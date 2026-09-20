@@ -67,3 +67,25 @@ export function buildSidebarSnapshot(
     ).length,
   }
 }
+
+
+export function selectSidebarTasks(
+  tasks: LoomSidebarSnapshot["tasks"],
+  maxRows = 12,
+) {
+  if (tasks.length <= maxRows) return tasks
+
+  const important = new Set(
+    tasks
+      .filter((task) => task.status === "runnable" || task.status === "failed")
+      .map((task) => task.id),
+  )
+  let ordinarySlots = Math.max(0, maxRows - important.size)
+
+  return tasks.filter((task) => {
+    if (important.has(task.id)) return true
+    if (ordinarySlots <= 0) return false
+    ordinarySlots--
+    return true
+  })
+}
