@@ -59,7 +59,7 @@ The brief almost always wants **both** sides' intent preserved (e.g. "keep the n
 
 - Only use "take one side wholesale" when you have positively confirmed the other side is obsolete. `git checkout --ours <file>` / `--theirs <file>` exist, but reach for them rarely and deliberately.
 - A conflict that spans behavior from two commits is resolved by **understanding what each commit was for**, then writing the line that satisfies both — exactly as a human reviewer would.
-- Do not invent a third behavior. Combine what's there; if the two sides are genuinely incompatible and need a design call, that's `[ESCALATE: ARCHITECTURE]`, not a guess.
+- Do not invent a third behavior. Combine what's there; if the two sides are genuinely incompatible and need a design call, that requires the appropriate Loom authority (normally a blocking architecture OQ), not a guess.
 
 ## 4. Verify the resolution (mandatory, before staging)
 
