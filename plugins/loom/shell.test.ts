@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { isAllowedWorkerShell, shellResourcesAllowed } from "./shell"
+import { isAllowedWorkerShell, scopedGofmtWriteTargets, shellResourcesAllowed } from "./shell"
 
 describe("Loom Worker shell policy", () => {
   test("allows common inspection and verification commands", () => {
@@ -40,6 +40,45 @@ describe("Loom Worker shell policy", () => {
     expect(isAllowedWorkerShell("sed -i s/a/b/ file")).toBe(false)
     expect(isAllowedWorkerShell("npm install foo")).toBe(false)
     expect(isAllowedWorkerShell("python -c 'open(\"x\", \"w\").write(\"y\")'")).toBe(false)
+  })
+
+  test("allows gofmt -w only inside the declared Worker write scope", () => {
+    expect(isAllowedWorkerShell("gofmt -w internal/agentdefinition/definition.go")).toBe(false)
+
+    expect(
+      shellResourcesAllowed(
+        ["gofmt -w internal/agentdefinition/definition.go cmd/leash/main.go"],
+        ["internal/agentdefinition/**", "cmd/leash/**"],
+      ),
+    ).toBe(true)
+
+    expect(
+      shellResourcesAllowed(
+        ["gofmt -w internal/agentdefinition/definition.go docs/architecture/leash-v1/index.md"],
+        ["internal/agentdefinition/**"],
+      ),
+    ).toBe(false)
+
+    expect(
+      shellResourcesAllowed(
+        ["gofmt -w internal/agentdefinition/definition.go ../other/file.go"],
+        ["internal/agentdefinition/**"],
+      ),
+    ).toBe(false)
+
+    expect(
+      shellResourcesAllowed(
+        ["gofmt -w internal/agentdefinition/*.go"],
+        ["internal/agentdefinition/**"],
+      ),
+    ).toBe(false)
+  })
+
+  test("parses only conservative gofmt write forms", () => {
+    expect(scopedGofmtWriteTargets("gofmt -w -s a.go b.go")).toEqual(["a.go", "b.go"])
+    expect(scopedGofmtWriteTargets("gofmt -w -r 'x -> y' a.go")).toBeUndefined()
+    expect(scopedGofmtWriteTargets("gofmt -w a.go && rm -rf .")).toBeUndefined()
+    expect(scopedGofmtWriteTargets("gofmt -w /tmp/a.go")).toBeUndefined()
   })
 
   test("all scanner-produced command resources must be safe", () => {
