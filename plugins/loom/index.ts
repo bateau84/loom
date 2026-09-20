@@ -242,6 +242,96 @@ function questionState(questions: OpenQuestion[], workflow: Workflow) {
 }
 
 
+function clippedSummary(value?: string, max = 180) {
+  if (!value) return undefined
+  const normalized = value.replace(/\s+/g, " ").trim()
+  return normalized.length <= max ? normalized : normalized.slice(0, max - 1) + "…"
+}
+
+function compactQuestions(questions: OpenQuestion[], workflow: Workflow) {
+  const state = questionState(questions, workflow)
+  return {
+    open: state.unresolved.length,
+    routes: state.routes,
+    reconcile: state.reconcile,
+  }
+}
+
+function compactVerification(workflow: Workflow) {
+  const requirements = workflow.verification ?? []
+  return {
+    open: requirements
+      .filter((requirement) => requirement.status === "open")
+      .map((requirement) => ({
+        id: requirement.id,
+        before: requirement.beforeStepId,
+        kind: requirement.kind,
+        statement: clippedSummary(requirement.statement, 140),
+      })),
+    satisfied: requirements.filter((requirement) => requirement.status === "satisfied").length,
+  }
+}
+
+function compactWorkflowState(
+  workflow: Workflow,
+  questions: OpenQuestion[],
+  budget: BudgetState,
+  limits: ExecutionLimits,
+  acceptance?: AcceptancePlan,
+  knowledge?: KnowledgeReport,
+) {
+  const ready = runnable(workflow)
+  const finished = workflow.steps.filter((step) => ["complete", "passed", "failed"].includes(step.status))
+  const failed = workflow.steps.filter((step) => step.status === "failed")
+  const pending = workflow.steps.filter((step) => step.status === "pending")
+  const readyIds = new Set(ready.map((step) => step.id))
+  const blockedPending = pending.filter((step) => !readyIds.has(step.id))
+
+  const state =
+    failed.length > 0 && ready.length === 0
+      ? "blocked"
+      : pending.length === 0
+        ? "complete"
+        : "active"
+
+  return {
+    workflowId: workflow.id,
+    state,
+    progress: {
+      finished: finished.length,
+      total: workflow.steps.length,
+      failed: failed.length,
+    },
+    now: ready.map((step) => ({ step: step.id, agent: step.agent, kind: step.kind })),
+    recent: finished.slice(-5).map((step) => ({
+      step: step.id,
+      agent: step.agent,
+      status: step.status,
+      ...(step.summary ? { summary: clippedSummary(step.summary) } : {}),
+    })),
+    upcoming: blockedPending.slice(0, 6).map((step) => ({
+      step: step.id,
+      agent: step.agent,
+      waitsFor: step.dependsOn.filter(
+        (dependency) =>
+          !workflow.steps.some(
+            (candidate) =>
+              candidate.id === dependency && ["complete", "passed"].includes(candidate.status),
+          ),
+      ),
+    })),
+    questions: compactQuestions(questions, workflow),
+    verification: compactVerification(workflow),
+    budget: {
+      dispatches: budget.totalDispatches,
+      maxDispatches: limits.maxTotalDispatches,
+      ...(budget.exhausted ? { exhausted: budget.exhausted } : {}),
+    },
+    acceptance: acceptance ? acceptanceReadiness(acceptance) : null,
+    knowledge: knowledge ? { valid: knowledge.valid } : null,
+  }
+}
+
 function evidenceKey(id: string) {
   return `evidence/${id}`
 }
