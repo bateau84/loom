@@ -1,3 +1,10 @@
+---
+type: evaluation
+title: Loom Behavioral Evals
+description: Adversarial behavioral conformance system for Loom's model-driven roles.
+tags: [evaluation, loom, behavioral, conformance, adversarial]
+---
+
 # Loom Behavioral Evals
 
 These evals test whether Loom's model-driven roles follow the behavioral contract, not just whether the deterministic control-plane code is correct.
