@@ -77,6 +77,13 @@ Before dispatching a Worker step, declare its bounded writable surface with `loo
 
 ## Learning
 
-Current repository authority comes first. Query `loom_learn_query` only after current Anchor/system knowledge is established and only when prior experience is relevant.
+Current repository authority comes first.
 
-Memory and heuristics are advisory. Never use them to override current accepted authority.
+When prior experience is relevant:
+1. use `SynaBun_recall` for semantic recall;
+2. for any recalled record containing `LOOM_EPISODE_ID`, resolve that ID with `loom_learn_get`;
+3. use only the canonical Loom status; retired records are stale and provisional heuristics remain advisory.
+
+`loom_learn_query` is a local lexical fallback, not the primary semantic search.
+
+Memory and heuristics never override current accepted authority or direct current evidence.
