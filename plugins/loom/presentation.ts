@@ -26,7 +26,7 @@ function scalar(value: unknown) {
   const text = String(value)
   if (text.length === 0) return "—"
   if (text.includes("\n")) return text
-  if (looksMachineLike(text)) return `\`${text.replaceAll("\`", "\\\`")}\``
+  if (looksMachineLike(text)) return "`" + text.replaceAll("`", "\\`") + "`"
   return text
 }
 
