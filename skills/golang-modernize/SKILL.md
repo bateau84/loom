@@ -17,7 +17,7 @@ metadata:
 **Modes:**
 
 - **Inline mode** (developer is actively coding): suggest only modernizations relevant to the current file or feature; mention other opportunities you noticed but do not touch unrelated files.
-- **Full-scan mode** (explicit `/golang-modernize` invocation or CI): scan all five modernization areas — (1) deprecated packages and API replacements, (2) language feature opportunities (range-over-int, min/max, any, iterators), (3) standard library upgrades (slices, maps, cmp, slog), (4) testing patterns (t.Context, b.Loop, synctest), (5) tooling and infra (golangci-lint v2, govulncheck, PGO, CI pipeline) — then consolidate and prioritize by the migration priority guide. Delegation follows `current Loom role directive and control-plane state` — only `general` dispatches sub-agents; a spoke covers all five areas itself, sequentially.
+- **Full-scan mode** (explicit `/golang-modernize` invocation or CI): scan all five modernization areas — (1) deprecated packages and API replacements, (2) language feature opportunities (range-over-int, min/max, any, iterators), (3) standard library upgrades (slices, maps, cmp, slog), (4) testing patterns (t.Context, b.Loop, synctest), (5) tooling and infra (golangci-lint v2, govulncheck, PGO, CI pipeline) — then consolidate and prioritize by the migration priority guide. Within the current Loom task, covers all five areas itself, sequentially.
 
 # Go Code Modernization Guide
 
@@ -41,7 +41,7 @@ When invoked:
 6. **Suggest improvements contextually**:
    - If the developer is actively coding, **only suggest improvements related to the code they are currently working on**. Do not refactor unrelated files. Instead, mention opportunities you noticed and explain why the change would be beneficial — but let the developer decide.
    - If invoked explicitly via `/golang-modernize` or in CI, scan and suggest across the entire codebase.
-7. **For large codebases**, cover every modernization category (deprecated packages, language features, standard library upgrades, testing patterns, tooling and infra). Delegation follows `current Loom role directive and control-plane state` — only `general` dispatches sub-agents; a spoke sweeps all categories itself, sequentially.
+7. **For large codebases**, cover every modernization category (deprecated packages, language features, standard library upgrades, testing patterns, tooling and infra). Within the current Loom task, sweeps all categories itself, sequentially.
 8. **Before suggesting a dependency update**, run `go mod tidy` and the test suite to verify compatibility. Ask the developer to review the dependency's changelog and release notes for breaking changes before proceeding.
 9. **If the developer explicitly ignores a suggestion**, write a short memo to `.modernize` in the project root so it is not suggested again. Format: one line per ignored suggestion, with a short description.
 
