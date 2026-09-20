@@ -743,12 +743,31 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         input: {
           type: "object",
           properties: {
-            humanFacing: { type: "boolean" },
-            behavioral: { type: "boolean" },
-            structural: { type: "boolean" },
-            externalUnknown: { type: "boolean" },
-            diagnostic: { type: "boolean" },
-            productOutcome: { type: "boolean" },
+            humanFacing: {
+              type: "boolean",
+              description: "True when the accepted work changes human-facing interaction, visible state, recovery, or subjective experience.",
+            },
+            behavioral: {
+              type: "boolean",
+              description: "True when observable product behavior or guarantees need new semantic authority.",
+            },
+            structural: {
+              type: "boolean",
+              description:
+                "True only when an unresolved structural/design decision requires Architect authority. Mechanical config/schema/file-shape conversion with a fully determined mapping is not structural=true by itself.",
+            },
+            externalUnknown: {
+              type: "boolean",
+              description: "True when current external facts or documentation must be researched before implementation.",
+            },
+            diagnostic: {
+              type: "boolean",
+              description: "True when a fault/root cause is unknown and diagnosis is required.",
+            },
+            productOutcome: {
+              type: "boolean",
+              description: "True for a product-outcome workflow that requires planning and Product Acceptance.",
+            },
           },
           required: [
             "humanFacing",
@@ -794,15 +813,21 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
           workflow.effects = effects
           workflow.steps = next
+          reconcileVerificationAfterRoute(workflow)
           await ctx.storage.set(workflowKey(workflow.id), workflow)
 
           const questions = await readQuestions(ctx, workflow.id)
           return {
             content: JSON.stringify({
               workflowId: workflow.id,
-              steps: workflow.steps,
-              runnable: runnable(workflow).map((step) => ({ id: step.id, agent: step.agent })),
-              questions: questionState(questions, workflow),
+              path: workflow.steps.map((step) => ({
+                step: step.id,
+                agent: step.agent,
+                kind: step.kind,
+                waitsFor: step.dependsOn,
+              })),
+              now: runnable(workflow).map((step) => ({ step: step.id, agent: step.agent })),
+              questions: compactQuestions(questions, workflow),
             }),
           }
         },
@@ -813,12 +838,18 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         description: "Inspect Loom workflow state, runnable steps, and unresolved shared questions.",
         input: {
           type: "object",
-          properties: { workflowId: { type: "string" } },
+          properties: {
+            workflowId: { type: "string" },
+            detail: {
+              type: "boolean",
+              description: "Return full workflow internals. Default false returns a compact progress/next-step view.",
+            },
+          },
           additionalProperties: false,
         },
         options: { namespace: "loom", codemode: false },
         execute: async (input, tool) => {
-          const requested = (input as { workflowId?: string }).workflowId
+          const requested = (input as { workflowId?: string; detail?: boolean }).workflowId
           const workflow = requested
             ? await readWorkflow(ctx, requested)
             : await activeWorkflow(ctx, tool.sessionID)
@@ -830,11 +861,23 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           const budget = await readBudget(ctx, workflow.id)
           const acceptance = (await ctx.storage.get(acceptanceKey(workflow.id))) as AcceptancePlan | undefined
           const knowledge = (await ctx.storage.get(knowledgeKey(workflow.id))) as KnowledgeReport | undefined
+          const detail = Boolean((input as { detail?: boolean }).detail)
+
+          if (!detail) {
+            return {
+              content: JSON.stringify(
+                compactWorkflowState(workflow, questions, budget, limits, acceptance, knowledge),
+              ),
+            }
+          }
+
           return {
             content: JSON.stringify({
+              summary: compactWorkflowState(workflow, questions, budget, limits, acceptance, knowledge),
               workflow,
               runnable: runnable(workflow).map((step) => ({ id: step.id, agent: step.agent })),
               questions: questionState(questions, workflow),
+              verification: workflow.verification ?? [],
               budget: { limits, state: budget },
               acceptance: acceptance
                 ? { plan: acceptance, readiness: acceptanceReadiness(acceptance) }
