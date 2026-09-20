@@ -29,6 +29,7 @@ Loom's repository is the global OpenCode config directory. Agent files therefore
 - **worker** — implementation and bounded technical work.
 - **research** — sourced investigation and external knowledge.
 - **diagnostic** — root-cause investigation.
+- **acceptance** — executes real end-to-end Product Acceptance scenarios and records observed proof.
 
 Planning is normally a worker capability loaded through a planning skill rather than a permanent authority role.
 
@@ -64,6 +65,7 @@ Typical mapping:
 | implementation | Worker |
 | external factual uncertainty | Research |
 | unexplained failure | Diagnostic |
+| assembled-product proof | Acceptance |
 | normal independent check | Reviewer |
 | whole-solution challenge | Critic |
 

@@ -53,6 +53,13 @@ import {
   episodeRecallPayload,
   rememberedMemoryId,
 } from "./synabun"
+import {
+  acceptanceReadiness,
+  createAcceptancePlan,
+  recordAcceptanceResult,
+  resetAcceptance,
+  type AcceptancePlan,
+} from "./acceptance"
 
 const loomAgents = new Set([
   "designer",
@@ -60,6 +67,7 @@ const loomAgents = new Set([
   "architect",
   "reviewer",
   "critic",
+  "acceptance",
   "worker",
   "research",
   "diagnostic",
@@ -75,6 +83,10 @@ function claimIdKey(id: string) {
 
 function heuristicKey(id: string) {
   return `heuristic/${id}`
+}
+
+function acceptanceKey(workflowId: string) {
+  return `acceptance/${workflowId}`
 }
 
 function scopeKey(workflowId: string, stepId: string) {
@@ -398,12 +410,16 @@ export default Plugin.define({
           const questions = await readQuestions(ctx, workflow.id)
           const limits = await readLimits(ctx, workflow.id)
           const budget = await readBudget(ctx, workflow.id)
+          const acceptance = (await ctx.storage.get(acceptanceKey(workflow.id))) as AcceptancePlan | undefined
           return {
             content: JSON.stringify({
               workflow,
               runnable: runnable(workflow).map((step) => ({ id: step.id, agent: step.agent })),
               questions: questionState(questions, workflow),
               budget: { limits, state: budget },
+              acceptance: acceptance
+                ? { plan: acceptance, readiness: acceptanceReadiness(acceptance) }
+                : null,
             }),
           }
         },
@@ -456,7 +472,31 @@ export default Plugin.define({
 
           const resolvedOutcome = outcome ?? (step.kind === "work" ? "complete" : undefined)
           if (!resolvedOutcome) {
-            return { content: JSON.stringify({ error: "Reviewer/Critic gate requires outcome pass or fail." }) }
+            return { content: JSON.stringify({ error: "Gate step requires outcome pass or fail." }) }
+          }
+
+          if (stepId === "product-acceptance") {
+            const plan = (await ctx.storage.get(acceptanceKey(workflowId))) as AcceptancePlan | undefined
+            if (!plan) {
+              return { content: JSON.stringify({ error: "Product Acceptance plan is missing." }) }
+            }
+            const readiness = acceptanceReadiness(plan)
+            if (readiness === "pending") {
+              return { content: JSON.stringify({ error: "Product Acceptance still has pending scenarios.", readiness }) }
+            }
+            if (resolvedOutcome === "pass" && readiness !== "passed") {
+              return { content: JSON.stringify({ error: "Product Acceptance cannot PASS unless every scenario passed.", readiness }) }
+            }
+            if (resolvedOutcome === "fail" && readiness === "passed") {
+              return { content: JSON.stringify({ error: "Product Acceptance cannot FAIL when every scenario passed.", readiness }) }
+            }
+          }
+
+          if (stepId === "review-product" && resolvedOutcome === "pass") {
+            const plan = (await ctx.storage.get(acceptanceKey(workflowId))) as AcceptancePlan | undefined
+            if (!plan || acceptanceReadiness(plan) !== "passed") {
+              return { content: JSON.stringify({ error: "Product review cannot PASS without passed Product Acceptance." }) }
+            }
           }
 
           try {
@@ -541,6 +581,15 @@ export default Plugin.define({
 
           try {
             const reset = reopenFrom(workflow, stepId)
+
+            if (reset.includes("product-acceptance")) {
+              const acceptance = (await ctx.storage.get(acceptanceKey(workflowId))) as AcceptancePlan | undefined
+              if (acceptance) {
+                resetAcceptance(acceptance)
+                await ctx.storage.set(acceptanceKey(workflowId), acceptance)
+              }
+            }
+
             await ctx.storage.set(
               `progress/${workflowId}/${stepId}/${crypto.randomUUID()}`,
               { reason: value.reason, ...progress, at: new Date().toISOString() },
@@ -896,6 +945,156 @@ export default Plugin.define({
           return { content: JSON.stringify({ observations, claims }) }
         },
       })
+
+      editor.add({
+        name: "pa_plan",
+        description:
+          "Create or replace the current Product Acceptance scenario plan before results are recorded. Scenarios must map to accepted Anchor/requirement criteria.",
+        input: {
+          type: "object",
+          properties: {
+            workflowId: { type: "string" },
+            scenarios: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  id: { type: "string" },
+                  title: { type: "string" },
+                  criteria: { type: "array", items: { type: "string" } },
+                },
+                required: ["id", "title", "criteria"],
+                additionalProperties: false,
+              },
+            },
+          },
+          required: ["workflowId", "scenarios"],
+          additionalProperties: false,
+        },
+        options: { namespace: "loom" },
+        execute: async (input, tool) => {
+          if (!["acceptance", "specifier", "reviewer"].includes(tool.agent)) {
+            return { content: JSON.stringify({ error: "Only acceptance, specifier, or reviewer may define Product Acceptance scenarios." }) }
+          }
+
+          const value = input as {
+            workflowId: string
+            scenarios: Array<{ id: string; title: string; criteria: string[] }>
+          }
+          const workflow = await readWorkflow(ctx, value.workflowId)
+          if (!workflow) return { content: JSON.stringify({ error: "Workflow not found." }) }
+          if (!workflow.steps.some((step) => step.id === "product-acceptance")) {
+            return { content: JSON.stringify({ error: "Workflow does not require Product Acceptance." }) }
+          }
+
+          const existing = (await ctx.storage.get(acceptanceKey(value.workflowId))) as AcceptancePlan | undefined
+          if (existing?.scenarios.some((scenario) => scenario.outcome !== "pending")) {
+            return { content: JSON.stringify({ error: "Product Acceptance plan cannot change after results exist; reopen/reset first." }) }
+          }
+
+          try {
+            const plan = createAcceptancePlan({
+              workflowId: value.workflowId,
+              createdBy: tool.agent,
+              scenarios: value.scenarios,
+              now: new Date().toISOString(),
+            })
+            await ctx.storage.set(acceptanceKey(value.workflowId), plan)
+            return { content: JSON.stringify({ plan, readiness: acceptanceReadiness(plan) }) }
+          } catch (error) {
+            return { content: JSON.stringify({ error: error instanceof Error ? error.message : String(error) }) }
+          }
+        },
+      })
+
+      editor.add({
+        name: "pa_status",
+        description: "Inspect Product Acceptance scenarios, results, evidence references, and readiness.",
+        input: {
+          type: "object",
+          properties: { workflowId: { type: "string" } },
+          required: ["workflowId"],
+          additionalProperties: false,
+        },
+        options: { namespace: "loom" },
+        execute: async (input) => {
+          const { workflowId } = input as { workflowId: string }
+          const plan = (await ctx.storage.get(acceptanceKey(workflowId))) as AcceptancePlan | undefined
+          return {
+            content: JSON.stringify({
+              plan: plan ?? null,
+              readiness: plan ? acceptanceReadiness(plan) : "missing",
+            }),
+          }
+        },
+      })
+
+      editor.add({
+        name: "pa_result",
+        description:
+          "Record one immutable Product Acceptance scenario result for the current attempt. PASS requires product-acceptance evidence claims from the Product Acceptance step.",
+        input: {
+          type: "object",
+          properties: {
+            workflowId: { type: "string" },
+            scenarioId: { type: "string" },
+            outcome: { type: "string", enum: ["passed", "failed", "unproven"] },
+            evidenceClaimIds: { type: "array", items: { type: "string" } },
+            note: { type: "string" },
+          },
+          required: ["workflowId", "scenarioId", "outcome", "evidenceClaimIds", "note"],
+          additionalProperties: false,
+        },
+        options: { namespace: "loom" },
+        execute: async (input, tool) => {
+          if (tool.agent !== "acceptance") {
+            return { content: JSON.stringify({ error: "Only acceptance may record Product Acceptance results." }) }
+          }
+
+          const value = input as {
+            workflowId: string
+            scenarioId: string
+            outcome: "passed" | "failed" | "unproven"
+            evidenceClaimIds: string[]
+            note: string
+          }
+          const plan = (await ctx.storage.get(acceptanceKey(value.workflowId))) as AcceptancePlan | undefined
+          if (!plan) return { content: JSON.stringify({ error: "Product Acceptance plan not found." }) }
+
+          const records = await Promise.all(
+            value.evidenceClaimIds.map((id) => ctx.storage.get(claimIdKey(id)) as Promise<EvidenceClaim | undefined>),
+          )
+          const claims = records.filter((claim): claim is EvidenceClaim => Boolean(claim))
+          if (claims.length !== value.evidenceClaimIds.length) {
+            return { content: JSON.stringify({ error: "Every Product Acceptance evidence claim id must exist." }) }
+          }
+          if (claims.some((claim) => claim.byAgent !== "acceptance")) {
+            return { content: JSON.stringify({ error: "Product Acceptance evidence claims must be produced by acceptance." }) }
+          }
+
+          try {
+            const scenario = recordAcceptanceResult({
+              plan,
+              scenarioId: value.scenarioId,
+              outcome: value.outcome,
+              claims,
+              byAgent: tool.agent,
+              note: value.note,
+              now: new Date().toISOString(),
+            })
+            await ctx.storage.set(acceptanceKey(value.workflowId), plan)
+            return {
+              content: JSON.stringify({
+                scenario,
+                readiness: acceptanceReadiness(plan),
+              }),
+            }
+          } catch (error) {
+            return { content: JSON.stringify({ error: error instanceof Error ? error.message : String(error) }) }
+          }
+        },
+      })
+
       editor.add({
         name: "budget_status",
         description: "Inspect Loom execution limits and current dispatch consumption.",

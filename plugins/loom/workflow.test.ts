@@ -47,9 +47,34 @@ describe("Loom routing DAG", () => {
       "critic-solution",
       "worker",
       "review-implementation",
+      "product-acceptance",
+      "designer-validation",
+      "review-product",
       "critic-final",
     ])
     expect(runnable(w).map((step) => step.id).sort()).toEqual(["designer", "research", "specifier"])
+  })
+
+  test("Product Acceptance and designer validation precede final product review", () => {
+    const w = workflow(buildSteps({
+      humanFacing: true,
+      behavioral: false,
+      structural: false,
+      externalUnknown: false,
+      diagnostic: false,
+      productOutcome: true,
+    }))
+
+    finishStep(w, "designer", "designer", "complete", "design done")
+    finishStep(w, "review-think", "reviewer", "pass", "think pass")
+    finishStep(w, "critic-solution", "critic", "pass", "solution pass")
+    finishStep(w, "worker", "worker", "complete", "built")
+    finishStep(w, "review-implementation", "reviewer", "pass", "implementation pass")
+
+    expect(runnable(w).map((step) => step.id).sort()).toEqual([
+      "designer-validation",
+      "product-acceptance",
+    ])
   })
 
   test("failed review blocks downstream work", () => {
