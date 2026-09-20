@@ -38,6 +38,7 @@ import {
 } from "./evidence"
 import {
   DEFAULT_LIMITS,
+  grantExtraDispatch,
   hasMaterialProgress,
   newBudgetState,
   recordDispatch,
@@ -159,7 +160,8 @@ async function readBudget(ctx: any, workflowId: string): Promise<BudgetState> {
 }
 
 async function readLimits(ctx: any, workflowId: string): Promise<ExecutionLimits> {
-  return ((await ctx.storage.get(limitsKey(workflowId))) as ExecutionLimits | undefined) ?? DEFAULT_LIMITS
+  const stored = (await ctx.storage.get(limitsKey(workflowId))) as Partial<ExecutionLimits> | undefined
+  return { ...DEFAULT_LIMITS, ...(stored ?? {}) }
 }
 
 function workflowKey(id: string) {
@@ -1884,6 +1886,129 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           const limits = await readLimits(ctx, workflowId)
           const state = await readBudget(ctx, workflowId)
           return { content: renderToolOutput({ limits, state }) }
+        },
+      })
+
+
+      editor.add({
+        name: "budget_grant",
+        description:
+          "Grant exactly one extra dispatch to an exhausted runnable work step after material progress. General only. Reviewer/Critic gate budgets remain hard bounded; dispatch history and the workflow-wide total limit are preserved.",
+        input: {
+          type: "object",
+          properties: {
+            workflowId: { type: "string" },
+            stepId: { type: "string" },
+            reason: { type: "string" },
+            progress: {
+              type: "object",
+              properties: {
+                newEvidence: { type: "boolean" },
+                changedHypothesis: { type: "boolean" },
+                changedStrategy: { type: "boolean" },
+                reducedUnresolved: { type: "boolean" },
+              },
+              required: [
+                "newEvidence",
+                "changedHypothesis",
+                "changedStrategy",
+                "reducedUnresolved",
+              ],
+              additionalProperties: false,
+            },
+          },
+          required: ["workflowId", "stepId", "reason", "progress"],
+          additionalProperties: false,
+        },
+        options: { namespace: "loom", codemode: false },
+        execute: async (input, tool) => {
+          if (tool.agent !== "general") {
+            return { content: renderToolOutput({ error: "Only general may grant extra Loom dispatch budget." }) }
+          }
+
+          const value = input as {
+            workflowId: string
+            stepId: string
+            reason: string
+            progress: ProgressSignal
+          }
+
+          const workflow = await readWorkflow(ctx, value.workflowId)
+          if (!workflow) return { content: renderToolOutput({ error: "Workflow not found." }) }
+
+          const step = workflow.steps.find((candidate) => candidate.id === value.stepId)
+          if (!step) return { content: renderToolOutput({ error: "Step not found." }) }
+          if (step.kind !== "work") {
+            return {
+              content: renderToolOutput({
+                error: "Budget grants apply only to work steps. Reviewer and Critic gate budgets remain hard bounded.",
+                step: { id: step.id, kind: step.kind, agent: step.agent },
+              }),
+            }
+          }
+          if (step.status !== "pending") {
+            return {
+              content: renderToolOutput({
+                error: "Budget grants apply only to pending work. Reopen failed work before granting another dispatch.",
+                step: { id: step.id, status: step.status },
+              }),
+            }
+          }
+          if (!runnable(workflow).some((candidate) => candidate.id === step.id)) {
+            return {
+              content: renderToolOutput({
+                error: "Budget grants apply only when the exhausted work step is currently runnable.",
+                step: { id: step.id, status: step.status, dependsOn: step.dependsOn },
+              }),
+            }
+          }
+
+          const limits = await readLimits(ctx, value.workflowId)
+          const state = await readBudget(ctx, value.workflowId)
+          const key = `step:${step.id}`
+          const result = grantExtraDispatch({
+            state,
+            limits,
+            key,
+            agent: step.agent,
+            grantedBy: tool.agent,
+            reason: value.reason,
+            progress: value.progress,
+            now: new Date().toISOString(),
+          })
+
+          if (!result.allowed) {
+            return {
+              content: renderToolOutput({
+                error: result.reason,
+                step: {
+                  id: step.id,
+                  agent: step.agent,
+                  used: state.byKey[key] ?? 0,
+                },
+                limits,
+              }),
+            }
+          }
+
+          await ctx.storage.set(budgetKey(value.workflowId), state)
+          return {
+            content: renderToolOutput({
+              granted: true,
+              step: {
+                id: step.id,
+                agent: step.agent,
+                used: state.byKey[key] ?? 0,
+                previousLimit: result.previousLimit,
+                newLimit: result.newLimit,
+              },
+              grant: result.grant,
+              workflowDispatches: {
+                used: state.totalDispatches,
+                limit: limits.maxTotalDispatches,
+              },
+            }),
+          }
         },
       })
 

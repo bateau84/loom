@@ -3,13 +3,31 @@ export type ExecutionLimits = {
   maxDispatchesPerStep: number
   maxReviewerDispatchesPerStep: number
   maxCriticDispatchesPerStep: number
+  maxExtraDispatchesPerStep: number
   maxProviderRetries: number
+}
+
+export type ProgressSignal = {
+  newEvidence: boolean
+  changedHypothesis: boolean
+  changedStrategy: boolean
+  reducedUnresolved: boolean
+}
+
+export type BudgetGrant = {
+  key: string
+  agent: string
+  grantedBy: string
+  reason: string
+  progress: ProgressSignal
+  grantedAt: string
 }
 
 export type BudgetState = {
   totalDispatches: number
   byKey: Record<string, number>
   seenDispatches: string[]
+  grants?: BudgetGrant[]
   exhausted?: string
 }
 
@@ -18,6 +36,7 @@ export const DEFAULT_LIMITS: ExecutionLimits = {
   maxDispatchesPerStep: 3,
   maxReviewerDispatchesPerStep: 3,
   maxCriticDispatchesPerStep: 2,
+  maxExtraDispatchesPerStep: 3,
   maxProviderRetries: 2,
 }
 
@@ -26,13 +45,27 @@ export function newBudgetState(): BudgetState {
     totalDispatches: 0,
     byKey: {},
     seenDispatches: [],
+    grants: [],
   }
 }
 
-function stepLimit(agent: string, limits: ExecutionLimits) {
+function baseStepLimit(agent: string, limits: ExecutionLimits) {
   if (agent === "critic") return limits.maxCriticDispatchesPerStep
   if (agent === "reviewer") return limits.maxReviewerDispatchesPerStep
   return limits.maxDispatchesPerStep
+}
+
+function grantsForKey(state: BudgetState, key: string) {
+  return (state.grants ?? []).filter((grant) => grant.key === key).length
+}
+
+export function effectiveStepLimit(
+  state: BudgetState,
+  key: string,
+  agent: string,
+  limits: ExecutionLimits,
+) {
+  return baseStepLimit(agent, limits) + grantsForKey(state, key)
 }
 
 export function recordDispatch(input: {
@@ -54,7 +87,7 @@ export function recordDispatch(input: {
   }
 
   const current = state.byKey[key] ?? 0
-  const max = stepLimit(agent, limits)
+  const max = effectiveStepLimit(state, key, agent, limits)
 
   if (current >= max) {
     state.exhausted = `dispatch limit ${max} reached for ${key}`
@@ -69,11 +102,71 @@ export function recordDispatch(input: {
   return { allowed: true, duplicate: false, state }
 }
 
-export type ProgressSignal = {
-  newEvidence: boolean
-  changedHypothesis: boolean
-  changedStrategy: boolean
-  reducedUnresolved: boolean
+export function grantExtraDispatch(input: {
+  state: BudgetState
+  limits: ExecutionLimits
+  key: string
+  agent: string
+  grantedBy: string
+  reason: string
+  progress: ProgressSignal
+  now: string
+}) {
+  const { state, limits, key, agent, grantedBy, reason, progress, now } = input
+  const used = state.byKey[key] ?? 0
+  const currentLimit = effectiveStepLimit(state, key, agent, limits)
+  const grants = grantsForKey(state, key)
+
+  if (!reason.trim()) {
+    return { allowed: false, reason: "Budget grant requires a concrete reason.", state }
+  }
+
+  if (!hasMaterialProgress(progress)) {
+    return {
+      allowed: false,
+      reason:
+        "Budget grant requires material progress: new evidence, changed hypothesis, changed strategy, or reduced unresolved work.",
+      state,
+    }
+  }
+
+  if (state.totalDispatches >= limits.maxTotalDispatches) {
+    state.exhausted = `total dispatch limit ${limits.maxTotalDispatches} reached`
+    return { allowed: false, reason: state.exhausted, state }
+  }
+
+  if (used < currentLimit) {
+    return {
+      allowed: false,
+      reason: `Step still has dispatch capacity: ${used}/${currentLimit} used.`,
+      state,
+    }
+  }
+
+  if (grants >= limits.maxExtraDispatchesPerStep) {
+    state.exhausted = `extra dispatch grant limit ${limits.maxExtraDispatchesPerStep} reached for ${key}`
+    return { allowed: false, reason: state.exhausted, state }
+  }
+
+  const grant: BudgetGrant = {
+    key,
+    agent,
+    grantedBy,
+    reason: reason.trim(),
+    progress,
+    grantedAt: now,
+  }
+  if (!state.grants) state.grants = []
+  state.grants.push(grant)
+  delete state.exhausted
+
+  return {
+    allowed: true,
+    grant,
+    previousLimit: currentLimit,
+    newLimit: currentLimit + 1,
+    state,
+  }
 }
 
 export function hasMaterialProgress(signal: ProgressSignal) {

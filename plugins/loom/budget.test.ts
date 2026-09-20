@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import {
   DEFAULT_LIMITS,
+  grantExtraDispatch,
   hasMaterialProgress,
   newBudgetState,
   recordDispatch,
@@ -77,6 +78,192 @@ describe("Loom progress and dispatch budgets", () => {
         dispatchID: "c3",
         key: "critic-final",
         agent: "critic",
+      }).allowed,
+    ).toBe(false)
+  })
+
+  test("one material-progress grant allows exactly one extra dispatch without resetting history", () => {
+    const state = newBudgetState()
+    const key = "step:task:cli-agent-dry-run"
+
+    for (const id of ["d1", "d2", "d3"]) {
+      expect(
+        recordDispatch({
+          state,
+          limits: DEFAULT_LIMITS,
+          dispatchID: id,
+          key,
+          agent: "worker",
+        }).allowed,
+      ).toBe(true)
+    }
+
+    expect(
+      recordDispatch({
+        state,
+        limits: DEFAULT_LIMITS,
+        dispatchID: "d4-denied",
+        key,
+        agent: "worker",
+      }).allowed,
+    ).toBe(false)
+
+    const grant = grantExtraDispatch({
+      state,
+      limits: DEFAULT_LIMITS,
+      key,
+      agent: "worker",
+      grantedBy: "general",
+      reason: "Externally verified formatting correction is now available.",
+      progress: {
+        newEvidence: true,
+        changedHypothesis: false,
+        changedStrategy: false,
+        reducedUnresolved: true,
+      },
+      now: "2026-09-20T22:00:00Z",
+    })
+
+    expect(grant.allowed).toBe(true)
+    expect(grant.previousLimit).toBe(3)
+    expect(grant.newLimit).toBe(4)
+    expect(state.totalDispatches).toBe(3)
+    expect(state.byKey[key]).toBe(3)
+    expect(state.grants).toHaveLength(1)
+
+    expect(
+      recordDispatch({
+        state,
+        limits: DEFAULT_LIMITS,
+        dispatchID: "d4",
+        key,
+        agent: "worker",
+      }).allowed,
+    ).toBe(true)
+
+    expect(state.totalDispatches).toBe(4)
+    expect(state.byKey[key]).toBe(4)
+
+    expect(
+      recordDispatch({
+        state,
+        limits: DEFAULT_LIMITS,
+        dispatchID: "d5",
+        key,
+        agent: "worker",
+      }).allowed,
+    ).toBe(false)
+  })
+
+  test("grant requires material progress and actual exhaustion", () => {
+    const state = newBudgetState()
+    const key = "step:task:x"
+
+    expect(
+      grantExtraDispatch({
+        state,
+        limits: DEFAULT_LIMITS,
+        key,
+        agent: "worker",
+        grantedBy: "general",
+        reason: "Try again.",
+        progress: {
+          newEvidence: true,
+          changedHypothesis: false,
+          changedStrategy: false,
+          reducedUnresolved: false,
+        },
+        now: "now",
+      }).allowed,
+    ).toBe(false)
+
+    for (const id of ["d1", "d2", "d3"]) {
+      recordDispatch({
+        state,
+        limits: DEFAULT_LIMITS,
+        dispatchID: id,
+        key,
+        agent: "worker",
+      })
+    }
+
+    expect(
+      grantExtraDispatch({
+        state,
+        limits: DEFAULT_LIMITS,
+        key,
+        agent: "worker",
+        grantedBy: "general",
+        reason: "No actual change.",
+        progress: {
+          newEvidence: false,
+          changedHypothesis: false,
+          changedStrategy: false,
+          reducedUnresolved: false,
+        },
+        now: "now",
+      }).allowed,
+    ).toBe(false)
+  })
+
+  test("extra per-step grants remain hard bounded", () => {
+    const state = newBudgetState()
+    const key = "step:task:x"
+
+    for (const id of ["d1", "d2", "d3"]) {
+      recordDispatch({
+        state,
+        limits: DEFAULT_LIMITS,
+        dispatchID: id,
+        key,
+        agent: "worker",
+      })
+    }
+
+    for (let attempt = 1; attempt <= DEFAULT_LIMITS.maxExtraDispatchesPerStep; attempt++) {
+      const grant = grantExtraDispatch({
+        state,
+        limits: DEFAULT_LIMITS,
+        key,
+        agent: "worker",
+        grantedBy: "general",
+        reason: `Material progress ${attempt}`,
+        progress: {
+          newEvidence: true,
+          changedHypothesis: false,
+          changedStrategy: false,
+          reducedUnresolved: false,
+        },
+        now: `now-${attempt}`,
+      })
+      expect(grant.allowed).toBe(true)
+
+      expect(
+        recordDispatch({
+          state,
+          limits: DEFAULT_LIMITS,
+          dispatchID: `extra-${attempt}`,
+          key,
+          agent: "worker",
+        }).allowed,
+      ).toBe(true)
+    }
+
+    expect(
+      grantExtraDispatch({
+        state,
+        limits: DEFAULT_LIMITS,
+        key,
+        agent: "worker",
+        grantedBy: "general",
+        reason: "Too many extra attempts",
+        progress: {
+          newEvidence: true,
+          changedHypothesis: false,
+          changedStrategy: false,
+          reducedUnresolved: false,
+        },
+        now: "later",
       }).allowed,
     ).toBe(false)
   })
