@@ -1,6 +1,8 @@
 import { Plugin } from "@opencode/plugin"
 import {
+  applyTaskPlan,
   buildSteps,
+  plannedTaskSteps,
   preserveSatisfied,
   finishStep,
   reopenFrom,
@@ -60,6 +62,7 @@ import {
   resetAcceptance,
   type AcceptancePlan,
 } from "./acceptance"
+import { taskStepId, validateTaskPlan, type TaskSpec } from "./tasks"
 
 const loomAgents = new Set([
   "designer",
@@ -68,6 +71,7 @@ const loomAgents = new Set([
   "reviewer",
   "critic",
   "acceptance",
+  "planner",
   "worker",
   "research",
   "diagnostic",
@@ -358,7 +362,10 @@ export default Plugin.define({
 
           const implementationStarted = workflow.steps.some(
             (step) =>
-              ["worker", "review-implementation", "critic-final"].includes(step.id) &&
+              (
+                ["worker", "plan", "review-implementation", "critic-final"].includes(step.id) ||
+                step.id.startsWith("task:")
+              ) &&
               ["complete", "passed"].includes(step.status),
           )
           if (implementationStarted) {
@@ -473,6 +480,10 @@ export default Plugin.define({
           const resolvedOutcome = outcome ?? (step.kind === "work" ? "complete" : undefined)
           if (!resolvedOutcome) {
             return { content: JSON.stringify({ error: "Gate step requires outcome pass or fail." }) }
+          }
+
+          if (stepId === "plan" && plannedTaskSteps(workflow).length === 0) {
+            return { content: JSON.stringify({ error: "Planning step cannot complete before a validated task graph exists." }) }
           }
 
           if (stepId === "product-acceptance") {
@@ -1113,6 +1124,111 @@ export default Plugin.define({
         },
       })
 
+
+      editor.add({
+        name: "task_plan",
+        description:
+          "Create or replace the bounded Worker task DAG for a product workflow. Planner only. Tasks become real workflow steps with immutable write scopes.",
+        input: {
+          type: "object",
+          properties: {
+            workflowId: { type: "string" },
+            tasks: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  id: { type: "string" },
+                  title: { type: "string" },
+                  objective: { type: "string" },
+                  dependsOn: { type: "array", items: { type: "string" } },
+                  write: { type: "array", items: { type: "string" } },
+                  skills: { type: "array", items: { type: "string" } },
+                  verify: { type: "array", items: { type: "string" } },
+                },
+                required: ["id", "title", "objective", "dependsOn", "write", "skills", "verify"],
+                additionalProperties: false,
+              },
+            },
+          },
+          required: ["workflowId", "tasks"],
+          additionalProperties: false,
+        },
+        options: { namespace: "loom" },
+        execute: async (input, tool) => {
+          if (tool.agent !== "planner") {
+            return { content: JSON.stringify({ error: "Only planner may define the Worker task graph." }) }
+          }
+
+          const value = input as { workflowId: string; tasks: TaskSpec[] }
+          const workflow = await readWorkflow(ctx, value.workflowId)
+          if (!workflow) return { content: JSON.stringify({ error: "Workflow not found." }) }
+
+          const planStep = workflow.steps.find((step) => step.id === "plan")
+          if (!planStep) return { content: JSON.stringify({ error: "Workflow has no planning step." }) }
+          if (!runnable(workflow).some((step) => step.id === "plan")) {
+            return { content: JSON.stringify({ error: "Planning step is not currently runnable." }) }
+          }
+
+          try {
+            const tasks = validateTaskPlan(value.tasks)
+            const steps = applyTaskPlan(workflow, tasks)
+
+            for (const step of steps) {
+              const scope: TaskScope = {
+                workflowId: value.workflowId,
+                stepId: step.id,
+                write: step.task!.write,
+              }
+              await ctx.storage.set(scopeKey(value.workflowId, step.id), scope)
+            }
+
+            await ctx.storage.set(workflowKey(workflow.id), workflow)
+            return {
+              content: JSON.stringify({
+                tasks: steps.map((step) => ({
+                  stepId: step.id,
+                  task: step.task,
+                  dependsOn: step.dependsOn,
+                })),
+              }),
+            }
+          } catch (error) {
+            return { content: JSON.stringify({ error: error instanceof Error ? error.message : String(error) }) }
+          }
+        },
+      })
+
+      editor.add({
+        name: "task_status",
+        description: "Inspect planned Worker tasks, status, dependencies, scopes, skills, and currently runnable tasks.",
+        input: {
+          type: "object",
+          properties: { workflowId: { type: "string" } },
+          required: ["workflowId"],
+          additionalProperties: false,
+        },
+        options: { namespace: "loom" },
+        execute: async (input) => {
+          const { workflowId } = input as { workflowId: string }
+          const workflow = await readWorkflow(ctx, workflowId)
+          if (!workflow) return { content: JSON.stringify({ error: "Workflow not found." }) }
+          const tasks = plannedTaskSteps(workflow)
+          const runnableIDs = new Set(runnable(workflow).map((step) => step.id))
+          return {
+            content: JSON.stringify({
+              tasks: tasks.map((step) => ({
+                stepId: step.id,
+                status: step.status,
+                runnable: runnableIDs.has(step.id),
+                dependsOn: step.dependsOn,
+                task: step.task,
+              })),
+            }),
+          }
+        },
+      })
+
       editor.add({
         name: "task_scope",
         description:
@@ -1141,6 +1257,9 @@ export default Plugin.define({
           if (!step) return { content: JSON.stringify({ error: "Step not found." }) }
           if (step.agent !== "worker") {
             return { content: JSON.stringify({ error: "Task scope may only be assigned to Worker steps." }) }
+          }
+          if (step.task) {
+            return { content: JSON.stringify({ error: "Planned task scope is immutable; reopen the planning step to change it." }) }
           }
           if (step.status !== "pending") {
             return { content: JSON.stringify({ error: "Worker task scope cannot change after the step has finished." }) }
@@ -1191,6 +1310,10 @@ export default Plugin.define({
             }
           }
 
+          if (!runnable(workflow).some((candidate) => candidate.id === stepId)) {
+            return { content: JSON.stringify({ error: "Step is not currently runnable; dependencies or prior gates are incomplete." }) }
+          }
+
           let scope: TaskScope | undefined
           if (tool.agent === "worker") {
             scope = (await ctx.storage.get(scopeKey(workflowId, stepId))) as TaskScope | undefined
@@ -1209,6 +1332,7 @@ export default Plugin.define({
               workflowId,
               stepId,
               ...(scope ? { write: scope.write } : {}),
+              ...(step.task ? { task: step.task } : {}),
             }),
           }
         },
