@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "bun test .opencode/plugins/loom/workflow.test.ts",
+    "test": "bun test plugins/loom/workflow.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
