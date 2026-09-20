@@ -28,3 +28,10 @@ Use the Loom OQ board for cross-authority questions. Raise a blocking OQ instead
 ## Learning
 
 After current Anchor authority is established, you may use `SynaBun_recall` for relevant prior behavioral lessons. Resolve recalled `LOOM_EPISODE_ID` values with `loom_learn_get`. Memory cannot create or override product guarantees.
+
+
+## Product Acceptance scenarios
+
+When Product Acceptance scenarios are usefully defined during specification, you may register them with `loom_pa_plan`.
+
+Map scenarios to accepted criteria. Do not invent new product obligations through the acceptance plan; it is verification coverage, not authority.
