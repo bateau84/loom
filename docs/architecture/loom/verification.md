@@ -99,6 +99,25 @@ If the same root defect survives the bounded cycle, reroute the cause instead of
 
 Critic is not the automatic next retry.
 
+## Behavioral conformance evals
+
+Deterministic control-plane tests are necessary but do not prove model-driven roles follow their directives.
+
+Loom therefore keeps a separate behavioral corpus under `evals/`.
+
+Two live execution modes are used:
+
+- **runtime** — real OpenCode execution with Loom plugin/skills loaded; tool behavior can be asserted mechanically.
+- **role-decision** — fresh-context role judgment with mutation/subagent permissions denied; this tests authority and decision boundaries without inventing workflow state.
+
+Each case maps to one or more behavioral requirements, contains adversarial positive expectations, and names forbidden behavior.
+
+A separate fresh judge model evaluates semantic compliance. A different model from the target is preferred when available.
+
+Inference-bearing evals are explicit and are not part of ordinary PR CI. Normal CI validates corpus structure, traceability, harness syntax, and deterministic tests without model spend.
+
+Behavioral evals complement rather than replace YuHaul dogfood Product Acceptance.
+
 ## False-Success Priority
 
 Loom treats false PASS as more dangerous than visible failure.
