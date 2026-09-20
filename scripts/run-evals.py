@@ -162,6 +162,11 @@ def default_auth_path() -> Path:
     return base / "opencode" / "auth.json"
 
 
+def default_models_path() -> Path:
+    base = Path(os.environ.get("XDG_CACHE_HOME", str(Path.home() / ".cache")))
+    return base / "opencode" / "models.json"
+
+
 def resolve_optional_file(explicit: str | None, env_name: str, fallback: Path | None = None) -> Path | None:
     raw = explicit or os.environ.get(env_name)
     if raw:
@@ -212,6 +217,7 @@ def invoke_container(
     project: Path,
     auth: Path | None,
     config: Path | None,
+    models_catalog: Path | None,
     timeout: int,
     container_timeout: int,
     mount_node_modules: bool,
@@ -260,6 +266,8 @@ def invoke_container(
             command += volume(auth, "/seed/auth.json", True)
         if config:
             command += volume(config, "/seed/opencode.json", True)
+        if models_catalog:
+            command += volume(models_catalog, "/seed/models.json", True)
 
         command += [
             "--env",
@@ -411,6 +419,11 @@ def run_case(case: dict[str, Any], args: argparse.Namespace, engine: str) -> dic
     temp, target_project, judge_project = setup_projects(case)
     auth = resolve_optional_file(args.auth, "OPENCODE_EVAL_RUNNER_AUTH", default_auth_path())
     config = resolve_optional_file(args.provider_config, "OPENCODE_EVAL_RUNNER_CONFIG")
+    models_catalog = resolve_optional_file(
+        args.models_catalog,
+        "OPENCODE_EVAL_RUNNER_MODELS",
+        default_models_path(),
+    )
     judge_model = args.judge_model or args.model
 
     if args.judge_transport != args.target_transport and not args.judge_model:
@@ -436,6 +449,7 @@ def run_case(case: dict[str, Any], args: argparse.Namespace, engine: str) -> dic
             project=target_project,
             auth=auth,
             config=config,
+            models_catalog=models_catalog,
             timeout=args.timeout_seconds,
             container_timeout=args.container_timeout,
             mount_node_modules=case["execution"] == "runtime",
@@ -527,6 +541,7 @@ def main() -> int:
     parser.add_argument("--copilot-image")
     parser.add_argument("--auth")
     parser.add_argument("--provider-config")
+    parser.add_argument("--models-catalog")
     parser.add_argument("--env", action="append", default=[], metavar="NAME")
     parser.add_argument("--artifact-dir", default=str(ROOT / ".loom-evals"))
     parser.add_argument("--timeout-seconds", type=int, default=240)
