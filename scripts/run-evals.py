@@ -383,14 +383,21 @@ def preflight_model(opencode: str, model: str | None, cwd: Path, env: dict[str, 
         return True, "using OpenCode default model"
     if "/" not in model:
         return False, "model must use provider/model format"
-    provider = model.split("/", 1)[0]
-    result = run_command([opencode, "models", provider], cwd, env, timeout)
+    result = run_command([opencode, "models"], cwd, env, timeout)
     if result.returncode != 0:
         detail = (result.stderr or result.stdout).strip()
-        return False, "opencode models %s failed: %s" % (provider, detail[:1000])
-    available = [line.strip().split()[0] for line in result.stdout.splitlines() if line.strip()]
-    if model not in available and not any(model == line.strip() for line in result.stdout.splitlines()):
-        return False, "model %s not listed by 'opencode models %s'" % (model, provider)
+        return False, "opencode models failed: %s" % detail[:1000]
+    available = {
+        line.strip().split()[0]
+        for line in result.stdout.splitlines()
+        if line.strip() and not line.lstrip().startswith(("#", "DESCRIPTION", "USAGE", "FLAGS"))
+    }
+    if model not in available:
+        sample = ", ".join(sorted(available)[:12])
+        return False, "model %s not listed by 'opencode models'%s" % (
+            model,
+            ("; sample: " + sample) if sample else "",
+        )
     return True, "model available"
 
 
