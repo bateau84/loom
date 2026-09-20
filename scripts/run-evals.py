@@ -178,9 +178,35 @@ def volume(source: Path, target: str, readonly: bool) -> list[str]:
     return ["--volume", f"{source.resolve()}:{target}:{'ro' if readonly else 'rw'}"]
 
 
-def pass_env(command: list[str], names: tuple[str, ...] | list[str]) -> None:
+def host_environment_for_transport(transport: str) -> dict[str, str]:
+    env = dict(os.environ)
+    if transport != "github-copilot-cli" or any(env.get(name, "").strip() for name in COPILOT_ENVS):
+        return env
+
+    gh = shutil.which("gh")
+    if not gh:
+        return env
+
+    try:
+        proc = subprocess.run(
+            [gh, "auth", "token"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return env
+
+    token = proc.stdout.strip() if proc.returncode == 0 else ""
+    if token:
+        env["COPILOT_GITHUB_TOKEN"] = token
+    return env
+
+
+def pass_env(command: list[str], names: tuple[str, ...] | list[str], host_env: dict[str, str]) -> None:
     for name in names:
-        if os.environ.get(name):
+        if host_env.get(name):
             command += ["--env", name]
 
 
@@ -280,15 +306,17 @@ def invoke_container(
             "--env",
             f"EVAL_TIMEOUT_SECONDS={timeout}",
         ]
-        pass_env(command, PROVIDER_ENVS)
+        host_env = host_environment_for_transport(transport)
+        pass_env(command, PROVIDER_ENVS, host_env)
         if transport == "github-copilot-cli":
-            pass_env(command, COPILOT_ENVS)
-        pass_env(command, extra_envs)
+            pass_env(command, COPILOT_ENVS, host_env)
+        pass_env(command, extra_envs, host_env)
         command.append(image)
 
         proc = subprocess.run(
             command,
             cwd=ROOT,
+            env=host_env,
             capture_output=True,
             text=True,
             timeout=container_timeout,
