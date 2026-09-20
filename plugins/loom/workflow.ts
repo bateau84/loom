@@ -1,3 +1,5 @@
+import { taskStepId, type TaskSpec } from "./tasks"
+
 export type StepKind = "work" | "gate"
 export type StepStatus = "pending" | "complete" | "passed" | "failed"
 
@@ -8,6 +10,7 @@ export type Step = {
   dependsOn: string[]
   status: StepStatus
   summary?: string
+  task?: TaskSpec
 }
 
 export type Effects = {
@@ -86,8 +89,13 @@ export function buildSteps(effects: Effects): Step[] {
     lastThink = ["critic-solution"]
   }
 
-  steps.push(work("worker", "worker", lastThink))
-  steps.push(gate("review-implementation", "reviewer", ["worker"]))
+  if (effects.productOutcome) {
+    steps.push(work("plan", "planner", lastThink))
+    steps.push(gate("review-implementation", "reviewer", ["plan"]))
+  } else {
+    steps.push(work("worker", "worker", lastThink))
+    steps.push(gate("review-implementation", "reviewer", ["worker"]))
+  }
 
   if (effects.productOutcome) {
     steps.push(gate("product-acceptance", "acceptance", ["review-implementation"]))
@@ -168,4 +176,43 @@ export function reopenFrom(workflow: Workflow, stepId: string) {
   }
 
   return [...affected]
+}
+
+
+export function plannedTaskSteps(workflow: Workflow) {
+  return workflow.steps.filter((step) => step.id.startsWith("task:") && step.task)
+}
+
+export function applyTaskPlan(workflow: Workflow, tasks: TaskSpec[]) {
+  const plan = workflow.steps.find((step) => step.id === "plan")
+  if (!plan) throw new Error("Workflow has no planning step.")
+  if (plan.status !== "pending") throw new Error("Planning step must be pending before replacing the task graph.")
+
+  const existing = plannedTaskSteps(workflow)
+  if (existing.some((step) => step.status !== "pending")) {
+    throw new Error("Task graph cannot change after task execution has started.")
+  }
+
+  const taskSteps: Step[] = tasks.map((task) => ({
+    id: taskStepId(task.id),
+    agent: "worker",
+    kind: "work",
+    dependsOn: ["plan", ...task.dependsOn.map(taskStepId)],
+    status: "pending",
+    task,
+  }))
+
+  const withoutTasks = workflow.steps.filter((step) => !step.id.startsWith("task:"))
+  const planIndex = withoutTasks.findIndex((step) => step.id === "plan")
+  workflow.steps = [
+    ...withoutTasks.slice(0, planIndex + 1),
+    ...taskSteps,
+    ...withoutTasks.slice(planIndex + 1),
+  ]
+
+  const review = workflow.steps.find((step) => step.id === "review-implementation")
+  if (!review) throw new Error("Workflow has no implementation review step.")
+  review.dependsOn = taskSteps.map((step) => step.id)
+
+  return taskSteps
 }
