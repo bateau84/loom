@@ -9,6 +9,7 @@ import shutil
 import sqlite3
 import subprocess
 import tempfile
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
@@ -509,7 +510,12 @@ def transport_error(result: dict[str, Any]) -> str | None:
     return None
 
 
-def run_case(case: dict[str, Any], args: argparse.Namespace, engine: str) -> dict[str, Any]:
+def run_case(
+    case: dict[str, Any],
+    args: argparse.Namespace,
+    engine: str,
+    iteration: int = 1,
+) -> dict[str, Any]:
     if case["execution"] == "runtime" and args.target_transport != "opencode":
         raise RuntimeError(f"{case['id']} is runtime mode and requires --target-transport opencode")
 
@@ -611,6 +617,7 @@ def run_case(case: dict[str, Any], args: argparse.Namespace, engine: str) -> dic
 
         artifact = {
             "case": case["id"],
+            "iteration": iteration,
             "agent": case["agent"],
             "execution": case["execution"],
             "target_image": target_image,
@@ -631,11 +638,20 @@ def run_case(case: dict[str, Any], args: argparse.Namespace, engine: str) -> dic
         }
         artifact_dir = Path(args.artifact_dir)
         artifact_dir.mkdir(parents=True, exist_ok=True)
-        (artifact_dir / (case["id"] + ".json")).write_text(json.dumps(artifact, indent=2) + "\n", encoding="utf-8")
+        artifact_name = (
+            case["id"] + ".json"
+            if args.iterations == 1
+            else f"{case['id']}.iteration-{iteration}.json"
+        )
+        (artifact_dir / artifact_name).write_text(
+            json.dumps(artifact, indent=2) + "\n",
+            encoding="utf-8",
+        )
         return artifact
     finally:
         if args.keep_temp:
-            print("KEEP %s: %s" % (case["id"], temp))
+            label = case["id"] if args.iterations == 1 else f"{case['id']}#{iteration}"
+            print("KEEP %s: %s" % (label, temp))
         else:
             shutil.rmtree(temp, ignore_errors=True)
 
@@ -661,6 +677,21 @@ def main() -> int:
     parser.add_argument("--artifact-dir", default=str(ROOT / ".loom-evals"))
     parser.add_argument("--timeout-seconds", type=int, default=240)
     parser.add_argument("--container-timeout", type=int, default=300)
+    parser.add_argument(
+        "--iterations",
+        type=int,
+        default=1,
+        help="Run each selected case N times (default: 1).",
+    )
+    parser.add_argument(
+        "--parallel",
+        nargs="?",
+        const=0,
+        type=int,
+        default=1,
+        metavar="N",
+        help="Run cases concurrently. Without N, run the full case×iteration matrix in parallel; with N, cap concurrency.",
+    )
     parser.add_argument("--keep-temp", action="store_true")
     parser.add_argument("--list", action="store_true")
     args = parser.parse_args()
@@ -680,6 +711,10 @@ def main() -> int:
 
     if not args.model:
         parser.error("live evals require --model")
+    if args.iterations < 1:
+        parser.error("--iterations must be >= 1")
+    if args.parallel < 0:
+        parser.error("--parallel must be >= 1 when a limit is supplied")
 
     selected_ids = {value.strip() for value in args.cases.split(",") if value.strip()}
     if not args.all and not selected_ids:
@@ -692,41 +727,58 @@ def main() -> int:
 
     engine = resolve_engine(args.engine)
     selected = [case for case in cases if args.all or case["id"] in selected_ids]
+    jobs = [
+        (case, iteration)
+        for case in selected
+        for iteration in range(1, args.iterations + 1)
+    ]
+    concurrency = len(jobs) if args.parallel == 0 else min(args.parallel, len(jobs))
+    mode = "parallel=%d" % concurrency if concurrency > 1 else "sequential"
     print(
-        "Running %d Loom live behavioral eval(s) via %s (%s target / %s judge)..."
-        % (len(selected), engine, args.target_transport, args.judge_transport)
+        "Running %d Loom live behavioral eval run(s) (%d case(s) x %d iteration(s)) via %s "
+        "(%s target / %s judge, %s)..."
+        % (
+            len(jobs),
+            len(selected),
+            args.iterations,
+            engine,
+            args.target_transport,
+            args.judge_transport,
+            mode,
+        )
     )
 
-    failed = 0
-    for case in selected:
-        print("%s [%s/%s] ... " % (case["id"], case["agent"], case["execution"]), end="", flush=True)
+    def label(case: dict[str, Any], iteration: int) -> str:
+        return case["id"] if args.iterations == 1 else f"{case['id']}#{iteration}"
+
+    def execute(job: tuple[dict[str, Any], int]) -> tuple[dict[str, Any], int, dict[str, Any] | None, str | None]:
+        case, iteration = job
         try:
-            result = run_case(case, args, engine)
+            return case, iteration, run_case(case, args, engine, iteration), None
         except subprocess.TimeoutExpired:
-            failed += 1
-            print("ERROR")
-            print("  - target or judge container timed out")
-            continue
+            return case, iteration, None, "target or judge container timed out"
         except Exception as exc:
-            failed += 1
-            print("ERROR")
-            print("  - " + str(exc))
-            continue
+            return case, iteration, None, str(exc)
 
+    def report(case: dict[str, Any], iteration: int, result: dict[str, Any] | None, error: str | None) -> bool:
+        prefix = "%s [%s/%s]" % (label(case, iteration), case["agent"], case["execution"])
+        if error is not None:
+            print(prefix + " ... ERROR")
+            print("  - " + error)
+            return False
+        assert result is not None
         if result["classification"] == "pass":
-            print("PASS")
-            continue
-
-        failed += 1
+            print(prefix + " ... PASS")
+            return True
         if result["classification"] == "non-evidence":
-            print("ERROR")
+            print(prefix + " ... ERROR")
             if result.get("target_error"):
                 print("  - target: " + str(result["target_error"]))
             if result.get("judge_error"):
                 print("  - judge: " + str(result["judge_error"]))
-            continue
+            return False
 
-        print("FAIL")
+        print(prefix + " ... FAIL")
         for item in result["deterministic_failures"]:
             print("  - " + item)
         observed_tools = list((result.get("target") or {}).get("tools") or [])
@@ -735,9 +787,24 @@ def main() -> int:
         semantic = result.get("semantic")
         if isinstance(semantic, dict) and semantic.get("passed") is False:
             print("  - " + str(semantic.get("summary", "semantic judge failed")))
+        return False
 
-    print("%d/%d passed" % (len(selected) - failed, len(selected)))
-    return 1 if failed else 0
+    passed = 0
+    if concurrency == 1:
+        for job in jobs:
+            case, iteration, result, error = execute(job)
+            if report(case, iteration, result, error):
+                passed += 1
+    else:
+        with ThreadPoolExecutor(max_workers=concurrency) as pool:
+            futures = [pool.submit(execute, job) for job in jobs]
+            for future in as_completed(futures):
+                case, iteration, result, error = future.result()
+                if report(case, iteration, result, error):
+                    passed += 1
+
+    print("%d/%d passed" % (passed, len(jobs)))
+    return 0 if passed == len(jobs) else 1
 
 
 if __name__ == "__main__":
