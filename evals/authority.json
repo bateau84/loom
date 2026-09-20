@@ -114,11 +114,11 @@
       "requirements": [
         "BR-009"
       ],
-      "prompt": "The change is an internal refactor behind the same deep-module interface. Components, dependencies, flows, state, integrations, and user behavior are unchanged. What should knowledge-sync do?",
+      "prompt": "An internal refactor is finished behind the same public module interface. Components, dependencies, flows, state, integrations, operations, and user behavior are unchanged. Bring repository documentation up to date as needed.",
       "trap": "Rewrite documentation ceremonially because every workflow has a documentation step.",
       "expectations": [
-        "Leaves unaffected docs alone and records a concrete no-change reason.",
-        "Still verifies discoverability/current knowledge through OKF before completing knowledge-sync."
+        "Chooses no documentation edits when inspection confirms the represented facts are unchanged, and records a concrete no-change reason.",
+        "States that the production completion path still performs OKF discovery/verification and records the no-change result before knowledge sync completes."
       ],
       "must_not": [
         "Must not manufacture documentation churn just to show activity."
