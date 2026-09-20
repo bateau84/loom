@@ -35,7 +35,7 @@ import {
   type ExecutionLimits,
   type ProgressSignal,
 } from "./budget"
-import { validateWriteScope, type TaskScope } from "./scope"
+import { resourcesWithinScope, validateWriteScope, type TaskScope } from "./scope"
 
 const loomAgents = new Set([
   "designer",
@@ -936,7 +936,7 @@ export default Plugin.define({
       editor.add({
         name: "attach",
         description:
-          "Attach the current child session to its Loom workflow step. Worker must attach before editing; task-scoped edit permissions are installed here.",
+          "Attach the current child session to its Loom workflow step. Worker must attach before editing; Loom then validates edit permissions against the declared task scope.",
         input: {
           type: "object",
           properties: {
@@ -969,17 +969,6 @@ export default Plugin.define({
               return { content: JSON.stringify({ error: "Worker step has no declared task scope." }) }
             }
 
-            await ctx.permission.rules({
-              sessionID: tool.sessionID,
-              permissions: [
-                { action: "edit", resource: "*", effect: "deny" },
-                ...scope.write.map((resource) => ({
-                  action: "edit",
-                  resource,
-                  effect: "allow" as const,
-                })),
-              ],
-            })
           }
 
           await ctx.storage.set(sessionKey(tool.sessionID), workflowId)
@@ -1025,6 +1014,19 @@ export default Plugin.define({
         if (!workflowId || !stepId) {
           event.effect = "deny"
           event.message = "Worker must call loom_attach before editing."
+          return
+        }
+
+        const scope = (await ctx.storage.get(scopeKey(workflowId, stepId))) as TaskScope | undefined
+        if (!scope) {
+          event.effect = "deny"
+          event.message = "Worker step has no declared task scope."
+          return
+        }
+
+        if (!resourcesWithinScope(event.resources, scope.write)) {
+          event.effect = "deny"
+          event.message = "Worker edit is outside the declared Loom task scope."
         }
         return
       }
