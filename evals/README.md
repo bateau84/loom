@@ -151,7 +151,10 @@ Authentication precedence is:
 COPILOT_GITHUB_TOKEN
 GH_TOKEN
 GITHUB_TOKEN
+gh auth token
 ```
+
+For local runs, if no token environment variable is set and `gh` is authenticated, Loom automatically resolves `gh auth token` on the host and passes it into the isolated Copilot container. GitHub documents the GitHub CLI token as a supported Copilot CLI authentication fallback. The token value is not written to disk or placed on the container command line.
 
 Runtime cases such as `INTENT-01` require the `opencode` target transport because the eval asserts real Loom tool calls. A Copilot CLI judge can still be used with an OpenCode target:
 
