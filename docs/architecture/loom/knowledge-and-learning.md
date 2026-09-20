@@ -42,15 +42,25 @@ Useful experience from actual work:
 - implementation lessons;
 - review escapes.
 
-Episodic memory is searchable context, not law.
+Loom keeps the canonical episode record in structured plugin storage with:
+- exact evidence references;
+- project/workflow provenance;
+- active/retired status;
+- SynaBun synchronization status.
+
+SynaBun stores the semantic recall copy. A SynaBun hit is therefore a discovery mechanism, not the canonical record.
+
+If SynaBun is unavailable, episode creation still succeeds. The record remains pending/failed for semantic synchronization and can be retried later.
 
 ### Heuristics
 
 Cross-task or cross-project patterns that may improve future judgment.
 
-Heuristics begin provisional unless strong prior evidence exists.
+Heuristics begin provisional.
 
-Promotion requires independent supporting evidence or repeated successful use.
+Validation requires repeated support from independent workflow/project sources and an independent Reviewer or Critic decision.
+
+If supporting episodic evidence is later retired, that support is removed and a heuristic is demoted from validated to provisional when the remaining evidence is insufficient.
 
 ## Living Repository Map
 
@@ -83,12 +93,31 @@ A fresh General/Diagnostic session begins with:
 1. Anchor discovery;
 2. relevant requirement/design/architecture lookup through OKF;
 3. system-map lookup;
-4. relevant episodic/heuristic retrieval;
-5. targeted code inspection.
+4. SynaBun semantic recall for potentially relevant past experience;
+5. canonical resolution of recalled `LOOM_EPISODE_ID` records through Loom;
+6. targeted code inspection.
+
+The current repository and current evidence are established before memory is allowed to influence judgment.
 
 Broad codebase reading is a fallback, not the default.
 
 ## Learning Safety
+
+The ordering is:
+
+```text
+current accepted authority
+  > direct current evidence
+  > validated heuristic
+  > provisional heuristic
+  > episodic memory
+```
+
+SynaBun is never product authority.
+
+Every Loom-authored semantic memory embeds its canonical `LOOM_EPISODE_ID`. Agents resolve that ID against Loom before relying on the lesson, so a stale SynaBun copy can be detected as retired.
+
+Durable learning requires real Loom evidence references. Free-form recollection is not sufficient.
 
 If memory conflicts with current authority, current authority wins.
 
