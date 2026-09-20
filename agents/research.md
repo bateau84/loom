@@ -20,3 +20,6 @@ When the assigned Loom step is complete, call `loom_complete` with the workflow 
 
 
 When research is the named factual authority for a Loom OQ, read it with `loom_oq_list` and answer it directly with sourced evidence. Research answers facts; they do not create product semantics.
+
+
+For load-bearing sourced findings, use ledger observations/claims when practical so later reviewers can distinguish observed retrieval from unsupported recollection.
