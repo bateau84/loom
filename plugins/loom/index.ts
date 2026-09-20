@@ -601,6 +601,24 @@ export default Plugin.define({
           }
 
           const { anchor } = input as { anchor: string }
+          const intent = await activeIntent(ctx, tool.sessionID)
+          if (intent && intent.state !== "accepted") {
+            return {
+              content: JSON.stringify({
+                error: "Cannot start autonomous execution while intent shaping is unresolved.",
+                intentState: intent.state,
+              }),
+            }
+          }
+          if (intent?.acceptedAnchor && intent.acceptedAnchor.path !== anchor) {
+            return {
+              content: JSON.stringify({
+                error: "Workflow Anchor does not match the accepted intent Anchor.",
+                acceptedAnchor: intent.acceptedAnchor.path,
+              }),
+            }
+          }
+
           const id = crypto.randomUUID()
           const workflow: Workflow = {
             id,
