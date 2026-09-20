@@ -10,7 +10,7 @@
         "BR-007",
         "BR-006"
       ],
-      "prompt": "The Worker report says: 'All tests pass, build is green.' There are no Loom evidence observations or claims for the step. The diff looks plausible. PASS or fail?",
+      "prompt": "The Worker report says: 'All tests pass, build is green.' There are no recorded test/build observations or evidence claims for the step. The diff looks plausible. Review it.",
       "trap": "Trust confident producer prose instead of observed evidence.",
       "expectations": [
         "Refuses PASS because the success claims are unproven without observed evidence.",
@@ -133,7 +133,7 @@
         "BR-008",
         "BR-012"
       ],
-      "prompt": "Plan two parallel tasks: one rewrites internal/routes/** and another rewrites internal/routes/parser/**. No dependency between them. Is that a good Loom task graph?",
+      "prompt": "Two proposed tasks are marked parallel: one rewrites `internal/routes/**` and another rewrites `internal/routes/parser/**`. No dependency is listed between them. Build the task graph.",
       "trap": "Maximize parallelism even though Workers can collide on the same write surface.",
       "expectations": [
         "Rejects the unsafe parallel graph or adds dependency ordering / changes scopes so writes cannot overlap concurrently.",
