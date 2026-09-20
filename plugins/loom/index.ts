@@ -1318,108 +1318,123 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       })
 
       editor.add({
-        name: "verification_require",
+        name: "verification",
         description:
-          "Persist one load-bearing verification requirement created by the currently attached specialist step. A target gate cannot PASS until the requirement has observed proof.",
+          "Manage load-bearing Loom verification. action=status inspects requirements; action=require persists a specialist-owned requirement; action=prove satisfies one with observed current-session evidence.",
         input: {
           type: "object",
           properties: {
+            action: { type: "string", enum: ["status", "require", "prove"] },
             workflowId: { type: "string" },
             beforeStepId: {
               type: "string",
-              description: "Downstream gate that must not PASS until this verification is proven.",
+              description: "For require: downstream gate that must not PASS before proof exists.",
             },
             kind: {
               type: "string",
               enum: ["test", "build", "lint", "security", "runtime", "integration", "product-acceptance", "other"],
             },
             statement: { type: "string" },
-          },
-          required: ["workflowId", "beforeStepId", "kind", "statement"],
-          additionalProperties: false,
-        },
-        options: { namespace: "loom", codemode: false },
-        execute: async (input, tool) => {
-          const value = input as {
-            workflowId: string
-            beforeStepId: string
-            kind: EvidenceKind
-            statement: string
-          }
-          const workflow = await readWorkflow(ctx, value.workflowId)
-          if (!workflow) return { content: JSON.stringify({ error: "Workflow not found." }) }
-
-          const attachedWorkflow = (await ctx.storage.get(sessionKey(tool.sessionID))) as string | undefined
-          const attachedStep = (await ctx.storage.get(sessionStepKey(tool.sessionID))) as string | undefined
-          if (attachedWorkflow !== value.workflowId || !attachedStep) {
-            return {
-              content: JSON.stringify({
-                error: "Verification requirements must be created from a specialist session attached to its current Loom step.",
-              }),
-            }
-          }
-
-          const current = workflow.steps.find((step) => step.id === attachedStep)
-          if (!current || current.agent !== tool.agent) {
-            return { content: JSON.stringify({ error: "Current attached step does not belong to this agent." }) }
-          }
-          if (!runnable(workflow).some((step) => step.id === attachedStep)) {
-            return { content: JSON.stringify({ error: "Current attached step is not runnable." }) }
-          }
-
-          try {
-            const requirement = addVerificationRequirement(workflow, {
-              id: crypto.randomUUID(),
-              createdByStepId: attachedStep,
-              createdByAgent: tool.agent,
-              beforeStepId: value.beforeStepId,
-              kind: value.kind,
-              statement: value.statement,
-              now: new Date().toISOString(),
-            })
-            await ctx.storage.set(workflowKey(workflow.id), workflow)
-            return {
-              content: JSON.stringify({
-                requirement: {
-                  id: requirement.id,
-                  kind: requirement.kind,
-                  before: requirement.beforeStepId,
-                  status: requirement.status,
-                  statement: requirement.statement,
-                },
-              }),
-            }
-          } catch (error) {
-            return { content: JSON.stringify({ error: error instanceof Error ? error.message : String(error) }) }
-          }
-        },
-      })
-
-      editor.add({
-        name: "verification_prove",
-        description:
-          "Satisfy one persisted verification requirement with observed events from the current session. General or an attached specialist may provide proof when their permissions allow the required non-mutating check.",
-        input: {
-          type: "object",
-          properties: {
-            workflowId: { type: "string" },
             requirementId: { type: "string" },
-            statement: { type: "string" },
             observationIds: { type: "array", items: { type: "string" } },
+            detail: { type: "boolean" },
           },
-          required: ["workflowId", "requirementId", "statement", "observationIds"],
+          required: ["action"],
           additionalProperties: false,
         },
         options: { namespace: "loom", codemode: false },
         execute: async (input, tool) => {
           const value = input as {
-            workflowId: string
-            requirementId: string
-            statement: string
-            observationIds: string[]
+            action: "status" | "require" | "prove"
+            workflowId?: string
+            beforeStepId?: string
+            kind?: EvidenceKind
+            statement?: string
+            requirementId?: string
+            observationIds?: string[]
+            detail?: boolean
           }
-          const workflow = await readWorkflow(ctx, value.workflowId)
+
+          const workflow = value.workflowId
+            ? await readWorkflow(ctx, value.workflowId)
+            : await activeWorkflow(ctx, tool.sessionID)
           if (!workflow) return { content: JSON.stringify({ error: "Workflow not found." }) }
+
+          if (value.action === "status") {
+            return {
+              content: JSON.stringify(
+                value.detail
+                  ? { verification: workflow.verification ?? [] }
+                  : { verification: compactVerification(workflow) },
+              ),
+            }
+          }
+
+          if (!value.workflowId) {
+            return { content: JSON.stringify({ error: "workflowId is required for verification mutations." }) }
+          }
+
+          if (value.action === "require") {
+            if (!value.beforeStepId || !value.kind || !value.statement?.trim()) {
+              return {
+                content: JSON.stringify({
+                  error: "require needs beforeStepId, kind, and a non-empty statement.",
+                }),
+              }
+            }
+
+            const attachedWorkflow = (await ctx.storage.get(sessionKey(tool.sessionID))) as string | undefined
+            const attachedStep = (await ctx.storage.get(sessionStepKey(tool.sessionID))) as string | undefined
+            if (attachedWorkflow !== value.workflowId || !attachedStep) {
+              return {
+                content: JSON.stringify({
+                  error: "Verification requirements must be created from a specialist session attached to its current Loom step.",
+                }),
+              }
+            }
+
+            const current = workflow.steps.find((step) => step.id === attachedStep)
+            if (!current || current.agent !== tool.agent) {
+              return { content: JSON.stringify({ error: "Current attached step does not belong to this agent." }) }
+            }
+            if (!runnable(workflow).some((step) => step.id === attachedStep)) {
+              return { content: JSON.stringify({ error: "Current attached step is not runnable." }) }
+            }
+
+            try {
+              const requirement = addVerificationRequirement(workflow, {
+                id: crypto.randomUUID(),
+                createdByStepId: attachedStep,
+                createdByAgent: tool.agent,
+                beforeStepId: value.beforeStepId,
+                kind: value.kind,
+                statement: value.statement,
+                now: new Date().toISOString(),
+              })
+              await ctx.storage.set(workflowKey(workflow.id), workflow)
+              return {
+                content: JSON.stringify({
+                  requirement: {
+                    id: requirement.id,
+                    kind: requirement.kind,
+                    before: requirement.beforeStepId,
+                    status: requirement.status,
+                    statement: requirement.statement,
+                  },
+                }),
+              }
+            } catch (error) {
+              return { content: JSON.stringify({ error: error instanceof Error ? error.message : String(error) }) }
+            }
+          }
+
+          if (!value.requirementId || !value.statement?.trim() || !Array.isArray(value.observationIds)) {
+            return {
+              content: JSON.stringify({
+                error: "prove needs requirementId, statement, and observationIds.",
+              }),
+            }
+          }
 
           const attachedWorkflow = (await ctx.storage.get(sessionKey(tool.sessionID))) as string | undefined
           if (attachedWorkflow !== value.workflowId) {
@@ -1469,35 +1484,6 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             }
           } catch (error) {
             return { content: JSON.stringify({ error: error instanceof Error ? error.message : String(error) }) }
-          }
-        },
-      })
-
-      editor.add({
-        name: "verification_status",
-        description: "Inspect persisted verification requirements. Compact by default; pass detail=true for proof metadata.",
-        input: {
-          type: "object",
-          properties: {
-            workflowId: { type: "string" },
-            detail: { type: "boolean" },
-          },
-          additionalProperties: false,
-        },
-        options: { namespace: "loom", codemode: false },
-        execute: async (input, tool) => {
-          const value = input as { workflowId?: string; detail?: boolean }
-          const workflow = value.workflowId
-            ? await readWorkflow(ctx, value.workflowId)
-            : await activeWorkflow(ctx, tool.sessionID)
-          if (!workflow) return { content: JSON.stringify({ error: "Workflow not found." }) }
-
-          return {
-            content: JSON.stringify(
-              value.detail
-                ? { verification: workflow.verification ?? [] }
-                : { verification: compactVerification(workflow) },
-            ),
           }
         },
       })
