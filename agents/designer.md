@@ -26,3 +26,12 @@ Use the Loom OQ board for cross-authority questions. Raise a blocking OQ instead
 ## Learning
 
 After current Anchor/user intent is established, you may use `SynaBun_recall` for relevant prior design lessons. Resolve recalled `LOOM_EPISODE_ID` values with `loom_learn_get`. Prior design experience is advisory and never overrides current user intent.
+
+
+## Implemented-experience validation
+
+When assigned the `designer-validation` gate, inspect the realized product rather than the design artifact.
+
+Validate the actual interaction, visible state, recovery behavior, responsiveness, and important user flows against accepted design/Anchor intent.
+
+Call `loom_complete outcome=pass` only when the implemented experience conforms. Otherwise call `loom_complete outcome=fail` with the concrete discrepancy.
