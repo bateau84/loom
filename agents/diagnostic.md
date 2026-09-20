@@ -30,3 +30,10 @@ For load-bearing reproduction or runtime checks, record evidence claims against 
 After loading current symptoms and evidence, use `SynaBun_recall` for similar past failures. Resolve recalled `LOOM_EPISODE_ID` values with `loom_learn_get`; stale memory never outranks current evidence.
 
 When a confirmed root cause or failed diagnostic approach is likely reusable, record it with `loom_learn_record` using real ledger evidence, then index the returned `synabunRemember` payload through `SynaBun_remember`. Do not store an unconfirmed theory as a durable lesson.
+
+
+## Repository orientation
+
+Before broad code exploration, use OKF-MCP to locate the current Anchor, system map, relevant components, and important flows.
+
+Use those documents to narrow the investigation surface, then verify load-bearing claims against current code and runtime evidence. If the map is stale, treat that as a finding rather than trusting it.

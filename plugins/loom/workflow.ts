@@ -97,9 +97,13 @@ export function buildSteps(effects: Effects): Step[] {
     steps.push(gate("review-implementation", "reviewer", ["worker"]))
   }
 
+  if (effects.productOutcome || effects.structural) {
+    steps.push(work("knowledge-sync", "documenter", ["review-implementation"]))
+  }
+
   if (effects.productOutcome) {
     steps.push(gate("product-acceptance", "acceptance", ["review-implementation"]))
-    const productReviewDeps = ["product-acceptance"]
+    const productReviewDeps = ["product-acceptance", "knowledge-sync"]
 
     if (effects.humanFacing) {
       steps.push(gate("designer-validation", "designer", ["review-implementation"]))

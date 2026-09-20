@@ -71,6 +71,8 @@ After Product Acceptance and any Designer validation pass, Reviewer independentl
 
 Mechanical Product Acceptance readiness is necessary but not sufficient for Reviewer PASS.
 
+Product Reviewer also requires a valid OKF-verified living-knowledge report and spot-checks that changed system/user documentation matches the realized product.
+
 ### 6. Critic
 
 Critic asks:
