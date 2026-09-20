@@ -276,6 +276,11 @@ def invoke_container(
             # Avoid SELinux bind-mount denial without mutating labels on the
             # user's repository, node_modules, or auth/config seed files.
             command += ["--security-opt", "label=disable"]
+        elif hasattr(os, "getuid") and os.getuid() != 0:
+            # Rootful Docker preserves numeric ownership on bind mounts.
+            # Match the non-root host caller so private seed files stay
+            # readable. A root caller leaves the image's non-root USER intact.
+            command += ["--user", f"{os.getuid()}:{os.getgid()}"]
         command += [
             "--workdir",
             "/workspace",
