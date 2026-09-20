@@ -38,6 +38,6 @@ You may validate or retire cross-workflow heuristics when the evidence supports 
 
 ## Final product attack
 
-For `critic-final`, inspect the Product Acceptance plan and the final product review before adjudicating the realized product.
+For `critic-final`, inspect the Product Acceptance plan, living-knowledge status, and final product review before adjudicating the realized product.
 
 Attack for locally-green-but-globally-broken outcomes, missing Anchor criteria, unrealistic acceptance scenarios, and evidence that proves components rather than the assembled product.
