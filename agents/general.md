@@ -73,3 +73,10 @@ Inspect `loom_budget_status` when repeated corrections occur. A denied dispatch 
 ## Worker scope
 
 Before dispatching a Worker step, declare its bounded writable surface with `loom_task_scope`. Do not grant repository-wide write access. Pass the workflow ID and step ID so the Worker can attach before editing.
+
+
+## Learning
+
+Current repository authority comes first. Query `loom_learn_query` only after current Anchor/system knowledge is established and only when prior experience is relevant.
+
+Memory and heuristics are advisory. Never use them to override current accepted authority.
