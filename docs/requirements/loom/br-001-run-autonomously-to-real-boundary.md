@@ -14,6 +14,22 @@ Loom may stop for the user only when product intent or material scope genuinely 
 
 A phase change, agent handoff, review result, planning boundary, or implementation wave is not by itself a user boundary.
 
+## Acceptance Criteria
+
+1. An accepted executable objective starts real work without asking the user for routine permission to continue.
+2. Intermediate phase, review, plan, and worker boundaries continue automatically when the next step is authorized.
+3. Technical or expert-owned blockers are routed to the capable authority without becoming user questions.
+4. User interruption occurs only for a user-owned decision or exhausted capability boundary.
+5. Completed independent work is preserved when one dependent path becomes blocked.
+
+## Verification Semantics
+
+Verify with workflow traces from representative greenfield and maintenance runs.
+
+Valid proof includes uninterrupted phase progression, automatic expert rerouting, and a deliberate user stop only at a seeded user-owned decision.
+
+A narrated plan, repeated "continue?" prompts, or a trace that returns control at ordinary phase boundaries does not satisfy this requirement.
+
 ## Derived from
 
 - [Loom Anchor](../../anchors/loom/anchor.md)
