@@ -127,13 +127,13 @@ This keeps ordinary maintenance shallow while retaining evidence-triggered escal
 
 Load-bearing verification discovered by a specialist is workflow state, not prose.
 
-An attached specialist may call `loom_verification_require` to record:
+An attached specialist may call `loom_verification action=require` to record:
 - the evidence kind;
 - the concrete required outcome;
 - the downstream gate that must not PASS before proof exists;
 - creating step/role provenance.
 
-Any current workflow session with the required non-mutating capability may provide proof using observed tool-event IDs through `loom_verification_prove`.
+Any current workflow session with the required non-mutating capability may provide proof using observed tool-event IDs through `loom_verification action=prove`.
 
 A gate PASS is mechanically rejected while an open requirement targets that gate.
 
