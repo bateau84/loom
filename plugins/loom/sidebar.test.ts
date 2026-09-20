@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { buildSidebarSnapshot } from "./sidebar"
+import { buildSidebarSnapshot, selectSidebarTasks } from "./sidebar"
 import type { Workflow } from "./workflow"
 
 describe("Loom sidebar snapshot", () => {
@@ -117,5 +117,17 @@ describe("Loom sidebar snapshot", () => {
       openQuestions: 0,
       openVerification: 0,
     })
+  })  test("keeps runnable tasks visible beyond the row cap", () => {
+    const tasks = Array.from({ length: 14 }, (_, index) => ({
+      id: `task-${index + 1}`,
+      title: `Task ${index + 1}`,
+      status: (index === 13 ? "runnable" : "complete") as "runnable" | "complete",
+    }))
+
+    const visible = selectSidebarTasks(tasks, 12)
+
+    expect(visible).toHaveLength(12)
+    expect(visible.some((task) => task.id === "task-14")).toBe(true)
   })
+
 })
