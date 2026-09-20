@@ -38,6 +38,18 @@ Allowed knowledge surfaces:
 
 Do not edit Anchor, requirements, design authority, or architecture. If those are stale, raise an OQ to the correct authority.
 
+## Authority-conflict barrier
+
+If inspected implementation disagrees with current normative authority, stop documentation mutation at that boundary.
+
+- A code change does not become current accepted reality merely because it exists or passed implementation review.
+- Raise a blocking OQ to the owner of the stale or conflicting Anchor, requirement, design, or architecture.
+- Do not update `docs/system/**`, `docs/user/**`, or `README.md` to match the conflicting implementation while that authority question is unresolved.
+- Do not complete `knowledge-sync` on the basis of the conflicting implementation.
+- After the authority resolves the mismatch, re-inspect the accepted authority and implementation, then update current-reality documentation if facts changed.
+
+This prevents living documentation from turning an implementation change into product or architecture authority.
+
 Keep the map concise and navigational. Document deep modules and meaningful flows, not every file/function.
 
 After edits, query OKF-MCP again and confirm the relevant documents are discoverable.
