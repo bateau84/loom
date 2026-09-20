@@ -180,3 +180,14 @@ For every Worker edit permission evaluation, Loom checks the requested resource 
 General cannot dispatch a Worker step without a declared scope.
 
 This V1 boundary governs OpenCode edit/write/apply-patch permissions. Arbitrary shell side effects are not yet path-contained by Loom and remain a separate tool-policy problem; Loom must not claim stronger containment than it currently enforces.
+
+
+## Worker shell boundary
+
+OpenCode shell commands run with the host user's authority, so Loom does not treat shell as equivalent to scoped edit tools.
+
+Worker shell permission is restricted to a conservative inspection and verification allowlist. Compound commands, redirection, common write/fix flags, dependency installation, and arbitrary script execution are denied in V1.
+
+External-directory access is denied for Worker.
+
+This is intentionally restrictive. Mutation-heavy shell operations need a later controlled capability with stronger containment rather than a broader generic shell permission.
