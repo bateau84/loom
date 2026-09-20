@@ -237,6 +237,12 @@ def invoke_container(
             "ALL",
             "--security-opt",
             "no-new-privileges",
+        ]
+        if engine == "podman":
+            # Avoid SELinux bind-mount denial without mutating labels on the
+            # user's repository, node_modules, or auth/config seed files.
+            command += ["--security-opt", "label=disable"]
+        command += [
             "--workdir",
             "/workspace",
         ]
