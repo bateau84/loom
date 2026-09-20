@@ -14,6 +14,8 @@ Turn the accepted Anchor, requirements, design, and architecture into the smalle
 
 Your first Loom action is `loom_attach` with the assigned workflow ID and `plan` step.
 
+Load `risk-driven-planning` and `work-decomposition` before constructing a non-trivial DAG. They guide decomposition and verification placement; accepted authority and Loom task validation remain controlling.
+
 For each task define:
 - stable lowercase id;
 - concise title;

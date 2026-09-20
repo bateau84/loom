@@ -1,0 +1,40 @@
+{
+  "skill_name": "python-lint",
+  "evals": [
+    {
+      "id": 1,
+      "name": "consolidate-on-ruff",
+      "prompt": "Our Python repo runs black, isort, and flake8 through pre-commit, and they keep producing conflicting changes that fight each other. Set up a single modern tool to own formatting and linting, and simplify the configuration.",
+      "trap": "A weak fix tweaks the existing three tools or adds Ruff alongside black. Ruff replaces all three; running black with ruff format means two formatters fighting again.",
+      "expectations": [
+        "Recommends Ruff as the single tool (ruff format + ruff check)",
+        "Removes black, isort, and flake8 (does not keep black alongside ruff format)",
+        "Configures rules under [tool.ruff] in pyproject.toml",
+        "Notes ruff format and ruff check are separate commands and both are run"
+      ]
+    },
+    {
+      "id": 2,
+      "name": "pinned-noqa",
+      "prompt": "Suppress the linter warning on this single line without disabling unrelated checks on it.\n\n```python\nimport settings  # flagged as unused, but imported for its import-time side effects\n```",
+      "trap": "A bare `# noqa` silences the line entirely, hiding any future, unrelated violation on it. The suppression must pin the specific rule code and say why.",
+      "expectations": [
+        "Pins the specific rule code (e.g. # noqa: F401), not a bare # noqa",
+        "Includes a short reason for the suppression",
+        "Does NOT use a bare `# noqa`"
+      ]
+    },
+    {
+      "id": 3,
+      "name": "ruff-config-async-service",
+      "prompt": "Write a `[tool.ruff]` configuration for a Python 3.13 async FastAPI service. We want import sorting, likely-bug detection, automatic upgrades to modern syntax, and flagging of blocking calls made inside async functions.",
+      "trap": "A generic config omits target-version (so pyupgrade can't rewrite safely) and, most importantly, the ASYNC rule set that catches blocking calls in coroutines — the one rule that matters most for an async service.",
+      "expectations": [
+        "Sets target-version = \"py313\"",
+        "select includes \"ASYNC\" (blocking-in-async detection)",
+        "select includes \"I\" (isort), \"B\" (bugbear), and \"UP\" (pyupgrade)",
+        "Keeps configuration in pyproject.toml under [tool.ruff]"
+      ]
+    }
+  ]
+}

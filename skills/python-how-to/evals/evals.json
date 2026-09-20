@@ -1,0 +1,42 @@
+{
+  "skill_name": "python-how-to",
+  "evals": [
+    {
+      "id": 1,
+      "name": "load-multiple-skills",
+      "prompt": "I'm adding a FastAPI endpoint that accepts a JSON body, calls an external service with httpx, and writes the result to SQLite. Which of this project's Python skills should be active for the task?",
+      "trap": "The natural answer names a single 'closest' skill (FastAPI). The orchestrator's whole point is that a real task spans several skills loaded together, always paired with the foundation skill.",
+      "expectations": [
+        "Loads python-fastapi",
+        "Loads python-pydantic (request/response model)",
+        "Loads python-async (httpx / not blocking the loop)",
+        "Loads python-database (SQLite persistence)",
+        "Loads python-error-handling",
+        "Always pairs with python-common-practice",
+        "Loads several skills together, not just one"
+      ]
+    },
+    {
+      "id": 2,
+      "name": "pydantic-vs-type-checking",
+      "prompt": "I need to validate an incoming JSON request body from an untrusted client. Is that the job of Pydantic or of the static type checker?",
+      "trap": "Both deal with 'types', so it's easy to point at the type checker. But static checkers don't run at runtime and can't validate external data; runtime boundary validation is Pydantic's job.",
+      "expectations": [
+        "Chooses python-pydantic (runtime validation at the boundary)",
+        "Explains the static type checker doesn't validate runtime/external data",
+        "Notes Pydantic owns boundary parsing of untrusted input"
+      ]
+    },
+    {
+      "id": 3,
+      "name": "error-vs-observability",
+      "prompt": "When an external call fails I want to both decide the control flow (retry or abort) and record the failure as a log line and an error metric. Which skill owns which part?",
+      "trap": "The two concerns blur together. The boundary line assigns control flow to error-handling and recording (logs/metrics) to observability.",
+      "expectations": [
+        "Assigns control flow (catch/raise/retry/abort) to python-error-handling",
+        "Assigns logging and the error metric to python-observability",
+        "Splits the responsibilities along that boundary rather than conflating them"
+      ]
+    }
+  ]
+}

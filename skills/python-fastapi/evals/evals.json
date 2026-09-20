@@ -1,0 +1,40 @@
+{
+  "skill_name": "python-fastapi",
+  "evals": [
+    {
+      "id": 1,
+      "name": "response-model-filters-output",
+      "prompt": "This endpoint returns a User database object that includes `password_hash` and `internal_notes`. The HTTP response must expose only `id`, `email`, and `display_name`.\n\n```python\n@router.get('/users/{id}')\nasync def get_user(id: str):\n    return db.get_user(id)   # returns the full User object\n```",
+      "trap": "Returning the raw object works and serializes fine, so the model may leave it — silently leaking the password hash and internal notes. A response_model restricts the output to declared fields.",
+      "expectations": [
+        "Declares a response_model (a Pydantic output model) limiting the fields",
+        "The response excludes password_hash and internal_notes",
+        "Does NOT return the raw db object/dict without a response_model"
+      ]
+    },
+    {
+      "id": 2,
+      "name": "lifespan-not-on-event",
+      "prompt": "Open a shared httpx.AsyncClient and start an APScheduler when the app boots, and close/stop them on shutdown, attaching them to the application.",
+      "trap": "`@app.on_event(\"startup\")`/`(\"shutdown\")` is widely shown in older tutorials and is the natural reach, but it is deprecated. The current mechanism is the lifespan context manager, and the client must be opened once (not per request).",
+      "expectations": [
+        "Uses the lifespan context manager (asynccontextmanager + FastAPI(lifespan=...))",
+        "Stores resources on app.state and closes/stops them after yield",
+        "Does NOT use the deprecated @app.on_event handlers",
+        "Opens the httpx client once at startup, not per request"
+      ]
+    },
+    {
+      "id": 3,
+      "name": "auth-precondition-dependency",
+      "prompt": "Several endpoints require an authenticated YouTube client available at `request.app.state.youtube`, and should return 503 when it is missing. Add this precondition without repeating the check in every route body.",
+      "trap": "The obvious solution copies an `if state.youtube is None: raise HTTPException(503)` into each handler. FastAPI's Depends lets one dependency raise the 503 and short-circuit, declared once and reused.",
+      "expectations": [
+        "Implements a dependency (Depends) that raises HTTPException(503) when unauthenticated",
+        "Routes declare the dependency instead of each checking inline",
+        "Accesses shared app.state via a dependency",
+        "Does NOT duplicate the precondition check in every handler body"
+      ]
+    }
+  ]
+}

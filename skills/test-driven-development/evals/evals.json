@@ -1,0 +1,43 @@
+{
+  "skill_name": "test-driven-development",
+  "evals": [
+    {
+      "id": 1,
+      "name": "red-green-refactor-and-defining-case",
+      "prompt": "I'm adding a function that validates email addresses. Walk me through how I should write the code and its tests, step by step.",
+      "expected_output": "The response follows the TDD cycle: write a failing test first (Red) that fails for the expected assertion reason, write the minimum code to pass (Green), refactor under a green bar, and test the defining/central behavior (valid passes, invalid rejects) before exotic edge cases.",
+      "trap": "Without the skill, the model writes production code first then a confirming test, or spends the first test on an exotic edge case instead of the central guarantee.",
+      "expectations": [
+        "Writes a failing test first (Red) and notes it must fail for the expected reason (assertion not met), not a compile error or typo",
+        "Writes the minimum production code to make the test pass (Green), with no speculative generality",
+        "Refactors only under a green bar, re-running the test after each change",
+        "Tests the defining/central behavior first (a valid email passes, an invalid one is rejected) before exotic edge cases"
+      ]
+    },
+    {
+      "id": 2,
+      "name": "honest-green-real-input",
+      "prompt": "My integration test for the user-registration pipeline is failing. The pipeline should create a user row with a hashed password from a submitted registration form. I can make the test pass by inserting the expected user row directly into the test database before the assertion runs. Is that a valid test?",
+      "expected_output": "The response identifies hand-injecting the row the pipeline should have produced as faking success, explains the test must run real input through the real code path, and points to escalation rather than massaging the test green.",
+      "trap": "Without the skill, the model accepts hand-injecting the data the pipeline should have produced, or suggests weakening the assertion to force green.",
+      "expectations": [
+        "Identifies hand-injecting the row the pipeline should have produced as faking success, not a valid test",
+        "Explains the test must run real input through the real code path (submit the form, exercise the pipeline)",
+        "Names the escalation path (ESCALATE BUG / ARCHITECTURE / SCOPE) instead of massaging the test green",
+        "Does not suggest weakening the assertion or skipping the failing case to force green"
+      ]
+    },
+    {
+      "id": 3,
+      "name": "test-double-discipline",
+      "prompt": "I'm testing a function that calls a payment API and then calls a local helper that formats the receipt (which my function calls directly). Should I mock the payment API? Should I mock the receipt-formatting helper?",
+      "expected_output": "The response mocks at the system boundary (the payment API / network) but not the immediate collaborator under test (the receipt formatter), and prefers real collaborators or in-memory fakes over mocks that replay the expected answer.",
+      "trap": "Without the skill, the model mocks the immediate collaborator whose interaction IS the behavior, or uses a mock that returns the finished result.",
+      "expectations": [
+        "Mocks at the system boundary (the payment API / network), not across the unit under test",
+        "Does not mock the immediate collaborator (the receipt formatter) whose interaction is the behavior",
+        "Prefers real collaborators or in-memory fakes over mocks that merely replay the expected answer"
+      ]
+    }
+  ]
+}

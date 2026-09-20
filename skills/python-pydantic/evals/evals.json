@@ -1,0 +1,40 @@
+{
+  "skill_name": "python-pydantic",
+  "evals": [
+    {
+      "id": 1,
+      "name": "settings-from-env",
+      "prompt": "Load application configuration from environment variables prefixed `SORTARR_`, falling back to a `.env` file and then to code defaults. The config has `api_port` (int) and `compare_distance` (int, which must be between 0 and 100 inclusive). An out-of-range value should make the application fail at startup.",
+      "trap": "The natural approach reads os.environ directly, casts with int(), and validates the range with a manual if-check. The skill wants pydantic-settings BaseSettings with env_prefix and Field bounds so validation happens at construction.",
+      "expectations": [
+        "Uses pydantic-settings BaseSettings",
+        "Sets env_prefix = \"SORTARR_\" and reads a .env file",
+        "Expresses the 0–100 bound with Field(ge=0, le=100), not a manual if-check",
+        "Relies on construction-time validation to fail loudly at startup",
+        "Does NOT read os.environ manually for these values"
+      ]
+    },
+    {
+      "id": 2,
+      "name": "secret-str-api-key",
+      "prompt": "Add an `api_key` field to the Settings class. The API key comes from the `SORTARR_API_KEY` environment variable. It must never appear in application logs, in debug output, or when the settings object is printed or serialized for diagnostics.",
+      "trap": "A plain `str` field is the obvious type. But plain str exposes the value in repr(), model_dump(), and any logger that serializes the object. Pydantic v2's `SecretStr` type redacts the value in those outputs. The skill explicitly says: 'For files use SecretStr so they don't print in logs/model_dump()'.",
+      "expectations": [
+        "Declares api_key as SecretStr (not plain str)",
+        "Notes or implies that plain str would expose the secret in logs/repr/model_dump",
+        "Does NOT use a plain str field for the api_key"
+      ]
+    },
+    {
+      "id": 3,
+      "name": "closed-set-field",
+      "prompt": "The `action` field of a model accepts only the values 'allow' or 'deny'. It is currently a `str` checked by hand. Model it so invalid values are rejected at parse time and the allowed set appears in the generated OpenAPI schema.",
+      "trap": "A free `str` plus a `field_validator` membership check works but duplicates what the type system can express. Literal (or Enum) makes it a closed set that documents itself in the schema.",
+      "expectations": [
+        "Uses Literal[\"allow\", \"deny\"] (or an Enum) for the field",
+        "Removes the manual if/validator membership check",
+        "Does NOT keep a plain `str` with a hand-written check"
+      ]
+    }
+  ]
+}

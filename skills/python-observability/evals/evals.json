@@ -1,0 +1,43 @@
+{
+  "skill_name": "python-observability",
+  "evals": [
+    {
+      "id": 1,
+      "name": "metric-label-cardinality",
+      "prompt": "Add a Prometheus counter that tracks failed sync operations so we can break the failures down by the affected playlist and by the user who triggered the sync.",
+      "trap": "The prompt asks to break down by playlist and user, which invites playlist_id/user_id labels — unbounded cardinality that creates a new time series per value and eventually OOMs the scrape target. Those IDs belong in logs/traces; labels must stay a small bounded set.",
+      "expectations": [
+        "Does NOT use playlist_id or user_id as metric labels",
+        "Uses only a small bounded label set (e.g. a reason/status) if any labels",
+        "Explains high-cardinality labels create unbounded series / risk OOM",
+        "Suggests putting the per-entity IDs in logs/traces instead",
+        "Defines the Counter at module scope"
+      ]
+    },
+    {
+      "id": 2,
+      "name": "structured-named-logging",
+      "prompt": "Replace the diagnostics in this library module with production logging that survives log aggregation and lets operators filter by playlist id.\n\n```python\ndef sync(pid, n):\n    print(f'syncing {pid}')\n    print(f'added {n} tracks')\n```",
+      "trap": "Swapping print for f-string log calls feels like enough, but f-strings render eagerly and bury fields in a message string. The skill wants a module-level named logger, lazy %/extra fields, and no basicConfig inside a library.",
+      "expectations": [
+        "Uses a module-level named logger (logging.getLogger(__name__)), not print",
+        "Uses lazy % args or extra={} fields, not f-strings, in the log calls",
+        "Attaches the playlist id as a structured field (extra=), queryable",
+        "Mentions JSON formatting for production/aggregation",
+        "Does NOT call logging.basicConfig inside this library module"
+      ]
+    },
+    {
+      "id": 3,
+      "name": "module-scope-metric",
+      "prompt": "This service crashes on the second request with a duplicated-timeseries / already-registered error. Fix it.\n\n```python\ndef handle():\n    c = Counter('requests_total', 'requests')\n    c.inc()\n```",
+      "trap": "Without knowing that metric objects must be created once, the model may try a try/except around registration or a CollectorRegistry hack. The real fix is to define the Counter at module scope and only increment it in the function.",
+      "expectations": [
+        "Moves the Counter definition to module scope (created once)",
+        "Increments the module-level metric inside the function",
+        "Explains re-creating a Counter raises a duplicate-registration error",
+        "Does NOT define the metric inside the function body"
+      ]
+    }
+  ]
+}

@@ -26,6 +26,8 @@ Maintain current reality, not product authority.
 
 Your first Loom action is `loom_attach` with the workflow ID and `knowledge-sync`.
 
+Load `documentation` before deciding what current-reality knowledge must change. Use language-specific documentation skills only when code/API documentation is also in scope.
+
 Before editing:
 1. use OKF-MCP discovery to locate the Anchor, relevant current system docs, and relationships;
 2. inspect only the implementation surfaces needed to verify changed reality;

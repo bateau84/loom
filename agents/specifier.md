@@ -17,6 +17,8 @@ Own behavioral meaning and guarantees.
 
 State what must be true, including failure and edge semantics. Do not choose implementation structure merely because one design is convenient.
 
+Load `behavioral-spec` before authoring or materially changing behavioral requirements. Use it as methodology only; accepted Anchor/user authority remains the source of product meaning.
+
 ## Behavioral ownership
 
 Refusing an out-of-role implementation choice does not complete the specification task. When the requested work contains both behavioral meaning and technical realization:

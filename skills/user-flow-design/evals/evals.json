@@ -1,0 +1,83 @@
+{
+  "skill": "user-flow-design",
+  "version": "1.0.0",
+  "shape": 1,
+  "cases": [
+    {
+      "id": "UFD-01",
+      "name": "happy-path-only-checkout-flow",
+      "trap": "Designer produces a flow that covers only the happy path — all error states are marked 'system shows an error message' without specifying re-entry points, what information the user receives, or what progress is preserved — forcing the coder to invent error recovery behavior at implementation time.",
+      "prompt": "Design the checkout flow for an e-commerce application. The user has items in their cart and needs to: enter a shipping address, select a shipping method, enter payment information, and confirm the order.",
+      "expectations": [
+        "Designer must produce error paths for each step, not just the happy path — payment failure, address validation failure, and order submission failure must each be named as explicit error paths with re-entry points",
+        "Each error path must specify what information the user receives — not 'the system shows an error' but the specific information the user needs to recover (e.g., 'Payment declined: the card ending in 4242 was declined by the issuer. User can re-enter payment info at Step 3.')",
+        "Designer must specify which steps preserve user input on error — if the payment step fails, does the user lose their shipping address? This is a design decision that must be stated",
+        "Designer must specify all three exit types: success confirmation (what the user sees confirming the order was placed), abandonment (what happens to cart state if user closes the browser mid-flow), and terminal error (what happens if the payment gateway is unavailable)",
+        "Designer must enumerate at least two entry point variants beyond the canonical flow start — such as a user arriving at checkout from a saved cart link or resuming an abandoned checkout",
+        "Designer must apply the dead-end test to each error path: can the user continue from every error state, or are some error states terminal branches with no forward path?"
+      ],
+      "negative_expectations": [
+        "Designer must not produce a flow where error states are described only as 'the system shows an error message' without specifying the re-entry point or what information is shown",
+        "Designer must not omit the abandonment exit state — what happens when the user closes the browser mid-checkout is a design decision, not an implementation detail",
+        "Designer must not produce a flow where all steps are described at the interaction level ('user clicks the Next button', 'the Submit button turns grey') rather than the task level ('user confirms payment details', 'system processes payment')"
+      ]
+    },
+    {
+      "id": "UFD-02",
+      "name": "cli-pipeline-exit-codes-ignored",
+      "trap": "Designer treats CLI pipeline design as a sequence of commands without specifying exit code contracts, making no distinction between scripted and interactive contexts, and leaving mid-pipeline failure behavior undefined — producing a pipeline that silently continues past failures in automated contexts.",
+      "prompt": "Design the deployment pipeline flow for a developer tool. The user needs to: run tests, build a Docker image, push the image to a registry, and deploy to a staging environment. The pipeline should be usable both interactively and in a CI script.",
+      "expectations": [
+        "Designer must specify exit code contracts for each command — what exit 0 means for each step and what non-zero exit codes are possible and what they mean",
+        "Designer must identify that silent exit 0 on failure (e.g., a build step that exits 0 even when the build fails) is a named flow design failure that must be explicitly prohibited in the pipeline design",
+        "Designer must design both the interactive flow (user runs commands manually, sees output, decides whether to proceed) and the scripted/CI flow (commands run with && or similar, failures must abort the pipeline automatically)",
+        "Designer must specify what happens when a step fails mid-pipeline: does the pipeline abort immediately, does cleanup happen, is the partial artifact left in place or removed?",
+        "Designer must enumerate the entry context for the pipeline: which environment variables must be set, which files must exist, which credentials must be present — and specify what happens when the entry context is incomplete",
+        "Designer must specify the exit state for each terminal outcome: successful deployment (what the user knows when done), build failure (what is preserved, what must be cleaned up), push failure (image exists locally but not in registry — what is the state?), deployment failure (image pushed, deployment failed — how does the user roll back?)"
+      ],
+      "negative_expectations": [
+        "Designer must not describe the pipeline as a sequence of commands without specifying exit code semantics — 'run tests then build then push then deploy' is not a flow design",
+        "Designer must not produce a flow that works only in interactive context without addressing the scripted/CI context — a pipeline that cannot run in CI without modification is a flow design failure",
+        "Designer must not leave mid-pipeline failure behavior undefined — 'the pipeline stops if a step fails' is not sufficient; the designer must specify what cleanup is required and what the system state is after each failure type"
+      ]
+    },
+    {
+      "id": "UFD-03",
+      "name": "tui-navigation-no-escape-test",
+      "trap": "Designer produces a TUI navigation flow with states that have no explicitly designed exit — users can enter views, modals, or modes with no discoverable way out, producing the classic 'vim problem' where the user must force-quit the application to escape a state.",
+      "prompt": "Design the navigation flow for a TUI application that manages SSH connections. The application has: a connection list view showing saved connections, a connection editor for adding or modifying connections, a terminal session view when connected to a remote host, and a configuration view for application-wide settings.",
+      "expectations": [
+        "Designer must apply the no-escape test to every state: each view, modal, and mode must have at least one explicitly designed exit transition that is discoverable without reading documentation",
+        "Designer must specify what happens when the user presses the terminal session's exit key while still connected to a remote host — is there a confirmation prompt? What if there are pending writes or running processes?",
+        "Designer must design the modal flow for the connection editor: how does the user enter it (from connection list), how does the user exit it with changes saved, how does the user exit it with changes discarded, and what happens if the user presses q or Ctrl+C while editing",
+        "Designer must specify entry state: which view opens by default and what it shows when there are no saved connections (empty state) vs. when there are connections (populated state)",
+        "Designer must address the error state for the terminal session view: what view does the user see if a connection attempt fails, and how do they return to the connection list from that error state?",
+        "Designer must produce a state machine showing all states and transitions — including back-navigation — not just the happy-path forward-navigation"
+      ],
+      "negative_expectations": [
+        "Designer must not produce a flow where any state has only forward transitions with no backward exit — every state must have at least one way out",
+        "Designer must not describe navigation only as 'user can navigate between views' without specifying the key or command that triggers each transition",
+        "Designer must not leave the terminal session exit flow undefined — what happens when the user wants to disconnect is a flow design decision that determines whether users can leave the terminal session state without force-quitting"
+      ]
+    },
+    {
+      "id": "UFD-04",
+      "name": "flow-vs-interaction-design-conflation",
+      "trap": "Designer conflates task-level flow design with interaction-level design — producing a document that specifies what individual buttons look like, what animations play, and what specific error message text says, rather than the sequence of states and decisions the user moves through — making the document too detailed to communicate the flow and too coarse to specify the interaction.",
+      "prompt": "Design the user flow for a password reset feature. The user has forgotten their password and needs to reset it.",
+      "expectations": [
+        "Designer must operate at the task level: steps are state transitions ('user submits email address', 'user receives email link', 'user enters new password', 'user confirms new password matches', 'user is authenticated with new password') — not interaction details",
+        "Designer must explicitly distinguish between what belongs to this flow design and what belongs to interaction-design — for example, noting that the error message text for 'passwords do not match' is an interaction-design decision, while the decision that there IS an error path when passwords do not match is a flow decision",
+        "Designer must design the one-time-link edge case: what happens when the user opens the reset link in a different browser than the one where they are already logged in? What happens when the link has expired?",
+        "Designer must specify the re-entry point for the expired-link error path — does the user restart from step 1 (request a new email), and is the prior link invalidated?",
+        "Designer must address the entry-point variant where the user arrives at the reset page having already clicked a valid link — the entry state is not 'the user lands on the password reset page' but 'the user lands on the password reset page with a valid unexpired token already consumed from the URL'",
+        "The flow must cover all three exit types: success (user has a new password and is authenticated), abandonment (user closes the browser mid-flow — is the token still valid?), and terminal error (link expired, token invalid)"
+      ],
+      "negative_expectations": [
+        "Designer must not describe the visual appearance of any UI element — button color, input field border, error message typography are interaction-design decisions, not flow decisions",
+        "Designer must not produce steps that are sub-interaction details ('user clicks the Submit button', 'the spinner appears', 'the spinner disappears after 500ms') — these are not flow steps",
+        "Designer must not conflate the password reset flow with a journey map by adding emotional content ('user feels relieved when the reset succeeds') — task flows do not include emotional states"
+      ]
+    }
+  ]
+}

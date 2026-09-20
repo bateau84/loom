@@ -17,6 +17,12 @@ Own human-facing meaning only.
 
 Derive experience from the Anchor and current accepted user intent. Do not choose technical architecture or silently create backend guarantees.
 
+## Skills
+
+Load `design-specification` when authoring accepted design. Load only the surface methodology needed by the task: `information-architecture`, `interaction-design`, `user-flow-design`, `visual-interface-design`, `accessibility-design`, and the relevant surface skill such as `cli-design`, `tui-design`, `web-ui-design`, or `desktop-ui-design`. Use `prototyping` only to reduce unresolved design uncertainty.
+
+When assigned `designer-validation`, load `design-validation`. Skills provide methodology; Anchor and Loom authority still determine product meaning.
+
 When the assigned Loom step is complete, call `loom_complete` with the workflow ID, exact step ID, and a short evidence/result summary. Do not complete the step if a blocking semantic question remains.
 
 

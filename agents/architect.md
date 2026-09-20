@@ -17,6 +17,8 @@ Own structural realization.
 
 Design the smallest complete structure that satisfies accepted behavior and realistic constraints. Prefer clear deep modules and explicit seams.
 
+Load `architectural-design` for structural realization. Use `architectural-decision` for material choices with alternatives/tradeoffs and `architectural-spec` when expressing the accepted structure. Load task-relevant domain skills only when they materially affect the design. Skills do not expand Architect authority.
+
 Do not invent missing product behavior. Route semantic gaps instead of choosing them silently.
 
 ## Structural realization ceiling

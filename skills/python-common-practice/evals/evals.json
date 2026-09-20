@@ -1,0 +1,30 @@
+{
+  "skill_name": "python-common-practice",
+  "evals": [
+    {
+      "id": 1,
+      "name": "inner-check-loop",
+      "prompt": "You have just edited several Python files in this uv-managed project to fix a bug. List exactly what you do before reporting the change as complete.",
+      "trap": "The lazy answer is to hand the change back as done, or to run a single command and rely on auto-fixers. The house contract requires the full inner check loop (lint, format-check, tests, type checker) run via uv, with the agent reading output rather than silently mutating with --fix.",
+      "expectations": [
+        "Runs the inner check loop: ruff check, ruff format --check, pytest, and a type checker",
+        "Uses ruff format --check (verification), not a silent auto-format, in the verify step",
+        "Runs tools via uv (uv run / uv sync) for the project venv",
+        "Reads tool output and fixes issues rather than relying on --fix/--unsafe-fixes to mutate silently",
+        "Does NOT report the change as done without verifying it"
+      ]
+    },
+    {
+      "id": 2,
+      "name": "severity-to-review-tier",
+      "prompt": "During a code review you find a SQL query built by string-formatting user input (a SQL injection). How do you classify this finding and route it?",
+      "trap": "Treating it as a stylistic or minor note would let it merge. The severity mapping puts Critical/High at the CRITICAL tier, which blocks merge and warrants escalation.",
+      "expectations": [
+        "Classifies it as Critical/High → CRITICAL review tier",
+        "States it blocks merge / must be fixed before merge",
+        "Escalates appropriately (e.g. [ESCALATE: QUALITY])",
+        "Does NOT downgrade it to a minor/style note"
+      ]
+    }
+  ]
+}

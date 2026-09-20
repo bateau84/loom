@@ -1,0 +1,87 @@
+{
+  "skill": "prototyping",
+  "version": "1.0.0",
+  "shape": 1,
+  "cases": [
+    {
+      "id": "PROTO-01",
+      "name": "figma-apology-instead-of-walkthrough",
+      "trap": "Designer apologizes for the inability to create an interactive Figma or clickable prototype, then either produces nothing or offers only a vague textual description of what a prototype 'would look like.' Instead of applying the scenario walkthrough method, the response treats the absence of GUI prototyping tools as a blocker rather than using the five available text-based formats.",
+      "prompt": "I'm designing a TUI for a Kubernetes cluster manager. The user should be able to view all pods, filter by namespace, select a pod, and view its logs in a split panel. I want to validate the navigation design before we start building. Can you prototype this for me?",
+      "expectations": [
+        "Designer must produce at least one terminal state sketch showing the TUI layout at a key state (e.g., pod list view with namespace filter), using ASCII characters to represent the panel structure, with labeled regions (pod list, filter bar, log panel, status bar)",
+        "Designer must show multiple states — at minimum: initial list view (no selection), selection state (pod selected, log panel populated), and the filter-active state — because the navigation design cannot be validated from a single state",
+        "Designer must produce a key binding map or embed key binding information in the state sketches that covers: navigation between pods, triggering log view, filtering by namespace, and clearing the filter — because key binding conflicts and discoverability are the primary TUI navigation design risks",
+        "Designer must identify at least one design gap from the prototype — something the sketches reveal the design has not yet specified, such as: focus behavior when the filter input is activated, what happens to the log panel when the user navigates to a different pod, or how namespace filter interacts with the current selection",
+        "Designer must apply at minimum a partial scenario walkthrough for one user task (e.g., 'operator finds logs for a crashing pod') — naming what the user sees, what they do, and what the system responds — not just describe the layout statically",
+        "Designer must frame the terminal state sketch and walkthrough as the primary prototyping contribution, not as a workaround for missing tools"
+      ],
+      "negative_expectations": [
+        "Designer must not apologize for the inability to create an interactive Figma or clickable wireframe and then produce nothing actionable",
+        "Designer must not describe what a prototype 'would look like' in prose without producing any actual prototype artifact",
+        "Designer must not produce only a written description of the feature requirements without testing the navigation design against a scenario",
+        "Designer must not produce a static ASCII sketch that shows layout only, without specifying states, key bindings, or any walkthrough — a layout sketch alone cannot validate navigation design"
+      ]
+    },
+    {
+      "id": "PROTO-02",
+      "name": "happy-path-only-scenario-walkthrough",
+      "trap": "Designer produces a scenario walkthrough that only covers the success case — valid input, all systems up, ideal user behavior — leaving error paths, edge cases, and recovery flows unspecified. The walkthrough looks thorough (it has all the right fields filled in) but only tests the design under optimal conditions, which reveals the fewest design gaps.",
+      "prompt": "I'm designing a CLI tool for database migrations. A user runs 'dbmigrate up' to apply pending migrations, 'dbmigrate down' to roll back the last migration, and 'dbmigrate status' to see which migrations have been applied. Please create a command transcript prototype to validate the design.",
+      "expectations": [
+        "Designer must produce a command transcript for the primary success path (e.g., 'dbmigrate up' applies two pending migrations successfully) that shows the exact output and exit code",
+        "Designer must produce at least two error-path transcripts, covering at minimum: (1) running 'dbmigrate up' when no pending migrations exist — is this success (exit 0) or a distinct signal? (2) running 'dbmigrate down' when no migrations have been applied — what does the tool do when rollback is impossible?",
+        "Designer must produce a transcript for a migration failure midway — where the first of three pending migrations fails — revealing: does the tool stop and leave the database in a partially-migrated state? Does it roll back? Does it exit non-zero? What exactly does the output say?",
+        "Designer must identify at least one design gap from the transcripts — something the transcripts reveal that the design has not yet resolved (e.g., the ambiguity between 'no pending migrations' and 'migration failed')",
+        "Designer must address the non-interactive scripting context in at least one transcript — showing that 'dbmigrate up' works correctly in a CI pipeline where there is no human to interpret diagnostic text",
+        "The exit code taxonomy must be explicit: at minimum, the transcripts must reveal whether 'no migrations to apply' and 'migration failed' use different exit codes"
+      ],
+      "negative_expectations": [
+        "Designer must not produce only the success-path transcript and consider the design validated — the design gaps in error handling are the most important outputs of the prototype",
+        "Designer must not use 'exit code 1 for all errors' across all error paths — the transcript must force the question of whether different failure modes need different codes",
+        "Designer must not produce a prose description of how the CLI 'would behave' instead of concrete transcripts showing exact commands, exact output, and exact exit codes",
+        "Designer must not skip the partial-failure scenario (first migration succeeds, second fails) — this is the scenario most likely to reveal the design's most difficult unresolved question"
+      ]
+    },
+    {
+      "id": "PROTO-03",
+      "name": "prototype-treated-as-deliverable",
+      "trap": "Designer treats the prototype artifact as the final design deliverable — either handing it to the coder directly as implementation instructions, or continuing to refine the prototype beyond the point where the design question has been answered (prototype limbo). The prototype is never transitioned to a Design Spec, and the design questions it raised are never formally resolved into design decisions.",
+      "prompt": "We've been working on the interaction design for our form validation approach, and I've created a state-transition sketch showing the five states (empty, typing, validating, available, taken, error). I'm happy with how it looks and I think we're ready. Can you help me figure out what to do next?",
+      "expectations": [
+        "Designer must evaluate whether the state-transition sketch has answered its design questions — by checking whether each state has complete entry conditions, available actions, and exit transitions, and whether the sketch has revealed any gaps that are still unresolved",
+        "Designer must recommend transitioning to the Design Spec, not continuing to refine the sketch — if the design questions are answered, the prototype's job is done",
+        "Designer must map the state-transition sketch outputs to specific Design Spec elements: the states become the 'States' section of the Behavioral specification, the transitions become the 'Transitions' section, any discovered gaps become 'Open design questions', and the decisions made become 'Design decisions'",
+        "Designer must explicitly name at least one design gap that the state-transition sketch likely surfaced — such as: what constitutes a 'change' (current value vs persisted value?), how simultaneous rapid edits interact with the debounce timer, or whether 'error' state allows form submission",
+        "Designer must confirm that the next step is writing the Design Spec, not producing another prototype artifact — unless there are specific remaining open questions that another prototype format would resolve better than the spec can",
+        "Designer must name which elements of the Design Spec will come from the prototype: states → Behavioral specification states section; transitions → Transitions; design decisions made during prototyping → Design decisions; unresolved gaps → Open design questions"
+      ],
+      "negative_expectations": [
+        "Designer must not tell the user to 'keep refining the sketch' without identifying what specific unresolved design question further refinement would answer",
+        "Designer must not hand the state-transition sketch directly to a coder as implementation instructions — the sketch is a prototype, not a spec; the spec is the contract",
+        "Designer must not produce an additional prototype format (another walkthrough, another sketch) when the design question has been answered and the transition to spec is the right next step",
+        "Designer must not treat 'I'm happy with how it looks' as evidence that the design questions are answered — happiness with the prototype is not the completion criterion; answered design questions are"
+      ]
+    },
+    {
+      "id": "PROTO-04",
+      "name": "decision-prototyping-instead-of-vague-comparison",
+      "trap": "When asked to help decide between two design approaches, Designer produces a vague comparison of abstract pros and cons — treating the decision as a preference question ('Approach A is simpler, Approach B is more powerful') rather than running the same scenario through both approaches and grounding the comparison in observable design evidence. The result is an opinion, not a decision.",
+      "prompt": "We're designing a search feature for our TUI file manager. We're torn between two approaches: (A) a persistent search bar always visible at the top that filters as you type, and (B) a modal search invoked with '/' that overlays the file list while active. Both teams have opinions. Can you help us decide?",
+      "expectations": [
+        "Designer must run a specific scenario through BOTH approaches — such as 'developer needs to find all files named .env across subdirectories' — producing a step-by-step comparison of how each approach handles the scenario",
+        "Designer must produce a walkthrough for at least one scenario that reveals different behavior between the approaches: e.g., what happens when the user navigates away from the file list while the search is active, or what happens when search returns no results",
+        "Designer must identify what each approach fails to specify or handles poorly — the 'gaps revealed' and 'failure modes' for each — not just what each approach is good at",
+        "Designer must reach a decision grounded in the scenario evidence — 'Approach B handles the no-results case more gracefully because the modal can be dismissed cleanly while Approach A leaves the file list in a filtered state the user may not know how to clear' — not a personal preference",
+        "Designer must explicitly state which design decision should be recorded in the Design Spec and the rationale from the scenario evidence",
+        "Designer must address at least one edge case in the comparison — such as what happens in approach A when the user starts typing and then presses Escape, vs what happens in Approach B — because edge cases are where the approaches diverge most meaningfully"
+      ],
+      "negative_expectations": [
+        "Designer must not produce only an abstract list of pros and cons for each approach without walking through a specific scenario",
+        "Designer must not declare a winner based on 'best practice' or 'what most tools do' without applying that claim to the specific scenario",
+        "Designer must not present the comparison as a design preference question — 'it depends on what your users prefer' — when the scenario walkthrough reveals which approach handles the primary task more coherently",
+        "Designer must not skip the 'gaps revealed' section — the most valuable output of the comparative analysis is what each approach fails to specify, not just what it does well"
+      ]
+    }
+  ]
+}

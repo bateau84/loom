@@ -1,0 +1,83 @@
+{
+  "skill": "information-architecture",
+  "version": "1.0.0",
+  "shape": 1,
+  "cases": [
+    {
+      "id": "IA-01",
+      "name": "implementation-model-cli-taxonomy",
+      "trap": "Designer produces an IA that mirrors the system's internal service or module structure rather than user mental models — CLI commands are named after internal services, organizational units, or database entities instead of the tasks users are trying to accomplish.",
+      "prompt": "We're building a CLI tool for a SaaS platform. The backend has three internal services: AuthService, DataPipelineOrchestrator, and NotificationDispatcher. The engineering team has proposed this command structure: `saas-cli authservice login`, `saas-cli authservice create-token`, `saas-cli datapipelineorchestrator run`, `saas-cli datapipelineorchestrator list-runs`, `saas-cli notificationdispatcher send`, `saas-cli notificationdispatcher list-channels`. Design the IA for this CLI.",
+      "expectations": [
+        "Designer must identify that the proposed structure mirrors internal service names (AuthService, DataPipelineOrchestrator, NotificationDispatcher) rather than user task vocabulary",
+        "Designer must produce an alternative namespace that uses the user's mental model — what the user is working with (auth, pipeline, notifications) in language users would use",
+        "Designer must explain why mirroring internal service names fails: users approaching the CLI to 'run my pipeline' will not know to look under 'datapipelineorchestrator'",
+        "The proposed IA must use the noun-verb or verb-noun pattern consistently — not mixed between services",
+        "Designer must apply the information-scent test to the top-level namespace: would a user who has never read the documentation know which top-level command to start with for each common task?",
+        "Designer must produce a controlled vocabulary for the command namespace — resolving any synonyms (e.g., is 'run' or 'execute' the canonical verb for running a pipeline?)"
+      ],
+      "negative_expectations": [
+        "Designer must not accept 'authservice', 'datapipelineorchestrator', or 'notificationdispatcher' as user-facing command names without questioning whether these match user vocabulary",
+        "Designer must not produce an IA that requires users to know internal service names to find commands — this is implementation-model IA",
+        "Designer must not omit the information-scent evaluation — the test 'would a user know what is inside this namespace?' must be applied to the proposed top-level commands"
+      ]
+    },
+    {
+      "id": "IA-02",
+      "name": "mystery-meat-navigation-labels",
+      "trap": "Designer accepts or produces navigation labels that are marketing vocabulary — 'Solutions', 'Resources', 'Insights', 'Engage' — or similarly vague labels that create no information scent, and treats them as acceptable navigation because they sound professional or match the brand voice.",
+      "prompt": "We're designing the top-level navigation for a B2B SaaS product that helps engineering teams manage their cloud infrastructure. The product manager has proposed this navigation: 'Home | Solutions | Resources | Insights | Settings'. The PM says the words test well with marketing and 'feel premium'. Design the IA for this navigation.",
+      "expectations": [
+        "Designer must identify each of the proposed labels as mystery meat navigation and name why each fails the information-scent test",
+        "Designer must apply the information-scent test explicitly: 'Would a user who has never visited this product know what they will find under Solutions? Under Resources? Under Insights?'",
+        "Designer must produce alternative labels that use the actual content vocabulary — what the user will find, in the user's task language",
+        "Designer must distinguish between what labels 'feel like' (brand voice, premium tone) and what labels accomplish (creating accurate expectations before the click)",
+        "Designer must produce at least one scenario showing how a user would fail to find something they need because the navigation labels do not predict the content",
+        "The proposed navigation labels must be specific enough that a user could predict which label to click for at least 3 different user tasks"
+      ],
+      "negative_expectations": [
+        "Designer must not accept 'Solutions', 'Resources', or 'Insights' as navigation labels without applying the information-scent test",
+        "Designer must not treat 'feels premium' or 'tests well with marketing' as a valid argument for navigation labels — marketing testing and navigation findability testing are different",
+        "Designer must not produce replacement labels that are still ambiguous — replacing 'Solutions' with 'Products' when the content is actually 'Infrastructure monitoring tools' is not an improvement"
+      ]
+    },
+    {
+      "id": "IA-03",
+      "name": "web-ia-applied-to-tui-without-surface-translation",
+      "trap": "Designer applies web navigation IA patterns (breadcrumbs, global nav bars, horizontal tabs) to a TUI design problem without translating them to terminal-appropriate navigation mechanisms — treating TUI as a text-rendered GUI rather than a distinct surface with distinct navigation constraints.",
+      "prompt": "We're designing a TUI application for managing Kubernetes clusters. The application needs to let users navigate between: cluster overview, namespace list, pod details, service list, and deployment history. The designer has proposed: a breadcrumb trail at the top showing 'Clusters > Namespaces > Pods', a horizontal tab bar for switching between resource types, and a sidebar with global navigation. Design the IA for this TUI.",
+      "expectations": [
+        "Designer must identify that breadcrumbs, horizontal tab bars, and sidebars are web/desktop navigation patterns that require translation for TUI implementation",
+        "Designer must address the TUI-specific navigation model: key bindings are navigation, the status bar shows current position, the view hierarchy is expressed through pane structure rather than visual navigation bars",
+        "Designer must produce a view hierarchy showing what views exist and what the navigation relationships between them are — which views are sibling levels, which are parent-child, which are modal overlays",
+        "Designer must distinguish view state (which namespace is selected in the list) from navigation (moving from the namespace list view to a pod detail view)",
+        "Designer must specify what wayfinding mechanisms replace breadcrumbs in the TUI context — the status bar content, the current view title, the navigation indicators visible at all times",
+        "The IA must address the 'orphaned view' risk: every view must have a discoverable path in (how to reach it) and a way out (how to navigate back)"
+      ],
+      "negative_expectations": [
+        "Designer must not propose a breadcrumb trail without addressing how breadcrumbs work in a terminal grid — they cannot be clicked, and the visual representation is different from web",
+        "Designer must not treat a horizontal tab bar as a navigation solution without addressing terminal rendering constraints (fixed-cell grid, no CSS, limited color depth)",
+        "Designer must not produce an IA that applies web navigation vocabulary ('links', 'pages', 'clicking navigation items') without translating to TUI equivalents ('key bindings', 'views', 'focus movement')"
+      ]
+    },
+    {
+      "id": "IA-04",
+      "name": "over-categorization-future-proofing",
+      "trap": "Designer creates a deeply nested category structure with thin categories (1-3 items each) justified by anticipated future content growth — producing an IA where users must navigate through empty-feeling levels to reach content, because the structure was designed for content that does not yet exist.",
+      "prompt": "We're designing the settings structure for a developer tool. Currently the tool has 8 settings: editor font size, editor color theme, editor line numbers toggle, git commit auto-sign, git default branch name, notifications for deploys, notifications for failures, and API key. The product manager wants the settings organized into: 'Editor > Appearance > Typography' (font size), 'Editor > Appearance > Themes' (color theme), 'Editor > Appearance > Display' (line numbers), 'Editor > Version Control > Git > Commits' (auto-sign), 'Editor > Version Control > Git > Branches' (default branch), 'Integrations > Notifications > Deploys' (deploy notifications), 'Integrations > Notifications > Failures' (failure notifications), 'Security > Authentication > API Access' (API key). The PM says this structure is 'future-proof'. Design the IA for these settings.",
+      "expectations": [
+        "Designer must identify that the proposed structure has over-categorization: most leaf nodes contain exactly 1 item, and the hierarchy is 3-4 levels deep for 8 settings",
+        "Designer must apply the over-categorization test: how many items does each category currently contain? Would flattening the structure harm findability?",
+        "Designer must propose an alternative structure calibrated to the existing content — not the anticipated future content",
+        "Designer must explain the cognitive cost of over-categorization: users must navigate through 3-4 hierarchy levels to reach a single setting, which is more effort than scanning a flat list of 8 items",
+        "Designer must distinguish between depth that serves findability (when there are genuinely too many items at one level) and depth that serves anticipated future organization",
+        "The proposed IA must explain the principle: design for what exists, with the simplest structure that doesn't actively prevent future growth"
+      ],
+      "negative_expectations": [
+        "Designer must not accept 'future-proof' as sufficient justification for deep nesting of thin categories",
+        "Designer must not produce an IA with 3+ hierarchy levels for content that could be organized in 1-2 levels without harming findability",
+        "Designer must not recommend the proposed structure without applying the user-effort test: is the navigation cost of 3-4 clicks to reach a single setting justified by the organizational benefit?"
+      ]
+    }
+  ]
+}

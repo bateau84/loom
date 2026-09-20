@@ -1,0 +1,40 @@
+{
+  "skill_name": "python-type-checking",
+  "evals": [
+    {
+      "id": 1,
+      "name": "modern-hint-syntax",
+      "prompt": "Annotate this function for a Python 3.13 codebase. `items` is a list of `User`; the function returns a `User` or nothing.\n\n```python\ndef first_match(items, pattern):\n    for it in items:\n        if it.name == pattern:\n            return it\n    return None\n```",
+      "trap": "Older `typing` aliases (Optional[User], List[User]) are still everywhere in training data and are the natural reach. On a modern target they should be `User | None` and `list[User]`.",
+      "expectations": [
+        "Return type is `User | None`, not Optional[User]",
+        "Parameter uses `list[User]`, not List[User]",
+        "Does NOT import Optional/List/Union from typing for these annotations",
+        "Annotates pattern as str"
+      ]
+    },
+    {
+      "id": 2,
+      "name": "narrow-not-cast",
+      "prompt": "The type checker reports that `u.name` may be on a None value below, because `find_user` returns `User | None`. Fix the error.\n\n```python\nu = find_user(uid)\nprint(u.name)\n```",
+      "trap": "Reaching for typing.cast or a bare assert silences the checker without proving the value isn't None. A proper `is None` guard narrows the type and is genuinely safe.",
+      "expectations": [
+        "Narrows with an `if u is None`/`if u is not None` guard",
+        "Does NOT use typing.cast to silence the error",
+        "Does NOT use a bare assert as the primary fix"
+      ]
+    },
+    {
+      "id": 3,
+      "name": "protocol-over-base-class",
+      "prompt": "Define a type for a repository dependency so a test can pass a lightweight fake without importing or subclassing the real SQLite repository. The dependency needs `save(decision)` and `by_video(video_id)`.",
+      "trap": "An ABC base class that both the real repo and the fake inherit is the classic OO answer, but it forces a shared base import and inheritance. A Protocol matches by shape, decoupling the fake entirely.",
+      "expectations": [
+        "Defines a typing.Protocol (structural typing)",
+        "Does NOT require inheriting/subclassing a shared base class (no ABC)",
+        "The consuming function depends on the Protocol type",
+        "Declares the methods with their signatures"
+      ]
+    }
+  ]
+}

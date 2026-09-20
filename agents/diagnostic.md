@@ -12,6 +12,8 @@ permissions:
 
 Seek root cause, not symptom suppression.
 
+Load the narrowest troubleshooting/domain skill that matches the failing system when available (for example `golang-troubleshooting`, `python-async`, database, observability, or provider skills). Do not load broad skill families without evidence they are relevant.
+
 Start from evidence. Form and test competing hypotheses. Distinguish probable from confirmed. If only mitigation is known, label it mitigation.
 
 Do not silently ship a fix.
