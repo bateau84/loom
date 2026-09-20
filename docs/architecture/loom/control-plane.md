@@ -44,6 +44,7 @@ The plugin exposes a small Loom tool namespace.
 
 Initial capabilities:
 
+- **intent** — track one-question-at-a-time product-intent interviews, resolved decision branches, draft readiness, and exact Anchor acceptance.
 - **workflow** — start, inspect, advance, block, complete.
 - **route** — classify required capabilities and inspect unmet prerequisites.
 - **task** — register a validated implementation DAG, expose runnable tasks, and enforce bounded per-task write surfaces.
@@ -235,3 +236,21 @@ Before `knowledge-sync` may complete, Loom requires a structured knowledge repor
 A valid report either names changed knowledge documents or records a concrete reason why existing knowledge remains accurate.
 
 If upstream work is reopened, the knowledge report is invalidated automatically and must be re-established before final product review.
+
+
+## Intent and Anchor boundary
+
+Intent shaping is tracked separately from autonomous workflow execution.
+
+An intent session records:
+- the original fuzzy request;
+- the single currently-open user question, if any;
+- recommendation and rationale attached to that question;
+- resolved decision branches with source `user`, `repository`, or `research`;
+- evidence references for non-user resolutions;
+- the draft-ready Anchor summary;
+- the accepted Anchor path and exact user acceptance confirmation.
+
+The control plane refuses a second simultaneous user question and refuses repository/research resolutions without evidence references.
+
+`loom_start` refuses autonomous execution while the active intent session is unresolved. When the accepted Anchor starts its workflow, the session's active-intent pointer is cleared while the durable interview record remains auditable.

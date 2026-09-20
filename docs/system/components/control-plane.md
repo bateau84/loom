@@ -14,6 +14,7 @@ Keep deterministic coordination out of model memory.
 ## Public Seams
 
 The Loom plugin exposes tools for:
+- intent interview start/question/resolve/prepare/accept;
 - workflow start/routing/status/completion/reopen;
 - shared OQs;
 - executable task DAGs and task attachment;
@@ -26,6 +27,7 @@ The Loom plugin exposes tools for:
 ## Internal Modules
 
 - `plugins/loom/index.ts` — OpenCode integration and tool/hook surface.
+- `plugins/loom/intent.ts` — intent interview and Anchor-acceptance state.
 - `plugins/loom/workflow.ts` — workflow DAG and step state.
 - `plugins/loom/tasks.ts` — bounded implementation DAG validation.
 - `plugins/loom/oq.ts` — shared questions.

@@ -68,6 +68,16 @@ import {
   invalidateKnowledgeReport,
   type KnowledgeReport,
 } from "./knowledge"
+import {
+  acceptIntent,
+  askIntentQuestion,
+  prepareIntentDraft,
+  reopenIntent,
+  resolveIntentQuestion,
+  startIntent,
+  type IntentDecisionSource,
+  type IntentSession,
+} from "./intent"
 
 const loomAgents = new Set([
   "designer",
@@ -82,6 +92,23 @@ const loomAgents = new Set([
   "research",
   "diagnostic",
 ])
+
+function intentKey(id: string) {
+  return `intent/${id}`
+}
+
+function sessionIntentKey(sessionID: string) {
+  return `session-intent/${sessionID}`
+}
+
+async function readIntent(ctx: any, id: string): Promise<IntentSession | undefined> {
+  return (await ctx.storage.get(intentKey(id))) as IntentSession | undefined
+}
+
+async function activeIntent(ctx: any, sessionID: string): Promise<IntentSession | undefined> {
+  const id = (await ctx.storage.get(sessionIntentKey(sessionID))) as string | undefined
+  return id ? readIntent(ctx, id) : undefined
+}
 
 function episodeKey(id: string) {
   return `episode/${id}`
@@ -299,6 +326,263 @@ export default Plugin.define({
         description: "Loom workflow control, shared questions, routing, and step state.",
       })
 
+
+      editor.add({
+        name: "intent_start",
+        description:
+          "Start Loom intent shaping from a fuzzy product idea. General only. Use before an accepted Anchor exists.",
+        input: {
+          type: "object",
+          properties: {
+            seed: { type: "string" },
+          },
+          required: ["seed"],
+          additionalProperties: false,
+        },
+        options: { namespace: "loom" },
+        execute: async (input, tool) => {
+          if (tool.agent !== "general") {
+            return { content: JSON.stringify({ error: "Only general may run Loom intent shaping." }) }
+          }
+
+          const existing = await activeIntent(ctx, tool.sessionID)
+          if (existing && existing.state !== "accepted") {
+            return { content: JSON.stringify({ error: "An active intent interview already exists.", intent: existing }) }
+          }
+
+          try {
+            const session = startIntent((input as { seed: string }).seed, new Date().toISOString())
+            await ctx.storage.set(intentKey(session.id), session)
+            await ctx.storage.set(sessionIntentKey(tool.sessionID), session.id)
+            return { content: JSON.stringify({ intent: session }) }
+          } catch (error) {
+            return { content: JSON.stringify({ error: error instanceof Error ? error.message : String(error) }) }
+          }
+        },
+      })
+
+      editor.add({
+        name: "intent_status",
+        description: "Inspect the active Loom intent interview or one explicit intent id.",
+        input: {
+          type: "object",
+          properties: {
+            intentId: { type: "string" },
+          },
+          additionalProperties: false,
+        },
+        options: { namespace: "loom" },
+        execute: async (input, tool) => {
+          const requested = (input as { intentId?: string }).intentId
+          const session = requested ? await readIntent(ctx, requested) : await activeIntent(ctx, tool.sessionID)
+          return { content: JSON.stringify({ intent: session ?? null }) }
+        },
+      })
+
+      editor.add({
+        name: "intent_question",
+        description:
+          "Register exactly one user-owned interview question with Loom's recommended answer and rationale. General only.",
+        input: {
+          type: "object",
+          properties: {
+            branch: { type: "string" },
+            question: { type: "string" },
+            recommendation: { type: "string" },
+            why: { type: "string" },
+          },
+          required: ["branch", "question", "recommendation", "why"],
+          additionalProperties: false,
+        },
+        options: { namespace: "loom" },
+        execute: async (input, tool) => {
+          if (tool.agent !== "general") {
+            return { content: JSON.stringify({ error: "Only general may ask Loom intent questions." }) }
+          }
+          const session = await activeIntent(ctx, tool.sessionID)
+          if (!session) return { content: JSON.stringify({ error: "No active intent interview." }) }
+
+          const value = input as { branch: string; question: string; recommendation: string; why: string }
+          try {
+            const openQuestion = askIntentQuestion({
+              session,
+              ...value,
+              now: new Date().toISOString(),
+            })
+            await ctx.storage.set(intentKey(session.id), session)
+            return { content: JSON.stringify({ intentId: session.id, openQuestion }) }
+          } catch (error) {
+            return { content: JSON.stringify({ error: error instanceof Error ? error.message : String(error) }) }
+          }
+        },
+      })
+
+      editor.add({
+        name: "intent_resolve",
+        description:
+          "Resolve the current intent branch from the exact user answer or from repository/research evidence. General only.",
+        input: {
+          type: "object",
+          properties: {
+            resolution: { type: "string" },
+            source: { type: "string", enum: ["user", "repository", "research"] },
+            evidence: { type: "array", items: { type: "string" } },
+          },
+          required: ["resolution", "source"],
+          additionalProperties: false,
+        },
+        options: { namespace: "loom" },
+        execute: async (input, tool) => {
+          if (tool.agent !== "general") {
+            return { content: JSON.stringify({ error: "Only general may resolve Loom intent branches." }) }
+          }
+          const session = await activeIntent(ctx, tool.sessionID)
+          if (!session) return { content: JSON.stringify({ error: "No active intent interview." }) }
+
+          const value = input as {
+            resolution: string
+            source: IntentDecisionSource
+            evidence?: string[]
+          }
+          try {
+            const decision = resolveIntentQuestion({
+              session,
+              resolution: value.resolution,
+              source: value.source,
+              evidence: value.evidence,
+              now: new Date().toISOString(),
+            })
+            await ctx.storage.set(intentKey(session.id), session)
+            return { content: JSON.stringify({ intentId: session.id, decision }) }
+          } catch (error) {
+            return { content: JSON.stringify({ error: error instanceof Error ? error.message : String(error) }) }
+          }
+        },
+      })
+
+      editor.add({
+        name: "intent_prepare",
+        description:
+          "Mark the interview draft-ready after goal, observable success, scope, exclusions, user-owned decisions, and context are sufficiently resolved.",
+        input: {
+          type: "object",
+          properties: {
+            goal: { type: "string" },
+            success: { type: "array", items: { type: "string" } },
+            scope: { type: "array", items: { type: "string" } },
+            exclusions: { type: "array", items: { type: "string" } },
+            userOwned: { type: "array", items: { type: "string" } },
+            context: { type: "array", items: { type: "string" } },
+          },
+          required: ["goal", "success", "scope", "exclusions", "userOwned", "context"],
+          additionalProperties: false,
+        },
+        options: { namespace: "loom" },
+        execute: async (input, tool) => {
+          if (tool.agent !== "general") {
+            return { content: JSON.stringify({ error: "Only general may prepare a Loom Anchor draft." }) }
+          }
+          const session = await activeIntent(ctx, tool.sessionID)
+          if (!session) return { content: JSON.stringify({ error: "No active intent interview." }) }
+
+          const value = input as {
+            goal: string
+            success: string[]
+            scope: string[]
+            exclusions: string[]
+            userOwned: string[]
+            context: string[]
+          }
+          try {
+            const draft = prepareIntentDraft({
+              session,
+              ...value,
+              now: new Date().toISOString(),
+            })
+            await ctx.storage.set(intentKey(session.id), session)
+            return { content: JSON.stringify({ intentId: session.id, draft }) }
+          } catch (error) {
+            return { content: JSON.stringify({ error: error instanceof Error ? error.message : String(error) }) }
+          }
+        },
+      })
+
+      editor.add({
+        name: "intent_reopen",
+        description: "Return a draft-ready intent to interviewing after the user requests a correction. General only.",
+        input: {
+          type: "object",
+          properties: {},
+          additionalProperties: false,
+        },
+        options: { namespace: "loom" },
+        execute: async (_input, tool) => {
+          if (tool.agent !== "general") {
+            return { content: JSON.stringify({ error: "Only general may reopen Loom intent." }) }
+          }
+          const session = await activeIntent(ctx, tool.sessionID)
+          if (!session) return { content: JSON.stringify({ error: "No active intent interview." }) }
+          try {
+            reopenIntent(session)
+            await ctx.storage.set(intentKey(session.id), session)
+            return { content: JSON.stringify({ intent: session }) }
+          } catch (error) {
+            return { content: JSON.stringify({ error: error instanceof Error ? error.message : String(error) }) }
+          }
+        },
+      })
+
+      editor.add({
+        name: "intent_accept",
+        description:
+          "Record the explicit user acceptance boundary for a completed Anchor. General only; provide the exact user confirmation text.",
+        input: {
+          type: "object",
+          properties: {
+            anchorPath: { type: "string" },
+            confirmation: { type: "string" },
+          },
+          required: ["anchorPath", "confirmation"],
+          additionalProperties: false,
+        },
+        options: { namespace: "loom" },
+        execute: async (input, tool) => {
+          if (tool.agent !== "general") {
+            return { content: JSON.stringify({ error: "Only general may record Anchor acceptance." }) }
+          }
+          const session = await activeIntent(ctx, tool.sessionID)
+          if (!session) return { content: JSON.stringify({ error: "No active intent interview." }) }
+
+          const value = input as { anchorPath: string; confirmation: string }
+          if (!value.anchorPath.replaceAll("\\", "/").startsWith("docs/anchors/")) {
+            return { content: JSON.stringify({ error: "Accepted Anchor must live under docs/anchors/**." }) }
+          }
+
+          try {
+            const accepted = acceptIntent({
+              session,
+              anchorPath: value.anchorPath,
+              confirmation: value.confirmation,
+              now: new Date().toISOString(),
+            })
+            await ctx.storage.set(intentKey(session.id), session)
+            return {
+              content: JSON.stringify({
+                intentId: session.id,
+                accepted,
+                next: {
+                  tool: "loom_start",
+                  anchor: accepted.path,
+                  continueAutomatically: true,
+                },
+              }),
+            }
+          } catch (error) {
+            return { content: JSON.stringify({ error: error instanceof Error ? error.message : String(error) }) }
+          }
+        },
+      })
+
       editor.add({
         name: "start",
         description: "Start a Loom workflow for an accepted Anchor. General only.",
@@ -317,6 +601,24 @@ export default Plugin.define({
           }
 
           const { anchor } = input as { anchor: string }
+          const intent = await activeIntent(ctx, tool.sessionID)
+          if (intent && intent.state !== "accepted") {
+            return {
+              content: JSON.stringify({
+                error: "Cannot start autonomous execution while intent shaping is unresolved.",
+                intentState: intent.state,
+              }),
+            }
+          }
+          if (intent?.acceptedAnchor && intent.acceptedAnchor.path !== anchor) {
+            return {
+              content: JSON.stringify({
+                error: "Workflow Anchor does not match the accepted intent Anchor.",
+                acceptedAnchor: intent.acceptedAnchor.path,
+              }),
+            }
+          }
+
           const id = crypto.randomUUID()
           const workflow: Workflow = {
             id,
@@ -328,6 +630,9 @@ export default Plugin.define({
 
           await ctx.storage.set(workflowKey(id), workflow)
           await ctx.storage.set(sessionKey(tool.sessionID), id)
+          if (intent?.acceptedAnchor?.path === anchor) {
+            await ctx.storage.set(sessionIntentKey(tool.sessionID), "")
+          }
           await ctx.storage.set(limitsKey(id), DEFAULT_LIMITS)
           await ctx.storage.set(budgetKey(id), newBudgetState())
 

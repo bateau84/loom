@@ -13,8 +13,8 @@ Loom's repository is the global OpenCode config directory. Agent files therefore
 
 ### Primary
 
-- **general** — user-facing execution governor; starts and resumes autonomous workflows.
-- **brainstorm** — interactive sparring and Anchor shaping.
+- **general** — user-facing execution governor; shapes fuzzy intent, records the Anchor acceptance boundary, then starts/resumes autonomous workflows.
+- **brainstorm** — optional explicit sparring mode for intent exploration without autonomous execution.
 
 ### Authority subagents
 
@@ -123,3 +123,18 @@ Different-model independence is preferred for holistic review, but absence of a 
 - [BR-012](../../requirements/loom/br-012-prefer-deep-modules-and-remove-obsolete-code.md)
 - [BR-013](../../requirements/loom/br-013-diagnose-root-causes.md)
 - [BR-014](../../requirements/loom/br-014-support-deliberate-sparring.md)
+
+
+## Intent interviewing
+
+General loads the `intent-grilling` skill only when product intent is unresolved.
+
+The interview follows four runtime-enforced rules:
+- one unresolved user question at a time;
+- every user question carries a recommended answer and short rationale;
+- repository/research-answerable branches are resolved with evidence rather than sent to the user;
+- execution cannot start while the active intent session is unresolved.
+
+The interview is ready to draft an Anchor when Goal, observable success, scope, exclusions, user-owned decisions, and important context are clear enough that no unresolved user-owned branch would materially change them.
+
+The user explicitly accepts the complete Anchor before autonomous execution begins.
