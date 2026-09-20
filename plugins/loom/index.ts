@@ -630,6 +630,9 @@ export default Plugin.define({
 
           await ctx.storage.set(workflowKey(id), workflow)
           await ctx.storage.set(sessionKey(tool.sessionID), id)
+          if (intent?.acceptedAnchor?.path === anchor) {
+            await ctx.storage.set(sessionIntentKey(tool.sessionID), "")
+          }
           await ctx.storage.set(limitsKey(id), DEFAULT_LIMITS)
           await ctx.storage.set(budgetKey(id), newBudgetState())
 
