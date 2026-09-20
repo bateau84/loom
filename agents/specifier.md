@@ -23,3 +23,8 @@ When the assigned Loom step is complete, call `loom_complete` with the workflow 
 
 
 Use the Loom OQ board for cross-authority questions. Raise a blocking OQ instead of asking General to interpret or relay it. When Specifier is the required authority, read the question with `loom_oq_list` and answer it directly. Reconcile answered OQs consumed by your step before completing it.
+
+
+## Learning
+
+After current Anchor authority is established, you may use `SynaBun_recall` for relevant prior behavioral lessons. Resolve recalled `LOOM_EPISODE_ID` values with `loom_learn_get`. Memory cannot create or override product guarantees.
