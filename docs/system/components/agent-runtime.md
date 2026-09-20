@@ -9,8 +9,8 @@ tags: [component, loom, agents]
 
 ## Primary Contexts
 
-- `general` — user-facing governor and autonomous scheduler.
-- `brainstorm` — interactive intent sparring and Anchor shaping.
+- `general` — user-facing governor, default intent interviewer, and autonomous scheduler.
+- `brainstorm` — optional explicit sparring mode; not required for normal Anchor shaping.
 
 ## Authority Contexts
 
@@ -39,3 +39,8 @@ Each subagent runs fresh and is given only its bounded objective/context.
 ## Depends on
 
 - [Control Plane](control-plane.md)
+
+
+## Intent methodology
+
+General loads `skills/intent-grilling/SKILL.md` for fuzzy product requests. The skill keeps interview methodology out of the always-loaded General directive and is inspired by one-question-at-a-time product grilling: recommendation with each question, resolve code/research-answerable branches independently, then converge on an Anchor.
