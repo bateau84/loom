@@ -1,4 +1,6 @@
 import type * as OpenCodePlugin from "@opencode/plugin"
+import { LoomRpc } from "./rpc"
+import { buildSidebarSnapshot } from "./sidebar"
 import { renderToolOutput } from "./presentation"
 import {
   addVerificationRequirement,
@@ -412,6 +414,15 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
   id: "loom",
 
   async setup(ctx) {
+    await ctx.rpc.register(LoomRpc, {
+      sidebar: async (input) => {
+        const { sessionID } = input as { sessionID: string }
+        const workflow = await activeWorkflow(ctx, sessionID)
+        const questions = workflow ? await readQuestions(ctx, workflow.id) : []
+        return buildSidebarSnapshot(workflow, questions)
+      },
+    })
+
     await ctx.agent.transform((editor) => {
       if (editor.get("general")) editor.default("general")
     })
