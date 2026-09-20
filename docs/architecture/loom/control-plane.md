@@ -84,17 +84,22 @@ Identical failure + unchanged strategy beyond the configured limit routes upward
 Questions are shared workflow state, not messages carried manually by General.
 
 An OQ records:
-- question;
-- required authority;
-- source evidence;
-- blocking scope;
-- answer;
-- consumers;
-- reconciliation status.
+- the exact question and source evidence;
+- the authority required to answer it;
+- whether it blocks work;
+- affected workflow-step consumers;
+- the authoritative answer;
+- per-consumer reconciliation.
 
-Agents query OQs relevant to their role/task.
+Any active specialist may raise a question. The required authority reads and answers it directly from shared state. General schedules the required authority when needed but does not interpret or relay the question.
 
-The control plane validates that answers come from the required authority profile before treating them as authoritative.
+An answer is not closure when consumers already relied on the unresolved or prior meaning. Each declared consumer records `incorporated`, `unaffected`, or `explicitly-deferred`. Blocking work cannot complete until its relevant question is closed.
+
+For a blocking question raised before downstream work begins, the raising step is automatically a consumer. Future dependent work consumes the corrected artifact normally and does not need ceremonial reconciliation merely because it is downstream.
+
+Reopening explicitly preserves or invalidates the previous answer. Invalidating an answer clears prior reconciliation.
+
+User-owned questions are the exception: General presents the exact stored question and records the exact user answer as user-sourced authority.
 
 ## Resource Bounds
 

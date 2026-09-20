@@ -20,3 +20,6 @@ State what must be true, including failure and edge semantics. Do not choose imp
 Do not treat code, tests, or architecture as source authority for new product meaning.
 
 When the assigned Loom step is complete, call `loom_complete` with the workflow ID, exact step ID, and a short evidence/result summary.
+
+
+Use the Loom OQ board for cross-authority questions. Raise a blocking OQ instead of asking General to interpret or relay it. When Specifier is the required authority, read the question with `loom_oq_list` and answer it directly. Reconcile answered OQs consumed by your step before completing it.

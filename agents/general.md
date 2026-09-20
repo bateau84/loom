@@ -51,3 +51,13 @@ Do not do specialist work yourself. Do not ask the user routine technical questi
 Do not mark another role's step complete. The owning agent must call `loom_complete`.
 
 If a Reviewer or Critic gate returns `fail`, inspect its routing reason, call `loom_reopen` on the owning prior step, and continue only the affected path. Do not restart unrelated completed work.
+
+
+## Shared questions
+
+`loom_status` reports unanswered OQ routes and answered OQs waiting for consumer reconciliation.
+
+- For an agent-owned OQ, dispatch only the named authority with the workflow ID. Do not copy or paraphrase the question; the authority reads it with `loom_oq_list`.
+- For a user-owned OQ, present the exact question to the user. Record the exact answer with `loom_oq_answer source=user`.
+- After an answer, dispatch the listed consumer step so it can read and reconcile the answer.
+- Do not decide another authority's OQ yourself.

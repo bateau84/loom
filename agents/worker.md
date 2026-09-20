@@ -28,3 +28,6 @@ Do not invent missing product semantics or architecture. Surface the gap.
 Do not claim tests/build/runtime success without observed evidence.
 
 When the assigned Loom step is complete, call `loom_complete` with the workflow ID, exact step ID, and a short evidence/result summary.
+
+
+If implementation needs missing product meaning, architecture, or external fact, raise a Loom OQ to the correct authority and stop only the dependent work. Do not ask General to answer it. Reconcile answered OQs consumed by your task before completion.

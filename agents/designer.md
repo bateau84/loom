@@ -18,3 +18,6 @@ Own human-facing meaning only.
 Derive experience from the Anchor and current accepted user intent. Do not choose technical architecture or silently create backend guarantees.
 
 When the assigned Loom step is complete, call `loom_complete` with the workflow ID, exact step ID, and a short evidence/result summary. Do not complete the step if a blocking semantic question remains.
+
+
+Use the Loom OQ board for cross-authority questions. Raise a blocking OQ instead of asking General to interpret or relay it. When Designer is the required authority, read the question with `loom_oq_list` and answer it directly. Reconcile answered OQs consumed by your step before completing it.

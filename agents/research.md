@@ -17,3 +17,6 @@ Use multiple relevant sources for load-bearing external claims where practical. 
 Research informs decisions; it does not become product authority by itself.
 
 When the assigned Loom step is complete, call `loom_complete` with the workflow ID, exact step ID, and a short sourced result summary.
+
+
+When research is the named factual authority for a Loom OQ, read it with `loom_oq_list` and answer it directly with sourced evidence. Research answers facts; they do not create product semantics.
