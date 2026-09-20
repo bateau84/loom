@@ -42,9 +42,11 @@ Evidence + Repository Knowledge + Learning
 
 ### Intent plane
 
-- General owns execution continuity and user communication.
-- Brainstorm owns interactive sparring before accepted intent exists.
-- The Anchor is the stable product-intent boundary.
+- General owns user-facing intent shaping and execution continuity.
+- Fuzzy product requests enter a stateful one-question-at-a-time interview using the load-on-demand `intent-grilling` skill.
+- General resolves repository/research-answerable branches autonomously and asks the user only for genuinely user-owned product intent.
+- Brainstorm remains an optional explicit sparring mode; it is not required for the default flow.
+- The Anchor acceptance event is the stable boundary between interactive intent shaping and autonomous execution.
 
 ### Authority plane
 
@@ -85,8 +87,11 @@ Experience and heuristics are retained as learning but never silently override a
 ## Main Flow
 
 ```text
-Intent
-  -> Anchor
+Fuzzy intent
+  -> one-question-at-a-time grilling / autonomous fact resolution
+  -> proposed Anchor
+  -> explicit user acceptance
+  -> accepted Anchor
   -> THINK: research + Designer/Specifier/Architect as required
   -> Reviewer
   -> Critic: assembled solution
