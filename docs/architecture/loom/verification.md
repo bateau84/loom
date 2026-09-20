@@ -43,15 +43,35 @@ Reviewer does not redesign the whole product simply because another approach exi
 
 ### 4. Product Acceptance
 
-Product Acceptance proves accepted Anchor outcomes through the real product-owned composition.
+Product Acceptance is executed in a fresh **Acceptance** context, separate from Reviewer.
+
+The active workflow holds a compact scenario plan. Each scenario:
+- maps to one or more accepted Anchor/requirement criteria;
+- has an immutable result for the current attempt;
+- is `passed`, `failed`, or `unproven`;
+- requires `product-acceptance` evidence claims for PASS.
+
+Product Acceptance proves accepted outcomes through the real product-owned composition.
 
 Mocks may stand in for true external systems where appropriate.
 
 Mocks must not replace mandatory product-owned components in the path being claimed.
 
-Human-facing products include Designer validation of the implemented experience where relevant.
+If upstream implementation is reopened, old Product Acceptance results are reset automatically.
 
-### 5. Critic
+Human-facing products additionally run a fresh Designer validation against the realized experience.
+
+### 5. Product Reviewer
+
+After Product Acceptance and any Designer validation pass, Reviewer independently checks:
+- scenario coverage against accepted product criteria;
+- evidence quality and revision relevance;
+- whether real product-owned paths were exercised;
+- whether locally green evidence actually proves the assembled product.
+
+Mechanical Product Acceptance readiness is necessary but not sufficient for Reviewer PASS.
+
+### 6. Critic
 
 Critic asks:
 
