@@ -29,7 +29,7 @@ function LoomSidebar(props: { sessionID?: string }) {
 
     const current = ++generation
     try {
-      const next = await rpc.sidebar({ sessionID })
+      const next = await rpc.sidebar({ sessionID }) as LoomSidebarSnapshot
       if (current === generation) setSnapshot(next)
     } catch {
       if (current === generation) setSnapshot(undefined)
@@ -77,10 +77,10 @@ function LoomSidebar(props: { sessionID?: string }) {
           </box>
         </Show>
 
-        <Show when={snapshot()!.now.length > 0}>
+        <Show when={snapshot()!.now.some((step) => !step.id.startsWith("task:"))}>
           <box flexDirection="column" gap={0} paddingTop={1}>
             <text fg={context.theme.text.base}>Now</text>
-            <For each={snapshot()!.now}>
+            <For each={snapshot()!.now.filter((step) => !step.id.startsWith("task:"))}>
               {(step) => <text>→ {step.label}</text>}
             </For>
           </box>
