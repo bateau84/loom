@@ -134,18 +134,6 @@ def setup_projects(case: dict[str, Any]) -> tuple[Path, Path, Path]:
     (target_oc / "agents" / (case["agent"] + ".md")).write_text(target_agent, encoding="utf-8")
     (judge_oc / "agents" / "eval-judge.md").write_text(JUDGE_AGENT, encoding="utf-8")
 
-    if case["execution"] == "runtime":
-        # OpenCode auto-discovers plugin entry files directly under
-        # .opencode/plugins/*.ts. Keep Loom's multi-file module tree intact,
-        # but add a direct top-level entry shim so the plugin is actually
-        # loaded in the isolated eval project.
-        plugin_dir = target_oc / "plugins"
-        shutil.copytree(ROOT / "plugins" / "loom", plugin_dir / "loom", dirs_exist_ok=True)
-        (plugin_dir / "loom.ts").write_text(
-            'export { default } from "./loom/index"\n',
-            encoding="utf-8",
-        )
-
     for fixture in case.get("fixture_files", []):
         path = safe_fixture_path(target_project, fixture["path"])
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -320,6 +308,7 @@ def invoke_container(
     config: Path | None,
     models_catalog: Path | None,
     database_seed: Path | None,
+    config_root: Path | None,
     timeout: int,
     container_timeout: int,
     mount_node_modules: bool,
@@ -378,6 +367,8 @@ def invoke_container(
             command += volume(models_catalog, "/seed/models.json", True)
         if database_seed:
             command += volume(database_seed, "/seed/opencode.db", True)
+        if config_root:
+            command += volume(config_root, "/seed/opencode-config", True)
 
         command += [
             "--env",
@@ -564,6 +555,7 @@ def run_case(case: dict[str, Any], args: argparse.Namespace, engine: str) -> dic
             config=config,
             models_catalog=models_catalog,
             database_seed=database_seed,
+            config_root=ROOT if case["execution"] == "runtime" and args.target_transport == "opencode" else None,
             timeout=args.timeout_seconds,
             container_timeout=args.container_timeout,
             mount_node_modules=case["execution"] == "runtime",
