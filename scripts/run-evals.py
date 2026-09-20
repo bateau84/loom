@@ -269,6 +269,10 @@ def invoke_container(
             "no-new-privileges",
         ]
         if engine == "podman":
+            # The eval-runner image uses dedicated UID/GID 1000. Map the
+            # invoking host user onto that identity so private read-only seed
+            # files remain readable without running the container as root.
+            command += ["--userns", "keep-id:uid=1000,gid=1000"]
             # Avoid SELinux bind-mount denial without mutating labels on the
             # user's repository, node_modules, or auth/config seed files.
             command += ["--security-opt", "label=disable"]
