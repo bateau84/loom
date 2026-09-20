@@ -339,7 +339,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           required: ["seed"],
           additionalProperties: false,
         },
-        options: { namespace: "loom" },
+        options: { namespace: "loom", codemode: false },
         execute: async (input, tool) => {
           if (tool.agent !== "general") {
             return { content: JSON.stringify({ error: "Only general may run Loom intent shaping." }) }
@@ -371,7 +371,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           },
           additionalProperties: false,
         },
-        options: { namespace: "loom" },
+        options: { namespace: "loom", codemode: false },
         execute: async (input, tool) => {
           const requested = (input as { intentId?: string }).intentId
           const session = requested ? await readIntent(ctx, requested) : await activeIntent(ctx, tool.sessionID)
@@ -394,7 +394,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           required: ["branch", "question", "recommendation", "why"],
           additionalProperties: false,
         },
-        options: { namespace: "loom" },
+        options: { namespace: "loom", codemode: false },
         execute: async (input, tool) => {
           if (tool.agent !== "general") {
             return { content: JSON.stringify({ error: "Only general may ask Loom intent questions." }) }
@@ -431,7 +431,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           required: ["resolution", "source"],
           additionalProperties: false,
         },
-        options: { namespace: "loom" },
+        options: { namespace: "loom", codemode: false },
         execute: async (input, tool) => {
           if (tool.agent !== "general") {
             return { content: JSON.stringify({ error: "Only general may resolve Loom intent branches." }) }
@@ -477,7 +477,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           required: ["goal", "success", "scope", "exclusions", "userOwned", "context"],
           additionalProperties: false,
         },
-        options: { namespace: "loom" },
+        options: { namespace: "loom", codemode: false },
         execute: async (input, tool) => {
           if (tool.agent !== "general") {
             return { content: JSON.stringify({ error: "Only general may prepare a Loom Anchor draft." }) }
@@ -515,7 +515,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           properties: {},
           additionalProperties: false,
         },
-        options: { namespace: "loom" },
+        options: { namespace: "loom", codemode: false },
         execute: async (_input, tool) => {
           if (tool.agent !== "general") {
             return { content: JSON.stringify({ error: "Only general may reopen Loom intent." }) }
@@ -545,7 +545,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           required: ["anchorPath", "confirmation"],
           additionalProperties: false,
         },
-        options: { namespace: "loom" },
+        options: { namespace: "loom", codemode: false },
         execute: async (input, tool) => {
           if (tool.agent !== "general") {
             return { content: JSON.stringify({ error: "Only general may record Anchor acceptance." }) }
@@ -594,7 +594,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           required: ["anchor"],
           additionalProperties: false,
         },
-        options: { namespace: "loom" },
+        options: { namespace: "loom", codemode: false },
         execute: async (input, tool) => {
           if (tool.agent !== "general") {
             return { content: JSON.stringify({ error: "Only general may start a Loom workflow." }) }
@@ -664,7 +664,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           ],
           additionalProperties: false,
         },
-        options: { namespace: "loom" },
+        options: { namespace: "loom", codemode: false },
         execute: async (input, tool) => {
           if (tool.agent !== "general") {
             return { content: JSON.stringify({ error: "Only general may route Loom workflows." }) }
@@ -720,7 +720,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           properties: { workflowId: { type: "string" } },
           additionalProperties: false,
         },
-        options: { namespace: "loom" },
+        options: { namespace: "loom", codemode: false },
         execute: async (input, tool) => {
           const requested = (input as { workflowId?: string }).workflowId
           const workflow = requested
@@ -764,7 +764,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           required: ["workflowId", "stepId", "summary"],
           additionalProperties: false,
         },
-        options: { namespace: "loom" },
+        options: { namespace: "loom", codemode: false },
         execute: async (input, tool) => {
           const { workflowId, stepId, summary, outcome } = input as {
             workflowId: string
@@ -882,7 +882,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           ],
           additionalProperties: false,
         },
-        options: { namespace: "loom" },
+        options: { namespace: "loom", codemode: false },
         execute: async (input, tool) => {
           if (tool.agent !== "general") {
             return { content: JSON.stringify({ error: "Only general may reopen Loom steps." }) }
@@ -972,7 +972,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           required: ["workflowId", "stepId", "question", "requiredAuthority", "blocking"],
           additionalProperties: false,
         },
-        options: { namespace: "loom" },
+        options: { namespace: "loom", codemode: false },
         execute: async (input, tool) => {
           const value = input as {
             workflowId: string
@@ -1025,7 +1025,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           required: ["workflowId"],
           additionalProperties: false,
         },
-        options: { namespace: "loom" },
+        options: { namespace: "loom", codemode: false },
         execute: async (input, tool) => {
           const { workflowId, stepId } = input as { workflowId: string; stepId?: string }
           const workflow = await readWorkflow(ctx, workflowId)
@@ -1056,7 +1056,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           required: ["workflowId", "questionId", "answer", "source"],
           additionalProperties: false,
         },
-        options: { namespace: "loom" },
+        options: { namespace: "loom", codemode: false },
         execute: async (input, tool) => {
           const value = input as {
             workflowId: string
@@ -1104,7 +1104,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           required: ["workflowId", "questionId", "stepId", "disposition", "summary"],
           additionalProperties: false,
         },
-        options: { namespace: "loom" },
+        options: { namespace: "loom", codemode: false },
         execute: async (input, tool) => {
           const value = input as {
             workflowId: string
@@ -1150,7 +1150,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           required: ["workflowId", "questionId", "preserveAnswer", "reason"],
           additionalProperties: false,
         },
-        options: { namespace: "loom" },
+        options: { namespace: "loom", codemode: false },
         execute: async (input, tool) => {
           const value = input as {
             workflowId: string
@@ -1185,7 +1185,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           properties: {},
           additionalProperties: false,
         },
-        options: { namespace: "loom" },
+        options: { namespace: "loom", codemode: false },
         execute: async (_input, tool) => {
           const observations = await sessionObservations(ctx, tool.sessionID)
           return { content: JSON.stringify({ observations }) }
@@ -1211,7 +1211,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           required: ["workflowId", "stepId", "kind", "statement", "observationIds"],
           additionalProperties: false,
         },
-        options: { namespace: "loom" },
+        options: { namespace: "loom", codemode: false },
         execute: async (input, tool) => {
           const value = input as {
             workflowId: string
@@ -1280,7 +1280,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           required: ["workflowId", "stepId"],
           additionalProperties: false,
         },
-        options: { namespace: "loom" },
+        options: { namespace: "loom", codemode: false },
         execute: async (input) => {
           const { workflowId, stepId } = input as { workflowId: string; stepId: string }
           const observations = await stepObservations(ctx, workflowId, stepId)
@@ -1305,7 +1305,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           required: ["workflowId", "changedDocs", "okfObservationIds"],
           additionalProperties: false,
         },
-        options: { namespace: "loom" },
+        options: { namespace: "loom", codemode: false },
         execute: async (input, tool) => {
           if (tool.agent !== "documenter") {
             return { content: JSON.stringify({ error: "Only documenter may record knowledge-sync results." }) }
@@ -1363,7 +1363,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           required: ["workflowId"],
           additionalProperties: false,
         },
-        options: { namespace: "loom" },
+        options: { namespace: "loom", codemode: false },
         execute: async (input) => {
           const { workflowId } = input as { workflowId: string }
           const report = (await ctx.storage.get(knowledgeKey(workflowId))) as KnowledgeReport | undefined
@@ -1396,7 +1396,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           required: ["workflowId", "scenarios"],
           additionalProperties: false,
         },
-        options: { namespace: "loom" },
+        options: { namespace: "loom", codemode: false },
         execute: async (input, tool) => {
           if (!["acceptance", "specifier", "reviewer"].includes(tool.agent)) {
             return { content: JSON.stringify({ error: "Only acceptance, specifier, or reviewer may define Product Acceptance scenarios." }) }
@@ -1441,7 +1441,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           required: ["workflowId"],
           additionalProperties: false,
         },
-        options: { namespace: "loom" },
+        options: { namespace: "loom", codemode: false },
         execute: async (input) => {
           const { workflowId } = input as { workflowId: string }
           const plan = (await ctx.storage.get(acceptanceKey(workflowId))) as AcceptancePlan | undefined
@@ -1470,7 +1470,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           required: ["workflowId", "scenarioId", "outcome", "evidenceClaimIds", "note"],
           additionalProperties: false,
         },
-        options: { namespace: "loom" },
+        options: { namespace: "loom", codemode: false },
         execute: async (input, tool) => {
           if (tool.agent !== "acceptance") {
             return { content: JSON.stringify({ error: "Only acceptance may record Product Acceptance results." }) }
@@ -1529,7 +1529,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           required: ["workflowId"],
           additionalProperties: false,
         },
-        options: { namespace: "loom" },
+        options: { namespace: "loom", codemode: false },
         execute: async (input) => {
           const { workflowId } = input as { workflowId: string }
           const limits = await readLimits(ctx, workflowId)
@@ -1568,7 +1568,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           required: ["workflowId", "tasks"],
           additionalProperties: false,
         },
-        options: { namespace: "loom" },
+        options: { namespace: "loom", codemode: false },
         execute: async (input, tool) => {
           if (tool.agent !== "planner") {
             return { content: JSON.stringify({ error: "Only planner may define the Worker task graph." }) }
@@ -1622,7 +1622,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           required: ["workflowId"],
           additionalProperties: false,
         },
-        options: { namespace: "loom" },
+        options: { namespace: "loom", codemode: false },
         execute: async (input) => {
           const { workflowId } = input as { workflowId: string }
           const workflow = await readWorkflow(ctx, workflowId)
@@ -1657,7 +1657,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           required: ["workflowId", "stepId", "write"],
           additionalProperties: false,
         },
-        options: { namespace: "loom" },
+        options: { namespace: "loom", codemode: false },
         execute: async (input, tool) => {
           if (tool.agent !== "general") {
             return { content: JSON.stringify({ error: "Only general may define Worker task scope." }) }
@@ -1708,7 +1708,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           required: ["workflowId", "stepId"],
           additionalProperties: false,
         },
-        options: { namespace: "loom" },
+        options: { namespace: "loom", codemode: false },
         execute: async (input, tool) => {
           const { workflowId, stepId } = input as { workflowId: string; stepId: string }
           const workflow = await readWorkflow(ctx, workflowId)
@@ -1764,7 +1764,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           required: ["workflowId", "stepId"],
           additionalProperties: false,
         },
-        options: { namespace: "loom" },
+        options: { namespace: "loom", codemode: false },
         execute: async (input) => {
           const { workflowId, stepId } = input as { workflowId: string; stepId: string }
           const scope = (await ctx.storage.get(scopeKey(workflowId, stepId))) as TaskScope | undefined
@@ -1788,7 +1788,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           required: ["subject", "lesson", "evidenceRefs", "tags"],
           additionalProperties: false,
         },
-        options: { namespace: "loom" },
+        options: { namespace: "loom", codemode: false },
         execute: async (input, tool) => {
           const value = input as {
             subject: string
@@ -1854,7 +1854,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           required: ["query"],
           additionalProperties: false,
         },
-        options: { namespace: "loom" },
+        options: { namespace: "loom", codemode: false },
         execute: async (input) => {
           const value = input as { query: string; projectOnly?: boolean; limit?: number }
           const limit = Math.max(1, Math.min(value.limit ?? 10, 25))
@@ -1889,7 +1889,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           },
           additionalProperties: false,
         },
-        options: { namespace: "loom" },
+        options: { namespace: "loom", codemode: false },
         execute: async (input) => {
           const value = input as { episodeIds?: string[]; heuristicIds?: string[] }
           const episodeIds = [...new Set(value.episodeIds ?? [])]
@@ -1932,7 +1932,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           required: ["episodeId", "reason"],
           additionalProperties: false,
         },
-        options: { namespace: "loom" },
+        options: { namespace: "loom", codemode: false },
         execute: async (input, tool) => {
           if (tool.agent !== "reviewer" && tool.agent !== "critic") {
             return { content: JSON.stringify({ error: "Only reviewer or critic may retire learning episodes." }) }
@@ -1987,7 +1987,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           },
           additionalProperties: false,
         },
-        options: { namespace: "loom" },
+        options: { namespace: "loom", codemode: false },
         execute: async (input) => {
           const value = input as { limit?: number }
           const limit = Math.max(1, Math.min(value.limit ?? 25, 100))
@@ -2019,7 +2019,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           required: ["statement", "scope", "episodeIds"],
           additionalProperties: false,
         },
-        options: { namespace: "loom" },
+        options: { namespace: "loom", codemode: false },
         execute: async (input, tool) => {
           const value = input as { statement: string; scope: string; episodeIds: string[] }
           const records = await Promise.all(
@@ -2063,7 +2063,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           required: ["heuristicId", "action", "episodeIds", "note"],
           additionalProperties: false,
         },
-        options: { namespace: "loom" },
+        options: { namespace: "loom", codemode: false },
         execute: async (input, tool) => {
           if (tool.agent !== "reviewer" && tool.agent !== "critic") {
             return { content: JSON.stringify({ error: "Only reviewer or critic may validate or retire heuristics." }) }
