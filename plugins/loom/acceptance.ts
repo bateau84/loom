@@ -80,6 +80,10 @@ export function recordAcceptanceResult(input: {
   const scenario = input.plan.scenarios.find((candidate) => candidate.id === input.scenarioId)
   if (!scenario) throw new Error("Product Acceptance scenario not found.")
 
+  if (scenario.outcome !== "pending") {
+    throw new Error("Product Acceptance scenario already has a result; reopen/reset before replacing it.")
+  }
+
   if (input.outcome === "passed") {
     if (input.claims.length === 0) {
       throw new Error("Passing Product Acceptance requires observed evidence claims.")
@@ -89,6 +93,9 @@ export function recordAcceptanceResult(input: {
     }
     if (input.claims.some((claim) => claim.workflowId !== input.plan.workflowId)) {
       throw new Error("Product Acceptance evidence must belong to the same workflow.")
+    }
+    if (input.claims.some((claim) => claim.stepId !== "product-acceptance")) {
+      throw new Error("Product Acceptance evidence must be produced by the product-acceptance step.")
     }
   }
 
