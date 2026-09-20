@@ -412,7 +412,7 @@ Desktop accessibility differs architecturally from web ARIA. The design obligati
 
 ### Design implications for accessibility
 
-1. **Every custom-drawn control must declare itself.** A custom-drawn button, slider, or list item does not automatically expose to accessibility APIs. The Design Spec must specify: what role does this control declare? What is its label? What are its accessible actions? Do not leave this to the coder's judgment.
+1. **Every custom-drawn control must declare itself.** A custom-drawn button, slider, or list item does not automatically expose to accessibility APIs. The Design Spec must specify: what role does this control declare? What is its label? What are its accessible actions? Do not leave this to the worker's judgment.
 
 2. **Keyboard navigation must be complete.** Tab moves focus between interactive elements. Arrow keys navigate within complex widgets (menus, lists, trees, grids). Enter activates the focused element. Escape closes dialogs and dismisses overlays and returns focus to the trigger. This is the minimum; the Design Spec must name the key behavior for every custom interactive component.
 
