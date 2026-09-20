@@ -12,11 +12,14 @@ from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_IMAGE = "ghcr.io/bateau84/opencode-eval-runner:edge"
 DEFAULT_SUITES = [
     ROOT / "evals" / "authority.json",
     ROOT / "evals" / "front-door.json",
     ROOT / "evals" / "verification.json",
 ]
+PROVIDER_ENVS = ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "OPENROUTER_API_KEY")
+COPILOT_ENVS = ("COPILOT_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN")
 
 JUDGE_AGENT = """---
 description: Strict semantic judge for Loom behavioral evals
@@ -98,154 +101,203 @@ def safe_fixture_path(project: Path, value: str) -> Path:
     return target
 
 
-def global_opencode_config_dir() -> Path:
-    base = Path(os.environ.get("XDG_CONFIG_HOME", str(Path.home() / ".config")))
-    return (base / "opencode").resolve()
-
-
-def setup_project(case: dict[str, Any]) -> tuple[Path, Path]:
-    temp = Path(tempfile.mkdtemp(prefix="loom-eval-" + case["id"].lower() + "-"))
-    project = temp / "project"
-    oc = project / ".opencode"
-    (oc / "agents").mkdir(parents=True)
-    (oc / "skills").mkdir(parents=True)
-
-    shutil.copytree(ROOT / "skills", oc / "skills", dirs_exist_ok=True)
-
-    source_agent = (ROOT / "agents" / (case["agent"] + ".md")).read_text(encoding="utf-8")
-    target = promote_agent(source_agent) if case["execution"] == "runtime" else decision_agent(source_agent, case["agent"])
-    (oc / "agents" / (case["agent"] + ".md")).write_text(target, encoding="utf-8")
-    (oc / "agents" / "eval-judge.md").write_text(JUDGE_AGENT, encoding="utf-8")
-
-    # Preserve the user's real global OpenCode provider/plugin environment.
-    # Project-local .opencode definitions override agents/skills for the case.
-    # If Loom is checked out somewhere other than the global OpenCode config,
-    # load this exact checkout's plugin project-locally.
-    if case["execution"] == "runtime" and ROOT.resolve() != global_opencode_config_dir():
-        shutil.copytree(ROOT / "plugins", oc / "plugins", dirs_exist_ok=True)
-        node_modules = ROOT / "node_modules"
-        if node_modules.exists():
-            try:
-                (project / "node_modules").symlink_to(node_modules, target_is_directory=True)
-            except OSError:
-                pass
-
-    for fixture in case.get("fixture_files", []):
-        path = safe_fixture_path(project, fixture["path"])
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(fixture["content"], encoding="utf-8")
-
+def write_project_config(project: Path, agent: str) -> None:
     (project / "opencode.json").write_text(
-        json.dumps(
-            {
-                "$schema": "https://opencode.ai/config.json",
-                "default_agent": case["agent"],
-            },
-            indent=2,
-        )
-        + "\n",
+        json.dumps({"$schema": "https://opencode.ai/config.json", "default_agent": agent}, indent=2) + "\n",
         encoding="utf-8",
     )
 
-    return temp, project
 
-def run_command(command: list[str], cwd: Path, env: dict[str, str], timeout: int) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        command,
-        cwd=cwd,
-        env=env,
-        capture_output=True,
-        text=True,
-        timeout=timeout,
-        check=False,
+def setup_projects(case: dict[str, Any]) -> tuple[Path, Path, Path]:
+    temp = Path(tempfile.mkdtemp(prefix="loom-eval-" + case["id"].lower() + "-"))
+    target_project = temp / "target"
+    judge_project = temp / "judge"
+
+    target_oc = target_project / ".opencode"
+    judge_oc = judge_project / ".opencode"
+    (target_oc / "agents").mkdir(parents=True)
+    (target_oc / "skills").mkdir(parents=True)
+    (judge_oc / "agents").mkdir(parents=True)
+
+    shutil.copytree(ROOT / "skills", target_oc / "skills", dirs_exist_ok=True)
+
+    source_agent = (ROOT / "agents" / (case["agent"] + ".md")).read_text(encoding="utf-8")
+    target_agent = (
+        promote_agent(source_agent)
+        if case["execution"] == "runtime"
+        else decision_agent(source_agent, case["agent"])
     )
+    (target_oc / "agents" / (case["agent"] + ".md")).write_text(target_agent, encoding="utf-8")
+    (judge_oc / "agents" / "eval-judge.md").write_text(JUDGE_AGENT, encoding="utf-8")
+
+    if case["execution"] == "runtime":
+        shutil.copytree(ROOT / "plugins", target_oc / "plugins", dirs_exist_ok=True)
+
+    for fixture in case.get("fixture_files", []):
+        path = safe_fixture_path(target_project, fixture["path"])
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(fixture["content"], encoding="utf-8")
+
+    write_project_config(target_project, case["agent"])
+    write_project_config(judge_project, "eval-judge")
+    return temp, target_project, judge_project
 
 
-def parse_events(text: str) -> list[dict[str, Any]]:
-    events: list[dict[str, Any]] = []
-    for raw in text.splitlines():
-        raw = raw.strip()
-        if not raw:
-            continue
-        try:
-            value = json.loads(raw)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(value, dict):
-            events.append(value)
-    return events
+def resolve_engine(requested: str) -> str:
+    if requested != "auto":
+        if not shutil.which(requested):
+            raise RuntimeError("container engine not found: " + requested)
+        return requested
+    for candidate in ("podman", "docker"):
+        if shutil.which(candidate):
+            return candidate
+    raise RuntimeError("no supported container engine found; install podman or docker")
 
 
-def session_id(events: list[dict[str, Any]]) -> str | None:
-    for event in events:
-        value = event.get("sessionID") or event.get("sessionId")
-        if isinstance(value, str):
-            return value
+def default_auth_path() -> Path:
+    base = Path(os.environ.get("XDG_DATA_HOME", str(Path.home() / ".local" / "share")))
+    return base / "opencode" / "auth.json"
+
+
+def resolve_optional_file(explicit: str | None, env_name: str, fallback: Path | None = None) -> Path | None:
+    raw = explicit or os.environ.get(env_name)
+    if raw:
+        path = Path(raw).expanduser().resolve()
+        if not path.is_file():
+            raise RuntimeError(f"{env_name} file not found: {path}")
+        return path
+    if fallback and fallback.is_file():
+        return fallback.resolve()
     return None
 
 
-def session_export(opencode: str, sid: str | None, cwd: Path, env: dict[str, str], timeout: int) -> Any:
-    if not sid:
-        return None
-    result = run_command([opencode, "session", "export", sid, "--sanitize"], cwd, env, timeout)
-    if result.returncode != 0:
-        return None
-    try:
-        return json.loads(result.stdout)
-    except json.JSONDecodeError:
-        return None
+def volume(source: Path, target: str, readonly: bool) -> list[str]:
+    return ["--volume", f"{source.resolve()}:{target}:{'ro' if readonly else 'rw'}"]
 
 
-def assistant_text(exported: Any, events: list[dict[str, Any]]) -> str:
-    parts: list[str] = []
-    messages = exported if isinstance(exported, list) else exported.get("messages", []) if isinstance(exported, dict) else []
-    for message in messages:
-        if not isinstance(message, dict):
-            continue
-        info = message.get("info")
-        if not isinstance(info, dict) or info.get("role") != "assistant" or info.get("summary") is True:
-            continue
-        for part in message.get("parts", []):
-            if (
-                isinstance(part, dict)
-                and part.get("type") == "text"
-                and part.get("synthetic") is not True
-                and part.get("ignored") is not True
-                and isinstance(part.get("text"), str)
-            ):
-                value = part["text"].strip()
-                if value:
-                    parts.append(value)
-    if parts:
-        return "\n\n".join(parts)
-
-    for event in events:
-        part = event.get("part")
-        if event.get("type") == "text" and isinstance(part, dict) and isinstance(part.get("text"), str):
-            value = part["text"].strip()
-            if value:
-                parts.append(value)
-    return "\n\n".join(parts)
+def pass_env(command: list[str], names: tuple[str, ...] | list[str]) -> None:
+    for name in names:
+        if os.environ.get(name):
+            command += ["--env", name]
 
 
-def assistant_tools(exported: Any, events: list[dict[str, Any]]) -> list[str]:
-    found: list[str] = []
-    messages = exported if isinstance(exported, list) else exported.get("messages", []) if isinstance(exported, dict) else []
-    for message in messages:
-        if not isinstance(message, dict):
-            continue
-        info = message.get("info")
-        if not isinstance(info, dict) or info.get("role") != "assistant":
-            continue
-        for part in message.get("parts", []):
-            if isinstance(part, dict) and part.get("type") == "tool" and isinstance(part.get("tool"), str):
-                found.append(part["tool"])
-    for event in events:
-        if event.get("type") == "tool_use" and isinstance(event.get("part"), dict):
-            tool = event["part"].get("tool")
-            if isinstance(tool, str):
-                found.append(tool)
-    return list(dict.fromkeys(found))
+def invoke_container(
+    *,
+    engine: str,
+    image: str,
+    transport: str,
+    model: str,
+    agent: str,
+    prompt: str,
+    system: str,
+    project: Path,
+    auth: Path | None,
+    config: Path | None,
+    timeout: int,
+    container_timeout: int,
+    mount_node_modules: bool,
+    extra_envs: list[str],
+) -> dict[str, Any]:
+    with tempfile.TemporaryDirectory(prefix="loom-eval-invoke-") as tmp:
+        root = Path(tmp)
+        input_dir = root / "input"
+        output_dir = root / "output"
+        input_dir.mkdir()
+        output_dir.mkdir()
+        (input_dir / "prompt.txt").write_text(prompt, encoding="utf-8")
+        (input_dir / "system.txt").write_text(system, encoding="utf-8")
+
+        command = [
+            engine,
+            "run",
+            "--rm",
+            "--read-only",
+            "--tmpfs",
+            "/tmp:rw,exec,nosuid,nodev,size=1g",
+            "--cap-drop",
+            "ALL",
+            "--security-opt",
+            "no-new-privileges",
+            "--workdir",
+            "/workspace",
+        ]
+        command += volume(project, "/workspace", True)
+        command += volume(input_dir, "/input", True)
+        command += volume(output_dir, "/output", False)
+
+        if mount_node_modules:
+            node_modules = ROOT / "node_modules"
+            if not node_modules.is_dir():
+                raise RuntimeError("runtime eval requires node_modules; run bun install first")
+            command += volume(node_modules, "/workspace/node_modules", True)
+
+        if auth:
+            command += volume(auth, "/seed/auth.json", True)
+        if config:
+            command += volume(config, "/seed/opencode.json", True)
+
+        command += [
+            "--env",
+            f"EVAL_TRANSPORT={transport}",
+            "--env",
+            f"EVAL_MODEL={model}",
+            "--env",
+            f"EVAL_AGENT={agent}",
+            "--env",
+            "EVAL_PROMPT_FILE=/input/prompt.txt",
+            "--env",
+            "EVAL_SYSTEM_FILE=/input/system.txt",
+            "--env",
+            "EVAL_RESULT_FILE=/output/result.json",
+            "--env",
+            f"EVAL_TIMEOUT_SECONDS={timeout}",
+        ]
+        pass_env(command, PROVIDER_ENVS)
+        if transport == "github-copilot-cli":
+            pass_env(command, COPILOT_ENVS)
+        pass_env(command, extra_envs)
+        command.append(image)
+
+        proc = subprocess.run(
+            command,
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            timeout=container_timeout,
+            check=False,
+        )
+        result_path = output_dir / "result.json"
+        if not result_path.is_file():
+            detail = " | ".join(part.strip() for part in (proc.stderr, proc.stdout) if part.strip())
+            return {
+                "exit_code": proc.returncode,
+                "text": "",
+                "tools": [],
+                "stderr": ("container produced no result" + (": " + detail[:4000] if detail else "")),
+                "stdout": proc.stdout[:100000],
+                "infrastructure_error": True,
+            }
+        try:
+            result = json.loads(result_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            return {
+                "exit_code": proc.returncode,
+                "text": "",
+                "tools": [],
+                "stderr": "container result was invalid JSON: " + str(exc),
+                "stdout": "",
+                "infrastructure_error": True,
+            }
+        if not isinstance(result, dict):
+            return {
+                "exit_code": proc.returncode,
+                "text": "",
+                "tools": [],
+                "stderr": "container result was not an object",
+                "stdout": "",
+                "infrastructure_error": True,
+            }
+        return result
 
 
 def normalize_tool(value: str) -> str:
@@ -266,33 +318,6 @@ def deterministic_failures(case: dict[str, Any], tools: list[str]) -> list[str]:
         if normalize_tool(forbidden) in normalized:
             failures.append("forbidden tool observed: " + forbidden)
     return failures
-
-
-def invoke_agent(
-    opencode: str,
-    agent: str,
-    prompt: str,
-    model: str | None,
-    project: Path,
-    env: dict[str, str],
-    timeout: int,
-) -> dict[str, Any]:
-    command = [opencode, "run", "--standalone", "--format", "json", "--auto", "--agent", agent]
-    if model:
-        command += ["--model", model]
-    command.append(prompt)
-    result = run_command(command, project, env, timeout)
-    events = parse_events(result.stdout)
-    sid = session_id(events)
-    exported = session_export(opencode, sid, project, env, timeout)
-    return {
-        "exit_code": result.returncode,
-        "stdout": result.stdout,
-        "stderr": result.stderr,
-        "session_id": sid,
-        "text": assistant_text(exported, events),
-        "tools": assistant_tools(exported, events),
-    }
 
 
 def judge_prompt(case: dict[str, Any], text: str, tools: list[str]) -> str:
@@ -324,8 +349,8 @@ def parse_judge(text: str) -> dict[str, Any]:
     cleaned = text.strip()
     cleaned = re.sub(r"^~~~(?:json)?\s*", "", cleaned, flags=re.I)
     cleaned = re.sub(r"\s*~~~$", "", cleaned)
-    cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned, flags=re.I)
-    cleaned = re.sub(r"\s*```$", "", cleaned)
+    cleaned = re.sub(r"^\`\`\`(?:json)?\s*", "", cleaned, flags=re.I)
+    cleaned = re.sub(r"\s*\`\`\`$", "", cleaned)
     value = json.loads(cleaned)
     if not isinstance(value, dict) or not isinstance(value.get("passed"), bool):
         raise ValueError("judge result missing boolean passed")
@@ -340,138 +365,116 @@ def target_prompt(case: dict[str, Any]) -> str:
     return case["prompt"] + "\n\nRespond with the production decision/action for this scenario. Do not claim to have executed unavailable tools."
 
 
-def preflight_model(opencode: str, model: str | None, cwd: Path, env: dict[str, str], timeout: int) -> tuple[bool, str]:
-    if not model:
-        return True, "using OpenCode default model"
-    if "/" not in model:
-        return False, "model must use provider/model format"
-    result = run_command([opencode, "models"], cwd, env, timeout)
-    if result.returncode != 0:
-        detail = (result.stderr or result.stdout).strip()
-        return False, "opencode models failed: %s" % detail[:1000]
-    available = {
-        line.strip().split()[0]
-        for line in result.stdout.splitlines()
-        if line.strip() and not line.lstrip().startswith(("#", "DESCRIPTION", "USAGE", "FLAGS"))
-    }
-    if model not in available:
-        sample = ", ".join(sorted(available)[:12])
-        return False, "model %s not listed by 'opencode models'%s" % (
-            model,
-            ("; sample: " + sample) if sample else "",
+def transport_error(result: dict[str, Any]) -> str | None:
+    if result.get("infrastructure_error") is True:
+        return str(result.get("stderr") or "container infrastructure failure")
+    if result.get("exit_code") != 0:
+        detail = str(result.get("stderr") or result.get("stdout") or "").strip()
+        return "transport exited %s%s" % (
+            result.get("exit_code"),
+            (": " + detail[:2000].replace("\n", " | ")) if detail else "",
         )
-    return True, "model available"
+    if not str(result.get("text") or "").strip():
+        return "transport produced no usable assistant text"
+    return None
 
 
-def run_case(case: dict[str, Any], args: argparse.Namespace) -> dict[str, Any]:
-    temp, project = setup_project(case)
-    env = dict(os.environ)
-    if args.provider_config:
-        env["OPENCODE_CONFIG"] = str(Path(args.provider_config).resolve())
-    env["OPENCODE_DISABLE_AUTOUPDATE"] = "1"
+def run_case(case: dict[str, Any], args: argparse.Namespace, engine: str) -> dict[str, Any]:
+    if case["execution"] == "runtime" and args.target_transport != "opencode":
+        raise RuntimeError(f"{case['id']} is runtime mode and requires --target-transport opencode")
+
+    temp, target_project, judge_project = setup_projects(case)
+    auth = resolve_optional_file(args.auth, "OPENCODE_EVAL_RUNNER_AUTH", default_auth_path())
+    config = resolve_optional_file(args.provider_config, "OPENCODE_EVAL_RUNNER_CONFIG")
+    judge_model = args.judge_model or args.model
+
+    if args.judge_transport != args.target_transport and not args.judge_model:
+        raise RuntimeError("--judge-model is required when target and judge transports differ")
 
     try:
-        target_ok, target_preflight = preflight_model(
-            args.opencode, args.model, project, env, args.timeout_seconds
+        target_system = ""
+        if args.target_transport == "github-copilot-cli":
+            target_agent_text = (target_project / ".opencode" / "agents" / (case["agent"] + ".md")).read_text(encoding="utf-8")
+            target_system = strip_frontmatter(target_agent_text)
+
+        target = invoke_container(
+            engine=engine,
+            image=args.image,
+            transport=args.target_transport,
+            model=args.model,
+            agent=case["agent"],
+            prompt=target_prompt(case),
+            system=target_system,
+            project=target_project,
+            auth=auth,
+            config=config,
+            timeout=args.timeout_seconds,
+            container_timeout=args.container_timeout,
+            mount_node_modules=case["execution"] == "runtime",
+            extra_envs=args.env,
         )
-        judge_model = args.judge_model or args.model
-        if judge_model == args.model:
-            judge_ok, judge_preflight = target_ok, target_preflight
-        else:
-            judge_ok, judge_preflight = preflight_model(
-                args.opencode, judge_model, project, env, args.timeout_seconds
+        target_error = transport_error(target)
+        deterministic = deterministic_failures(case, list(target.get("tools") or [])) if not target_error else []
+
+        judge_result: dict[str, Any] | None = None
+        judge: dict[str, Any] | None = None
+        judge_error: str | None = None
+
+        if not target_error:
+            judge_result = invoke_container(
+                engine=engine,
+                image=args.image,
+                transport=args.judge_transport,
+                model=judge_model,
+                agent="eval-judge",
+                prompt=judge_prompt(case, str(target.get("text") or ""), list(target.get("tools") or [])),
+                system=strip_frontmatter(JUDGE_AGENT) if args.judge_transport == "github-copilot-cli" else "",
+                project=judge_project,
+                auth=auth,
+                config=config,
+                timeout=args.timeout_seconds,
+                container_timeout=args.container_timeout,
+                mount_node_modules=False,
+                extra_envs=args.env,
             )
-        if not target_ok or not judge_ok:
-            return {
-                "case": case["id"],
-                "agent": case["agent"],
-                "execution": case["execution"],
-                "model": args.model or "opencode-default",
-                "judge_model": args.judge_model or args.model or "opencode-default",
-                "passed": False,
-                "preflight_error": "; ".join(
-                    item for ok, item in (
-                        (target_ok, target_preflight),
-                        (judge_ok, judge_preflight),
-                    )
-                    if not ok
-                ),
-                "target": {
-                    "exit_code": None,
-                    "session_id": None,
-                    "text": "",
-                    "tools": [],
-                    "stderr": "",
-                    "stdout": "",
-                },
-                "deterministic_failures": [],
-                "semantic": None,
-                "judge_error": None,
-            }
+            judge_error = transport_error(judge_result)
+            if not judge_error:
+                try:
+                    judge = parse_judge(str(judge_result.get("text") or ""))
+                except Exception as exc:
+                    judge_error = "judge parse failed: " + str(exc)
 
-        target = invoke_agent(
-            args.opencode,
-            case["agent"],
-            target_prompt(case),
-            args.model,
-            project,
-            env,
-            args.timeout_seconds,
-        )
-        deterministic = deterministic_failures(case, target["tools"])
-        judge = None
-        judge_error = None
-
-        if target["exit_code"] == 0 and target["text"].strip():
-            judged = invoke_agent(
-                args.opencode,
-                "eval-judge",
-                judge_prompt(case, target["text"], target["tools"]),
-                args.judge_model or args.model,
-                project,
-                env,
-                args.timeout_seconds,
-            )
-            try:
-                judge = parse_judge(judged["text"])
-            except Exception as exc:
-                judge_error = "judge parse failed: " + str(exc)
-        else:
-            judge_error = "target produced no usable assistant text (exit %s)" % target["exit_code"]
-
+        non_evidence = target_error is not None or judge_error is not None
         passed = (
-            target["exit_code"] == 0
+            not non_evidence
             and not deterministic
             and isinstance(judge, dict)
             and judge.get("passed") is True
-            and judge_error is None
         )
+        classification = "pass" if passed else "non-evidence" if non_evidence else "behavioral-fail"
 
         artifact = {
             "case": case["id"],
             "agent": case["agent"],
             "execution": case["execution"],
-            "model": args.model or "opencode-default",
-            "judge_model": args.judge_model or args.model or "opencode-default",
+            "runner_image": args.image,
+            "container_engine": engine,
+            "target_transport": args.target_transport,
+            "judge_transport": args.judge_transport,
+            "model": args.model,
+            "judge_model": judge_model,
+            "classification": classification,
             "passed": passed,
-            "preflight_error": None,
-            "target": {
-                "exit_code": target["exit_code"],
-                "session_id": target["session_id"],
-                "text": target["text"],
-                "tools": target["tools"],
-                "stderr": target["stderr"][:10000],
-                "stdout": target["stdout"][:100000],
-            },
+            "target": target,
+            "target_error": target_error,
             "deterministic_failures": deterministic,
+            "judge_transport_result": judge_result,
             "semantic": judge,
             "judge_error": judge_error,
         }
         artifact_dir = Path(args.artifact_dir)
         artifact_dir.mkdir(parents=True, exist_ok=True)
-        (artifact_dir / (case["id"] + ".json")).write_text(
-            json.dumps(artifact, indent=2) + "\n", encoding="utf-8"
-        )
+        (artifact_dir / (case["id"] + ".json")).write_text(json.dumps(artifact, indent=2) + "\n", encoding="utf-8")
         return artifact
     finally:
         if args.keep_temp:
@@ -481,18 +484,24 @@ def run_case(case: dict[str, Any], args: argparse.Namespace) -> dict[str, Any]:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Run Loom behavioral evals through isolated OpenCode sessions.")
+    parser = argparse.ArgumentParser(description="Run Loom behavioral evals in isolated OCI model invocations.")
     parser.add_argument("--all", action="store_true")
     parser.add_argument("--cases", default="")
     parser.add_argument("--suite", action="append", default=[])
     parser.add_argument("--model")
     parser.add_argument("--judge-model")
-    parser.add_argument("--opencode", default="opencode")
+    parser.add_argument("--target-transport", choices=("opencode", "github-copilot-cli"), default="opencode")
+    parser.add_argument("--judge-transport", choices=("opencode", "github-copilot-cli"), default="opencode")
+    parser.add_argument("--engine", choices=("auto", "podman", "docker"), default="auto")
+    parser.add_argument("--image", default=os.environ.get("OPENCODE_EVAL_RUNNER_IMAGE", DEFAULT_IMAGE))
+    parser.add_argument("--auth")
+    parser.add_argument("--provider-config")
+    parser.add_argument("--env", action="append", default=[], metavar="NAME")
     parser.add_argument("--artifact-dir", default=str(ROOT / ".loom-evals"))
     parser.add_argument("--timeout-seconds", type=int, default=240)
+    parser.add_argument("--container-timeout", type=int, default=300)
     parser.add_argument("--keep-temp", action="store_true")
     parser.add_argument("--list", action="store_true")
-    parser.add_argument("--provider-config")
     args = parser.parse_args()
 
     suite_paths = [Path(value).resolve() for value in args.suite] if args.suite else DEFAULT_SUITES
@@ -508,6 +517,9 @@ def main() -> int:
             ))
         return 0
 
+    if not args.model:
+        parser.error("live evals require --model")
+
     selected_ids = {value.strip() for value in args.cases.split(",") if value.strip()}
     if not args.all and not selected_ids:
         parser.error("live evals spend model inference; pass --cases ID1,ID2 or --all explicitly")
@@ -517,18 +529,22 @@ def main() -> int:
     if missing:
         parser.error("unknown case id(s): " + ", ".join(missing))
 
+    engine = resolve_engine(args.engine)
     selected = [case for case in cases if args.all or case["id"] in selected_ids]
-    print("Running %d Loom live behavioral eval(s)..." % len(selected))
+    print(
+        "Running %d Loom live behavioral eval(s) via %s (%s target / %s judge)..."
+        % (len(selected), engine, args.target_transport, args.judge_transport)
+    )
 
     failed = 0
     for case in selected:
         print("%s [%s/%s] ... " % (case["id"], case["agent"], case["execution"]), end="", flush=True)
         try:
-            result = run_case(case, args)
+            result = run_case(case, args, engine)
         except subprocess.TimeoutExpired:
             failed += 1
             print("ERROR")
-            print("  - target or judge timed out")
+            print("  - target or judge container timed out")
             continue
         except Exception as exc:
             failed += 1
@@ -536,27 +552,25 @@ def main() -> int:
             print("  - " + str(exc))
             continue
 
-        if result["passed"]:
+        if result["classification"] == "pass":
             print("PASS")
-        else:
-            failed += 1
-            print("FAIL")
-            if result.get("preflight_error"):
-                print("  - preflight: " + str(result["preflight_error"]))
-            for item in result["deterministic_failures"]:
-                print("  - " + item)
-            if result["judge_error"]:
-                print("  - " + result["judge_error"])
-            target = result.get("target") or {}
-            stderr = str(target.get("stderr") or "").strip()
-            stdout = str(target.get("stdout") or "").strip()
-            if stderr:
-                print("  - OpenCode stderr: " + stderr[:1500].replace("\n", " | "))
-            elif stdout and not target.get("text"):
-                print("  - OpenCode stdout: " + stdout[:1500].replace("\n", " | "))
-            semantic = result.get("semantic")
-            if isinstance(semantic, dict) and semantic.get("passed") is False:
-                print("  - " + str(semantic.get("summary", "semantic judge failed")))
+            continue
+
+        failed += 1
+        if result["classification"] == "non-evidence":
+            print("ERROR")
+            if result.get("target_error"):
+                print("  - target: " + str(result["target_error"]))
+            if result.get("judge_error"):
+                print("  - judge: " + str(result["judge_error"]))
+            continue
+
+        print("FAIL")
+        for item in result["deterministic_failures"]:
+            print("  - " + item)
+        semantic = result.get("semantic")
+        if isinstance(semantic, dict) and semantic.get("passed") is False:
+            print("  - " + str(semantic.get("summary", "semantic judge failed")))
 
     print("%d/%d passed" % (len(selected) - failed, len(selected)))
     return 1 if failed else 0

@@ -70,13 +70,84 @@ List cases:
 bun run eval:list
 ```
 
-Run a few cases using your existing OpenCode authentication:
+Live execution uses the reusable OCI boundary from `bateau84/opencode-eval-runner`. Install Podman or Docker first. The target and semantic judge run in **separate fresh containers**.
+
+Run a few cases with your existing OpenCode `auth.json`:
 
 ```bash
 bun run eval:live -- \
   --cases INTENT-01,REVIEW-01,WORK-01 \
-  --model <provider/model> \
-  --judge-model <different-provider/model>
+  --model openai/gpt-5.3-codex-spark
+```
+
+The harness chooses Podman first, then Docker. Override it explicitly with `--engine podman` or `--engine docker`.
+
+The default image is:
+
+```text
+ghcr.io/bateau84/opencode-eval-runner:edge
+```
+
+The OpenCode transport automatically seeds the normal credential file when present:
+
+```text
+~/.local/share/opencode/auth.json
+```
+
+It does **not** inherit your global OpenCode config. Pass provider configuration only when the provider actually requires it:
+
+```bash
+bun run eval:live -- \
+  --cases WORK-01 \
+  --model my-provider/my-model \
+  --provider-config /path/to/minimal-provider-config.json
+```
+
+API-key providers may use `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or `OPENROUTER_API_KEY`.
+
+### Independent judge
+
+A different judge model is preferred:
+
+```bash
+bun run eval:live -- \
+  --cases WORK-01,REVIEW-01 \
+  --model openai/gpt-5.3-codex-spark \
+  --judge-model openai/gpt-5.4
+```
+
+Target and judge still run in different containers even when they use the same model.
+
+### GitHub Copilot CLI transport
+
+Pure role-decision cases and the semantic judge may use GitHub Copilot CLI:
+
+```bash
+export COPILOT_GITHUB_TOKEN=...
+
+bun run eval:live -- \
+  --cases WORK-01,REVIEW-01,CRITIC-01 \
+  --model gpt-5.4 \
+  --target-transport github-copilot-cli \
+  --judge-transport github-copilot-cli
+```
+
+Authentication precedence is:
+
+```text
+COPILOT_GITHUB_TOKEN
+GH_TOKEN
+GITHUB_TOKEN
+```
+
+Runtime cases such as `INTENT-01` require the `opencode` target transport because the eval asserts real Loom tool calls. A Copilot CLI judge can still be used with an OpenCode target:
+
+```bash
+bun run eval:live -- \
+  --cases INTENT-01 \
+  --model openai/gpt-5.3-codex-spark \
+  --judge-transport github-copilot-cli \
+  --judge-model gpt-5.4
 ```
 
 Run the complete corpus only deliberately:
@@ -85,13 +156,9 @@ Run the complete corpus only deliberately:
 bun run eval:live -- --all --model <provider/model>
 ```
 
-If `--judge-model` is omitted, the target model is reused as judge. A different model is preferred for adversarial independence.
+For each case, Loom creates separate target and judge projects. Runtime targets receive the checked-out Loom plugin/skills plus a read-only mount of the checked-out `node_modules`; judges receive only the judge agent. Container-local HOME/XDG/session state is discarded after every invocation.
 
-The runner creates a fresh temporary OpenCode project per case. It copies the exact checked-out Loom agents/skills and, for runtime cases, the Loom plugin. It does not modify the user's real project or global Loom configuration.
-
-Provider/model configuration is copied only for provider/model fields into an isolated config root. OpenCode's existing authentication remains available through its normal credential store.
-
-Results are written to `.loom-evals/<CASE>.json`.
+Results are written to `.loom-evals/<CASE>.json`. Infrastructure/provider failures are classified as **non-evidence**, not behavioral FAIL.
 
 ## Cost control
 
