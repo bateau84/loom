@@ -30,8 +30,9 @@ Loom's repository is the global OpenCode config directory. Agent files therefore
 - **research** — sourced investigation and external knowledge.
 - **diagnostic** — root-cause investigation.
 - **acceptance** — executes real end-to-end Product Acceptance scenarios and records observed proof.
+- **planner** — disposable decomposition context that turns an accepted solution into a bounded executable Worker DAG.
 
-Planning is normally a worker capability loaded through a planning skill rather than a permanent authority role.
+Planner is an execution context, not a product authority or gate owner. The executable DAG lives in Loom workflow state; a separate Plan document is not required unless the product itself needs one.
 
 ## Fresh Context
 
@@ -66,6 +67,7 @@ Typical mapping:
 | external factual uncertainty | Research |
 | unexplained failure | Diagnostic |
 | assembled-product proof | Acceptance |
+| product implementation decomposition | Planner |
 | normal independent check | Reviewer |
 | whole-solution challenge | Critic |
 
@@ -83,7 +85,6 @@ Examples:
 - database migrations;
 - OAuth;
 - browser/UI testing;
-- planning;
 - documentation;
 - security testing.
 
