@@ -48,6 +48,19 @@ Each case includes:
 
 The semantic judge sees the observed assistant result and tool list. It must grade every positive and negative clause explicitly.
 
+## Scenario authoring standard
+
+Behavioral cases should resemble normal work, not instructions for passing the eval harness.
+
+- Prefer realistic user, teammate, bug, feature, refactor, documentation, and release situations.
+- Do not name a Loom mechanism in the prompt unless that mechanism itself is the behavior under test.
+- Test both sides of authority boundaries. A good corpus checks that a role refuses work it does not own **and** acts decisively when the work is inside its authority.
+- Include ordinary low-risk work as well as adversarial edge cases so the safest learned strategy is not simply to escalate everything.
+- Vary domain, pressure, lifecycle state, and task size instead of cloning the same scenario with different nouns.
+- In `role-decision` mode, expectations grade the production decision/action the role states; they must not require tool calls or completed side effects that the mode deliberately makes unavailable.
+- In `runtime` mode, require observed actions when the behavior depends on actually using Loom tools.
+- Keep harness plumbing, marker strings, container details, and judge instructions out of case prompts.
+
 ## Free validation
 
 Normal CI runs:
