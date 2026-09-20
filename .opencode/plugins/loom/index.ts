@@ -10,18 +10,21 @@ type Step = {
   summary?: string
 }
 
+type Effects = {
+  humanFacing: boolean
+  behavioral: boolean
+  structural: boolean
+  externalUnknown: boolean
+  diagnostic: boolean
+  productOutcome: boolean
+}
+
 type Workflow = {
   id: string
   anchor: string
   createdBySession: string
   createdAt: string
-  effects?: {
-    humanFacing: boolean
-    behavioral: boolean
-    structural: boolean
-    externalUnknown: boolean
-    productOutcome: boolean
-  }
+  effects?: Effects
   steps: Step[]
 }
 
@@ -51,10 +54,14 @@ function runnable(workflow: Workflow) {
   )
 }
 
-function buildSteps(effects: NonNullable<Workflow["effects"]>): Step[] {
+function buildSteps(effects: Effects): Step[] {
   const steps: Step[] = []
   const think: string[] = []
 
+  if (effects.diagnostic) {
+    steps.push({ id: "diagnostic", agent: "diagnostic", dependsOn: [], status: "pending" })
+    think.push("diagnostic")
+  }
   if (effects.externalUnknown) {
     steps.push({ id: "research", agent: "research", dependsOn: [], status: "pending" })
     think.push("research")
@@ -116,6 +123,18 @@ function buildSteps(effects: NonNullable<Workflow["effects"]>): Step[] {
   return steps
 }
 
+function preserveCompleted(previous: Step[], next: Step[]) {
+  const byID = new Map(previous.map((step) => [step.id, step]))
+
+  for (const step of next) {
+    const old = byID.get(step.id)
+    if (old?.agent === step.agent && old.status === "complete") {
+      step.status = "complete"
+      step.summary = old.summary
+    }
+  }
+}
+
 async function readWorkflow(ctx: any, id: string): Promise<Workflow | undefined> {
   return (await ctx.storage.get(workflowKey(id))) as Workflow | undefined
 }
@@ -129,6 +148,10 @@ export default Plugin.define({
   id: "loom",
 
   async setup(ctx) {
+    await ctx.agent.transform((editor) => {
+      if (editor.get("general")) editor.default("general")
+    })
+
     await ctx.tool.transform((editor) => {
       editor.namespace({
         name: "loom",
@@ -172,7 +195,7 @@ export default Plugin.define({
       editor.add({
         name: "route",
         description:
-          "Classify the accepted change and create the required Loom execution DAG. General only; use before dispatching specialists or workers.",
+          "Classify or reclassify the accepted work and create the required Loom execution DAG. General only. Reclassification is allowed before implementation completes and preserves valid completed steps.",
         input: {
           type: "object",
           properties: {
@@ -180,12 +203,20 @@ export default Plugin.define({
             behavioral: { type: "boolean" },
             structural: { type: "boolean" },
             externalUnknown: { type: "boolean" },
+            diagnostic: { type: "boolean" },
             productOutcome: {
               type: "boolean",
               description: "True for non-trivial product work requiring holistic solution and final Critic review.",
             },
           },
-          required: ["humanFacing", "behavioral", "structural", "externalUnknown", "productOutcome"],
+          required: [
+            "humanFacing",
+            "behavioral",
+            "structural",
+            "externalUnknown",
+            "diagnostic",
+            "productOutcome",
+          ],
           additionalProperties: false,
         },
         options: { namespace: "loom" },
@@ -199,17 +230,26 @@ export default Plugin.define({
             return { content: JSON.stringify({ error: "No active Loom workflow. Call loom_start first." }) }
           }
 
-          if (workflow.steps.some((step) => step.status === "complete")) {
+          const implementationStarted = workflow.steps.some(
+            (step) =>
+              ["worker", "review-implementation", "critic-final"].includes(step.id) &&
+              step.status === "complete",
+          )
+          if (implementationStarted) {
             return {
               content: JSON.stringify({
-                error: "V0 routing is immutable after work has completed. Start a new workflow for reclassification.",
+                error:
+                  "V0 route reclassification is only supported before implementation completion. Start a new correction workflow for later reclassification.",
               }),
             }
           }
 
-          const effects = input as NonNullable<Workflow["effects"]>
+          const effects = input as Effects
+          const next = buildSteps(effects)
+          preserveCompleted(workflow.steps, next)
+
           workflow.effects = effects
-          workflow.steps = buildSteps(effects)
+          workflow.steps = next
           await ctx.storage.set(workflowKey(workflow.id), workflow)
 
           return {
