@@ -113,8 +113,7 @@
       "agent": "research",
       "execution": "role-decision",
       "requirements": [
-        "BR-003",
-        "BR-022"
+        "BR-003"
       ],
       "prompt": "Two secondary blog posts say an API endpoint supports incremental sync; the provider's current reference says the endpoint returns full snapshots only. Produce the research conclusion.",
       "trap": "Cherry-pick the convenient majority of secondary sources.",
