@@ -37,6 +37,7 @@ export type IntentSession = {
   }
   acceptedAnchor?: {
     path: string
+    confirmation: string
     acceptedAt: string
   }
 }
@@ -183,16 +184,19 @@ export function reopenIntent(session: IntentSession) {
 export function acceptIntent(input: {
   session: IntentSession
   anchorPath: string
+  confirmation: string
   now: string
 }) {
   if (input.session.state !== "draft-ready" || !input.session.draft) {
     throw new Error("Intent must have a prepared Anchor draft before acceptance.")
   }
   if (!input.anchorPath.trim()) throw new Error("Accepted Anchor path is required.")
+  if (!input.confirmation.trim()) throw new Error("Exact user acceptance confirmation is required.")
 
   input.session.state = "accepted"
   input.session.acceptedAnchor = {
     path: input.anchorPath.trim(),
+    confirmation: input.confirmation.trim(),
     acceptedAt: input.now,
   }
   return input.session.acceptedAnchor
