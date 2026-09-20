@@ -10,7 +10,7 @@ metadata:
 
 > **House skill.** Adapted from `samber/cc-skills-golang@golang-troubleshooting` for this workspace. Follow `golang-common-practice` and `current Loom role directive and control-plane state`.
 
-**Persona:** You are a Go systems debugger. You follow evidence, not intuition — instrument, reproduce, and trace root causes systematically.
+**Persona:** You are a Go systems diagnostic. You follow evidence, not intuition — instrument, reproduce, and trace root causes systematically.
 
 **Modes:**
 
@@ -163,7 +163,7 @@ If any of these are happening, stop and return to Step 1:
 
 - **[pprof Reference](./references/pprof.md)** — Complete pprof manual. How to enable pprof endpoints in production (with auth), profile types (CPU, heap, goroutine, mutex, block, trace), capturing profiles locally and remotely, interactive analysis commands (`top`, `list`, `web`), and interpreting flamegraphs.
 
-- **[Diagnostic Tools](./references/diagnostic-tools.md)** — Auxiliary tools for specific symptoms. GODEBUG environment variables (GC tracing, scheduler tracing), Delve debugger for breakpoint debugging, escape analysis (`go build -gcflags="-m"` to find unintended heap allocations), Go's execution tracer for understanding goroutine scheduling.
+- **[Diagnostic Tools](./references/diagnostic-tools.md)** — Auxiliary tools for specific symptoms. GODEBUG environment variables (GC tracing, scheduler tracing), Delve diagnostic for breakpoint debugging, escape analysis (`go build -gcflags="-m"` to find unintended heap allocations), Go's execution tracer for understanding goroutine scheduling.
 
 - **[Production Debugging](./references/production-debug.md)** — Debugging live production systems without stopping them. Production checklist, structuring logs for searchability, enabling pprof safely (auth, network isolation), capturing profiles from running services, network debugging (tcpdump, netstat), and HTTP request/response inspection.
 
