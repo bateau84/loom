@@ -418,7 +418,7 @@ Terminal states: [success state, abort state, error state]
 
 When producing a flow design as an AI agent:
 
-1. **Produce error paths explicitly.** Do not write "the system handles errors appropriately" — this defers error path design to the coder and produces dead ends. Name each error condition and its re-entry point.
+1. **Produce error paths explicitly.** Do not write "the system handles errors appropriately" — this defers error path design to the worker and produces dead ends. Name each error condition and its re-entry point.
 
 2. **Name the exit states.** Do not write "the flow ends" — write "the user sees confirmation that the order was placed, including the order number and estimated delivery date." Success confirmation is a design decision, not an implementation detail.
 
@@ -539,7 +539,7 @@ Coverage list for [product/feature]:
   ✗ User deletes account — NOT DESIGNED
 ```
 
-**Gap analysis**: Explicitly flagged missing flows, incomplete error paths, and flow-IA contradictions. Do not omit these — the coder will discover the gaps and invent solutions that may not match design intent.
+**Gap analysis**: Explicitly flagged missing flows, incomplete error paths, and flow-IA contradictions. Do not omit these — the worker will discover the gaps and invent solutions that may not match design intent.
 
 ---
 
