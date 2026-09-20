@@ -1,4 +1,6 @@
-# terraform-module-testing Assessment Contract
+# terraform-module-testing Reviewer Assessment
+
+Reviewer-only domain contract. It does not create Loom authority, product meaning, or proof.
 
 ## Review criteria
 
@@ -12,13 +14,3 @@ Reviewer asks what `.tftest.hcl` actually proves at **plan vs apply** level:
 - apply-mode tests clean up temporary resources and account for credentials/cost/region/quota;
 - Terraform version gates match features used (mocking, parallel/state_key etc.);
 - scenarios cover defaults, boundary validation, conditional resources, important outputs and integration paths proportional to module contract.
-
-## Adjudication criteria
-
-Critic breaks the intended invariant while preserving the current assertion, injects a different expected failure, replaces real provider behavior with permissive mock values, and runs tests in parallel/reordered. Ask whether a green test can exist while the module’s accepted behavior is wrong.
-
-Block when cited module-test evidence is non-discriminating or plan/mock evidence is used to claim real infrastructure behavior. More apply tests are not inherently better when plan tests prove the intended contract safely.
-
-## Scaling
-
-Increase depth with real-resource apply tests, state sharing/cross-run dependencies, provider mocks, destructive/costly infrastructure, version-specific features, and breadth of the module contract.

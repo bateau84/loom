@@ -1,4 +1,6 @@
-# terraform-provider-testing Assessment Contract
+# terraform-provider-testing Reviewer Assessment
+
+Reviewer-only domain contract. It does not create Loom authority, product meaning, or proof.
 
 ## Review criteria
 
@@ -13,13 +15,3 @@ Reviewer verifies acceptance tests exercise Terraform’s **plan→apply→refre
 - `ExpectError` matches the intended diagnostic rather than any failure; prerequisites/skips do not turn absent credentials/provider features into green evidence;
 - cross-step comparison captures actual mutation/preservation semantics and external-disappears tests exercise Read convergence;
 - ephemeral resource tests respect no-persistent-state semantics rather than forcing ordinary resource assumptions.
-
-## Adjudication criteria
-
-Critic breaks Read/update/import/destroy while leaving Create intact, returns unrelated expected error, leaves remote resource after test, introduces perpetual plan diff, and runs tests in parallel/reordered. Ask what provider defect could survive every cited check.
-
-Block when acceptance tests can systematically false-pass on state convergence/lifecycle or cleanup is unsafe. Test helper style is non-blocking.
-
-## Scaling
-
-Increase depth with stateful/destructive resources, import/disappears, eventual consistency, replacement, parallel test execution, sweepers, ephemeral resources, and cost/privilege of real provider accounts.

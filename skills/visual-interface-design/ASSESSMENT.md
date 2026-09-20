@@ -1,4 +1,6 @@
-# visual-interface-design Assessment Contract
+# visual-interface-design Reviewer Assessment
+
+Reviewer-only domain contract. It does not create Loom authority, product meaning, or proof.
 
 ## Review criteria
 
@@ -13,15 +15,3 @@ Reviewer asks whether visual treatment communicates the accepted information/int
 7. **Motion purpose** — visual motion communicates state, causality, orientation, or confirmation and has reduced-motion treatment where applicable.
 8. **Decorative freedom** — decorative color/shape is allowed; it becomes a defect only when it obscures hierarchy, accessibility, brand/system coherence, or semantic meaning.
 9. **Boundary discipline** — aesthetics do not invent product behavior or overwrite accepted interaction/information architecture.
-
-## Adjudication criteria
-
-Critic probes information under degraded perception: grayscale/no color, high zoom, narrow viewport, dense/error states, focus vs hover, and reduced motion. Ask whether severity/action/status could be misread and whether token/system exceptions accumulate into visual drift.
-
-Block when visual choices hide a required state/action, materially misrepresent severity/status, make an accepted task inaccessible, contradict accepted behavioral design, or fragment the design system enough to create inconsistent semantics.
-
-Aesthetic preference alone is not a gate defect. Do not require every decorative color to carry information.
-
-## Scaling
-
-Increase depth with state density, data visualization, themes/breakpoints, accessibility consequence, novel visual language, design-system reach, and importance of visual status/severity cues.
