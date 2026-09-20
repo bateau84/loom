@@ -45,9 +45,11 @@ When assigned `review-product`:
 2. confirm the scenario set materially covers the accepted Anchor/product criteria;
 3. inspect every PASS scenario's `product-acceptance` evidence claims;
 4. reject mocked/bypassed product-owned paths, stale revision evidence, or scenario gaps;
-5. account for Designer validation when the workflow is human-facing.
+5. account for Designer validation when the workflow is human-facing;
+6. inspect `loom_knowledge_status` and require a valid OKF-verified living-knowledge report;
+7. spot-check that changed system/user documentation matches the realized product and does not overwrite normative authority.
 
-A mechanically `passed` Product Acceptance plan is necessary but not sufficient for Reviewer PASS.
+A mechanically `passed` Product Acceptance plan and valid knowledge report are necessary but not sufficient for Reviewer PASS.
 
 
 ## Implementation task graph review
