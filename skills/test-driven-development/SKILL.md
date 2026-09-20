@@ -43,7 +43,7 @@ A test is **faking success** — a coverage gap to escalate, not a checkmark —
 - **skipping the hard case** (`skip` / `xfail` / commented-out) so only the easy paths run,
 - **asserting on a value the test itself set**, rather than one the system produced.
 
-If you cannot make a test pass by running real input through real code, that is a gap in the implementation or the design. Do not massage it green. Stop and escalate with the fitting code — `[ESCALATE: BUG]` (real path broken), `[ESCALATE: ARCHITECTURE]` (path never designed, or a precondition stubbed upstream), or `[ESCALATE: SCOPE]` (cannot be honestly tested as scoped).
+If you cannot make a test pass by running real input through real code, that is a gap in the implementation or the design. Do not massage it green. Stop and surface the real gap through Loom: implementation defects return to the producing work, missing structural realization routes to Architect, and an honestly untestable task scope returns to Planner rather than being widened locally.
 
 The fingerprint to watch for: _"the test only passes because I set up the exact thing the code was supposed to create."_
 
