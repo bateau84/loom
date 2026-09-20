@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs"
+import { existsSync, readFileSync, readdirSync } from "node:fs"
 import { join } from "node:path"
 
 export type EvalExecution = "runtime" | "role-decision"
@@ -61,9 +61,10 @@ export function validateSuite(suite: EvalSuite, repoRoot: string) {
     if (!Array.isArray(item.requirements) || item.requirements.length === 0) {
       errors.push(`${label}: at least one requirement mapping is required`)
     } else {
+      const requirementDir = join(repoRoot, "docs", "requirements", "loom")
       const requirementFiles = new Set(
-        existsSync(join(repoRoot, "docs", "requirements", "loom"))
-          ? Array.from(new Bun.Glob("br-*.md").scanSync(join(repoRoot, "docs", "requirements", "loom")))
+        existsSync(requirementDir)
+          ? readdirSync(requirementDir).filter((file) => file.startsWith("br-") && file.endsWith(".md"))
           : [],
       )
       for (const requirement of item.requirements) {
