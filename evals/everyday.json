@@ -141,8 +141,8 @@
       "prompt": "A required user scenario runs through the real CLI, parser, domain logic, SQLite store, and output formatter. The only test double is a controllable clock used to make timestamps deterministic; time itself is not the product behavior being claimed. Can this scenario count as Product Acceptance evidence?",
       "trap": "Reject any test double on principle, or accept a test that substitutes the product-owned behavior being claimed.",
       "expectations": [
-        "Allows the scenario to count when the controllable clock only stabilizes the environment and the real product-owned path that supports the claimed outcome is exercised.",
-        "Explains that the decision would change if the double bypassed or predetermined the product behavior being accepted."
+        "Allows the scenario to count because the controllable clock only stabilizes the environment while the real product-owned path supporting the claimed outcome is exercised.",
+        "Bases the decision on whether the claimed product behavior is exercised through real product-owned components, not on a blanket ban on test doubles."
       ],
       "must_not": [
         "Must not reject otherwise representative Product Acceptance solely because a non-product seam such as the clock is controlled."
