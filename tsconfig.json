@@ -8,6 +8,6 @@
     "skipLibCheck": true
   },
   "include": [
-    ".opencode/plugins/loom/**/*.ts"
+    "plugins/loom/**/*.ts"
   ]
 }
