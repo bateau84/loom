@@ -212,7 +212,7 @@ func Contains[T comparable](slice []T, target T) bool  // not []any
 
 ## Parallelizing Code Style Reviews
 
-When reviewing code style across a large codebase, cover the independent style concerns (control flow, function design, variable declarations, string handling, code organization). Delegation follows `current Loom role directive and control-plane state` — only `general` dispatches sub-agents; a spoke works through every concern itself and reports back.
+When reviewing code style across a large codebase, cover the independent style concerns (control flow, function design, variable declarations, string handling, code organization). Within the current Loom task, works through every concern itself and reports back.
 
 ## Enforce with Linters
 
