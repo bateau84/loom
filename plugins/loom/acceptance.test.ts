@@ -65,6 +65,37 @@ describe("Loom Product Acceptance", () => {
     ).toThrow()
   })
 
+  test("scenario result cannot be overwritten without reset", () => {
+    const plan = createAcceptancePlan({
+      workflowId: "workflow-1",
+      createdBy: "acceptance",
+      scenarios: [{ id: "login", title: "Login", criteria: ["User can authenticate"] }],
+      now: "now",
+    })
+
+    recordAcceptanceResult({
+      plan,
+      scenarioId: "login",
+      outcome: "failed",
+      claims: [],
+      byAgent: "acceptance",
+      note: "failed",
+      now: "later",
+    })
+
+    expect(() =>
+      recordAcceptanceResult({
+        plan,
+        scenarioId: "login",
+        outcome: "passed",
+        claims: [claim("c1")],
+        byAgent: "acceptance",
+        note: "changed mind",
+        now: "later2",
+      }),
+    ).toThrow()
+  })
+
   test("all scenarios must pass for Product Acceptance readiness", () => {
     const plan = createAcceptancePlan({
       workflowId: "workflow-1",
