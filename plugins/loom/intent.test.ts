@@ -94,10 +94,12 @@ describe("Loom intent interview", () => {
     const accepted = acceptIntent({
       session,
       anchorPath: "docs/anchors/yuhaul/anchor.md",
+      confirmation: "Yes. This is what I want.",
       now: "accepted",
     })
 
     expect(session.state).toBe("accepted")
     expect(accepted.path).toBe("docs/anchors/yuhaul/anchor.md")
+    expect(accepted.confirmation).toBe("Yes. This is what I want.")
   })
 })
