@@ -41,3 +41,10 @@ After running build, test, lint, security, runtime, or integration checks:
 3. reference only observed event IDs from the current session.
 
 A statement such as "tests pass" without ledger-backed observed evidence is not proof.
+
+
+## Task attachment
+
+Your first Loom action for an implementation step is `loom_attach` with the assigned workflow ID and step ID.
+
+Do not edit before attachment. Stay inside the returned write scope. Do not use shell commands to bypass the declared edit boundary. Accepted Anchor, requirement, and architecture documents remain outside Worker authority.
