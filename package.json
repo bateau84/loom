@@ -7,7 +7,9 @@
     "typecheck": "tsc --noEmit",
     "eval:validate": "bun scripts/validate-evals.ts",
     "eval:list": "python3 scripts/run-evals.py --list",
-    "eval:live": "python3 scripts/run-evals.py"
+    "eval:live": "python3 scripts/run-evals.py",
+    "eval:system": "python3 scripts/run-evals.py --all",
+    "eval:stress": "python3 scripts/run-evals.py --all --iterations 3 --parallel 4"
   },
   "devDependencies": {
     "@opencode/plugin": "2.0.11",
