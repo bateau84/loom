@@ -65,7 +65,18 @@ Static agent permissions provide the first boundary; task-scoped control adds th
 
 ### Evidence capture
 
-Tool execution hooks observe completed shell/tool operations and register provenance for verification-relevant events.
+Tool execution hooks record compact observations for non-Loom tool calls:
+- session and agent identity when available;
+- tool name and success/failure;
+- timestamp;
+- digests of input and result;
+- redacted shell command or file path when safely available.
+
+Raw tool output is not copied into the ledger by default.
+
+Agents may create evidence claims only by referencing observations from their current session. Test/build/lint/security claims additionally require a recognized observed command of that class.
+
+When a workflow step completes, its session observations are bound to that step. Reviewers can query the step's observations and claims directly.
 
 An agent cannot create equivalent proof by merely writing prose.
 
