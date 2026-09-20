@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import {
+  applyTaskPlan,
   buildSteps,
   finishStep,
   preserveSatisfied,
@@ -45,7 +46,7 @@ describe("Loom routing DAG", () => {
       "architect",
       "review-architecture",
       "critic-solution",
-      "worker",
+      "plan",
       "review-implementation",
       "product-acceptance",
       "designer-validation",
@@ -68,13 +69,74 @@ describe("Loom routing DAG", () => {
     finishStep(w, "designer", "designer", "complete", "design done")
     finishStep(w, "review-think", "reviewer", "pass", "think pass")
     finishStep(w, "critic-solution", "critic", "pass", "solution pass")
-    finishStep(w, "worker", "worker", "complete", "built")
+    applyTaskPlan(w, [
+      {
+        id: "backend",
+        title: "Backend",
+        objective: "Build backend",
+        dependsOn: [],
+        write: ["internal/backend/**"],
+        skills: ["golang"],
+        verify: ["go test ./..."],
+      },
+      {
+        id: "ui",
+        title: "UI",
+        objective: "Build UI",
+        dependsOn: [],
+        write: ["web/**"],
+        skills: ["frontend"],
+        verify: ["bun test"],
+      },
+    ])
+    finishStep(w, "plan", "planner", "complete", "plan ready")
+    expect(runnable(w).map((step) => step.id).sort()).toEqual(["task:backend", "task:ui"])
+    finishStep(w, "task:backend", "worker", "complete", "backend built")
+    finishStep(w, "task:ui", "worker", "complete", "ui built")
     finishStep(w, "review-implementation", "reviewer", "pass", "implementation pass")
 
     expect(runnable(w).map((step) => step.id).sort()).toEqual([
       "designer-validation",
       "product-acceptance",
     ])
+  })
+
+  test("planned Worker dependencies become real workflow dependencies", () => {
+    const w = workflow(buildSteps({
+      humanFacing: false,
+      behavioral: false,
+      structural: false,
+      externalUnknown: false,
+      diagnostic: false,
+      productOutcome: true,
+    }))
+
+    finishStep(w, "critic-solution", "critic", "pass", "solution pass")
+    applyTaskPlan(w, [
+      {
+        id: "db",
+        title: "Database",
+        objective: "Create persistence",
+        dependsOn: [],
+        write: ["internal/db/**"],
+        skills: ["database"],
+        verify: ["go test ./..."],
+      },
+      {
+        id: "api",
+        title: "API",
+        objective: "Build API",
+        dependsOn: ["db"],
+        write: ["internal/api/**"],
+        skills: ["golang"],
+        verify: ["go test ./..."],
+      },
+    ])
+    finishStep(w, "plan", "planner", "complete", "plan ready")
+
+    expect(runnable(w).map((step) => step.id)).toEqual(["task:db"])
+    finishStep(w, "task:db", "worker", "complete", "db done")
+    expect(runnable(w).map((step) => step.id)).toEqual(["task:api"])
   })
 
   test("failed review blocks downstream work", () => {
