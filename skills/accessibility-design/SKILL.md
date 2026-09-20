@@ -139,7 +139,7 @@ Screen readers convert visual interfaces to a serialized, linear audio or braill
 
 - **Accessible names are design deliverables:** Every interactive element and every informative image must have an accessible name specified in the design. Not "an icon button" — "an icon button with accessible name 'Close dialog'." The accessible name is a design requirement, not an implementation detail.
 
-- **Dynamic content announcements are design decisions:** When content updates without a page reload, screen reader users do not see visual changes. The design must specify which updates are announced live (status messages, loading states, error messages, search results) and which are not. This is a `aria-live` region decision — the designer specifies it, the coder implements it.
+- **Dynamic content announcements are design decisions:** When content updates without a page reload, screen reader users do not see visual changes. The design must specify which updates are announced live (status messages, loading states, error messages, search results) and which are not. This is a `aria-live` region decision — the designer specifies it, the worker implements it.
 
 **Low Vision**
 
@@ -321,7 +321,7 @@ Design obligations:
 - When visual position and logical order diverge, note this in the spec with the intended reading order
 - Groups of related controls should be reached as a group
 
-Design failure: a three-column layout where the design shows the right column as visually prominent (perhaps larger text), but the intended tab order is left-to-right across all three columns. Without specifying this, the coder implements DOM order, which may not match the visual layout if CSS grid or flexbox reorders elements.
+Design failure: a three-column layout where the design shows the right column as visually prominent (perhaps larger text), but the intended tab order is left-to-right across all three columns. Without specifying this, the worker implements DOM order, which may not match the visual layout if CSS grid or flexbox reorders elements.
 
 ### Focus States as a Design State
 
@@ -387,7 +387,7 @@ Design implications of each mode:
 
 **By heading:** Heading hierarchy must be semantic, not presentational. The design must specify heading levels (H1, H2, H3) based on content hierarchy, not based on visual size. Design failure: "use a large, bold font for section titles" without specifying H2. A developer who renders large bold text as a `<p>` element with CSS creates a visual hierarchy with no semantic structure — screen reader users cannot navigate by heading.
 
-**By interactive elements:** Every interactive element must have an accessible name. The ARIA naming order (highest priority to lowest): `aria-labelledby` → `aria-label` → `<label>` association → `title` attribute → element content (for buttons). The designer specifies the accessible name; the coder implements the most appropriate HTML mechanism.
+**By interactive elements:** Every interactive element must have an accessible name. The ARIA naming order (highest priority to lowest): `aria-labelledby` → `aria-label` → `<label>` association → `title` attribute → element content (for buttons). The designer specifies the accessible name; the worker implements the most appropriate HTML mechanism.
 
 ### The Reading Order Problem
 
@@ -401,7 +401,7 @@ This works. But consider:
 Visual layout: Recent Activity (right sidebar, visually prominent) | Main Content (left column) | Navigation (top, reused across pages)
 Intended reading order: Navigation | Main Content | Recent Activity
 
-If the visual layout is achieved with CSS float or flexbox order, the DOM order may follow source order (Navigation | Main Content | Recent Activity), which is correct. But if the designer specifies visual prominence without specifying reading order, the coder may implement this differently.
+If the visual layout is achieved with CSS float or flexbox order, the DOM order may follow source order (Navigation | Main Content | Recent Activity), which is correct. But if the designer specifies visual prominence without specifying reading order, the worker may implement this differently.
 
 **Design obligation:** For any layout where visual position is used to establish priority, specify whether the visual priority matches the intended reading order. If they differ, specify the intended reading order explicitly.
 
