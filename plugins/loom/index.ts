@@ -26,6 +26,15 @@ import {
   type EvidenceKind,
   type EvidenceObservation,
 } from "./evidence"
+import {
+  DEFAULT_LIMITS,
+  hasMaterialProgress,
+  newBudgetState,
+  recordDispatch,
+  type BudgetState,
+  type ExecutionLimits,
+  type ProgressSignal,
+} from "./budget"
 
 const loomAgents = new Set([
   "designer",
@@ -37,6 +46,22 @@ const loomAgents = new Set([
   "research",
   "diagnostic",
 ])
+
+function budgetKey(workflowId: string) {
+  return `budget/${workflowId}`
+}
+
+function limitsKey(workflowId: string) {
+  return `limits/${workflowId}`
+}
+
+async function readBudget(ctx: any, workflowId: string): Promise<BudgetState> {
+  return ((await ctx.storage.get(budgetKey(workflowId))) as BudgetState | undefined) ?? newBudgetState()
+}
+
+async function readLimits(ctx: any, workflowId: string): Promise<ExecutionLimits> {
+  return ((await ctx.storage.get(limitsKey(workflowId))) as ExecutionLimits | undefined) ?? DEFAULT_LIMITS
+}
 
 function workflowKey(id: string) {
   return `workflow/${id}`
@@ -239,6 +264,8 @@ export default Plugin.define({
 
           await ctx.storage.set(workflowKey(id), workflow)
           await ctx.storage.set(sessionKey(tool.sessionID), id)
+          await ctx.storage.set(limitsKey(id), DEFAULT_LIMITS)
+          await ctx.storage.set(budgetKey(id), newBudgetState())
 
           return { content: JSON.stringify({ workflowId: id, anchor, status: "started" }) }
         },
@@ -331,11 +358,14 @@ export default Plugin.define({
           if (!workflow) return { content: JSON.stringify({ error: "Workflow not found." }) }
 
           const questions = await readQuestions(ctx, workflow.id)
+          const limits = await readLimits(ctx, workflow.id)
+          const budget = await readBudget(ctx, workflow.id)
           return {
             content: JSON.stringify({
               workflow,
               runnable: runnable(workflow).map((step) => ({ id: step.id, agent: step.agent })),
               questions: questionState(questions, workflow),
+              budget: { limits, state: budget },
             }),
           }
         },
@@ -422,8 +452,21 @@ export default Plugin.define({
           properties: {
             workflowId: { type: "string" },
             stepId: { type: "string" },
+            reason: { type: "string" },
+            newEvidence: { type: "boolean" },
+            changedHypothesis: { type: "boolean" },
+            changedStrategy: { type: "boolean" },
+            reducedUnresolved: { type: "boolean" },
           },
-          required: ["workflowId", "stepId"],
+          required: [
+            "workflowId",
+            "stepId",
+            "reason",
+            "newEvidence",
+            "changedHypothesis",
+            "changedStrategy",
+            "reducedUnresolved",
+          ],
           additionalProperties: false,
         },
         options: { namespace: "loom" },
@@ -431,12 +474,39 @@ export default Plugin.define({
           if (tool.agent !== "general") {
             return { content: JSON.stringify({ error: "Only general may reopen Loom steps." }) }
           }
-          const { workflowId, stepId } = input as { workflowId: string; stepId: string }
+          const value = input as {
+            workflowId: string
+            stepId: string
+            reason: string
+            newEvidence: boolean
+            changedHypothesis: boolean
+            changedStrategy: boolean
+            reducedUnresolved: boolean
+          }
+          const { workflowId, stepId } = value
+          const progress: ProgressSignal = {
+            newEvidence: value.newEvidence,
+            changedHypothesis: value.changedHypothesis,
+            changedStrategy: value.changedStrategy,
+            reducedUnresolved: value.reducedUnresolved,
+          }
+          if (!hasMaterialProgress(progress)) {
+            return {
+              content: JSON.stringify({
+                error: "Reopen denied: repeated work must have new evidence, a changed hypothesis, a changed strategy, or a reduced unresolved set.",
+              }),
+            }
+          }
+
           const workflow = await readWorkflow(ctx, workflowId)
           if (!workflow) return { content: JSON.stringify({ error: "Workflow not found." }) }
 
           try {
             const reset = reopenFrom(workflow, stepId)
+            await ctx.storage.set(
+              `progress/${workflowId}/${stepId}/${crypto.randomUUID()}`,
+              { reason: value.reason, ...progress, at: new Date().toISOString() },
+            )
             await ctx.storage.set(workflowKey(workflow.id), workflow)
             return {
               content: JSON.stringify({
@@ -787,6 +857,24 @@ export default Plugin.define({
           return { content: JSON.stringify({ observations, claims }) }
         },
       })
+      editor.add({
+        name: "budget_status",
+        description: "Inspect Loom execution limits and current dispatch consumption.",
+        input: {
+          type: "object",
+          properties: { workflowId: { type: "string" } },
+          required: ["workflowId"],
+          additionalProperties: false,
+        },
+        options: { namespace: "loom" },
+        execute: async (input) => {
+          const { workflowId } = input as { workflowId: string }
+          const limits = await readLimits(ctx, workflowId)
+          const state = await readBudget(ctx, workflowId)
+          return { content: JSON.stringify({ limits, state }) }
+        },
+      })
+
     })
 
     await ctx.permission.hook("evaluate", async (event) => {
@@ -803,17 +891,41 @@ export default Plugin.define({
       }
 
       const questions = await readQuestions(ctx, workflow.id)
-      const requiredForQuestion = questions.some(
+      const openQuestion = questions.find(
         (question) =>
           question.status !== "closed" &&
           !question.answer &&
           question.requiredAuthority === target,
       )
-      const requiredForStep = runnable(workflow).some((step) => step.agent === target)
+      const runnableStep = runnable(workflow).find((step) => step.agent === target)
 
-      if (!requiredForStep && !requiredForQuestion) {
+      if (!runnableStep && !openQuestion) {
         event.effect = "deny"
         event.message = `Agent ${target} is not runnable and has no unanswered OQ. Inspect loom_status.`
+        return
+      }
+
+      const limits = await readLimits(ctx, workflow.id)
+      const budget = await readBudget(ctx, workflow.id)
+      const dispatchID = [
+        event.sessionID,
+        event.source?.messageID ?? "message",
+        event.source?.id ?? "tool",
+        target,
+      ].join(":")
+      const key = runnableStep ? `step:${runnableStep.id}` : `oq:${openQuestion!.id}`
+      const recorded = recordDispatch({ state: budget, limits, dispatchID, key, agent: target })
+      await ctx.storage.set(budgetKey(workflow.id), budget)
+
+      if (!recorded.allowed) {
+        event.effect = "deny"
+        event.message = `Loom execution budget exhausted: ${recorded.reason}`
+      }
+    })
+
+    await ctx.session.hook("retry", (event) => {
+      if (event.attempt >= 1 + DEFAULT_LIMITS.maxProviderRetries) {
+        event.decision = { retry: false }
       }
     })
 

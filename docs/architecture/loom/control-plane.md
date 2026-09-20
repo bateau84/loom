@@ -147,3 +147,21 @@ OpenCode V2 plugins expose agent/tool transforms, session hooks, permission hook
 
 - https://opencode.ai/v2/docs/build/plugins
 - https://opencode.ai/v2/docs/permissions
+
+
+## Progress and dispatch budgets
+
+Loom enforces a small execution budget independently of agent prose.
+
+Initial defaults:
+- total subagent dispatches per workflow: 40;
+- ordinary step dispatches: 3;
+- Reviewer dispatches per gate: 3;
+- Critic dispatches per gate: 2;
+- provider retries after the initial request: 2.
+
+Permission hooks count authorized subagent dispatches using stable tool-call identity where available. A dispatch that exceeds its bound is denied.
+
+Reopening failed work requires at least one explicit progress dimension: new evidence, changed hypothesis, changed strategy, or reduced unresolved work. The reopen reason is persisted.
+
+These are safety defaults, not product semantics. Later configuration may tune them, but agents may not silently widen them during a run.
