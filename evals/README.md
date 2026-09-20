@@ -91,16 +91,17 @@ Copilot:  ghcr.io/bateau84/opencode-eval-runner:copilot-edge
 
 Override them independently with `--opencode-image` / `--copilot-image`, or use `--image` to force one explicit image for both transports.
 
-The OpenCode transport automatically seeds the normal credential file and model catalog when present:
+The OpenCode transport automatically detects the normal auth, V2 credential database, and model catalog when present:
 
 ```text
 ~/.local/share/opencode/auth.json
+~/.local/share/opencode/opencode.db
 ~/.cache/opencode/models.json
 ```
 
-The latter is copied into the container's fresh `XDG_CACHE_HOME`, so model IDs available in the host catalog are available to the isolated OpenCode process without mounting the rest of the host cache.
+The host database is never mounted directly. Loom creates a temporary schema-only database containing only provider credential rows and migration journals; session, project, message, event, and other runtime tables remain empty. The sanitized database, auth file, and model catalog are mounted read-only and copied into fresh writable XDG directories inside each eval container.
 
-It does **not** inherit the host model cache by default. The isolated container owns a writable cache under `/tmp` and refreshes its catalog with `opencode models --refresh` before preflight.
+The model catalog is copied into the isolated cache. OpenCode V2 performs provider/model resolution during the real invocation; Loom does not use the obsolete `opencode models --refresh` path.
 
 It does **not** inherit your global OpenCode config. Pass provider configuration only when the provider actually requires it:
 
@@ -109,7 +110,8 @@ bun run eval:live -- \
   --cases WORK-01 \
   --model my-provider/my-model \
   --provider-config /path/to/minimal-provider-config.json \
-  --models-catalog /path/to/models.json
+  --models-catalog /path/to/models.json \
+  --database /path/to/opencode.db
 ```
 
 API-key providers may use `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or `OPENROUTER_API_KEY`.
