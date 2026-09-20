@@ -35,6 +35,7 @@ import {
   type ExecutionLimits,
   type ProgressSignal,
 } from "./budget"
+import { validateWriteScope, type TaskScope } from "./scope"
 
 const loomAgents = new Set([
   "designer",
@@ -46,6 +47,14 @@ const loomAgents = new Set([
   "research",
   "diagnostic",
 ])
+
+function scopeKey(workflowId: string, stepId: string) {
+  return `scope/${workflowId}/${stepId}`
+}
+
+function sessionStepKey(sessionID: string) {
+  return `session-step/${sessionID}`
+}
 
 function budgetKey(workflowId: string) {
   return `budget/${workflowId}`
@@ -875,9 +884,151 @@ export default Plugin.define({
         },
       })
 
+      editor.add({
+        name: "task_scope",
+        description:
+          "Declare the bounded writable surface for one Worker step. General only. Accepted authority documents cannot be delegated to Worker.",
+        input: {
+          type: "object",
+          properties: {
+            workflowId: { type: "string" },
+            stepId: { type: "string" },
+            write: { type: "array", items: { type: "string" } },
+          },
+          required: ["workflowId", "stepId", "write"],
+          additionalProperties: false,
+        },
+        options: { namespace: "loom" },
+        execute: async (input, tool) => {
+          if (tool.agent !== "general") {
+            return { content: JSON.stringify({ error: "Only general may define Worker task scope." }) }
+          }
+
+          const value = input as { workflowId: string; stepId: string; write: string[] }
+          const workflow = await readWorkflow(ctx, value.workflowId)
+          if (!workflow) return { content: JSON.stringify({ error: "Workflow not found." }) }
+
+          const step = workflow.steps.find((candidate) => candidate.id === value.stepId)
+          if (!step) return { content: JSON.stringify({ error: "Step not found." }) }
+          if (step.agent !== "worker") {
+            return { content: JSON.stringify({ error: "Task scope may only be assigned to Worker steps." }) }
+          }
+          if (step.status !== "pending") {
+            return { content: JSON.stringify({ error: "Worker task scope cannot change after the step has finished." }) }
+          }
+
+          try {
+            validateWriteScope(value.write)
+          } catch (error) {
+            return { content: JSON.stringify({ error: error instanceof Error ? error.message : String(error) }) }
+          }
+
+          const scope: TaskScope = {
+            workflowId: value.workflowId,
+            stepId: value.stepId,
+            write: value.write,
+          }
+          await ctx.storage.set(scopeKey(value.workflowId, value.stepId), scope)
+          return { content: JSON.stringify({ scope }) }
+        },
+      })
+
+      editor.add({
+        name: "attach",
+        description:
+          "Attach the current child session to its Loom workflow step. Worker must attach before editing; task-scoped edit permissions are installed here.",
+        input: {
+          type: "object",
+          properties: {
+            workflowId: { type: "string" },
+            stepId: { type: "string" },
+          },
+          required: ["workflowId", "stepId"],
+          additionalProperties: false,
+        },
+        options: { namespace: "loom" },
+        execute: async (input, tool) => {
+          const { workflowId, stepId } = input as { workflowId: string; stepId: string }
+          const workflow = await readWorkflow(ctx, workflowId)
+          if (!workflow) return { content: JSON.stringify({ error: "Workflow not found." }) }
+
+          const step = workflow.steps.find((candidate) => candidate.id === stepId)
+          if (!step) return { content: JSON.stringify({ error: "Step not found." }) }
+          if (step.agent !== tool.agent) {
+            return {
+              content: JSON.stringify({
+                error: `Step ${stepId} belongs to ${step.agent}, not ${tool.agent}.`,
+              }),
+            }
+          }
+
+          let scope: TaskScope | undefined
+          if (tool.agent === "worker") {
+            scope = (await ctx.storage.get(scopeKey(workflowId, stepId))) as TaskScope | undefined
+            if (!scope) {
+              return { content: JSON.stringify({ error: "Worker step has no declared task scope." }) }
+            }
+
+            await ctx.permission.rules({
+              sessionID: tool.sessionID,
+              permissions: [
+                { action: "edit", resource: "*", effect: "deny" },
+                ...scope.write.map((resource) => ({
+                  action: "edit",
+                  resource,
+                  effect: "allow" as const,
+                })),
+              ],
+            })
+          }
+
+          await ctx.storage.set(sessionKey(tool.sessionID), workflowId)
+          await ctx.storage.set(sessionStepKey(tool.sessionID), stepId)
+
+          return {
+            content: JSON.stringify({
+              attached: true,
+              workflowId,
+              stepId,
+              ...(scope ? { write: scope.write } : {}),
+            }),
+          }
+        },
+      })
+
+      editor.add({
+        name: "scope_status",
+        description: "Inspect the declared Worker write scope for one workflow step.",
+        input: {
+          type: "object",
+          properties: {
+            workflowId: { type: "string" },
+            stepId: { type: "string" },
+          },
+          required: ["workflowId", "stepId"],
+          additionalProperties: false,
+        },
+        options: { namespace: "loom" },
+        execute: async (input) => {
+          const { workflowId, stepId } = input as { workflowId: string; stepId: string }
+          const scope = (await ctx.storage.get(scopeKey(workflowId, stepId))) as TaskScope | undefined
+          return { content: JSON.stringify({ scope: scope ?? null }) }
+        },
+      })
+
     })
 
     await ctx.permission.hook("evaluate", async (event) => {
+      if (event.agent === "worker" && event.action === "edit") {
+        const workflowId = (await ctx.storage.get(sessionKey(event.sessionID))) as string | undefined
+        const stepId = (await ctx.storage.get(sessionStepKey(event.sessionID))) as string | undefined
+        if (!workflowId || !stepId) {
+          event.effect = "deny"
+          event.message = "Worker must call loom_attach before editing."
+        }
+        return
+      }
+
       if (event.agent !== "general" || event.action !== "subagent") return
 
       const target = event.resources.find((resource) => loomAgents.has(resource))
@@ -903,6 +1054,15 @@ export default Plugin.define({
         event.effect = "deny"
         event.message = `Agent ${target} is not runnable and has no unanswered OQ. Inspect loom_status.`
         return
+      }
+
+      if (target === "worker" && runnableStep) {
+        const scope = (await ctx.storage.get(scopeKey(workflow.id, runnableStep.id))) as TaskScope | undefined
+        if (!scope) {
+          event.effect = "deny"
+          event.message = `Worker step ${runnableStep.id} has no declared write scope. Call loom_task_scope first.`
+          return
+        }
       }
 
       const limits = await readLimits(ctx, workflow.id)
