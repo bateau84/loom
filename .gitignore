@@ -6,12 +6,10 @@ __pycache__/
 /.aos-evals/
 
 ## Ignore opencoode.json.
-cli.json
-cli-*.json
-config.json
-config-*.json
-service.json
-service-*.json
+cli*.json
+config*.json
+service*.json
+tsconfigi*.json
 tui*.json
 opencode*.json
 opencode*.jsonc
