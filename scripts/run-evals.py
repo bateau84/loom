@@ -309,6 +309,7 @@ def invoke_container(
     models_catalog: Path | None,
     database_seed: Path | None,
     config_root: Path | None,
+    expected_plugin: str | None,
     timeout: int,
     container_timeout: int,
     mount_node_modules: bool,
@@ -384,6 +385,8 @@ def invoke_container(
             "--env",
             f"EVAL_TIMEOUT_SECONDS={timeout}",
         ]
+        if expected_plugin:
+            command += ["--env", f"EVAL_EXPECT_PLUGIN={expected_plugin}"]
         host_env = host_environment_for_transport(transport)
         pass_env(command, PROVIDER_ENVS, host_env)
         if transport == "github-copilot-cli":
@@ -556,6 +559,7 @@ def run_case(case: dict[str, Any], args: argparse.Namespace, engine: str) -> dic
             models_catalog=models_catalog,
             database_seed=database_seed,
             config_root=ROOT if case["execution"] == "runtime" and args.target_transport == "opencode" else None,
+            expected_plugin="loom" if case["execution"] == "runtime" and args.target_transport == "opencode" else None,
             timeout=args.timeout_seconds,
             container_timeout=args.container_timeout,
             mount_node_modules=case["execution"] == "runtime",
@@ -583,6 +587,7 @@ def run_case(case: dict[str, Any], args: argparse.Namespace, engine: str) -> dic
                 models_catalog=models_catalog,
                 database_seed=database_seed,
                 config_root=None,
+                expected_plugin=None,
                 timeout=args.timeout_seconds,
                 container_timeout=args.container_timeout,
                 mount_node_modules=False,
