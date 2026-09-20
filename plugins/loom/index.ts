@@ -1,3 +1,4 @@
+import type * as OpenCodePlugin from "@opencode/plugin"
 import {
   applyTaskPlan,
   buildSteps,
@@ -311,10 +312,10 @@ function toolEventKey(raw: any) {
 
 const pendingToolInputs = new Map<string, unknown>()
 
-export default {
+const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
   id: "loom",
 
-  async setup(ctx: any) {
+  async setup(ctx) {
     await ctx.agent.transform((editor) => {
       if (editor.get("general")) editor.default("general")
     })
@@ -2254,3 +2255,5 @@ export default {
     })
   },
 }
+
+export default loomPlugin
