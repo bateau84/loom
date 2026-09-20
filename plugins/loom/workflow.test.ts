@@ -1,10 +1,14 @@
 import { describe, expect, test } from "bun:test"
 import {
+  addVerificationRequirement,
   applyTaskPlan,
   buildSteps,
   finishStep,
+  openVerificationRequirements,
   preserveSatisfied,
+  proveVerificationRequirement,
   reopenFrom,
+  resetVerificationAfterReopen,
   runnable,
   type Workflow,
 } from "./workflow"
@@ -197,6 +201,84 @@ describe("Loom routing DAG", () => {
     expect(affected).toContain("architect")
     expect(w.steps.find((step) => step.id === "designer")?.status).toBe("complete")
     expect(runnable(w).map((step) => step.id)).toEqual(["specifier"])
+  })
+
+  test("verification requirements mechanically block a downstream gate until proven", () => {
+    const w = workflow(buildSteps({
+      humanFacing: false,
+      behavioral: false,
+      structural: true,
+      externalUnknown: false,
+      diagnostic: false,
+      productOutcome: false,
+    }))
+
+    const requirement = addVerificationRequirement(w, {
+      id: "vr-runtime",
+      createdByStepId: "architect",
+      createdByAgent: "architect",
+      beforeStepId: "review-implementation",
+      kind: "runtime",
+      statement: "OpenCode V2 loads the migrated plugin and exposes Loom tools",
+      now: "now",
+    })
+
+    finishStep(w, "architect", "architect", "complete", "architecture done")
+    finishStep(w, "review-architecture", "reviewer", "pass", "architecture pass")
+    finishStep(w, "worker", "worker", "complete", "migration done")
+
+    expect(() =>
+      finishStep(w, "review-implementation", "reviewer", "pass", "looks good"),
+    ).toThrow("unsatisfied verification requirements")
+
+    proveVerificationRequirement(w, requirement.id, {
+      byAgent: "reviewer",
+      stepId: "review-implementation",
+      statement: "Observed isolated V2 startup with Loom tools loaded",
+      observationIds: ["obs-runtime"],
+      provedAt: "later",
+    })
+
+    expect(openVerificationRequirements(w, "review-implementation")).toHaveLength(0)
+    finishStep(w, "review-implementation", "reviewer", "pass", "runtime proof present")
+    expect(w.steps.find((step) => step.id === "review-implementation")?.status).toBe("passed")
+  })
+
+  test("reopening downstream work invalidates proof while reopening its creator supersedes the requirement", () => {
+    const w = workflow(buildSteps({
+      humanFacing: false,
+      behavioral: false,
+      structural: true,
+      externalUnknown: false,
+      diagnostic: false,
+      productOutcome: false,
+    }))
+
+    const requirement = addVerificationRequirement(w, {
+      id: "vr-test",
+      createdByStepId: "architect",
+      createdByAgent: "architect",
+      beforeStepId: "review-implementation",
+      kind: "test",
+      statement: "Migration tests pass",
+      now: "now",
+    })
+    proveVerificationRequirement(w, requirement.id, {
+      byAgent: "worker",
+      stepId: "worker",
+      statement: "Tests passed",
+      observationIds: ["obs-test"],
+      provedAt: "later",
+    })
+
+    const resetWorker = reopenFrom(w, "worker")
+    resetVerificationAfterReopen(w, resetWorker)
+    expect(requirement.status).toBe("open")
+    expect(requirement.proof).toBeUndefined()
+
+    const resetArchitect = reopenFrom(w, "architect")
+    resetVerificationAfterReopen(w, resetArchitect)
+    expect(requirement.status).toBe("superseded")
   })
 
   test("route reclassification preserves satisfied diagnosis", () => {

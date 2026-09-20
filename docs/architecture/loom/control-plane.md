@@ -113,6 +113,52 @@ Reopening explicitly preserves or invalidates the previous answer. Invalidating 
 
 User-owned questions are the exception: General presents the exact stored question and records the exact user answer as user-sourced authority.
 
+## Progressive Maintenance Routing
+
+For non-product maintenance, migration, and refactor work, Loom distinguishes a **structural change** from an **unresolved structural decision**.
+
+`loom_route structural=true` means current evidence already shows that Architect authority is required to choose technical realization. A mechanical config/schema/file-shape transformation whose mapping is fully determined by accepted authority or current external documentation does not require Architect merely because structure changes.
+
+When external facts are needed first, General may route `externalUnknown=true, structural=false`. After Research and independent review establish current facts, General reclassifies only if a real structural decision remains. Satisfied work is preserved across that reclassification.
+
+This keeps ordinary maintenance shallow while retaining evidence-triggered escalation.
+
+## Persisted Verification Requirements
+
+Load-bearing verification discovered by a specialist is workflow state, not prose.
+
+An attached specialist may call `loom_verification action=require` to record:
+- the evidence kind;
+- the concrete required outcome;
+- the downstream gate that must not PASS before proof exists;
+- creating step/role provenance.
+
+Any current workflow session with the required non-mutating capability may provide proof using observed tool-event IDs through `loom_verification action=prove`.
+
+A gate PASS is mechanically rejected while an open requirement targets that gate.
+
+Reopening upstream work invalidates affected proof. Reopening the requirement's creating step supersedes that requirement so the new specialist pass can restate the current obligation.
+
+Coordinator prompts cannot waive persisted verification.
+
+## Operational Tool Presentation
+
+High-frequency operational tools default to compact views intended for both models and humans.
+
+`loom_status` summarizes:
+- finished/total progress;
+- currently runnable work;
+- recent completed/failed transitions;
+- near-term blocked steps and dependencies;
+- open OQs;
+- open verification requirements;
+- dispatch budget;
+- Product Acceptance / knowledge-sync state.
+
+Pass `detail=true` only when full workflow internals are actually needed.
+
+`loom_evidence_observations` likewise returns a bounded recent list by default instead of dumping all observation digests into the transcript; full records remain available with `detail=true`.
+
 ## Resource Bounds
 
 V1 MUST hard-bound:

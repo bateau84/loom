@@ -41,6 +41,12 @@ Reviewer may route defects back to the producer or the correct authority.
 
 Reviewer does not redesign the whole product simply because another approach exists.
 
+Reviewer verdict authority is independent of coordinator wording. General may supply objective, accepted authority, artifacts, and evidence, but cannot instruct Reviewer to PASS/FAIL or downgrade a missing proof obligation.
+
+Before a gate verdict, Reviewer inspects persisted Loom verification requirements targeted at that gate. An open requirement cannot be waived in prose. If Reviewer has permission to execute the required non-mutating check, Reviewer may obtain and bind the missing proof directly. Otherwise Reviewer returns the exact proof/capability gap.
+
+A producer's inability to run a verification command is not automatically a system-wide capability boundary. Loom exhausts other already-authorized non-mutating verification paths before reporting the check unavailable.
+
 ### 4. Product Acceptance
 
 Product Acceptance is executed in a fresh **Acceptance** context, separate from Reviewer.

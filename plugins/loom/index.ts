@@ -1,11 +1,15 @@
 import type * as OpenCodePlugin from "@opencode/plugin"
 import {
+  addVerificationRequirement,
   applyTaskPlan,
   buildSteps,
   plannedTaskSteps,
   preserveSatisfied,
   finishStep,
+  proveVerificationRequirement,
+  reconcileVerificationAfterRoute,
   reopenFrom,
+  resetVerificationAfterReopen,
   runnable,
   type Effects,
   type Workflow,
@@ -23,6 +27,7 @@ import {
 } from "./oq"
 import {
   createClaim,
+  observationsSupportKind,
   safeInputSummary,
   type EvidenceClaim,
   type EvidenceKind,
@@ -235,6 +240,96 @@ function questionState(questions: OpenQuestion[], workflow: Workflow) {
   }
 }
 
+
+function clippedSummary(value?: string, max = 180) {
+  if (!value) return undefined
+  const normalized = value.replace(/\s+/g, " ").trim()
+  return normalized.length <= max ? normalized : normalized.slice(0, max - 1) + "…"
+}
+
+function compactQuestions(questions: OpenQuestion[], workflow: Workflow) {
+  const state = questionState(questions, workflow)
+  return {
+    open: state.unresolved.length,
+    routes: state.routes,
+    reconcile: state.reconcile,
+  }
+}
+
+function compactVerification(workflow: Workflow) {
+  const requirements = workflow.verification ?? []
+  return {
+    open: requirements
+      .filter((requirement) => requirement.status === "open")
+      .map((requirement) => ({
+        id: requirement.id,
+        before: requirement.beforeStepId,
+        kind: requirement.kind,
+        statement: clippedSummary(requirement.statement, 140),
+      })),
+    satisfied: requirements.filter((requirement) => requirement.status === "satisfied").length,
+  }
+}
+
+function compactWorkflowState(
+  workflow: Workflow,
+  questions: OpenQuestion[],
+  budget: BudgetState,
+  limits: ExecutionLimits,
+  acceptance?: AcceptancePlan,
+  knowledge?: KnowledgeReport,
+) {
+  const ready = runnable(workflow)
+  const finished = workflow.steps.filter((step) => ["complete", "passed", "failed"].includes(step.status))
+  const failed = workflow.steps.filter((step) => step.status === "failed")
+  const pending = workflow.steps.filter((step) => step.status === "pending")
+  const readyIds = new Set(ready.map((step) => step.id))
+  const blockedPending = pending.filter((step) => !readyIds.has(step.id))
+
+  const state =
+    failed.length > 0 && ready.length === 0
+      ? "blocked"
+      : pending.length === 0
+        ? "complete"
+        : "active"
+
+  return {
+    workflowId: workflow.id,
+    state,
+    progress: {
+      finished: finished.length,
+      total: workflow.steps.length,
+      failed: failed.length,
+    },
+    now: ready.map((step) => ({ step: step.id, agent: step.agent, kind: step.kind })),
+    recent: finished.slice(-5).map((step) => ({
+      step: step.id,
+      agent: step.agent,
+      status: step.status,
+      ...(step.summary ? { summary: clippedSummary(step.summary) } : {}),
+    })),
+    upcoming: blockedPending.slice(0, 6).map((step) => ({
+      step: step.id,
+      agent: step.agent,
+      waitsFor: step.dependsOn.filter(
+        (dependency) =>
+          !workflow.steps.some(
+            (candidate) =>
+              candidate.id === dependency && ["complete", "passed"].includes(candidate.status),
+          ),
+      ),
+    })),
+    questions: compactQuestions(questions, workflow),
+    verification: compactVerification(workflow),
+    budget: {
+      dispatches: budget.totalDispatches,
+      maxDispatches: limits.maxTotalDispatches,
+      ...(budget.exhausted ? { exhausted: budget.exhausted } : {}),
+    },
+    acceptance: acceptance ? acceptanceReadiness(acceptance) : null,
+    knowledge: knowledge ? { valid: knowledge.valid } : null,
+  }
+}
 
 function evidenceKey(id: string) {
   return `evidence/${id}`
@@ -647,12 +742,31 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         input: {
           type: "object",
           properties: {
-            humanFacing: { type: "boolean" },
-            behavioral: { type: "boolean" },
-            structural: { type: "boolean" },
-            externalUnknown: { type: "boolean" },
-            diagnostic: { type: "boolean" },
-            productOutcome: { type: "boolean" },
+            humanFacing: {
+              type: "boolean",
+              description: "True when the accepted work changes human-facing interaction, visible state, recovery, or subjective experience.",
+            },
+            behavioral: {
+              type: "boolean",
+              description: "True when observable product behavior or guarantees need new semantic authority.",
+            },
+            structural: {
+              type: "boolean",
+              description:
+                "True only when an unresolved structural/design decision requires Architect authority. Mechanical config/schema/file-shape conversion with a fully determined mapping is not structural=true by itself.",
+            },
+            externalUnknown: {
+              type: "boolean",
+              description: "True when current external facts or documentation must be researched before implementation.",
+            },
+            diagnostic: {
+              type: "boolean",
+              description: "True when a fault/root cause is unknown and diagnosis is required.",
+            },
+            productOutcome: {
+              type: "boolean",
+              description: "True for a product-outcome workflow that requires planning and Product Acceptance.",
+            },
           },
           required: [
             "humanFacing",
@@ -698,15 +812,21 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
           workflow.effects = effects
           workflow.steps = next
+          reconcileVerificationAfterRoute(workflow)
           await ctx.storage.set(workflowKey(workflow.id), workflow)
 
           const questions = await readQuestions(ctx, workflow.id)
           return {
             content: JSON.stringify({
               workflowId: workflow.id,
-              steps: workflow.steps,
-              runnable: runnable(workflow).map((step) => ({ id: step.id, agent: step.agent })),
-              questions: questionState(questions, workflow),
+              path: workflow.steps.map((step) => ({
+                step: step.id,
+                agent: step.agent,
+                kind: step.kind,
+                waitsFor: step.dependsOn,
+              })),
+              now: runnable(workflow).map((step) => ({ step: step.id, agent: step.agent })),
+              questions: compactQuestions(questions, workflow),
             }),
           }
         },
@@ -714,15 +834,21 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
       editor.add({
         name: "status",
-        description: "Inspect Loom workflow state, runnable steps, and unresolved shared questions.",
+        description: "Inspect Loom progress, current/next work, blockers, OQs, verification, and budget. Compact by default; detail=true returns internals.",
         input: {
           type: "object",
-          properties: { workflowId: { type: "string" } },
+          properties: {
+            workflowId: { type: "string" },
+            detail: {
+              type: "boolean",
+              description: "Return full workflow internals. Default false returns a compact progress/next-step view.",
+            },
+          },
           additionalProperties: false,
         },
         options: { namespace: "loom", codemode: false },
         execute: async (input, tool) => {
-          const requested = (input as { workflowId?: string }).workflowId
+          const requested = (input as { workflowId?: string; detail?: boolean }).workflowId
           const workflow = requested
             ? await readWorkflow(ctx, requested)
             : await activeWorkflow(ctx, tool.sessionID)
@@ -734,11 +860,23 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           const budget = await readBudget(ctx, workflow.id)
           const acceptance = (await ctx.storage.get(acceptanceKey(workflow.id))) as AcceptancePlan | undefined
           const knowledge = (await ctx.storage.get(knowledgeKey(workflow.id))) as KnowledgeReport | undefined
+          const detail = Boolean((input as { detail?: boolean }).detail)
+
+          if (!detail) {
+            return {
+              content: JSON.stringify(
+                compactWorkflowState(workflow, questions, budget, limits, acceptance, knowledge),
+              ),
+            }
+          }
+
           return {
             content: JSON.stringify({
+              summary: compactWorkflowState(workflow, questions, budget, limits, acceptance, knowledge),
               workflow,
               runnable: runnable(workflow).map((step) => ({ id: step.id, agent: step.agent })),
               questions: questionState(questions, workflow),
+              verification: workflow.verification ?? [],
               budget: { limits, state: budget },
               acceptance: acceptance
                 ? { plan: acceptance, readiness: acceptanceReadiness(acceptance) }
@@ -916,6 +1054,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
           try {
             const reset = reopenFrom(workflow, stepId)
+            resetVerificationAfterReopen(workflow, reset)
 
             if (reset.includes("product-acceptance")) {
               const acceptance = (await ctx.storage.get(acceptanceKey(workflowId))) as AcceptancePlan | undefined
@@ -1178,17 +1317,215 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       })
 
       editor.add({
+        name: "verification",
+        description:
+          "Manage load-bearing Loom verification. action=status inspects requirements; action=require persists a specialist-owned requirement; action=prove satisfies one with observed current-session evidence.",
+        input: {
+          type: "object",
+          properties: {
+            action: { type: "string", enum: ["status", "require", "prove"] },
+            workflowId: { type: "string" },
+            beforeStepId: {
+              type: "string",
+              description: "For require: downstream gate that must not PASS before proof exists.",
+            },
+            kind: {
+              type: "string",
+              enum: ["test", "build", "lint", "security", "runtime", "integration", "product-acceptance", "other"],
+            },
+            statement: { type: "string" },
+            requirementId: { type: "string" },
+            observationIds: { type: "array", items: { type: "string" } },
+            detail: { type: "boolean" },
+          },
+          required: ["action"],
+          additionalProperties: false,
+        },
+        options: { namespace: "loom", codemode: false },
+        execute: async (input, tool) => {
+          const value = input as {
+            action: "status" | "require" | "prove"
+            workflowId?: string
+            beforeStepId?: string
+            kind?: EvidenceKind
+            statement?: string
+            requirementId?: string
+            observationIds?: string[]
+            detail?: boolean
+          }
+
+          const workflow = value.workflowId
+            ? await readWorkflow(ctx, value.workflowId)
+            : await activeWorkflow(ctx, tool.sessionID)
+          if (!workflow) return { content: JSON.stringify({ error: "Workflow not found." }) }
+
+          if (value.action === "status") {
+            return {
+              content: JSON.stringify(
+                value.detail
+                  ? { verification: workflow.verification ?? [] }
+                  : { verification: compactVerification(workflow) },
+              ),
+            }
+          }
+
+          if (!value.workflowId) {
+            return { content: JSON.stringify({ error: "workflowId is required for verification mutations." }) }
+          }
+
+          if (value.action === "require") {
+            if (!value.beforeStepId || !value.kind || !value.statement?.trim()) {
+              return {
+                content: JSON.stringify({
+                  error: "require needs beforeStepId, kind, and a non-empty statement.",
+                }),
+              }
+            }
+
+            const attachedWorkflow = (await ctx.storage.get(sessionKey(tool.sessionID))) as string | undefined
+            const attachedStep = (await ctx.storage.get(sessionStepKey(tool.sessionID))) as string | undefined
+            if (attachedWorkflow !== value.workflowId || !attachedStep) {
+              return {
+                content: JSON.stringify({
+                  error: "Verification requirements must be created from a specialist session attached to its current Loom step.",
+                }),
+              }
+            }
+
+            const current = workflow.steps.find((step) => step.id === attachedStep)
+            if (!current || current.agent !== tool.agent) {
+              return { content: JSON.stringify({ error: "Current attached step does not belong to this agent." }) }
+            }
+            if (!runnable(workflow).some((step) => step.id === attachedStep)) {
+              return { content: JSON.stringify({ error: "Current attached step is not runnable." }) }
+            }
+
+            try {
+              const requirement = addVerificationRequirement(workflow, {
+                id: crypto.randomUUID(),
+                createdByStepId: attachedStep,
+                createdByAgent: tool.agent,
+                beforeStepId: value.beforeStepId,
+                kind: value.kind,
+                statement: value.statement,
+                now: new Date().toISOString(),
+              })
+              await ctx.storage.set(workflowKey(workflow.id), workflow)
+              return {
+                content: JSON.stringify({
+                  requirement: {
+                    id: requirement.id,
+                    kind: requirement.kind,
+                    before: requirement.beforeStepId,
+                    status: requirement.status,
+                    statement: requirement.statement,
+                  },
+                }),
+              }
+            } catch (error) {
+              return { content: JSON.stringify({ error: error instanceof Error ? error.message : String(error) }) }
+            }
+          }
+
+          if (!value.requirementId || !value.statement?.trim() || !Array.isArray(value.observationIds)) {
+            return {
+              content: JSON.stringify({
+                error: "prove needs requirementId, statement, and observationIds.",
+              }),
+            }
+          }
+
+          const attachedWorkflow = (await ctx.storage.get(sessionKey(tool.sessionID))) as string | undefined
+          if (attachedWorkflow !== value.workflowId) {
+            return { content: JSON.stringify({ error: "Current session is not attached to this workflow." }) }
+          }
+
+          const requirement = (workflow.verification ?? []).find(
+            (candidate) => candidate.id === value.requirementId,
+          )
+          if (!requirement) return { content: JSON.stringify({ error: "Verification requirement not found." }) }
+
+          const available = await sessionObservations(ctx, tool.sessionID)
+          const byID = new Map(available.map((observation) => [observation.id, observation]))
+          const observations = value.observationIds
+            .map((id) => byID.get(id))
+            .filter((observation): observation is EvidenceObservation => Boolean(observation))
+
+          if (observations.length !== value.observationIds.length) {
+            return { content: JSON.stringify({ error: "Every proof id must be an observed event from the current session." }) }
+          }
+          if (!observationsSupportKind(requirement.kind, observations)) {
+            return {
+              content: JSON.stringify({
+                error: `Observed evidence does not support verification kind ${requirement.kind}.`,
+              }),
+            }
+          }
+
+          const attachedStep = (await ctx.storage.get(sessionStepKey(tool.sessionID))) as string | undefined
+          try {
+            const proven = proveVerificationRequirement(workflow, requirement.id, {
+              byAgent: tool.agent,
+              ...(attachedStep ? { stepId: attachedStep } : {}),
+              statement: value.statement,
+              observationIds: observations.map((observation) => observation.id),
+              provedAt: new Date().toISOString(),
+            })
+            await ctx.storage.set(workflowKey(workflow.id), workflow)
+            return {
+              content: JSON.stringify({
+                proven: proven.id,
+                kind: proven.kind,
+                before: proven.beforeStepId,
+                by: proven.proof?.byAgent,
+                observations: proven.proof?.observationIds.length ?? 0,
+              }),
+            }
+          } catch (error) {
+            return { content: JSON.stringify({ error: error instanceof Error ? error.message : String(error) }) }
+          }
+        },
+      })
+
+      editor.add({
         name: "evidence_observations",
         description: "List automatically observed non-Loom tool executions from the current session.",
         input: {
           type: "object",
-          properties: {},
+          properties: {
+            limit: {
+              type: "number",
+              description: "Maximum recent observations to show in compact mode. Default 12, maximum 100.",
+            },
+            detail: {
+              type: "boolean",
+              description: "Return full observation records instead of the compact recent view.",
+            },
+          },
           additionalProperties: false,
         },
         options: { namespace: "loom", codemode: false },
-        execute: async (_input, tool) => {
+        execute: async (input, tool) => {
           const observations = await sessionObservations(ctx, tool.sessionID)
-          return { content: JSON.stringify({ observations }) }
+          const value = input as { limit?: number; detail?: boolean }
+          if (value.detail) return { content: JSON.stringify({ observations }) }
+
+          const limit = Math.max(1, Math.min(100, Math.floor(value.limit ?? 12)))
+          const recent = observations.slice(-limit).map((observation) => ({
+            id: observation.id,
+            tool: observation.tool,
+            status: observation.status,
+            at: observation.observedAt,
+            ...(observation.command ? { command: clippedSummary(observation.command, 180) } : {}),
+            ...(observation.path ? { path: observation.path } : {}),
+          }))
+          return {
+            content: JSON.stringify({
+              count: observations.length,
+              showing: recent.length,
+              observations: recent,
+            }),
+          }
         },
       })
 

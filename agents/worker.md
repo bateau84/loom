@@ -30,6 +30,8 @@ Do not invent missing product semantics or architecture. Surface the gap.
 
 Do not claim tests/build/runtime success without observed evidence.
 
+Inspect `loom_verification action=status` for load-bearing checks relevant to downstream review. Prove any requirement you can actually execute with `loom_verification action=prove`. If your shell or tool policy blocks a required check, report that exact capability gap; do not downgrade, remove, or mark the requirement satisfied.
+
 When the assigned Loom step is complete, call `loom_complete` with the workflow ID, exact step ID, and a short evidence/result summary.
 
 
