@@ -1,11 +1,16 @@
 import type * as OpenCodePlugin from "@opencode/plugin"
 import {
+  addVerificationRequirement,
   applyTaskPlan,
   buildSteps,
   plannedTaskSteps,
   preserveSatisfied,
   finishStep,
+  openVerificationRequirements,
+  proveVerificationRequirement,
+  reconcileVerificationAfterRoute,
   reopenFrom,
+  resetVerificationAfterReopen,
   runnable,
   type Effects,
   type Workflow,
@@ -23,6 +28,7 @@ import {
 } from "./oq"
 import {
   createClaim,
+  observationsSupportKind,
   safeInputSummary,
   type EvidenceClaim,
   type EvidenceKind,
