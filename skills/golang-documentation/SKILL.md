@@ -15,7 +15,7 @@ metadata:
 **Modes:**
 
 - **Write mode** — generating or filling in missing documentation (doc comments, README, CONTRIBUTING, CHANGELOG, llms.txt). Work sequentially through the checklist in Step 2. Delegation follows `current Loom role directive and control-plane state` — only `general` dispatches sub-agents.
-- **Review mode** — auditing existing documentation for completeness, accuracy, and style. Cover every documentation layer (doc comments, README, CONTRIBUTING, CHANGELOG, library-specific extras). Delegation follows `current Loom role directive and control-plane state` — only `general` dispatches sub-agents; a spoke covers all layers itself, sequentially.
+- **Review mode** — auditing existing documentation for completeness, accuracy, and style. Cover every documentation layer (doc comments, README, CONTRIBUTING, CHANGELOG, library-specific extras). Within the current Loom task, covers all layers itself, sequentially.
 
 # Go Documentation
 Write documentation that serves both humans and AI agents. Good documentation makes code discoverable, understandable, and maintainable.
@@ -80,7 +80,7 @@ A private project might not need a documentation website, llms.txt, Go Playgroun
 
 ## Parallelizing Documentation Work
 
-When documenting a large codebase with many packages, cover these independent tasks. Delegation follows `current Loom role directive and control-plane state` — only `general` dispatches sub-agents; a spoke works through them sequentially:
+When documenting a large codebase with many packages, cover these independent tasks. Within the current Loom task, works through them sequentially:
 
 - Assign each sub-agent to verify and fix doc comments in a different set of packages
 - Generate `ExampleXxx` test functions for multiple packages simultaneously
