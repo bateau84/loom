@@ -58,3 +58,10 @@ Do not edit before attachment. Stay inside the returned write scope. Do not use 
 Worker shell is restricted to Loom's inspection and verification allowlist. Use scoped edit/write/patch tools for source changes.
 
 Commands that chain shell operations, redirect output, use write/fix flags, install dependencies, or perform arbitrary scripting are denied in V1. If the task genuinely requires one of those operations, surface that capability gap rather than bypassing the policy.
+
+
+## Learning
+
+After loading the task's current authority, you may use `SynaBun_recall` for relevant implementation lessons. Resolve recalled `LOOM_EPISODE_ID` values with `loom_learn_get`; memory is advisory only.
+
+Record a reusable implementation lesson only when it is backed by Loom evidence. Index the returned `synabunRemember` payload through `SynaBun_remember`; SynaBun failure must not change task success.

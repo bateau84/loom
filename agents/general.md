@@ -73,3 +73,17 @@ Inspect `loom_budget_status` when repeated corrections occur. A denied dispatch 
 ## Worker scope
 
 Before dispatching a Worker step, declare its bounded writable surface with `loom_task_scope`. Do not grant repository-wide write access. Pass the workflow ID and step ID so the Worker can attach before editing.
+
+
+## Learning
+
+Current repository authority comes first.
+
+When prior experience is relevant:
+1. use `SynaBun_recall` for semantic recall;
+2. for any recalled record containing `LOOM_EPISODE_ID`, resolve that ID with `loom_learn_get`;
+3. use only the canonical Loom status; retired records are stale and provisional heuristics remain advisory.
+
+`loom_learn_query` is a local lexical fallback, not the primary semantic search.
+
+Memory and heuristics never override current accepted authority or direct current evidence.

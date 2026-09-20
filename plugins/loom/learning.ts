@@ -1,0 +1,203 @@
+export type EpisodeStatus = "active" | "retired"
+export type EpisodeSyncStatus = "pending" | "synced" | "failed"
+
+export type Episode = {
+  id: string
+  project: string
+  workflowId?: string
+  subject: string
+  lesson: string
+  evidenceRefs: string[]
+  tags: string[]
+  createdBy: string
+  createdAt: string
+  status: EpisodeStatus
+  synabun: {
+    status: EpisodeSyncStatus
+    memoryId?: string
+    syncedAt?: string
+  }
+  retiredBy?: string
+  retiredAt?: string
+  retireReason?: string
+}
+
+export type HeuristicStatus = "provisional" | "validated" | "retired"
+
+export type HeuristicSupport = {
+  episodeId: string
+  project: string
+  workflowId?: string
+}
+
+export type Heuristic = {
+  id: string
+  statement: string
+  scope: string
+  status: HeuristicStatus
+  support: HeuristicSupport[]
+  proposedBy: string
+  createdAt: string
+  reviewedBy?: string
+  reviewedAt?: string
+  reviewNote?: string
+}
+
+function terms(value: string) {
+  return new Set(
+    value
+      .toLowerCase()
+      .split(/[^a-z0-9_-]+/)
+      .filter((term) => term.length >= 2),
+  )
+}
+
+function overlap(query: Set<string>, values: string[]) {
+  const candidate = terms(values.join(" "))
+  let score = 0
+  for (const term of query) if (candidate.has(term)) score++
+  return score
+}
+
+export function rankEpisodes(query: string, episodes: Episode[]) {
+  const q = terms(query)
+  return episodes
+    .filter((episode) => episode.status === "active")
+    .map((episode) => ({
+      value: episode,
+      score: overlap(q, [episode.subject, episode.lesson, ...episode.tags]),
+    }))
+    .filter((entry) => entry.score > 0 || query.trim() === "")
+    .sort((a, b) => b.score - a.score || b.value.createdAt.localeCompare(a.value.createdAt))
+}
+
+export function rankHeuristics(query: string, heuristics: Heuristic[]) {
+  const q = terms(query)
+  return heuristics
+    .filter((heuristic) => heuristic.status !== "retired")
+    .map((heuristic) => ({
+      value: heuristic,
+      score: overlap(q, [heuristic.statement, heuristic.scope]),
+    }))
+    .filter((entry) => entry.score > 0 || query.trim() === "")
+    .sort((a, b) => {
+      const status = Number(b.value.status === "validated") - Number(a.value.status === "validated")
+      return status || b.score - a.score || b.value.createdAt.localeCompare(a.value.createdAt)
+    })
+}
+
+export function proposeHeuristic(input: {
+  id: string
+  statement: string
+  scope: string
+  proposedBy: string
+  episodes: Episode[]
+  now: string
+}): Heuristic {
+  const active = input.episodes.filter((episode) => episode.status === "active")
+  if (active.length === 0) {
+    throw new Error("A heuristic proposal needs at least one active supporting episode.")
+  }
+
+  const unique = new Map(active.map((episode) => [episode.id, episode]))
+  return {
+    id: input.id,
+    statement: input.statement,
+    scope: input.scope,
+    status: "provisional",
+    support: [...unique.values()].map((episode) => ({
+      episodeId: episode.id,
+      project: episode.project,
+      ...(episode.workflowId ? { workflowId: episode.workflowId } : {}),
+    })),
+    proposedBy: input.proposedBy,
+    createdAt: input.now,
+  }
+}
+
+function independentSource(support: HeuristicSupport) {
+  return support.workflowId ? `${support.project}:${support.workflowId}` : `project:${support.project}`
+}
+
+export function reviewHeuristic(input: {
+  heuristic: Heuristic
+  reviewer: string
+  action: "validate" | "retire"
+  episodes: Episode[]
+  note: string
+  now: string
+}) {
+  if (input.action === "validate") {
+    const active = input.episodes.filter((episode) => episode.status === "active")
+    const support = new Map(
+      input.heuristic.support.map((item) => [item.episodeId, item]),
+    )
+    for (const episode of active) {
+      support.set(episode.id, {
+        episodeId: episode.id,
+        project: episode.project,
+        ...(episode.workflowId ? { workflowId: episode.workflowId } : {}),
+      })
+    }
+
+    const all = [...support.values()]
+    if (all.length < 2) {
+      throw new Error("Validating a heuristic requires at least two distinct supporting episodes.")
+    }
+
+    const independent = new Set(all.map(independentSource))
+    if (independent.size < 2) {
+      throw new Error("Validating a heuristic requires support from at least two independent workflow/project sources.")
+    }
+
+    input.heuristic.support = all
+    input.heuristic.status = "validated"
+  } else {
+    input.heuristic.status = "retired"
+  }
+
+  input.heuristic.reviewedBy = input.reviewer
+  input.heuristic.reviewedAt = input.now
+  input.heuristic.reviewNote = input.note
+  return input.heuristic
+}
+
+export function retireEpisode(input: {
+  episode: Episode
+  reviewer: string
+  reason: string
+  now: string
+}) {
+  if (!input.reason.trim()) throw new Error("Retiring an episode requires a reason.")
+  input.episode.status = "retired"
+  input.episode.retiredBy = input.reviewer
+  input.episode.retiredAt = input.now
+  input.episode.retireReason = input.reason
+  return input.episode
+}
+
+export function heuristicsForEpisodes(episodeIds: string[], heuristics: Heuristic[]) {
+  const wanted = new Set(episodeIds)
+  return heuristics.filter(
+    (heuristic) =>
+      heuristic.status !== "retired" &&
+      heuristic.support.some((support) => wanted.has(support.episodeId)),
+  )
+}
+
+
+export function removeEpisodeSupport(heuristic: Heuristic, episodeId: string) {
+  const before = heuristic.support.length
+  heuristic.support = heuristic.support.filter((support) => support.episodeId !== episodeId)
+  if (heuristic.support.length === before) return false
+
+  if (heuristic.status === "validated") {
+    const independent = new Set(heuristic.support.map(independentSource))
+    if (heuristic.support.length < 2 || independent.size < 2) {
+      heuristic.status = "provisional"
+      heuristic.reviewNote = "Demoted after supporting episode was retired."
+    }
+  }
+
+  return true
+}
