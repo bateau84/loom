@@ -36,6 +36,7 @@ import {
   type ProgressSignal,
 } from "./budget"
 import { resourcesWithinScope, validateWriteScope, type TaskScope } from "./scope"
+import { shellResourcesAllowed } from "./shell"
 
 const loomAgents = new Set([
   "designer",
@@ -1008,6 +1009,14 @@ export default Plugin.define({
     })
 
     await ctx.permission.hook("evaluate", async (event) => {
+      if (event.agent === "worker" && event.action === "shell") {
+        if (!shellResourcesAllowed(event.resources)) {
+          event.effect = "deny"
+          event.message = "Worker shell is limited to Loom's inspection and verification allowlist. Use scoped edit tools for source mutation."
+        }
+        return
+      }
+
       if (event.agent === "worker" && event.action === "edit") {
         const workflowId = (await ctx.storage.get(sessionKey(event.sessionID))) as string | undefined
         const stepId = (await ctx.storage.get(sessionStepKey(event.sessionID))) as string | undefined
