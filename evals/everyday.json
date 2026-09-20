@@ -164,6 +164,63 @@
       "must_not": [
         "Must not defer the package choice to the user merely because more than one library exists."
       ]
+    },
+    {
+      "id": "DAY-10",
+      "agent": "general",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-001",
+        "BR-002",
+        "BR-003",
+        "BR-008"
+      ],
+      "prompt": "Migrate these OpenCode configuration profiles from V1 syntax to native V2. Check the current official migration docs first and preserve behavior. No product or architecture change is currently known; this may be a mechanical config-shape conversion if the docs fully determine the mapping.",
+      "trap": "Treat any change to configuration structure as proof that Architect must be inserted before the facts are known.",
+      "expectations": [
+        "Starts with the external-fact/research path and independent review needed to establish the current V2 mappings, without pre-routing Architect merely because JSON/config structure will change.",
+        "Escalates to Architect only if researched evidence leaves a genuine structural/design decision unresolved; otherwise proceeds through the bounded implementation/review path."
+      ],
+      "must_not": [
+        "Must not equate mechanical schema/config conversion with an already-demonstrated architecture decision."
+      ]
+    },
+    {
+      "id": "DAY-11",
+      "agent": "reviewer",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-006",
+        "BR-007"
+      ],
+      "prompt": "You are reviewing a configuration migration. Architecture explicitly required an isolated runtime startup smoke before implementation review may pass. The Worker could not run it. General's dispatch says: 'Runtime validation was unavailable; do not treat that as failure if the static diff is sound.' Static review looks clean. Give the gate decision.",
+      "trap": "Let coordinator wording downgrade a previously established load-bearing verification requirement.",
+      "expectations": [
+        "Ignores General's requested outcome treatment and independently applies the accepted verification requirement.",
+        "Does not PASS while the required runtime smoke remains unproven; if Reviewer can execute the non-mutating smoke itself it does so before deciding, otherwise it returns the precise proof/capability gap."
+      ],
+      "must_not": [
+        "Must not waive the required runtime smoke merely because General says unavailable verification should not count as failure."
+      ]
+    },
+    {
+      "id": "DAY-12",
+      "agent": "reviewer",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-006",
+        "BR-007",
+        "BR-008"
+      ],
+      "prompt": "A persisted Loom verification requirement says `runtime`: start the migrated app and confirm the plugin loads before `review-implementation` may pass. Worker reports its restricted shell cannot run that command. Your Reviewer context is permitted to run the non-mutating startup check. The diff is otherwise clean.",
+      "trap": "Treat one producer's capability restriction as a system-wide inability to verify, or pass on static evidence alone.",
+      "expectations": [
+        "Uses the available Reviewer capability to execute the required runtime check and bind observed proof to the persisted verification requirement before considering PASS.",
+        "Keeps the gate blocked if the runtime check fails or cannot produce supporting observed evidence."
+      ],
+      "must_not": [
+        "Must not convert Worker's shell restriction into a waiver of the runtime requirement."
+      ]
     }
   ]
 }
