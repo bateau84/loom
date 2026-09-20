@@ -6,6 +6,7 @@ import json
 import os
 import re
 import shutil
+import sqlite3
 import subprocess
 import tempfile
 from pathlib import Path
@@ -167,6 +168,71 @@ def default_models_path() -> Path:
     return base / "opencode" / "models.json"
 
 
+def default_database_path() -> Path:
+    base = Path(os.environ.get("XDG_DATA_HOME", str(Path.home() / ".local" / "share")))
+    return base / "opencode" / "opencode.db"
+
+
+def sanitize_database_seed(source: Path, destination: Path) -> Path:
+    source = source.expanduser().resolve()
+    destination = destination.resolve()
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.unlink(missing_ok=True)
+
+    def quote(identifier: str) -> str:
+        return '"' + identifier.replace('"', '""') + '"'
+
+    try:
+        with sqlite3.connect(f"file:{source}?mode=ro", uri=True) as src_db, sqlite3.connect(destination) as dst_db:
+            schema = src_db.execute(
+                "SELECT type, name, sql FROM sqlite_master "
+                "WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite_%' "
+                "ORDER BY CASE type "
+                "WHEN 'table' THEN 0 WHEN 'index' THEN 1 "
+                "WHEN 'view' THEN 2 WHEN 'trigger' THEN 3 ELSE 4 END, name"
+            ).fetchall()
+            tables = {name for object_type, name, _ in schema if object_type == "table"}
+            if "credential" not in tables or "session" not in tables:
+                raise RuntimeError("OpenCode V2 database is missing credential/session schema")
+
+            dst_db.execute("PRAGMA foreign_keys=OFF")
+            for object_type, _, sql in schema:
+                if object_type == "table":
+                    dst_db.execute(sql)
+
+            for table in ("credential", "migration", "__drizzle_migrations"):
+                if table not in tables:
+                    continue
+                columns = [row[1] for row in src_db.execute(f"PRAGMA table_info({quote(table)})")]
+                if not columns:
+                    continue
+                column_sql = ", ".join(quote(column) for column in columns)
+                placeholders = ", ".join("?" for _ in columns)
+                rows = src_db.execute(f"SELECT {column_sql} FROM {quote(table)}").fetchall()
+                if rows:
+                    dst_db.executemany(
+                        f"INSERT INTO {quote(table)} ({column_sql}) VALUES ({placeholders})",
+                        rows,
+                    )
+
+            for object_type, _, sql in schema:
+                if object_type != "table":
+                    dst_db.execute(sql)
+
+            dst_db.commit()
+            dst_db.execute("PRAGMA journal_mode=DELETE")
+            dst_db.execute("VACUUM")
+    except sqlite3.Error as exc:
+        destination.unlink(missing_ok=True)
+        raise RuntimeError(f"failed to prepare sanitized OpenCode database: {exc}") from exc
+    except RuntimeError:
+        destination.unlink(missing_ok=True)
+        raise
+
+    destination.chmod(0o600)
+    return destination
+
+
 def resolve_optional_file(explicit: str | None, env_name: str, fallback: Path | None = None) -> Path | None:
     raw = explicit or os.environ.get(env_name)
     if raw:
@@ -244,6 +310,7 @@ def invoke_container(
     auth: Path | None,
     config: Path | None,
     models_catalog: Path | None,
+    database_seed: Path | None,
     timeout: int,
     container_timeout: int,
     mount_node_modules: bool,
@@ -300,6 +367,8 @@ def invoke_container(
             command += volume(config, "/seed/opencode.json", True)
         if models_catalog:
             command += volume(models_catalog, "/seed/models.json", True)
+        if database_seed:
+            command += volume(database_seed, "/seed/opencode.db", True)
 
         command += [
             "--env",
@@ -449,6 +518,16 @@ def run_case(case: dict[str, Any], args: argparse.Namespace, engine: str) -> dic
         "OPENCODE_EVAL_RUNNER_MODELS",
         default_models_path(),
     )
+    database_source = resolve_optional_file(
+        args.database,
+        "OPENCODE_EVAL_RUNNER_DB",
+        default_database_path(),
+    )
+    database_seed = (
+        sanitize_database_seed(database_source, temp / "opencode-credentials.db")
+        if database_source and "opencode" in {args.target_transport, args.judge_transport}
+        else None
+    )
     judge_model = args.judge_model or args.model
 
     if args.judge_transport != args.target_transport and not args.judge_model:
@@ -475,6 +554,7 @@ def run_case(case: dict[str, Any], args: argparse.Namespace, engine: str) -> dic
             auth=auth,
             config=config,
             models_catalog=models_catalog,
+            database_seed=database_seed,
             timeout=args.timeout_seconds,
             container_timeout=args.container_timeout,
             mount_node_modules=case["execution"] == "runtime",
@@ -500,6 +580,7 @@ def run_case(case: dict[str, Any], args: argparse.Namespace, engine: str) -> dic
                 auth=auth,
                 config=config,
                 models_catalog=models_catalog,
+                database_seed=database_seed,
                 timeout=args.timeout_seconds,
                 container_timeout=args.container_timeout,
                 mount_node_modules=False,
@@ -568,6 +649,7 @@ def main() -> int:
     parser.add_argument("--auth")
     parser.add_argument("--provider-config")
     parser.add_argument("--models-catalog")
+    parser.add_argument("--database")
     parser.add_argument("--env", action="append", default=[], metavar="NAME")
     parser.add_argument("--artifact-dir", default=str(ROOT / ".loom-evals"))
     parser.add_argument("--timeout-seconds", type=int, default=240)
