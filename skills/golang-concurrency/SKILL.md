@@ -16,7 +16,7 @@ metadata:
 
 - **Write mode** — implement concurrent code (goroutines, channels, sync primitives, worker pools, pipelines). Follow the sequential instructions below.
 - **Review mode** — reviewing a PR's concurrent code changes. Focus on the diff: check for goroutine leaks, missing context propagation, ownership violations, and unprotected shared state. Sequential.
-- **Audit mode** — auditing existing concurrent code across a codebase. Cover the categories in the "Parallelizing Concurrency Audits" section. Delegation follows `current Loom role directive and control-plane state` — only `general` dispatches sub-agents; a spoke works through them sequentially.
+- **Audit mode** — auditing existing concurrent code across a codebase. Cover the categories in the "Parallelizing Concurrency Audits" section. Within the current Loom task, works through them sequentially.
 
 # Go Concurrency Best Practices
 
@@ -88,7 +88,7 @@ For pipeline patterns (fan-out/fan-in, bounded workers, generator chains, Go 1.2
 
 ## Parallelizing Concurrency Audits
 
-When auditing concurrency across a large codebase, cover these independent categories. Delegation follows `current Loom role directive and control-plane state` — only `general` dispatches sub-agents; a spoke works through them sequentially:
+When auditing concurrency across a large codebase, cover these independent categories. Within the current Loom task, works through them sequentially:
 
 1. Find all goroutine spawns (`go func`, `go method`) and verify shutdown mechanisms
 2. Search for mutable globals and shared state without synchronization
