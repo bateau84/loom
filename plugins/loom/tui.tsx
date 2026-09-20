@@ -30,7 +30,8 @@ function LoomSidebar(props: { sessionID?: string }) {
 
     const current = ++generation
     try {
-      const next = await rpc.sidebar({ sessionID }) as LoomSidebarSnapshot
+      const location = context.location ?? context.data.location.default()
+      const next = await rpc.sidebar({ sessionID }, { location }) as LoomSidebarSnapshot
       if (current === generation) setSnapshot(next)
     } catch {
       if (current === generation) setSnapshot(undefined)
