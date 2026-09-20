@@ -47,9 +47,6 @@ describe("Loom tool presentation", () => {
 
   test("keeps raw JSON as an explicit debug format", () => {
     const output = renderToolOutput({ workflowId: "wf-1", status: "active" }, "json")
-    expect(output).toBe('{
-  "workflowId": "wf-1",
-  "status": "active"
-}')
+    expect(output).toBe(JSON.stringify({ workflowId: "wf-1", status: "active" }, null, 2))
   })
 })
