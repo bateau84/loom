@@ -165,7 +165,7 @@ For full pprof CLI reference (all commands, non-interactive mode, profile interp
 ## Cross-References
 
 - → See `golang-performance` skill for optimization patterns to apply after measuring ("if X bottleneck, apply Y")
-- → See `golang-troubleshooting` skill for pprof setup on running services (enable, secure, capture), Delve debugger, GODEBUG flags, root cause methodology
+- → See `golang-troubleshooting` skill for pprof setup on running services (enable, secure, capture), Delve diagnostic, GODEBUG flags, root cause methodology
 - → See `golang-observability` skill for everyday always-on monitoring, continuous profiling (Pyroscope), distributed tracing (OpenTelemetry)
 - → See `golang-testing` skill for general testing practices
 - → See `promql-cli` skill for querying Prometheus runtime metrics in production to validate benchmark findings
