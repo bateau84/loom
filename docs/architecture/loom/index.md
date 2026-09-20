@@ -9,6 +9,7 @@ tags: [architecture, loom, index]
 
 - [System Architecture](system.md)
 - [Execution Model](execution-model.md)
+- [Hierarchical Work Model](work-hierarchy.md)
 - [Control Plane](control-plane.md)
 - [Verification Model](verification.md)
 - [Knowledge and Learning](knowledge-and-learning.md)
