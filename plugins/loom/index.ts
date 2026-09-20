@@ -1,4 +1,5 @@
 import type * as OpenCodePlugin from "@opencode/plugin"
+import { renderToolOutput } from "./presentation"
 import {
   addVerificationRequirement,
   applyTaskPlan,
@@ -437,21 +438,21 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         options: { namespace: "loom", codemode: false },
         execute: async (input, tool) => {
           if (tool.agent !== "general") {
-            return { content: JSON.stringify({ error: "Only general may run Loom intent shaping." }) }
+            return { content: renderToolOutput({ error: "Only general may run Loom intent shaping." }) }
           }
 
           const existing = await activeIntent(ctx, tool.sessionID)
           if (existing && existing.state !== "accepted") {
-            return { content: JSON.stringify({ error: "An active intent interview already exists.", intent: existing }) }
+            return { content: renderToolOutput({ error: "An active intent interview already exists.", intent: existing }) }
           }
 
           try {
             const session = startIntent((input as { seed: string }).seed, new Date().toISOString())
             await ctx.storage.set(intentKey(session.id), session)
             await ctx.storage.set(sessionIntentKey(tool.sessionID), session.id)
-            return { content: JSON.stringify({ intent: session }) }
+            return { content: renderToolOutput({ intent: session }) }
           } catch (error) {
-            return { content: JSON.stringify({ error: error instanceof Error ? error.message : String(error) }) }
+            return { content: renderToolOutput({ error: error instanceof Error ? error.message : String(error) }) }
           }
         },
       })
@@ -470,7 +471,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         execute: async (input, tool) => {
           const requested = (input as { intentId?: string }).intentId
           const session = requested ? await readIntent(ctx, requested) : await activeIntent(ctx, tool.sessionID)
-          return { content: JSON.stringify({ intent: session ?? null }) }
+          return { content: renderToolOutput({ intent: session ?? null }) }
         },
       })
 
@@ -492,10 +493,10 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         options: { namespace: "loom", codemode: false },
         execute: async (input, tool) => {
           if (tool.agent !== "general") {
-            return { content: JSON.stringify({ error: "Only general may ask Loom intent questions." }) }
+            return { content: renderToolOutput({ error: "Only general may ask Loom intent questions." }) }
           }
           const session = await activeIntent(ctx, tool.sessionID)
-          if (!session) return { content: JSON.stringify({ error: "No active intent interview." }) }
+          if (!session) return { content: renderToolOutput({ error: "No active intent interview." }) }
 
           const value = input as { branch: string; question: string; recommendation: string; why: string }
           try {
@@ -505,9 +506,9 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               now: new Date().toISOString(),
             })
             await ctx.storage.set(intentKey(session.id), session)
-            return { content: JSON.stringify({ intentId: session.id, openQuestion }) }
+            return { content: renderToolOutput({ intentId: session.id, openQuestion }) }
           } catch (error) {
-            return { content: JSON.stringify({ error: error instanceof Error ? error.message : String(error) }) }
+            return { content: renderToolOutput({ error: error instanceof Error ? error.message : String(error) }) }
           }
         },
       })
@@ -529,10 +530,10 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         options: { namespace: "loom", codemode: false },
         execute: async (input, tool) => {
           if (tool.agent !== "general") {
-            return { content: JSON.stringify({ error: "Only general may resolve Loom intent branches." }) }
+            return { content: renderToolOutput({ error: "Only general may resolve Loom intent branches." }) }
           }
           const session = await activeIntent(ctx, tool.sessionID)
-          if (!session) return { content: JSON.stringify({ error: "No active intent interview." }) }
+          if (!session) return { content: renderToolOutput({ error: "No active intent interview." }) }
 
           const value = input as {
             resolution: string
@@ -548,9 +549,9 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               now: new Date().toISOString(),
             })
             await ctx.storage.set(intentKey(session.id), session)
-            return { content: JSON.stringify({ intentId: session.id, decision }) }
+            return { content: renderToolOutput({ intentId: session.id, decision }) }
           } catch (error) {
-            return { content: JSON.stringify({ error: error instanceof Error ? error.message : String(error) }) }
+            return { content: renderToolOutput({ error: error instanceof Error ? error.message : String(error) }) }
           }
         },
       })
@@ -575,10 +576,10 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         options: { namespace: "loom", codemode: false },
         execute: async (input, tool) => {
           if (tool.agent !== "general") {
-            return { content: JSON.stringify({ error: "Only general may prepare a Loom Anchor draft." }) }
+            return { content: renderToolOutput({ error: "Only general may prepare a Loom Anchor draft." }) }
           }
           const session = await activeIntent(ctx, tool.sessionID)
-          if (!session) return { content: JSON.stringify({ error: "No active intent interview." }) }
+          if (!session) return { content: renderToolOutput({ error: "No active intent interview." }) }
 
           const value = input as {
             goal: string
@@ -595,9 +596,9 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               now: new Date().toISOString(),
             })
             await ctx.storage.set(intentKey(session.id), session)
-            return { content: JSON.stringify({ intentId: session.id, draft }) }
+            return { content: renderToolOutput({ intentId: session.id, draft }) }
           } catch (error) {
-            return { content: JSON.stringify({ error: error instanceof Error ? error.message : String(error) }) }
+            return { content: renderToolOutput({ error: error instanceof Error ? error.message : String(error) }) }
           }
         },
       })
@@ -613,16 +614,16 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         options: { namespace: "loom", codemode: false },
         execute: async (_input, tool) => {
           if (tool.agent !== "general") {
-            return { content: JSON.stringify({ error: "Only general may reopen Loom intent." }) }
+            return { content: renderToolOutput({ error: "Only general may reopen Loom intent." }) }
           }
           const session = await activeIntent(ctx, tool.sessionID)
-          if (!session) return { content: JSON.stringify({ error: "No active intent interview." }) }
+          if (!session) return { content: renderToolOutput({ error: "No active intent interview." }) }
           try {
             reopenIntent(session)
             await ctx.storage.set(intentKey(session.id), session)
-            return { content: JSON.stringify({ intent: session }) }
+            return { content: renderToolOutput({ intent: session }) }
           } catch (error) {
-            return { content: JSON.stringify({ error: error instanceof Error ? error.message : String(error) }) }
+            return { content: renderToolOutput({ error: error instanceof Error ? error.message : String(error) }) }
           }
         },
       })
@@ -643,14 +644,14 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         options: { namespace: "loom", codemode: false },
         execute: async (input, tool) => {
           if (tool.agent !== "general") {
-            return { content: JSON.stringify({ error: "Only general may record Anchor acceptance." }) }
+            return { content: renderToolOutput({ error: "Only general may record Anchor acceptance." }) }
           }
           const session = await activeIntent(ctx, tool.sessionID)
-          if (!session) return { content: JSON.stringify({ error: "No active intent interview." }) }
+          if (!session) return { content: renderToolOutput({ error: "No active intent interview." }) }
 
           const value = input as { anchorPath: string; confirmation: string }
           if (!value.anchorPath.replaceAll("\\", "/").startsWith("docs/anchors/")) {
-            return { content: JSON.stringify({ error: "Accepted Anchor must live under docs/anchors/**." }) }
+            return { content: renderToolOutput({ error: "Accepted Anchor must live under docs/anchors/**." }) }
           }
 
           try {
@@ -662,7 +663,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             })
             await ctx.storage.set(intentKey(session.id), session)
             return {
-              content: JSON.stringify({
+              content: renderToolOutput({
                 intentId: session.id,
                 accepted,
                 next: {
@@ -673,7 +674,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               }),
             }
           } catch (error) {
-            return { content: JSON.stringify({ error: error instanceof Error ? error.message : String(error) }) }
+            return { content: renderToolOutput({ error: error instanceof Error ? error.message : String(error) }) }
           }
         },
       })
@@ -692,14 +693,14 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         options: { namespace: "loom", codemode: false },
         execute: async (input, tool) => {
           if (tool.agent !== "general") {
-            return { content: JSON.stringify({ error: "Only general may start a Loom workflow." }) }
+            return { content: renderToolOutput({ error: "Only general may start a Loom workflow." }) }
           }
 
           const { anchor } = input as { anchor: string }
           const intent = await activeIntent(ctx, tool.sessionID)
           if (intent && intent.state !== "accepted") {
             return {
-              content: JSON.stringify({
+              content: renderToolOutput({
                 error: "Cannot start autonomous execution while intent shaping is unresolved.",
                 intentState: intent.state,
               }),
@@ -707,7 +708,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           }
           if (intent?.acceptedAnchor && intent.acceptedAnchor.path !== anchor) {
             return {
-              content: JSON.stringify({
+              content: renderToolOutput({
                 error: "Workflow Anchor does not match the accepted intent Anchor.",
                 acceptedAnchor: intent.acceptedAnchor.path,
               }),
@@ -731,7 +732,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           await ctx.storage.set(limitsKey(id), DEFAULT_LIMITS)
           await ctx.storage.set(budgetKey(id), newBudgetState())
 
-          return { content: JSON.stringify({ workflowId: id, anchor, status: "started" }) }
+          return { content: renderToolOutput({ workflowId: id, anchor, status: "started" }) }
         },
       })
 
@@ -781,12 +782,12 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         options: { namespace: "loom", codemode: false },
         execute: async (input, tool) => {
           if (tool.agent !== "general") {
-            return { content: JSON.stringify({ error: "Only general may route Loom workflows." }) }
+            return { content: renderToolOutput({ error: "Only general may route Loom workflows." }) }
           }
 
           const workflow = await activeWorkflow(ctx, tool.sessionID)
           if (!workflow) {
-            return { content: JSON.stringify({ error: "No active Loom workflow. Call loom_start first." }) }
+            return { content: renderToolOutput({ error: "No active Loom workflow. Call loom_start first." }) }
           }
 
           const implementationStarted = workflow.steps.some(
@@ -799,7 +800,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           )
           if (implementationStarted) {
             return {
-              content: JSON.stringify({
+              content: renderToolOutput({
                 error:
                   "V0 route reclassification is only supported before implementation completion. Start a correction workflow for later reclassification.",
               }),
@@ -817,7 +818,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
           const questions = await readQuestions(ctx, workflow.id)
           return {
-            content: JSON.stringify({
+            content: renderToolOutput({
               workflowId: workflow.id,
               path: workflow.steps.map((step) => ({
                 step: step.id,
@@ -853,7 +854,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             ? await readWorkflow(ctx, requested)
             : await activeWorkflow(ctx, tool.sessionID)
 
-          if (!workflow) return { content: JSON.stringify({ error: "Workflow not found." }) }
+          if (!workflow) return { content: renderToolOutput({ error: "Workflow not found." }) }
 
           const questions = await readQuestions(ctx, workflow.id)
           const limits = await readLimits(ctx, workflow.id)
@@ -864,14 +865,14 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
           if (!detail) {
             return {
-              content: JSON.stringify(
+              content: renderToolOutput(
                 compactWorkflowState(workflow, questions, budget, limits, acceptance, knowledge),
               ),
             }
           }
 
           return {
-            content: JSON.stringify({
+            content: renderToolOutput({
               summary: compactWorkflowState(workflow, questions, budget, limits, acceptance, knowledge),
               workflow,
               runnable: runnable(workflow).map((step) => ({ id: step.id, agent: step.agent })),
@@ -912,13 +913,13 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           }
 
           const workflow = await readWorkflow(ctx, workflowId)
-          if (!workflow) return { content: JSON.stringify({ error: "Workflow not found." }) }
+          if (!workflow) return { content: renderToolOutput({ error: "Workflow not found." }) }
 
           const questions = await readQuestions(ctx, workflowId)
           const blocking = blockingQuestionsForStep(questions, stepId)
           if (blocking.length > 0) {
             return {
-              content: JSON.stringify({
+              content: renderToolOutput({
                 error: "Step has unresolved blocking questions.",
                 questions: blocking.map((question) => ({
                   id: question.id,
@@ -930,59 +931,59 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           }
 
           const step = workflow.steps.find((candidate) => candidate.id === stepId)
-          if (!step) return { content: JSON.stringify({ error: "Step not found." }) }
+          if (!step) return { content: renderToolOutput({ error: "Step not found." }) }
 
           const resolvedOutcome = outcome ?? (step.kind === "work" ? "complete" : undefined)
           if (!resolvedOutcome) {
-            return { content: JSON.stringify({ error: "Gate step requires outcome pass or fail." }) }
+            return { content: renderToolOutput({ error: "Gate step requires outcome pass or fail." }) }
           }
 
           if (stepId === "plan" && plannedTaskSteps(workflow).length === 0) {
-            return { content: JSON.stringify({ error: "Planning step cannot complete before a validated task graph exists." }) }
+            return { content: renderToolOutput({ error: "Planning step cannot complete before a validated task graph exists." }) }
           }
 
           if (stepId === "knowledge-sync") {
             const report = (await ctx.storage.get(knowledgeKey(workflowId))) as KnowledgeReport | undefined
             if (!report?.valid) {
-              return { content: JSON.stringify({ error: "Knowledge sync cannot complete without a valid OKF-verified knowledge report." }) }
+              return { content: renderToolOutput({ error: "Knowledge sync cannot complete without a valid OKF-verified knowledge report." }) }
             }
           }
 
           if (stepId === "product-acceptance") {
             const plan = (await ctx.storage.get(acceptanceKey(workflowId))) as AcceptancePlan | undefined
             if (!plan) {
-              return { content: JSON.stringify({ error: "Product Acceptance plan is missing." }) }
+              return { content: renderToolOutput({ error: "Product Acceptance plan is missing." }) }
             }
             const readiness = acceptanceReadiness(plan)
             if (readiness === "pending") {
-              return { content: JSON.stringify({ error: "Product Acceptance still has pending scenarios.", readiness }) }
+              return { content: renderToolOutput({ error: "Product Acceptance still has pending scenarios.", readiness }) }
             }
             if (resolvedOutcome === "pass" && readiness !== "passed") {
-              return { content: JSON.stringify({ error: "Product Acceptance cannot PASS unless every scenario passed.", readiness }) }
+              return { content: renderToolOutput({ error: "Product Acceptance cannot PASS unless every scenario passed.", readiness }) }
             }
             if (resolvedOutcome === "fail" && readiness === "passed") {
-              return { content: JSON.stringify({ error: "Product Acceptance cannot FAIL when every scenario passed.", readiness }) }
+              return { content: renderToolOutput({ error: "Product Acceptance cannot FAIL when every scenario passed.", readiness }) }
             }
           }
 
           if (stepId === "review-product" && resolvedOutcome === "pass") {
             const plan = (await ctx.storage.get(acceptanceKey(workflowId))) as AcceptancePlan | undefined
             if (!plan || acceptanceReadiness(plan) !== "passed") {
-              return { content: JSON.stringify({ error: "Product review cannot PASS without passed Product Acceptance." }) }
+              return { content: renderToolOutput({ error: "Product review cannot PASS without passed Product Acceptance." }) }
             }
           }
 
           try {
             finishStep(workflow, stepId, tool.agent, resolvedOutcome, summary)
           } catch (error) {
-            return { content: JSON.stringify({ error: error instanceof Error ? error.message : String(error) }) }
+            return { content: renderToolOutput({ error: error instanceof Error ? error.message : String(error) }) }
           }
 
           const evidenceBound = await bindSessionEvidence(ctx, tool.sessionID, workflowId, stepId)
           await ctx.storage.set(workflowKey(workflow.id), workflow)
 
           return {
-            content: JSON.stringify({
+            content: renderToolOutput({
               finished: stepId,
               evidenceBound,
               outcome: resolvedOutcome,
@@ -1023,7 +1024,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         options: { namespace: "loom", codemode: false },
         execute: async (input, tool) => {
           if (tool.agent !== "general") {
-            return { content: JSON.stringify({ error: "Only general may reopen Loom steps." }) }
+            return { content: renderToolOutput({ error: "Only general may reopen Loom steps." }) }
           }
           const value = input as {
             workflowId: string
@@ -1043,14 +1044,14 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           }
           if (!hasMaterialProgress(progress)) {
             return {
-              content: JSON.stringify({
+              content: renderToolOutput({
                 error: "Reopen denied: repeated work must have new evidence, a changed hypothesis, a changed strategy, or a reduced unresolved set.",
               }),
             }
           }
 
           const workflow = await readWorkflow(ctx, workflowId)
-          if (!workflow) return { content: JSON.stringify({ error: "Workflow not found." }) }
+          if (!workflow) return { content: renderToolOutput({ error: "Workflow not found." }) }
 
           try {
             const reset = reopenFrom(workflow, stepId)
@@ -1078,14 +1079,14 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             )
             await ctx.storage.set(workflowKey(workflow.id), workflow)
             return {
-              content: JSON.stringify({
+              content: renderToolOutput({
                 reopened: stepId,
                 reset,
                 runnable: runnable(workflow).map((candidate) => ({ id: candidate.id, agent: candidate.agent })),
               }),
             }
           } catch (error) {
-            return { content: JSON.stringify({ error: error instanceof Error ? error.message : String(error) }) }
+            return { content: renderToolOutput({ error: error instanceof Error ? error.message : String(error) }) }
           }
         },
       })
@@ -1123,7 +1124,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             evidence?: string[]
           }
           const workflow = await readWorkflow(ctx, value.workflowId)
-          if (!workflow) return { content: JSON.stringify({ error: "Workflow not found." }) }
+          if (!workflow) return { content: renderToolOutput({ error: "Workflow not found." }) }
 
           try {
             const question = raiseQuestion({
@@ -1141,13 +1142,13 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             await appendQuestion(ctx, question)
             await bindSessionEvidence(ctx, tool.sessionID, value.workflowId, value.stepId)
             return {
-              content: JSON.stringify({
+              content: renderToolOutput({
                 question,
                 routeTo: question.requiredAuthority,
               }),
             }
           } catch (error) {
-            return { content: JSON.stringify({ error: error instanceof Error ? error.message : String(error) }) }
+            return { content: renderToolOutput({ error: error instanceof Error ? error.message : String(error) }) }
           }
         },
       })
@@ -1168,11 +1169,11 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         execute: async (input, tool) => {
           const { workflowId, stepId } = input as { workflowId: string; stepId?: string }
           const workflow = await readWorkflow(ctx, workflowId)
-          if (!workflow) return { content: JSON.stringify({ error: "Workflow not found." }) }
+          if (!workflow) return { content: renderToolOutput({ error: "Workflow not found." }) }
 
           const questions = await readQuestions(ctx, workflowId)
           return {
-            content: JSON.stringify({
+            content: renderToolOutput({
               questions: relevantQuestions(questions, workflow, tool.agent, stepId),
             }),
           }
@@ -1205,7 +1206,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             evidence?: string[]
           }
           const question = (await ctx.storage.get(oqKey(value.workflowId, value.questionId))) as OpenQuestion | undefined
-          if (!question) return { content: JSON.stringify({ error: "Question not found." }) }
+          if (!question) return { content: renderToolOutput({ error: "Question not found." }) }
 
           try {
             answerQuestion(
@@ -1217,9 +1218,9 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               new Date().toISOString(),
             )
             await saveQuestion(ctx, question)
-            return { content: JSON.stringify({ question }) }
+            return { content: renderToolOutput({ question }) }
           } catch (error) {
-            return { content: JSON.stringify({ error: error instanceof Error ? error.message : String(error) }) }
+            return { content: renderToolOutput({ error: error instanceof Error ? error.message : String(error) }) }
           }
         },
       })
@@ -1254,7 +1255,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           }
           const workflow = await readWorkflow(ctx, value.workflowId)
           const question = (await ctx.storage.get(oqKey(value.workflowId, value.questionId))) as OpenQuestion | undefined
-          if (!workflow || !question) return { content: JSON.stringify({ error: "Workflow or question not found." }) }
+          if (!workflow || !question) return { content: renderToolOutput({ error: "Workflow or question not found." }) }
 
           try {
             reconcileQuestion(
@@ -1267,9 +1268,9 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               new Date().toISOString(),
             )
             await saveQuestion(ctx, question)
-            return { content: JSON.stringify({ question }) }
+            return { content: renderToolOutput({ question }) }
           } catch (error) {
-            return { content: JSON.stringify({ error: error instanceof Error ? error.message : String(error) }) }
+            return { content: renderToolOutput({ error: error instanceof Error ? error.message : String(error) }) }
           }
         },
       })
@@ -1298,7 +1299,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             reason: string
           }
           const question = (await ctx.storage.get(oqKey(value.workflowId, value.questionId))) as OpenQuestion | undefined
-          if (!question) return { content: JSON.stringify({ error: "Question not found." }) }
+          if (!question) return { content: renderToolOutput({ error: "Question not found." }) }
 
           try {
             reopenQuestion(
@@ -1309,9 +1310,9 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               new Date().toISOString(),
             )
             await saveQuestion(ctx, question)
-            return { content: JSON.stringify({ question }) }
+            return { content: renderToolOutput({ question }) }
           } catch (error) {
-            return { content: JSON.stringify({ error: error instanceof Error ? error.message : String(error) }) }
+            return { content: renderToolOutput({ error: error instanceof Error ? error.message : String(error) }) }
           }
         },
       })
@@ -1357,11 +1358,11 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           const workflow = value.workflowId
             ? await readWorkflow(ctx, value.workflowId)
             : await activeWorkflow(ctx, tool.sessionID)
-          if (!workflow) return { content: JSON.stringify({ error: "Workflow not found." }) }
+          if (!workflow) return { content: renderToolOutput({ error: "Workflow not found." }) }
 
           if (value.action === "status") {
             return {
-              content: JSON.stringify(
+              content: renderToolOutput(
                 value.detail
                   ? { verification: workflow.verification ?? [] }
                   : { verification: compactVerification(workflow) },
@@ -1370,13 +1371,13 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           }
 
           if (!value.workflowId) {
-            return { content: JSON.stringify({ error: "workflowId is required for verification mutations." }) }
+            return { content: renderToolOutput({ error: "workflowId is required for verification mutations." }) }
           }
 
           if (value.action === "require") {
             if (!value.beforeStepId || !value.kind || !value.statement?.trim()) {
               return {
-                content: JSON.stringify({
+                content: renderToolOutput({
                   error: "require needs beforeStepId, kind, and a non-empty statement.",
                 }),
               }
@@ -1386,7 +1387,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             const attachedStep = (await ctx.storage.get(sessionStepKey(tool.sessionID))) as string | undefined
             if (attachedWorkflow !== value.workflowId || !attachedStep) {
               return {
-                content: JSON.stringify({
+                content: renderToolOutput({
                   error: "Verification requirements must be created from a specialist session attached to its current Loom step.",
                 }),
               }
@@ -1394,10 +1395,10 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
             const current = workflow.steps.find((step) => step.id === attachedStep)
             if (!current || current.agent !== tool.agent) {
-              return { content: JSON.stringify({ error: "Current attached step does not belong to this agent." }) }
+              return { content: renderToolOutput({ error: "Current attached step does not belong to this agent." }) }
             }
             if (!runnable(workflow).some((step) => step.id === attachedStep)) {
-              return { content: JSON.stringify({ error: "Current attached step is not runnable." }) }
+              return { content: renderToolOutput({ error: "Current attached step is not runnable." }) }
             }
 
             try {
@@ -1412,7 +1413,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               })
               await ctx.storage.set(workflowKey(workflow.id), workflow)
               return {
-                content: JSON.stringify({
+                content: renderToolOutput({
                   requirement: {
                     id: requirement.id,
                     kind: requirement.kind,
@@ -1423,13 +1424,13 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 }),
               }
             } catch (error) {
-              return { content: JSON.stringify({ error: error instanceof Error ? error.message : String(error) }) }
+              return { content: renderToolOutput({ error: error instanceof Error ? error.message : String(error) }) }
             }
           }
 
           if (!value.requirementId || !value.statement?.trim() || !Array.isArray(value.observationIds)) {
             return {
-              content: JSON.stringify({
+              content: renderToolOutput({
                 error: "prove needs requirementId, statement, and observationIds.",
               }),
             }
@@ -1437,13 +1438,13 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
           const attachedWorkflow = (await ctx.storage.get(sessionKey(tool.sessionID))) as string | undefined
           if (attachedWorkflow !== value.workflowId) {
-            return { content: JSON.stringify({ error: "Current session is not attached to this workflow." }) }
+            return { content: renderToolOutput({ error: "Current session is not attached to this workflow." }) }
           }
 
           const requirement = (workflow.verification ?? []).find(
             (candidate) => candidate.id === value.requirementId,
           )
-          if (!requirement) return { content: JSON.stringify({ error: "Verification requirement not found." }) }
+          if (!requirement) return { content: renderToolOutput({ error: "Verification requirement not found." }) }
 
           const available = await sessionObservations(ctx, tool.sessionID)
           const byID = new Map(available.map((observation) => [observation.id, observation]))
@@ -1452,11 +1453,11 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             .filter((observation): observation is EvidenceObservation => Boolean(observation))
 
           if (observations.length !== value.observationIds.length) {
-            return { content: JSON.stringify({ error: "Every proof id must be an observed event from the current session." }) }
+            return { content: renderToolOutput({ error: "Every proof id must be an observed event from the current session." }) }
           }
           if (!observationsSupportKind(requirement.kind, observations)) {
             return {
-              content: JSON.stringify({
+              content: renderToolOutput({
                 error: `Observed evidence does not support verification kind ${requirement.kind}.`,
               }),
             }
@@ -1473,7 +1474,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             })
             await ctx.storage.set(workflowKey(workflow.id), workflow)
             return {
-              content: JSON.stringify({
+              content: renderToolOutput({
                 proven: proven.id,
                 kind: proven.kind,
                 before: proven.beforeStepId,
@@ -1482,7 +1483,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               }),
             }
           } catch (error) {
-            return { content: JSON.stringify({ error: error instanceof Error ? error.message : String(error) }) }
+            return { content: renderToolOutput({ error: error instanceof Error ? error.message : String(error) }) }
           }
         },
       })
@@ -1508,7 +1509,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         execute: async (input, tool) => {
           const observations = await sessionObservations(ctx, tool.sessionID)
           const value = input as { limit?: number; detail?: boolean }
-          if (value.detail) return { content: JSON.stringify({ observations }) }
+          if (value.detail) return { content: renderToolOutput({ observations }) }
 
           const limit = Math.max(1, Math.min(100, Math.floor(value.limit ?? 12)))
           const recent = observations.slice(-limit).map((observation) => ({
@@ -1520,7 +1521,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             ...(observation.path ? { path: observation.path } : {}),
           }))
           return {
-            content: JSON.stringify({
+            content: renderToolOutput({
               count: observations.length,
               showing: recent.length,
               observations: recent,
@@ -1559,12 +1560,12 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           }
 
           const workflow = await readWorkflow(ctx, value.workflowId)
-          if (!workflow) return { content: JSON.stringify({ error: "Workflow not found." }) }
+          if (!workflow) return { content: renderToolOutput({ error: "Workflow not found." }) }
 
           const step = workflow.steps.find((candidate) => candidate.id === value.stepId)
-          if (!step) return { content: JSON.stringify({ error: "Step not found." }) }
+          if (!step) return { content: renderToolOutput({ error: "Step not found." }) }
           if (step.agent !== tool.agent) {
-            return { content: JSON.stringify({ error: `Step ${value.stepId} belongs to ${step.agent}, not ${tool.agent}.` }) }
+            return { content: renderToolOutput({ error: `Step ${value.stepId} belongs to ${step.agent}, not ${tool.agent}.` }) }
           }
 
           const available = await sessionObservations(ctx, tool.sessionID)
@@ -1572,7 +1573,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           const observations = value.observationIds.map((id) => byID.get(id)).filter(Boolean) as EvidenceObservation[]
 
           if (observations.length !== value.observationIds.length) {
-            return { content: JSON.stringify({ error: "Every evidence id must be an observed event from the current session." }) }
+            return { content: renderToolOutput({ error: "Every evidence id must be an observed event from the current session." }) }
           }
 
           try {
@@ -1598,9 +1599,9 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             await ctx.storage.set(`${claimPrefix(value.workflowId, value.stepId)}${claim.id}`, claim)
             await ctx.storage.set(claimIdKey(claim.id), claim)
 
-            return { content: JSON.stringify({ claim }) }
+            return { content: renderToolOutput({ claim }) }
           } catch (error) {
-            return { content: JSON.stringify({ error: error instanceof Error ? error.message : String(error) }) }
+            return { content: renderToolOutput({ error: error instanceof Error ? error.message : String(error) }) }
           }
         },
       })
@@ -1622,7 +1623,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           const { workflowId, stepId } = input as { workflowId: string; stepId: string }
           const observations = await stepObservations(ctx, workflowId, stepId)
           const claims = await stepClaims(ctx, workflowId, stepId)
-          return { content: JSON.stringify({ observations, claims }) }
+          return { content: renderToolOutput({ observations, claims }) }
         },
       })
 
@@ -1645,7 +1646,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         options: { namespace: "loom", codemode: false },
         execute: async (input, tool) => {
           if (tool.agent !== "documenter") {
-            return { content: JSON.stringify({ error: "Only documenter may record knowledge-sync results." }) }
+            return { content: renderToolOutput({ error: "Only documenter may record knowledge-sync results." }) }
           }
 
           const value = input as {
@@ -1656,12 +1657,12 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           }
 
           const workflow = await readWorkflow(ctx, value.workflowId)
-          if (!workflow) return { content: JSON.stringify({ error: "Workflow not found." }) }
+          if (!workflow) return { content: renderToolOutput({ error: "Workflow not found." }) }
 
           const attachedWorkflow = (await ctx.storage.get(sessionKey(tool.sessionID))) as string | undefined
           const attachedStep = (await ctx.storage.get(sessionStepKey(tool.sessionID))) as string | undefined
           if (attachedWorkflow !== value.workflowId || attachedStep !== "knowledge-sync") {
-            return { content: JSON.stringify({ error: "Documenter must attach to this workflow's knowledge-sync step first." }) }
+            return { content: renderToolOutput({ error: "Documenter must attach to this workflow's knowledge-sync step first." }) }
           }
 
           const available = await sessionObservations(ctx, tool.sessionID)
@@ -1671,7 +1672,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             .filter((observation): observation is EvidenceObservation => Boolean(observation))
 
           if (observations.length !== value.okfObservationIds.length) {
-            return { content: JSON.stringify({ error: "Every OKF observation id must belong to the current Documenter session." }) }
+            return { content: renderToolOutput({ error: "Every OKF observation id must belong to the current Documenter session." }) }
           }
 
           try {
@@ -1684,9 +1685,9 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               now: new Date().toISOString(),
             })
             await ctx.storage.set(knowledgeKey(value.workflowId), report)
-            return { content: JSON.stringify({ report }) }
+            return { content: renderToolOutput({ report }) }
           } catch (error) {
-            return { content: JSON.stringify({ error: error instanceof Error ? error.message : String(error) }) }
+            return { content: renderToolOutput({ error: error instanceof Error ? error.message : String(error) }) }
           }
         },
       })
@@ -1704,7 +1705,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         execute: async (input) => {
           const { workflowId } = input as { workflowId: string }
           const report = (await ctx.storage.get(knowledgeKey(workflowId))) as KnowledgeReport | undefined
-          return { content: JSON.stringify({ report: report ?? null }) }
+          return { content: renderToolOutput({ report: report ?? null }) }
         },
       })
 
@@ -1736,7 +1737,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         options: { namespace: "loom", codemode: false },
         execute: async (input, tool) => {
           if (!["acceptance", "specifier", "reviewer"].includes(tool.agent)) {
-            return { content: JSON.stringify({ error: "Only acceptance, specifier, or reviewer may define Product Acceptance scenarios." }) }
+            return { content: renderToolOutput({ error: "Only acceptance, specifier, or reviewer may define Product Acceptance scenarios." }) }
           }
 
           const value = input as {
@@ -1744,14 +1745,14 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             scenarios: Array<{ id: string; title: string; criteria: string[] }>
           }
           const workflow = await readWorkflow(ctx, value.workflowId)
-          if (!workflow) return { content: JSON.stringify({ error: "Workflow not found." }) }
+          if (!workflow) return { content: renderToolOutput({ error: "Workflow not found." }) }
           if (!workflow.steps.some((step) => step.id === "product-acceptance")) {
-            return { content: JSON.stringify({ error: "Workflow does not require Product Acceptance." }) }
+            return { content: renderToolOutput({ error: "Workflow does not require Product Acceptance." }) }
           }
 
           const existing = (await ctx.storage.get(acceptanceKey(value.workflowId))) as AcceptancePlan | undefined
           if (existing?.scenarios.some((scenario) => scenario.outcome !== "pending")) {
-            return { content: JSON.stringify({ error: "Product Acceptance plan cannot change after results exist; reopen/reset first." }) }
+            return { content: renderToolOutput({ error: "Product Acceptance plan cannot change after results exist; reopen/reset first." }) }
           }
 
           try {
@@ -1762,9 +1763,9 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               now: new Date().toISOString(),
             })
             await ctx.storage.set(acceptanceKey(value.workflowId), plan)
-            return { content: JSON.stringify({ plan, readiness: acceptanceReadiness(plan) }) }
+            return { content: renderToolOutput({ plan, readiness: acceptanceReadiness(plan) }) }
           } catch (error) {
-            return { content: JSON.stringify({ error: error instanceof Error ? error.message : String(error) }) }
+            return { content: renderToolOutput({ error: error instanceof Error ? error.message : String(error) }) }
           }
         },
       })
@@ -1783,7 +1784,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           const { workflowId } = input as { workflowId: string }
           const plan = (await ctx.storage.get(acceptanceKey(workflowId))) as AcceptancePlan | undefined
           return {
-            content: JSON.stringify({
+            content: renderToolOutput({
               plan: plan ?? null,
               readiness: plan ? acceptanceReadiness(plan) : "missing",
             }),
@@ -1810,7 +1811,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         options: { namespace: "loom", codemode: false },
         execute: async (input, tool) => {
           if (tool.agent !== "acceptance") {
-            return { content: JSON.stringify({ error: "Only acceptance may record Product Acceptance results." }) }
+            return { content: renderToolOutput({ error: "Only acceptance may record Product Acceptance results." }) }
           }
 
           const value = input as {
@@ -1821,17 +1822,17 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             note: string
           }
           const plan = (await ctx.storage.get(acceptanceKey(value.workflowId))) as AcceptancePlan | undefined
-          if (!plan) return { content: JSON.stringify({ error: "Product Acceptance plan not found." }) }
+          if (!plan) return { content: renderToolOutput({ error: "Product Acceptance plan not found." }) }
 
           const records = await Promise.all(
             value.evidenceClaimIds.map((id) => ctx.storage.get(claimIdKey(id)) as Promise<EvidenceClaim | undefined>),
           )
           const claims = records.filter((claim): claim is EvidenceClaim => Boolean(claim))
           if (claims.length !== value.evidenceClaimIds.length) {
-            return { content: JSON.stringify({ error: "Every Product Acceptance evidence claim id must exist." }) }
+            return { content: renderToolOutput({ error: "Every Product Acceptance evidence claim id must exist." }) }
           }
           if (claims.some((claim) => claim.byAgent !== "acceptance")) {
-            return { content: JSON.stringify({ error: "Product Acceptance evidence claims must be produced by acceptance." }) }
+            return { content: renderToolOutput({ error: "Product Acceptance evidence claims must be produced by acceptance." }) }
           }
 
           try {
@@ -1846,13 +1847,13 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             })
             await ctx.storage.set(acceptanceKey(value.workflowId), plan)
             return {
-              content: JSON.stringify({
+              content: renderToolOutput({
                 scenario,
                 readiness: acceptanceReadiness(plan),
               }),
             }
           } catch (error) {
-            return { content: JSON.stringify({ error: error instanceof Error ? error.message : String(error) }) }
+            return { content: renderToolOutput({ error: error instanceof Error ? error.message : String(error) }) }
           }
         },
       })
@@ -1871,7 +1872,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           const { workflowId } = input as { workflowId: string }
           const limits = await readLimits(ctx, workflowId)
           const state = await readBudget(ctx, workflowId)
-          return { content: JSON.stringify({ limits, state }) }
+          return { content: renderToolOutput({ limits, state }) }
         },
       })
 
@@ -1908,17 +1909,17 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         options: { namespace: "loom", codemode: false },
         execute: async (input, tool) => {
           if (tool.agent !== "planner") {
-            return { content: JSON.stringify({ error: "Only planner may define the Worker task graph." }) }
+            return { content: renderToolOutput({ error: "Only planner may define the Worker task graph." }) }
           }
 
           const value = input as { workflowId: string; tasks: TaskSpec[] }
           const workflow = await readWorkflow(ctx, value.workflowId)
-          if (!workflow) return { content: JSON.stringify({ error: "Workflow not found." }) }
+          if (!workflow) return { content: renderToolOutput({ error: "Workflow not found." }) }
 
           const planStep = workflow.steps.find((step) => step.id === "plan")
-          if (!planStep) return { content: JSON.stringify({ error: "Workflow has no planning step." }) }
+          if (!planStep) return { content: renderToolOutput({ error: "Workflow has no planning step." }) }
           if (!runnable(workflow).some((step) => step.id === "plan")) {
-            return { content: JSON.stringify({ error: "Planning step is not currently runnable." }) }
+            return { content: renderToolOutput({ error: "Planning step is not currently runnable." }) }
           }
 
           try {
@@ -1936,7 +1937,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
             await ctx.storage.set(workflowKey(workflow.id), workflow)
             return {
-              content: JSON.stringify({
+              content: renderToolOutput({
                 tasks: steps.map((step) => ({
                   stepId: step.id,
                   task: step.task,
@@ -1945,7 +1946,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               }),
             }
           } catch (error) {
-            return { content: JSON.stringify({ error: error instanceof Error ? error.message : String(error) }) }
+            return { content: renderToolOutput({ error: error instanceof Error ? error.message : String(error) }) }
           }
         },
       })
@@ -1963,11 +1964,11 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         execute: async (input) => {
           const { workflowId } = input as { workflowId: string }
           const workflow = await readWorkflow(ctx, workflowId)
-          if (!workflow) return { content: JSON.stringify({ error: "Workflow not found." }) }
+          if (!workflow) return { content: renderToolOutput({ error: "Workflow not found." }) }
           const tasks = plannedTaskSteps(workflow)
           const runnableIDs = new Set(runnable(workflow).map((step) => step.id))
           return {
-            content: JSON.stringify({
+            content: renderToolOutput({
               tasks: tasks.map((step) => ({
                 stepId: step.id,
                 status: step.status,
@@ -1997,29 +1998,29 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         options: { namespace: "loom", codemode: false },
         execute: async (input, tool) => {
           if (tool.agent !== "general") {
-            return { content: JSON.stringify({ error: "Only general may define Worker task scope." }) }
+            return { content: renderToolOutput({ error: "Only general may define Worker task scope." }) }
           }
 
           const value = input as { workflowId: string; stepId: string; write: string[] }
           const workflow = await readWorkflow(ctx, value.workflowId)
-          if (!workflow) return { content: JSON.stringify({ error: "Workflow not found." }) }
+          if (!workflow) return { content: renderToolOutput({ error: "Workflow not found." }) }
 
           const step = workflow.steps.find((candidate) => candidate.id === value.stepId)
-          if (!step) return { content: JSON.stringify({ error: "Step not found." }) }
+          if (!step) return { content: renderToolOutput({ error: "Step not found." }) }
           if (step.agent !== "worker") {
-            return { content: JSON.stringify({ error: "Task scope may only be assigned to Worker steps." }) }
+            return { content: renderToolOutput({ error: "Task scope may only be assigned to Worker steps." }) }
           }
           if (step.task) {
-            return { content: JSON.stringify({ error: "Planned task scope is immutable; reopen the planning step to change it." }) }
+            return { content: renderToolOutput({ error: "Planned task scope is immutable; reopen the planning step to change it." }) }
           }
           if (step.status !== "pending") {
-            return { content: JSON.stringify({ error: "Worker task scope cannot change after the step has finished." }) }
+            return { content: renderToolOutput({ error: "Worker task scope cannot change after the step has finished." }) }
           }
 
           try {
             validateWriteScope(value.write)
           } catch (error) {
-            return { content: JSON.stringify({ error: error instanceof Error ? error.message : String(error) }) }
+            return { content: renderToolOutput({ error: error instanceof Error ? error.message : String(error) }) }
           }
 
           const scope: TaskScope = {
@@ -2028,7 +2029,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             write: value.write,
           }
           await ctx.storage.set(scopeKey(value.workflowId, value.stepId), scope)
-          return { content: JSON.stringify({ scope }) }
+          return { content: renderToolOutput({ scope }) }
         },
       })
 
@@ -2049,27 +2050,27 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         execute: async (input, tool) => {
           const { workflowId, stepId } = input as { workflowId: string; stepId: string }
           const workflow = await readWorkflow(ctx, workflowId)
-          if (!workflow) return { content: JSON.stringify({ error: "Workflow not found." }) }
+          if (!workflow) return { content: renderToolOutput({ error: "Workflow not found." }) }
 
           const step = workflow.steps.find((candidate) => candidate.id === stepId)
-          if (!step) return { content: JSON.stringify({ error: "Step not found." }) }
+          if (!step) return { content: renderToolOutput({ error: "Step not found." }) }
           if (step.agent !== tool.agent) {
             return {
-              content: JSON.stringify({
+              content: renderToolOutput({
                 error: `Step ${stepId} belongs to ${step.agent}, not ${tool.agent}.`,
               }),
             }
           }
 
           if (!runnable(workflow).some((candidate) => candidate.id === stepId)) {
-            return { content: JSON.stringify({ error: "Step is not currently runnable; dependencies or prior gates are incomplete." }) }
+            return { content: renderToolOutput({ error: "Step is not currently runnable; dependencies or prior gates are incomplete." }) }
           }
 
           let scope: TaskScope | undefined
           if (tool.agent === "worker") {
             scope = (await ctx.storage.get(scopeKey(workflowId, stepId))) as TaskScope | undefined
             if (!scope) {
-              return { content: JSON.stringify({ error: "Worker step has no declared task scope." }) }
+              return { content: renderToolOutput({ error: "Worker step has no declared task scope." }) }
             }
 
           }
@@ -2078,7 +2079,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           await ctx.storage.set(sessionStepKey(tool.sessionID), stepId)
 
           return {
-            content: JSON.stringify({
+            content: renderToolOutput({
               attached: true,
               workflowId,
               stepId,
@@ -2105,7 +2106,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         execute: async (input) => {
           const { workflowId, stepId } = input as { workflowId: string; stepId: string }
           const scope = (await ctx.storage.get(scopeKey(workflowId, stepId))) as TaskScope | undefined
-          return { content: JSON.stringify({ scope: scope ?? null }) }
+          return { content: renderToolOutput({ scope: scope ?? null }) }
         },
       })
 
@@ -2136,7 +2137,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           }
 
           if (value.evidenceRefs.length === 0) {
-            return { content: JSON.stringify({ error: "A durable learning episode needs at least one evidence reference." }) }
+            return { content: renderToolOutput({ error: "A durable learning episode needs at least one evidence reference." }) }
           }
 
           const checked = await Promise.all(
@@ -2150,7 +2151,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           )
           const missing = checked.filter((entry) => !entry.exists).map((entry) => entry.id)
           if (missing.length > 0) {
-            return { content: JSON.stringify({ error: "Every learning evidence reference must exist in the Loom evidence ledger.", missing }) }
+            return { content: renderToolOutput({ error: "Every learning evidence reference must exist in the Loom evidence ledger.", missing }) }
           }
 
           const episode: Episode = {
@@ -2169,7 +2170,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
           await ctx.storage.set(episodeKey(episode.id), episode)
           return {
-            content: JSON.stringify({
+            content: renderToolOutput({
               episode,
               synabunRemember: episodeRecallPayload(episode),
             }),
@@ -2203,7 +2204,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           const heuristics = await scanValues<Heuristic>(ctx, "heuristic/")
 
           return {
-            content: JSON.stringify({
+            content: renderToolOutput({
               advisory: true,
               semantic: false,
               episodes: rankEpisodes(value.query, episodes).slice(0, limit).map((entry) => entry.value),
@@ -2246,7 +2247,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           const heuristics = [...new Map([...direct, ...related].map((item) => [item.id, item])).values()]
 
           return {
-            content: JSON.stringify({
+            content: renderToolOutput({
               authoritative: false,
               canonical: true,
               episodes,
@@ -2272,12 +2273,12 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         options: { namespace: "loom", codemode: false },
         execute: async (input, tool) => {
           if (tool.agent !== "reviewer" && tool.agent !== "critic") {
-            return { content: JSON.stringify({ error: "Only reviewer or critic may retire learning episodes." }) }
+            return { content: renderToolOutput({ error: "Only reviewer or critic may retire learning episodes." }) }
           }
 
           const value = input as { episodeId: string; reason: string }
           const episode = (await ctx.storage.get(episodeKey(value.episodeId))) as Episode | undefined
-          if (!episode) return { content: JSON.stringify({ error: "Episode not found." }) }
+          if (!episode) return { content: renderToolOutput({ error: "Episode not found." }) }
 
           try {
             retireEpisode({
@@ -2298,7 +2299,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             }
 
             return {
-              content: JSON.stringify({
+              content: renderToolOutput({
                 episode,
                 affectedHeuristics: affected,
                 ...(episode.synabun.memoryId
@@ -2307,7 +2308,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               }),
             }
           } catch (error) {
-            return { content: JSON.stringify({ error: error instanceof Error ? error.message : String(error) }) }
+            return { content: renderToolOutput({ error: error instanceof Error ? error.message : String(error) }) }
           }
         },
       })
@@ -2338,7 +2339,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               synabunRemember: episodeRecallPayload(episode),
             }))
 
-          return { content: JSON.stringify({ unsynced }) }
+          return { content: renderToolOutput({ unsynced }) }
         },
       })
 
@@ -2365,7 +2366,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           const episodes = records.filter((episode): episode is Episode => Boolean(episode))
 
           if (episodes.length !== value.episodeIds.length) {
-            return { content: JSON.stringify({ error: "Every supporting episode id must exist." }) }
+            return { content: renderToolOutput({ error: "Every supporting episode id must exist." }) }
           }
 
           try {
@@ -2378,9 +2379,9 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               now: new Date().toISOString(),
             })
             await ctx.storage.set(heuristicKey(heuristic.id), heuristic)
-            return { content: JSON.stringify({ heuristic }) }
+            return { content: renderToolOutput({ heuristic }) }
           } catch (error) {
-            return { content: JSON.stringify({ error: error instanceof Error ? error.message : String(error) }) }
+            return { content: renderToolOutput({ error: error instanceof Error ? error.message : String(error) }) }
           }
         },
       })
@@ -2403,7 +2404,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         options: { namespace: "loom", codemode: false },
         execute: async (input, tool) => {
           if (tool.agent !== "reviewer" && tool.agent !== "critic") {
-            return { content: JSON.stringify({ error: "Only reviewer or critic may validate or retire heuristics." }) }
+            return { content: renderToolOutput({ error: "Only reviewer or critic may validate or retire heuristics." }) }
           }
 
           const value = input as {
@@ -2413,14 +2414,14 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             note: string
           }
           const heuristic = (await ctx.storage.get(heuristicKey(value.heuristicId))) as Heuristic | undefined
-          if (!heuristic) return { content: JSON.stringify({ error: "Heuristic not found." }) }
+          if (!heuristic) return { content: renderToolOutput({ error: "Heuristic not found." }) }
 
           const records = await Promise.all(
             value.episodeIds.map((id) => ctx.storage.get(episodeKey(id)) as Promise<Episode | undefined>),
           )
           const episodes = records.filter((episode): episode is Episode => Boolean(episode))
           if (episodes.length !== value.episodeIds.length) {
-            return { content: JSON.stringify({ error: "Every review episode id must exist." }) }
+            return { content: renderToolOutput({ error: "Every review episode id must exist." }) }
           }
 
           try {
@@ -2433,9 +2434,9 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               now: new Date().toISOString(),
             })
             await ctx.storage.set(heuristicKey(heuristic.id), heuristic)
-            return { content: JSON.stringify({ heuristic }) }
+            return { content: renderToolOutput({ heuristic }) }
           } catch (error) {
-            return { content: JSON.stringify({ error: error instanceof Error ? error.message : String(error) }) }
+            return { content: renderToolOutput({ error: error instanceof Error ? error.message : String(error) }) }
           }
         },
       })
