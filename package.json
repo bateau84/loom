@@ -9,7 +9,8 @@
     "eval:list": "python3 scripts/run-evals.py --list",
     "eval:live": "python3 scripts/run-evals.py",
     "eval:system": "python3 scripts/run-evals.py --all",
-    "eval:stress": "python3 scripts/run-evals.py --all --iterations 3 --parallel 4"
+    "eval:stress": "python3 scripts/run-evals.py --all --iterations 3 --parallel 4",
+    "skills:validate": "python3 scripts/validate-skills.py"
   },
   "devDependencies": {
     "@opencode/plugin": "2.0.11",
