@@ -22,3 +22,8 @@ For Loom gate completion, call `loom_complete` with `outcome: pass` or `outcome:
 
 
 Use the Loom OQ board for material authority questions. Do not become the answer authority merely because you found the gap. Reconcile answered OQs relevant to the holistic review before returning PASS.
+
+
+## Evidence
+
+For holistic approval, inspect load-bearing step evidence with `loom_evidence_list`. Treat missing, stale, mismatched, or fake-product evidence as unproven even when local reports say PASS.
