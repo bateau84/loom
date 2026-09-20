@@ -104,7 +104,7 @@ Prefer:
 
 Avoid:
 
-> Updated `general.md`, `current Loom role directive and control-plane state`, and `critic.md`.
+> Updated the coordinator, workflow policy, and independent-review surfaces that implement the new handoff contract.
 
 File paths may be included when they help reviewers navigate, but file inventory is secondary to behavior.
 
