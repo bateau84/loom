@@ -84,25 +84,7 @@ Pick the owner; load neighbors only when the task spans the boundary.
 - **Goroutine vs cancel**: `golang-concurrency` + `golang-context` — load both when cancelling goroutines via context
 - **Features vs rules**: `golang-modernize` (language adoption) vs `golang-lint` (static analysis config)
 
-## Configure mode
 
-To force-trigger specific skills in a project so they always load, add a block to that project's `AGENTS.md` (this is how the system wires skills, the same way `/graphify` is wired):
-
-```markdown
-## Required Go skills
-
-For any Go work in this repo, always load `golang-common-practice` plus:
-
-- `golang-error-handling`, `golang-safety` — this service treats every error path as load-bearing
-- `golang-security` — handles user input and secrets
-- `golang-testing` — changes require tests
-
-Wire `/golang-how-to` to invoke this router skill before starting Go tasks.
-```
-
-Tailor the list to the repo: pick the primary skills from the routing table that match the project's domain, and always include `golang-common-practice`.
-
----
 
 
 ## Staying Updated with Go
