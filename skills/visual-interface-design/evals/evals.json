@@ -1,0 +1,84 @@
+{
+  "skill": "visual-interface-design",
+  "version": "1.0.0",
+  "shape": 1,
+  "cases": [
+    {
+      "id": "VID-01",
+      "name": "web-specific-advice-claimed-as-surface-independent",
+      "trap": "Designer produces web-specific visual design advice (CSS variables, Tailwind tokens, responsive breakpoints, web typography loading strategies) while claiming to provide surface-independent visual design reasoning. The advice would be at home in Hallmark's references and does not address TUI, CLI, or desktop visual constraints. Designer fails the Hallmark boundary test.",
+      "prompt": "We're building an application that has a web dashboard (for managers to view reports) and a TUI monitoring view (for engineers who watch it in terminal during incidents). Design the visual language so both surfaces communicate status consistently — specifically, how should error states look on each surface, and what color strategy should we use across both?",
+      "expectations": [
+        "Designer must address BOTH surfaces with surface-specific constraints — the TUI answer and the web answer must be substantively different, not the same advice with terminology swapped",
+        "For the TUI surface: Designer must address the 16-color ANSI constraint — red for error must be the ANSI red color token, not a hex value; hierarchy must use bold/bright variants and box-drawing characters, not CSS properties",
+        "For the web dashboard: Designer must specify contrast requirements (WCAG 1.4.3: 4.5:1 for text, 1.4.11: 3:1 for UI components) and require that color is paired with a secondary signal (icon + text) not used alone",
+        "Designer must establish that the semantic role (error = red family) is consistent across both surfaces, while the implementation differs: ANSI red in TUI, a specific-value hex token in web",
+        "Designer must address color blindness: both surfaces must convey error state through a secondary signal (icon shape, text label, or pattern) so the design works without color distinction",
+        "Designer must specify that dark mode behavior differs: TUI always has a dark terminal background; the web dashboard may support both, requiring a separate color specification for each mode"
+      ],
+      "negative_expectations": [
+        "Designer must not produce a design that addresses only the web surface and notes 'apply similar principles to the TUI' — the TUI has fundamentally different visual capabilities and requires distinct guidance",
+        "Designer must not specify hex color values for the TUI surface — the TUI operates within ANSI color names, not hex values",
+        "Designer must not treat dark mode as color inversion — dark mode for the web surface requires a separate color specification, not an inverted palette",
+        "Designer must not produce advice that would be equally applicable if the TUI surface were replaced with a mobile app — TUI-specific constraints (character grid, box-drawing characters, cursor-based focus) must be present"
+      ]
+    },
+    {
+      "id": "VID-02",
+      "name": "color-as-sole-status-indicator",
+      "trap": "Designer specifies status indicators (error, warning, success states) using color as the only distinguishing signal — no secondary signal (icon, text label, pattern, or shape change). The design fails for colorblind users and in grayscale contexts. Designer either does not acknowledge the constraint or treats color accessibility as a compliance afterthought rather than a design input.",
+      "prompt": "Design the status indicator system for a web application dashboard that displays database connection health. Connections can be: healthy, degraded (slow but operational), critical (approaching failure), and offline (not responding). The dashboard is used by on-call engineers who need to spot problems immediately.",
+      "expectations": [
+        "Designer must specify a secondary signal for every status state — not just color. Each state must be distinguishable when all color is removed (grayscale test)",
+        "Designer must specify icon shapes that differ by state: a ✓ or ● for healthy, ⚠ or △ for degraded, ✗ or ● (filled) for critical, ○ (hollow) or — for offline — distinct shapes for each state",
+        "Designer must explicitly reference WCAG 1.4.1 (color cannot be the only means of conveying information) as the design constraint, not just an implementation concern",
+        "Designer must specify text labels alongside or near the status indicators (not just tooltips on hover) — engineers reading a dashboard at a glance need non-hover-dependent status",
+        "Designer must address the contrast requirements for each status color against the dashboard background: 3:1 minimum for the status icon/indicator against its adjacent color (WCAG 1.4.11)",
+        "Designer must specify how the status system degrades when viewed on a monochrome display or printed — the system must remain functional"
+      ],
+      "negative_expectations": [
+        "Designer must not specify a system where the only distinction between 'degraded' and 'critical' is a color change from amber to red — these must be distinguishable without color",
+        "Designer must not defer accessibility to 'the developer will add ARIA labels' — the visual design must carry the accessibility signal, not rely solely on programmatic labels",
+        "Designer must not specify status as a background color fill only — background color changes are less perceptible than foreground icon/text changes for rapid scanning"
+      ]
+    },
+    {
+      "id": "VID-03",
+      "name": "typographic-hierarchy-missing-from-data-dense-interface",
+      "trap": "Designer produces a visual design for a data-dense interface (data table, monitoring dashboard, log viewer) that uses marketing-page typography conventions: large headings, generous whitespace, minimal information density. The result forces excessive scrolling and prevents users from seeing the global picture. Designer does not distinguish density as a deliberate design decision appropriate to expert users with data-intensive tasks.",
+      "prompt": "Design the visual typography system for an engineering log viewer that shows application logs in real time. Engineers use this during incidents to find error patterns across hundreds of log entries. Each log entry has: timestamp, severity level (DEBUG/INFO/WARN/ERROR/FATAL), service name, and message text. They need to scan vertically at high speed to spot errors.",
+      "expectations": [
+        "Designer must specify a high-density layout appropriate for expert users scanning logs at speed — row height should be minimal (a single line per entry), not padded for aesthetic comfort",
+        "Designer must specify monospace font for all log entry content — timestamp, severity, service name, and message must use a monospace typeface so column positions are visually stable and scannable",
+        "Designer must use type weight and color to encode severity as hierarchy: FATAL/ERROR entries should have the highest visual weight (bold + full-contrast foreground or status color), WARN slightly less, INFO/DEBUG muted/reduced",
+        "Designer must specify that timestamp and service name use a smaller, muted caption-level treatment so the log message — the content engineers need to read — has the highest visual weight",
+        "Designer must address the line length and wrapping behavior: log messages can be arbitrarily long; the design must specify whether lines wrap or truncate (with expand-on-click) and how this affects scanning speed",
+        "Designer must specify that severity color is never the sole differentiator — ERROR and FATAL must be distinguishable from each other through color + weight + optionally label, not just different shades of red"
+      ],
+      "negative_expectations": [
+        "Designer must not specify a type scale and spacing that would be appropriate for a marketing page or onboarding flow — this is a data-dense expert tool, and 24px vertical padding between rows is wrong",
+        "Designer must not specify a proportional font (Helvetica, Inter, system-ui) for the log entries without monospace — proportional fonts do not maintain column alignment, which is critical for scanning structured log fields",
+        "Designer must not treat severity level as a background-color-only distinction (red background for ERROR) without also specifying foreground contrast, weight, and icon signals — background-only is a colorblind failure and reduces readability of the message text"
+      ]
+    },
+    {
+      "id": "VID-04",
+      "name": "motion-decorative-and-harmful",
+      "trap": "Designer specifies motion and animation that is decorative rather than communicative — animations that play continuously, transitions that slow down habitual interactions, or motion effects (parallax, large-scale zoom) that cause vestibular harm. Designer treats animation as a visual design asset rather than as a communication tool with costs and accessibility obligations.",
+      "prompt": "Design the motion behavior for a project management web application. The app has: a kanban board where cards move between columns, a dashboard with live-updating metric widgets, and a notification system that shows alerts when tasks are overdue. The design team says they want the app to 'feel dynamic and alive'.",
+      "expectations": [
+        "Designer must distinguish between motion that communicates (card drag + drop, alert appearance) and motion that is decorative ('feels dynamic and alive') — and explicitly recommend against decorative ambient motion",
+        "Designer must specify that live-updating metric widgets must not use continuous animation — auto-refreshing animations in a peripheral widget distract from the primary work area and cause attention hijacking",
+        "Designer must specify a maximum duration for habitual interactions: kanban card movement should complete in under 200ms; transitions users perform dozens of times daily must not feel slow",
+        "Designer must specify prefers-reduced-motion behavior: when the OS has reduced-motion enabled, all non-essential animation stops; state changes are communicated through immediate visual difference (color, icon, text update) rather than motion",
+        "Designer must address the notification alert: motion that draws attention to the alert is appropriate (because the alert is a system-state change the user needs to notice), but the motion must be brief and terminate — not a continuously pulsing animation",
+        "Designer must explicitly flag that parallax, large-scale zoom, and continuous rotation are vestibular hazards under WCAG 2.3.3 and must not be used as 'dynamic' design elements"
+      ],
+      "negative_expectations": [
+        "Designer must not endorse 'the app should feel alive' as a design direction without translating it into specific, purposeful motion with defined communicative function — 'alive' is an aesthetic judgment, not a design specification",
+        "Designer must not specify a continuously running animation on the dashboard metrics as a way to signal 'real-time data' — the data update itself (value change) is the signal; continuous animation is noise",
+        "Designer must not omit prefers-reduced-motion from the design specification — it is not an implementation detail but a design requirement that shapes what the motion system must fall back to"
+      ]
+    }
+  ]
+}

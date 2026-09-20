@@ -1,0 +1,94 @@
+[
+  {
+    "id": "tui-eval-1",
+    "description": "Designer designing a TUI file manager adapts web UI patterns without translating to terminal medium",
+    "prompt": "I'm designing a TUI file manager. I want a hover state that shows a tooltip with file metadata when the user moves the cursor over a filename. I also want to use flexbox-style layout so the panels resize fluidly.",
+    "trap": "Applies web UI patterns (hover state, flexbox) to TUI without acknowledging that the terminal medium has no hover state (focus is binary: has focus or doesn't) and no pixel-level fluid layout (all positioning is integer character-cell arithmetic).",
+    "expectations": [
+      "Should explain that hover state does not exist in terminal keyboard-first interaction — focus is binary, not positional-cursor-over-element",
+      "Should explain that TUI layout uses integer character-cell arithmetic, not CSS flexbox or pixel-based fluid layout",
+      "Should suggest a keyboard-driven alternative to hover tooltips: showing file metadata in a fixed detail panel or status bar when the file has keyboard focus (highlighted row / cursor position = focus)",
+      "Should address how to show file metadata without hover: detail panel on the right, or status bar at the bottom showing selected file's metadata",
+      "Should NOT design hover-based interactions without translation to the terminal medium"
+    ],
+    "negative_expectations": [
+      "Should NOT suggest implementing CSS-style flexible box layout in a terminal without explaining the integer-cell constraint",
+      "Should NOT design hover-tooltip behavior as if it transfers directly from web UI"
+    ]
+  },
+  {
+    "id": "tui-eval-2",
+    "description": "Designer designing a TUI without addressing key binding discoverability",
+    "prompt": "I'm designing a TUI dashboard showing system metrics. The user can switch between views (CPU, memory, network, disk), filter by time range, and export data. Design the key binding scheme.",
+    "trap": "Produces a key binding map without designing the discoverability mechanism — the status bar, help overlay, and mode indicator. A key binding scheme with no discoverability mechanism produces a TUI where users must guess or read documentation to use the tool.",
+    "expectations": [
+      "Should produce a key binding map organized by context (navigation, filter mode, export mode, global)",
+      "Should specify what the status bar shows in each context — at minimum '? = help' and the 2-3 most relevant bindings for current focus",
+      "Should design a '?' help overlay showing the complete key binding map",
+      "Should address how mode is communicated visually when filter mode or export mode is active (status bar indicator)",
+      "Should follow keyboard conventions: arrow keys and/or j/k for navigation, Tab for panel/view switching, Escape to cancel/go back, q to quit",
+      "Should address terminal-reserved bindings (Ctrl-C = interrupt must still work)"
+    ],
+    "negative_expectations": [
+      "Should NOT produce a key binding map without specifying how those bindings are discoverable to a first-time user",
+      "Should NOT assign bindings to Ctrl-C without providing an alternative quit mechanism",
+      "Should NOT design the key binding scheme as if users will read external documentation to discover it"
+    ]
+  },
+  {
+    "id": "tui-eval-3",
+    "description": "Designer specifying TUI color strategy without addressing NO_COLOR and non-color signals",
+    "prompt": "I want to use color to communicate pod status in a Kubernetes dashboard TUI: green for running, yellow for pending, red for failed, gray for unknown.",
+    "trap": "Designs color as the only signal for pod status without specifying non-color alternatives. Fails for color-blind users, NO_COLOR environments, and monochrome terminals — the design produces a tool where state is invisible without color.",
+    "expectations": [
+      "Should accept color as an enhancement but require non-color primary signals",
+      "Should specify text or symbol signals paired with color: e.g., '✓ Running', '⟳ Pending', '✗ Failed', '? Unknown' — or status text in the row itself",
+      "Should specify NO_COLOR behavior: when NO_COLOR is set, what remains to communicate pod status (the text/symbol signals)",
+      "Should use semantic color tokens rather than literal green/yellow/red/gray: 'success-indicator', 'warning-indicator', 'error-indicator', 'muted' mapped to 16 ANSI colors",
+      "Should address that the terminal's ANSI color values are controlled by the user's terminal theme — design must work in both dark and light terminal backgrounds"
+    ],
+    "negative_expectations": [
+      "Should NOT design a color scheme where color is the only distinguishing signal for pod state",
+      "Should NOT use literal RGB or hex color values as the primary color specification without semantic token layer",
+      "Should NOT ignore the NO_COLOR environment variable requirement"
+    ]
+  },
+  {
+    "id": "tui-eval-4",
+    "description": "Designer designing a full-screen TUI without specifying the focus model and modal overlay behavior",
+    "prompt": "My TUI has a main list panel and a detail panel on the right. When the user presses 'e', it should open a modal dialog to edit the selected item. Design the focus behavior.",
+    "trap": "Describes the modal opening without specifying: how focus is communicated visually in the list panel and detail panel, what focus-trap behavior the modal must enforce, how Escape closes the modal, and what happens to focus after the modal closes.",
+    "expectations": [
+      "Should specify how the list panel communicates selection/focus: highlighted row (reverse video), cursor position, optional ▶ marker",
+      "Should specify how the detail panel shows it is active vs inactive: border style or color change (bright border when active, dim when inactive)",
+      "Should specify the modal focus-trap: while the modal is open, Tab and panel-switching bindings must not move focus outside the modal",
+      "Should specify modal close behavior: Escape closes the modal without saving, returns focus to the list at the same selected item",
+      "Should specify what happens if the user presses 'e' when no item is selected (disabled state — no modal opens)",
+      "Should address what 'Edit' modal's focus model is internally: which input field has focus on open, how Tab traverses fields within the modal"
+    ],
+    "negative_expectations": [
+      "Should NOT describe modal opening without specifying the focus-trap behavior during modal",
+      "Should NOT leave focus return path after modal close unspecified",
+      "Should NOT omit the visual focus indicator design for the list panel and detail panel"
+    ]
+  },
+  {
+    "id": "tui-eval-5",
+    "description": "Designer not addressing TUI layout at 80x24 minimum terminal size",
+    "prompt": "I'm designing a TUI with four panels: a navigation sidebar (20 columns), a main content area, a detail panel (40 columns), and a status panel at the bottom. The status panel should be 8 rows tall.",
+    "trap": "Accepts a panel layout without pressure-testing it at 80x24 — the standard minimum terminal size. Four panels with the specified sizes do not fit in 80x24, producing a broken layout for any user running a default terminal.",
+    "expectations": [
+      "Should calculate whether the proposed layout fits at 80x24: 20 (sidebar) + content + 40 (detail) = requires content area to be 80-20-40-2 (borders) = 18 columns, which may be insufficient; status panel of 8 rows leaves only 16 rows for content panels",
+      "Should identify that the layout needs a responsive fallback for 80x24: which panels collapse or hide at minimum size",
+      "Should propose a breakpoint strategy: at narrow widths, collapse the detail panel (accessible via drill-down or a key); at very narrow widths (≤60 columns), collapse the sidebar too",
+      "Should specify what appears at 80x24 vs at a wider terminal (e.g., 120+ columns)",
+      "Should specify when the 'terminal too small' message appears (below the minimum functional size)",
+      "Should note that the 8-row status panel is unusual — most TUI status bars are 1-2 rows; clarify whether this is intended and if so, what it contains"
+    ],
+    "negative_expectations": [
+      "Should NOT accept the proposed layout without checking if it fits at 80x24",
+      "Should NOT design a TUI with no responsive strategy for minimum terminal size",
+      "Should NOT omit a 'terminal too small' fallback state"
+    ]
+  }
+]

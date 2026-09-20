@@ -1,0 +1,71 @@
+{
+  "skill_name": "pr-educational-body",
+  "evals": [
+    {
+      "id": 1,
+      "name": "multi-file-feature-pr-body",
+      "prompt": "I just finished a feature branch with 4 commits adding refresh-token rotation to the auth service. The changes touch auth/session.go, auth/session_test.go, auth/middleware.go, and docs/api-auth.md. Tests pass. Create the PR.",
+      "expected_output": "A PR body with Why, What changed, Review notes, and Verification sections (plus optional Why this approach and/or Follow-ups when useful), where each section contains genuine reasoning that explains WHY the work was done — not just restating the file list or commit titles. What changed groups files by logical concern (auth logic, docs) rather than by commit.",
+      "trap": "Without the skill, the model either creates the PR with an empty body, dumps the commit log as the body, or fills sections with formulaic filler that restates the diff rather than explaining the reasoning.",
+      "expectations": [
+        "PR body contains Why, What changed, Review notes, and Verification sections",
+        "Why section explains the problem that existed before the change (static tokens, no rotation) and does NOT merely list the files touched",
+        "Why this approach section (when included) explains why this approach was chosen over alternatives, with specific trade-offs mentioned",
+        "What changed section groups files by logical concern (auth logic vs docs) rather than listing each commit separately",
+        "Verification section cites a concrete test command or result and does NOT merely say 'tests pass'"
+      ]
+    },
+    {
+      "id": 2,
+      "name": "single-file-bugfix-trivial-format",
+      "prompt": "I fixed a one-line bug in utils/parse.go where a missing nil check caused a panic on empty input. Single file changed, tests added in utils/parse_test.go. Create the PR.",
+      "expected_output": "A trivial-format PR body: one-line summary of what and why, one-line Changes description, one-line Verification. No Why, What changed, or Review notes sections because they would each be one sentence restating the same thing.",
+      "trap": "Without the skill, the model either creates a full Why/What changed/Review notes/Verification structure for a trivial change (over-engineering), or creates the PR with no body at all (under-documenting).",
+      "expectations": [
+        "PR body is short (under 5 lines of content) using the trivial format, not the default non-trivial structure",
+        "Body does NOT contain separate Why, What changed, and Review notes sections — they would be redundant for this scope",
+        "Body includes a one-line summary that explains both WHAT was fixed and WHY it matters",
+        "Verification section (even if one line) describes how the fix was checked (e.g. test result or manual confirmation)"
+      ]
+    },
+    {
+      "id": 3,
+      "name": "multi-file-refactor-pr-body",
+      "prompt": "I refactored the payment processing module: extracted a shared client interface from three concrete implementations (Stripe, PayPal, Square), moved retry logic into a middleware layer, and added integration tests. Changes span 8 files across payments/ and payments/internal/. No behavior change — purely structural. Create the PR.",
+      "expected_output": "A PR body with Why, What changed, Review notes, and Verification sections where Why explains why the refactor was needed (duplication, testability, etc.), Why this approach explains the specific design choices (middleware vs decorator, interface shape), What changed groups by concern (interface extraction, retry middleware, tests), and Follow-ups notes what is explicitly deferred.",
+      "trap": "Without the skill, the model writes a body that either (a) fails to explain WHY a no-behavior-change refactor was worth doing, or (b) describes it as 'code cleanup' without specific design rationale.",
+      "expectations": [
+        "Why section explains the specific problem with the old structure (duplication, tight coupling, hard to test) and does NOT merely say 'the code needed refactoring'",
+        "Why this approach section explains why this particular refactor approach was chosen (e.g. why middleware over decorator, why this interface shape)",
+        "What changed section groups files by concern (interface extraction, retry middleware, test additions) rather than listing all 8 files flat",
+        "Follow-ups section is present and notes what was explicitly deferred or considered but not done"
+      ]
+    },
+    {
+      "id": 4,
+      "name": "pr-body-no-internal-workflow-terms",
+      "prompt": "I just finished implementing a new caching layer for the API. Changes touch api/cache.go, api/cache_test.go, and config/config.go. The cache uses Redis with a 5-minute TTL. Create the PR.",
+      "expected_output": "A PR body that is self-contained and uses no internal workflow terminology. No mentions of waves, tasks, sprints, agents, hubs, spokes, dispatches, plans, phases, or any internal protocol vocabulary.",
+      "trap": "Without the skill, the model may reference internal workflow terms like 'this was part of task 3.2' or 'completed in wave 2' or 'dispatched by the hub' — language that is meaningless to an external reviewer.",
+      "expectations": [
+        "Body contains zero instances of internal workflow terms: wave, task, sprint, agent, hub, spoke, dispatch, plan, phase",
+        "Body is self-contained — a reader with no repo access, no commit history, and no prior conversation can understand it",
+        "Body does NOT reference internal docs, protocols, or paths (no docs/ephemeral-reports/, no shared-protocol.md references)",
+        "Body explains the caching decision in terms the external reviewer can evaluate (performance need, TTL choice, Redis over alternatives)"
+      ]
+    },
+    {
+      "id": 5,
+      "name": "pr-body-explains-why-not-just-what",
+      "prompt": "I changed the API rate limiter from a fixed-window approach to a sliding-window algorithm. Changes in api/ratelimit.go and api/ratelimit_test.go. Both approaches were considered. Create the PR.",
+      "expected_output": "A PR body where Why explains the problem with the old approach and what the new approach achieves, and Why this approach explains WHY sliding-window was chosen over fixed-window with specific trade-offs — not just that the change was made.",
+      "trap": "Without the skill, the model writes a body that describes WHAT changed ('changed rate limiter from fixed to sliding window') but never explains WHY the old approach was insufficient or why this alternative was chosen.",
+      "expectations": [
+        "Why section explains the specific problem with fixed-window rate limiting (burst handling, accuracy at window edges) and does NOT merely say 'the rate limiter was changed'",
+        "Why this approach section compares sliding-window to fixed-window with at least one specific trade-off mentioned (memory, accuracy, implementation complexity)",
+        "Body does NOT merely restate the diff ('changed ratelimit.go to use sliding window') — it adds reasoning the diff alone cannot convey",
+        "What changed section explains what each file's change contributes to the overall goal and does NOT merely list what was modified"
+      ]
+    }
+  ]
+}

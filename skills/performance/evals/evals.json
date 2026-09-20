@@ -1,0 +1,43 @@
+{
+  "skill_name": "performance",
+  "evals": [
+    {
+      "id": 1,
+      "name": "measure-before-optimize-and-percentile-shape",
+      "prompt": "Our endpoint is slow — p99 is 8 seconds. The obvious culprit is the 4 sequential database queries, so I'm going to parallelize them with goroutines. Right?",
+      "expected_output": "The response treats the 4-query framing as a hypothesis, not a diagnosis; reads the percentile shape before proposing a fix; notes parallelism makes the request as slow as the slowest leg; and instruments (per-step timing) before optimizing.",
+      "trap": "Without the skill, the model jumps straight to a fix (parallelization or caching) without measuring, and misreads a tail problem as a structural one.",
+      "expectations": [
+        "Treats '4 sequential queries' as a hypothesis, not a diagnosis; does not jump to parallelization",
+        "Reads the percentile shape first (p50 fine + p99 bad = tail problem; identify the shape before fixing)",
+        "Notes parallelizing N queries makes the request as slow as the slowest leg (does not fix a tail)",
+        "Instruments before optimizing — per-step timing, and the fix waits for the data"
+      ]
+    },
+    {
+      "id": 2,
+      "name": "instrumentation-stop-condition-and-leadership",
+      "prompt": "Management wants the slow endpoint fixed. How do I approach this?",
+      "expected_output": "The response specifies an instrumentation plan (per-step timing, slow-request flag, deploy_version, row counts, connection pool depth), defines a stop condition with a success criterion, converts latency to user-impact numbers, and answers leadership with a data-driven plan rather than a quick fix.",
+      "trap": "Without the skill, the model gives a quick fix with no measurement plan, no stop condition, and abstract latency numbers.",
+      "expectations": [
+        "Specifies instrumentation (per-step timing, slow-request flag, deploy_version, row counts, connection pool depth)",
+        "Defines a stop condition with a success criterion (e.g. a slow step in a majority of slow requests), not an open-ended timer",
+        "Converts latency into user-impact numbers (e.g. X requests/day take >8s)",
+        "Answers leadership with a data-driven plan, not a quick fix"
+      ]
+    },
+    {
+      "id": 3,
+      "name": "percentile-cheat-sheet-reading",
+      "prompt": "In our dashboard, one endpoint shows p99 worse than p99.9, and a different endpoint has all percentiles bad. What do these shapes mean?",
+      "expected_output": "The response reads the shapes: p99 worse than p99.9 is reverse tail (usually a measurement artifact), all-percentiles-bad is a structural problem (cumulative cost or sequential bottleneck), and p50-fine/p99-bad is a tail problem.",
+      "trap": "Without the skill, the model misreads the percentile shapes and prescribes the wrong fix.",
+      "expectations": [
+        "Recognizes p99 worse than p99.9 as reverse tail, usually a measurement artifact",
+        "Recognizes all-percentiles-bad as a structural problem (cumulative cost or a sequential bottleneck)",
+        "Recognizes p50 fine + p99 bad as a tail problem (one thing occasionally slow), not all requests slow"
+      ]
+    }
+  ]
+}

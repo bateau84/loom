@@ -1,0 +1,41 @@
+{
+  "skill_name": "python-async",
+  "evals": [
+    {
+      "id": 1,
+      "name": "per-request-client",
+      "prompt": "A new engineer extracted API calls into helper functions. Review this code for correctness. These helpers are called from FastAPI request handlers — potentially hundreds of times per minute.\n\n```python\n# api_helpers.py\nimport httpx\n\nasync def search_youtube(query: str) -> list:\n    async with httpx.AsyncClient(timeout=30) as client:\n        r = await client.get(\"https://api.youtube.com/search\", params={\"q\": query})\n        return r.json()[\"items\"]\n\nasync def fetch_spotify_track(track_id: str) -> dict:\n    async with httpx.AsyncClient(timeout=30) as client:\n        r = await client.get(f\"https://api.spotify.com/tracks/{track_id}\")\n        return r.json()\n```\n\nIdentify any issues and suggest the correct pattern.",
+      "trap": "Creating `httpx.AsyncClient` inside `async with` per call looks like clean resource management, but destroys the connection pool and TLS session on every call. At high call rates this wastes significant overhead. The skill requires one shared client per service/lifespan, not one per call.",
+      "expectations": [
+        "Identifies the per-call AsyncClient creation as an issue",
+        "Recommends a shared/reused AsyncClient (per lifespan or injected as dependency)",
+        "Notes connection pool or TLS reuse is lost when creating a new client per call",
+        "Does NOT suggest leaving the per-call client creation in place"
+      ]
+    },
+    {
+      "id": 2,
+      "name": "taskgroup-vs-gather-orphan",
+      "prompt": "Fetch user data from 3 independent microservices concurrently. If any service raises an exception, the other in-flight calls must be cancelled immediately — don't leave them running to completion wasting quota or connections. Return results only if all three succeed.\n\n```python\nasync def fetch_user_context(user_id: str) -> dict:\n    # TODO: fetch profile, permissions, preferences concurrently\n    # cancel others immediately if any fails\n    ...\n```\n\nImplement this function.",
+      "trap": "asyncio.gather(*coros) raises on first exception but does NOT cancel the remaining tasks — they continue running as orphaned background tasks. asyncio.TaskGroup (3.11+) cancels sibling tasks when one raises, preventing the leak.",
+      "expectations": [
+        "Uses asyncio.TaskGroup (not plain asyncio.gather)",
+        "Creates tasks via tg.create_task() inside the TaskGroup context",
+        "Notes or implies that gather does NOT cancel remaining tasks on failure / leaves them running",
+        "Does NOT use asyncio.gather as the sole mechanism (it orphans siblings on failure)"
+      ]
+    },
+    {
+      "id": 3,
+      "name": "asyncio-run-inside-loop",
+      "prompt": "A FastAPI app uses this service. The method `process_webhook` is a plain Python function that receives events and needs to call the async `fetch` method. It crashes in production.\n\n```python\nclass DataService:\n    async def fetch(self, id: str) -> dict:\n        async with httpx.AsyncClient() as c:\n            return (await c.get(f\"/data/{id}\")).json()\n\n    def process_webhook(self, payload: dict) -> dict:\n        data = asyncio.run(self.fetch(payload[\"id\"]))  # crashes in production\n        return {\"status\": \"ok\", \"data\": data}\n```\n\nWhy does it crash? Fix it.",
+      "trap": "asyncio.run() creates a NEW event loop. Inside FastAPI the loop is already running, so asyncio.run() raises RuntimeError: 'This event loop is already running'. The fix is asyncio.to_thread (offload the blocking call or make the caller async).",
+      "expectations": [
+        "Identifies asyncio.run() fails when called inside an already-running event loop",
+        "Fixes by using asyncio.to_thread, or by making process_webhook async",
+        "Explains why the crash occurs (loop already running / nested event loop)",
+        "Does NOT leave asyncio.run() in place as the solution"
+      ]
+    }
+  ]
+}

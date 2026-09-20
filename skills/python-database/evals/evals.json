@@ -1,0 +1,41 @@
+{
+  "skill_name": "python-database",
+  "evals": [
+    {
+      "id": 1,
+      "name": "transaction-boundary",
+      "prompt": "Record a sync run atomically: insert a row into `sync_runs` AND update `last_sync_at` in the `state` table. Both operations must succeed or fail together. Use the `get_connection(db_path)` context manager already in the codebase.\n\n```python\nfrom contextlib import contextmanager\nimport sqlite3\n\n@contextmanager\ndef get_connection(db_path: str):\n    con = sqlite3.connect(db_path)\n    con.row_factory = sqlite3.Row\n    try:\n        yield con\n    finally:\n        con.close()\n\ndef record_sync_run(db_path: str, started: str) -> None:\n    with get_connection(db_path) as con:\n        con.execute(\"INSERT INTO sync_runs (started) VALUES (?)\", (started,))\n        con.execute(\"UPDATE state SET last_sync_at = ?\", (started,))\n```\n\nIs this implementation transactionally correct? Fix any issues.",
+      "trap": "The `get_connection` context manager manages connection lifecycle (open/close) NOT transactions. Without an inner `with con:` block, sqlite3 uses auto-commit mode — if the second execute raises, the first may already be committed. Two `with` statements are needed: outer for connection lifecycle, inner `with con:` for the transaction boundary.",
+      "expectations": [
+        "Identifies the missing explicit transaction boundary (get_connection manages lifecycle, not transactions)",
+        "Adds an inner `with con:` block wrapping both execute() calls as one atomic transaction",
+        "Explains the outer `with` closes the connection; the inner `with con:` commits on success, rolls back on exception",
+        "Does NOT treat the outer get_connection as sufficient for transactional atomicity"
+      ]
+    },
+    {
+      "id": 2,
+      "name": "connection-at-import-time",
+      "prompt": "An APScheduler job runs every hour. In production it intermittently throws `ProgrammingError: SQLite objects created in a thread can only be used in the same thread`. A developer proposes adding `check_same_thread=False` to the connect() call. Is that the right fix?\n\n```python\nimport sqlite3\n\n_con = sqlite3.connect(\"sortarr.db\")\n_repo = Repository(_con)\n\ndef hourly_sync_job():\n    playlists = _repo.get_all_playlists()\n    for p in playlists:\n        sync_playlist(_repo, p)\n```",
+      "trap": "`check_same_thread=False` suppresses the safety guard but does NOT fix the root problem: a single connection shared across threads is not safe for concurrent writes. The correct fix is to open the connection INSIDE the job function so each run gets its own connection.",
+      "expectations": [
+        "Rejects check_same_thread=False as a complete/correct fix",
+        "Opens the connection inside the job function so each invocation gets its own connection",
+        "Notes sqlite3 connections are not safe for concurrent or cross-thread use",
+        "Does NOT accept check_same_thread=False as the primary solution"
+      ]
+    },
+    {
+      "id": 3,
+      "name": "wal-concurrent-readers",
+      "prompt": "The service has an APScheduler job that writes to SQLite every minute. During busy request periods, read queries from FastAPI handlers become noticeably slower — sometimes blocking for the entire duration of the write. The DB uses the default journal mode. Diagnose the cause and suggest a pragma that would allow reads and the scheduled write to proceed with much less contention.",
+      "trap": "Without the skill, the model may suggest indexes, query optimization, or connection pooling. The skill-specific answer is `PRAGMA journal_mode = WAL`, which allows concurrent readers while a writer has the lock. The default DELETE journal mode requires exclusive locking that blocks all readers.",
+      "expectations": [
+        "Identifies the default journal mode causes exclusive write locks that block concurrent reads",
+        "Suggests PRAGMA journal_mode = WAL",
+        "Explains WAL allows concurrent reads during a write",
+        "Does NOT limit the primary recommendation to indexes or query optimization without mentioning WAL"
+      ]
+    }
+  ]
+}

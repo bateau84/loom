@@ -1,0 +1,91 @@
+{
+  "skill": "interaction-design",
+  "version": "1.0.0",
+  "shape": 1,
+  "cases": [
+    {
+      "id": "IxD-01",
+      "name": "surface-adaptation-not-translation",
+      "trap": "Designer designs interaction for web and adapts terminology for CLI without addressing the stateless command-response model — produces a CLI spec with visual affordances (hover, persistent state, animations), modal dialogs, or interaction patterns that assume a stateful event loop. The surface model change (from async DOM to stateless command-response) is not addressed.",
+      "prompt": "We're building a CLI tool for database migrations. Users run it before deploying to production. It should show the list of pending migrations, let the user review them, and confirm before applying. Design the interaction for this CLI tool.",
+      "expectations": [
+        "Designer must recognize this is a stateless command-response interaction model, not a web or TUI model — the tool runs, presents output, and exits",
+        "Designer must specify the stdout/stderr contract: which output goes where, how exit codes signal success vs failure",
+        "Designer must specify what exit code 0 means (success), exit code 1 means (at least one migration failed), and any additional exit codes for pre-flight failure vs execution failure",
+        "Designer must address the non-interactive scripting context: the --yes flag (or equivalent) must be specified for automation contexts where interactive confirmation breaks the script",
+        "Designer must specify how the 'list of pending migrations' is output — as human-readable columnar format, as parseable format for scripting, or both",
+        "Designer must specify the feedback model during migration application: what appears on stderr as migrations execute (progress), what appears on stdout when complete",
+        "The confirmation interaction must be specified as a text prompt (Y/N or similar) in interactive mode, not as a modal dialog or button"
+      ],
+      "negative_expectations": [
+        "Designer must not specify modal dialogs, hover states, button labels, or visual affordances that do not exist in a CLI stateless command-response context",
+        "Designer must not omit exit code semantics — exit 0 on migration failure is a named failure mode that breaks pipeline composition",
+        "Designer must not design a confirmation flow that only works interactively without providing a --yes / --non-interactive flag for scripting contexts",
+        "Designer must not produce a spec that could equally apply to a web UI with terminology substitution — the design must be grounded in CLI-specific interaction constraints"
+      ]
+    },
+    {
+      "id": "IxD-02",
+      "name": "happy-path-only-state-design",
+      "trap": "Designer specifies interaction only for the default and success states, leaving the loading state, error state, disabled state, and focus state unspecified — producing a happy-path behavioral contract that engineering must complete with invented behavior. The design implicitly assumes all operations succeed instantly.",
+      "prompt": "We're designing a form where users submit a request to transfer ownership of a repository to another organization. The transfer requires the user to type the repository name to confirm. Design the interaction for this form.",
+      "expectations": [
+        "Designer must enumerate all eight canonical states for the form's submit button: default, focus, active, disabled, loading, error, success — and define the design obligation for each",
+        "Designer must specify the disabled state: the submit button must be disabled until the confirmation text matches the repository name — specifying when it enables is an interaction design decision",
+        "Designer must specify the loading state: what happens in the 0.1–1.0 second window after the user submits? What changes immediately to signal the action registered?",
+        "Designer must specify at least three distinct error states: validation error (confirmation text mismatch), server rejection (organization does not accept transfers), and network failure (request did not reach server)",
+        "For each error state, Designer must specify what feedback the user receives, what data is preserved (the confirmation text field should not be cleared on error), and what recovery path exists",
+        "Designer must specify the success state: what happens after transfer completes? Does the user land on the new repository URL? What is the confirmation message?",
+        "Designer must specify the focus state: the confirmation text field has focus by default on page load, or the user must tab to it — this is a design decision that affects usability"
+      ],
+      "negative_expectations": [
+        "Designer must not specify only the default state and success state — a behavioral contract that omits loading, error, and disabled states is not a complete interaction design",
+        "Designer must not write 'error handling TBD' or defer error state design to engineering — each error state is a design decision, not an implementation detail",
+        "Designer must not describe the confirmation text field behavior only for the case where the user types correctly — the mismatch case, the copy-paste case, and the partial-match case are interaction design decisions",
+        "Designer must not omit the 0.1–1.0 second feedback obligation — a submit button that shows no acknowledgment until the server responds will cause users to re-submit"
+      ]
+    },
+    {
+      "id": "IxD-03",
+      "name": "error-design-as-afterthought",
+      "trap": "Designer treats error handling as a footnote or implementation concern rather than as a primary interaction design obligation — produces an interaction spec where error states are mentioned in a single bullet ('show an error if something fails') without specifying what failed, what feedback the user receives, what data is preserved, or what recovery path exists.",
+      "prompt": "Design the interaction for a TUI application that lets developers browse and manage Kubernetes pods. Users can view pod logs, restart pods, and delete pods. The application connects to the cluster via kubectl under the hood.",
+      "expectations": [
+        "Designer must specify the error state for each operation that can fail: log fetch failure, restart failure, delete failure, and cluster connection failure — each as a distinct design decision, not a single generic 'show error' instruction",
+        "Designer must apply the error prevention hierarchy: which errors can be prevented (disabling delete on system-critical pods), which can be detected early (validating cluster connectivity before entering the main view), and which require recovery design (pod restart failure with kubectl reason)",
+        "Designer must specify that cluster connection failure is a different error state than operation failure — the application cannot enter the main view if the cluster is unreachable; this is a startup error state, not an operation error state",
+        "For delete pod: Designer must specify the confirmation interaction (which key triggers it, what the confirmation overlay shows, what happens if the user cancels), and specify that this is a modal state capturing all input",
+        "For the TUI interaction model specifically: Designer must specify focus behavior after an error — does focus return to the pod list? Does an error overlay appear and dismiss on keypress?",
+        "Designer must specify what error message content is required for cluster-level errors: not 'Error connecting to cluster' but the kubectl error reason that helps the developer diagnose the problem",
+        "Designer must address the state machine: when an operation fails, what state does the application enter? Is it possible to get into a state where the user cannot exit or recover?"
+      ],
+      "negative_expectations": [
+        "Designer must not describe error handling with a single statement like 'display an error message if the operation fails' — this leaves every error state unspecified",
+        "Designer must not omit the cluster-unreachable startup error state — a TUI that hangs on launch while trying to connect with no visible feedback is an interaction design failure",
+        "Designer must not treat delete confirmation as a simple 'are you sure?' without specifying it as a modal state that captures all input — in TUI, modal behavior must be explicitly designed, not assumed",
+        "Designer must not specify identical error behavior for log fetch failure (recoverable, low impact) and cluster connection failure (unrecoverable, application cannot function) — the error hierarchy demands distinct treatment"
+      ]
+    },
+    {
+      "id": "IxD-04",
+      "name": "affordance-without-signifier",
+      "trap": "Designer specifies interactive capabilities (actions the user can take) without specifying the signifiers that make those actions discoverable — producing a behavioral contract where users can theoretically do many things but have no way to learn that those things are possible. Hidden affordances are treated as sufficient design.",
+      "prompt": "Design the interaction for a data table component in a web application. The table shows user records. Rows can be sorted by column, filtered by column value, selected for bulk operations, and expanded to show additional detail. Columns can be resized.",
+      "expectations": [
+        "Designer must specify a signifier for each affordance: what makes the column sortable visible? (sort icon, cursor change, clickable header appearance) — not just that sorting is available",
+        "Designer must specify the signifier for row expansion: what indicates that a row is expandable? (chevron icon, cursor change, row hover affordance) — the hidden expansion is a hidden affordance if not signified",
+        "Designer must specify how column resizability is signified: the resize handle must be visible (or appear on hover) and the cursor must change to a resize cursor — a column that can be resized but provides no visible handle is a hidden affordance",
+        "Designer must specify the bulk selection affordance: how does the user discover they can select rows? (checkbox column, Shift+click pattern) — and what happens when one row is selected (does a bulk action toolbar appear?)",
+        "Designer must specify the focus state for keyboard navigation: when the table is navigated by keyboard, which cell/row has focus and how is it visually indicated?",
+        "For each affordance, Designer must verify: perceptible (action possible + signifier present), not hidden (action possible but no signifier), not false (signifier present but no action)",
+        "Designer must specify the active state for sorting: when a column is sorted ascending, the sort icon shows ascending direction — this is an affordance signifier for the 'click to sort descending' next action"
+      ],
+      "negative_expectations": [
+        "Designer must not specify that columns are sortable without specifying what visual indicator makes sortability discoverable",
+        "Designer must not describe row expansion as a feature without specifying the signifier that indicates rows are expandable — 'click the row to expand' is not interaction design unless users know rows are clickable",
+        "Designer must not treat the resize handle as an implementation detail — its visual presence and the cursor change on hover are interaction design decisions that determine whether the affordance is discoverable or hidden",
+        "Designer must not omit the focus state for keyboard navigation — a data table with no visible keyboard focus indicator is inaccessible and fails the Gulf of Evaluation for keyboard users"
+      ]
+    }
+  ]
+}

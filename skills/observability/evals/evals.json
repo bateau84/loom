@@ -1,0 +1,44 @@
+{
+  "skill_name": "observability",
+  "evals": [
+    {
+      "id": 1,
+      "name": "three-pillars-right-signal",
+      "prompt": "I'm building a web service and I need to (a) understand why one specific request is slow as it travels through several internal services, and (b) track request throughput and alert when the error rate spikes. What should I instrument, and what signal should I reach for in each case?",
+      "expected_output": "The response distinguishes the three pillars and assigns each question to the right one: a trace/span tree for the slow-request 'watch it process' question, and a metric/counter for the throughput/error-rate alerting question, explicitly rejecting narration logs as the answer.",
+      "trap": "Without the skill, the model sprays play-by-play narration logs ('entering X', 'got here', 'value=5') instead of choosing the right pillar per question.",
+      "expectations": [
+        "Distinguishes logs, metrics, and traces and what question each answers",
+        "Recommends a trace (span tree) for following the one slow request across services, not a scatter of logs",
+        "Recommends a metric (counter/rate) for throughput and error-rate alerting",
+        "Rejects narration logs ('entering X', 'got here') as the primary tool for either question"
+      ]
+    },
+    {
+      "id": 2,
+      "name": "log-categories-and-levels",
+      "prompt": "We need to record authentication and authorization decisions for a compliance audit, and separately log normal request handling. A colleague is also logging every HTTP 400 (bad input) as an Error. How should I structure this logging?",
+      "expected_output": "The response separates audit logs from operational logs, gives audit its own immutable/access-controlled/synchronously-durable stream that answers the six questions, and applies the correct level discipline — treating a clean 4xx on bad input as Info/Debug, not Error.",
+      "trap": "Without the skill, the model lumps audit and operational logs into one stream and logs every user error (HTTP 400) as an Error.",
+      "expectations": [
+        "Separates audit logs from operational logs onto a dedicated, access-controlled, immutable stream",
+        "Audit records answer the six questions: who, did what, to what, outcome, when, from where",
+        "Applies level discipline: Error for system failures, Info for normal business events; a clean 4xx from bad input is Info/Debug, not Error",
+        "Notes audit logs are never sampled or dropped and require synchronous durability"
+      ]
+    },
+    {
+      "id": 3,
+      "name": "economics-cardinality-secrets",
+      "prompt": "Our log volume is expensive, Prometheus cardinality is exploding, and I want to make sure we aren't leaking anything sensitive. What should I change?",
+      "expected_output": "The response recognizes high-cardinality values must be log fields not metric label keys, applies the boundary-logging one-rich-record pattern to cut volume, and asserts logs must never contain secrets or PII.",
+      "trap": "Without the skill, the model treats logging as free, puts user IDs / request IDs as metric label keys, and does not check for secrets or PII.",
+      "expectations": [
+        "High-cardinality values (user IDs, request IDs) go in log field values, never as metric label keys",
+        "Applies boundary logging / the single rich record at the request boundary to reduce volume, or states more logging is not more observability",
+        "Logs must never contain secrets or PII (tokens, passwords, keys, personal data)",
+        "Diagnostic/Debug detail is off or sampled in production and cheap to disable"
+      ]
+    }
+  ]
+}

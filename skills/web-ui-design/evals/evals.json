@@ -1,0 +1,91 @@
+{
+  "skill": "web-ui-design",
+  "version": "1.0.0",
+  "shape": 1,
+  "cases": [
+    {
+      "id": "Web-01",
+      "name": "spa-back-button-and-url-design",
+      "trap": "Designer specifies SPA navigation without addressing URL state management or back-button behavior — produces a navigation spec where every view transition is described as a visual/component change with no mention of pushState, URL structure, or what the back button should return to. The browser-as-co-host constraint is invisible in the design.",
+      "prompt": "We're building a project management SPA with three main sections: a Projects list, a Project detail view (with tabs for Tasks, Members, and Settings), and a Task detail view that opens as a sidebar. When the user clicks a project, they see the project detail. When they click a task, the task detail sidebar opens alongside the project view. Design the navigation model for this application.",
+      "expectations": [
+        "Designer must specify URL structure for all navigation states: the Projects list URL, the Project detail URL (including which tab is active), and the Task detail URL — all three states must have distinct, shareable URLs",
+        "Designer must specify what happens when the user presses Back from the Task detail view: do they return to the Project detail with the task sidebar closed? Do they return to the previously active tab? The design must be explicit",
+        "Designer must specify what happens when the user presses Back from the Project detail view: they return to the Projects list — the specification must name this and confirm the Projects list URL is the correct back-navigation destination",
+        "Designer must address the tab state within the Project detail view: if the user is on the Members tab, navigates to a task and back, do they return to the Members tab? This is a URL architecture decision — either the tab is in the URL (persistent, back works) or it is component state (ephemeral, back returns to default tab)",
+        "Designer must specify that client-side navigation must push browser history entries (pushState) for every route change — this is a design specification requirement, not an implementation detail the coder invents",
+        "Designer must specify what a user sees when they copy the Task detail URL and open it in a new tab — the expected behavior is the Project detail view with the task sidebar open, not a blank page or error"
+      ],
+      "negative_expectations": [
+        "Designer must not describe SPA navigation purely in terms of component state changes ('the sidebar opens', 'the project view renders') without specifying URL changes",
+        "Designer must not leave URL structure to implementation — 'the URL will update appropriately' is not a design specification",
+        "Designer must not produce a design where the back button behavior is undefined or left to the developer's discretion",
+        "Designer must not specify the task sidebar as floating state-only content (no URL) without acknowledging that this means the task view is not shareable or bookmarkable — if this is an intentional trade-off, it must be stated explicitly"
+      ]
+    },
+    {
+      "id": "Web-02",
+      "name": "form-design-validation-and-accessibility",
+      "trap": "Designer specifies a web form using placeholder text as labels, validates on blur, shows only form-level error messages without moving focus, and designs a 'red border' as the sole error indicator — applying generic form layout assumptions without addressing web-specific form design requirements for label placement, validation timing, error association, and accessibility.",
+      "prompt": "Design a user registration form for a web application. The form collects: full name, email address, password (with confirmation), and the user's primary role (choose from: Developer, Designer, Manager, Other). The form should validate the input and create the account. This form will be embedded in a larger onboarding flow.",
+      "expectations": [
+        "Designer must specify top-aligned labels (above each field, not placeholder-only) as the recommended label placement — specifically stating that placeholder text may provide formatting hints but must not substitute for persistent labels",
+        "Designer must specify validation timing: validate on submit, not on blur, for all required fields — stating why (blur validation creates anxiety before the user has finished their thought)",
+        "Designer must specify an error summary at the top of the form that appears when the user submits with validation errors, with keyboard focus moving to the error summary on appearance",
+        "Designer must specify field-level error messages that appear below each invalid field after submission, stating what went wrong and how to fix it — not just a visual indicator like a red border",
+        "Designer must specify that all form fields have programmatically associated labels (not just visually adjacent text) and that error messages are programmatically associated with their fields",
+        "Designer must specify the appropriate input type for each field: type='email' for email (triggers email keyboard on mobile, browser validates format), type='password' for password fields",
+        "Designer must specify how radio buttons or a select element should be used for the role field — with justification for which choice (4 options suggests radio buttons for visible comparison; select if the list will grow)",
+        "Designer must specify the disabled state of the submit button: is it disabled until the form is valid, or always enabled until submission? Both are defensible; the design must choose explicitly"
+      ],
+      "negative_expectations": [
+        "Designer must not specify placeholder text as the sole labeling mechanism — placeholder text disappears on input and creates an anti-pattern",
+        "Designer must not specify validate-on-blur for error messages — the design must state validation fires on submit",
+        "Designer must not specify only form-level error messages without field-level association — the user must be able to identify which specific field failed",
+        "Designer must not specify color alone (red border) as the error indicator — a visible text error message is required alongside any color change",
+        "Designer must not leave focus behavior on form submission error unspecified — focus must move to the error summary or first error field"
+      ]
+    },
+    {
+      "id": "Web-03",
+      "name": "responsive-interaction-change",
+      "trap": "Designer specifies a responsive web design as a pure layout exercise — 'at mobile breakpoints, the columns collapse to one column and the sidebar moves to a bottom drawer' — without addressing that the interaction model itself changes: hover-based interactions disappear, touch targets must grow, and specific interactions designed for mouse (hover-reveal, drag-and-drop, right-click context menu) require alternative designs for touch.",
+      "prompt": "Design a data management dashboard that shows a list of records with inline editing and bulk actions. On desktop, there are two columns of records visible. Users can hover over a record to reveal edit and delete buttons. Users can select multiple records with checkboxes and perform bulk actions (export, delete). Design the responsive behavior for this dashboard.",
+      "expectations": [
+        "Designer must explicitly address that the hover-reveal pattern for edit and delete buttons does not work on touch — and specify the touch alternative: always-visible action buttons, a tap-to-reveal row action bar, or swipe-to-reveal actions (with explicit note about iOS back-swipe conflict if swipe is used)",
+        "Designer must specify minimum touch target size for interactive elements at mobile breakpoints: 44×44 CSS pixels minimum per WCAG 2.5.5 — row action buttons, checkboxes, and any interactive element must meet this requirement",
+        "Designer must specify how bulk selection works on touch: desktop checkbox behavior may be preserved, but the interaction must be explicitly specified — does a long press initiate selection mode? Is there a toggle to enter multi-select mode?",
+        "Designer must specify how the two-column layout changes at mobile breakpoints as an interaction change, not just a layout change: what columns are visible? What data is hidden? Does a card replace the row layout?",
+        "Designer must specify what happens to bulk actions at mobile: are they always visible? Hidden behind a button? The interaction model for bulk operations changes when users cannot hover and may have limited thumb reach to top-of-screen action bars",
+        "Designer must address the right-click context menu if used on desktop: right-click is not available on touch — if it is used as an additional interaction surface on desktop, touch must have an alternative"
+      ],
+      "negative_expectations": [
+        "Designer must not describe the responsive behavior purely as layout changes without addressing interaction model changes",
+        "Designer must not specify hover-reveal as the primary interaction pattern for mobile without providing a touch-accessible alternative",
+        "Designer must not assume checkboxes function identically for touch and mouse — the selection interaction requires explicit specification for touch contexts",
+        "Designer must not leave touch target sizes unaddressed when specifying interactive elements at mobile breakpoints"
+      ]
+    },
+    {
+      "id": "Web-04",
+      "name": "spa-accessibility-focus-management",
+      "trap": "Designer specifies SPA navigation and modal dialogs without addressing focus management — the design treats focus as a CSS/implementation concern rather than a design decision. The result is a spec that produces routes changing without focus moving, modals that trap neither focus nor return it to the trigger, and dynamic content updates that go unannounced to screen reader users.",
+      "prompt": "Design a task management SPA where: (1) The main view is a kanban board with multiple columns. (2) Clicking a task card opens a task detail panel that slides in from the right, overlaying the board. (3) While the task detail is open, the user can add comments, which appear in the comment thread below the task details. (4) The user can close the task detail with an X button or the Escape key, returning to the board.",
+      "expectations": [
+        "Designer must specify where focus goes when the task detail panel opens: to the first interactive element inside the panel (the panel title or close button), not to the overlay background or left on the card that was clicked",
+        "Designer must specify that while the task detail panel is open, focus must be trapped within the panel: Tab and Shift+Tab cycle within the panel boundary; focus must not escape to the kanban board behind",
+        "Designer must specify where focus returns when the panel closes: to the task card that opened it — this is the correct focus return pattern per WCAG 2.4.3",
+        "Designer must specify a keyboard close mechanism for the panel: Escape key closes the panel (standard modal/panel convention) — the spec must name this, not leave it to the coder to infer",
+        "Designer must specify how new comments are announced to screen reader users when they are added to the comment thread — this requires an ARIA live region with polite politeness level, since new comments are non-urgent informational updates",
+        "Designer must specify what the ARIA live region announces when a comment is added: the comment author and content, or a notification like 'Comment added by Jane Doe' — the spec must be concrete about what text is announced",
+        "Designer must specify where keyboard focus goes when the SPA navigates to a new board (if the app has multiple boards) — to the new board's heading, not left at the navigation trigger"
+      ],
+      "negative_expectations": [
+        "Designer must not specify the task detail panel as a pure visual/layout concern (slides in from right, overlays the board) without addressing focus behavior",
+        "Designer must not leave focus management to 'the developer will handle accessibility' — focus placement is a design specification requirement",
+        "Designer must not specify dynamic comment updates without addressing how screen reader users are notified of new content",
+        "Designer must not specify modal-style panels without specifying the focus trap — an overlay panel that does not trap focus is a WCAG 2.4.3 failure"
+      ]
+    }
+  ]
+}
