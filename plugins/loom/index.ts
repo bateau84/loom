@@ -1055,6 +1055,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
           try {
             const reset = reopenFrom(workflow, stepId)
+            resetVerificationAfterReopen(workflow, reset)
 
             if (reset.includes("product-acceptance")) {
               const acceptance = (await ctx.storage.get(acceptanceKey(workflowId))) as AcceptancePlan | undefined
@@ -1317,17 +1318,229 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       })
 
       editor.add({
+        name: "verification_require",
+        description:
+          "Persist one load-bearing verification requirement created by the currently attached specialist step. A target gate cannot PASS until the requirement has observed proof.",
+        input: {
+          type: "object",
+          properties: {
+            workflowId: { type: "string" },
+            beforeStepId: {
+              type: "string",
+              description: "Downstream gate that must not PASS until this verification is proven.",
+            },
+            kind: {
+              type: "string",
+              enum: ["test", "build", "lint", "security", "runtime", "integration", "product-acceptance", "other"],
+            },
+            statement: { type: "string" },
+          },
+          required: ["workflowId", "beforeStepId", "kind", "statement"],
+          additionalProperties: false,
+        },
+        options: { namespace: "loom", codemode: false },
+        execute: async (input, tool) => {
+          const value = input as {
+            workflowId: string
+            beforeStepId: string
+            kind: EvidenceKind
+            statement: string
+          }
+          const workflow = await readWorkflow(ctx, value.workflowId)
+          if (!workflow) return { content: JSON.stringify({ error: "Workflow not found." }) }
+
+          const attachedWorkflow = (await ctx.storage.get(sessionKey(tool.sessionID))) as string | undefined
+          const attachedStep = (await ctx.storage.get(sessionStepKey(tool.sessionID))) as string | undefined
+          if (attachedWorkflow !== value.workflowId || !attachedStep) {
+            return {
+              content: JSON.stringify({
+                error: "Verification requirements must be created from a specialist session attached to its current Loom step.",
+              }),
+            }
+          }
+
+          const current = workflow.steps.find((step) => step.id === attachedStep)
+          if (!current || current.agent !== tool.agent) {
+            return { content: JSON.stringify({ error: "Current attached step does not belong to this agent." }) }
+          }
+          if (!runnable(workflow).some((step) => step.id === attachedStep)) {
+            return { content: JSON.stringify({ error: "Current attached step is not runnable." }) }
+          }
+
+          try {
+            const requirement = addVerificationRequirement(workflow, {
+              id: crypto.randomUUID(),
+              createdByStepId: attachedStep,
+              createdByAgent: tool.agent,
+              beforeStepId: value.beforeStepId,
+              kind: value.kind,
+              statement: value.statement,
+              now: new Date().toISOString(),
+            })
+            await ctx.storage.set(workflowKey(workflow.id), workflow)
+            return {
+              content: JSON.stringify({
+                requirement: {
+                  id: requirement.id,
+                  kind: requirement.kind,
+                  before: requirement.beforeStepId,
+                  status: requirement.status,
+                  statement: requirement.statement,
+                },
+              }),
+            }
+          } catch (error) {
+            return { content: JSON.stringify({ error: error instanceof Error ? error.message : String(error) }) }
+          }
+        },
+      })
+
+      editor.add({
+        name: "verification_prove",
+        description:
+          "Satisfy one persisted verification requirement with observed events from the current session. General or an attached specialist may provide proof when their permissions allow the required non-mutating check.",
+        input: {
+          type: "object",
+          properties: {
+            workflowId: { type: "string" },
+            requirementId: { type: "string" },
+            statement: { type: "string" },
+            observationIds: { type: "array", items: { type: "string" } },
+          },
+          required: ["workflowId", "requirementId", "statement", "observationIds"],
+          additionalProperties: false,
+        },
+        options: { namespace: "loom", codemode: false },
+        execute: async (input, tool) => {
+          const value = input as {
+            workflowId: string
+            requirementId: string
+            statement: string
+            observationIds: string[]
+          }
+          const workflow = await readWorkflow(ctx, value.workflowId)
+          if (!workflow) return { content: JSON.stringify({ error: "Workflow not found." }) }
+
+          const attachedWorkflow = (await ctx.storage.get(sessionKey(tool.sessionID))) as string | undefined
+          if (attachedWorkflow !== value.workflowId) {
+            return { content: JSON.stringify({ error: "Current session is not attached to this workflow." }) }
+          }
+
+          const requirement = (workflow.verification ?? []).find(
+            (candidate) => candidate.id === value.requirementId,
+          )
+          if (!requirement) return { content: JSON.stringify({ error: "Verification requirement not found." }) }
+
+          const available = await sessionObservations(ctx, tool.sessionID)
+          const byID = new Map(available.map((observation) => [observation.id, observation]))
+          const observations = value.observationIds
+            .map((id) => byID.get(id))
+            .filter((observation): observation is EvidenceObservation => Boolean(observation))
+
+          if (observations.length !== value.observationIds.length) {
+            return { content: JSON.stringify({ error: "Every proof id must be an observed event from the current session." }) }
+          }
+          if (!observationsSupportKind(requirement.kind, observations)) {
+            return {
+              content: JSON.stringify({
+                error: `Observed evidence does not support verification kind ${requirement.kind}.`,
+              }),
+            }
+          }
+
+          const attachedStep = (await ctx.storage.get(sessionStepKey(tool.sessionID))) as string | undefined
+          try {
+            const proven = proveVerificationRequirement(workflow, requirement.id, {
+              byAgent: tool.agent,
+              ...(attachedStep ? { stepId: attachedStep } : {}),
+              statement: value.statement,
+              observationIds: observations.map((observation) => observation.id),
+              provedAt: new Date().toISOString(),
+            })
+            await ctx.storage.set(workflowKey(workflow.id), workflow)
+            return {
+              content: JSON.stringify({
+                proven: proven.id,
+                kind: proven.kind,
+                before: proven.beforeStepId,
+                by: proven.proof?.byAgent,
+                observations: proven.proof?.observationIds.length ?? 0,
+              }),
+            }
+          } catch (error) {
+            return { content: JSON.stringify({ error: error instanceof Error ? error.message : String(error) }) }
+          }
+        },
+      })
+
+      editor.add({
+        name: "verification_status",
+        description: "Inspect persisted verification requirements. Compact by default; pass detail=true for proof metadata.",
+        input: {
+          type: "object",
+          properties: {
+            workflowId: { type: "string" },
+            detail: { type: "boolean" },
+          },
+          additionalProperties: false,
+        },
+        options: { namespace: "loom", codemode: false },
+        execute: async (input, tool) => {
+          const value = input as { workflowId?: string; detail?: boolean }
+          const workflow = value.workflowId
+            ? await readWorkflow(ctx, value.workflowId)
+            : await activeWorkflow(ctx, tool.sessionID)
+          if (!workflow) return { content: JSON.stringify({ error: "Workflow not found." }) }
+
+          return {
+            content: JSON.stringify(
+              value.detail
+                ? { verification: workflow.verification ?? [] }
+                : { verification: compactVerification(workflow) },
+            ),
+          }
+        },
+      })
+
+      editor.add({
         name: "evidence_observations",
         description: "List automatically observed non-Loom tool executions from the current session.",
         input: {
           type: "object",
-          properties: {},
+          properties: {
+            limit: {
+              type: "number",
+              description: "Maximum recent observations to show in compact mode. Default 12, maximum 100.",
+            },
+            detail: {
+              type: "boolean",
+              description: "Return full observation records instead of the compact recent view.",
+            },
+          },
           additionalProperties: false,
         },
         options: { namespace: "loom", codemode: false },
-        execute: async (_input, tool) => {
+        execute: async (input, tool) => {
           const observations = await sessionObservations(ctx, tool.sessionID)
-          return { content: JSON.stringify({ observations }) }
+          const value = input as { limit?: number; detail?: boolean }
+          if (value.detail) return { content: JSON.stringify({ observations }) }
+
+          const limit = Math.max(1, Math.min(100, Math.floor(value.limit ?? 12)))
+          const recent = observations.slice(-limit).map((observation) => ({
+            id: observation.id,
+            tool: observation.tool,
+            status: observation.status,
+            at: observation.observedAt,
+            ...(observation.command ? { command: clippedSummary(observation.command, 180) } : {}),
+            ...(observation.path ? { path: observation.path } : {}),
+          }))
+          return {
+            content: JSON.stringify({
+              count: observations.length,
+              showing: recent.length,
+              observations: recent,
+            }),
+          }
         },
       })
 
