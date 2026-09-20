@@ -63,6 +63,11 @@ import {
   type AcceptancePlan,
 } from "./acceptance"
 import { taskStepId, validateTaskPlan, type TaskSpec } from "./tasks"
+import {
+  createKnowledgeReport,
+  invalidateKnowledgeReport,
+  type KnowledgeReport,
+} from "./knowledge"
 
 const loomAgents = new Set([
   "designer",
@@ -72,6 +77,7 @@ const loomAgents = new Set([
   "critic",
   "acceptance",
   "planner",
+  "documenter",
   "worker",
   "research",
   "diagnostic",
@@ -91,6 +97,10 @@ function heuristicKey(id: string) {
 
 function acceptanceKey(workflowId: string) {
   return `acceptance/${workflowId}`
+}
+
+function knowledgeKey(workflowId: string) {
+  return `knowledge/${workflowId}`
 }
 
 function scopeKey(workflowId: string, stepId: string) {
@@ -418,6 +428,7 @@ export default Plugin.define({
           const limits = await readLimits(ctx, workflow.id)
           const budget = await readBudget(ctx, workflow.id)
           const acceptance = (await ctx.storage.get(acceptanceKey(workflow.id))) as AcceptancePlan | undefined
+          const knowledge = (await ctx.storage.get(knowledgeKey(workflow.id))) as KnowledgeReport | undefined
           return {
             content: JSON.stringify({
               workflow,
@@ -427,6 +438,7 @@ export default Plugin.define({
               acceptance: acceptance
                 ? { plan: acceptance, readiness: acceptanceReadiness(acceptance) }
                 : null,
+              knowledge: knowledge ?? null,
             }),
           }
         },
@@ -484,6 +496,13 @@ export default Plugin.define({
 
           if (stepId === "plan" && plannedTaskSteps(workflow).length === 0) {
             return { content: JSON.stringify({ error: "Planning step cannot complete before a validated task graph exists." }) }
+          }
+
+          if (stepId === "knowledge-sync") {
+            const report = (await ctx.storage.get(knowledgeKey(workflowId))) as KnowledgeReport | undefined
+            if (!report?.valid) {
+              return { content: JSON.stringify({ error: "Knowledge sync cannot complete without a valid OKF-verified knowledge report." }) }
+            }
           }
 
           if (stepId === "product-acceptance") {
@@ -598,6 +617,14 @@ export default Plugin.define({
               if (acceptance) {
                 resetAcceptance(acceptance)
                 await ctx.storage.set(acceptanceKey(workflowId), acceptance)
+              }
+            }
+
+            if (reset.includes("knowledge-sync")) {
+              const knowledge = (await ctx.storage.get(knowledgeKey(workflowId))) as KnowledgeReport | undefined
+              if (knowledge) {
+                invalidateKnowledgeReport(knowledge)
+                await ctx.storage.set(knowledgeKey(workflowId), knowledge)
               }
             }
 
@@ -954,6 +981,88 @@ export default Plugin.define({
           const observations = await stepObservations(ctx, workflowId, stepId)
           const claims = await stepClaims(ctx, workflowId, stepId)
           return { content: JSON.stringify({ observations, claims }) }
+        },
+      })
+
+
+      editor.add({
+        name: "knowledge_record",
+        description:
+          "Record the current living-documentation outcome for knowledge-sync. Requires observed successful OKF-MCP discovery/verification from this Documenter session.",
+        input: {
+          type: "object",
+          properties: {
+            workflowId: { type: "string" },
+            changedDocs: { type: "array", items: { type: "string" } },
+            unchangedReason: { type: "string" },
+            okfObservationIds: { type: "array", items: { type: "string" } },
+          },
+          required: ["workflowId", "changedDocs", "okfObservationIds"],
+          additionalProperties: false,
+        },
+        options: { namespace: "loom" },
+        execute: async (input, tool) => {
+          if (tool.agent !== "documenter") {
+            return { content: JSON.stringify({ error: "Only documenter may record knowledge-sync results." }) }
+          }
+
+          const value = input as {
+            workflowId: string
+            changedDocs: string[]
+            unchangedReason?: string
+            okfObservationIds: string[]
+          }
+
+          const workflow = await readWorkflow(ctx, value.workflowId)
+          if (!workflow) return { content: JSON.stringify({ error: "Workflow not found." }) }
+
+          const attachedWorkflow = (await ctx.storage.get(sessionKey(tool.sessionID))) as string | undefined
+          const attachedStep = (await ctx.storage.get(sessionStepKey(tool.sessionID))) as string | undefined
+          if (attachedWorkflow !== value.workflowId || attachedStep !== "knowledge-sync") {
+            return { content: JSON.stringify({ error: "Documenter must attach to this workflow's knowledge-sync step first." }) }
+          }
+
+          const available = await sessionObservations(ctx, tool.sessionID)
+          const byID = new Map(available.map((observation) => [observation.id, observation]))
+          const observations = value.okfObservationIds
+            .map((id) => byID.get(id))
+            .filter((observation): observation is EvidenceObservation => Boolean(observation))
+
+          if (observations.length !== value.okfObservationIds.length) {
+            return { content: JSON.stringify({ error: "Every OKF observation id must belong to the current Documenter session." }) }
+          }
+
+          try {
+            const report = createKnowledgeReport({
+              workflowId: value.workflowId,
+              changedDocs: value.changedDocs,
+              unchangedReason: value.unchangedReason,
+              observations,
+              recordedBy: tool.agent,
+              now: new Date().toISOString(),
+            })
+            await ctx.storage.set(knowledgeKey(value.workflowId), report)
+            return { content: JSON.stringify({ report }) }
+          } catch (error) {
+            return { content: JSON.stringify({ error: error instanceof Error ? error.message : String(error) }) }
+          }
+        },
+      })
+
+      editor.add({
+        name: "knowledge_status",
+        description: "Inspect the current workflow's living-documentation report.",
+        input: {
+          type: "object",
+          properties: { workflowId: { type: "string" } },
+          required: ["workflowId"],
+          additionalProperties: false,
+        },
+        options: { namespace: "loom" },
+        execute: async (input) => {
+          const { workflowId } = input as { workflowId: string }
+          const report = (await ctx.storage.get(knowledgeKey(workflowId))) as KnowledgeReport | undefined
+          return { content: JSON.stringify({ report: report ?? null }) }
         },
       })
 
