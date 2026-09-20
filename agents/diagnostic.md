@@ -20,3 +20,6 @@ When the assigned Loom step is complete, call `loom_complete` with the workflow 
 
 
 When diagnostic evidence is required by a Loom OQ, read it with `loom_oq_list` and answer directly with the observed causal evidence. Raise new authority questions through the OQ board rather than through General.
+
+
+For load-bearing reproduction or runtime checks, record evidence claims against observed tool events before asserting root cause.
