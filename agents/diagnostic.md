@@ -17,3 +17,6 @@ Start from evidence. Form and test competing hypotheses. Distinguish probable fr
 Do not silently ship a fix.
 
 When the assigned Loom step is complete, call `loom_complete` with the workflow ID, exact step ID, and a short evidence/root-cause summary.
+
+
+When diagnostic evidence is required by a Loom OQ, read it with `loom_oq_list` and answer directly with the observed causal evidence. Raise new authority questions through the OQ board rather than through General.
