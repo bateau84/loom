@@ -247,9 +247,7 @@ def invoke_container(
     with tempfile.TemporaryDirectory(prefix="loom-eval-invoke-") as tmp:
         root = Path(tmp)
         input_dir = root / "input"
-        output_dir = root / "output"
         input_dir.mkdir()
-        output_dir.mkdir()
         (input_dir / "prompt.txt").write_text(prompt, encoding="utf-8")
         (input_dir / "system.txt").write_text(system, encoding="utf-8")
 
@@ -275,7 +273,6 @@ def invoke_container(
         ]
         command += volume(project, "/workspace", True)
         command += volume(input_dir, "/input", True)
-        command += volume(output_dir, "/output", False)
 
         if mount_node_modules:
             node_modules = ROOT / "node_modules"
@@ -302,8 +299,6 @@ def invoke_container(
             "--env",
             "EVAL_SYSTEM_FILE=/input/system.txt",
             "--env",
-            "EVAL_RESULT_FILE=/output/result.json",
-            "--env",
             f"EVAL_TIMEOUT_SECONDS={timeout}",
         ]
         host_env = host_environment_for_transport(transport)
@@ -322,26 +317,19 @@ def invoke_container(
             timeout=container_timeout,
             check=False,
         )
-        result_path = output_dir / "result.json"
-        if not result_path.is_file():
+        try:
+            result = json.loads(proc.stdout)
+        except json.JSONDecodeError as exc:
             detail = " | ".join(part.strip() for part in (proc.stderr, proc.stdout) if part.strip())
             return {
                 "exit_code": proc.returncode,
                 "text": "",
                 "tools": [],
-                "stderr": ("container produced no result" + (": " + detail[:4000] if detail else "")),
+                "stderr": (
+                    "container result was invalid JSON: " + str(exc)
+                    + (": " + detail[:4000] if detail else "")
+                ),
                 "stdout": proc.stdout[:100000],
-                "infrastructure_error": True,
-            }
-        try:
-            result = json.loads(result_path.read_text(encoding="utf-8"))
-        except json.JSONDecodeError as exc:
-            return {
-                "exit_code": proc.returncode,
-                "text": "",
-                "tools": [],
-                "stderr": "container result was invalid JSON: " + str(exc),
-                "stdout": "",
                 "infrastructure_error": True,
             }
         if not isinstance(result, dict):
