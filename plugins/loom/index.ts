@@ -42,6 +42,7 @@ import {
   proposeHeuristic,
   rankEpisodes,
   rankHeuristics,
+  removeEpisodeSupport,
   retireEpisode,
   reviewHeuristic,
   type Episode,
@@ -1212,9 +1213,20 @@ export default Plugin.define({
               now: new Date().toISOString(),
             })
             await ctx.storage.set(episodeKey(episode.id), episode)
+
+            const heuristics = await scanValues<Heuristic>(ctx, "heuristic/")
+            const affected: Heuristic[] = []
+            for (const heuristic of heuristics) {
+              if (removeEpisodeSupport(heuristic, episode.id)) {
+                await ctx.storage.set(heuristicKey(heuristic.id), heuristic)
+                affected.push(heuristic)
+              }
+            }
+
             return {
               content: JSON.stringify({
                 episode,
+                affectedHeuristics: affected,
                 ...(episode.synabun.memoryId
                   ? { synabunForget: { memory_id: episode.synabun.memoryId } }
                   : {}),
@@ -1223,6 +1235,36 @@ export default Plugin.define({
           } catch (error) {
             return { content: JSON.stringify({ error: error instanceof Error ? error.message : String(error) }) }
           }
+        },
+      })
+
+
+      editor.add({
+        name: "learn_unsynced",
+        description:
+          "List active canonical learning episodes whose SynaBun semantic copy is pending or failed.",
+        input: {
+          type: "object",
+          properties: {
+            limit: { type: "number" },
+          },
+          additionalProperties: false,
+        },
+        options: { namespace: "loom" },
+        execute: async (input) => {
+          const value = input as { limit?: number }
+          const limit = Math.max(1, Math.min(value.limit ?? 25, 100))
+          const episodes = await scanValues<Episode>(ctx, "episode/")
+          const unsynced = episodes
+            .filter((episode) => episode.status === "active" && episode.synabun.status !== "synced")
+            .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+            .slice(0, limit)
+            .map((episode) => ({
+              episode,
+              synabunRemember: episodeRecallPayload(episode),
+            }))
+
+          return { content: JSON.stringify({ unsynced }) }
         },
       })
 
