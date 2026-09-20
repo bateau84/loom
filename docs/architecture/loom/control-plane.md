@@ -143,7 +143,14 @@ Coordinator prompts cannot waive persisted verification.
 
 ## Operational Tool Presentation
 
-High-frequency operational tools default to compact views intended for both models and humans.
+All `loom_*` tools return human-readable Markdown by default. Durable control-plane state remains structured data; presentation is a separate boundary and must not expose raw compact JSON as the normal operator view.
+
+The shared renderer:
+- uses readable headings for nested objects and collections;
+- labels scalar fields consistently;
+- formats identifiers and machine-like values distinctly;
+- renders errors prominently;
+- preserves bounded/compact payload choices made by individual tools.
 
 `loom_status` summarizes:
 - finished/total progress;
@@ -155,9 +162,11 @@ High-frequency operational tools default to compact views intended for both mode
 - dispatch budget;
 - Product Acceptance / knowledge-sync state.
 
-Pass `detail=true` only when full workflow internals are actually needed.
+Pass `detail=true` only when fuller workflow internals are actually needed; the detailed result remains Markdown-readable.
 
 `loom_evidence_observations` likewise returns a bounded recent list by default instead of dumping all observation digests into the transcript; full records remain available with `detail=true`.
+
+For low-level debugging, set `LOOM_TOOL_OUTPUT=json` to restore pretty-printed raw JSON for tool results. JSON is a diagnostic format, not the default human-facing presentation.
 
 ## Resource Bounds
 
