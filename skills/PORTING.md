@@ -4,6 +4,18 @@ Source inventory: `nrkno/mats-opencode-setup/skills`.
 
 Loom uses skills as **on-demand methodology**. Skills do not create authority; Loom role directives and control-plane state remain authoritative.
 
+## Three-layer inheritance
+
+The original skill library's useful separation between practitioner methodology and independent assessment is preserved and extended:
+
+- `SKILL.md` — practitioner methodology;
+- `ASSESSMENT.md` — Reviewer-only normal conformance/domain assessment;
+- `QA.md` — Critic-only Quality Assurance attacks aimed at residual false confidence.
+
+The old AOS `ASSESSMENT.md` files often mixed Reviewer criteria, Critic adjudication, and scaling. During Loom migration, Reviewer content stays in `ASSESSMENT.md`; Critic/adversarial content moves to `QA.md`. Old lifecycle/gate semantics are not restored.
+
+Companions are optional. They are added only when they carry domain-specific discriminating value.
+
 ## Rewritten for Loom
 
 These were rewritten because the source versions encoded old AOS roles, gates, readiness, or artifact workflows:
@@ -58,5 +70,7 @@ Legacy role nouns in copied house skills were normalized to current Loom termino
 Copy/adapt a source skill when it is reusable domain methodology and does not redefine Loom authority, routing, gates, evidence, permissions, or user checkpoints.
 
 Rewrite useful skills that touch those governance surfaces.
+
+Split old mixed assessment contracts by epistemic owner rather than copying their lifecycle language.
 
 Defer optional package/persona/external-integration skills until a real project requires them.
