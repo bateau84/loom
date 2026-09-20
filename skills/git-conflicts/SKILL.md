@@ -115,7 +115,7 @@ git rebase --continue                 # now flies through the remaining commits
 git stash pop                         # restore the generated files
 ```
 
-This is distinct from the escape hatch above — that handles a stuck *conflict commit*; this handles dirty *non-conflicted* tracked files blocking the remaining clean commits. The root fix is adding those paths to `.gitignore` — note it as a follow-up for coder.
+This is distinct from the escape hatch above — that handles a stuck *conflict commit*; this handles dirty *non-conflicted* tracked files blocking the remaining clean commits. The root fix is adding those paths to `.gitignore` — note it as a follow-up for worker.
 
 ## 7. Finish and push
 
