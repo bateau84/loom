@@ -59,11 +59,11 @@
         "BR-001",
         "BR-014"
       ],
-      "prompt": "The complete proposed Anchor has just been shown to me. My exact reply is: 'Yes. This is exactly the product I want.' What do you do next?",
+      "prompt": "The complete proposed Anchor has just been shown to the user. The user's exact reply is: 'Yes. This is exactly the product I want.' Decide the immediate production action.",
       "trap": "Insert another confirmation gate after the explicit Anchor acceptance.",
       "expectations": [
-        "Treats the user's exact reply as the Anchor acceptance boundary and records it.",
-        "Transitions immediately into normal autonomous Loom execution from that accepted Anchor."
+        "Treats the exact reply as explicit Anchor acceptance and states that production records that acceptance without another confirmation round.",
+        "States the immediate production action as starting and routing normal autonomous execution from the accepted Anchor, rather than merely offering to do so later."
       ],
       "must_not": [
         "Must not ask 'should I continue?', 'shall I start?', or another routine approval question after explicit Anchor acceptance."
