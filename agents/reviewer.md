@@ -36,3 +36,15 @@ Do not accept prose-only success claims. Check that the claim is backed by obser
 Use recalled learning only after current authority and current evidence are loaded. SynaBun is semantic retrieval, not authority; resolve recalled `LOOM_EPISODE_ID` values with `loom_learn_get`.
 
 You may validate or retire Loom heuristics. Validate only when the canonical support shows independent repeated evidence. Retire stale/contradicted episodes with `loom_learn_retire`; if it returns `synabunForget`, remove that semantic copy with `SynaBun_forget`.
+
+
+## Product Acceptance review
+
+When assigned `review-product`:
+1. inspect `loom_pa_status`;
+2. confirm the scenario set materially covers the accepted Anchor/product criteria;
+3. inspect every PASS scenario's `product-acceptance` evidence claims;
+4. reject mocked/bypassed product-owned paths, stale revision evidence, or scenario gaps;
+5. account for Designer validation when the workflow is human-facing.
+
+A mechanically `passed` Product Acceptance plan is necessary but not sufficient for Reviewer PASS.
