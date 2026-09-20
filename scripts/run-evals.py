@@ -103,25 +103,26 @@ def global_opencode_config_dir() -> Path:
     return (base / "opencode").resolve()
 
 
-def setup_project(case: dict[str, Any]) -> tuple[Path, Path, Path]:
+def setup_project(case: dict[str, Any]) -> tuple[Path, Path]:
     temp = Path(tempfile.mkdtemp(prefix="loom-eval-" + case["id"].lower() + "-"))
     project = temp / "project"
-    eval_config = temp / "eval-config"
-    (eval_config / "agents").mkdir(parents=True)
-    (eval_config / "skills").mkdir(parents=True)
+    oc = project / ".opencode"
+    (oc / "agents").mkdir(parents=True)
+    (oc / "skills").mkdir(parents=True)
 
-    shutil.copytree(ROOT / "skills", eval_config / "skills", dirs_exist_ok=True)
+    shutil.copytree(ROOT / "skills", oc / "skills", dirs_exist_ok=True)
 
     source_agent = (ROOT / "agents" / (case["agent"] + ".md")).read_text(encoding="utf-8")
     target = promote_agent(source_agent) if case["execution"] == "runtime" else decision_agent(source_agent, case["agent"])
-    (eval_config / "agents" / (case["agent"] + ".md")).write_text(target, encoding="utf-8")
-    (eval_config / "agents" / "eval-judge.md").write_text(JUDGE_AGENT, encoding="utf-8")
+    (oc / "agents" / (case["agent"] + ".md")).write_text(target, encoding="utf-8")
+    (oc / "agents" / "eval-judge.md").write_text(JUDGE_AGENT, encoding="utf-8")
 
-    # Loom is normally installed as the user's global OpenCode config. When the
-    # checked-out repo is elsewhere (for example a CI checkout), provide the
-    # exact checked-out plugin through the higher-precedence eval config dir.
+    # Preserve the user's real global OpenCode provider/plugin environment.
+    # Project-local .opencode definitions override agents/skills for the case.
+    # If Loom is checked out somewhere other than the global OpenCode config,
+    # load this exact checkout's plugin project-locally.
     if case["execution"] == "runtime" and ROOT.resolve() != global_opencode_config_dir():
-        shutil.copytree(ROOT / "plugins", eval_config / "plugins", dirs_exist_ok=True)
+        shutil.copytree(ROOT / "plugins", oc / "plugins", dirs_exist_ok=True)
         node_modules = ROOT / "node_modules"
         if node_modules.exists():
             try:
@@ -134,7 +135,6 @@ def setup_project(case: dict[str, Any]) -> tuple[Path, Path, Path]:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(fixture["content"], encoding="utf-8")
 
-    project.mkdir(parents=True, exist_ok=True)
     (project / "opencode.json").write_text(
         json.dumps(
             {
@@ -147,7 +147,7 @@ def setup_project(case: dict[str, Any]) -> tuple[Path, Path, Path]:
         encoding="utf-8",
     )
 
-    return temp, project, eval_config
+    return temp, project
 
 def run_command(command: list[str], cwd: Path, env: dict[str, str], timeout: int) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
@@ -364,9 +364,8 @@ def preflight_model(opencode: str, model: str | None, cwd: Path, env: dict[str, 
 
 
 def run_case(case: dict[str, Any], args: argparse.Namespace) -> dict[str, Any]:
-    temp, project, eval_config = setup_project(case)
+    temp, project = setup_project(case)
     env = dict(os.environ)
-    env["OPENCODE_CONFIG_DIR"] = str(eval_config)
     if args.provider_config:
         env["OPENCODE_CONFIG"] = str(Path(args.provider_config).resolve())
     env["OPENCODE_DISABLE_AUTOUPDATE"] = "1"
