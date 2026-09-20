@@ -15,6 +15,8 @@ The user should provide intent and genuinely user-owned decisions. Loom should h
 
 Quality and correctness are more important than speed. Autonomy must remain bounded: Loom must stop safely rather than fabricate success, repeat failed work indefinitely, or consume unbounded resources.
 
+Loom's first proving ground is **YuHaul**. Its longer-term target is harder: Loom should become capable of building and evolving **Leash** itself.
+
 ## Acceptance Criteria
 
 1. Loom can turn an initially vague product idea into a clear Anchor through focused user questions and independent research.
@@ -45,20 +47,26 @@ Quality and correctness are more important than speed. Autonomy must remain boun
 
 ## Minimal Version
 
-The first usable Loom must be able to take a small-to-medium greenfield software idea through:
+The first usable Loom must prove itself by taking the **YuHaul** product from accepted Anchor to a real, usable application without manual agent herding.
 
-1. intent shaping and Anchor creation;
-2. required research, human-centered design, behavioral specification, and architecture;
-3. independent review of those outputs;
-4. one holistic adversarial solution review;
-5. executable planning;
-6. implementation by bounded workers;
-7. observed build/test/runtime verification;
-8. independent implementation and Product Acceptance review;
-9. final holistic adversarial review;
-10. maintained repository knowledge sufficient for a fresh session to resume useful work.
+That run must include, as needed:
 
-It must also handle a later bug in the produced application without requiring the user to reconstruct the system for it.
+1. research;
+2. human-centered design;
+3. behavioral specification;
+4. technical architecture;
+5. independent review;
+6. one holistic adversarial solution review;
+7. executable planning;
+8. implementation of the full product surface, including UI, persistence, authentication and external integration;
+9. observed build/test/runtime verification;
+10. real Product Acceptance;
+11. final holistic adversarial review;
+12. maintained repository knowledge sufficient for a fresh session to understand and continue the system.
+
+After YuHaul is built, Loom must also be able to enter a fresh session and diagnose and repair a later YuHaul defect without requiring the user to reconstruct the product or architecture.
+
+YuHaul is the minimum proof. **Leash is the long-term capability target**: Loom should eventually be trustworthy enough to build and evolve a system of Leash's complexity.
 
 ## Not This
 
@@ -92,5 +100,6 @@ Routine technical, design, implementation, planning, research, and verification 
 - Loom is a greenfield redesign. Previous AOS work is research material only and carries no automatic authority.
 - The design should preserve useful lessons from the previous AOS while avoiding its bureaucracy, correction loops, and dependence on large directive sets.
 - The intended user experience is analogous to: "I want a carpet." Loom should determine the remaining expertise-solvable details and return a finished, trustworthy carpet.
+- YuHaul is the first end-to-end proving product; Leash is the longer-term target for Loom's autonomous product-building capability.
 - The system should favor software-enforced workflow, evidence, limits, and state where possible, while using models for judgment, reasoning, creativity, implementation, review, and adversarial challenge.
 - Repository knowledge should follow OKF-compatible structure and be accessible to agents through OKF tooling where available.
