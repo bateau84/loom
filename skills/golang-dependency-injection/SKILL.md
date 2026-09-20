@@ -15,7 +15,7 @@ metadata:
 **Modes:**
 
 - **Design mode** (new project, new service, or adding a service to an existing DI setup): assess the existing dependency graph and lifecycle needs; recommend manual injection or a library from the decision table; then generate the wiring code.
-- **Refactor mode** (existing coupled code): map three things — (1) global variables and `init()` service setup, (2) concrete type dependencies that should become interfaces, (3) service-locator anti-patterns (container passed as argument) — then propose a migration plan. Delegation follows `current Loom role directive and control-plane state` — only `general` dispatches sub-agents; a spoke covers all three itself, sequentially.
+- **Refactor mode** (existing coupled code): map three things — (1) global variables and `init()` service setup, (2) concrete type dependencies that should become interfaces, (3) service-locator anti-patterns (container passed as argument) — then propose a migration plan. Within the current Loom task, covers all three itself, sequentially.
 
 # Dependency Injection in Go
 
