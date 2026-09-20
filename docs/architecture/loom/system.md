@@ -32,7 +32,7 @@ Loom Control Plane
   +--> Reviewer
   +--> Critic
   |
-  +--> Worker / Research / Diagnostic / Acceptance contexts
+  +--> Planner / Worker / Research / Diagnostic / Acceptance contexts
   |
   v
 Evidence + Repository Knowledge + Learning
@@ -56,9 +56,11 @@ Evidence + Repository Knowledge + Learning
 
 ### Worker plane
 
-Fresh bounded subagent contexts perform implementation, research, diagnostics, planning, migration, and other execution work using task-specific skills.
+Fresh bounded execution contexts perform decomposition, implementation, research, diagnostics, migration, Product Acceptance, and other technical work.
 
-Workers do not gain product or architecture authority merely by being able to edit code.
+Planner decomposes an accepted solution into an executable DAG. Workers execute the resulting bounded tasks.
+
+Neither Planner nor Worker gains product or architecture authority from execution capability.
 
 ### Control plane
 
@@ -88,7 +90,7 @@ Intent
   -> THINK: research + Designer/Specifier/Architect as required
   -> Reviewer
   -> Critic: assembled solution
-  -> BUILD: plan + bounded workers
+  -> BUILD: Planner DAG + bounded parallel/sequential Workers
   -> VERIFY: observed evidence + implementation Reviewer
   -> Product Acceptance + Designer validation when applicable
   -> product Reviewer
