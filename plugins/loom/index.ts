@@ -19,6 +19,13 @@ import {
   type OQAuthority,
   type OQDisposition,
 } from "./oq"
+import {
+  createClaim,
+  safeInputSummary,
+  type EvidenceClaim,
+  type EvidenceKind,
+  type EvidenceObservation,
+} from "./evidence"
 
 const loomAgents = new Set([
   "designer",
@@ -111,6 +118,83 @@ function questionState(questions: OpenQuestion[], workflow: Workflow) {
     reconcile,
   }
 }
+
+
+function evidenceKey(id: string) {
+  return `evidence/${id}`
+}
+
+function sessionEvidencePrefix(sessionID: string) {
+  return `evidence-session/${sessionID}/`
+}
+
+function stepEvidencePrefix(workflowId: string, stepId: string) {
+  return `evidence-step/${workflowId}/${stepId}/`
+}
+
+function claimPrefix(workflowId: string, stepId: string) {
+  return `evidence-claim/${workflowId}/${stepId}/`
+}
+
+async function digest(value: unknown) {
+  const text = JSON.stringify(value) ?? String(value)
+  const bytes = new TextEncoder().encode(text)
+  const hash = await crypto.subtle.digest("SHA-256", bytes)
+  return [...new Uint8Array(hash)].map((byte) => byte.toString(16).padStart(2, "0")).join("")
+}
+
+async function scanValues<T>(ctx: any, prefix: string): Promise<T[]> {
+  const values: T[] = []
+  let after: string | undefined
+
+  do {
+    const page = await ctx.storage.scan({ prefix, limit: 100, ...(after ? { after } : {}) })
+    values.push(...page.entries.map((entry: { value: unknown }) => entry.value as T))
+    after = page.next
+  } while (after)
+
+  return values
+}
+
+async function sessionObservations(ctx: any, sessionID: string): Promise<EvidenceObservation[]> {
+  const ids = await scanValues<string>(ctx, sessionEvidencePrefix(sessionID))
+  const records = await Promise.all(ids.map((id) => ctx.storage.get(evidenceKey(id))))
+  return records.filter((record): record is EvidenceObservation => Boolean(record))
+}
+
+async function stepObservations(ctx: any, workflowId: string, stepId: string): Promise<EvidenceObservation[]> {
+  const ids = await scanValues<string>(ctx, stepEvidencePrefix(workflowId, stepId))
+  const records = await Promise.all(ids.map((id) => ctx.storage.get(evidenceKey(id))))
+  return records.filter((record): record is EvidenceObservation => Boolean(record))
+}
+
+async function stepClaims(ctx: any, workflowId: string, stepId: string): Promise<EvidenceClaim[]> {
+  return scanValues<EvidenceClaim>(ctx, claimPrefix(workflowId, stepId))
+}
+
+async function bindSessionEvidence(ctx: any, sessionID: string, workflowId: string, stepId: string) {
+  const observations = await sessionObservations(ctx, sessionID)
+  let bound = 0
+
+  for (const observation of observations) {
+    if (observation.workflowId && (observation.workflowId !== workflowId || observation.stepId !== stepId)) {
+      continue
+    }
+
+    const next = { ...observation, workflowId, stepId }
+    await ctx.storage.set(evidenceKey(observation.id), next)
+    await ctx.storage.set(`${stepEvidencePrefix(workflowId, stepId)}${observation.id}`, observation.id)
+    bound++
+  }
+
+  return bound
+}
+
+function toolEventKey(raw: any) {
+  return String(raw.callID ?? raw.id ?? `${raw.sessionID ?? "unknown"}:${raw.tool ?? "unknown"}`)
+}
+
+const pendingToolInputs = new Map<string, unknown>()
 
 export default Plugin.define({
   id: "loom",
@@ -313,11 +397,13 @@ export default Plugin.define({
             return { content: JSON.stringify({ error: error instanceof Error ? error.message : String(error) }) }
           }
 
+          const evidenceBound = await bindSessionEvidence(ctx, tool.sessionID, workflowId, stepId)
           await ctx.storage.set(workflowKey(workflow.id), workflow)
 
           return {
             content: JSON.stringify({
               finished: stepId,
+              evidenceBound,
               outcome: resolvedOutcome,
               blocked: workflow.steps.filter((candidate) => candidate.status === "failed").map((candidate) => candidate.id),
               runnable: runnable(workflow).map((candidate) => ({ id: candidate.id, agent: candidate.agent })),
@@ -414,6 +500,7 @@ export default Plugin.define({
               now: new Date().toISOString(),
             })
             await appendQuestion(ctx, question)
+            await bindSessionEvidence(ctx, tool.sessionID, value.workflowId, value.stepId)
             return {
               content: JSON.stringify({
                 question,
@@ -589,6 +676,117 @@ export default Plugin.define({
           }
         },
       })
+
+      editor.add({
+        name: "evidence_observations",
+        description: "List automatically observed non-Loom tool executions from the current session.",
+        input: {
+          type: "object",
+          properties: {},
+          additionalProperties: false,
+        },
+        options: { namespace: "loom" },
+        execute: async (_input, tool) => {
+          const observations = await sessionObservations(ctx, tool.sessionID)
+          return { content: JSON.stringify({ observations }) }
+        },
+      })
+
+      editor.add({
+        name: "evidence_claim",
+        description:
+          "Create an evidence claim backed by observed tool events from this session. Verification claim kinds are checked against observed commands.",
+        input: {
+          type: "object",
+          properties: {
+            workflowId: { type: "string" },
+            stepId: { type: "string" },
+            kind: {
+              type: "string",
+              enum: ["test", "build", "lint", "security", "runtime", "integration", "product-acceptance", "other"],
+            },
+            statement: { type: "string" },
+            observationIds: { type: "array", items: { type: "string" } },
+          },
+          required: ["workflowId", "stepId", "kind", "statement", "observationIds"],
+          additionalProperties: false,
+        },
+        options: { namespace: "loom" },
+        execute: async (input, tool) => {
+          const value = input as {
+            workflowId: string
+            stepId: string
+            kind: EvidenceKind
+            statement: string
+            observationIds: string[]
+          }
+
+          const workflow = await readWorkflow(ctx, value.workflowId)
+          if (!workflow) return { content: JSON.stringify({ error: "Workflow not found." }) }
+
+          const step = workflow.steps.find((candidate) => candidate.id === value.stepId)
+          if (!step) return { content: JSON.stringify({ error: "Step not found." }) }
+          if (step.agent !== tool.agent) {
+            return { content: JSON.stringify({ error: `Step ${value.stepId} belongs to ${step.agent}, not ${tool.agent}.` }) }
+          }
+
+          const available = await sessionObservations(ctx, tool.sessionID)
+          const byID = new Map(available.map((observation) => [observation.id, observation]))
+          const observations = value.observationIds.map((id) => byID.get(id)).filter(Boolean) as EvidenceObservation[]
+
+          if (observations.length !== value.observationIds.length) {
+            return { content: JSON.stringify({ error: "Every evidence id must be an observed event from the current session." }) }
+          }
+
+          try {
+            const claim = createClaim({
+              id: crypto.randomUUID(),
+              workflowId: value.workflowId,
+              stepId: value.stepId,
+              byAgent: tool.agent,
+              kind: value.kind,
+              statement: value.statement,
+              observations,
+              now: new Date().toISOString(),
+            })
+
+            for (const observation of observations) {
+              const next = { ...observation, workflowId: value.workflowId, stepId: value.stepId }
+              await ctx.storage.set(evidenceKey(observation.id), next)
+              await ctx.storage.set(
+                `${stepEvidencePrefix(value.workflowId, value.stepId)}${observation.id}`,
+                observation.id,
+              )
+            }
+            await ctx.storage.set(`${claimPrefix(value.workflowId, value.stepId)}${claim.id}`, claim)
+
+            return { content: JSON.stringify({ claim }) }
+          } catch (error) {
+            return { content: JSON.stringify({ error: error instanceof Error ? error.message : String(error) }) }
+          }
+        },
+      })
+
+      editor.add({
+        name: "evidence_list",
+        description: "List observed evidence and evidence claims bound to one workflow step.",
+        input: {
+          type: "object",
+          properties: {
+            workflowId: { type: "string" },
+            stepId: { type: "string" },
+          },
+          required: ["workflowId", "stepId"],
+          additionalProperties: false,
+        },
+        options: { namespace: "loom" },
+        execute: async (input) => {
+          const { workflowId, stepId } = input as { workflowId: string; stepId: string }
+          const observations = await stepObservations(ctx, workflowId, stepId)
+          const claims = await stepClaims(ctx, workflowId, stepId)
+          return { content: JSON.stringify({ observations, claims }) }
+        },
+      })
     })
 
     await ctx.permission.hook("evaluate", async (event) => {
@@ -617,6 +815,41 @@ export default Plugin.define({
         event.effect = "deny"
         event.message = `Agent ${target} is not runnable and has no unanswered OQ. Inspect loom_status.`
       }
+    })
+
+    await ctx.tool.hook("execute.before", (event) => {
+      const raw = event as any
+      const tool = String(raw.tool ?? "")
+      if (tool.startsWith("loom_") || tool.startsWith("loom.")) return
+      pendingToolInputs.set(toolEventKey(raw), raw.input)
+    })
+
+    await ctx.tool.hook("execute.after", async (event) => {
+      const raw = event as any
+      const tool = String(raw.tool ?? "")
+      if (!tool || tool.startsWith("loom_") || tool.startsWith("loom.")) return
+      if (!raw.sessionID) return
+
+      const key = toolEventKey(raw)
+      const input = raw.input ?? pendingToolInputs.get(key)
+      pendingToolInputs.delete(key)
+
+      const summary = safeInputSummary(tool, input)
+      const observation: EvidenceObservation = {
+        id: crypto.randomUUID(),
+        sessionID: String(raw.sessionID),
+        ...(raw.agent ? { agent: String(raw.agent) } : {}),
+        tool,
+        status: raw.status === "error" ? "error" : "completed",
+        observedAt: new Date().toISOString(),
+        ...(input === undefined ? {} : { inputDigest: await digest(input) }),
+        ...(raw.status === "completed" ? { resultDigest: await digest(raw.result) } : {}),
+        ...(raw.status === "error" ? { error: String(raw.error?.message ?? raw.error ?? "tool error").slice(0, 1000) } : {}),
+        ...summary,
+      }
+
+      await ctx.storage.set(evidenceKey(observation.id), observation)
+      await ctx.storage.set(`${sessionEvidencePrefix(observation.sessionID)}${observation.id}`, observation.id)
     })
   },
 })
