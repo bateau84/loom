@@ -1,0 +1,312 @@
+import { Plugin } from "@opencode/plugin"
+import {
+  buildSteps,
+  preserveSatisfied,
+  finishStep,
+  reopenFrom,
+  runnable,
+  type Effects,
+  type Workflow,
+} from "./workflow"
+
+const loomAgents = new Set([
+  "designer",
+  "specifier",
+  "architect",
+  "reviewer",
+  "critic",
+  "worker",
+  "research",
+  "diagnostic",
+])
+
+function workflowKey(id: string) {
+  return `workflow/${id}`
+}
+
+function sessionKey(id: string) {
+  return `session/${id}`
+}
+
+async function readWorkflow(ctx: any, id: string): Promise<Workflow | undefined> {
+  return (await ctx.storage.get(workflowKey(id))) as Workflow | undefined
+}
+
+async function activeWorkflow(ctx: any, sessionID: string): Promise<Workflow | undefined> {
+  const id = (await ctx.storage.get(sessionKey(sessionID))) as string | undefined
+  return id ? readWorkflow(ctx, id) : undefined
+}
+
+export default Plugin.define({
+  id: "loom",
+
+  async setup(ctx) {
+    await ctx.agent.transform((editor) => {
+      if (editor.get("general")) editor.default("general")
+    })
+
+    await ctx.tool.transform((editor) => {
+      editor.namespace({
+        name: "loom",
+        description: "Loom workflow control: start, route, inspect, and complete workflow steps.",
+      })
+
+      editor.add({
+        name: "start",
+        description: "Start a Loom workflow for an accepted Anchor. General only.",
+        input: {
+          type: "object",
+          properties: {
+            anchor: { type: "string", description: "Repository path to the accepted Anchor." },
+          },
+          required: ["anchor"],
+          additionalProperties: false,
+        },
+        options: { namespace: "loom" },
+        execute: async (input, tool) => {
+          if (tool.agent !== "general") {
+            return { content: JSON.stringify({ error: "Only general may start a Loom workflow." }) }
+          }
+
+          const { anchor } = input as { anchor: string }
+          const id = crypto.randomUUID()
+          const workflow: Workflow = {
+            id,
+            anchor,
+            createdBySession: tool.sessionID,
+            createdAt: new Date().toISOString(),
+            steps: [],
+          }
+
+          await ctx.storage.set(workflowKey(id), workflow)
+          await ctx.storage.set(sessionKey(tool.sessionID), id)
+
+          return { content: JSON.stringify({ workflowId: id, anchor, status: "started" }) }
+        },
+      })
+
+      editor.add({
+        name: "route",
+        description:
+          "Classify or reclassify accepted work and create the required Loom execution DAG. General only. Reclassification before implementation preserves valid completed steps.",
+        input: {
+          type: "object",
+          properties: {
+            humanFacing: { type: "boolean" },
+            behavioral: { type: "boolean" },
+            structural: { type: "boolean" },
+            externalUnknown: { type: "boolean" },
+            diagnostic: { type: "boolean" },
+            productOutcome: {
+              type: "boolean",
+              description: "True for non-trivial product work requiring holistic solution and final Critic review.",
+            },
+          },
+          required: [
+            "humanFacing",
+            "behavioral",
+            "structural",
+            "externalUnknown",
+            "diagnostic",
+            "productOutcome",
+          ],
+          additionalProperties: false,
+        },
+        options: { namespace: "loom" },
+        execute: async (input, tool) => {
+          if (tool.agent !== "general") {
+            return { content: JSON.stringify({ error: "Only general may route Loom workflows." }) }
+          }
+
+          const workflow = await activeWorkflow(ctx, tool.sessionID)
+          if (!workflow) {
+            return { content: JSON.stringify({ error: "No active Loom workflow. Call loom_start first." }) }
+          }
+
+          const implementationStarted = workflow.steps.some(
+            (step) =>
+              ["worker", "review-implementation", "critic-final"].includes(step.id) &&
+              step.status === "complete",
+          )
+          if (implementationStarted) {
+            return {
+              content: JSON.stringify({
+                error:
+                  "V0 route reclassification is only supported before implementation completion. Start a new correction workflow for later reclassification.",
+              }),
+            }
+          }
+
+          const effects = input as Effects
+          const next = buildSteps(effects)
+          preserveSatisfied(workflow.steps, next)
+
+          workflow.effects = effects
+          workflow.steps = next
+          await ctx.storage.set(workflowKey(workflow.id), workflow)
+
+          return {
+            content: JSON.stringify({
+              workflowId: workflow.id,
+              steps: workflow.steps,
+              runnable: runnable(workflow).map((step) => ({ id: step.id, agent: step.agent })),
+            }),
+          }
+        },
+      })
+
+      editor.add({
+        name: "status",
+        description: "Inspect Loom workflow state and currently runnable steps.",
+        input: {
+          type: "object",
+          properties: {
+            workflowId: { type: "string" },
+          },
+          additionalProperties: false,
+        },
+        options: { namespace: "loom" },
+        execute: async (input, tool) => {
+          const requested = (input as { workflowId?: string }).workflowId
+          const workflow = requested
+            ? await readWorkflow(ctx, requested)
+            : await activeWorkflow(ctx, tool.sessionID)
+
+          if (!workflow) {
+            return { content: JSON.stringify({ error: "Workflow not found." }) }
+          }
+
+          return {
+            content: JSON.stringify({
+              workflow,
+              runnable: runnable(workflow).map((step) => ({ id: step.id, agent: step.agent })),
+            }),
+          }
+        },
+      })
+
+      editor.add({
+        name: "complete",
+        description:
+          "Complete one Loom workflow step. The current OpenCode agent must match the step's assigned agent and all dependencies must already be complete.",
+        input: {
+          type: "object",
+          properties: {
+            workflowId: { type: "string" },
+            stepId: { type: "string" },
+            summary: { type: "string", description: "Short result/evidence summary." },
+            outcome: {
+              type: "string",
+              enum: ["complete", "pass", "fail"],
+              description: "Work steps default to complete. Reviewer/Critic gates must use pass or fail.",
+            },
+          },
+          required: ["workflowId", "stepId", "summary"],
+          additionalProperties: false,
+        },
+        options: { namespace: "loom" },
+        execute: async (input, tool) => {
+          const { workflowId, stepId, summary, outcome } = input as {
+            workflowId: string
+            stepId: string
+            summary: string
+            outcome?: "complete" | "pass" | "fail"
+          }
+
+          const workflow = await readWorkflow(ctx, workflowId)
+          if (!workflow) return { content: JSON.stringify({ error: "Workflow not found." }) }
+
+          const step = workflow.steps.find((candidate) => candidate.id === stepId)
+          if (!step) return { content: JSON.stringify({ error: "Step not found." }) }
+
+          const resolvedOutcome = outcome ?? (step.kind === "work" ? "complete" : undefined)
+          if (!resolvedOutcome) {
+            return { content: JSON.stringify({ error: "Reviewer/Critic gate requires outcome pass or fail." }) }
+          }
+
+          try {
+            finishStep(workflow, stepId, tool.agent, resolvedOutcome, summary)
+          } catch (error) {
+            return { content: JSON.stringify({ error: error instanceof Error ? error.message : String(error) }) }
+          }
+
+          await ctx.storage.set(workflowKey(workflow.id), workflow)
+
+          return {
+            content: JSON.stringify({
+              finished: stepId,
+              outcome: resolvedOutcome,
+              blocked: workflow.steps.filter((candidate) => candidate.status === "failed").map((candidate) => candidate.id),
+              runnable: runnable(workflow).map((candidate) => ({
+                id: candidate.id,
+                agent: candidate.agent,
+              })),
+            }),
+          }
+        },
+      })
+
+      editor.add({
+        name: "reopen",
+        description:
+          "Reopen one prior step after a failed review or new evidence. Resets that step and only its downstream dependents. General only.",
+        input: {
+          type: "object",
+          properties: {
+            workflowId: { type: "string" },
+            stepId: { type: "string" },
+          },
+          required: ["workflowId", "stepId"],
+          additionalProperties: false,
+        },
+        options: { namespace: "loom" },
+        execute: async (input, tool) => {
+          if (tool.agent !== "general") {
+            return { content: JSON.stringify({ error: "Only general may reopen Loom steps." }) }
+          }
+
+          const { workflowId, stepId } = input as { workflowId: string; stepId: string }
+          const workflow = await readWorkflow(ctx, workflowId)
+          if (!workflow) return { content: JSON.stringify({ error: "Workflow not found." }) }
+
+          try {
+            const reset = reopenFrom(workflow, stepId)
+            await ctx.storage.set(workflowKey(workflow.id), workflow)
+            return {
+              content: JSON.stringify({
+                reopened: stepId,
+                reset,
+                runnable: runnable(workflow).map((candidate) => ({
+                  id: candidate.id,
+                  agent: candidate.agent,
+                })),
+              }),
+            }
+          } catch (error) {
+            return { content: JSON.stringify({ error: error instanceof Error ? error.message : String(error) }) }
+          }
+        },
+      })
+    })
+
+    await ctx.permission.hook("evaluate", async (event) => {
+      if (event.agent !== "general" || event.action !== "subagent") return
+
+      const target = event.resources.find((resource) => loomAgents.has(resource))
+      if (!target) return
+
+      const workflow = await activeWorkflow(ctx, event.sessionID)
+      if (!workflow || workflow.steps.length === 0) {
+        event.effect = "deny"
+        event.message = "Start and route a Loom workflow before dispatching Loom subagents."
+        return
+      }
+
+      const allowed = runnable(workflow).some((step) => step.agent === target)
+      if (!allowed) {
+        event.effect = "deny"
+        event.message = `Agent ${target} is not runnable. Inspect loom_status for current prerequisites.`
+      }
+    })
+  },
+})

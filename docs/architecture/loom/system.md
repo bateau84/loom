@@ -112,7 +112,7 @@ A new software mechanism is justified when the answer is already deterministic a
 
 ## OpenCode Basis
 
-Current OpenCode V2 provides project agents, fresh subagent sessions, ordered permissions, on-demand skills, custom tools, plugins, agent transforms, session hooks, permission hooks, and durable plugin storage.
+Loom is installed as the global OpenCode configuration at `~/.config/opencode`. Current OpenCode V2 provides global agents, fresh subagent sessions, ordered permissions, on-demand skills, custom tools, globally discovered plugins, agent transforms, session hooks, permission hooks, and durable plugin storage.
 
 - https://opencode.ai/v2/docs/agents
 - https://opencode.ai/v2/docs/permissions

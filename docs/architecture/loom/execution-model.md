@@ -9,6 +9,8 @@ tags: [architecture, loom, agents, routing, skills]
 
 ## Agent Set
 
+Loom's repository is the global OpenCode config directory. Agent files therefore live directly under `agents/`, plugins under `plugins/`, skills under `skills/`, and commands under `commands/`.
+
 ### Primary
 
 - **general** — user-facing execution governor; starts and resumes autonomous workflows.

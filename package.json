@@ -1,0 +1,14 @@
+{
+  "name": "loom-aos",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "bun test ./plugins/loom/workflow.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@opencode/plugin": "2.0.4",
+    "@types/bun": "1.4.2",
+    "typescript": "7.0.2"
+  }
+}

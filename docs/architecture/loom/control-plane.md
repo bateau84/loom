@@ -11,7 +11,7 @@ tags: [architecture, loom, control-plane, plugin, workflow]
 
 The control plane handles rules that should not depend on an LLM remembering them.
 
-It is implemented as a project-local OpenCode V2 plugin with custom tools and hooks.
+It is implemented as a global OpenCode V2 plugin under `~/.config/opencode/plugins/loom/`, with custom tools and hooks. Loom's repository mirrors the global config directory, so OpenCode-specific files live at repository root.
 
 ## Core State
 
@@ -107,7 +107,7 @@ V1 MUST hard-bound:
 
 Per-request token ceilings may be applied through OpenCode session hooks.
 
-Exact monetary hard-stop enforcement is optional until OpenCode exposes reliable server-side cost accounting to the project plugin. Resource exhaustion still produces an honest resumable state.
+Exact monetary hard-stop enforcement is optional until OpenCode exposes reliable server-side cost accounting to the Loom plugin. Resource exhaustion still produces an honest resumable state.
 
 ## Storage
 
