@@ -1,4 +1,6 @@
-# provider-docs Assessment Contract
+# provider-docs Reviewer Assessment
+
+Reviewer-only domain contract. It does not create Loom authority, product meaning, or proof.
 
 ## Review criteria
 
@@ -12,13 +14,3 @@ Reviewer compares Registry docs to **schema/runtime/generator truth**:
 - import, timeout, lifecycle/replacement, compatibility/deprecation and destructive behavior are documented when users need them to avoid state surprises;
 - Registry release/tag/manifest/version rules are correct for the repository’s publication path;
 - docs never promise behavior the provider does not implement.
-
-## Adjudication criteria
-
-Critic selects representative examples/attributes and traces them docs → schema → CRUD/action behavior, then regenerates docs to detect hand-edited drift. Probe required/computed/ForceNew/RequiresReplace/import semantics and renamed/deprecated fields.
-
-Block materially false public docs that can drive destructive/state/compatibility errors or a release whose Registry docs omit the changed API. Wording polish is non-blocking.
-
-## Scaling
-
-Increase depth with public surface breadth, lifecycle/replacement/import semantics, breaking/deprecated changes, generated/manual boundary, and Registry release consequence.

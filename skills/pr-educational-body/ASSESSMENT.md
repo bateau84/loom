@@ -1,4 +1,6 @@
-# pr-educational-body Assessment Contract
+# pr-educational-body Reviewer Assessment
+
+Reviewer-only domain contract. It does not create Loom authority, product meaning, or proof.
 
 ## Review criteria
 
@@ -12,13 +14,3 @@ Reviewer reads the PR body as a cold reviewer and verifies it teaches the **actu
 - verification lists exact checks/commands and observed status only when actually run; unverified areas remain explicit;
 - breaking changes/follow-ups/deferred risk are visible when material;
 - PR body does not claim normative authority over source specs/architecture or duplicate every commit message verbatim.
-
-## Adjudication criteria
-
-Critic hides the diff/commit list and asks whether the body would cause a cold reviewer to inspect the right risks; then compare every material claim with the actual branch. Probe invented motive, omitted breaking/migration/security change, verification theater, and a body generated mechanically from commit titles.
-
-Block when the PR body materially misrepresents scope/risk/verification in a way that can mislead review or release decisions. Missing prose polish is non-blocking.
-
-## Scaling
-
-Increase depth with cross-cutting file/domain breadth, security/authority/migration changes, commit count/history complexity, external reviewers, and amount of behavior not obvious from the diff.
