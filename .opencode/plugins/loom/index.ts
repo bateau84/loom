@@ -1,32 +1,11 @@
 import { Plugin } from "@opencode/plugin"
-
-type StepStatus = "pending" | "complete"
-
-type Step = {
-  id: string
-  agent: string
-  dependsOn: string[]
-  status: StepStatus
-  summary?: string
-}
-
-type Effects = {
-  humanFacing: boolean
-  behavioral: boolean
-  structural: boolean
-  externalUnknown: boolean
-  diagnostic: boolean
-  productOutcome: boolean
-}
-
-type Workflow = {
-  id: string
-  anchor: string
-  createdBySession: string
-  createdAt: string
-  effects?: Effects
-  steps: Step[]
-}
+import {
+  buildSteps,
+  preserveCompleted,
+  runnable,
+  type Effects,
+  type Workflow,
+} from "./workflow"
 
 const loomAgents = new Set([
   "designer",
@@ -45,94 +24,6 @@ function workflowKey(id: string) {
 
 function sessionKey(id: string) {
   return `session/${id}`
-}
-
-function runnable(workflow: Workflow) {
-  const done = new Set(workflow.steps.filter((step) => step.status === "complete").map((step) => step.id))
-  return workflow.steps.filter(
-    (step) => step.status === "pending" && step.dependsOn.every((dependency) => done.has(dependency)),
-  )
-}
-
-function buildSteps(effects: Effects): Step[] {
-  const steps: Step[] = []
-  const think: string[] = []
-
-  if (effects.diagnostic) {
-    steps.push({ id: "diagnostic", agent: "diagnostic", dependsOn: [], status: "pending" })
-    think.push("diagnostic")
-  }
-  if (effects.externalUnknown) {
-    steps.push({ id: "research", agent: "research", dependsOn: [], status: "pending" })
-    think.push("research")
-  }
-  if (effects.humanFacing) {
-    steps.push({ id: "designer", agent: "designer", dependsOn: [], status: "pending" })
-    think.push("designer")
-  }
-  if (effects.behavioral) {
-    steps.push({ id: "specifier", agent: "specifier", dependsOn: [], status: "pending" })
-    think.push("specifier")
-  }
-
-  let lastThink: string[] = [...think]
-
-  if (think.length > 0) {
-    steps.push({ id: "review-think", agent: "reviewer", dependsOn: [...think], status: "pending" })
-    lastThink = ["review-think"]
-  }
-
-  if (effects.structural) {
-    steps.push({ id: "architect", agent: "architect", dependsOn: [...lastThink], status: "pending" })
-    steps.push({
-      id: "review-architecture",
-      agent: "reviewer",
-      dependsOn: ["architect"],
-      status: "pending",
-    })
-    lastThink = ["review-architecture"]
-  }
-
-  if (effects.productOutcome) {
-    steps.push({
-      id: "critic-solution",
-      agent: "critic",
-      dependsOn: [...lastThink],
-      status: "pending",
-    })
-    lastThink = ["critic-solution"]
-  }
-
-  steps.push({ id: "worker", agent: "worker", dependsOn: [...lastThink], status: "pending" })
-  steps.push({
-    id: "review-implementation",
-    agent: "reviewer",
-    dependsOn: ["worker"],
-    status: "pending",
-  })
-
-  if (effects.productOutcome) {
-    steps.push({
-      id: "critic-final",
-      agent: "critic",
-      dependsOn: ["review-implementation"],
-      status: "pending",
-    })
-  }
-
-  return steps
-}
-
-function preserveCompleted(previous: Step[], next: Step[]) {
-  const byID = new Map(previous.map((step) => [step.id, step]))
-
-  for (const step of next) {
-    const old = byID.get(step.id)
-    if (old?.agent === step.agent && old.status === "complete") {
-      step.status = "complete"
-      step.summary = old.summary
-    }
-  }
 }
 
 async function readWorkflow(ctx: any, id: string): Promise<Workflow | undefined> {
@@ -195,7 +86,7 @@ export default Plugin.define({
       editor.add({
         name: "route",
         description:
-          "Classify or reclassify the accepted work and create the required Loom execution DAG. General only. Reclassification is allowed before implementation completes and preserves valid completed steps.",
+          "Classify or reclassify accepted work and create the required Loom execution DAG. General only. Reclassification before implementation preserves valid completed steps.",
         input: {
           type: "object",
           properties: {
