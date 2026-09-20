@@ -128,7 +128,7 @@ The linter name in parentheses tells you which linter flagged it. Use this to:
 
 ## Parallelizing Legacy Codebase Cleanup
 
-When adopting linting on a legacy codebase, fix the independent linter categories below. Delegation follows `current Loom role directive and control-plane state` — only `general` dispatches sub-agents; a spoke works through them sequentially:
+When adopting linting on a legacy codebase, fix the independent linter categories below. Within the current Loom task, works through them sequentially:
 
 - Sub-agent 1: Run `golangci-lint run --fix ./...` for auto-fixable issues
 - Sub-agent 2: Fix security linter findings (bodyclose, sqlclosecheck, gosec)
