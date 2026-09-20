@@ -10,9 +10,9 @@ metadata:
 ## When to load
 
 - **architect** — designing a performance-critical system
-- **coder** — implementing a hot path or data-intensive operation
+- **worker** — implementing a hot path or data-intensive operation
 - **reviewer** — reviewing a PR that touches a hot path, query, or cache
-- **researcher** — investigating a reported slowness or latency spike
+- **research** — investigating a reported slowness or latency spike
 
 ## The 5 rules
 
