@@ -1,33 +1,49 @@
 import { describe, expect, test } from "bun:test"
 import {
+  heuristicsForEpisodes,
   proposeHeuristic,
   rankEpisodes,
   rankHeuristics,
+  retireEpisode,
   reviewHeuristic,
   type Episode,
 } from "./learning"
 
-function episode(id: string, project = "p", lesson = "Prefer explicit state transitions"): Episode {
+function episode(
+  id: string,
+  project = "p",
+  lesson = "Prefer explicit state transitions",
+  workflowId = "w-" + id,
+): Episode {
   return {
     id,
     project,
+    workflowId,
     subject: "workflow state",
     lesson,
     evidenceRefs: ["e:" + id],
     tags: ["workflow", "state"],
     createdBy: "reviewer",
     createdAt: id,
+    status: "active",
+    synabun: { status: "pending" },
   }
 }
 
 describe("Loom learning memory", () => {
-  test("retrieves relevant episodes without making them authority", () => {
+  test("retrieves relevant active episodes without making them authority", () => {
     const results = rankEpisodes("workflow state", [
       episode("2"),
       episode("1", "p", "CSS spacing lesson"),
     ])
 
     expect(results[0]?.value.id).toBe("2")
+  })
+
+  test("retired episodes are not returned", () => {
+    const retired = episode("1")
+    retireEpisode({ episode: retired, reviewer: "reviewer", reason: "stale", now: "later" })
+    expect(rankEpisodes("workflow", [retired])).toHaveLength(0)
   })
 
   test("new heuristics are provisional", () => {
@@ -65,13 +81,37 @@ describe("Loom learning memory", () => {
     ).toThrow()
   })
 
+  test("two episodes from the same workflow cannot validate a heuristic", () => {
+    const first = episode("1", "project-a", "lesson", "workflow-a")
+    const second = episode("2", "project-a", "lesson", "workflow-a")
+    const heuristic = proposeHeuristic({
+      id: "h1",
+      statement: "Prefer explicit state transitions",
+      scope: "workflow engines",
+      proposedBy: "architect",
+      episodes: [first],
+      now: "now",
+    })
+
+    expect(() =>
+      reviewHeuristic({
+        heuristic,
+        reviewer: "reviewer",
+        action: "validate",
+        episodes: [second],
+        note: "same workflow",
+        now: "later",
+      }),
+    ).toThrow()
+  })
+
   test("independent repeated evidence can validate a heuristic", () => {
     const heuristic = proposeHeuristic({
       id: "h1",
       statement: "Prefer explicit state transitions",
       scope: "workflow engines",
       proposedBy: "architect",
-      episodes: [episode("1", "project-a")],
+      episodes: [episode("1", "project-a", "lesson", "workflow-a")],
       now: "now",
     })
 
@@ -79,7 +119,7 @@ describe("Loom learning memory", () => {
       heuristic,
       reviewer: "reviewer",
       action: "validate",
-      episodes: [episode("2", "project-b")],
+      episodes: [episode("2", "project-b", "lesson", "workflow-b")],
       note: "recurred independently",
       now: "later",
     })
@@ -102,14 +142,14 @@ describe("Loom learning memory", () => {
       statement: "Explicit state transitions reduce workflow ambiguity",
       scope: "workflow",
       proposedBy: "architect",
-      episodes: [episode("2")],
+      episodes: [episode("2", "project-a", "lesson", "workflow-a")],
       now: "2",
     })
     reviewHeuristic({
       heuristic: validated,
       reviewer: "critic",
       action: "validate",
-      episodes: [episode("3")],
+      episodes: [episode("3", "project-b", "lesson", "workflow-b")],
       note: "confirmed",
       now: "3",
     })
@@ -136,5 +176,18 @@ describe("Loom learning memory", () => {
     })
 
     expect(rankHeuristics("workflow", [heuristic])).toHaveLength(0)
+  })
+
+  test("canonical lookup can relate recalled episodes to current heuristics", () => {
+    const heuristic = proposeHeuristic({
+      id: "h1",
+      statement: "Prefer explicit state transitions",
+      scope: "workflow",
+      proposedBy: "architect",
+      episodes: [episode("1")],
+      now: "1",
+    })
+
+    expect(heuristicsForEpisodes(["1"], [heuristic]).map((item) => item.id)).toEqual(["h1"])
   })
 })
