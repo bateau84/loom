@@ -582,6 +582,7 @@ def run_case(case: dict[str, Any], args: argparse.Namespace, engine: str) -> dic
                 config=config,
                 models_catalog=models_catalog,
                 database_seed=database_seed,
+                config_root=None,
                 timeout=args.timeout_seconds,
                 container_timeout=args.container_timeout,
                 mount_node_modules=False,
