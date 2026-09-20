@@ -1893,7 +1893,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       editor.add({
         name: "budget_grant",
         description:
-          "Grant exactly one extra dispatch to an exhausted workflow step after material progress. General only. Preserves dispatch history and never widens the workflow-wide total limit.",
+          "Grant exactly one extra dispatch to an exhausted runnable work step after material progress. General only. Reviewer/Critic gate budgets remain hard bounded; dispatch history and the workflow-wide total limit are preserved.",
         input: {
           type: "object",
           properties: {
@@ -1938,11 +1938,27 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
           const step = workflow.steps.find((candidate) => candidate.id === value.stepId)
           if (!step) return { content: renderToolOutput({ error: "Step not found." }) }
+          if (step.kind !== "work") {
+            return {
+              content: renderToolOutput({
+                error: "Budget grants apply only to work steps. Reviewer and Critic gate budgets remain hard bounded.",
+                step: { id: step.id, kind: step.kind, agent: step.agent },
+              }),
+            }
+          }
           if (step.status !== "pending") {
             return {
               content: renderToolOutput({
-                error: "Budget grants apply only to pending steps. Reopen failed work before granting another dispatch.",
+                error: "Budget grants apply only to pending work. Reopen failed work before granting another dispatch.",
                 step: { id: step.id, status: step.status },
+              }),
+            }
+          }
+          if (!runnable(workflow).some((candidate) => candidate.id === step.id)) {
+            return {
+              content: renderToolOutput({
+                error: "Budget grants apply only when the exhausted work step is currently runnable.",
+                step: { id: step.id, status: step.status, dependsOn: step.dependsOn },
               }),
             }
           }
