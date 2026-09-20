@@ -1,4 +1,3 @@
-import { Plugin } from "@opencode/plugin"
 import {
   applyTaskPlan,
   buildSteps,
@@ -312,10 +311,10 @@ function toolEventKey(raw: any) {
 
 const pendingToolInputs = new Map<string, unknown>()
 
-export default Plugin.define({
+export default {
   id: "loom",
 
-  async setup(ctx) {
+  async setup(ctx: any) {
     await ctx.agent.transform((editor) => {
       if (editor.get("general")) editor.default("general")
     })
@@ -2254,4 +2253,4 @@ export default Plugin.define({
       await ctx.storage.set(`${sessionEvidencePrefix(observation.sessionID)}${observation.id}`, observation.id)
     })
   },
-})
+}
