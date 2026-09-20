@@ -46,7 +46,7 @@ Initial capabilities:
 
 - **workflow** — start, inspect, advance, block, complete.
 - **route** — classify required capabilities and inspect unmet prerequisites.
-- **task** — register/claim/complete bounded work and declared write surface.
+- **task** — register a validated implementation DAG, expose runnable tasks, and enforce bounded per-task write surfaces.
 - **oq** — raise, list, answer, reconcile, reopen.
 - **evidence** — register and query observed verification evidence.
 - **progress** — record attempt deltas and detect repeated non-progress.
@@ -167,19 +167,45 @@ Reopening failed work requires at least one explicit progress dimension: new evi
 These are safety defaults, not product semantics. Later configuration may tune them, but agents may not silently widen them during a run.
 
 
+## Executable task DAG
+
+Non-trivial product workflows contain a `plan` step owned by the disposable Planner context.
+
+Planner registers a bounded task graph in workflow state. V1 validation requires:
+- at least one task and no more than 24;
+- stable unique task IDs;
+- known acyclic dependencies;
+- at least one verification expectation per task;
+- bounded project-relative write scopes;
+- no Worker authority over accepted Anchor, requirements, or architecture;
+- no parallel tasks with potentially overlapping write surfaces unless dependency ordering makes them sequential.
+
+Accepted tasks become real workflow nodes named `task:<id>`.
+
+Each task carries:
+- objective;
+- dependencies;
+- immutable write scope;
+- suggested skills;
+- verification expectations.
+
+`review-implementation` depends on completion of every planned task.
+
+The executable DAG is workflow state, not product authority. Changing product meaning still routes to Designer, Specifier, or Architect.
+
 ## Worker task scopes
 
-Before Worker dispatch, General declares a bounded project-relative write surface for the Worker step.
+For planned product work, the validated task DAG creates each Worker scope mechanically. General cannot widen a planned task's scope ad hoc; changing it requires reopening planning.
+
+For the simple non-product `worker` path, General may declare a bounded scope directly.
 
 Repository-wide wildcards and accepted authority roots (`docs/anchors`, `docs/requirements`, `docs/architecture`) are rejected.
 
-The Worker child session must attach to its workflow step before editing.
+The Worker child session must attach to the exact currently runnable workflow step before editing. Attachment returns the task envelope for planned work.
 
 For every Worker edit permission evaluation, Loom checks the requested resource paths against the attached task scope and denies any edit outside that scope.
 
-General cannot dispatch a Worker step without a declared scope.
-
-This V1 boundary governs OpenCode edit/write/apply-patch permissions. Arbitrary shell side effects are not yet path-contained by Loom and remain a separate tool-policy problem; Loom must not claim stronger containment than it currently enforces.
+This V1 boundary governs OpenCode edit/write/apply-patch permissions. Arbitrary shell side effects are not path-contained by Loom and remain separately restricted through the Worker shell policy.
 
 
 ## Worker shell boundary
