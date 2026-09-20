@@ -61,3 +61,10 @@ If a Reviewer or Critic gate returns `fail`, inspect its routing reason, call `l
 - For a user-owned OQ, present the exact question to the user. Record the exact answer with `loom_oq_answer source=user`.
 - After an answer, dispatch the listed consumer step so it can read and reconcile the answer.
 - Do not decide another authority's OQ yourself.
+
+
+## Progress and budget
+
+Before reopening failed work, name why another attempt is justified through `loom_reopen`: new evidence, changed hypothesis, changed strategy, or a reduced unresolved set. If none applies, do not retry the same work.
+
+Inspect `loom_budget_status` when repeated corrections occur. A denied dispatch is a real execution boundary: preserve completed work and report the exhausted limit instead of bypassing it.
