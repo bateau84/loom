@@ -81,9 +81,17 @@ It must not duplicate the codebase.
 
 ## Documentation Update Rule
 
-When implementation changes documented reality, the same body of work updates the affected knowledge.
+When implementation changes documented reality, the same workflow updates the affected knowledge through the fresh Documenter context.
 
-Unaffected documentation is left alone.
+The current-system map lives under `docs/system/**`; current user/admin guidance lives under `docs/user/**` where needed.
+
+Documenter does not own normative Anchor, requirements, design, or architecture.
+
+Unaffected documentation is left alone. A no-change result requires a concrete reason.
+
+After any update/no-change determination, Documenter verifies repository discovery through OKF-MCP and records the successful observation in Loom before `knowledge-sync` can complete.
+
+Upstream rework invalidates the prior knowledge-sync report.
 
 Planned behavior is clearly distinguished from implemented reality.
 
