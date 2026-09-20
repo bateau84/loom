@@ -1,3 +1,5 @@
+import { resourcesWithinScope } from "./scope"
+
 const forbiddenOperators = [
   /(?:^|\s)(?:&&|\|\||;|\|)(?:\s|$)/,
   /(?:^|\s)(?:>|>>|<|2>|2>>|&>)(?:\s|$)/,
@@ -41,6 +43,7 @@ const safePatterns = [
   /^go vet(?:\s|$)/,
   /^go list(?:\s|$)/,
   /^go env(?:\s|$)/,
+  /^gofmt(?:\s|$)/,
   /^golangci-lint run(?:\s|$)/,
   /^gosec(?:\s|$)/,
   /^govulncheck(?:\s|$)/,
@@ -74,6 +77,43 @@ export function isAllowedWorkerShell(command: string) {
   return safePatterns.some((pattern) => pattern.test(normalized))
 }
 
-export function shellResourcesAllowed(resources: readonly string[]) {
-  return resources.length > 0 && resources.every(isAllowedWorkerShell)
+function safeRelativeGoFile(path: string) {
+  const normalized = path.replaceAll("\\", "/").replace(/^\.\//, "")
+  if (!normalized || normalized.startsWith("/")) return false
+  if (normalized.split("/").includes("..")) return false
+  if (/[*?\[\]{}]/.test(normalized)) return false
+  return normalized.endsWith(".go")
+}
+
+export function scopedGofmtWriteTargets(command: string) {
+  const normalized = command.trim()
+  if (forbiddenOperators.some((pattern) => pattern.test(normalized))) return undefined
+
+  const tokens = normalized.split(/\s+/)
+  if (tokens[0] !== "gofmt" || !tokens.includes("-w")) return undefined
+
+  const targets: string[] = []
+  for (const token of tokens.slice(1)) {
+    if (token === "-w" || token === "-s") continue
+    if (token.startsWith("-")) return undefined
+    if (!safeRelativeGoFile(token)) return undefined
+    targets.push(token)
+  }
+
+  return targets.length > 0 ? targets : undefined
+}
+
+export function shellResourcesAllowed(
+  resources: readonly string[],
+  writeScope: string[] = [],
+) {
+  if (resources.length === 0) return false
+
+  return resources.every((command) => {
+    if (isAllowedWorkerShell(command)) return true
+
+    const targets = scopedGofmtWriteTargets(command)
+    if (!targets || writeScope.length === 0) return false
+    return resourcesWithinScope(targets, writeScope)
+  })
 }

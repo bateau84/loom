@@ -2581,9 +2581,19 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
     await ctx.permission.hook("evaluate", async (event) => {
       if (event.agent === "worker" && event.action === "shell") {
-        if (!shellResourcesAllowed(event.resources)) {
+        if (shellResourcesAllowed(event.resources)) return
+
+        const workflowId = (await ctx.storage.get(sessionKey(event.sessionID))) as string | undefined
+        const stepId = (await ctx.storage.get(sessionStepKey(event.sessionID))) as string | undefined
+        const scope =
+          workflowId && stepId
+            ? ((await ctx.storage.get(scopeKey(workflowId, stepId))) as TaskScope | undefined)
+            : undefined
+
+        if (!scope || !shellResourcesAllowed(event.resources, scope.write)) {
           event.effect = "deny"
-          event.message = "Worker shell is limited to Loom's inspection and verification allowlist. Use scoped edit tools for source mutation."
+          event.message =
+            "Worker shell is limited to Loom's inspection/verification commands plus explicitly supported scope-aware mutations inside the task write scope."
         }
         return
       }
