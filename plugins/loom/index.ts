@@ -37,6 +37,14 @@ import {
 } from "./budget"
 import { resourcesWithinScope, validateWriteScope, type TaskScope } from "./scope"
 import { shellResourcesAllowed } from "./shell"
+import {
+  proposeHeuristic,
+  rankEpisodes,
+  rankHeuristics,
+  reviewHeuristic,
+  type Episode,
+  type Heuristic,
+} from "./learning"
 
 const loomAgents = new Set([
   "designer",
@@ -48,6 +56,14 @@ const loomAgents = new Set([
   "research",
   "diagnostic",
 ])
+
+function episodeKey(id: string) {
+  return `episode/${id}`
+}
+
+function heuristicKey(id: string) {
+  return `heuristic/${id}`
+}
 
 function scopeKey(workflowId: string, stepId: string) {
   return `scope/${workflowId}/${stepId}`
@@ -1003,6 +1019,186 @@ export default Plugin.define({
           const { workflowId, stepId } = input as { workflowId: string; stepId: string }
           const scope = (await ctx.storage.get(scopeKey(workflowId, stepId))) as TaskScope | undefined
           return { content: JSON.stringify({ scope: scope ?? null }) }
+        },
+      })
+
+      editor.add({
+        name: "learn_record",
+        description:
+          "Record one evidence-backed episodic lesson from current work. Learning is advisory and never becomes product authority.",
+        input: {
+          type: "object",
+          properties: {
+            subject: { type: "string" },
+            lesson: { type: "string" },
+            evidenceRefs: { type: "array", items: { type: "string" } },
+            tags: { type: "array", items: { type: "string" } },
+            workflowId: { type: "string" },
+          },
+          required: ["subject", "lesson", "evidenceRefs", "tags"],
+          additionalProperties: false,
+        },
+        options: { namespace: "loom" },
+        execute: async (input, tool) => {
+          const value = input as {
+            subject: string
+            lesson: string
+            evidenceRefs: string[]
+            tags: string[]
+            workflowId?: string
+          }
+
+          if (value.evidenceRefs.length === 0) {
+            return { content: JSON.stringify({ error: "A durable learning episode needs at least one evidence reference." }) }
+          }
+
+          const episode: Episode = {
+            id: crypto.randomUUID(),
+            project: ctx.location.project.canonical,
+            ...(value.workflowId ? { workflowId: value.workflowId } : {}),
+            subject: value.subject,
+            lesson: value.lesson,
+            evidenceRefs: value.evidenceRefs,
+            tags: [...new Set(value.tags.map((tag) => tag.toLowerCase()))],
+            createdBy: tool.agent,
+            createdAt: new Date().toISOString(),
+          }
+
+          await ctx.storage.set(episodeKey(episode.id), episode)
+          return { content: JSON.stringify({ episode }) }
+        },
+      })
+
+      editor.add({
+        name: "learn_query",
+        description:
+          "Query episodic lessons and non-retired heuristics. Results are advisory; current repository authority and current evidence win.",
+        input: {
+          type: "object",
+          properties: {
+            query: { type: "string" },
+            projectOnly: { type: "boolean" },
+            limit: { type: "number" },
+          },
+          required: ["query"],
+          additionalProperties: false,
+        },
+        options: { namespace: "loom" },
+        execute: async (input) => {
+          const value = input as { query: string; projectOnly?: boolean; limit?: number }
+          const limit = Math.max(1, Math.min(value.limit ?? 10, 25))
+
+          let episodes = await scanValues<Episode>(ctx, "episode/")
+          if (value.projectOnly) {
+            episodes = episodes.filter((episode) => episode.project === ctx.location.project.canonical)
+          }
+          const heuristics = await scanValues<Heuristic>(ctx, "heuristic/")
+
+          return {
+            content: JSON.stringify({
+              advisory: true,
+              episodes: rankEpisodes(value.query, episodes).slice(0, limit).map((entry) => entry.value),
+              heuristics: rankHeuristics(value.query, heuristics).slice(0, limit).map((entry) => entry.value),
+            }),
+          }
+        },
+      })
+
+      editor.add({
+        name: "heuristic_propose",
+        description:
+          "Propose a reusable heuristic from one or more recorded episodes. New heuristics are always provisional.",
+        input: {
+          type: "object",
+          properties: {
+            statement: { type: "string" },
+            scope: { type: "string" },
+            episodeIds: { type: "array", items: { type: "string" } },
+          },
+          required: ["statement", "scope", "episodeIds"],
+          additionalProperties: false,
+        },
+        options: { namespace: "loom" },
+        execute: async (input, tool) => {
+          const value = input as { statement: string; scope: string; episodeIds: string[] }
+          const records = await Promise.all(
+            value.episodeIds.map((id) => ctx.storage.get(episodeKey(id)) as Promise<Episode | undefined>),
+          )
+          const episodes = records.filter((episode): episode is Episode => Boolean(episode))
+
+          if (episodes.length !== value.episodeIds.length) {
+            return { content: JSON.stringify({ error: "Every supporting episode id must exist." }) }
+          }
+
+          try {
+            const heuristic = proposeHeuristic({
+              id: crypto.randomUUID(),
+              statement: value.statement,
+              scope: value.scope,
+              proposedBy: tool.agent,
+              episodes,
+              now: new Date().toISOString(),
+            })
+            await ctx.storage.set(heuristicKey(heuristic.id), heuristic)
+            return { content: JSON.stringify({ heuristic }) }
+          } catch (error) {
+            return { content: JSON.stringify({ error: error instanceof Error ? error.message : String(error) }) }
+          }
+        },
+      })
+
+      editor.add({
+        name: "heuristic_review",
+        description:
+          "Validate or retire a heuristic. Only Reviewer or Critic may do this; validation requires repeated supporting episodes.",
+        input: {
+          type: "object",
+          properties: {
+            heuristicId: { type: "string" },
+            action: { type: "string", enum: ["validate", "retire"] },
+            episodeIds: { type: "array", items: { type: "string" } },
+            note: { type: "string" },
+          },
+          required: ["heuristicId", "action", "episodeIds", "note"],
+          additionalProperties: false,
+        },
+        options: { namespace: "loom" },
+        execute: async (input, tool) => {
+          if (tool.agent !== "reviewer" && tool.agent !== "critic") {
+            return { content: JSON.stringify({ error: "Only reviewer or critic may validate or retire heuristics." }) }
+          }
+
+          const value = input as {
+            heuristicId: string
+            action: "validate" | "retire"
+            episodeIds: string[]
+            note: string
+          }
+          const heuristic = (await ctx.storage.get(heuristicKey(value.heuristicId))) as Heuristic | undefined
+          if (!heuristic) return { content: JSON.stringify({ error: "Heuristic not found." }) }
+
+          const records = await Promise.all(
+            value.episodeIds.map((id) => ctx.storage.get(episodeKey(id)) as Promise<Episode | undefined>),
+          )
+          const episodes = records.filter((episode): episode is Episode => Boolean(episode))
+          if (episodes.length !== value.episodeIds.length) {
+            return { content: JSON.stringify({ error: "Every review episode id must exist." }) }
+          }
+
+          try {
+            reviewHeuristic({
+              heuristic,
+              reviewer: tool.agent,
+              action: value.action,
+              episodes,
+              note: value.note,
+              now: new Date().toISOString(),
+            })
+            await ctx.storage.set(heuristicKey(heuristic.id), heuristic)
+            return { content: JSON.stringify({ heuristic }) }
+          } catch (error) {
+            return { content: JSON.stringify({ error: error instanceof Error ? error.message : String(error) }) }
+          }
         },
       })
 
