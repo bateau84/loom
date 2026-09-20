@@ -1,0 +1,140 @@
+import { describe, expect, test } from "bun:test"
+import {
+  proposeHeuristic,
+  rankEpisodes,
+  rankHeuristics,
+  reviewHeuristic,
+  type Episode,
+} from "./learning"
+
+function episode(id: string, project = "p", lesson = "Prefer explicit state transitions"): Episode {
+  return {
+    id,
+    project,
+    subject: "workflow state",
+    lesson,
+    evidenceRefs: ["e:" + id],
+    tags: ["workflow", "state"],
+    createdBy: "reviewer",
+    createdAt: id,
+  }
+}
+
+describe("Loom learning memory", () => {
+  test("retrieves relevant episodes without making them authority", () => {
+    const results = rankEpisodes("workflow state", [
+      episode("2"),
+      episode("1", "p", "CSS spacing lesson"),
+    ])
+
+    expect(results[0]?.value.id).toBe("2")
+  })
+
+  test("new heuristics are provisional", () => {
+    const heuristic = proposeHeuristic({
+      id: "h1",
+      statement: "Prefer explicit state transitions",
+      scope: "workflow engines",
+      proposedBy: "architect",
+      episodes: [episode("1")],
+      now: "now",
+    })
+
+    expect(heuristic.status).toBe("provisional")
+  })
+
+  test("one episode cannot validate a heuristic", () => {
+    const heuristic = proposeHeuristic({
+      id: "h1",
+      statement: "Prefer explicit state transitions",
+      scope: "workflow engines",
+      proposedBy: "architect",
+      episodes: [episode("1")],
+      now: "now",
+    })
+
+    expect(() =>
+      reviewHeuristic({
+        heuristic,
+        reviewer: "critic",
+        action: "validate",
+        episodes: [episode("1")],
+        note: "same evidence only",
+        now: "later",
+      }),
+    ).toThrow()
+  })
+
+  test("independent repeated evidence can validate a heuristic", () => {
+    const heuristic = proposeHeuristic({
+      id: "h1",
+      statement: "Prefer explicit state transitions",
+      scope: "workflow engines",
+      proposedBy: "architect",
+      episodes: [episode("1", "project-a")],
+      now: "now",
+    })
+
+    reviewHeuristic({
+      heuristic,
+      reviewer: "reviewer",
+      action: "validate",
+      episodes: [episode("2", "project-b")],
+      note: "recurred independently",
+      now: "later",
+    })
+
+    expect(heuristic.status).toBe("validated")
+    expect(heuristic.support).toHaveLength(2)
+  })
+
+  test("validated heuristics rank before provisional peers", () => {
+    const provisional = proposeHeuristic({
+      id: "h1",
+      statement: "Prefer explicit state transitions",
+      scope: "workflow",
+      proposedBy: "architect",
+      episodes: [episode("1")],
+      now: "1",
+    })
+    const validated = proposeHeuristic({
+      id: "h2",
+      statement: "Explicit state transitions reduce workflow ambiguity",
+      scope: "workflow",
+      proposedBy: "architect",
+      episodes: [episode("2")],
+      now: "2",
+    })
+    reviewHeuristic({
+      heuristic: validated,
+      reviewer: "critic",
+      action: "validate",
+      episodes: [episode("3")],
+      note: "confirmed",
+      now: "3",
+    })
+
+    expect(rankHeuristics("workflow state", [provisional, validated])[0]?.value.id).toBe("h2")
+  })
+
+  test("retired heuristics are not returned", () => {
+    const heuristic = proposeHeuristic({
+      id: "h1",
+      statement: "Prefer explicit state transitions",
+      scope: "workflow",
+      proposedBy: "architect",
+      episodes: [episode("1")],
+      now: "1",
+    })
+    reviewHeuristic({
+      heuristic,
+      reviewer: "critic",
+      action: "retire",
+      episodes: [],
+      note: "contradicted by current evidence",
+      now: "2",
+    })
+
+    expect(rankHeuristics("workflow", [heuristic])).toHaveLength(0)
+  })
+})
