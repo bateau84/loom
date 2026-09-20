@@ -72,7 +72,7 @@ Go call sites always include the package name, so repeating it in the identifier
 ```go
 // Good — clean at the call site
 http.Client       // not http.HTTPClient
-json.Decoder      // not json.JSONDecoder
+json.Deworker      // not json.JSONDeworker
 user.New()        // not user.NewUser()
 config.Parse()    // not config.ParseConfig()
 
