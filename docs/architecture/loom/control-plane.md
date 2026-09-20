@@ -173,9 +173,9 @@ Before Worker dispatch, General declares a bounded project-relative write surfac
 
 Repository-wide wildcards and accepted authority roots (`docs/anchors`, `docs/requirements`, `docs/architecture`) are rejected.
 
-The Worker child session must attach to its workflow step before editing. Attachment installs session-scoped OpenCode edit permissions:
-- deny edit everywhere;
-- allow only the declared task paths.
+The Worker child session must attach to its workflow step before editing.
+
+For every Worker edit permission evaluation, Loom checks the requested resource paths against the attached task scope and denies any edit outside that scope.
 
 General cannot dispatch a Worker step without a declared scope.
 
