@@ -29,6 +29,16 @@ Source:
 
 Scenario state is workflow-local in `plugins/loom/acceptance.ts`. PASS requires Product Acceptance evidence claims. Upstream rework invalidates prior acceptance results.
 
+## Behavioral Conformance
+
+The corpus under `evals/` attacks model-driven failure modes such as user-herding, authority drift, fake verification, shallow diagnosis, unsafe planning, stale-memory authority, and incomplete Product Acceptance.
+
+- `scripts/validate-evals.ts` validates case shape and BR traceability without inference.
+- `scripts/run-evals.py` runs selected cases through isolated real OpenCode sessions and a fresh semantic judge.
+- `.github/workflows/loom-live-evals.yml` exposes inference-bearing evals only through explicit manual dispatch.
+
+Runtime cases provide composition/tool evidence. Role-decision cases provide fresh-context directive-compliance evidence. Neither replaces real YuHaul Product Acceptance.
+
 ## Depends on
 
 - [Control Plane](control-plane.md)
