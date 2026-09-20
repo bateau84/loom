@@ -4,6 +4,7 @@ import {
   proposeHeuristic,
   rankEpisodes,
   rankHeuristics,
+  removeEpisodeSupport,
   retireEpisode,
   reviewHeuristic,
   type Episode,
@@ -176,6 +177,30 @@ describe("Loom learning memory", () => {
     })
 
     expect(rankHeuristics("workflow", [heuristic])).toHaveLength(0)
+  })
+
+  test("retiring support demotes a validated heuristic when evidence is no longer independent", () => {
+    const heuristic = proposeHeuristic({
+      id: "h1",
+      statement: "Prefer explicit state transitions",
+      scope: "workflow",
+      proposedBy: "architect",
+      episodes: [episode("1", "project-a", "lesson", "workflow-a")],
+      now: "1",
+    })
+    reviewHeuristic({
+      heuristic,
+      reviewer: "reviewer",
+      action: "validate",
+      episodes: [episode("2", "project-b", "lesson", "workflow-b")],
+      note: "independent support",
+      now: "2",
+    })
+
+    expect(heuristic.status).toBe("validated")
+    removeEpisodeSupport(heuristic, "2")
+    expect(heuristic.status).toBe("provisional")
+    expect(heuristic.support.map((item) => item.episodeId)).toEqual(["1"])
   })
 
   test("canonical lookup can relate recalled episodes to current heuristics", () => {
