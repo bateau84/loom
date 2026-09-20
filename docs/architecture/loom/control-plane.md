@@ -217,3 +217,21 @@ Worker shell permission is restricted to a conservative inspection and verificat
 External-directory access is denied for Worker.
 
 This is intentionally restrictive. Mutation-heavy shell operations need a later controlled capability with stronger containment rather than a broader generic shell permission.
+
+
+## Living-knowledge synchronization
+
+Product workflows and structural maintenance include a `knowledge-sync` step after implementation review.
+
+Documenter may update only current-reality knowledge surfaces:
+- `docs/system/**`;
+- `docs/user/**`;
+- top-level `README.md` when setup/use materially changed.
+
+Normative Anchor, requirements, design, and architecture remain owned by their existing authorities.
+
+Before `knowledge-sync` may complete, Loom requires a structured knowledge report backed by an observed successful OKF-MCP discovery or verification call from the attached Documenter session.
+
+A valid report either names changed knowledge documents or records a concrete reason why existing knowledge remains accurate.
+
+If upstream work is reopened, the knowledge report is invalidated automatically and must be re-established before final product review.
