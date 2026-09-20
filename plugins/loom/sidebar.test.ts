@@ -131,5 +131,17 @@ describe("Loom sidebar snapshot", () => {
     expect(visible).toHaveLength(12)
     expect(visible.some((task) => task.id === "task-14")).toBe(true)
   })
+  test("keeps the discovered TUI entry wired to the sidebar", async () => {
+    const entry = await Bun.file(new URL("./tui.ts", import.meta.url)).text()
+    const view = await Bun.file(new URL("./tui-view.tsx", import.meta.url)).text()
+
+    expect(entry).toContain('export { default } from "./tui-view.tsx"')
+    expect(view).toContain('append: "sidebar.content"')
+    expect(view).toContain("context.client.rpc(LoomRpc)")
+    expect(view).toContain("{ location }")
+
+    const transpiler = new Bun.Transpiler({ loader: "tsx", target: "bun" })
+    expect(() => transpiler.transformSync(view)).not.toThrow()
+  })
 
 })
