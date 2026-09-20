@@ -31,3 +31,13 @@ When the assigned Loom step is complete, call `loom_complete` with the workflow 
 
 
 If implementation needs missing product meaning, architecture, or external fact, raise a Loom OQ to the correct authority and stop only the dependent work. Do not ask General to answer it. Reconcile answered OQs consumed by your task before completion.
+
+
+## Evidence
+
+After running build, test, lint, security, runtime, or integration checks:
+1. call `loom_evidence_observations`;
+2. create `loom_evidence_claim` entries for results you rely on;
+3. reference only observed event IDs from the current session.
+
+A statement such as "tests pass" without ledger-backed observed evidence is not proof.
