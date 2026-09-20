@@ -12,7 +12,10 @@ from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_IMAGE = "ghcr.io/bateau84/opencode-eval-runner:edge"
+DEFAULT_IMAGES = {
+    "opencode": "ghcr.io/bateau84/opencode-eval-runner:opencode-edge",
+    "github-copilot-cli": "ghcr.io/bateau84/opencode-eval-runner:copilot-edge",
+}
 DEFAULT_SUITES = [
     ROOT / "evals" / "authority.json",
     ROOT / "evals" / "front-door.json",
@@ -179,6 +182,22 @@ def pass_env(command: list[str], names: tuple[str, ...] | list[str]) -> None:
     for name in names:
         if os.environ.get(name):
             command += ["--env", name]
+
+
+def image_for_transport(args: argparse.Namespace, transport: str) -> str:
+    if args.image:
+        return args.image
+    if transport == "opencode":
+        return (
+            args.opencode_image
+            or os.environ.get("OPENCODE_EVAL_RUNNER_OPENCODE_IMAGE")
+            or DEFAULT_IMAGES["opencode"]
+        )
+    return (
+        args.copilot_image
+        or os.environ.get("OPENCODE_EVAL_RUNNER_COPILOT_IMAGE")
+        or DEFAULT_IMAGES["github-copilot-cli"]
+    )
 
 
 def invoke_container(
@@ -397,9 +416,12 @@ def run_case(case: dict[str, Any], args: argparse.Namespace, engine: str) -> dic
             target_agent_text = (target_project / ".opencode" / "agents" / (case["agent"] + ".md")).read_text(encoding="utf-8")
             target_system = strip_frontmatter(target_agent_text)
 
+        target_image = image_for_transport(args, args.target_transport)
+        judge_image = image_for_transport(args, args.judge_transport)
+
         target = invoke_container(
             engine=engine,
-            image=args.image,
+            image=target_image,
             transport=args.target_transport,
             model=args.model,
             agent=case["agent"],
@@ -423,7 +445,7 @@ def run_case(case: dict[str, Any], args: argparse.Namespace, engine: str) -> dic
         if not target_error:
             judge_result = invoke_container(
                 engine=engine,
-                image=args.image,
+                image=judge_image,
                 transport=args.judge_transport,
                 model=judge_model,
                 agent="eval-judge",
@@ -457,7 +479,8 @@ def run_case(case: dict[str, Any], args: argparse.Namespace, engine: str) -> dic
             "case": case["id"],
             "agent": case["agent"],
             "execution": case["execution"],
-            "runner_image": args.image,
+            "target_image": target_image,
+            "judge_image": judge_image,
             "container_engine": engine,
             "target_transport": args.target_transport,
             "judge_transport": args.judge_transport,
@@ -493,7 +516,9 @@ def main() -> int:
     parser.add_argument("--target-transport", choices=("opencode", "github-copilot-cli"), default="opencode")
     parser.add_argument("--judge-transport", choices=("opencode", "github-copilot-cli"), default="opencode")
     parser.add_argument("--engine", choices=("auto", "podman", "docker"), default="auto")
-    parser.add_argument("--image", default=os.environ.get("OPENCODE_EVAL_RUNNER_IMAGE", DEFAULT_IMAGE))
+    parser.add_argument("--image", help="Override both transport images with one explicit image.")
+    parser.add_argument("--opencode-image")
+    parser.add_argument("--copilot-image")
     parser.add_argument("--auth")
     parser.add_argument("--provider-config")
     parser.add_argument("--env", action="append", default=[], metavar="NAME")

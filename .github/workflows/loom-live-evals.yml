@@ -85,6 +85,8 @@ jobs:
         uses: bateau84/opencode-eval-runner@main
         with:
           engine: docker
+          prepare-opencode: ${{ inputs.target_transport == 'opencode' || inputs.judge_transport == 'opencode' }}
+          prepare-copilot: ${{ inputs.target_transport == 'github-copilot-cli' || inputs.judge_transport == 'github-copilot-cli' }}
           artifact-dir: .loom-evals
           command: |
             args=(
