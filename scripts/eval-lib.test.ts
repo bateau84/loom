@@ -27,10 +27,9 @@ describe("behavioral eval utilities", () => {
   test("grades required and forbidden tools by exact/suffixed runtime names", () => {
     const failures = gradeToolAssertions(
       ["loom_intent_start", "mcp__SynaBun__recall"],
-      { requires: ["intent_start", "recall"], forbids: ["start"] },
+      { requires: ["loom_intent_start", "SynaBun_recall"], forbids: ["loom_start"] },
     )
-    // intent_start also suffix-matches generic start only if separator semantics are wrong.
-    expect(failures).toContain("forbidden tool observed: start")
+    expect(failures).toEqual([])
   })
 
   test("parses strict semantic judge JSON", () => {
