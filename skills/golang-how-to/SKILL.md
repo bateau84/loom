@@ -14,7 +14,7 @@ metadata:
 
 **Not for:** replacing specialist `golang-*` guidance; this skill routes to it.
 
-**Always load `golang-common-practice` first.** It is the Go-specific base layer for this family: the inner compile loop, severity-to-review-tier mapping, diagnose-before-fixing, and cross-reference style. System-wide delegation and escalation live in `current Loom role directive and control-plane state`. Every routing decision below assumes both are in effect.
+**Always load `golang-common-practice` first.** It is the Go-specific base layer for this family: the inner compile loop, diagnose-before-fixing, and cross-reference style. System-wide delegation and escalation live in `current Loom role directive and control-plane state`. Every routing decision below assumes both are in effect.
 
 **Go code navigation:** prefer `gopls` for semantic lookup: definitions, references, implementations, symbols, and type information. Use `rg`/`grep` for literal text or when `gopls` cannot answer.
 
