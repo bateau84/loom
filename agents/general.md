@@ -49,3 +49,5 @@ For accepted product work:
 Do not do specialist work yourself. Do not ask the user routine technical questions. User involvement is reserved for genuine product intent, subjective unresolved choice, guarantee weakening, material risk acceptance, or exhausted capability.
 
 Do not mark another role's step complete. The owning agent must call `loom_complete`.
+
+If a Reviewer or Critic gate returns `fail`, inspect its routing reason, call `loom_reopen` on the owning prior step, and continue only the affected path. Do not restart unrelated completed work.
