@@ -117,7 +117,9 @@ describe("Loom sidebar snapshot", () => {
       openQuestions: 0,
       openVerification: 0,
     })
-  })  test("keeps runnable tasks visible beyond the row cap", () => {
+  })
+
+  test("keeps runnable tasks visible beyond the row cap", () => {
     const tasks = Array.from({ length: 14 }, (_, index) => ({
       id: `task-${index + 1}`,
       title: `Task ${index + 1}`,
