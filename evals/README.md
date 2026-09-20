@@ -82,11 +82,14 @@ bun run eval:live -- \
 
 The harness chooses Podman first, then Docker. Override it explicitly with `--engine podman` or `--engine docker`.
 
-The default image is:
+The harness selects a slim image per transport:
 
 ```text
-ghcr.io/bateau84/opencode-eval-runner:edge
+OpenCode: ghcr.io/bateau84/opencode-eval-runner:opencode-edge
+Copilot:  ghcr.io/bateau84/opencode-eval-runner:copilot-edge
 ```
+
+Override them independently with `--opencode-image` / `--copilot-image`, or use `--image` to force one explicit image for both transports.
 
 The OpenCode transport automatically seeds the normal credential file when present:
 
