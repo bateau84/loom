@@ -162,6 +162,11 @@ def default_auth_path() -> Path:
     return base / "opencode" / "auth.json"
 
 
+def default_models_path() -> Path:
+    base = Path(os.environ.get("XDG_CACHE_HOME", str(Path.home() / ".cache")))
+    return base / "opencode" / "models.json"
+
+
 def resolve_optional_file(explicit: str | None, env_name: str, fallback: Path | None = None) -> Path | None:
     raw = explicit or os.environ.get(env_name)
     if raw:
@@ -433,6 +438,7 @@ def run_case(case: dict[str, Any], args: argparse.Namespace, engine: str) -> dic
     models_catalog = resolve_optional_file(
         args.models_catalog,
         "OPENCODE_EVAL_RUNNER_MODELS",
+        default_models_path(),
     )
     judge_model = args.judge_model or args.model
 
