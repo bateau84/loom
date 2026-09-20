@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "bun test ./plugins/loom/workflow.test.ts ./plugins/loom/oq.test.ts ./plugins/loom/evidence.test.ts ./plugins/loom/budget.test.ts ./plugins/loom/scope.test.ts ./plugins/loom/shell.test.ts ./plugins/loom/learning.test.ts ./plugins/loom/synabun.test.ts ./plugins/loom/acceptance.test.ts ./plugins/loom/tasks.test.ts ./plugins/loom/knowledge.test.ts ./plugins/loom/intent.test.ts ./scripts/eval-lib.test.ts",
+    "test": "bun test ./plugins/loom/presentation.test.ts ./plugins/loom/workflow.test.ts ./plugins/loom/oq.test.ts ./plugins/loom/evidence.test.ts ./plugins/loom/budget.test.ts ./plugins/loom/scope.test.ts ./plugins/loom/shell.test.ts ./plugins/loom/learning.test.ts ./plugins/loom/synabun.test.ts ./plugins/loom/acceptance.test.ts ./plugins/loom/tasks.test.ts ./plugins/loom/knowledge.test.ts ./plugins/loom/intent.test.ts ./scripts/eval-lib.test.ts",
     "typecheck": "tsc --noEmit",
     "eval:validate": "bun scripts/validate-evals.ts",
     "eval:list": "python3 scripts/run-evals.py --list",
