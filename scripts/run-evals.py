@@ -22,16 +22,7 @@ JUDGE_AGENT = """---
 description: Strict semantic judge for Loom behavioral evals
 mode: primary
 permissions:
-  - action: edit
-    resource: "*"
-    effect: deny
-  - action: shell
-    resource: "*"
-    effect: deny
-  - action: subagent
-    resource: "*"
-    effect: deny
-  - action: external_directory
+  - action: "*"
     resource: "*"
     effect: deny
 ---
@@ -78,16 +69,7 @@ def decision_agent(text: str, agent: str) -> str:
 description: Behavioral evaluation wrapper for Loom %s
 mode: primary
 permissions:
-  - action: edit
-    resource: "*"
-    effect: deny
-  - action: shell
-    resource: "*"
-    effect: deny
-  - action: subagent
-    resource: "*"
-    effect: deny
-  - action: external_directory
+  - action: "*"
     resource: "*"
     effect: deny
 ---
@@ -108,31 +90,6 @@ def load_cases(suite_paths: list[Path]) -> list[dict[str, Any]]:
     return cases
 
 
-def copy_provider_config(destination: Path, explicit: Path | None) -> None:
-    candidates: list[Path] = []
-    if explicit:
-        candidates.append(explicit)
-    if os.environ.get("XDG_CONFIG_HOME"):
-        candidates.append(Path(os.environ["XDG_CONFIG_HOME"]) / "opencode" / "opencode.json")
-    candidates.append(Path.home() / ".config" / "opencode" / "opencode.json")
-
-    source: dict[str, Any] = {}
-    for path in candidates:
-        if not path.is_file():
-            continue
-        try:
-            source = json.loads(path.read_text(encoding="utf-8"))
-            break
-        except Exception:
-            continue
-
-    safe: dict[str, Any] = {"$schema": "https://opencode.ai/config.json"}
-    for key in ("model", "small_model", "provider", "providers"):
-        if key in source:
-            safe[key] = source[key]
-    destination.write_text(json.dumps(safe, indent=2) + "\n", encoding="utf-8")
-
-
 def safe_fixture_path(project: Path, value: str) -> Path:
     if not value or value.startswith("/") or ".." in Path(value).parts:
         raise RuntimeError("unsafe fixture path: " + value)
@@ -141,22 +98,30 @@ def safe_fixture_path(project: Path, value: str) -> Path:
     return target
 
 
-def setup_project(case: dict[str, Any], provider_config: Path | None) -> tuple[Path, Path, Path]:
+def global_opencode_config_dir() -> Path:
+    base = Path(os.environ.get("XDG_CONFIG_HOME", str(Path.home() / ".config")))
+    return (base / "opencode").resolve()
+
+
+def setup_project(case: dict[str, Any]) -> tuple[Path, Path, Path]:
     temp = Path(tempfile.mkdtemp(prefix="loom-eval-" + case["id"].lower() + "-"))
     project = temp / "project"
-    oc = project / ".opencode"
-    (oc / "agents").mkdir(parents=True)
-    (oc / "skills").mkdir(parents=True)
+    eval_config = temp / "eval-config"
+    (eval_config / "agents").mkdir(parents=True)
+    (eval_config / "skills").mkdir(parents=True)
 
-    shutil.copytree(ROOT / "skills", oc / "skills", dirs_exist_ok=True)
+    shutil.copytree(ROOT / "skills", eval_config / "skills", dirs_exist_ok=True)
 
     source_agent = (ROOT / "agents" / (case["agent"] + ".md")).read_text(encoding="utf-8")
     target = promote_agent(source_agent) if case["execution"] == "runtime" else decision_agent(source_agent, case["agent"])
-    (oc / "agents" / (case["agent"] + ".md")).write_text(target, encoding="utf-8")
-    (oc / "agents" / "eval-judge.md").write_text(JUDGE_AGENT, encoding="utf-8")
+    (eval_config / "agents" / (case["agent"] + ".md")).write_text(target, encoding="utf-8")
+    (eval_config / "agents" / "eval-judge.md").write_text(JUDGE_AGENT, encoding="utf-8")
 
-    if case["execution"] == "runtime":
-        shutil.copytree(ROOT / "plugins", oc / "plugins", dirs_exist_ok=True)
+    # Loom is normally installed as the user's global OpenCode config. When the
+    # checked-out repo is elsewhere (for example a CI checkout), provide the
+    # exact checked-out plugin through the higher-precedence eval config dir.
+    if case["execution"] == "runtime" and ROOT.resolve() != global_opencode_config_dir():
+        shutil.copytree(ROOT / "plugins", eval_config / "plugins", dirs_exist_ok=True)
         node_modules = ROOT / "node_modules"
         if node_modules.exists():
             try:
@@ -169,6 +134,7 @@ def setup_project(case: dict[str, Any], provider_config: Path | None) -> tuple[P
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(fixture["content"], encoding="utf-8")
 
+    project.mkdir(parents=True, exist_ok=True)
     (project / "opencode.json").write_text(
         json.dumps(
             {
@@ -181,11 +147,7 @@ def setup_project(case: dict[str, Any], provider_config: Path | None) -> tuple[P
         encoding="utf-8",
     )
 
-    xdg = temp / "xdg"
-    (xdg / "opencode").mkdir(parents=True)
-    copy_provider_config(xdg / "opencode" / "opencode.json", provider_config)
-    return temp, project, xdg
-
+    return temp, project, eval_config
 
 def run_command(command: list[str], cwd: Path, env: dict[str, str], timeout: int) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
@@ -225,7 +187,7 @@ def session_id(events: list[dict[str, Any]]) -> str | None:
 def session_export(opencode: str, sid: str | None, cwd: Path, env: dict[str, str], timeout: int) -> Any:
     if not sid:
         return None
-    result = run_command([opencode, "export", sid, "--sanitize"], cwd, env, timeout)
+    result = run_command([opencode, "session", "export", sid, "--sanitize"], cwd, env, timeout)
     if result.returncode != 0:
         return None
     try:
@@ -402,18 +364,24 @@ def preflight_model(opencode: str, model: str | None, cwd: Path, env: dict[str, 
 
 
 def run_case(case: dict[str, Any], args: argparse.Namespace) -> dict[str, Any]:
-    temp, project, xdg = setup_project(case, Path(args.provider_config) if args.provider_config else None)
+    temp, project, eval_config = setup_project(case)
     env = dict(os.environ)
-    env["XDG_CONFIG_HOME"] = str(xdg)
+    env["OPENCODE_CONFIG_DIR"] = str(eval_config)
+    if args.provider_config:
+        env["OPENCODE_CONFIG"] = str(Path(args.provider_config).resolve())
     env["OPENCODE_DISABLE_AUTOUPDATE"] = "1"
 
     try:
         target_ok, target_preflight = preflight_model(
             args.opencode, args.model, project, env, args.timeout_seconds
         )
-        judge_ok, judge_preflight = preflight_model(
-            args.opencode, args.judge_model or args.model, project, env, args.timeout_seconds
-        )
+        judge_model = args.judge_model or args.model
+        if judge_model == args.model:
+            judge_ok, judge_preflight = target_ok, target_preflight
+        else:
+            judge_ok, judge_preflight = preflight_model(
+                args.opencode, judge_model, project, env, args.timeout_seconds
+            )
         if not target_ok or not judge_ok:
             return {
                 "case": case["id"],
