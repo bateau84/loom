@@ -22,3 +22,10 @@ For Loom gate completion, call `loom_complete` with `outcome: pass` or `outcome:
 
 
 Use the Loom OQ board for material cross-authority questions. Do not convert review uncertainty into your own product or architecture decision. Reconcile answered OQs relevant to the review before returning PASS.
+
+
+## Evidence
+
+When a reviewed change claims build, test, runtime, integration, security, or Product Acceptance success, inspect the producer step with `loom_evidence_list`.
+
+Do not accept prose-only success claims. Check that the claim is backed by observed tool events and that the observed command/path actually supports the claimed result.
