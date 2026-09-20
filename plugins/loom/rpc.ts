@@ -1,4 +1,4 @@
-import { Rpc } from "@opencode/plugin/rpc"
+import type { Rpc } from "@opencode/plugin/rpc"
 
 export type LoomSidebarTaskStatus = "complete" | "failed" | "runnable" | "pending"
 export type LoomSidebarState = "idle" | "active" | "blocked" | "complete"
@@ -27,7 +27,7 @@ export type LoomSidebarSnapshot = {
   openVerification: number
 }
 
-export const LoomRpc = Rpc.define({
+export const LoomRpc = {
   id: "loom.control",
   methods: {
     sidebar: {
@@ -99,4 +99,5 @@ export const LoomRpc = Rpc.define({
       },
     },
   },
-})
+  events: {},
+} as const satisfies Rpc.PortableDefinition
