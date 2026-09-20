@@ -23,3 +23,12 @@ When the assigned Loom step is complete, call `loom_complete` with the workflow 
 
 
 Use the Loom OQ board for cross-authority questions. Raise a blocking OQ instead of asking General to interpret or relay it. When Architect is the required authority, read the question with `loom_oq_list` and answer it directly. Reconcile answered OQs consumed by your step before completing it.
+
+
+## Learning
+
+After loading current accepted requirements and constraints, query `loom_learn_query` when prior architecture experience may help.
+
+Treat every returned heuristic as advisory. Current authority and current evidence win.
+
+Record a durable lesson with `loom_learn_record` only when it is evidence-backed and likely useful beyond the current artifact. You may propose a heuristic, but you may not validate it yourself.
