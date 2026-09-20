@@ -32,7 +32,7 @@ Loom Control Plane
   +--> Reviewer
   +--> Critic
   |
-  +--> Planner / Worker / Research / Diagnostic / Acceptance contexts
+  +--> Planner / Worker / Research / Diagnostic / Acceptance / Documenter contexts
   |
   v
 Evidence + Repository Knowledge + Learning
@@ -56,7 +56,7 @@ Evidence + Repository Knowledge + Learning
 
 ### Worker plane
 
-Fresh bounded execution contexts perform decomposition, implementation, research, diagnostics, migration, Product Acceptance, and other technical work.
+Fresh bounded execution contexts perform decomposition, implementation, research, diagnostics, migration, Product Acceptance, living-knowledge maintenance, and other technical work.
 
 Planner decomposes an accepted solution into an executable DAG. Workers execute the resulting bounded tasks.
 
@@ -92,7 +92,7 @@ Intent
   -> Critic: assembled solution
   -> BUILD: Planner DAG + bounded parallel/sequential Workers
   -> VERIFY: observed evidence + implementation Reviewer
-  -> Product Acceptance + Designer validation when applicable
+  -> Product Acceptance + Designer validation when applicable + knowledge-sync
   -> product Reviewer
   -> Critic: realized product
   -> Done
