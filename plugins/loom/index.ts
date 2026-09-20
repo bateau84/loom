@@ -6,7 +6,6 @@ import {
   plannedTaskSteps,
   preserveSatisfied,
   finishStep,
-  openVerificationRequirements,
   proveVerificationRequirement,
   reconcileVerificationAfterRoute,
   reopenFrom,
@@ -835,7 +834,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
       editor.add({
         name: "status",
-        description: "Inspect Loom workflow state, runnable steps, and unresolved shared questions.",
+        description: "Inspect Loom progress, current/next work, blockers, OQs, verification, and budget. Compact by default; detail=true returns internals.",
         input: {
           type: "object",
           properties: {
