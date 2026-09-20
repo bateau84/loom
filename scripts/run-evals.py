@@ -225,7 +225,7 @@ def session_id(events: list[dict[str, Any]]) -> str | None:
 def session_export(opencode: str, sid: str | None, cwd: Path, env: dict[str, str], timeout: int) -> Any:
     if not sid:
         return None
-    result = run_command([opencode, "session", "export", sid, "--sanitize"], cwd, env, timeout)
+    result = run_command([opencode, "export", sid, "--sanitize"], cwd, env, timeout)
     if result.returncode != 0:
         return None
     try:
@@ -378,6 +378,22 @@ def target_prompt(case: dict[str, Any]) -> str:
     return case["prompt"] + "\n\nRespond with the production decision/action for this scenario. Do not claim to have executed unavailable tools."
 
 
+def preflight_model(opencode: str, model: str | None, cwd: Path, env: dict[str, str], timeout: int) -> tuple[bool, str]:
+    if not model:
+        return True, "using OpenCode default model"
+    if "/" not in model:
+        return False, "model must use provider/model format"
+    provider = model.split("/", 1)[0]
+    result = run_command([opencode, "models", provider], cwd, env, timeout)
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout).strip()
+        return False, "opencode models %s failed: %s" % (provider, detail[:1000])
+    available = [line.strip().split()[0] for line in result.stdout.splitlines() if line.strip()]
+    if model not in available and not any(model == line.strip() for line in result.stdout.splitlines()):
+        return False, "model %s not listed by 'opencode models %s'" % (model, provider)
+    return True, "model available"
+
+
 def run_case(case: dict[str, Any], args: argparse.Namespace) -> dict[str, Any]:
     temp, project, xdg = setup_project(case, Path(args.provider_config) if args.provider_config else None)
     env = dict(os.environ)
@@ -385,6 +401,40 @@ def run_case(case: dict[str, Any], args: argparse.Namespace) -> dict[str, Any]:
     env["OPENCODE_DISABLE_AUTOUPDATE"] = "1"
 
     try:
+        target_ok, target_preflight = preflight_model(
+            args.opencode, args.model, project, env, args.timeout_seconds
+        )
+        judge_ok, judge_preflight = preflight_model(
+            args.opencode, args.judge_model or args.model, project, env, args.timeout_seconds
+        )
+        if not target_ok or not judge_ok:
+            return {
+                "case": case["id"],
+                "agent": case["agent"],
+                "execution": case["execution"],
+                "model": args.model or "opencode-default",
+                "judge_model": args.judge_model or args.model or "opencode-default",
+                "passed": False,
+                "preflight_error": "; ".join(
+                    item for ok, item in (
+                        (target_ok, target_preflight),
+                        (judge_ok, judge_preflight),
+                    )
+                    if not ok
+                ),
+                "target": {
+                    "exit_code": None,
+                    "session_id": None,
+                    "text": "",
+                    "tools": [],
+                    "stderr": "",
+                    "stdout": "",
+                },
+                "deterministic_failures": [],
+                "semantic": None,
+                "judge_error": None,
+            }
+
         target = invoke_agent(
             args.opencode,
             case["agent"],
@@ -430,6 +480,7 @@ def run_case(case: dict[str, Any], args: argparse.Namespace) -> dict[str, Any]:
             "model": args.model or "opencode-default",
             "judge_model": args.judge_model or args.model or "opencode-default",
             "passed": passed,
+            "preflight_error": None,
             "target": {
                 "exit_code": target["exit_code"],
                 "session_id": target["session_id"],
@@ -516,10 +567,19 @@ def main() -> int:
         else:
             failed += 1
             print("FAIL")
+            if result.get("preflight_error"):
+                print("  - preflight: " + str(result["preflight_error"]))
             for item in result["deterministic_failures"]:
                 print("  - " + item)
             if result["judge_error"]:
                 print("  - " + result["judge_error"])
+            target = result.get("target") or {}
+            stderr = str(target.get("stderr") or "").strip()
+            stdout = str(target.get("stdout") or "").strip()
+            if stderr:
+                print("  - OpenCode stderr: " + stderr[:1500].replace("\n", " | "))
+            elif stdout and not target.get("text"):
+                print("  - OpenCode stdout: " + stdout[:1500].replace("\n", " | "))
             semantic = result.get("semantic")
             if isinstance(semantic, dict) and semantic.get("passed") is False:
                 print("  - " + str(semantic.get("summary", "semantic judge failed")))
