@@ -184,3 +184,20 @@ export function heuristicsForEpisodes(episodeIds: string[], heuristics: Heuristi
       heuristic.support.some((support) => wanted.has(support.episodeId)),
   )
 }
+
+
+export function removeEpisodeSupport(heuristic: Heuristic, episodeId: string) {
+  const before = heuristic.support.length
+  heuristic.support = heuristic.support.filter((support) => support.episodeId !== episodeId)
+  if (heuristic.support.length === before) return false
+
+  if (heuristic.status === "validated") {
+    const independent = new Set(heuristic.support.map(independentSource))
+    if (heuristic.support.length < 2 || independent.size < 2) {
+      heuristic.status = "provisional"
+      heuristic.reviewNote = "Demoted after supporting episode was retired."
+    }
+  }
+
+  return true
+}
