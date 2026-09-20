@@ -15,7 +15,7 @@ metadata:
 **Modes:**
 
 - **Single-issue debug** (default): Follow the sequential Golden Rules — read the error, reproduce, one hypothesis at a time. Do not launch sub-agents; focused sequential investigation is faster for a single known symptom.
-- **Codebase bug hunt** (explicit audit of a large codebase): sweep every bug category (nil/interface, resources, error handling, races, context/slice/map). Delegation follows `current Loom role directive and control-plane state` — only `general` dispatches sub-agents, so a spoke works through all categories itself, sequentially. Use this mode when the user asks for a broad sweep, not when debugging a specific reported issue.
+- **Codebase bug hunt** (explicit audit of a large codebase): sweep every bug category (nil/interface, resources, error handling, races, context/slice/map). Within the current Loom task, work through all relevant categories sequentially; this skill does not dispatch or redefine the workflow. Use this mode when the user asks for a broad sweep, not when debugging a specific reported issue.
 
 **Dependencies:**
 
