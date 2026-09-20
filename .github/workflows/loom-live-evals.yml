@@ -81,6 +81,19 @@ jobs:
             echo "OPENCODE_EVAL_RUNNER_AUTH=$RUNNER_TEMP/loom-opencode-auth/auth.json" >> "$GITHUB_ENV"
           fi
 
+      - name: Materialize optional OpenCode model catalog
+        shell: bash
+        env:
+          OPENCODE_MODELS_JSON: ${{ secrets.OPENCODE_MODELS_JSON }}
+        run: |
+          set -euo pipefail
+          if [[ -n "${OPENCODE_MODELS_JSON:-}" ]]; then
+            install -m 700 -d "$RUNNER_TEMP/loom-opencode-models"
+            printf '%s' "$OPENCODE_MODELS_JSON" > "$RUNNER_TEMP/loom-opencode-models/models.json"
+            chmod 600 "$RUNNER_TEMP/loom-opencode-models/models.json"
+            echo "OPENCODE_EVAL_RUNNER_MODELS=$RUNNER_TEMP/loom-opencode-models/models.json" >> "$GITHUB_ENV"
+          fi
+
       - name: Run isolated live evals
         uses: bateau84/opencode-eval-runner@main
         with:
