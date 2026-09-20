@@ -25,7 +25,7 @@ The reflex "I want to see how the code is processing" usually wants a **trace**,
 | **Metrics** | _How much / how often / how bad, in aggregate?_ | Rates, counts, latencies, saturation — anything you alert on or watch trend over time. |
 | **Traces** | _Where did this request go, and where did the time go?_ | Following one request across functions/services, finding the slow or failing hop. **This is the tool for "watch it process."** |
 
-The mistake to avoid: fossilizing print-debugging as **narration logs** ("entering X", "got here", "value=5"). That play-by-play is what a trace (or a debugger session) gives you for free, and it becomes pure noise in production. Log _decisions and outcomes_; trace _flow_; measure _aggregates_.
+The mistake to avoid: fossilizing print-debugging as **narration logs** ("entering X", "got here", "value=5"). That play-by-play is what a trace (or a diagnostic session) gives you for free, and it becomes pure noise in production. Log _decisions and outcomes_; trace _flow_; measure _aggregates_.
 
 Traces are the under-used pillar. On any multi-step or cross-service path, a span tree answers "what happened and how long did each part take" far better than a scatter of logs you have to reassemble by hand. Set up the tracer early; add spans to service methods, DB queries, external calls, and queue operations.
 
@@ -103,7 +103,7 @@ Before you call it done, check:
 
 ## Cross-references
 
-- `current Loom role directive and control-plane state` -> **Observability & Logging** — the per-agent role hooks (coder writes, reviewer flags, debugger advises).
+- `current Loom role directive and control-plane state` -> **Observability & Logging** — the per-agent role hooks (worker writes, reviewer flags, diagnostic advises).
 - `golang-observability` — Go mechanics: logger choice, `zap`/`otelzap` wiring, `context.Context` propagation rules, Loki label strategy, RabbitMQ `traceparent` propagation, audit storage decisions, HTTP status level conventions, Prometheus, pprof.
 - `python-observability` — Python mechanics: `logging` / `structlog`, metrics, OpenTelemetry.
 - `test-driven-development` — asserting on logs/metrics/spans as observable behavior.
