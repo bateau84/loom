@@ -150,10 +150,14 @@ export function extractTools(...sources: unknown[]) {
   return tools
 }
 
+function normalizeTool(value: string) {
+  return value
+    .replace(/^mcp__([^_]+)__(.+)$/, "$1_$2")
+    .replaceAll(".", "_")
+}
+
 function toolMatches(observed: string, expected: string) {
-  return observed === expected ||
-    observed.endsWith("_" + expected) ||
-    observed.endsWith("." + expected)
+  return normalizeTool(observed) === normalizeTool(expected)
 }
 
 export function gradeToolAssertions(
