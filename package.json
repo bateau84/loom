@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "bun test ./plugins/loom/workflow.test.ts ./plugins/loom/oq.test.ts",
+    "test": "bun test ./plugins/loom/workflow.test.ts ./plugins/loom/oq.test.ts ./plugins/loom/evidence.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {

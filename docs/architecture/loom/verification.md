@@ -17,14 +17,17 @@ This is useful feedback but is not independent review.
 
 ### 2. Mechanical evidence
 
-The control plane records observed executions relevant to proof:
-- build/test commands;
-- exit status;
-- important output;
-- product state/version identity where available;
-- runtime/tool observations.
+The control plane records compact tool observations automatically.
 
-Missing evidence cannot be replaced by confidence.
+An evidence observation proves that a tool operation occurred; it does not by itself prove the product claim the agent wants to make.
+
+Agents therefore create explicit claims that reference observed event IDs. For test/build/lint/security claims, Loom checks that at least one referenced successful shell observation matches that verification class.
+
+Reviewer decides whether the observed operation actually proves the claimed behavior.
+
+Raw result bodies are not stored by default; the ledger retains provenance, safe summaries, and digests.
+
+Missing observed evidence cannot be replaced by confidence.
 
 ### 3. Reviewer
 
