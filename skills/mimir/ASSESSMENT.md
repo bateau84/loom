@@ -1,4 +1,6 @@
-# mimir Assessment Contract
+# mimir Reviewer Assessment
+
+Reviewer-only domain contract. It does not create Loom authority, product meaning, or proof.
 
 ## Review criteria
 
@@ -12,13 +14,3 @@ Reviewer checks Mimir as a distributed multi-tenant TSDB, not just a Prometheus-
 - query-frontend/querier/store-gateway caches/splitting improve performance without hiding stale/partial data;
 - readiness and self-metrics distinguish ring joining, storage failure, rate limiting and query problems;
 - Helm/topology changes preserve component compatibility and safe rollout/rollback.
-
-## Adjudication criteria
-
-Critic kills an ingester during writes, changes tenant header between write/read, saturates ingestion limits, queries data after active blocks moved to object storage, rolls components with version skew, and simulates object-store/compactor/store-gateway failure.
-
-Block when tenant isolation, metric durability/queryability, accepted availability, or retention semantics can fail. Capacity tuning is non-blocking unless it violates an accepted SLO/cost/resource bound.
-
-## Scaling
-
-Increase depth with tenant count, active series/ingest rate, replication/topology, object-store durability, retention, HA producers, query scale, and upgrade/rollback complexity.

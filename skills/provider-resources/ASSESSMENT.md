@@ -1,4 +1,6 @@
-# provider-resources Assessment Contract
+# provider-resources Reviewer Assessment
+
+Reviewer-only domain contract. It does not create Loom authority, product meaning, or proof.
 
 ## Review criteria
 
@@ -14,13 +16,3 @@ Reviewer evaluates Terraform resource/data-source behavior through **plan → ap
 - eventual consistency/waiters/retries classify transient vs terminal errors and honor context/timeouts;
 - tags/sets/maps/lists/nested objects preserve ordering/hash/normalization semantics and avoid perpetual diff;
 - acceptance tests prove basic+update+import+disappears/destroy and any special regression/lifecycle path.
-
-## Adjudication criteria
-
-Critic forces remote success + client timeout, external deletion/drift, import into empty state, unknown values at plan, eventual consistency, update partial failure, and destroy not-found. Ask whether repeated `terraform plan` converges to empty without hiding real drift.
-
-Block state corruption, perpetual/false diff, destructive wrong-target behavior, duplicate creation, import mismatch, or lifecycle semantics that break Terraform convergence. Schema style preference is non-blocking.
-
-## Scaling
-
-Increase depth with mutable/stateful resources, asynchronous APIs, nested schemas, replacement/destruction, import, eventual consistency, remote side effects, and user data loss potential.

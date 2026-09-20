@@ -1,4 +1,6 @@
-# golang-testing Assessment Contract
+# golang-testing Reviewer Assessment
+
+Reviewer-only domain contract. It does not create Loom authority, product meaning, or proof.
 
 ## Review criteria
 
@@ -11,13 +13,3 @@ Reviewer checks whether tests prove the claimed behavior under Go’s execution 
 - mocks/fakes sit beyond the intended test boundary; state is produced by the real upstream product behavior for integration/acceptance claims;
 - `t.Fatal`/helper behavior, cleanup, goroutine failures, and error assertions cannot hide failures in background goroutines;
 - skips/xfails/build tags are honest and do not remove the changed hard path from CI evidence.
-
-## Adjudication criteria
-
-Critic seeks false positives: reverse test order, run repeatedly/parallel/race, remove hand-injected state, make timing slower/faster, and swap mocks for the real boundary where the claim requires it. Ask what defect could exist while every cited test still passes.
-
-Block when tests cited for a mandatory verification claim do not exercise that behavior or can systematically false-pass. Missing optional unit-test style preference is non-blocking if stronger evidence exists.
-
-## Scaling
-
-Increase depth with concurrency/races, persistence/network/process boundaries, integration/product-acceptance claims, global state, timing sensitivity, and consequence of false-green evidence.

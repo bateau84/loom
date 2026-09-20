@@ -1,4 +1,6 @@
-# prometheus Assessment Contract
+# prometheus Reviewer Assessment
+
+Reviewer-only domain contract. It does not create Loom authority, product meaning, or proof.
 
 ## Review criteria
 
@@ -12,13 +14,3 @@ Reviewer checks instrumentation/storage/query assumptions around Prometheus’s 
 - recording/alert rules preserve units/labels/denominators and evaluate often enough for `for` semantics;
 - HA/remote-write duplicate/out-of-order behavior is understood where multiple replicas/backends exist;
 - missing target/series is distinguishable from a healthy zero.
-
-## Adjudication criteria
-
-Critic resets counters, removes a scrape target, creates high-cardinality labels, aggregates histograms across instances, sends zero traffic, and changes relabeling. Ask whether the resulting graph/alert can look healthy under missing data.
-
-Block when load-bearing SLI/alerting is materially false or instrumentation can cause serious cardinality/resource failure. Cosmetic metric naming is proportional unless public/standard contracts depend on it.
-
-## Scaling
-
-Increase depth with series cardinality/ingest scale, SLO/alert use, histograms, service discovery/relabeling, HA/remote_write, and multi-tenant/environment aggregation.

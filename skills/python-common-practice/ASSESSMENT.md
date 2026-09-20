@@ -1,4 +1,6 @@
-# python-common-practice Assessment Contract
+# python-common-practice Reviewer Assessment
+
+Reviewer-only domain contract. It does not create Loom authority, product meaning, or proof.
 
 ## Review criteria
 
@@ -12,13 +14,3 @@ Reviewer checks Python idioms where language dynamism can hide state/lifecycle d
 - imports/module-level initialization do not perform hidden network/config/side effects that make testing/startup order-dependent;
 - duck typing/protocol use remains explicit enough at public boundaries to avoid runtime-only surprises;
 - copies/aliases of lists/dicts/nested objects preserve ownership expectations.
-
-## Adjudication criteria
-
-Critic repeats calls/constructors, supplies `0`/`False`/`""`/`None`, consumes generators twice, imports in a clean process, raises during context-manager work, and mutates nested/shared defaults. Attack “Pythonic” shortcuts that silently collapse distinct states.
-
-Block when these semantics cause plausible correctness, data leakage, resource, or public-contract failures. Non-idiomatic but explicit/safe code is not a blocker solely for style.
-
-## Scaling
-
-Increase depth with shared mutable state, resource/context managers, generator/lazy pipelines, import-time behavior, public dynamic interfaces, and long-lived process state.

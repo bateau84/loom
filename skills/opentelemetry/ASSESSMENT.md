@@ -1,4 +1,6 @@
-# opentelemetry Assessment Contract
+# opentelemetry Reviewer Assessment
+
+Reviewer-only domain contract. It does not create Loom authority, product meaning, or proof.
 
 ## Review criteria
 
@@ -13,13 +15,3 @@ Reviewer checks OTel semantics at propagation, sampling and exporter boundaries:
 - exporter batching/queue/retry/drop behavior is observable and bounded; shutdown flush cannot hang indefinitely;
 - collector processors (batch, memory limiter, resource/attributes, tail sampling) cannot silently rewrite/drop required telemetry;
 - semantic-convention/SDK/exporter versions are compatible with backend queries/dashboards.
-
-## Adjudication criteria
-
-Critic traces one request across process boundaries, cancels it, triggers an error, forces exporter/backend outage and sampling, then checks parentage/attributes/drop counters. Probe baggage/attribute PII and a service map built from wrong span kinds.
-
-Block when required correlation/SLI/security evidence is materially false or exporter behavior can seriously destabilize the app. Cosmetic convention differences are non-blocking unless consumers rely on them.
-
-## Scaling
-
-Increase depth with cross-service propagation, async messaging, sampling, collector pipelines, high volume, sensitive baggage/attributes, and backend semantic-convention coupling.

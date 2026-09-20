@@ -1,4 +1,6 @@
-# observability Assessment Contract
+# observability Reviewer Assessment
+
+Reviewer-only domain contract. It does not create Loom authority, product meaning, or proof.
 
 ## Review criteria
 
@@ -12,13 +14,3 @@ Reviewer starts from the operational questions/invariants that must be answerabl
 - telemetry volume/cardinality/sampling/retention has a bounded cost and cannot itself overload the system;
 - secrets/PII/audit data are governed and access/retention match sensitivity;
 - observability failure degrades diagnosis, not product correctness, unless explicitly designed otherwise.
-
-## Adjudication criteria
-
-Critic injects a known failure and asks whether an operator can reconstruct **what failed, for whom, where, and whether recovery worked** without reading source. Then remove one signal/collector, create no-traffic, high-cardinality, partial failure and sampled traces to expose false confidence.
-
-Block when an accepted operational/security/audit guarantee is unobservable or telemetry materially lies/leaks/causes outage. More telemetry is not inherently better.
-
-## Scaling
-
-Increase depth with distribution/async workflows, SLO/audit dependence, security/privacy, sampling, signal volume/cardinality, external dependencies, and operational consequence.

@@ -1,4 +1,6 @@
-# loki Assessment Contract
+# loki Reviewer Assessment
+
+Reviewer-only domain contract. It does not create Loom authority, product meaning, or proof.
 
 ## Review criteria
 
@@ -12,13 +14,3 @@ Reviewer checks Loki around its defining constraint: labels are indexed metadata
 - tenancy/auth/retention/object-store/compactor/ingestion limits match operational policy in deployed Loki, not just local query syntax;
 - “no logs” is distinguished from zero events/healthy service/ingestion outage;
 - sensitive data is redacted before durable log storage/query exposure.
-
-## Adjudication criteria
-
-Critic creates a high-cardinality label, malformed log line, missing stream, empty tenant, retention boundary, and broad long-range query. Ask whether the query returns plausible numbers even when parsing failed or logs stopped arriving.
-
-Block when load-bearing diagnosis/alerting materially lies, tenant/security/retention boundaries fail, or label/query design can cause serious availability/cost impact. Minor query style is non-blocking.
-
-## Scaling
-
-Increase depth with ingest volume/cardinality, tenant count, retention, broad query ranges, parser diversity, alert/SLO use, sensitive logs, and distributed Loki architecture.

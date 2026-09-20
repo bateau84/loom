@@ -1,4 +1,6 @@
-# provider-actions Assessment Contract
+# provider-actions Reviewer Assessment
+
+Reviewer-only domain contract. It does not create Loom authority, product meaning, or proof.
 
 ## Review criteria
 
@@ -13,13 +15,3 @@ Reviewer treats Terraform Provider Actions as imperative side effects inside a d
 - diagnostics retain enough resource/action identity without leaking secrets;
 - destructive/irreversible actions expose guardrails and cannot be retried blindly;
 - tests exercise repeated invocation, failure/timeout, lifecycle placement and real/provider semantics where mocks cannot prove side effects.
-
-## Adjudication criteria
-
-Critic times out immediately after the remote API may have succeeded, retries the action, cancels polling, runs it at each lifecycle boundary and injects terminal provider errors. The key question is whether Terraform/model retry can duplicate or lose an imperative effect.
-
-Block destructive/irreversible duplication, false completion, lifecycle corruption, or ambiguous uncertain-outcome handling. Progress wording/style is non-blocking unless it lies about state.
-
-## Scaling
-
-Increase depth with destructive/irreversible side effects, async/polling duration, lifecycle coupling, retry ambiguity, auth/privilege, and experimental API/version risk.

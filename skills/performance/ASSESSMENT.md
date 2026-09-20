@@ -1,4 +1,6 @@
-# performance Assessment Contract
+# performance Reviewer Assessment
+
+Reviewer-only domain contract. It does not create Loom authority, product meaning, or proof.
 
 ## Review criteria
 
@@ -12,13 +14,3 @@ Reviewer requires a performance claim to connect workload → measurement → bo
 - optimization preserves correctness and does not merely move cost to memory, downstream systems, startup, background work or another percentile;
 - statistical variance/repetition/effect size supports the conclusion rather than one favorable run;
 - capacity headroom and failure behavior under/after saturation are considered for production claims.
-
-## Adjudication criteria
-
-Critic changes workload shape/concurrency, inspects tail latency/resource saturation, removes warm caches, and measures the shifted resource. Ask whether the claimed win survives a representative end-to-end test and whether the bottleneck simply moved.
-
-Block only when an accepted performance/capacity/SLO/cost guarantee is unsupported or materially regressed. Premature optimization is advisory unless it creates correctness/maintainability risk.
-
-## Scaling
-
-Increase depth with SLO/financial consequence, concurrency, saturation, distributed dependencies, workload variability, measurement noise, and magnitude/irreversibility of the optimization.

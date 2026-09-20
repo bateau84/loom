@@ -1,4 +1,6 @@
-# python-database Assessment Contract
+# python-database Reviewer Assessment
+
+Reviewer-only domain contract. It does not create Loom authority, product meaning, or proof.
 
 ## Review criteria
 
@@ -12,13 +14,3 @@ Reviewer checks DB access as transactional/resource behavior independent of fram
 - streaming/batch queries bound memory and respect cancellation;
 - migrations and mixed-version application compatibility are considered where schema changes accompany access code;
 - integration tests use the actual database dialect/features for claims mocks cannot establish.
-
-## Adjudication criteria
-
-Critic interrupts between writes, forces commit/deadlock/timeout, returns NULL/duplicates, retries an uncertain side effect, and saturates the pool. Probe injection through dynamic SQL pieces and cleanup after generator/stream abandonment.
-
-Block data-integrity/security/recovery/resource defects. Query aesthetics or ORM-vs-driver preference are non-blocking if guarantees remain sound.
-
-## Scaling
-
-Increase depth with multi-step transactions, concurrent writers, retries, streaming, pool pressure, migrations, dialect-specific behavior, and destructive/data-loss consequence.
