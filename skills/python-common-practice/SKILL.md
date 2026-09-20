@@ -1,6 +1,6 @@
 ---
 name: python-common-practice
-description: "Python style, verification (ruff, pytest, type checker), severity tiers, and Loom integration for code review and subagent dispatch. Use when writing or reviewing Python code, doing a Python review, dispatching a Python subagent, or applying the shared review tier to a Python finding. Load this alongside any `python-*` skill. Defines the Python-specific layer on top of the system-wide `shared-protocol`."
+description: "Python style, verification (ruff, pytest, type checker), severity tiers, and Loom integration for code review and subagent dispatch. Use when writing or reviewing Python code, doing a Python review, dispatching a Python subagent, or applying the shared review tier to a Python finding. Load this alongside any `python-*` skill. Defines the Python-specific layer on top of the system-wide `current Loom role directive and control-plane state`."
 license: MIT
 metadata:
   author: Bateau
