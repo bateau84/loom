@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import {
+  extractAssistantText,
+  extractAssistantTools,
   extractSessionId,
   extractText,
   extractTools,
@@ -30,6 +32,21 @@ describe("behavioral eval utilities", () => {
       { requires: ["loom_intent_start", "SynaBun_recall"], forbids: ["loom_start"] },
     )
     expect(failures).toEqual([])
+  })
+
+  test("extracts only assistant text and tools from session export", () => {
+    const exported = [
+      { info: { role: "user" }, parts: [{ type: "text", text: "user prompt" }] },
+      {
+        info: { role: "assistant", summary: false },
+        parts: [
+          { type: "tool", tool: "loom_intent_start" },
+          { type: "text", text: "What matters most?" },
+        ],
+      },
+    ]
+    expect(extractAssistantText(exported)).toBe("What matters most?")
+    expect(extractAssistantTools(exported)).toEqual(["loom_intent_start"])
   })
 
   test("parses strict semantic judge JSON", () => {
