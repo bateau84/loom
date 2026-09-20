@@ -116,7 +116,7 @@ function markdown(value: unknown) {
       const { error, ...rest } = object
       const lines = ["## Error", "", String(error)]
       if (Object.keys(rest).length > 0) {
-        lines.push("", ...renderObject(rest, 3))
+        lines.push("", ...renderObject(rest, 2))
       }
       return lines.join("\n").trim()
     }
