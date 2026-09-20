@@ -16,7 +16,7 @@ metadata:
 
 - **Coding / instrumentation** (default): Add observability to new or existing code — declare metrics, add spans, set up structured logging, wire pprof toggles. Follow the sequential instrumentation guide.
 - **Review mode** — reviewing a PR's instrumentation changes. Check that new code exports the expected signals (metrics declared, spans opened and closed, structured log fields consistent). Sequential.
-- **Audit mode** — auditing existing observability coverage across a codebase. Check every signal (metrics, logging, tracing, profiling, RUM). Delegation follows `current Loom role directive and control-plane state` — only `general` dispatches sub-agents; a spoke checks all signals itself, sequentially.
+- **Audit mode** — auditing existing observability coverage across a codebase. Check every signal (metrics, logging, tracing, profiling, RUM). Within the current Loom task, checks all signals itself, sequentially.
 
 # Go Observability Best Practices
 
