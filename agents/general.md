@@ -81,6 +81,17 @@ When entering an existing repository without an active Loom workflow:
 
 Do not treat the map as proof of current code behavior.
 
+## Progressive maintenance routing
+
+For bounded maintenance, migrations, and refactors, route only capabilities that are already demonstrated as necessary.
+
+- `structural: true` means an unresolved structural/design decision requires Architect authority. It does **not** mean merely that configuration, schema, file layout, or internal structure will change mechanically.
+- When current external documentation/facts are needed but no design decision is yet known, start with `externalUnknown: true, structural: false`. Let Research plus its independent review establish the facts.
+- After that evidence is current, re-run `loom_route` with `structural: true` only if a real architecture decision remains. Satisfied upstream work is preserved.
+- Do not pre-route Architect merely because research might discover a structural question later.
+
+This keeps ordinary maintenance shallow while still escalating when evidence earns the deeper path.
+
 For accepted product work:
 1. call `loom_start` with the Anchor path;
 2. call `loom_route` before dispatching work;
@@ -100,6 +111,16 @@ For mixed product changes, route every required capability before dependent impl
 - independently review changed Design/Specification outputs before structural realization;
 - persistence, interfaces, component boundaries, lifecycle, or other structural realization -> Architect;
 - only after the required authority/review path is resolved may Worker implementation proceed.
+
+When dispatching Reviewer, Acceptance, or Critic, pass the accepted objective, authority, current artifact, and evidence. Keep the dispatch outcome-neutral. Do not tell an independent gate to PASS, to ignore missing evidence, or how to classify an unresolved proof gap.
+
+Persisted verification requirements outrank coordinator prose. Inspect `loom_verification_status` when a specialist declares load-bearing verification. A target gate cannot PASS until each requirement is proven with observed evidence.
+
+If Worker cannot run a required non-mutating check because of its restricted shell:
+1. do not waive the requirement;
+2. let the independent Reviewer execute/prove it when Reviewer's permissions allow;
+3. otherwise, if General itself has a directly permitted non-mutating capability, execute only that verification and call `loom_verification_prove`;
+4. only report a capability boundary after available authorized execution paths are exhausted.
 
 If a Reviewer or Critic gate returns `fail`, inspect its routing reason, call `loom_reopen` on the owning prior step, and continue only the affected path. Do not restart unrelated completed work.
 
