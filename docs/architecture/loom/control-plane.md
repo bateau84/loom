@@ -165,3 +165,18 @@ Permission hooks count authorized subagent dispatches using stable tool-call ide
 Reopening failed work requires at least one explicit progress dimension: new evidence, changed hypothesis, changed strategy, or reduced unresolved work. The reopen reason is persisted.
 
 These are safety defaults, not product semantics. Later configuration may tune them, but agents may not silently widen them during a run.
+
+
+## Worker task scopes
+
+Before Worker dispatch, General declares a bounded project-relative write surface for the Worker step.
+
+Repository-wide wildcards and accepted authority roots (`docs/anchors`, `docs/requirements`, `docs/architecture`) are rejected.
+
+The Worker child session must attach to its workflow step before editing. Attachment installs session-scoped OpenCode edit permissions:
+- deny edit everywhere;
+- allow only the declared task paths.
+
+General cannot dispatch a Worker step without a declared scope.
+
+This V1 boundary governs OpenCode edit/write/apply-patch permissions. Arbitrary shell side effects are not yet path-contained by Loom and remain a separate tool-policy problem; Loom must not claim stronger containment than it currently enforces.
