@@ -174,7 +174,7 @@ bun run eval:live -- --all --model <provider/model>
 
 For each case, Loom creates separate target and judge projects. Runtime targets receive the checked-out Loom plugin/skills plus a read-only mount of the checked-out `node_modules`; judges receive only the judge agent. Container-local HOME/XDG/session state is discarded after every invocation.
 
-Results are written to `.loom-evals/<CASE>.json`. Infrastructure/provider failures are classified as **non-evidence**, not behavioral FAIL.
+Each container emits one JSON result on stdout. The Loom host harness writes `.loom-evals/<CASE>.json` itself, so target/judge containers do not require a writable host bind mount. Infrastructure/provider failures are classified as **non-evidence**, not behavioral FAIL.
 
 ## Cost control
 
