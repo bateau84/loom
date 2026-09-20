@@ -48,3 +48,15 @@ When assigned `review-product`:
 5. account for Designer validation when the workflow is human-facing.
 
 A mechanically `passed` Product Acceptance plan is necessary but not sufficient for Reviewer PASS.
+
+
+## Implementation task graph review
+
+When assigned `review-implementation` for a product workflow:
+1. inspect `loom_task_status`;
+2. confirm every planned task completed;
+3. inspect evidence for load-bearing `task:*` steps;
+4. check that task boundaries did not create orphaned parallel implementations or leave required integration unwired;
+5. review the assembled implementation, not merely task-local success.
+
+The Planner's DAG is execution structure, not authority. Review against accepted requirements and architecture.
