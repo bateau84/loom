@@ -31,6 +31,7 @@ Loom's repository is the global OpenCode config directory. Agent files therefore
 - **diagnostic** — root-cause investigation.
 - **acceptance** — executes real end-to-end Product Acceptance scenarios and records observed proof.
 - **planner** — disposable decomposition context that turns an accepted solution into a bounded executable Worker DAG.
+- **documenter** — maintains current system/user knowledge after implementation changes and verifies it through OKF.
 
 Planner is an execution context, not a product authority or gate owner. The executable DAG lives in Loom workflow state; a separate Plan document is not required unless the product itself needs one.
 
@@ -68,6 +69,7 @@ Typical mapping:
 | unexplained failure | Diagnostic |
 | assembled-product proof | Acceptance |
 | product implementation decomposition | Planner |
+| implemented-system knowledge sync | Documenter |
 | normal independent check | Reviewer |
 | whole-solution challenge | Critic |
 
