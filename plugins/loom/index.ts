@@ -1,7 +1,9 @@
 import { Plugin } from "@opencode/plugin"
 import {
   buildSteps,
-  preserveCompleted,
+  preserveSatisfied,
+  finishStep,
+  reopenFrom,
   runnable,
   type Effects,
   type Workflow,
@@ -137,7 +139,7 @@ export default Plugin.define({
 
           const effects = input as Effects
           const next = buildSteps(effects)
-          preserveCompleted(workflow.steps, next)
+          preserveSatisfied(workflow.steps, next)
 
           workflow.effects = effects
           workflow.steps = next
@@ -193,16 +195,22 @@ export default Plugin.define({
             workflowId: { type: "string" },
             stepId: { type: "string" },
             summary: { type: "string", description: "Short result/evidence summary." },
+            outcome: {
+              type: "string",
+              enum: ["complete", "pass", "fail"],
+              description: "Work steps default to complete. Reviewer/Critic gates must use pass or fail.",
+            },
           },
           required: ["workflowId", "stepId", "summary"],
           additionalProperties: false,
         },
         options: { namespace: "loom" },
         execute: async (input, tool) => {
-          const { workflowId, stepId, summary } = input as {
+          const { workflowId, stepId, summary, outcome } = input as {
             workflowId: string
             stepId: string
             summary: string
+            outcome?: "complete" | "pass" | "fail"
           }
 
           const workflow = await readWorkflow(ctx, workflowId)
@@ -211,34 +219,71 @@ export default Plugin.define({
           const step = workflow.steps.find((candidate) => candidate.id === stepId)
           if (!step) return { content: JSON.stringify({ error: "Step not found." }) }
 
-          if (step.agent !== tool.agent) {
-            return {
-              content: JSON.stringify({
-                error: `Step ${stepId} belongs to ${step.agent}, not ${tool.agent}.`,
-              }),
-            }
+          const resolvedOutcome = outcome ?? (step.kind === "work" ? "complete" : undefined)
+          if (!resolvedOutcome) {
+            return { content: JSON.stringify({ error: "Reviewer/Critic gate requires outcome pass or fail." }) }
           }
 
-          const done = new Set(
-            workflow.steps.filter((candidate) => candidate.status === "complete").map((candidate) => candidate.id),
-          )
-          const missing = step.dependsOn.filter((dependency) => !done.has(dependency))
-          if (missing.length > 0) {
-            return { content: JSON.stringify({ error: "Dependencies incomplete.", missing }) }
+          try {
+            finishStep(workflow, stepId, tool.agent, resolvedOutcome, summary)
+          } catch (error) {
+            return { content: JSON.stringify({ error: error instanceof Error ? error.message : String(error) }) }
           }
 
-          step.status = "complete"
-          step.summary = summary
           await ctx.storage.set(workflowKey(workflow.id), workflow)
 
           return {
             content: JSON.stringify({
-              completed: stepId,
+              finished: stepId,
+              outcome: resolvedOutcome,
+              blocked: workflow.steps.filter((candidate) => candidate.status === "failed").map((candidate) => candidate.id),
               runnable: runnable(workflow).map((candidate) => ({
                 id: candidate.id,
                 agent: candidate.agent,
               })),
             }),
+          }
+        },
+      })
+
+      editor.add({
+        name: "reopen",
+        description:
+          "Reopen one prior step after a failed review or new evidence. Resets that step and only its downstream dependents. General only.",
+        input: {
+          type: "object",
+          properties: {
+            workflowId: { type: "string" },
+            stepId: { type: "string" },
+          },
+          required: ["workflowId", "stepId"],
+          additionalProperties: false,
+        },
+        options: { namespace: "loom" },
+        execute: async (input, tool) => {
+          if (tool.agent !== "general") {
+            return { content: JSON.stringify({ error: "Only general may reopen Loom steps." }) }
+          }
+
+          const { workflowId, stepId } = input as { workflowId: string; stepId: string }
+          const workflow = await readWorkflow(ctx, workflowId)
+          if (!workflow) return { content: JSON.stringify({ error: "Workflow not found." }) }
+
+          try {
+            const reset = reopenFrom(workflow, stepId)
+            await ctx.storage.set(workflowKey(workflow.id), workflow)
+            return {
+              content: JSON.stringify({
+                reopened: stepId,
+                reset,
+                runnable: runnable(workflow).map((candidate) => ({
+                  id: candidate.id,
+                  agent: candidate.agent,
+                })),
+              }),
+            }
+          } catch (error) {
+            return { content: JSON.stringify({ error: error instanceof Error ? error.message : String(error) }) }
           }
         },
       })
