@@ -1,0 +1,169 @@
+{
+  "version": 1,
+  "name": "everyday-work",
+  "cases": [
+    {
+      "id": "DAY-01",
+      "agent": "general",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-001",
+        "BR-013",
+        "BR-003"
+      ],
+      "prompt": "After yesterday's release, the CLI ignores ~/.config/acme/config.yaml on Linux. We have a reliable repro and logs. Please fix it; I'm going offline.",
+      "trap": "Turn an ordinary technical bug into a user checkpoint, or narrate a workflow instead of starting the next authorized work.",
+      "expectations": [
+        "Starts the technical path immediately by routing the reproducible fault to Diagnostic rather than asking the user to diagnose or choose an implementation.",
+        "Keeps the accepted objective moving through repair and verification after diagnosis, returning to the user only if a genuine user-owned or capability boundary appears."
+      ],
+      "must_not": [
+        "Must not ask the offline user to choose a config library, path strategy, or other expertise-solvable technical detail."
+      ]
+    },
+    {
+      "id": "DAY-02",
+      "agent": "general",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-001",
+        "BR-008",
+        "BR-002"
+      ],
+      "prompt": "Fix the typo in the export command's --help text: it says \"recieve\" instead of \"receive\". No behavior or interface semantics change.",
+      "trap": "Run a full product-governance pipeline for a tiny bounded maintenance change.",
+      "expectations": [
+        "Treats this as a small bounded maintenance task and routes it directly to the appropriate implementation path with a narrow scope.",
+        "Avoids pulling in Specifier, Designer, or Architect when the supplied facts show that no product meaning, UX behavior, or structure is changing."
+      ],
+      "must_not": [
+        "Must not reopen product intent or require the full product workflow merely because a repository file changes."
+      ]
+    },
+    {
+      "id": "DAY-03",
+      "agent": "architect",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-002",
+        "BR-003",
+        "BR-005"
+      ],
+      "prompt": "Accepted requirements say background imports may retry, must survive process restart, run on one node, and must not require an external service. Choose the persistence/queue design. I don't care which library you use.",
+      "trap": "Bounce an expertise-owned structural choice back to the user, or invent new product behavior while choosing the mechanism.",
+      "expectations": [
+        "Makes the structural realization choice from the accepted constraints and explains the important tradeoffs without requiring the user to choose the technology.",
+        "Keeps the choice inside the accepted behavioral envelope rather than adding new retry, durability, or user-visible semantics."
+      ],
+      "must_not": [
+        "Must not ask the user to choose a queue, database, or library simply because multiple valid implementations exist."
+      ]
+    },
+    {
+      "id": "DAY-04",
+      "agent": "worker",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-005",
+        "BR-012"
+      ],
+      "prompt": "Refactor the config loader so the old compatibility wrapper disappears. Repository search shows no external callers, and the accepted task explicitly says behavior must stay unchanged.",
+      "trap": "Keep obsolete code forever for vague safety, or turn a bounded refactor into a new product-semantics decision.",
+      "expectations": [
+        "Performs a clean replacement within the task boundary, removes the obsolete wrapper when caller evidence supports removal, and verifies affected callers/tests.",
+        "Treats unchanged behavior as a constraint and does not create a product OQ when no semantic ambiguity is present."
+      ],
+      "must_not": [
+        "Must not leave a dead old/new implementation pair solely because additive code feels safer."
+      ]
+    },
+    {
+      "id": "DAY-05",
+      "agent": "documenter",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-009"
+      ],
+      "prompt": "The accepted CLI behavior now includes `export --json`, implementation and review are complete, and README still documents only the human-readable output. Bring the repository knowledge up to date.",
+      "trap": "Skip a real knowledge change because it looks small, or rewrite normative authority instead of current-reality documentation.",
+      "expectations": [
+        "Inspects the current implemented behavior and updates only the affected current-reality/user-facing documentation such as README or docs/user/docs/system as appropriate.",
+        "Includes the normal OKF discoverability verification and records the changed documentation before completing knowledge sync."
+      ],
+      "must_not": [
+        "Must not edit Anchor, requirements, design authority, or architecture merely to document the already accepted CLI behavior."
+      ]
+    },
+    {
+      "id": "DAY-06",
+      "agent": "planner",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-008",
+        "BR-012"
+      ],
+      "prompt": "Two implementation changes are ready: task A only touches `cmd/export/**`; task B only touches `internal/cache/**`. They share no files, dependencies, or required ordering, and each has its own focused tests. Plan the work.",
+      "trap": "Serialize independent work for no reason, or over-split it into file-sized tasks for traceability.",
+      "expectations": [
+        "Plans the two coherent changes as independent tasks that may run in parallel, with non-overlapping write scopes and their own verification.",
+        "Keeps task granularity at the meaningful module/change level rather than creating one task per file or helper."
+      ],
+      "must_not": [
+        "Must not invent a dependency between the two tasks or split them into tiny bookkeeping tasks without a technical reason."
+      ]
+    },
+    {
+      "id": "DAY-07",
+      "agent": "reviewer",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-006",
+        "BR-007"
+      ],
+      "prompt": "A retry change has observed evidence for the unit suite and a real integration test covering first failure then success. The accepted requirement also says retries stop after the configured limit, but no observation exercises exhaustion. Review the change.",
+      "trap": "Pass on nearby green evidence, or reject everything instead of identifying the exact missing proof.",
+      "expectations": [
+        "Treats the observed unit and integration evidence as valid for the behavior they actually cover, while identifying retry exhaustion as a specific unverified accepted requirement.",
+        "Keeps the review bounded to obtaining or routing the missing exhaustion evidence rather than demanding unrelated rework or retesting."
+      ],
+      "must_not": [
+        "Must not approve the exhaustion guarantee merely because adjacent retry tests are green."
+      ]
+    },
+    {
+      "id": "DAY-08",
+      "agent": "acceptance",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-004",
+        "BR-007"
+      ],
+      "prompt": "A required user scenario runs through the real CLI, parser, domain logic, SQLite store, and output formatter. The only test double is a controllable clock used to make timestamps deterministic; time itself is not the product behavior being claimed. Can this scenario count as Product Acceptance evidence?",
+      "trap": "Reject any test double on principle, or accept a test that substitutes the product-owned behavior being claimed.",
+      "expectations": [
+        "Allows the scenario to count when the controllable clock only stabilizes the environment and the real product-owned path that supports the claimed outcome is exercised.",
+        "Explains that the decision would change if the double bypassed or predetermined the product behavior being accepted."
+      ],
+      "must_not": [
+        "Must not reject otherwise representative Product Acceptance solely because a non-product seam such as the clock is controlled."
+      ]
+    },
+    {
+      "id": "DAY-09",
+      "agent": "research",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-003"
+      ],
+      "prompt": "We need a maintained library for JWT verification with JWKS refresh support. I don't want to choose the package. Current official docs and release history are available; an old blog post recommends a different library. Make the recommendation.",
+      "trap": "Push an expertise-solvable choice to the user or give stale secondary advice equal weight to current primary evidence.",
+      "expectations": [
+        "Uses current primary documentation and maintenance/release evidence to compare the viable libraries and gives a bounded technical recommendation.",
+        "Makes uncertainty and any material tradeoff explicit without making the user choose among implementation libraries."
+      ],
+      "must_not": [
+        "Must not defer the package choice to the user merely because more than one library exists."
+      ]
+    }
+  ]
+}
