@@ -18,7 +18,7 @@ A commit small enough to be safe (§1) is also small enough to explain honestly 
 ## 0. The two problems this skill solves
 
 1. **Loss.** Uncommitted work has no safety net - a single destructive command can erase hours of a session. §1, §4, and §5 exist to make the blast radius of any mistake as small as possible.
-2. **Illegibility.** A commit history that only an agent can parse ("classify the type, gate on it, move on") but no human can reconstruct the reasoning from is a second, quieter failure mode - the six-months-later maintainer has to re-derive "why" from git blame and Slack archaeology instead of reading it. §2 exists so the same artifact serves both an agent's fast-scan verification and a human's need to understand *why*, without a second, drifting document (see `../../docs/architecture/dual-audience-commit-report-format.md` for the full design rationale and the invariants this format guarantees for commit messages — historical reference: the commit-format invariants I1-I6 in that document remain accurate, but its handoff-format half and conflation thesis are superseded; the commit format itself is now fully specified in this skill). The coder-to-hub handoff report (§3.3) is a related but distinct artifact - see `../../docs/architecture/coder-handoff-reconciliation.md` for its two-layer Envelope + disk-report spec.
+2. **Illegibility.** A commit history that only an agent can parse ("classify the type, gate on it, move on") but no human can reconstruct the reasoning from is a second, quieter failure mode - the six-months-later maintainer has to re-derive "why" from git blame and Slack archaeology instead of reading it. §2 exists so the same artifact serves both an agent's fast-scan verification and a human's need to understand *why*, without a second, drifting document (see `../../docs/architecture/dual-audience-commit-report-format.md` for the full design rationale and the invariants this format guarantees for commit messages — historical reference: the commit-format invariants I1-I6 in that document remain accurate, but its handoff-format half and conflation thesis are superseded; the commit format itself is now fully specified in this skill). The worker-to-hub handoff report (§3.3) is a related but distinct artifact - see `../../docs/architecture/worker-handoff-reconciliation.md` for its two-layer Envelope + disk-report spec.
 
 Neither problem excuses the other. A beautifully-explained commit that never got made because you were "waiting to batch it" still loses the work. A frequent, disciplined committer whose messages are all `fix stuff` still leaves nothing for the next reader to learn from. This skill asks for both.
 
@@ -80,7 +80,7 @@ git commit -m "<concern B>: <what and why>"
 
 **Never `git add -A` / `git add .`** when the working tree has more than one concern in it - that flattens the split you just planned. Name files/hunks explicitly (same discipline as `git-conflicts` §5).
 
-Commit format: three layers. Every commit is read by two audiences for two different purposes: an agent scanning for classification/routing, and a human trying to understand *why*. Rather than write two artifacts - one terse, one explained, which inevitably drift apart - this skill uses **one artifact in three layers**. Full design rationale, the invariants each layer guarantees, and the coverage matrix live in `../../docs/architecture/dual-audience-commit-report-format.md` (historical reference — the commit-format invariants I1-I6 in that document remain accurate, but its handoff-format half and conflation thesis are superseded; the commit format itself is now fully specified in this skill); this section teaches the working shape. (The coder-to-hub handoff report, §3.3, follows a related but distinct two-layer spec - see `../../docs/architecture/coder-handoff-reconciliation.md`.)
+Commit format: three layers. Every commit is read by two audiences for two different purposes: an agent scanning for classification/routing, and a human trying to understand *why*. Rather than write two artifacts - one terse, one explained, which inevitably drift apart - this skill uses **one artifact in three layers**. Full design rationale, the invariants each layer guarantees, and the coverage matrix live in `../../docs/architecture/dual-audience-commit-report-format.md` (historical reference — the commit-format invariants I1-I6 in that document remain accurate, but its handoff-format half and conflation thesis are superseded; the commit format itself is now fully specified in this skill); this section teaches the working shape. (The worker-to-hub handoff report, §3.3, follows a related but distinct two-layer spec - see `../../docs/architecture/worker-handoff-reconciliation.md`.)
 
 ### 2.1 Layer 1 - Index (the Conventional Commits subject line)
 
@@ -159,7 +159,7 @@ explicitly deferred; current traffic pattern doesn't need it yet.
 
 ### 2.3 Layer 3 - Delivery (inline vs file-backed)
 
-Layer 3 is not a new mechanism - it reuses `../../includes/current Loom role directive and control-plane state` §File-Backed Reports exactly: small artifacts travel inline in full; artifacts too large to relay in a dispatch prompt get an inline skeleton (Layer 1 + a Verification summary) plus a path to the full Layer 2 body on disk. A commit itself is always Layer 3 = inline (git doesn't have a "too large" mode); the file-backed case applies to coder-to-hub reports, covered with worked examples in §3.3.
+Layer 3 is not a new mechanism - it reuses `../../includes/current Loom role directive and control-plane state` §File-Backed Reports exactly: small artifacts travel inline in full; artifacts too large to relay in a dispatch prompt get an inline skeleton (Layer 1 + a Verification summary) plus a path to the full Layer 2 body on disk. A commit itself is always Layer 3 = inline (git doesn't have a "too large" mode); the file-backed case applies to worker-to-hub reports, covered with worked examples in §3.3.
 
 **Breaking changes are a Layer 1 + Layer 2 concern, not a fourth layer:** mark the break in the subject with `!` and a `BREAKING CHANGE:` footer (existing Conventional Commits convention, unchanged), and use Layer 2's `### Reasoning` to carry the "why breaking was necessary" - a breaking change without that reasoning is a landmine for whoever upgrades past it.
 
@@ -201,7 +201,7 @@ Unauthenticated requests will receive 401 starting this release.
 
 ### 3.1 Parallel waves: multiple agents, one working tree
 
-`general` dispatches a wave's independent tasks as separate, concurrent subagent sessions (`general.md` -> Wave Execution Protocol, `/orchestrate` step 8: "Emit ALL Task tool calls for the wave in a single response turn"). These sessions are NOT isolated worktrees - every coder in the same wave reads and writes the SAME working tree and the SAME `.git`. That turns "commit as you go" into a shared-state hazard, not just a personal-hygiene one:
+`general` dispatches a wave's independent tasks as separate, concurrent subagent sessions (`general.md` -> Wave Execution Protocol, `/orchestrate` step 8: "Emit ALL Task tool calls for the wave in a single response turn"). These sessions are NOT isolated worktrees - every worker in the same wave reads and writes the SAME working tree and the SAME `.git`. That turns "commit as you go" into a shared-state hazard, not just a personal-hygiene one:
 
 - **`git status`/`git diff --stat` can show files you did not touch.** That's a sibling task's in-flight, possibly incomplete work - never stage it, never treat it as part of your own diff's scope, never delete or revert it. Only ever `git add` the exact file(s) YOUR task changed.
 - **`git add -A`, `git add .`, and `git commit -a` are forbidden during a wave, full stop - no exceptions.** This is stricter than the single-agent guidance in §2: mid-wave, a broad add doesn't just mix your own concerns, it can commit a sibling's unfinished, unbuilt, unreviewed file under your commit message - a correctness and provenance problem, not just a hygiene one.
@@ -214,16 +214,16 @@ Unauthenticated requests will receive 401 starting this release.
 
 Reach for `!` + `BREAKING CHANGE:` (see §2.3, Example 3) whenever the change removes or alters an existing contract a caller could reasonably depend on - a changed function signature, a removed field, a stricter validation that used to pass. The mechanical marker is cheap; the discipline that matters is putting the "why this break was worth it, and what it costs the caller" into `### Reasoning` - a breaking change with an empty reasoning section is indistinguishable from an accident to the next reader.
 
-### 3.3 Worker handoffs (coder-to-hub reports)
+### 3.3 Worker handoffs (worker-to-hub reports)
 
-A coder's handoff to its dispatching hub is **two layers, not the commit's three-layer vocabulary**: an inline Summary Envelope (`../../includes/current Loom role directive and control-plane state` § Summary Envelope - control token, `Report:` path, `Outcome`, `Routing` bullets including a mandatory `Status: DONE | PARTIAL COMPLETION | ESCALATED` bullet, `Concerns/Assumptions`) plus an on-disk structured report whose field order and mandatory-field discipline follow the 9-field table in `../../docs/architecture/coder-handoff-reconciliation.md` § Layer 2. Field 4 of that table (`Verification`) is **mandatory** in the disk report, not merely recommended - a report reaching the Shipping Gate without it cannot honestly claim gate-readiness.
+A worker's handoff to its dispatching hub is **two layers, not the commit's three-layer vocabulary**: an inline Summary Envelope (`../../includes/current Loom role directive and control-plane state` § Summary Envelope - control token, `Report:` path, `Outcome`, `Routing` bullets including a mandatory `Status: DONE | PARTIAL COMPLETION | ESCALATED` bullet, `Concerns/Assumptions`) plus an on-disk structured report whose field order and mandatory-field discipline follow the 9-field table in `../../docs/architecture/worker-handoff-reconciliation.md` § Layer 2. Field 4 of that table (`Verification`) is **mandatory** in the disk report, not merely recommended - a report reaching the Shipping Gate without it cannot honestly claim gate-readiness.
 
 Note: the disk report's Status field (the `## Status: DONE` / etc. heading) is a routing/status heading for the hub to scan, not a Conventional Commits subject - it is not matched against the `type(scope): subject` regex a commit's Layer 1 must satisfy.
 
 **Example 4 - small handoff, delivered as Envelope + disk report:**
 
 ```
-Report: docs/ephemeral-reports/coder/session-store-redis-migration/task-2-3.md
+Report: docs/ephemeral-reports/worker/session-store-redis-migration/task-2-3.md
 
 **Outcome:** Added input validation for CreateUser at the handler layer.
 
@@ -236,12 +236,12 @@ Report: docs/ephemeral-reports/coder/session-store-redis-migration/task-2-3.md
 - Remaining: none
 ```
 
-This is the complete inline artifact returned to the hub. The on-disk report at the `Report:` path carries the 9-field-ordered detail (`## Status: DONE`, `### Changes`, `### Verification`, etc. per `coder-handoff-reconciliation.md` § Layer 2) - not reproduced here beyond this pointer. The Envelope's `Status:` bullet is the exact-vocabulary string the hub copies into `Prior Findings` on re-dispatch and reads at step-limit recovery, without opening the disk report.
+This is the complete inline artifact returned to the hub. The on-disk report at the `Report:` path carries the 9-field-ordered detail (`## Status: DONE`, `### Changes`, `### Verification`, etc. per `worker-handoff-reconciliation.md` § Layer 2) - not reproduced here beyond this pointer. The Envelope's `Status:` bullet is the exact-vocabulary string the hub copies into `Prior Findings` on re-dispatch and reads at step-limit recovery, without opening the disk report.
 
 **Example 5 - large handoff, disk report trims optional fields:**
 
 ```
-Report: docs/ephemeral-reports/coder/session-store-redis-migration/task-4.md
+Report: docs/ephemeral-reports/worker/session-store-redis-migration/task-4.md
 
 **Outcome:** Migrated session storage from in-memory to Redis; sessions
 now survive a service restart.
@@ -359,6 +359,6 @@ Two failed attempts at recovery, or a genuinely ambiguous "what did they mean by
 - `/orchestrate` command - wave execution; §3.1 (parallel waves) is the shared-working-tree hazard this drives.
 - `ocw` worktree launcher - isolates each branch in its own directory, so a mistake in one task's worktree can't reach another's.
 - `plugins/guard-destructive-git.js` - the mechanical backstop for this skill: blocks `reset --hard`, `clean -fdx`, plain force-push (`--force`/`-f`), and `branch -D` on EVERY branch (not just protected ones), requiring an explicit human-set escape hatch. `--force-with-lease` is exempt - it has its own native safety check and is how you push a rebased branch (see `git-conflicts` skill). A skill is advisory; this guard is what actually stops the command if the discipline above is skipped under pressure.
-- `../../docs/architecture/dual-audience-commit-report-format.md` - the design rationale, invariants (I1-I6), and input/operation coverage matrix behind §2's three-layer commit format. Read this for *why* the format is shaped this way, not just *how* to use it (historical reference — the commit-format invariants I1-I6 in that document remain accurate, but its handoff-format half and conflation thesis are superseded; the commit format itself is now fully specified in this skill). (For the coder-to-hub handoff report's two-layer spec, §3.3, see `../../docs/architecture/coder-handoff-reconciliation.md` instead.)
-- `../../docs/reports/researcher/commit-message-research.md` - the Conventional Commits standard, SemVer mapping, and `semantic-release` tooling this format's Layer 1 builds on without modification.
-- `../../includes/current Loom role directive and control-plane state` §File-Backed Reports - the inline-vs-skeleton+path delivery rule §2.3/§3.3 reuse for coder-to-hub handoffs, rather than inventing a new threshold.
+- `../../docs/architecture/dual-audience-commit-report-format.md` - the design rationale, invariants (I1-I6), and input/operation coverage matrix behind §2's three-layer commit format. Read this for *why* the format is shaped this way, not just *how* to use it (historical reference — the commit-format invariants I1-I6 in that document remain accurate, but its handoff-format half and conflation thesis are superseded; the commit format itself is now fully specified in this skill). (For the worker-to-hub handoff report's two-layer spec, §3.3, see `../../docs/architecture/worker-handoff-reconciliation.md` instead.)
+- `../../docs/reports/research/commit-message-research.md` - the Conventional Commits standard, SemVer mapping, and `semantic-release` tooling this format's Layer 1 builds on without modification.
+- `../../includes/current Loom role directive and control-plane state` §File-Backed Reports - the inline-vs-skeleton+path delivery rule §2.3/§3.3 reuse for worker-to-hub handoffs, rather than inventing a new threshold.
