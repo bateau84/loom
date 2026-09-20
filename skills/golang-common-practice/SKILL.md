@@ -1,6 +1,6 @@
 ---
 name: golang-common-practice
-description: "Go style, verification, severity tiers, and agent-OS integration for code review and subagent dispatch. Use when writing or reviewing Go code, doing a Go review, dispatching a Go subagent, or applying the shared review tier to a Go finding. Load this alongside any `golang-*` skill. Defines the Go-specific layer on top of the system-wide `shared-protocol`."
+description: "Go style, verification, severity tiers, and agent-OS integration for code review and subagent dispatch. Use when writing or reviewing Go code, doing a Go review, dispatching a Go subagent, or applying the shared review tier to a Go finding. Load this alongside any `golang-*` skill. Defines the Go-specific layer on top of the system-wide `current Loom role directive and control-plane state`."
 license: MIT
 metadata:
   author: Bateau
