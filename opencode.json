@@ -12,6 +12,16 @@
         "SYNABUN_PROFILE": "codex-browser",
         "DOTENV_PATH": "/home/n23790/.synabun/.env"
       }
+    },
+    "okf-mcp": {
+      "type": "local",
+      "command": [
+        "/bin/sh",
+        "-lc",
+        "exec \"$HOME/.local/bin/okf-mcp\""
+      ],
+      "environment": {},
+      "enabled": true
     }
   }
 }
