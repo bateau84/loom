@@ -1,4 +1,6 @@
-# interaction-design Assessment Contract
+# interaction-design Reviewer Assessment
+
+Reviewer-only domain contract. It does not create Loom authority, product meaning, or proof.
 
 ## Review criteria
 
@@ -13,13 +15,3 @@ Reviewer models each material interaction as a state transition rather than coun
 7. **Feedback latency/truth** — feedback matches actual system state; delayed operations expose enough progress/uncertainty without falsely declaring completion.
 8. **Affordance/discoverability** — users can tell what is actionable and what state/mode they are in without relying on hidden conventions.
 9. **Boundary discipline** — interaction semantics remain human-facing and do not prescribe visual tokens or technical implementation without need.
-
-## Adjudication criteria
-
-Critic attacks the state machine: repeat an action before the previous response, fail halfway, cancel during work, change context while loading, lose/recover focus, use keyboard only, and attempt recovery from every material error.
-
-Block when a required scenario has an ambiguous/impossible transition, a destructive action is unsafe, the UI can signal success while work failed, users can become trapped in a mode/state, or recovery cannot reach a valid state. Do not block for missing irrelevant generic states or aesthetic treatment owned by visual design.
-
-## Scaling
-
-Increase depth with state-transition count, asynchronous/concurrent events, destructive consequence, modal/mode behavior, input modalities, long latency, and cross-surface handoffs.

@@ -1,4 +1,6 @@
-# golang-structs-interfaces Assessment Contract
+# golang-structs-interfaces Reviewer Assessment
+
+Reviewer-only domain contract. It does not create Loom authority, product meaning, or proof.
 
 ## Review criteria
 
@@ -12,13 +14,3 @@ Reviewer checks type design preserves Go method-set/zero-value/ownership semanti
 - zero value is useful or invalid states are prevented/documented; constructors are not ceremony only;
 - comparability/map-key, JSON/encoding, generics constraints, and equality implications are considered where the type crosses those boundaries;
 - public interface changes account for source compatibility and implementation burden.
-
-## Adjudication criteria
-
-Critic tries typed nil, interface substitution, value copying, embedding name conflicts, zero construction, serialization round trip, and future implementation extension. Ask whether the type boundary encodes the architecture or accidentally fights it.
-
-Block public/architectural contract violations, invariant bypass, unsafe copying, or nil-interface traps with material consequence. Interface-vs-concrete preference alone is non-blocking.
-
-## Scaling
-
-Increase depth with exported interfaces, number of implementations, mutable/concurrent state, serialization/comparability, embedding, and architectural boundary significance.
