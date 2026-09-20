@@ -3,6 +3,7 @@
 import { Plugin, usePlugin } from "@opencode/plugin/tui"
 import { For, Show, createEffect, createSignal, onCleanup } from "solid-js"
 import { LoomRpc, type LoomSidebarSnapshot, type LoomSidebarTaskStatus } from "./rpc"
+import { selectSidebarTasks } from "./sidebar"
 
 const MAX_PLAN_ROWS = 12
 
@@ -64,15 +65,15 @@ function LoomSidebar(props: { sessionID?: string }) {
         <Show when={snapshot()!.tasks.length > 0}>
           <box flexDirection="column" gap={0} paddingTop={1}>
             <text fg={context.theme.text.base}>Plan</text>
-            <For each={snapshot()!.tasks.slice(0, MAX_PLAN_ROWS)}>
+            <For each={selectSidebarTasks(snapshot()!.tasks, MAX_PLAN_ROWS)}>
               {(task) => (
                 <text>
                   {taskGlyph(task.status)} {task.title}
                 </text>
               )}
             </For>
-            <Show when={snapshot()!.tasks.length > MAX_PLAN_ROWS}>
-              <text>… +{snapshot()!.tasks.length - MAX_PLAN_ROWS} more</text>
+            <Show when={snapshot()!.tasks.length > selectSidebarTasks(snapshot()!.tasks, MAX_PLAN_ROWS).length}>
+              <text>… +{snapshot()!.tasks.length - selectSidebarTasks(snapshot()!.tasks, MAX_PLAN_ROWS).length} more</text>
             </Show>
           </box>
         </Show>
