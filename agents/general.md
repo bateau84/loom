@@ -33,6 +33,9 @@ permissions:
     resource: "acceptance"
     effect: allow
   - action: subagent
+    resource: "planner"
+    effect: allow
+  - action: subagent
     resource: "research"
     effect: allow
   - action: subagent
@@ -73,9 +76,17 @@ Before reopening failed work, name why another attempt is justified through `loo
 Inspect `loom_budget_status` when repeated corrections occur. A denied dispatch is a real execution boundary: preserve completed work and report the exhausted limit instead of bypassing it.
 
 
-## Worker scope
+## Build task graph
 
-Before dispatching a Worker step, declare its bounded writable surface with `loom_task_scope`. Do not grant repository-wide write access. Pass the workflow ID and step ID so the Worker can attach before editing.
+For product-outcome workflows, dispatch `planner` when the `plan` step becomes runnable.
+
+After Planner completes:
+- inspect `loom_task_status`;
+- dispatch every runnable `task:*` Worker step, in parallel when independent;
+- pass only the workflow ID and exact step ID; Worker receives objective, skills, verification expectations, and immutable write scope through `loom_attach`;
+- continue until all planned tasks complete, then dispatch `review-implementation`.
+
+For a simple non-product `worker` step, define its bounded scope with `loom_task_scope` before dispatch.
 
 
 ## Learning
