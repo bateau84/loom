@@ -15,7 +15,7 @@ metadata:
 **Modes:**
 
 - **Review mode** — reviewing a PR for security issues. Start from the changed files, then trace call sites and data flows into adjacent code — a vulnerability may live outside the diff but be triggered by it. Sequential.
-- **Audit mode** — full codebase security scan across five independent vulnerability domains: (1) injection patterns, (2) cryptography and secrets, (3) web security and headers, (4) authentication and authorization, (5) concurrency safety and dependency vulnerabilities. Cover all five, aggregate findings, score with DREAD, and report by severity (mapped to review tiers per `golang-common-practice`). Delegation follows `current Loom role directive and control-plane state` — only `general` dispatches sub-agents; a spoke works through all five domains itself.
+- **Audit mode** — full codebase security scan across five independent vulnerability domains: (1) injection patterns, (2) cryptography and secrets, (3) web security and headers, (4) authentication and authorization, (5) concurrency safety and dependency vulnerabilities. Cover all five, aggregate findings, score with DREAD, and report by severity (mapped to review tiers per `golang-common-practice`). Within the current Loom task, works through all five domains itself.
 - **Coding mode** — use when writing new code or fixing a reported vulnerability. Follow the skill's sequential guidance, then run a vulnerability-pattern grep pass over the newly written code before finishing.
 
 **Dependencies:**
