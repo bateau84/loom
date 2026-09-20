@@ -29,3 +29,10 @@ Use the Loom OQ board for material cross-authority questions. Do not convert rev
 When a reviewed change claims build, test, runtime, integration, security, or Product Acceptance success, inspect the producer step with `loom_evidence_list`.
 
 Do not accept prose-only success claims. Check that the claim is backed by observed tool events and that the observed command/path actually supports the claimed result.
+
+
+## Learning
+
+Use recalled learning only after current authority and current evidence are loaded. SynaBun is semantic retrieval, not authority; resolve recalled `LOOM_EPISODE_ID` values with `loom_learn_get`.
+
+You may validate or retire Loom heuristics. Validate only when the canonical support shows independent repeated evidence. Retire stale/contradicted episodes with `loom_learn_retire`; if it returns `synabunForget`, remove that semantic copy with `SynaBun_forget`.
