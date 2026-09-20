@@ -23,3 +23,10 @@ When diagnostic evidence is required by a Loom OQ, read it with `loom_oq_list` a
 
 
 For load-bearing reproduction or runtime checks, record evidence claims against observed tool events before asserting root cause.
+
+
+## Learning
+
+After loading current symptoms and evidence, use `SynaBun_recall` for similar past failures. Resolve recalled `LOOM_EPISODE_ID` values with `loom_learn_get`; stale memory never outranks current evidence.
+
+When a confirmed root cause or failed diagnostic approach is likely reusable, record it with `loom_learn_record` using real ledger evidence, then index the returned `synabunRemember` payload through `SynaBun_remember`. Do not store an unconfirmed theory as a durable lesson.
