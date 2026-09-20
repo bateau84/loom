@@ -60,12 +60,32 @@ export function validateSuite(suite: EvalSuite, repoRoot: string) {
     if (!item.trap?.trim()) errors.push(`${label}: trap is required`)
     if (!Array.isArray(item.requirements) || item.requirements.length === 0) {
       errors.push(`${label}: at least one requirement mapping is required`)
+    } else {
+      const requirementFiles = new Set(
+        existsSync(join(repoRoot, "docs", "requirements", "loom"))
+          ? Array.from(new Bun.Glob("br-*.md").scanSync(join(repoRoot, "docs", "requirements", "loom")))
+          : [],
+      )
+      for (const requirement of item.requirements) {
+        const prefix = requirement.toLowerCase() + "-"
+        if (![...requirementFiles].some((file) => file.startsWith(prefix))) {
+          errors.push(`${label}: unknown requirement mapping ${requirement}`)
+        }
+      }
     }
     if (!Array.isArray(item.expectations) || item.expectations.length < 2) {
       errors.push(`${label}: at least two positive expectations are required`)
     }
     if (!Array.isArray(item.must_not) || item.must_not.length < 1) {
       errors.push(`${label}: at least one forbidden behavior is required`)
+    }
+    if (item.tools) {
+      for (const key of ["requires", "forbids"] as const) {
+        const values = item.tools[key]
+        if (values !== undefined && (!Array.isArray(values) || values.some((value) => typeof value !== "string" || !value.trim()))) {
+          errors.push(`${label}: tools.${key} must be a non-empty string array when present`)
+        }
+      }
     }
   }
   return errors
