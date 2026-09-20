@@ -41,6 +41,7 @@ const safePatterns = [
   /^go vet(?:\s|$)/,
   /^go list(?:\s|$)/,
   /^go env(?:\s|$)/,
+  /^gofmt(?:\s|$)/,
   /^golangci-lint run(?:\s|$)/,
   /^gosec(?:\s|$)/,
   /^govulncheck(?:\s|$)/,
