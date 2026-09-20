@@ -49,4 +49,10 @@ describe("Loom tool presentation", () => {
     const output = renderToolOutput({ workflowId: "wf-1", status: "active" }, "json")
     expect(output).toBe(JSON.stringify({ workflowId: "wf-1", status: "active" }, null, 2))
   })
+
+  test("routes every Loom JSON result through the shared renderer", async () => {
+    const source = await Bun.file(new URL("./index.ts", import.meta.url)).text()
+    expect(source).not.toContain("content: JSON.stringify(")
+    expect(source).toContain("content: renderToolOutput(")
+  })
 })
