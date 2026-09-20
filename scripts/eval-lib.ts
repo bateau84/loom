@@ -156,19 +156,19 @@ export function extractText(...sources: unknown[]) {
 }
 
 export function extractTools(...sources: unknown[]) {
-  const tools: string[] = []
+  const tools = new Set<string>()
   for (const source of sources) {
     walk(source, (record) => {
-      if (record.type === "tool" && typeof record.tool === "string") tools.push(record.tool)
+      if (record.type === "tool" && typeof record.tool === "string") tools.add(record.tool)
       if (record.type === "tool_use") {
         const part = record.part
         if (part && typeof part === "object" && typeof (part as Record<string, unknown>).tool === "string") {
-          tools.push(String((part as Record<string, unknown>).tool))
+          tools.add(String((part as Record<string, unknown>).tool))
         }
       }
     })
   }
-  return tools
+  return [...tools]
 }
 
 function normalizeTool(value: string) {
@@ -250,7 +250,7 @@ export function extractAssistantText(exported: unknown) {
 }
 
 export function extractAssistantTools(exported: unknown) {
-  const tools: string[] = []
+  const tools = new Set<string>()
   const messages = Array.isArray(exported)
     ? exported
     : exported && typeof exported === "object" && Array.isArray((exported as Record<string, unknown>).messages)
@@ -266,8 +266,8 @@ export function extractAssistantTools(exported: unknown) {
     for (const part of messageParts) {
       if (!part || typeof part !== "object") continue
       const p = part as Record<string, unknown>
-      if (p.type === "tool" && typeof p.tool === "string") tools.push(p.tool)
+      if (p.type === "tool" && typeof p.tool === "string") tools.add(p.tool)
     }
   }
-  return tools
+  return [...tools]
 }
