@@ -1,4 +1,5 @@
 import { taskStepId, type TaskSpec } from "./tasks"
+import type { EvidenceKind } from "./evidence"
 
 export type StepKind = "work" | "gate"
 export type StepStatus = "pending" | "complete" | "passed" | "failed"
@@ -22,6 +23,26 @@ export type Effects = {
   productOutcome: boolean
 }
 
+export type VerificationRequirementStatus = "open" | "satisfied" | "superseded"
+
+export type VerificationRequirement = {
+  id: string
+  createdByStepId: string
+  createdByAgent: string
+  beforeStepId: string
+  kind: EvidenceKind
+  statement: string
+  status: VerificationRequirementStatus
+  createdAt: string
+  proof?: {
+    byAgent: string
+    stepId?: string
+    statement: string
+    observationIds: string[]
+    provedAt: string
+  }
+}
+
 export type Workflow = {
   id: string
   anchor: string
@@ -29,10 +50,129 @@ export type Workflow = {
   createdAt: string
   effects?: Effects
   steps: Step[]
+  verification?: VerificationRequirement[]
 }
 
 export function satisfied(step: Step) {
   return step.kind === "gate" ? step.status === "passed" : step.status === "complete"
+}
+
+function stepDependsOn(workflow: Workflow, targetId: string, sourceId: string, seen = new Set<string>()): boolean {
+  if (targetId === sourceId) return true
+  if (seen.has(targetId)) return false
+  seen.add(targetId)
+
+  const target = workflow.steps.find((step) => step.id === targetId)
+  if (!target) return false
+  return target.dependsOn.some((dependency) => stepDependsOn(workflow, dependency, sourceId, seen))
+}
+
+function verificationList(workflow: Workflow) {
+  if (!workflow.verification) workflow.verification = []
+  return workflow.verification
+}
+
+export function openVerificationRequirements(workflow: Workflow, beforeStepId?: string) {
+  return verificationList(workflow).filter(
+    (requirement) =>
+      requirement.status === "open" &&
+      (beforeStepId === undefined || requirement.beforeStepId === beforeStepId),
+  )
+}
+
+export function addVerificationRequirement(
+  workflow: Workflow,
+  input: {
+    id: string
+    createdByStepId: string
+    createdByAgent: string
+    beforeStepId: string
+    kind: EvidenceKind
+    statement: string
+    now: string
+  },
+) {
+  const creator = workflow.steps.find((step) => step.id === input.createdByStepId)
+  if (!creator) throw new Error("Verification creator step not found.")
+  if (creator.agent !== input.createdByAgent) {
+    throw new Error(`Step ${input.createdByStepId} belongs to ${creator.agent}, not ${input.createdByAgent}.`)
+  }
+
+  const gate = workflow.steps.find((step) => step.id === input.beforeStepId)
+  if (!gate) throw new Error("Verification target gate not found.")
+  if (gate.kind !== "gate") throw new Error("Verification requirements must target a gate.")
+  if (!stepDependsOn(workflow, input.beforeStepId, input.createdByStepId)) {
+    throw new Error("Verification target gate must be downstream of the creating step.")
+  }
+
+  const existing = verificationList(workflow).find(
+    (requirement) =>
+      requirement.status !== "superseded" &&
+      requirement.createdByStepId === input.createdByStepId &&
+      requirement.beforeStepId === input.beforeStepId &&
+      requirement.kind === input.kind &&
+      requirement.statement === input.statement,
+  )
+  if (existing) return existing
+
+  const requirement: VerificationRequirement = {
+    id: input.id,
+    createdByStepId: input.createdByStepId,
+    createdByAgent: input.createdByAgent,
+    beforeStepId: input.beforeStepId,
+    kind: input.kind,
+    statement: input.statement,
+    status: "open",
+    createdAt: input.now,
+  }
+  verificationList(workflow).push(requirement)
+  return requirement
+}
+
+export function proveVerificationRequirement(
+  workflow: Workflow,
+  requirementId: string,
+  proof: NonNullable<VerificationRequirement["proof"]>,
+) {
+  const requirement = verificationList(workflow).find((candidate) => candidate.id === requirementId)
+  if (!requirement) throw new Error("Verification requirement not found.")
+  if (requirement.status === "superseded") throw new Error("Verification requirement is superseded.")
+
+  requirement.status = "satisfied"
+  requirement.proof = proof
+  return requirement
+}
+
+export function reconcileVerificationAfterRoute(workflow: Workflow) {
+  const stepIds = new Set(workflow.steps.map((step) => step.id))
+  for (const requirement of verificationList(workflow)) {
+    if (
+      requirement.status !== "superseded" &&
+      (!stepIds.has(requirement.createdByStepId) || !stepIds.has(requirement.beforeStepId))
+    ) {
+      requirement.status = "superseded"
+      delete requirement.proof
+    }
+  }
+}
+
+export function resetVerificationAfterReopen(workflow: Workflow, resetStepIds: string[]) {
+  const reset = new Set(resetStepIds)
+  for (const requirement of verificationList(workflow)) {
+    if (reset.has(requirement.createdByStepId)) {
+      requirement.status = "superseded"
+      delete requirement.proof
+      continue
+    }
+
+    if (
+      requirement.status === "satisfied" &&
+      (reset.has(requirement.beforeStepId) || (requirement.proof?.stepId && reset.has(requirement.proof.stepId)))
+    ) {
+      requirement.status = "open"
+      delete requirement.proof
+    }
+  }
 }
 
 export function runnable(workflow: Workflow) {
@@ -145,6 +285,16 @@ export function finishStep(
 
   if (step.kind === "gate") {
     if (outcome === "complete") throw new Error("Gate steps require pass or fail.")
+    if (outcome === "pass") {
+      const missing = openVerificationRequirements(workflow, stepId)
+      if (missing.length > 0) {
+        throw new Error(
+          `Gate ${stepId} has unsatisfied verification requirements: ${missing
+            .map((requirement) => `${requirement.id} (${requirement.kind}: ${requirement.statement})`)
+            .join("; ")}`,
+        )
+      }
+    }
     step.status = outcome === "pass" ? "passed" : "failed"
   } else {
     if (outcome !== "complete") throw new Error("Work steps require complete.")
