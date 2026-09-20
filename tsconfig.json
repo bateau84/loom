@@ -9,6 +9,7 @@
     "types": ["bun"]
   },
   "include": [
-    "plugins/loom/**/*.ts"
+    "plugins/loom/**/*.ts",
+    "scripts/**/*.ts"
   ]
 }
