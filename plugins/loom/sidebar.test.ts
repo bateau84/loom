@@ -135,7 +135,7 @@ describe("Loom sidebar snapshot", () => {
     const entry = await Bun.file(new URL("./tui.ts", import.meta.url)).text()
     const view = await Bun.file(new URL("./tui-view.tsx", import.meta.url)).text()
 
-    expect(entry).toContain('export { default } from "./tui-view.tsx"')
+    expect(entry).toContain('export { default } from "./tui-view"')
     expect(view).toContain('append: "sidebar.content"')
     expect(view).toContain("context.client.rpc(LoomRpc)")
     expect(view).toContain("{ location }")
