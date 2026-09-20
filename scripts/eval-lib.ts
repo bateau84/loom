@@ -197,3 +197,56 @@ export function parseSemanticGrade(text: string): SemanticGrade {
   }
   return parsed
 }
+
+
+export function extractAssistantText(exported: unknown) {
+  const parts: string[] = []
+  const messages = Array.isArray(exported)
+    ? exported
+    : exported && typeof exported === "object" && Array.isArray((exported as Record<string, unknown>).messages)
+      ? ((exported as Record<string, unknown>).messages as unknown[])
+      : []
+
+  for (const item of messages) {
+    if (!item || typeof item !== "object") continue
+    const record = item as Record<string, unknown>
+    const info = record.info
+    if (!info || typeof info !== "object") continue
+    const meta = info as Record<string, unknown>
+    if (meta.role !== "assistant" || meta.summary === true) continue
+
+    const messageParts = Array.isArray(record.parts) ? record.parts : []
+    for (const part of messageParts) {
+      if (!part || typeof part !== "object") continue
+      const p = part as Record<string, unknown>
+      if (p.type === "text" && p.synthetic !== true && p.ignored !== true && typeof p.text === "string") {
+        const value = p.text.trim()
+        if (value) parts.push(value)
+      }
+    }
+  }
+  return parts.join("\n\n")
+}
+
+export function extractAssistantTools(exported: unknown) {
+  const tools: string[] = []
+  const messages = Array.isArray(exported)
+    ? exported
+    : exported && typeof exported === "object" && Array.isArray((exported as Record<string, unknown>).messages)
+      ? ((exported as Record<string, unknown>).messages as unknown[])
+      : []
+
+  for (const item of messages) {
+    if (!item || typeof item !== "object") continue
+    const record = item as Record<string, unknown>
+    const info = record.info
+    if (!info || typeof info !== "object" || (info as Record<string, unknown>).role !== "assistant") continue
+    const messageParts = Array.isArray(record.parts) ? record.parts : []
+    for (const part of messageParts) {
+      if (!part || typeof part !== "object") continue
+      const p = part as Record<string, unknown>
+      if (p.type === "tool" && typeof p.tool === "string") tools.push(p.tool)
+    }
+  }
+  return tools
+}
