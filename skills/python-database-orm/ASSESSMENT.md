@@ -1,4 +1,6 @@
-# python-database-orm Assessment Contract
+# python-database-orm Reviewer Assessment
+
+Reviewer-only domain contract. It does not create Loom authority, product meaning, or proof.
 
 ## Review criteria
 
@@ -12,13 +14,3 @@ Reviewer traces ORM object/session state rather than trusting generated SQL abst
 - schema/model nullability/default/server-default/enum/type semantics match migrations and database reality;
 - async ORM usage does not cross sync/greenlet boundaries incorrectly or hide blocking drivers;
 - tests include real-database integration for behaviors the ORM/mock layer cannot prove.
-
-## Adjudication criteria
-
-Critic closes/rolls back the session early, commits then reads expired state, serializes lazy relationships, runs concurrent updates, deletes a parent, retries deadlock/serialization failure, and checks emitted query count where performance is load-bearing.
-
-Block data-integrity/lifecycle/concurrency defects, or when ORM behavior can appear correct in unit tests yet fail against the real DB contract. Query-style preference is non-blocking absent an accepted SLO.
-
-## Scaling
-
-Increase depth with relationship graph complexity, cascades, concurrent writes, async sessions, migrations, large result sets, serialization, and correctness dependence on ORM implicit behavior.

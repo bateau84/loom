@@ -1,4 +1,6 @@
-# python-lint Assessment Contract
+# python-lint Reviewer Assessment
+
+Reviewer-only domain contract. It does not create Loom authority, product meaning, or proof.
 
 ## Review criteria
 
@@ -10,13 +12,3 @@ Reviewer verifies lint evidence represents the effective Python codebase:
 - CI invocation covers relevant source/tests and exits non-zero on findings; caches/wrappers do not stale/ignore output;
 - config changes are reviewed for rules silently removed/renamed by tool upgrades;
 - auto-fix changes are checked for behavior/API/import side effects rather than trusted mechanically.
-
-## Adjudication criteria
-
-Critic seeks false-green configurations: blanket ignores, excluded changed paths, select lists that dropped important categories, tool-version drift, non-failing wrappers, or auto-fix that changes semantics. Compare changed files with effective config.
-
-Block bypass of an accepted static gate or concealment of material defects. Preference among optional style rules is non-blocking.
-
-## Scaling
-
-Increase depth with config/tool upgrades, suppression breadth, monorepo/source-root complexity, security plugins, auto-fix scope, and reliance on lint as release evidence.

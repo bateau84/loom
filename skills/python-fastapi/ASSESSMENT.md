@@ -1,4 +1,6 @@
-# python-fastapi Assessment Contract
+# python-fastapi Reviewer Assessment
+
+Reviewer-only domain contract. It does not create Loom authority, product meaning, or proof.
 
 ## Review criteria
 
@@ -13,13 +15,3 @@ Reviewer checks FastAPI’s dependency/request lifecycle matches real ASGI behav
 - middleware/order/CORS/trusted-host/proxy/header behavior preserves security and tracing context;
 - streaming/websocket/client-disconnect and cancellation semantics are tested where used;
 - OpenAPI reflects actual auth/status/schema behavior and integration tests exercise the ASGI surface rather than only calling functions.
-
-## Adjudication criteria
-
-Critic cancels/disconnects mid-request, fails a yield dependency, supplies coercible-but-wrong values, bypasses auth through alternate routes/docs, restarts lifespan, and tests a background task failure. Probe green TestClient tests that omit real async/lifecycle behavior.
-
-Block public API/security/resource-lifecycle defects or when documented response/auth semantics diverge materially from runtime. Framework style preference is non-blocking.
-
-## Scaling
-
-Increase depth with async DB/external clients, auth, lifespan resources, streaming/websockets, background work, custom middleware/handlers, and public API compatibility.

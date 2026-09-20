@@ -1,4 +1,6 @@
-# python-observability Assessment Contract
+# python-observability Reviewer Assessment
+
+Reviewer-only domain contract. It does not create Loom authority, product meaning, or proof.
 
 ## Review criteria
 
@@ -12,13 +14,3 @@ Reviewer checks instrumentation survives Python concurrency/context and framewor
 - exporters/handlers initialize once and flush/shutdown boundedly under ASGI/worker/multiprocess models;
 - multiprocess metrics/logging semantics are correct when gunicorn/process workers are used;
 - telemetry claims correlate to actual operation outcome rather than intermediate acceptance.
-
-## Adjudication criteria
-
-Critic runs concurrent requests/tasks, executor hops, worker restart/shutdown, exporter failure, and a known error containing sensitive input. Probe duplicate events, context bleed between requests, orphan spans, cardinality explosion, and lost flush.
-
-Block when required diagnostic/security evidence is materially false/missing or telemetry can leak sensitive data/cause serious runtime failure. Cosmetic naming is non-blocking.
-
-## Scaling
-
-Increase depth with async/thread/process concurrency, framework middleware, high volume/cardinality, audit/security use, exporter lifecycle, and SLO dependence.

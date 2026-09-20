@@ -1,4 +1,6 @@
-# python-design-patterns Assessment Contract
+# python-design-patterns Reviewer Assessment
+
+Reviewer-only domain contract. It does not create Loom authority, product meaning, or proof.
 
 ## Review criteria
 
@@ -11,13 +13,3 @@ Reviewer asks whether the abstraction earns its complexity in Python’s dynamic
 - dependency inversion does not become a service locator/global registry;
 - singleton/shared state is justified and safe under tests/concurrency/process models;
 - extension points correspond to real variants and preserve substitutability at observable boundaries.
-
-## Adjudication criteria
-
-Critic sketches the direct Python alternative, adds a second implementation, imports modules in different order, and tests introspection/serialization/pickling/concurrency where the pattern touches them. Attack clever metaprogramming that moves failures from construction to runtime magic.
-
-Block when pattern use obscures ownership/control flow enough to create material correctness/API/maintainability risk or violates accepted architecture. Simpler-but-equivalent is usually reframe/maintainability, not an automatic gate failure.
-
-## Scaling
-
-Increase depth with metaprogramming, registries/plugins, public framework APIs, hidden global state, number of implementations, and architectural reach.

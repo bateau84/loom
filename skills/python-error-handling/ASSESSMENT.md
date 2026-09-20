@@ -1,4 +1,6 @@
-# python-error-handling Assessment Contract
+# python-error-handling Reviewer Assessment
+
+Reviewer-only domain contract. It does not create Loom authority, product meaning, or proof.
 
 ## Review criteria
 
@@ -12,13 +14,3 @@ Reviewer follows exception identity/context across boundaries:
 - retry decisions distinguish transient/terminal/idempotent cases and honor cancellation/deadlines;
 - error responses/logs redact secrets/PII and avoid exposing tracebacks/internals to untrusted callers;
 - partial-success state is explicit before raising/translation.
-
-## Adjudication criteria
-
-Critic injects errors inside the `try` scope that were not the intended catch target, fails cleanup, raises multiple concurrent exceptions, cancels work, and checks boundary translation/logging. Probe `except Exception: pass`, broad fallbacks, lost traceback/cause, and retrying non-idempotent work.
-
-Block when mandatory failure/recovery/security semantics are wrong or errors can be silently swallowed/misclassified. Internal wording/style is non-blocking absent public contract.
-
-## Scaling
-
-Increase depth with boundary layers, concurrency/ExceptionGroup, cleanup/transactions, retries, public error APIs, security sensitivity, and automated recovery.
