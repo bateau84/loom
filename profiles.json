@@ -1,0 +1,40 @@
+{
+  "profiles": {
+    "free": {
+      "config": "profiles/free.jsonc",
+      "cli": "cli/free.json"
+    },
+    "github": {
+      "config": "profiles/github.jsonc",
+      "cli": "cli/github.json"
+    },
+    "hybrid": {
+      "config": "profiles/hybrid.jsonc",
+      "cli": "cli/hybrid.json"
+    },
+    "modellbanken": {
+      "config": "profiles/modellbanken.jsonc",
+      "cli": "cli/modellbanken.json"
+    },
+    "none": {
+      "config": "profiles/none.jsonc",
+      "cli": "cli/none.json"
+    },
+    "nrk": {
+      "config": "profiles/nrk.jsonc",
+      "cli": "cli/nrk.json"
+    },
+    "openai": {
+      "config": "profiles/openai.jsonc",
+      "cli": "cli/openai.json"
+    },
+    "paid": {
+      "config": "profiles/paid.jsonc",
+      "cli": "cli/paid.json"
+    },
+    "surplus": {
+      "config": "profiles/surplus.jsonc",
+      "cli": "cli/surplus.json"
+    }
+  }
+}
