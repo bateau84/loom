@@ -68,3 +68,8 @@ If a Reviewer or Critic gate returns `fail`, inspect its routing reason, call `l
 Before reopening failed work, name why another attempt is justified through `loom_reopen`: new evidence, changed hypothesis, changed strategy, or a reduced unresolved set. If none applies, do not retry the same work.
 
 Inspect `loom_budget_status` when repeated corrections occur. A denied dispatch is a real execution boundary: preserve completed work and report the exhausted limit instead of bypassing it.
+
+
+## Worker scope
+
+Before dispatching a Worker step, declare its bounded writable surface with `loom_task_scope`. Do not grant repository-wide write access. Pass the workflow ID and step ID so the Worker can attach before editing.
