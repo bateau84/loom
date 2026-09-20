@@ -38,13 +38,20 @@ import {
 import { resourcesWithinScope, validateWriteScope, type TaskScope } from "./scope"
 import { shellResourcesAllowed } from "./shell"
 import {
+  heuristicsForEpisodes,
   proposeHeuristic,
   rankEpisodes,
   rankHeuristics,
+  retireEpisode,
   reviewHeuristic,
   type Episode,
   type Heuristic,
 } from "./learning"
+import {
+  episodeIdFromRememberInput,
+  episodeRecallPayload,
+  rememberedMemoryId,
+} from "./synabun"
 
 const loomAgents = new Set([
   "designer",
@@ -59,6 +66,10 @@ const loomAgents = new Set([
 
 function episodeKey(id: string) {
   return `episode/${id}`
+}
+
+function claimIdKey(id: string) {
+  return `evidence-claim-id/${id}`
 }
 
 function heuristicKey(id: string) {
@@ -855,6 +866,7 @@ export default Plugin.define({
               )
             }
             await ctx.storage.set(`${claimPrefix(value.workflowId, value.stepId)}${claim.id}`, claim)
+            await ctx.storage.set(claimIdKey(claim.id), claim)
 
             return { content: JSON.stringify({ claim }) }
           } catch (error) {
@@ -1052,27 +1064,48 @@ export default Plugin.define({
             return { content: JSON.stringify({ error: "A durable learning episode needs at least one evidence reference." }) }
           }
 
+          const checked = await Promise.all(
+            value.evidenceRefs.map(async (id) => ({
+              id,
+              exists: Boolean(
+                (await ctx.storage.get(evidenceKey(id))) ||
+                (await ctx.storage.get(claimIdKey(id))),
+              ),
+            })),
+          )
+          const missing = checked.filter((entry) => !entry.exists).map((entry) => entry.id)
+          if (missing.length > 0) {
+            return { content: JSON.stringify({ error: "Every learning evidence reference must exist in the Loom evidence ledger.", missing }) }
+          }
+
           const episode: Episode = {
             id: crypto.randomUUID(),
             project: ctx.location.project.canonical,
             ...(value.workflowId ? { workflowId: value.workflowId } : {}),
             subject: value.subject,
             lesson: value.lesson,
-            evidenceRefs: value.evidenceRefs,
+            evidenceRefs: [...new Set(value.evidenceRefs)],
             tags: [...new Set(value.tags.map((tag) => tag.toLowerCase()))],
             createdBy: tool.agent,
             createdAt: new Date().toISOString(),
+            status: "active",
+            synabun: { status: "pending" },
           }
 
           await ctx.storage.set(episodeKey(episode.id), episode)
-          return { content: JSON.stringify({ episode }) }
+          return {
+            content: JSON.stringify({
+              episode,
+              synabunRemember: episodeRecallPayload(episode),
+            }),
+          }
         },
       })
 
       editor.add({
         name: "learn_query",
         description:
-          "Query episodic lessons and non-retired heuristics. Results are advisory; current repository authority and current evidence win.",
+          "Local lexical fallback for canonical Loom learning records. Prefer SynaBun_recall for semantic recall, then verify recalled Loom ids with loom_learn_get.",
         input: {
           type: "object",
           properties: {
@@ -1097,9 +1130,98 @@ export default Plugin.define({
           return {
             content: JSON.stringify({
               advisory: true,
+              semantic: false,
               episodes: rankEpisodes(value.query, episodes).slice(0, limit).map((entry) => entry.value),
               heuristics: rankHeuristics(value.query, heuristics).slice(0, limit).map((entry) => entry.value),
             }),
+          }
+        },
+      })
+
+
+      editor.add({
+        name: "learn_get",
+        description:
+          "Resolve exact canonical Loom learning records after semantic recall. Retired records are returned with their current status so stale SynaBun hits cannot silently govern work.",
+        input: {
+          type: "object",
+          properties: {
+            episodeIds: { type: "array", items: { type: "string" } },
+            heuristicIds: { type: "array", items: { type: "string" } },
+          },
+          additionalProperties: false,
+        },
+        options: { namespace: "loom" },
+        execute: async (input) => {
+          const value = input as { episodeIds?: string[]; heuristicIds?: string[] }
+          const episodeIds = [...new Set(value.episodeIds ?? [])]
+          const heuristicIds = [...new Set(value.heuristicIds ?? [])]
+
+          const episodeRecords = await Promise.all(
+            episodeIds.map((id) => ctx.storage.get(episodeKey(id)) as Promise<Episode | undefined>),
+          )
+          const episodes = episodeRecords.filter((episode): episode is Episode => Boolean(episode))
+
+          const heuristicRecords = await Promise.all(
+            heuristicIds.map((id) => ctx.storage.get(heuristicKey(id)) as Promise<Heuristic | undefined>),
+          )
+          const direct = heuristicRecords.filter((heuristic): heuristic is Heuristic => Boolean(heuristic))
+          const allHeuristics = await scanValues<Heuristic>(ctx, "heuristic/")
+          const related = heuristicsForEpisodes(episodeIds, allHeuristics)
+          const heuristics = [...new Map([...direct, ...related].map((item) => [item.id, item])).values()]
+
+          return {
+            content: JSON.stringify({
+              authoritative: false,
+              canonical: true,
+              episodes,
+              heuristics,
+            }),
+          }
+        },
+      })
+
+      editor.add({
+        name: "learn_retire",
+        description:
+          "Retire a stale or contradicted episodic lesson. Reviewer or Critic only. Retired lessons remain auditable but are excluded from normal recall.",
+        input: {
+          type: "object",
+          properties: {
+            episodeId: { type: "string" },
+            reason: { type: "string" },
+          },
+          required: ["episodeId", "reason"],
+          additionalProperties: false,
+        },
+        options: { namespace: "loom" },
+        execute: async (input, tool) => {
+          if (tool.agent !== "reviewer" && tool.agent !== "critic") {
+            return { content: JSON.stringify({ error: "Only reviewer or critic may retire learning episodes." }) }
+          }
+
+          const value = input as { episodeId: string; reason: string }
+          const episode = (await ctx.storage.get(episodeKey(value.episodeId))) as Episode | undefined
+          if (!episode) return { content: JSON.stringify({ error: "Episode not found." }) }
+
+          try {
+            retireEpisode({
+              episode,
+              reviewer: tool.agent,
+              reason: value.reason,
+              now: new Date().toISOString(),
+            })
+            await ctx.storage.set(episodeKey(episode.id), episode)
+            return {
+              content: JSON.stringify({
+                episode,
+                ...(episode.synabun.memoryId
+                  ? { synabunForget: { memory_id: episode.synabun.memoryId } }
+                  : {}),
+              }),
+            }
+          } catch (error) {
+            return { content: JSON.stringify({ error: error instanceof Error ? error.message : String(error) }) }
           }
         },
       })
@@ -1312,6 +1434,28 @@ export default Plugin.define({
       const key = toolEventKey(raw)
       const input = raw.input ?? pendingToolInputs.get(key)
       pendingToolInputs.delete(key)
+
+      if (tool.toLowerCase().includes("synabun") && /(?:^|_)remember$/i.test(tool)) {
+        const episodeId = episodeIdFromRememberInput(input)
+        if (episodeId) {
+          const episode = (await ctx.storage.get(episodeKey(episodeId))) as Episode | undefined
+          if (episode) {
+            if (raw.status === "error") {
+              episode.synabun = { ...episode.synabun, status: "failed" }
+            } else {
+              const memoryId = rememberedMemoryId(raw.result)
+              if (memoryId) {
+                episode.synabun = {
+                  status: "synced",
+                  memoryId,
+                  syncedAt: new Date().toISOString(),
+                }
+              }
+            }
+            await ctx.storage.set(episodeKey(episode.id), episode)
+          }
+        }
+      }
 
       const summary = safeInputSummary(tool, input)
       const observation: EvidenceObservation = {
