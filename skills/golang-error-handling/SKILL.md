@@ -16,7 +16,7 @@ metadata:
 
 - **Coding mode** — writing new error handling code. Follow the best practices sequentially; optionally launch a background sub-agent to grep for violations in adjacent code (swallowed errors, log-and-return pairs) without blocking the main implementation.
 - **Review mode** — reviewing a PR's error handling changes. Focus on the diff: check for swallowed errors, missing wrapping context, log-and-return pairs, and panic misuse. Sequential.
-- **Audit mode** — auditing existing error handling across a codebase. Cover every independent category (creation, wrapping, single-handling rule, panic/recover, structured logging). Delegation follows `current Loom role directive and control-plane state` — only `general` dispatches sub-agents; a spoke covers all categories itself, sequentially.
+- **Audit mode** — auditing existing error handling across a codebase. Cover every independent category (creation, wrapping, single-handling rule, panic/recover, structured logging). Within the current Loom task, covers all categories itself, sequentially.
 
 # Go Error Handling Best Practices
 
@@ -50,7 +50,7 @@ This skill guides the creation of robust, idiomatic error handling in Go applica
 
 ## Parallelizing Error Handling Audits
 
-When auditing error handling across a large codebase, cover each independent error category. Delegation follows `current Loom role directive and control-plane state` — only `general` dispatches sub-agents; a spoke works through them sequentially:
+When auditing error handling across a large codebase, cover each independent error category. Within the current Loom task, works through them sequentially:
 
 - Sub-agent 1: Error creation — validate `errors.New`/`fmt.Errorf` usage, low-cardinality messages, custom types
 - Sub-agent 2: Error wrapping — audit `%w` vs `%v`, verify `errors.Is`/`errors.As` patterns
