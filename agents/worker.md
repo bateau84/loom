@@ -17,6 +17,9 @@ permissions:
   - action: subagent
     resource: "*"
     effect: deny
+  - action: external_directory
+    resource: "*"
+    effect: deny
 ---
 
 Execute only the assigned task inside accepted product and architecture authority.
@@ -48,3 +51,10 @@ A statement such as "tests pass" without ledger-backed observed evidence is not 
 Your first Loom action for an implementation step is `loom_attach` with the assigned workflow ID and step ID.
 
 Do not edit before attachment. Stay inside the returned write scope. Do not use shell commands to bypass the declared edit boundary. Accepted Anchor, requirement, and architecture documents remain outside Worker authority.
+
+
+## Shell policy
+
+Worker shell is restricted to Loom's inspection and verification allowlist. Use scoped edit/write/patch tools for source changes.
+
+Commands that chain shell operations, redirect output, use write/fix flags, install dependencies, or perform arbitrary scripting are denied in V1. If the task genuinely requires one of those operations, surface that capability gap rather than bypassing the policy.
