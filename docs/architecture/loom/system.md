@@ -32,7 +32,7 @@ Loom Control Plane
   +--> Reviewer
   +--> Critic
   |
-  +--> Worker / Research / Diagnostic contexts
+  +--> Worker / Research / Diagnostic / Acceptance contexts
   |
   v
 Evidence + Repository Knowledge + Learning
@@ -89,7 +89,9 @@ Intent
   -> Reviewer
   -> Critic: assembled solution
   -> BUILD: plan + bounded workers
-  -> VERIFY: observed evidence + Reviewer + Product Acceptance
+  -> VERIFY: observed evidence + implementation Reviewer
+  -> Product Acceptance + Designer validation when applicable
+  -> product Reviewer
   -> Critic: realized product
   -> Done
 ```
