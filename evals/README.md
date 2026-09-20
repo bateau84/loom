@@ -91,11 +91,14 @@ Copilot:  ghcr.io/bateau84/opencode-eval-runner:copilot-edge
 
 Override them independently with `--opencode-image` / `--copilot-image`, or use `--image` to force one explicit image for both transports.
 
-The OpenCode transport automatically seeds the normal credential file when present:
+The OpenCode transport automatically seeds the normal credential file and model catalog when present:
 
 ```text
 ~/.local/share/opencode/auth.json
+~/.cache/opencode/models.json
 ```
+
+The model catalog matters for subscription/OAuth providers because authentication alone does not make every host-visible model routable inside a fresh isolated OpenCode environment.
 
 It does **not** inherit your global OpenCode config. Pass provider configuration only when the provider actually requires it:
 
@@ -103,7 +106,8 @@ It does **not** inherit your global OpenCode config. Pass provider configuration
 bun run eval:live -- \
   --cases WORK-01 \
   --model my-provider/my-model \
-  --provider-config /path/to/minimal-provider-config.json
+  --provider-config /path/to/minimal-provider-config.json \
+  --models-catalog /path/to/models.json
 ```
 
 API-key providers may use `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or `OPENROUTER_API_KEY`.
