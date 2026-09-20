@@ -14,6 +14,20 @@ Where applicable, completion includes application code, usable user interface, p
 
 A locally complete component is not product completion.
 
+## Acceptance Criteria
+
+1. Completion is evaluated against the accepted Anchor, not only individual tasks.
+2. All product-owned components required by the accepted outcome exist and are integrated.
+3. Required UI, persistence, authentication, integrations, operations, and documentation are included when applicable.
+4. End-to-end behavior crosses the real product-owned composition.
+5. Missing mandatory product surfaces prevent completion.
+
+## Verification Semantics
+
+Use Product Acceptance scenarios rooted in Anchor outcomes and exercise the assembled product through realistic entry points.
+
+Unit tests, isolated component tests, mocked product-owned dependencies, or a list of completed tasks cannot by themselves prove this requirement.
+
 ## Derived from
 
 - [Loom Anchor](../../anchors/loom/anchor.md)
