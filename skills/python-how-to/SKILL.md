@@ -1,6 +1,6 @@
 ---
 name: python-how-to
-description: "Python skills orchestrator — active on any Python coding, review, debug, or setup task. Loads the most relevant python-* skills: building a service loads python-fastapi + python-pydantic + python-async; writing tests loads python-testing; instrumenting loads python-observability. Always pairs with python-common-practice. Disambiguates overlapping skills and configures AGENTS.md to force-trigger skills in a project."
+description: "Python skills orchestrator for selecting the smallest relevant python-* methodology set during authorized Loom work. Always pairs technical Python work with python-common-practice; does not mutate project policy or control Loom routing."
 license: MIT
 metadata:
   author: Bateau
@@ -17,7 +17,6 @@ metadata:
 
 - **Orchestrate** — for any Python coding, review, debug, or setup task, load the primary skill plus all applicable secondary skills simultaneously.
 - **Disambiguate** — when two skills seem to overlap, use the boundary lines below to pick the owner.
-- **Configure** — add a `## Required Python skills` block to the project's `AGENTS.md`. See [Configure mode](#configure-mode).
 
 ## Skill loading
 
@@ -63,20 +62,6 @@ Pick the owner; load the neighbor only when the task spans the boundary.
 - **`python-async` vs `python-fastapi`** — fastapi owns the request/response surface and DI; async owns coroutines, concurrency, and not blocking the loop. The danger zone (sync I/O in an `async def` handler) is owned by `python-async`.
 - **`python-lint` vs `python-type-checking`** — ruff owns style, imports, and lint rules; the type checker owns type correctness. They run side by side; neither subsumes the other.
 
-## Configure mode
-
-To force a project to always load these skills, add a block to its `AGENTS.md`:
-
-```markdown
-## Required Python skills
-
-Load `python-common-practice` plus, by task: `python-fastapi` + `python-pydantic`
-for the API, `python-async` for concurrency, `python-testing` for tests,
-`python-observability` for logging/metrics, `python-database` for persistence.
-Route via `python-how-to`.
-```
-
-Tailor the list to the project's stack — drop skills it doesn't use (e.g. omit `python-database` for a stateless service).
 
 ## References
 
