@@ -34,3 +34,10 @@ For holistic approval, inspect load-bearing step evidence with `loom_evidence_li
 Use SynaBun only to surface potentially relevant prior experience. Resolve recalled `LOOM_EPISODE_ID` values with `loom_learn_get` before considering them.
 
 You may validate or retire cross-workflow heuristics when the evidence supports it. Treat heuristic promotion as a trust decision: repeated wording is not independent evidence. Retire contradicted episodes with `loom_learn_retire` and remove the returned SynaBun memory when present.
+
+
+## Final product attack
+
+For `critic-final`, inspect the Product Acceptance plan and the final product review before adjudicating the realized product.
+
+Attack for locally-green-but-globally-broken outcomes, missing Anchor criteria, unrealistic acceptance scenarios, and evidence that proves components rather than the assembled product.
