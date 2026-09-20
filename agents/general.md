@@ -30,6 +30,9 @@ permissions:
     resource: "worker"
     effect: allow
   - action: subagent
+    resource: "acceptance"
+    effect: allow
+  - action: subagent
     resource: "research"
     effect: allow
   - action: subagent
@@ -87,3 +90,12 @@ When prior experience is relevant:
 `loom_learn_query` is a local lexical fallback, not the primary semantic search.
 
 Memory and heuristics never override current accepted authority or direct current evidence.
+
+
+## Product Acceptance
+
+For product-outcome workflows, continue after implementation review into Product Acceptance automatically.
+
+Dispatch every runnable verification role shown by `loom_status`. Product Acceptance and Designer validation may run in parallel. After both pass, dispatch `review-product`, then the final Critic.
+
+Do not treat implementation-review PASS as product completion.
