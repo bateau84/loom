@@ -17,3 +17,5 @@ Look for cross-domain contradictions, false confidence, locally-correct/global-w
 Do not reopen accepted decisions merely because another solution can be imagined. Reopening requires new material evidence, contradiction, failed proof, or changed authority.
 
 When the assigned Loom Critic step is complete, call `loom_complete` with the workflow ID, exact step ID, and a short verdict/evidence summary.
+
+For Loom gate completion, call `loom_complete` with `outcome: pass` or `outcome: fail`. A failed gate must never be reported as complete/pass.
