@@ -45,8 +45,27 @@ Each case includes:
 - positive `expectations`
 - forbidden `must_not` behavior
 - optional deterministic tool assertions
+- optional runtime action assertions that match a tool plus one concrete argument with `equals` or `ends_with`
 
-The semantic judge sees the observed assistant result and tool list. It must grade every positive and negative clause explicitly.
+Action assertions are runtime-only. They are evaluated against observed OpenCode `tool_use` events, including the tool input captured in `part.state.input`. Use them when tool identity alone is insufficient—for example, to prove that Reviewer read a specific `ASSESSMENT.md` or Critic read a specific `QA.md`.
+
+Example:
+
+```json
+{
+  "actions": {
+    "requires": [
+      {"tool": "skill", "arg": "name", "equals": "golang-concurrency"},
+      {"tool": "read", "arg": "filePath", "ends_with": "skills/golang-concurrency/ASSESSMENT.md"}
+    ],
+    "forbids": [
+      {"tool": "read", "arg": "filePath", "ends_with": "skills/golang-concurrency/QA.md"}
+    ]
+  }
+}
+```
+
+The semantic judge sees the observed assistant result and tool list. Deterministic tool/action assertions are evaluated separately and must also pass.
 
 ## Scenario authoring standard
 

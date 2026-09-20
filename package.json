@@ -10,7 +10,8 @@
     "eval:live": "python3 scripts/run-evals.py",
     "eval:system": "python3 scripts/run-evals.py --all",
     "eval:stress": "python3 scripts/run-evals.py --all --iterations 3 --parallel 4",
-    "skills:validate": "python3 scripts/validate-skills.py"
+    "skills:validate": "python3 scripts/validate-skills.py",
+    "eval:harness-test": "python3 scripts/test_eval_actions.py"
   },
   "devDependencies": {
     "@opencode/plugin": "2.0.11",
