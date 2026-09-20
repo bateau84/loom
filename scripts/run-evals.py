@@ -445,7 +445,59 @@ def normalize_tool(value: str) -> str:
     return value.replace(".", "_")
 
 
-def deterministic_failures(case: dict[str, Any], tools: list[str]) -> list[str]:
+def extract_observed_actions(raw_stdout: str) -> list[dict[str, Any]]:
+    actions: list[dict[str, Any]] = []
+    for raw in raw_stdout.splitlines():
+        try:
+            event = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(event, dict) or event.get("type") != "tool_use":
+            continue
+        part = event.get("part")
+        if not isinstance(part, dict) or part.get("type") != "tool" or not isinstance(part.get("tool"), str):
+            continue
+        state = part.get("state")
+        args = state.get("input") if isinstance(state, dict) and isinstance(state.get("input"), dict) else {}
+        actions.append({"tool": part["tool"], "args": args})
+    return actions
+
+
+def resolve_action_arg(args: dict[str, Any], dotted: str) -> Any:
+    value: Any = args
+    for segment in dotted.split("."):
+        if not isinstance(value, dict) or segment not in value:
+            return None
+        value = value[segment]
+    return value
+
+
+def action_matches(action: dict[str, Any], assertion: dict[str, Any]) -> bool:
+    if normalize_tool(str(action.get("tool") or "")) != normalize_tool(str(assertion.get("tool") or "")):
+        return False
+    value = resolve_action_arg(action.get("args") if isinstance(action.get("args"), dict) else {}, str(assertion.get("arg") or ""))
+    if "equals" in assertion:
+        return value == assertion["equals"]
+    if "ends_with" in assertion:
+        return isinstance(value, str) and value.endswith(str(assertion["ends_with"]))
+    return False
+
+
+def describe_action(assertion: dict[str, Any]) -> str:
+    comparator = "equals" if "equals" in assertion else "ends_with"
+    return "%s %s %s %r" % (
+        assertion.get("tool"),
+        assertion.get("arg"),
+        comparator,
+        assertion.get(comparator),
+    )
+
+
+def deterministic_failures(
+    case: dict[str, Any],
+    tools: list[str],
+    actions: list[dict[str, Any]] | None = None,
+) -> list[str]:
     failures: list[str] = []
     assertions = case.get("tools") or {}
     normalized = {normalize_tool(tool) for tool in tools}
@@ -455,6 +507,15 @@ def deterministic_failures(case: dict[str, Any], tools: list[str]) -> list[str]:
     for forbidden in assertions.get("forbids", []):
         if normalize_tool(forbidden) in normalized:
             failures.append("forbidden tool observed: " + forbidden)
+
+    observed_actions = actions or []
+    action_assertions = case.get("actions") or {}
+    for required in action_assertions.get("requires", []):
+        if not any(action_matches(action, required) for action in observed_actions):
+            failures.append("required action not observed: " + describe_action(required))
+    for forbidden in action_assertions.get("forbids", []):
+        if any(action_matches(action, forbidden) for action in observed_actions):
+            failures.append("forbidden action observed: " + describe_action(forbidden))
     return failures
 
 
@@ -580,7 +641,12 @@ def run_case(
             extra_envs=args.env,
         )
         target_error = transport_error(target)
-        deterministic = deterministic_failures(case, list(target.get("tools") or [])) if not target_error else []
+        observed_actions = extract_observed_actions(str(target.get("stdout") or "")) if not target_error else []
+        deterministic = (
+            deterministic_failures(case, list(target.get("tools") or []), observed_actions)
+            if not target_error
+            else []
+        )
 
         judge_result: dict[str, Any] | None = None
         judge: dict[str, Any] | None = None
@@ -639,6 +705,7 @@ def run_case(
             "passed": passed,
             "target": target,
             "target_error": target_error,
+            "observed_actions": observed_actions,
             "deterministic_failures": deterministic,
             "judge_transport_result": judge_result,
             "semantic": judge,

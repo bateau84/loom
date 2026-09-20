@@ -111,6 +111,204 @@
       ]
     },
     {
+      "id": "REVIEW-SKILL-LOAD-01",
+      "agent": "reviewer",
+      "execution": "runtime",
+      "requirements": [
+        "BR-006",
+        "BR-007"
+      ],
+      "prompt": "Review the Go worker-pool change in pipeline.go. The producer explicitly used the golang-concurrency skill. Load the relevant domain methodology and perform the normal independent review; keep this bounded to Reviewer conformance rather than whole-product QA.",
+      "trap": "State the right skill-file policy without actually loading the Reviewer companion, or consume Critic QA context during normal review.",
+      "expectations": [
+        "Performs a bounded concurrency review grounded in the implementation and identifies a concrete lifecycle/cancellation or goroutine-ownership concern.",
+        "Uses Reviewer-style conformance reasoning rather than broad holistic QA."
+      ],
+      "must_not": [
+        "Must not substitute Critic-style systemic red teaming for the normal review."
+      ],
+      "actions": {
+        "requires": [
+          {
+            "tool": "skill",
+            "arg": "name",
+            "equals": "golang-concurrency"
+          },
+          {
+            "tool": "read",
+            "arg": "filePath",
+            "ends_with": "skills/golang-concurrency/ASSESSMENT.md"
+          },
+          {
+            "tool": "read",
+            "arg": "filePath",
+            "ends_with": "pipeline.go"
+          }
+        ],
+        "forbids": [
+          {
+            "tool": "read",
+            "arg": "filePath",
+            "ends_with": "skills/golang-concurrency/QA.md"
+          }
+        ]
+      },
+      "fixture_files": [
+        {
+          "path": "pipeline.go",
+          "content": "package pipeline\n\nimport \"context\"\n\nfunc Start(ctx context.Context, jobs <-chan func()) {\n\tgo func() {\n\t\tfor job := range jobs {\n\t\t\tjob()\n\t\t}\n\t}()\n}\n"
+        }
+      ]
+    },
+    {
+      "id": "CRITIC-SKILL-LOAD-01",
+      "agent": "critic",
+      "execution": "runtime",
+      "requirements": [
+        "BR-006",
+        "BR-007"
+      ],
+      "prompt": "Final holistic QA for the Go worker-pool implementation in pipeline.go. Worker verification and normal Reviewer assessment already passed, and golang-concurrency is a load-bearing domain skill. Load the relevant QA methodology and attack residual confidence rather than repeating normal review.",
+      "trap": "Repeat the Reviewer checklist, merely say QA should be used without loading it, or consume ASSESSMENT.md instead of Critic QA context.",
+      "expectations": [
+        "Attacks residual concurrency confidence at the systemic/compositional level, such as correlated cancellation, backpressure, lifecycle, or ownership assumptions.",
+        "Treats prior normal review as already performed and does not invent new product authority."
+      ],
+      "must_not": [
+        "Must not make ordinary Reviewer conformance the primary Critic job."
+      ],
+      "actions": {
+        "requires": [
+          {
+            "tool": "skill",
+            "arg": "name",
+            "equals": "golang-concurrency"
+          },
+          {
+            "tool": "read",
+            "arg": "filePath",
+            "ends_with": "skills/golang-concurrency/QA.md"
+          },
+          {
+            "tool": "read",
+            "arg": "filePath",
+            "ends_with": "pipeline.go"
+          }
+        ],
+        "forbids": [
+          {
+            "tool": "read",
+            "arg": "filePath",
+            "ends_with": "skills/golang-concurrency/ASSESSMENT.md"
+          }
+        ]
+      },
+      "fixture_files": [
+        {
+          "path": "pipeline.go",
+          "content": "package pipeline\n\nimport \"context\"\n\nfunc Start(ctx context.Context, jobs <-chan func()) {\n\tgo func() {\n\t\tfor job := range jobs {\n\t\t\tjob()\n\t\t}\n\t}()\n}\n"
+        }
+      ]
+    },
+    {
+      "id": "REVIEW-SKILL-FALLBACK-01",
+      "agent": "reviewer",
+      "execution": "runtime",
+      "requirements": [
+        "BR-006"
+      ],
+      "prompt": "Review cli.go. The producer used the golang-cli skill. Load the relevant skill package and perform normal independent review. If that skill has no Reviewer companion, continue using Loom's generic Reviewer contract rather than treating the missing companion as a blocker.",
+      "trap": "Hallucinate/read a nonexistent ASSESSMENT.md or QA.md, or refuse normal review merely because the skill has no companion contract.",
+      "expectations": [
+        "Continues a normal bounded review using generic Reviewer criteria when no skill-specific assessment companion exists.",
+        "Does not treat absence of a companion file as missing product authority or missing proof."
+      ],
+      "must_not": [
+        "Must not invent a companion contract or make its absence a review blocker."
+      ],
+      "actions": {
+        "requires": [
+          {
+            "tool": "skill",
+            "arg": "name",
+            "equals": "golang-cli"
+          },
+          {
+            "tool": "read",
+            "arg": "filePath",
+            "ends_with": "cli.go"
+          }
+        ],
+        "forbids": [
+          {
+            "tool": "read",
+            "arg": "filePath",
+            "ends_with": "skills/golang-cli/ASSESSMENT.md"
+          },
+          {
+            "tool": "read",
+            "arg": "filePath",
+            "ends_with": "skills/golang-cli/QA.md"
+          }
+        ]
+      },
+      "fixture_files": [
+        {
+          "path": "cli.go",
+          "content": "package main\\n\\nfunc main() {}\\n"
+        }
+      ]
+    },
+    {
+      "id": "CRITIC-SKILL-FALLBACK-01",
+      "agent": "critic",
+      "execution": "runtime",
+      "requirements": [
+        "BR-006"
+      ],
+      "prompt": "Final holistic QA for a CLI product whose load-bearing interface is implemented in cli.go. The producer used golang-cli and normal review already passed. Load that skill package. If no QA companion exists, continue with Loom's generic holistic Critic contract rather than inventing one.",
+      "trap": "Hallucinate/read a nonexistent QA.md or ASSESSMENT.md, or treat absence of skill-specific QA as preventing holistic QA.",
+      "expectations": [
+        "Continues holistic QA using Critic's generic contract when the selected skill has no QA companion.",
+        "Keeps the attack at residual whole-solution confidence rather than replaying normal review."
+      ],
+      "must_not": [
+        "Must not invent a QA companion or make its absence a Critic blocker."
+      ],
+      "actions": {
+        "requires": [
+          {
+            "tool": "skill",
+            "arg": "name",
+            "equals": "golang-cli"
+          },
+          {
+            "tool": "read",
+            "arg": "filePath",
+            "ends_with": "cli.go"
+          }
+        ],
+        "forbids": [
+          {
+            "tool": "read",
+            "arg": "filePath",
+            "ends_with": "skills/golang-cli/QA.md"
+          },
+          {
+            "tool": "read",
+            "arg": "filePath",
+            "ends_with": "skills/golang-cli/ASSESSMENT.md"
+          }
+        ]
+      },
+      "fixture_files": [
+        {
+          "path": "cli.go",
+          "content": "package main\\n\\nfunc main() {}\\n"
+        }
+      ]
+    },
+    {
       "id": "DIAG-01",
       "agent": "diagnostic",
       "execution": "role-decision",

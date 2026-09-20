@@ -3,6 +3,13 @@ import { join } from "node:path"
 
 export type EvalExecution = "runtime" | "role-decision"
 
+export type ActionAssertion = {
+  tool: string
+  arg: string
+  equals?: string
+  ends_with?: string
+}
+
 export type EvalCase = {
   id: string
   agent: string
@@ -15,6 +22,10 @@ export type EvalCase = {
   tools?: {
     requires?: string[]
     forbids?: string[]
+  }
+  actions?: {
+    requires?: ActionAssertion[]
+    forbids?: ActionAssertion[]
   }
   fixture_files?: Array<{ path: string; content: string }>
 }
@@ -85,6 +96,36 @@ export function validateSuite(suite: EvalSuite, repoRoot: string) {
         const values = item.tools[key]
         if (values !== undefined && (!Array.isArray(values) || values.some((value) => typeof value !== "string" || !value.trim()))) {
           errors.push(`${label}: tools.${key} must be a non-empty string array when present`)
+        }
+      }
+    }
+    if (item.actions) {
+      if (item.execution !== "runtime") {
+        errors.push(`${label}: action assertions require runtime execution`)
+      }
+      for (const key of ["requires", "forbids"] as const) {
+        const values = item.actions[key]
+        if (values === undefined) continue
+        if (!Array.isArray(values)) {
+          errors.push(`${label}: actions.${key} must be an array when present`)
+          continue
+        }
+        for (const [actionIndex, assertion] of values.entries()) {
+          const prefix = `${label}: actions.${key}[${actionIndex}]`
+          if (!assertion || typeof assertion !== "object") {
+            errors.push(`${prefix} must be an object`)
+            continue
+          }
+          if (typeof assertion.tool !== "string" || !assertion.tool.trim()) {
+            errors.push(`${prefix}.tool is required`)
+          }
+          if (typeof assertion.arg !== "string" || !assertion.arg.trim()) {
+            errors.push(`${prefix}.arg is required`)
+          }
+          const comparators = [assertion.equals, assertion.ends_with].filter((value) => value !== undefined)
+          if (comparators.length !== 1 || comparators.some((value) => typeof value !== "string")) {
+            errors.push(`${prefix} requires exactly one string comparator: equals or ends_with`)
+          }
         }
       }
     }
