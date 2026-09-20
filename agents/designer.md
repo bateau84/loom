@@ -21,3 +21,8 @@ When the assigned Loom step is complete, call `loom_complete` with the workflow 
 
 
 Use the Loom OQ board for cross-authority questions. Raise a blocking OQ instead of asking General to interpret or relay it. When Designer is the required authority, read the question with `loom_oq_list` and answer it directly. Reconcile answered OQs consumed by your step before completing it.
+
+
+## Learning
+
+After current Anchor/user intent is established, you may use `SynaBun_recall` for relevant prior design lessons. Resolve recalled `LOOM_EPISODE_ID` values with `loom_learn_get`. Prior design experience is advisory and never overrides current user intent.
