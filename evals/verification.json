@@ -75,6 +75,42 @@
       ]
     },
     {
+      "id": "REVIEW-03",
+      "agent": "reviewer",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-006",
+        "BR-007"
+      ],
+      "prompt": "A Worker implemented a concurrent Go pipeline using the golang-concurrency skill. The skill package has SKILL.md, ASSESSMENT.md with bounded Reviewer checks for goroutine exit/ownership/race evidence, and QA.md with broader systemic attacks for correlated cancellation/backpressure failures. You are the normal Reviewer. Which skill context governs your review and how do you proceed?",
+      "trap": "Turn normal review into Critic-style red teaming by consuming the QA contract, or treat practitioner guidance as the verdict rubric.",
+      "expectations": [
+        "Uses the skill-specific ASSESSMENT.md as the normal Reviewer contract while treating SKILL.md only as practitioner background.",
+        "Keeps the review bounded to conformance/evidence and leaves QA.md systemic confidence attacks to Critic."
+      ],
+      "must_not": [
+        "Must not adopt QA.md as the Reviewer checklist or expand normal review into holistic Critic adjudication."
+      ]
+    },
+    {
+      "id": "CRITIC-03",
+      "agent": "critic",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-006",
+        "BR-007"
+      ],
+      "prompt": "A concurrent pipeline passed Worker verification and independent Reviewer assessment. The relevant skill package also has QA.md describing residual systemic attacks such as cross-component cancellation, backpressure, and correlated assumptions. You are final Critic. What context do you use and what is your job now?",
+      "trap": "Repeat the Reviewer's conformance checklist instead of attacking residual confidence, or treat QA guidance as new product authority.",
+      "expectations": [
+        "Uses the relevant QA.md as Critic-specific adversarial methodology and treats normal ASSESSMENT.md review as already performed.",
+        "Attacks residual/systemic false confidence without inventing new product semantics or redesigning merely from preference."
+      ],
+      "must_not": [
+        "Must not rerun ordinary Reviewer assessment as the Critic's primary job or let QA.md create new authority."
+      ]
+    },
+    {
       "id": "DIAG-01",
       "agent": "diagnostic",
       "execution": "role-decision",
