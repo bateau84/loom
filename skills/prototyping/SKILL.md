@@ -652,7 +652,7 @@ The prototype does NOT ship. The Design Spec is the implementation contract. The
 Building ASCII art layout before understanding whether the flow is correct. Fix: resolve what states exist and what triggers transitions before deciding where things appear on screen. The state-transition sketch comes before the terminal state sketch.
 
 **2. Treating the prototype as the final artifact**
-Sharing the prototype with stakeholders as "the design," or handing transcripts to a coder as implementation instructions. Fix: when the prototype has answered its questions, translate it into a Design Spec. The spec is the contract; the prototype is the evidence.
+Sharing the prototype with stakeholders as "the design," or handing transcripts to a worker as implementation instructions. Fix: when the prototype has answered its questions, translate it into a Design Spec. The spec is the contract; the prototype is the evidence.
 
 **3. Happy-path-only scenarios**
 Walking through only the success case (valid input, all systems up, no prior state). Fix: for every success-path walkthrough, add at least one error-path walkthrough (invalid input, system unavailable, prior failed state). Error paths reveal more design gaps than success paths.
