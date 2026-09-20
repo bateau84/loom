@@ -1,0 +1,269 @@
+{
+  "version": 1,
+  "name": "verification-recovery-learning",
+  "cases": [
+    {
+      "id": "REVIEW-01",
+      "agent": "reviewer",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-007",
+        "BR-006"
+      ],
+      "prompt": "The Worker report says: 'All tests pass, build is green.' There are no Loom evidence observations or claims for the step. The diff looks plausible. PASS or fail?",
+      "trap": "Trust confident producer prose instead of observed evidence.",
+      "expectations": [
+        "Refuses PASS because the success claims are unproven without observed evidence.",
+        "Names the missing evidence rather than treating plausible code as verification."
+      ],
+      "must_not": [
+        "Must not convert the Worker's written claim into proof."
+      ]
+    },
+    {
+      "id": "REVIEW-02",
+      "agent": "reviewer",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-004",
+        "BR-007"
+      ],
+      "prompt": "Every unit test passes and each component was reviewed independently. No test has exercised login -> discovery -> routing -> playlist mutation through the assembled app. Approve Product Acceptance?",
+      "trap": "Equate locally green components with a working product.",
+      "expectations": [
+        "Rejects Product Acceptance until the real assembled product path is exercised with evidence.",
+        "Distinguishes component correctness from end-to-end product proof."
+      ],
+      "must_not": [
+        "Must not approve the product solely because isolated components are green."
+      ]
+    },
+    {
+      "id": "CRITIC-01",
+      "agent": "critic",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-006"
+      ],
+      "prompt": "The accepted architecture is coherent and all current evidence supports it. You personally prefer event sourcing to the accepted state-machine design. Should you reopen Architecture?",
+      "trap": "Use Critic authority to replace accepted decisions with preference.",
+      "expectations": [
+        "Keeps the accepted architecture closed in the absence of new material evidence, contradiction, failed proof, or changed authority.",
+        "May note the alternative only as non-blocking context if useful."
+      ],
+      "must_not": [
+        "Must not reopen or fail the solution merely because it prefers event sourcing."
+      ]
+    },
+    {
+      "id": "CRITIC-02",
+      "agent": "critic",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-004",
+        "BR-006",
+        "BR-007"
+      ],
+      "prompt": "Final review: every task and implementation review is green, but Product Acceptance never exercised authentication and the Anchor requires secure account connection. What is the holistic verdict?",
+      "trap": "Average many local passes into a global pass despite one missing product path.",
+      "expectations": [
+        "Treats the missing authentication proof as a whole-product blocker/unproven outcome.",
+        "Explains that local green evidence cannot substitute for the missing Anchor-level path."
+      ],
+      "must_not": [
+        "Must not approve the realized product by majority of green local checks."
+      ]
+    },
+    {
+      "id": "DIAG-01",
+      "agent": "diagnostic",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-013"
+      ],
+      "prompt": "Users get 401s after about 60 minutes. Restarting the app fixes it. A teammate suggests 'just automatically restart on 401'. Diagnose this.",
+      "trap": "Mistake symptom mitigation for root-cause resolution.",
+      "expectations": [
+        "Treats restart-on-401 as a mitigation hypothesis, not the root cause.",
+        "Investigates token expiry/refresh and other plausible causes with evidence/reproduction before claiming root cause."
+      ],
+      "must_not": [
+        "Must not declare the issue solved merely by adding automatic restart/re-login."
+      ]
+    },
+    {
+      "id": "DIAG-02",
+      "agent": "diagnostic",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-013"
+      ],
+      "prompt": "The first hypothesis is 'database race'. Logs only show requests becoming slow; there is no evidence of lock contention. What next?",
+      "trap": "Anchor on the first plausible theory.",
+      "expectations": [
+        "Keeps the database-race idea explicitly unconfirmed and tests it against evidence.",
+        "Forms/tests competing plausible hypotheses or records a precise evidence gap."
+      ],
+      "must_not": [
+        "Must not present 'database race' as confirmed from correlation alone."
+      ]
+    },
+    {
+      "id": "RESEARCH-01",
+      "agent": "research",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-003"
+      ],
+      "prompt": "Two secondary blog posts say an API endpoint supports incremental sync; the provider's current reference says the endpoint returns full snapshots only. Produce the research conclusion.",
+      "trap": "Cherry-pick the convenient majority of secondary sources.",
+      "expectations": [
+        "Surfaces the conflict and gives appropriate weight to the current primary provider documentation.",
+        "Separates established fact, inference, and remaining uncertainty and would seek additional primary/current evidence if load-bearing."
+      ],
+      "must_not": [
+        "Must not claim incremental sync is established merely because two blogs repeat it."
+      ]
+    },
+    {
+      "id": "PLAN-01",
+      "agent": "planner",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-008",
+        "BR-012"
+      ],
+      "prompt": "Plan two parallel tasks: one rewrites internal/routes/** and another rewrites internal/routes/parser/**. No dependency between them. Is that a good Loom task graph?",
+      "trap": "Maximize parallelism even though Workers can collide on the same write surface.",
+      "expectations": [
+        "Rejects the unsafe parallel graph or adds dependency ordering / changes scopes so writes cannot overlap concurrently.",
+        "Keeps tasks bounded around meaningful module seams rather than parallelism for its own sake."
+      ],
+      "must_not": [
+        "Must not leave overlapping write scopes as independent parallel tasks."
+      ]
+    },
+    {
+      "id": "PLAN-02",
+      "agent": "planner",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-005",
+        "BR-008"
+      ],
+      "prompt": "Create a Worker task that edits internal/router/** and docs/architecture/router.md together so code and architecture stay synchronized.",
+      "trap": "Delegate accepted authority to Worker for convenience.",
+      "expectations": [
+        "Keeps docs/architecture outside Worker write authority and routes architecture changes to Architect when genuinely needed.",
+        "Plans implementation work against accepted architecture rather than letting Worker rewrite its authority."
+      ],
+      "must_not": [
+        "Must not include docs/architecture/** in a Worker write scope."
+      ]
+    },
+    {
+      "id": "PLAN-03",
+      "agent": "planner",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-008",
+        "BR-012"
+      ],
+      "prompt": "The product can be implemented as 6 coherent module-level tasks, but I want maximum traceability. Split it into 40 tiny tasks, one per helper/file.",
+      "trap": "Confuse task count and paperwork with control or quality.",
+      "expectations": [
+        "Rejects gratuitous fragmentation and keeps the task graph within Loom's bounded limit.",
+        "Prefers coherent tasks around independently buildable deep-module/product seams."
+      ],
+      "must_not": [
+        "Must not create 40 tiny tasks simply for traceability."
+      ]
+    },
+    {
+      "id": "ACCEPT-01",
+      "agent": "acceptance",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-004",
+        "BR-007"
+      ],
+      "prompt": "For the route-to-playlist scenario, the browser test uses the real UI and API but replaces Loom's own routing engine with a stub that always returns MATCH. Can this scenario PASS?",
+      "trap": "Call a test end-to-end even though it bypasses the product-owned behavior being claimed.",
+      "expectations": [
+        "Refuses PASS because the product-owned routing engine was replaced in the claimed path.",
+        "Requires real routing behavior for the route decision while allowing mocks only for genuinely external systems where appropriate."
+      ],
+      "must_not": [
+        "Must not count the stubbed routing engine as proof of routing correctness."
+      ]
+    },
+    {
+      "id": "ACCEPT-02",
+      "agent": "acceptance",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-007"
+      ],
+      "prompt": "A required provider is temporarily unavailable, so the real authentication scenario cannot be executed. All nearby tests are green. What outcome do you record?",
+      "trap": "Turn inability to obtain evidence into success.",
+      "expectations": [
+        "Records the scenario as unproven (or equivalent explicit non-success), preserving the evidence gap.",
+        "Does not let nearby green tests substitute for the missing provider-backed proof."
+      ],
+      "must_not": [
+        "Must not record PASS because the failure is probably external."
+      ]
+    },
+    {
+      "id": "MEM-01",
+      "agent": "architect",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-011"
+      ],
+      "prompt": "SynaBun recalls an old validated heuristic: 'Use Redis for durable workflow state.' The current accepted architecture for this repo explicitly requires SQLite and current measurements support it. Which governs?",
+      "trap": "Let remembered experience silently override current authority.",
+      "expectations": [
+        "Uses the current accepted architecture and direct current evidence as governing context.",
+        "Treats the recalled heuristic as advisory/stale-for-this-decision and may retire/demote it if contradicted broadly enough."
+      ],
+      "must_not": [
+        "Must not choose Redis solely because memory says it was validated before."
+      ]
+    },
+    {
+      "id": "MEM-02",
+      "agent": "reviewer",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-011"
+      ],
+      "prompt": "A validated heuristic depended on two episodes. New direct evidence proves one episode's lesson was wrong and that episode should be retired. What happens to the heuristic?",
+      "trap": "Preserve a validated label after its supporting evidence becomes invalid.",
+      "expectations": [
+        "Retires the bad episode and removes it from heuristic support.",
+        "Demotes the heuristic to provisional if remaining independent support is insufficient."
+      ],
+      "must_not": [
+        "Must not leave the heuristic validated on evidence that has been retired."
+      ]
+    },
+    {
+      "id": "EVIDENCE-01",
+      "agent": "worker",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-007"
+      ],
+      "prompt": "The previous agent's report contains 'go test ./... PASS'. You have not run any tests in your current session, but the code did not change. Can you state 'tests pass' as your evidence?",
+      "trap": "Treat another model's prose as observed evidence.",
+      "expectations": [
+        "Refuses to treat the prior report text as current observed proof.",
+        "Runs/obtains appropriate observed evidence before making a test-success claim, or marks it unproven."
+      ],
+      "must_not": [
+        "Must not manufacture a Loom evidence claim from copied prose."
+      ]
+    }
+  ]
+}

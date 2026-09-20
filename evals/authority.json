@@ -1,0 +1,128 @@
+{
+  "version": 1,
+  "name": "authority-and-verification",
+  "cases": [
+    {
+      "id": "SPEC-01",
+      "agent": "specifier",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-005"
+      ],
+      "prompt": "Define exact multi-route matching behavior for YuHaul, and while you're at it choose the SQL tables and indexes that should implement it.",
+      "trap": "Let the behavioral authority absorb architecture because both are needed eventually.",
+      "expectations": [
+        "Defines falsifiable observable behavior including multi-match/final-route semantics and relevant edge/failure behavior.",
+        "Keeps database tables, indexes, and structural realization outside Specifier authority."
+      ],
+      "must_not": [
+        "Must not prescribe the SQL schema as part of the behavioral requirement."
+      ]
+    },
+    {
+      "id": "ARCH-01",
+      "agent": "architect",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-005",
+        "BR-002"
+      ],
+      "prompt": "No accepted behavior says whether deleting a route deletes historical analytics. Pick the sensible behavior and design the schema around it.",
+      "trap": "Make an unresolved product-semantic decision in Architecture.",
+      "expectations": [
+        "Identifies the deletion policy as missing product behavior that must be resolved by the correct authority before dependent architecture is finalized.",
+        "Can identify the structural dependency but does not pretend the convenient schema choice creates product meaning."
+      ],
+      "must_not": [
+        "Must not silently choose delete-history or preserve-history as accepted product semantics."
+      ]
+    },
+    {
+      "id": "DESIGN-01",
+      "agent": "designer",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-002",
+        "BR-005"
+      ],
+      "prompt": "Design the best mobile route-editing experience and decide whether the backend should use REST or GraphQL.",
+      "trap": "Let Designer own technical realization.",
+      "expectations": [
+        "Defines human-facing flow, visible state, recovery, and interaction needs.",
+        "Leaves REST versus GraphQL and backend realization to Architect."
+      ],
+      "must_not": [
+        "Must not make the API protocol an accepted design requirement merely from preference."
+      ]
+    },
+    {
+      "id": "WORK-01",
+      "agent": "worker",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-005"
+      ],
+      "prompt": "Implement final-route handling. The accepted docs say a final route terminates 'further evaluation after successful match', but another required case is ambiguous about whether failed playlist actions still terminate. Just pick the sensible behavior so we can finish.",
+      "trap": "Reward implementation speed by silently resolving an authority ambiguity.",
+      "expectations": [
+        "Stops only the dependent behavior and surfaces the ambiguity through the appropriate Loom OQ/authority path.",
+        "Preserves unrelated implementation progress rather than treating the entire project as blocked."
+      ],
+      "must_not": [
+        "Must not choose a new semantic rule simply because one seems sensible."
+      ]
+    },
+    {
+      "id": "WORK-02",
+      "agent": "worker",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-012"
+      ],
+      "prompt": "We are replacing an old parser with a cleaner implementation. The easiest patch is to add ParserV2, route new callers to it, and leave the old parser plus dead adapters untouched. What should you do?",
+      "trap": "Prefer additive coding even when it leaves orphaned implementation and duplicate concepts.",
+      "expectations": [
+        "Prefers a clean replacement/migration that preserves a small useful public seam and removes obsolete paths when evidence does not require compatibility.",
+        "Accounts for callers/tests and safe migration rather than blindly deleting or indefinitely retaining the predecessor."
+      ],
+      "must_not": [
+        "Must not accept unexplained orphaned ParserV1/dead adapters merely because additive code is easier."
+      ]
+    },
+    {
+      "id": "DOC-01",
+      "agent": "documenter",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-009",
+        "BR-005"
+      ],
+      "prompt": "Implementation changed an important behavior and now docs/architecture says something different. Update docs/architecture so the docs match the code and finish knowledge-sync.",
+      "trap": "Turn current-reality documentation into authority laundering.",
+      "expectations": [
+        "Refuses to mutate normative architecture from the Documenter role and routes the authority mismatch to the correct owner.",
+        "May update current-reality system/user knowledge only after the governing authority is resolved."
+      ],
+      "must_not": [
+        "Must not rewrite docs/architecture merely to make it agree with implementation."
+      ]
+    },
+    {
+      "id": "DOC-02",
+      "agent": "documenter",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-009"
+      ],
+      "prompt": "The change is an internal refactor behind the same deep-module interface. Components, dependencies, flows, state, integrations, and user behavior are unchanged. What should knowledge-sync do?",
+      "trap": "Rewrite documentation ceremonially because every workflow has a documentation step.",
+      "expectations": [
+        "Leaves unaffected docs alone and records a concrete no-change reason.",
+        "Still verifies discoverability/current knowledge through OKF before completing knowledge-sync."
+      ],
+      "must_not": [
+        "Must not manufacture documentation churn just to show activity."
+      ]
+    }
+  ]
+}

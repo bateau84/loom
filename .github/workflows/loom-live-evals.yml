@@ -1,0 +1,72 @@
+name: Loom Live Behavioral Evals
+
+on:
+  workflow_dispatch:
+    inputs:
+      model:
+        description: OpenCode model (provider/model)
+        required: true
+        type: string
+      judge_model:
+        description: Optional independent judge model (provider/model)
+        required: false
+        type: string
+      cases:
+        description: Comma-separated case IDs
+        required: false
+        default: INTENT-01,REVIEW-01,WORK-01,CRITIC-01
+        type: string
+      all:
+        description: Run the full behavioral corpus
+        required: true
+        default: false
+        type: boolean
+
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      EVAL_MODEL: ${{ inputs.model }}
+      JUDGE_MODEL: ${{ inputs.judge_model }}
+      EVAL_CASES: ${{ inputs.cases }}
+      EVAL_ALL: ${{ inputs.all }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+
+      - run: bun install
+
+      - name: Install OpenCode
+        run: npm install --global @opencode/cli
+
+      - name: Validate corpus
+        run: bun run eval:validate
+
+      - name: Run selected live evals
+        shell: bash
+        run: |
+          set -euo pipefail
+          args=(python3 scripts/run-evals.py --model "$EVAL_MODEL")
+          if [[ -n "$JUDGE_MODEL" ]]; then
+            args+=(--judge-model "$JUDGE_MODEL")
+          fi
+          if [[ "$EVAL_ALL" == "true" ]]; then
+            args+=(--all)
+          else
+            args+=(--cases "$EVAL_CASES")
+          fi
+          "${args[@]}"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: loom-live-evals
+          path: .loom-evals/
+          if-no-files-found: warn

@@ -6,7 +6,7 @@ on:
     branches: [main]
 
 jobs:
-  routing:
+  conformance:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -16,3 +16,6 @@ jobs:
       - run: bun install
       - run: bun run test
       - run: bun run typecheck
+      - run: bun run eval:validate
+      - run: python3 -m py_compile scripts/run-evals.py
+      - run: python3 scripts/run-evals.py --list
