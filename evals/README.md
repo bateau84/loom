@@ -80,7 +80,7 @@ bun run eval:live -- \
   --model openai/gpt-5.3-codex-spark
 ```
 
-The harness chooses Podman first, then Docker. Override it explicitly with `--engine podman` or `--engine docker`.
+The harness chooses Podman first, then Docker. Override it explicitly with `--engine podman` or `--engine docker`. For rootless Podman on SELinux hosts, Loom disables container SELinux labeling for the eval container rather than relabeling your repository or credential files.
 
 The harness selects a slim image per transport:
 
