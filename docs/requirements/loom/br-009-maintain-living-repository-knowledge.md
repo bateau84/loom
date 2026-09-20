@@ -16,6 +16,22 @@ Documentation MUST NOT be created or expanded solely because ceremony requires a
 
 Repository knowledge SHOULD use OKF-compatible documents and SHOULD be discoverable through OKF tooling when available.
 
+## Acceptance Criteria
+
+1. Changes that alter documented reality update the affected documentation in the same body of work.
+2. Stable unaffected documentation is not rewritten merely to satisfy process.
+3. Major components, dependencies, data, integrations, flows, and public seams are discoverable from repository knowledge.
+4. Documentation relationships are machine-discoverable through OKF-compatible structure where available.
+5. Documentation describes current reality rather than planned-but-unimplemented behavior without clear status.
+
+## Verification Semantics
+
+Compare representative implementation changes with the knowledge base before and after the change.
+
+Valid proof shows changed facts updated, unchanged facts left alone, and OKF discovery locating the relevant documents.
+
+A documentation-count target, generic architecture prose, or stale documents that merely exist do not satisfy this requirement.
+
 ## Derived from
 
 - [Loom Anchor](../../anchors/loom/anchor.md)
