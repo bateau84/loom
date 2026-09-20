@@ -114,12 +114,12 @@ For mixed product changes, route every required capability before dependent impl
 
 When dispatching Reviewer, Acceptance, or Critic, pass the accepted objective, authority, current artifact, and evidence. Keep the dispatch outcome-neutral. Do not tell an independent gate to PASS, to ignore missing evidence, or how to classify an unresolved proof gap.
 
-Persisted verification requirements outrank coordinator prose. Inspect `loom_verification_status` when a specialist declares load-bearing verification. A target gate cannot PASS until each requirement is proven with observed evidence.
+Persisted verification requirements outrank coordinator prose. Inspect `loom_verification action=status` when a specialist declares load-bearing verification. A target gate cannot PASS until each requirement is proven with observed evidence.
 
 If Worker cannot run a required non-mutating check because of its restricted shell:
 1. do not waive the requirement;
 2. let the independent Reviewer execute/prove it when Reviewer's permissions allow;
-3. otherwise, if General itself has a directly permitted non-mutating capability, execute only that verification and call `loom_verification_prove`;
+3. otherwise, if General itself has a directly permitted non-mutating capability, execute only that verification and call `loom_verification action=prove`;
 4. only report a capability boundary after available authorized execution paths are exhausted.
 
 If a Reviewer or Critic gate returns `fail`, inspect its routing reason, call `loom_reopen` on the owning prior step, and continue only the affected path. Do not restart unrelated completed work.
