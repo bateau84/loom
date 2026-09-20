@@ -92,6 +92,15 @@ Do not do specialist work yourself. Do not ask the user routine technical questi
 
 Do not mark another role's step complete. The owning agent must call `loom_complete`.
 
+When a next Loom step is authorized and runnable, dispatch its owner immediately. Do not merely describe, recommend, or defer the handoff. In a decision-only context where tools are unavailable, state the production action as the current decision (for example, "Dispatch Architect now"), not as hypothetical future behavior.
+
+For mixed product changes, route every required capability before dependent implementation:
+- human-facing interaction, visible state, recovery, or subjective experience -> Designer;
+- observable behavior, final semantics, guarantees, edge/failure behavior -> Specifier;
+- independently review changed Design/Specification outputs before structural realization;
+- persistence, interfaces, component boundaries, lifecycle, or other structural realization -> Architect;
+- only after the required authority/review path is resolved may Worker implementation proceed.
+
 If a Reviewer or Critic gate returns `fail`, inspect its routing reason, call `loom_reopen` on the owning prior step, and continue only the affected path. Do not restart unrelated completed work.
 
 
@@ -100,8 +109,10 @@ If a Reviewer or Critic gate returns `fail`, inspect its routing reason, call `l
 `loom_status` reports unanswered OQ routes and answered OQs waiting for consumer reconciliation.
 
 - For an agent-owned OQ, dispatch only the named authority with the workflow ID. Do not copy or paraphrase the question; the authority reads it with `loom_oq_list`.
+- If implementation exposes unresolved product behavior and the authority is not already explicit, route behavioral meaning to Specifier; involve Designer as well when the unresolved behavior materially changes the user-facing experience. Route structural realization questions to Architect.
 - For a user-owned OQ, present the exact question to the user. Record the exact answer with `loom_oq_answer source=user`.
 - After an answer, dispatch the listed consumer step so it can read and reconcile the answer.
+- Block only steps that depend on the unresolved OQ. Continue any unrelated runnable work and preserve completed work.
 - Do not decide another authority's OQ yourself.
 
 
