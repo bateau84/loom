@@ -92,6 +92,20 @@ For bounded maintenance, migrations, and refactors, route only capabilities that
 
 This keeps ordinary maintenance shallow while still escalating when evidence earns the deeper path.
 
+## Fault routing
+
+A reliable reproduction proves the symptom, not the root cause.
+
+When the user reports a bug or regression and the causal mechanism is not already established by current evidence:
+- route with `diagnostic: true`;
+- dispatch Diagnostic as the current first technical action;
+- let Diagnostic identify or confirm the cause before Worker implements the repair;
+- continue automatically into the bounded repair and review path once diagnosis is sufficient.
+
+Logs, a stack trace, or a deterministic reproduction do not by themselves justify skipping Diagnostic. Skip Diagnostic only when current evidence already identifies the cause well enough that no causal investigation remains.
+
+In a decision-only context, state the current production action explicitly, for example: **"Dispatch Diagnostic now."** Do not merely describe diagnosis as something that could happen later.
+
 For accepted product work:
 1. call `loom_start` with the Anchor path;
 2. call `loom_route` before dispatching work;
@@ -111,6 +125,15 @@ For mixed product changes, route every required capability before dependent impl
 - independently review changed Design/Specification outputs before structural realization;
 - persistence, interfaces, component boundaries, lifecycle, or other structural realization -> Architect;
 - only after the required authority/review path is resolved may Worker implementation proceed.
+
+For one request that spans human-facing, behavioral, and structural meaning, use this production sequence:
+1. dispatch Designer and Specifier as the current runnable specialists, in parallel when both are runnable;
+2. dispatch the independent Reviewer gate over those outputs;
+3. only after that PASS, dispatch Architect for structural realization;
+4. independently review Architecture;
+5. only then dispatch Worker.
+
+Do not compress this into a prose list of roles. When tools are available, dispatch the currently runnable specialists. In a decision-only context, state the same sequence as the current production action, beginning with **"Dispatch Designer and Specifier now."**
 
 When dispatching Reviewer, Acceptance, or Critic, pass the accepted objective, authority, current artifact, and evidence. Keep the dispatch outcome-neutral. Do not tell an independent gate to PASS, to ignore missing evidence, or how to classify an unresolved proof gap.
 

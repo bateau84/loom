@@ -61,6 +61,16 @@ Behavioral cases should resemble normal work, not instructions for passing the e
 - In `runtime` mode, require observed actions when the behavior depends on actually using Loom tools.
 - Keep harness plumbing, marker strings, container details, and judge instructions out of case prompts.
 
+## Benchmark discipline
+
+The behavioral corpus is Loom's model-behavior benchmark.
+
+- When a realistic case fails consistently across fresh runs, change the agent/control-plane behavior by default; do not weaken the case just to make the score green.
+- Change an eval only when independent evidence shows that its scenario, expectation, execution mode, or judge contract is unrealistic or measures harness behavior instead of production behavior.
+- A proposed eval change must be defensible without referring to the model's current failure. "The model does not pass it" is not a reason to change the benchmark.
+- Preserve hard cases that expose recurring production behavior even when they materially lower the aggregate pass rate.
+- Track infrastructure/provider errors separately from behavioral FAIL so transport noise does not change benchmark meaning.
+
 ## Free validation
 
 Normal CI runs:
