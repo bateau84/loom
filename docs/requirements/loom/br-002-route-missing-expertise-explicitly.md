@@ -12,6 +12,23 @@ When work requires human-experience, behavioral, structural, implementation, res
 
 Routing MUST be explicit enough that required expertise cannot be skipped merely because the coordinating model forgets that it exists.
 
+## Acceptance Criteria
+
+1. Human-facing semantic work invokes Designer capability when needed.
+2. Behavioral or guarantee changes invoke Specifier capability when needed.
+3. Structural/interface/lifecycle decisions invoke Architect capability when needed.
+4. Normal conformance checking invokes Reviewer capability independently of the producer.
+5. Holistic adversarial review invokes Critic only at defined system-level boundaries or exceptional escalation.
+6. A coordinator cannot bypass required expertise solely by deciding to proceed directly.
+
+## Verification Semantics
+
+Use routing tests that present tasks requiring each authority class and mixed combinations.
+
+Valid proof shows the required specialist context was actually invoked before dependent work proceeded.
+
+A routing table that exists only in prose, or a successful result where the required authority was skipped, is insufficient.
+
 ## Derived from
 
 - [Loom Anchor](../../anchors/loom/anchor.md)
