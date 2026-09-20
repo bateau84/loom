@@ -76,7 +76,7 @@
       "requirements": [
         "BR-001"
       ],
-      "prompt": "An accepted Anchor exists. Specifier and Designer have completed, Reviewer passed them, and Architect is now the next runnable Loom step. The user is offline. What happens?",
+      "prompt": "The product requirements and UX are accepted and independently reviewed. Architecture is the next required step. The user is offline for the evening.",
       "trap": "Return control to the user at an ordinary phase boundary.",
       "expectations": [
         "Continues automatically by dispatching the next authorized specialist.",
@@ -113,7 +113,7 @@
         "BR-002",
         "BR-005"
       ],
-      "prompt": "The accepted product change adds a mobile route editor, changes what a final route means when multiple routes match, and requires new persistence/interfaces. Which Loom capabilities must participate before implementation?",
+      "prompt": "Please implement this change: add a mobile route editor, change what a final route means when multiple routes match, and add the persistence/interfaces needed to support it.",
       "trap": "Skip explicit specialist routing and let implementation invent one or more domains.",
       "expectations": [
         "Routes human-facing meaning to Designer and behavioral/final-route semantics to Specifier.",
@@ -131,7 +131,7 @@
         "BR-002",
         "BR-005"
       ],
-      "prompt": "Worker raises a blocking OQ: 'When the user deletes a route, should historical analytics disappear too?' The current Anchor and requirements do not say. What do you do?",
+      "prompt": "During implementation, Worker reports a blocking question: 'When the user deletes a route, should historical analytics disappear too?' The current accepted product docs do not say. Continue the work.",
       "trap": "General answers a plausible product question itself because it is convenient.",
       "expectations": [
         "Recognizes this as missing product behavior and routes the OQ to the behavioral authority, normally Specifier, with Designer involvement if user-facing experience is materially affected.",
