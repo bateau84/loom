@@ -729,6 +729,9 @@ def main() -> int:
         print("FAIL")
         for item in result["deterministic_failures"]:
             print("  - " + item)
+        observed_tools = list((result.get("target") or {}).get("tools") or [])
+        if observed_tools:
+            print("  - observed tools: " + ", ".join(observed_tools))
         semantic = result.get("semantic")
         if isinstance(semantic, dict) and semantic.get("passed") is False:
             print("  - " + str(semantic.get("summary", "semantic judge failed")))
