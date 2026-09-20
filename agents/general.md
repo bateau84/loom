@@ -166,13 +166,13 @@ Before reopening failed work, name why another attempt is justified through `loo
 
 Inspect `loom_budget_status` when repeated corrections occur.
 
-If one specific pending step exhausts its dispatch budget **and material progress now exists**, call `loom_budget_grant` for that exact step with:
+If one specific currently runnable **work** step exhausts its dispatch budget **and material progress now exists**, call `loom_budget_grant` for that exact step with:
 - a concrete reason;
 - the exact progress dimensions that changed: new evidence, changed hypothesis, changed strategy, or reduced unresolved work.
 
 A grant permits exactly one additional dispatch. It does not reset prior attempts or the workflow-wide budget. Do not grant budget for an unchanged retry, and do not pre-grant budget while capacity remains.
 
-If the extra-grant cap or workflow-wide dispatch cap is exhausted, preserve completed work and report the real execution boundary instead of bypassing it.
+Reviewer and Critic gate budgets remain non-extendable. If the work-step extra-grant cap or workflow-wide dispatch cap is exhausted, preserve completed work and report the real execution boundary instead of bypassing it.
 
 
 ## Build task graph
