@@ -48,6 +48,7 @@ describe("Loom routing DAG", () => {
       "critic-solution",
       "plan",
       "review-implementation",
+      "knowledge-sync",
       "product-acceptance",
       "designer-validation",
       "review-product",
@@ -97,6 +98,7 @@ describe("Loom routing DAG", () => {
 
     expect(runnable(w).map((step) => step.id).sort()).toEqual([
       "designer-validation",
+      "knowledge-sync",
       "product-acceptance",
     ])
   })
@@ -137,6 +139,24 @@ describe("Loom routing DAG", () => {
     expect(runnable(w).map((step) => step.id)).toEqual(["task:db"])
     finishStep(w, "task:db", "worker", "complete", "db done")
     expect(runnable(w).map((step) => step.id)).toEqual(["task:api"])
+  })
+
+  test("structural maintenance receives knowledge sync even without full product acceptance", () => {
+    const w = workflow(buildSteps({
+      humanFacing: false,
+      behavioral: false,
+      structural: true,
+      externalUnknown: false,
+      diagnostic: false,
+      productOutcome: false,
+    }))
+
+    finishStep(w, "architect", "architect", "complete", "architecture updated")
+    finishStep(w, "review-architecture", "reviewer", "pass", "architecture pass")
+    finishStep(w, "worker", "worker", "complete", "implementation done")
+    finishStep(w, "review-implementation", "reviewer", "pass", "implementation pass")
+
+    expect(runnable(w).map((step) => step.id)).toEqual(["knowledge-sync"])
   })
 
   test("failed review blocks downstream work", () => {
