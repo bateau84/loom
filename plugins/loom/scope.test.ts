@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { validateWriteScope } from "./scope"
+import { resourceMatchesScope, resourcesWithinScope, validateWriteScope } from "./scope"
 
 describe("Loom worker write scopes", () => {
   test("accepts bounded product paths", () => {
@@ -24,5 +24,16 @@ describe("Loom worker write scopes", () => {
   test("rejects path escape", () => {
     expect(() => validateWriteScope(["../other/**"])).toThrow()
     expect(() => validateWriteScope(["/tmp/**"])).toThrow()
+  })
+
+  test("matches relative scope against normalized edit resources", () => {
+    expect(resourceMatchesScope("src/app/main.go", "src/**")).toBe(true)
+    expect(resourceMatchesScope("/workspace/project/src/app/main.go", "src/**")).toBe(true)
+    expect(resourceMatchesScope("docs/requirements/x.md", "src/**")).toBe(false)
+  })
+
+  test("all edited resources must fit declared scope", () => {
+    expect(resourcesWithinScope(["src/a.go", "src/b.go"], ["src/**"])).toBe(true)
+    expect(resourcesWithinScope(["src/a.go", "README.md"], ["src/**"])).toBe(false)
   })
 })
