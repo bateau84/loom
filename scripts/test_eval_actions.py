@@ -136,29 +136,94 @@ class SkillOwnedEvalDiscoveryTests(unittest.TestCase):
             },
         )
 
-    def test_skill_owned_project_uses_synthetic_skill_loading_agent(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            eval_path = Path(tmp) / "skills" / "demo-skill" / "evals" / "custom.json"
-            eval_path.parent.mkdir(parents=True)
-            raw = {
-                "id": "one",
-                "prompt": "answer using the method",
-                "expectations": ["uses the method"],
-            }
-            case = RUN_EVALS.normalize_skill_eval_case("demo-skill", raw, eval_path, 0)
+    def test_skill_ablation_isolates_baseline_from_candidate_skill(self):
+        case = next(
+            case
+            for case in RUN_EVALS.load_skill_owned_cases(RUN_EVALS.ROOT / "skills")
+            if case["skill"] == "web-ui-design"
+        )
 
-        temp, target_project, _, = RUN_EVALS.setup_projects(case)
+        temp, baseline_project, candidate_project, _ = RUN_EVALS.setup_skill_ablation_projects(case)
         try:
-            agent = (
-                target_project
+            baseline_skill = baseline_project / ".opencode" / "skills" / "web-ui-design"
+            candidate_skill = candidate_project / ".opencode" / "skills" / "web-ui-design"
+            baseline_agent = (
+                baseline_project
+                / ".opencode"
+                / "agents"
+                / f"{RUN_EVALS.SKILL_BASELINE_AGENT}.md"
+            ).read_text(encoding="utf-8")
+            candidate_agent = (
+                candidate_project
                 / ".opencode"
                 / "agents"
                 / f"{RUN_EVALS.SKILL_EVAL_AGENT}.md"
             ).read_text(encoding="utf-8")
-            self.assertIn("Load the native skill `demo-skill` before answering", agent)
+
+            self.assertFalse(baseline_skill.exists())
+            self.assertTrue((candidate_skill / "SKILL.md").is_file())
+            self.assertEqual(
+                [path.name for path in (candidate_project / ".opencode" / "skills").iterdir()],
+                ["web-ui-design"],
+            )
+            self.assertIn("normal model capability", baseline_agent)
+            self.assertIn("Load the native skill `web-ui-design` before answering", candidate_agent)
         finally:
             import shutil
             shutil.rmtree(temp, ignore_errors=True)
+
+    def test_semantic_behavior_score_counts_positive_negative_and_trap(self):
+        grade = {
+            "expectations": [
+                {"expectation": "a", "met": True, "reason": "yes"},
+                {"expectation": "b", "met": False, "reason": "no"},
+            ],
+            "violations": [
+                {"rule": "c", "violated": False, "reason": "safe"},
+            ],
+            "trap_observed": False,
+            "trap_evidence": "not present",
+            "passed": False,
+        }
+
+        self.assertEqual(
+            RUN_EVALS.semantic_behavior_score(grade, trap_declared=True),
+            0.75,
+        )
+
+    def test_skill_value_distinguishes_improvement_and_regression(self):
+        self.assertEqual(
+            RUN_EVALS.classify_skill_value(25.0, trap_fixed=False, trap_regression=False),
+            "material-improvement",
+        )
+        self.assertEqual(
+            RUN_EVALS.classify_skill_value(4.0, trap_fixed=False, trap_regression=False),
+            "improvement",
+        )
+        self.assertEqual(
+            RUN_EVALS.classify_skill_value(0.0, trap_fixed=True, trap_regression=False),
+            "material-improvement",
+        )
+        self.assertEqual(
+            RUN_EVALS.classify_skill_value(20.0, trap_fixed=False, trap_regression=True),
+            "regression",
+        )
+
+    def test_judge_schema_requires_explicit_trap_grade(self):
+        good = {
+            "passed": True,
+            "expectations": [],
+            "violations": [],
+            "trap_observed": False,
+            "trap_evidence": "not observed",
+            "summary": "ok",
+        }
+        self.assertEqual(RUN_EVALS.parse_judge(json.dumps(good)), good)
+
+        bad = dict(good)
+        bad.pop("trap_observed")
+        with self.assertRaisesRegex(ValueError, "trap_observed"):
+            RUN_EVALS.parse_judge(json.dumps(bad))
 
 
 
