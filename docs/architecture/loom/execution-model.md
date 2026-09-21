@@ -30,10 +30,12 @@ Loom's repository is the global OpenCode config directory. Agent files therefore
 - **research** — sourced investigation and external knowledge.
 - **diagnostic** — root-cause investigation.
 - **acceptance** — executes real end-to-end Product Acceptance scenarios and records observed proof.
-- **planner** — disposable decomposition context that turns an accepted solution into a bounded executable Worker DAG.
+- **planner** — disposable decomposition context that turns an accepted Objective into Phase/Wave/Task decomposition plus a bounded executable Worker DAG.
 - **documenter** — maintains current system/user knowledge after implementation changes and verifies it through OKF.
 
-Planner is an execution context, not a product authority or gate owner. The executable DAG lives in Loom workflow state; a separate Plan document is not required unless the product itself needs one.
+Planner is an execution context, not a product authority or gate owner. Objective identity and completion meaning come from accepted authority before Planner. Planner may decompose inside that Objective, but may not redefine it.
+
+For Planner-driven product work, the control plane materializes Planner output into persistent Objective/Phase/Wave/Task work state plus the executable dependency DAG. Workflow state remains the bounded execution view over that work. A separate Plan document is not required unless the product itself needs one.
 
 ## Fresh Context
 
