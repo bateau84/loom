@@ -12,7 +12,7 @@ jobs:
   conformance:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - name: Smoke test pinned eval-runner action/runtime pair
         uses: bateau84/opencode-eval-runner@bd02908d134ccec81d4497604b7b115606cf9b45
         with:
@@ -24,7 +24,7 @@ jobs:
             opencode-eval-runner --help
             docker image inspect "$OPENCODE_EVAL_RUNNER_OPENCODE_IMAGE" >/dev/null
             docker image inspect "$OPENCODE_EVAL_RUNNER_COPILOT_IMAGE" >/dev/null
-      - uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
           bun-version: 1.4.2
       - run: bun install
