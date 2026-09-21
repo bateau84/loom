@@ -12,7 +12,7 @@ on:
         required: false
         type: string
       target_transport:
-        description: Target model transport
+        description: Target model transport. Skill eval targets require opencode.
         required: true
         default: opencode
         type: choice
@@ -37,7 +37,7 @@ on:
           - agent
           - skill
       target:
-        description: Optional comma-separated agent or skill names (for example reviewer or golang-concurrency)
+        description: Optional comma-separated agent or skill names. Skill names discover every *.json under skills/<skill>/evals/.
         required: false
         default: ""
         type: string
