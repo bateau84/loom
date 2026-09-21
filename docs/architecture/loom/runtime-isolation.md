@@ -304,14 +304,15 @@ Migration and upgrade strategy:
 3. future canonical-store schema changes run as ordered, idempotent, transactionally recorded upgrade steps with durable receipts;
 4. new writes use the scoped namespace only;
 5. reads may perform a bounded legacy lookup when the scoped record is absent;
-6. a legacy record is migrated when its project can be established unambiguously from stored workflow metadata **or** from exact resumed-session continuity supplied by the OpenCode host; canonical path alone is never sufficient proof after path reuse;
+6. a legacy record is migrated when its project can be established unambiguously from stored workflow metadata, from exact resumed-session continuity supplied by the OpenCode host, **or from an already-canonical scoped workflow for that exact legacy workflow binding**; canonical path alone is never sufficient proof after path reuse;
 7. resumed-session continuity requires the exact legacy session binding, exact resumed OpenCode session ID, matching OpenCode project identity, and no conflicting stored Loom project epoch;
-8. free-form user/model confirmation is not provenance and cannot authorize migration;
-9. migration runs under the same cross-process mutation guard as the destination aggregate;
-10. ambiguous or conflicting legacy records are reported, not merged;
-11. successful continuity reconciliation writes a durable receipt identifying the target project epoch and hashed source session;
-12. once migrated, the scoped record becomes canonical and future mutations never update the legacy execution key;
-13. migration tests include identical Anchor paths, stale/path-reuse, resumed pre-upgrade sessions, mismatched sessions, and conflicting project provenance.
+8. after one pre-epoch workflow is safely canonicalized, its scoped `projectId` is durable provenance for additional legacy sessions whose stored `session/<sessionId>` binding names that exact workflow. Missing host project metadata may then be tolerated, but an explicit host-project mismatch, a different workflow, or conflicting legacy project epoch is still refused;
+9. free-form user/model confirmation is not provenance and cannot authorize migration;
+10. migration runs under the same cross-process mutation guard as the destination aggregate;
+11. ambiguous or conflicting legacy records are reported, not merged;
+12. successful continuity/canonical-workflow reconciliation writes a durable receipt identifying the target project epoch, hashed source session, and provenance kind;
+13. once migrated, the scoped record becomes canonical and future mutations never update the legacy execution key;
+14. migration tests include identical Anchor paths, stale/path-reuse, resumed pre-upgrade sessions, secondary legacy sessions bound to an admitted canonical workflow, unrelated workflows, mismatched sessions, and conflicting project provenance.
 
 Migration is a compatibility mechanism, not a permanent dual-authority mode. The runtime-schema ledger is the mechanism for future upgrades; per-session legacy reconciliation exists only where an older schema did not record enough project identity for an eager installation-wide migration.
 
