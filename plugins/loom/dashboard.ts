@@ -365,12 +365,26 @@ async function workflowProjection(
     .map((entry) => parseSessionId(entry.key))
     .sort()
   const scenarios = acceptance?.scenarios ?? []
+  const questionValues = questions
+    .map((entry) => entry.value as OpenQuestion)
+    .filter((question): question is OpenQuestion => Boolean(question?.id))
   const recentActivityAt = latestTimestamp(
     [
       workflow.createdAt,
       work?.updatedAt,
       knowledge?.recordedAt,
       ...scenarios.map((scenario) => scenario.recordedAt),
+      ...questionValues.flatMap((question) => [
+        question.createdAt,
+        question.answer?.at,
+        question.reopened?.at,
+        ...Object.values(question.reconciliations ?? {}).map((reconciliation) => reconciliation.at),
+      ]),
+      ...(workflow.verification ?? []).flatMap((requirement) => [
+        requirement.createdAt,
+        requirement.proof?.provedAt,
+      ]),
+      ...(budget?.grants ?? []).map((grant) => grant.grantedAt),
     ],
     workflow.createdAt,
   )
@@ -384,9 +398,7 @@ async function workflowProjection(
     currentSteps: ready.map(summary),
     runnableSteps: ready.map(summary),
     ...(work ? { hierarchyProgress: hierarchyProgress(work) } : {}),
-    openOqCount: questions
-      .map((entry) => entry.value as OpenQuestion)
-      .filter((question) => question?.status !== "closed").length,
+    openOqCount: questionValues.filter((question) => question.status !== "closed").length,
     openVerificationCount: (workflow.verification ?? []).filter(
       (requirement) => requirement.status === "open",
     ).length,
