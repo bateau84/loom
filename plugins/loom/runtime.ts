@@ -1064,28 +1064,116 @@ async function copyStoragePrefix(
   return copied
 }
 
+function runtimeUpgradePath(
+  steps: RuntimeUpgradeStep[],
+  fromVersion: number,
+  targetVersion: number,
+): RuntimeUpgradeStep[] {
+  const byFrom = new Map<number, RuntimeUpgradeStep>()
+  for (const step of steps) {
+    if (
+      !step.id ||
+      !Number.isSafeInteger(step.fromVersion) ||
+      !Number.isSafeInteger(step.toVersion) ||
+      step.toVersion <= step.fromVersion ||
+      (typeof step.applyInstallation !== "function" && typeof step.applyProject !== "function")
+    ) {
+      throw new Error(`Invalid Loom runtime upgrade step: ${step.id || "<unnamed>"}`)
+    }
+    if (byFrom.has(step.fromVersion)) {
+      throw new Error(`Multiple Loom runtime upgrades start at version ${step.fromVersion}.`)
+    }
+    byFrom.set(step.fromVersion, step)
+  }
+
+  const path: RuntimeUpgradeStep[] = []
+  let version = fromVersion
+  while (version < targetVersion) {
+    const step = byFrom.get(version)
+    if (!step || step.toVersion > targetVersion) {
+      throw new Error(
+        `No Loom runtime upgrade path from version ${version} to ${targetVersion}.`,
+      )
+    }
+    path.push(step)
+    version = step.toVersion
+  }
+  return path
+}
+
+async function upgradeLateLegacyImport(
+  target: RawStorage,
+  runtime: LoomRuntimeIdentity,
+  targetVersion: number,
+  steps: RuntimeUpgradeStep[],
+) {
+  if (targetVersion <= RUNTIME_BASELINE_VERSION) return [] as string[]
+
+  const applied: string[] = []
+  for (const step of runtimeUpgradePath(steps, RUNTIME_BASELINE_VERSION, targetVersion)) {
+    if (step.applyInstallation) {
+      await step.applyInstallation(createInstallationUpgradeStorage(target), runtime)
+    }
+    if (step.applyProject) {
+      await step.applyProject(
+        createProjectUpgradeStorage(target, runtime.projectId),
+        runtime.projectId,
+        runtime,
+      )
+    }
+    applied.push(step.id)
+  }
+  return applied
+}
+
 export async function importLegacyPluginStorage(
   source: RawStorage,
   target: RawStorage,
   runtime: LoomRuntimeIdentity,
+  options: {
+    targetVersion?: number
+    steps?: RuntimeUpgradeStep[]
+  } = {},
 ): Promise<number> {
   const markerKey = `installation/plugin-storage-import-v1/${runtime.projectId}`
   if (await target.get(markerKey)) return 0
 
-  return withRuntimeLock(runtime, "migration", "plugin-storage-import-v1", async () => {
-    if (await target.get(markerKey)) return 0
-    let copied = 0
-    copied += await copyStoragePrefix(source, target, `project/${runtime.projectId}/`)
-    copied += await copyStoragePrefix(source, target, "episode/")
-    copied += await copyStoragePrefix(source, target, "heuristic/")
-    await target.set(markerKey, {
-      schemaVersion: 1,
-      projectId: runtime.projectId,
-      importedAt: new Date().toISOString(),
-      copied,
-    })
-    return copied
-  })
+  return withInstallationRuntimeLock(
+    runtime,
+    "migration",
+    "plugin-storage-import-v1",
+    async () => {
+      const targetVersion = options.targetVersion ?? RUNTIME_STATE_VERSION
+      const schema = await assertRuntimeStateVersion(target, targetVersion)
+      if (await target.get(markerKey)) return 0
+
+      let copied = 0
+      copied += await copyStoragePrefix(source, target, `project/${runtime.projectId}/`)
+      copied += await copyStoragePrefix(source, target, "episode/")
+      copied += await copyStoragePrefix(source, target, "heuristic/")
+
+      const appliedUpgradeIds =
+        copied > 0
+          ? await upgradeLateLegacyImport(
+              target,
+              runtime,
+              schema.currentVersion,
+              options.steps ?? RUNTIME_UPGRADE_STEPS,
+            )
+          : []
+
+      await target.set(markerKey, {
+        schemaVersion: 1,
+        projectId: runtime.projectId,
+        importedAt: new Date().toISOString(),
+        copied,
+        sourceRuntimeVersion: RUNTIME_BASELINE_VERSION,
+        targetRuntimeVersion: schema.currentVersion,
+        appliedUpgradeIds,
+      })
+      return copied
+    },
+  )
 }
 
 export type LegacyMigrationProvenance =

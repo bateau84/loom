@@ -424,6 +424,107 @@ describe("Loom runtime upgrade ledger", () => {
 
 })
 
+describe("Loom late legacy import upgrades", () => {
+  test("legacy plugin state imported after the installation advances is upgraded before becoming canonical", async () => {
+    await withRoots(async (root) => {
+      const legacy = new MemoryStorage()
+      const project = join(root, "late-import-project")
+      await mkdir(project, { recursive: true })
+      const runtime = await resolveRuntimeIdentity(project, legacy as any)
+      const target = await createTransactionalStorage(runtime)
+
+      const steps = [{
+        id: "test-late-import-v1-to-v2",
+        fromVersion: 1,
+        toVersion: 2,
+        applyInstallation: async (storage: any) => {
+          const episode = await storage.get("episode/e1")
+          if (episode) await storage.set("episode/e1", { ...(episode as any), format: 2 })
+        },
+        applyProject: async (storage: any) => {
+          const workflow = await storage.get("workflow/w")
+          if (workflow) await storage.set("workflow/w", { ...(workflow as any), format: 2 })
+        },
+      }]
+
+      await ensureRuntimeStateVersion(target, runtime, { targetVersion: 2, steps })
+
+      await legacy.set(`project/${runtime.projectId}/workflow/w`, {
+        id: "w",
+        format: 1,
+      })
+      await legacy.set("episode/e1", { id: "e1", format: 1 })
+
+      const copied = await importLegacyPluginStorage(legacy as any, target, runtime, {
+        targetVersion: 2,
+        steps,
+      })
+
+      expect(copied).toBe(2)
+      expect(await target.get(`project/${runtime.projectId}/workflow/w`)).toEqual({
+        id: "w",
+        format: 2,
+      })
+      expect(await target.get("episode/e1")).toEqual({ id: "e1", format: 2 })
+      expect(
+        await target.get(`installation/plugin-storage-import-v1/${runtime.projectId}`),
+      ).toMatchObject({
+        sourceRuntimeVersion: 1,
+        targetRuntimeVersion: 2,
+        appliedUpgradeIds: ["test-late-import-v1-to-v2"],
+      })
+      expect(await target.get("installation/runtime-schema")).toMatchObject({
+        currentVersion: 2,
+      })
+    })
+  })
+
+  test("failed late-import transformation rolls back copied legacy state and import marker", async () => {
+    await withRoots(async (root) => {
+      const legacy = new MemoryStorage()
+      const project = join(root, "late-import-failure-project")
+      await mkdir(project, { recursive: true })
+      const runtime = await resolveRuntimeIdentity(project, legacy as any)
+      const target = await createTransactionalStorage(runtime)
+
+      let failLateImport = false
+      const steps = [{
+        id: "test-late-import-failure-v1-to-v2",
+        fromVersion: 1,
+        toVersion: 2,
+        applyProject: async (storage: any) => {
+          const workflow = await storage.get("workflow/w")
+          if (!workflow) return
+          await storage.set("workflow/w", { ...(workflow as any), format: 2 })
+          if (failLateImport) throw new Error("late import transform failure")
+        },
+      }]
+
+      await ensureRuntimeStateVersion(target, runtime, { targetVersion: 2, steps })
+      failLateImport = true
+      await legacy.set(`project/${runtime.projectId}/workflow/w`, {
+        id: "w",
+        format: 1,
+      })
+
+      await expect(
+        importLegacyPluginStorage(legacy as any, target, runtime, {
+          targetVersion: 2,
+          steps,
+        }),
+      ).rejects.toThrow("late import transform failure")
+
+      expect(await target.get(`project/${runtime.projectId}/workflow/w`)).toBeUndefined()
+      expect(
+        await target.get(`installation/plugin-storage-import-v1/${runtime.projectId}`),
+      ).toBeUndefined()
+      expect(await target.get("installation/runtime-schema")).toMatchObject({
+        currentVersion: 2,
+      })
+    })
+  })
+})
+
 describe("Loom crash-safe durable storage", () => {
   test("crash inside a workflow transaction rolls back every aggregate key", async () => {
     await withRoots(async (root) => {
