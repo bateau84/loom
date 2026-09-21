@@ -35,7 +35,7 @@ The same relative Anchor path, Objective id, Task id, or other local identifier 
 11. Reopen, retry, failure, budget exhaustion, Product Acceptance, and completion in one compartment do not change another compartment.
 12. Project identity creation is race-safe across processes: simultaneous first-open cannot create two durable identities for one project.
 13. Project identity detects both path reuse and copied-marker collisions. A different project epoch appearing at a previously used canonical path, or a copied project marker appearing at a second still-existing root, cannot silently share/inherit the wrong namespace.
-14. Existing single-session state can survive Loom upgrades without silently merging ambiguous records. A restarted OpenCode session MAY reconcile its own pre-project-epoch Loom binding when the host proves the exact same session ID and OpenCode project identity; path-only inference or model-supplied confirmation is insufficient, and conflicting project provenance is always refused.
+14. Existing single-session state can survive Loom upgrades without silently merging ambiguous records. A restarted OpenCode session MAY reconcile its own pre-project-epoch Loom binding when the host proves the exact same session ID and OpenCode project identity. After that exact workflow is canonicalized into the current project epoch, additional legacy sessions with durable pre-upgrade bindings to that exact workflow MAY reconcile through the canonical workflow's project identity even when an older host session lacks project metadata. This never authorizes a different workflow, another project, path-only inference, or model-supplied confirmation, and conflicting stored project provenance is always refused.
 15. A session cannot silently switch from workflow A to workflow B. Rebinding is a Loom-controlled transition; it invalidates the previous step attachment and prevents selectors from the old binding being treated as current authority.
 16. A cross-process mutation commit is crash-safe at the durable-record boundary: observers after abrupt process loss see either the complete previous generation or the complete new generation, never a torn/partial record.
 
@@ -61,7 +61,7 @@ Use deterministic multi-project/multi-session tests with at least:
 - symlink/worktree/project-move cases consistent with the defined project-identity rules;
 - controlled session rebinding from a terminal/released workflow to another workflow, proving the old step attachment no longer authorizes access;
 - fault injection during guarded persistence, proving a reader observes either the old complete record or the new complete record, never a partially written generation;
-- an in-progress pre-upgrade OpenCode session restarted after a Loom upgrade, proving its exact legacy session/workflow binding is reconciled into the new project epoch while a different session, different project, or conflicting stored project epoch is refused.
+- an in-progress pre-upgrade OpenCode session restarted after a Loom upgrade, proving its exact legacy session/workflow binding is reconciled into the new project epoch; then a second legacy session durably bound to that same now-canonical workflow can reconcile without laundering an unrelated workflow, another project, or conflicting stored project epoch.
 
 Valid proof shows independent state snapshots, intended same-workflow sharing, explicit rejection of unrelated compartment access, and serialized cross-process mutation.
 
