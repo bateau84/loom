@@ -1,0 +1,80 @@
+name: PR48 Skill Eval Smoke
+
+on:
+  push:
+    branches:
+      - feature/action-skill-evals
+    paths:
+      - .github/workflows/pr48-skill-eval-smoke.yml
+
+permissions:
+  contents: read
+  copilot-requests: write
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+
+      - run: bun install
+
+      - name: Materialize optional OpenCode auth
+        shell: bash
+        env:
+          OPENCODE_AUTH_JSON: ${{ secrets.OPENCODE_AUTH_JSON }}
+        run: |
+          set -euo pipefail
+          if [[ -n "${OPENCODE_AUTH_JSON:-}" ]]; then
+            install -m 700 -d "$RUNNER_TEMP/loom-opencode-auth"
+            printf '%s' "$OPENCODE_AUTH_JSON" > "$RUNNER_TEMP/loom-opencode-auth/auth.json"
+            chmod 600 "$RUNNER_TEMP/loom-opencode-auth/auth.json"
+            echo "OPENCODE_EVAL_RUNNER_AUTH=$RUNNER_TEMP/loom-opencode-auth/auth.json" >> "$GITHUB_ENV"
+          fi
+
+      - name: Materialize optional OpenCode model catalog
+        shell: bash
+        env:
+          OPENCODE_MODELS_JSON: ${{ secrets.OPENCODE_MODELS_JSON }}
+        run: |
+          set -euo pipefail
+          if [[ -n "${OPENCODE_MODELS_JSON:-}" ]]; then
+            install -m 700 -d "$RUNNER_TEMP/loom-opencode-models"
+            printf '%s' "$OPENCODE_MODELS_JSON" > "$RUNNER_TEMP/loom-opencode-models/models.json"
+            chmod 600 "$RUNNER_TEMP/loom-opencode-models/models.json"
+            echo "OPENCODE_EVAL_RUNNER_MODELS=$RUNNER_TEMP/loom-opencode-models/models.json" >> "$GITHUB_ENV"
+          fi
+
+      - name: Run three skill eval smoke cases
+        uses: bateau84/opencode-eval-runner@bd02908d134ccec81d4497604b7b115606cf9b45
+        with:
+          engine: docker
+          opencode-image: ghcr.io/bateau84/opencode-eval-runner@sha256:279af644d0d05a17fecc0a277dc9648e0d03fb7d3c74a1f0fa05303c8c552f83
+          copilot-image: ghcr.io/bateau84/opencode-eval-runner@sha256:fbc8f007ff339c6a6d47d4b1113874084cbf0eb7e62c7bb69bf9ccd70cdae799
+          prepare-opencode: true
+          prepare-copilot: true
+          artifact-dir: .loom-evals
+          command: |
+            python3 scripts/run-evals.py \
+              --cases SKILL-GO-CONC-01,SKILL-ARCH-DESIGN-01,SKILL-AUTHORING-01 \
+              --model openai/gpt-5.5 \
+              --target-transport opencode \
+              --judge-transport github-copilot-cli \
+              --judge-model gpt-5.4 \
+              --engine docker
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pr48-skill-eval-smoke
+          path: .loom-evals/
+          if-no-files-found: warn
