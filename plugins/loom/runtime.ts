@@ -1008,6 +1008,8 @@ function validHostSessionResumeProof(
   },
 ) {
   return (
+    input.sessionProjectId.length > 0 &&
+    input.currentProjectId.length > 0 &&
     input.sessionProjectId === input.currentProjectId &&
     input.resumeProof?.kind === "opencode-host-session" &&
     input.resumeProof.sessionId === input.sessionId &&
