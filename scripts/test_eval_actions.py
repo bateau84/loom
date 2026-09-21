@@ -343,13 +343,20 @@ class EvidenceRedactionTests(unittest.TestCase):
     def test_redacts_environment_auth_and_database_credentials(self):
         env_secret = "sk-env-secret-123456"
         auth_secret = "auth-access-secret-234567"
+        key_secret = "auth-key-secret-456789"
         db_secret = "db-refresh-secret-345678"
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             auth = root / "auth.json"
             auth.write_text(
-                json.dumps({"openai": {"type": "oauth", "access": auth_secret}}),
+                json.dumps({
+                    "openai": {
+                        "type": "oauth",
+                        "access": auth_secret,
+                        "key": key_secret,
+                    }
+                }),
                 encoding="utf-8",
             )
             database = root / "opencode.db"
@@ -373,10 +380,11 @@ class EvidenceRedactionTests(unittest.TestCase):
 
         self.assertIn(env_secret, secrets)
         self.assertIn(auth_secret, secrets)
+        self.assertIn(key_secret, secrets)
         self.assertIn(db_secret, secrets)
 
         result = {
-            "text": f"{env_secret} {auth_secret}",
+            "text": f"{env_secret} {auth_secret} {key_secret}",
             "actions": [{"tool": "bash", "args": {"value": db_secret}}],
             "stdout": f"raw {env_secret} {db_secret}",
         }
@@ -384,6 +392,7 @@ class EvidenceRedactionTests(unittest.TestCase):
         encoded = json.dumps(redacted)
         self.assertNotIn(env_secret, encoded)
         self.assertNotIn(auth_secret, encoded)
+        self.assertNotIn(key_secret, encoded)
         self.assertNotIn(db_secret, encoded)
         self.assertIn("***REDACTED***", encoded)
 
