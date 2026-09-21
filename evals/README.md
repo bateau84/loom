@@ -132,7 +132,7 @@ bun run eval:live -- --target-kind skill --model openai/gpt-5.5
 bun run eval:live -- --target-kind skill --target golang-concurrency --model openai/gpt-5.5
 ```
 
-Skill prompts do not name the skill under test. The harness requires the matching native `skill` tool action, so a case cannot PASS by merely producing plausible domain prose without loading the intended skill.
+Skill prompts do not name the skill under test. The harness requires the runner's `skills_loaded` result to confirm the intended native `skill` call completed successfully; merely attempting the tool or producing plausible domain prose cannot PASS.
 
 The harness chooses Podman first, then Docker. Override it explicitly with `--engine podman` or `--engine docker`. For rootless Podman on SELinux hosts, Loom disables container SELinux labeling for the eval container rather than relabeling your repository or credential files.
 
