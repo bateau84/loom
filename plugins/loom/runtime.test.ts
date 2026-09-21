@@ -86,6 +86,18 @@ async function runFixtureExit(
   return proc.exited
 }
 
+async function waitForFixtureFile(path: string, timeoutMs = 10_000) {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    try {
+      return await readFile(path, "utf8")
+    } catch {
+      await Bun.sleep(50)
+    }
+  }
+  throw new Error(`Timed out waiting for fixture file: ${path}`)
+}
+
 async function runCommand(args: string[], cwd: string) {
   const proc = Bun.spawn(args, {
     cwd,
@@ -134,7 +146,7 @@ describe("Loom runtime upgrade ledger", () => {
           id: "test-v1-to-v2",
           fromVersion: 1,
           toVersion: 2,
-          apply: async (storage: any) => {
+          applyInstallation: async (storage: any) => {
             v2Runs++
             await storage.set("installation/test-v2", { ready: true })
             return { migrated: "v2" }
@@ -144,7 +156,7 @@ describe("Loom runtime upgrade ledger", () => {
           id: "test-v2-to-v3",
           fromVersion: 2,
           toVersion: 3,
-          apply: async (storage: any) => {
+          applyInstallation: async (storage: any) => {
             v3Runs++
             await storage.set("installation/test-v3", { ready: true })
             return { migrated: "v3" }
@@ -214,7 +226,7 @@ describe("Loom runtime upgrade ledger", () => {
         id: "test-v1-to-v2-global",
         fromVersion: 1,
         toVersion: 2,
-        apply: async (storage: any) => {
+        applyInstallation: async (storage: any) => {
           runs++
           await Bun.sleep(30)
           await storage.set("installation/global-upgrade-test", { complete: true })
@@ -230,6 +242,85 @@ describe("Loom runtime upgrade ledger", () => {
       expect(await raw.get("installation/runtime-schema")).toMatchObject({ currentVersion: 2 })
     })
   })
+
+  test("project-scoped upgrade callbacks migrate every canonical project before advancing the installation version", async () => {
+    await withRoots(async (root) => {
+      const legacy = new MemoryStorage()
+      const a = join(root, "a")
+      const b = join(root, "b")
+      await mkdir(a, { recursive: true })
+      await mkdir(b, { recursive: true })
+      const runtimeA = await resolveRuntimeIdentity(a, legacy as any)
+      const runtimeB = await resolveRuntimeIdentity(b, legacy as any)
+      const storage = await createTransactionalStorage(runtimeA)
+
+      await ensureRuntimeStateVersion(storage, runtimeA)
+      for (const runtime of [runtimeA, runtimeB]) {
+        await storage.set(`installation/projects/${runtime.projectId}`, { projectId: runtime.projectId })
+        await storage.set(`project/${runtime.projectId}/format`, { version: 1 })
+      }
+
+      const visited: string[] = []
+      const upgraded = await ensureRuntimeStateVersion(storage, runtimeA, {
+        targetVersion: 2,
+        steps: [{
+          id: "test-all-projects-v1-to-v2",
+          fromVersion: 1,
+          toVersion: 2,
+          applyProject: async (projectStorage: any, projectId: string) => {
+            visited.push(projectId)
+            await projectStorage.set("format", { version: 2, projectId })
+          },
+        }],
+      })
+
+      expect(upgraded.currentVersion).toBe(2)
+      expect(visited.sort()).toEqual([runtimeA.projectId, runtimeB.projectId].sort())
+      expect(await storage.get(`project/${runtimeA.projectId}/format`)).toEqual({
+        version: 2,
+        projectId: runtimeA.projectId,
+      })
+      expect(await storage.get(`project/${runtimeB.projectId}/format`)).toEqual({
+        version: 2,
+        projectId: runtimeB.projectId,
+      })
+    })
+  })
+
+  test("transactional upgrade failure rolls back project mutation receipt and version advance together", async () => {
+    await withRoots(async (root) => {
+      const legacy = new MemoryStorage()
+      const project = join(root, "project")
+      await mkdir(project, { recursive: true })
+      const runtime = await resolveRuntimeIdentity(project, legacy as any)
+      const storage = await createTransactionalStorage(runtime)
+
+      await ensureRuntimeStateVersion(storage, runtime)
+      await storage.set(`installation/projects/${runtime.projectId}`, { projectId: runtime.projectId })
+      await storage.set(`project/${runtime.projectId}/format`, { version: 1 })
+
+      await expect(
+        ensureRuntimeStateVersion(storage, runtime, {
+          targetVersion: 2,
+          steps: [{
+            id: "test-crashing-v1-to-v2",
+            fromVersion: 1,
+            toVersion: 2,
+            applyProject: async (projectStorage: any) => {
+              await projectStorage.set("format", { version: 2 })
+              throw new Error("fault injection after project mutation")
+            },
+          }],
+        }),
+      ).rejects.toThrow("fault injection")
+
+      expect(await storage.get(`project/${runtime.projectId}/format`)).toEqual({ version: 1 })
+      expect(await storage.get("installation/runtime-schema")).toMatchObject({ currentVersion: 1 })
+      const receipts = await storage.scan({ prefix: "installation/runtime-upgrades/" })
+      expect(receipts.entries).toHaveLength(0)
+    })
+  })
+
 })
 
 describe("Loom crash-safe durable storage", () => {
@@ -1216,6 +1307,35 @@ describe("Loom runtime identity and scoped storage", () => {
       ) as { schemaVersion: number; runtimeRoot: string }
       expect(persisted.schemaVersion).toBe(1)
       expect(persisted.runtimeRoot).toMatch(/(?:runtime-a\/loom|state\/loom\/runtime)$/)
+    })
+  })
+
+  test("already-running old process cannot mutate after another process upgrades the runtime schema", async () => {
+    await withRoots(async (root) => {
+      const project = join(root, "version-skew-project")
+      const ready = join(root, "old-ready")
+      const upgraded = join(root, "upgrade-done")
+      await mkdir(project, { recursive: true })
+      const env = {
+        XDG_STATE_HOME: join(root, "state"),
+        XDG_RUNTIME_DIR: join(root, "runtime"),
+      }
+      const fixturePath = fileURLToPath(new URL("./runtime-process-fixture.ts", import.meta.url))
+      const old = Bun.spawn(
+        [process.execPath, fixturePath, "version-skew-old", project, ready, upgraded],
+        { env: fixtureProcessEnv(env), stdout: "pipe", stderr: "pipe" },
+      )
+      const oldStdout = new Response(old.stdout).text()
+      const oldStderr = new Response(old.stderr).text()
+
+      await waitForFixtureFile(ready)
+      expect(await runFixture(["version-skew-upgrade", project, upgraded], env)).toBe("upgraded")
+
+      const [stdout, stderr, exitCode] = await Promise.all([oldStdout, oldStderr, old.exited])
+      expect(exitCode).toBe(0)
+      expect(stderr).toBe("")
+      expect(stdout).toContain("rejected")
+      expect(stdout).toContain("does not match this running build (1)")
     })
   })
 

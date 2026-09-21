@@ -53,8 +53,13 @@ export type RuntimeUpgradeStep = {
   id: string
   fromVersion: number
   toVersion: number
-  apply: (
+  applyInstallation?: (
     storage: RawStorage,
+    runtime: LoomRuntimeIdentity,
+  ) => Promise<Record<string, unknown> | void>
+  applyProject?: (
+    storage: RawStorage,
+    projectId: string,
     runtime: LoomRuntimeIdentity,
   ) => Promise<Record<string, unknown> | void>
 }
@@ -324,6 +329,7 @@ async function withRuntimeLockPaths<T>(
   runtime: LoomRuntimeIdentity,
   lockPaths: string[],
   fn: () => Promise<T>,
+  options: { enforceRuntimeVersion?: boolean } = {},
 ): Promise<T> {
   const releases: Array<() => Promise<void>> = []
 
@@ -332,7 +338,13 @@ async function withRuntimeLockPaths<T>(
       releases.push(await acquireFlock(lockPath))
     }
     const store = transactionalStores.get(runtime.stateRoot)
-    return store?.transaction ? await store.transaction(fn) : await fn()
+    const execute = async () => {
+      if (options.enforceRuntimeVersion !== false && store) {
+        await assertRuntimeStateVersion(store, RUNTIME_STATE_VERSION)
+      }
+      return fn()
+    }
+    return store?.transaction ? await store.transaction(execute) : await execute()
   } finally {
     let releaseError: unknown
     for (const release of releases.reverse()) {
@@ -372,7 +384,7 @@ export async function withInstallationRuntimeLock<T>(
     aggregate,
     `${sha256(resourceIdentity)}.lock`,
   )
-  return withRuntimeLockPaths(runtime, [lockPath], fn)
+  return withRuntimeLockPaths(runtime, [lockPath], fn, { enforceRuntimeVersion: false })
 }
 
 export async function withRuntimeLock<T>(
@@ -397,6 +409,51 @@ function validateRuntimeSchemaRecord(value: unknown): RuntimeSchemaRecordV1 {
   return value as RuntimeSchemaRecordV1
 }
 
+export async function assertRuntimeStateVersion(
+  storage: RawStorage,
+  expectedVersion = RUNTIME_STATE_VERSION,
+): Promise<RuntimeSchemaRecordV1> {
+  const value = await storage.get("installation/runtime-schema")
+  if (value === undefined) throw new Error("Loom runtime schema is not initialized.")
+  const record = validateRuntimeSchemaRecord(value)
+  if (record.currentVersion !== expectedVersion) {
+    throw new Error(
+      `Loom runtime state version ${record.currentVersion} does not match this running build (${expectedVersion}). Restart OpenCode with the current Loom version before accessing mutable runtime state.`,
+    )
+  }
+  return record
+}
+
+async function scanAllKeys(storage: RawStorage, prefix: string) {
+  const keys: string[] = []
+  let after: string | undefined
+  do {
+    const page = await storage.scan({ prefix, limit: 1000, ...(after ? { after } : {}) })
+    for (const entry of page.entries ?? []) {
+      if (typeof entry?.key === "string") keys.push(entry.key)
+    }
+    after = page.next
+  } while (after)
+  return keys
+}
+
+async function runtimeProjectIds(storage: RawStorage, runtime: LoomRuntimeIdentity) {
+  const ids = new Set<string>([runtime.projectId])
+  for (const key of await scanAllKeys(storage, "installation/projects/")) {
+    const projectId = key.slice("installation/projects/".length).split("/")[0]
+    if (projectId) ids.add(projectId)
+  }
+  for (const key of await scanAllKeys(storage, PROJECT_PREFIX)) {
+    const projectId = key.slice(PROJECT_PREFIX.length).split("/")[0]
+    if (projectId) ids.add(projectId)
+  }
+  return [...ids].sort()
+}
+
+async function storageTransaction<T>(storage: RawStorage, fn: () => Promise<T>): Promise<T> {
+  return storage.transaction ? storage.transaction(fn) : fn()
+}
+
 export async function ensureRuntimeStateVersion(
   storage: RawStorage,
   runtime: LoomRuntimeIdentity,
@@ -416,20 +473,18 @@ export async function ensureRuntimeStateVersion(
 
   return withInstallationRuntimeLock(runtime, "migration", "runtime-state-version", async () => {
     const key = "installation/runtime-schema"
-    const existing = await storage.get(key)
-    let record: RuntimeSchemaRecordV1
-
-    if (existing === undefined) {
-      record = {
+    let record = await storageTransaction(storage, async () => {
+      const existing = await storage.get(key)
+      if (existing !== undefined) return validateRuntimeSchemaRecord(existing)
+      const initialized: RuntimeSchemaRecordV1 = {
         schemaVersion: 1,
         currentVersion: RUNTIME_BASELINE_VERSION,
         initializedAt: now.toISOString(),
         updatedAt: now.toISOString(),
       }
-      await storage.set(key, record)
-    } else {
-      record = validateRuntimeSchemaRecord(existing)
-    }
+      await storage.set(key, initialized)
+      return initialized
+    })
 
     if (record.currentVersion > targetVersion) {
       throw new Error(
@@ -443,7 +498,8 @@ export async function ensureRuntimeStateVersion(
         !step.id ||
         !Number.isSafeInteger(step.fromVersion) ||
         !Number.isSafeInteger(step.toVersion) ||
-        step.toVersion <= step.fromVersion
+        step.toVersion <= step.fromVersion ||
+        (typeof step.applyInstallation !== "function" && typeof step.applyProject !== "function")
       ) {
         throw new Error(`Invalid Loom runtime upgrade step: ${step.id || "<unnamed>"}`)
       }
@@ -461,39 +517,67 @@ export async function ensureRuntimeStateVersion(
         )
       }
 
-      const receiptKey =
-        `installation/runtime-upgrades/${step.fromVersion}-${step.toVersion}/${sha256(step.id)}`
-      const priorReceipt = (await storage.get(receiptKey)) as RuntimeUpgradeReceiptV1 | undefined
-      let details: Record<string, unknown> | undefined
+      record = await storageTransaction(storage, async () => {
+        const current = validateRuntimeSchemaRecord(await storage.get(key))
+        if (current.currentVersion !== step.fromVersion) {
+          throw new Error(
+            `Loom runtime upgrade ${step.id} expected version ${step.fromVersion}, found ${current.currentVersion}.`,
+          )
+        }
 
-      if (
-        priorReceipt?.schemaVersion === 1 &&
-        priorReceipt.upgradeId === step.id &&
-        priorReceipt.fromVersion === step.fromVersion &&
-        priorReceipt.toVersion === step.toVersion
-      ) {
-        details = priorReceipt.details
-      } else {
-        details = (await step.apply(storage, runtime)) ?? undefined
+        const receiptKey =
+          `installation/runtime-upgrades/${step.fromVersion}-${step.toVersion}/${sha256(step.id)}`
+        const priorReceipt = (await storage.get(receiptKey)) as RuntimeUpgradeReceiptV1 | undefined
+        if (
+          priorReceipt?.schemaVersion === 1 &&
+          priorReceipt.upgradeId === step.id &&
+          priorReceipt.fromVersion === step.fromVersion &&
+          priorReceipt.toVersion === step.toVersion
+        ) {
+          throw new Error(
+            `Loom runtime upgrade receipt ${step.id} exists without its schema-version advance; refusing potentially partial migration state.`,
+          )
+        }
+
+        const details: Record<string, unknown> = {}
+        if (step.applyInstallation) {
+          const installationDetails = await step.applyInstallation(storage, runtime)
+          if (installationDetails) details.installation = installationDetails
+        }
+        if (step.applyProject) {
+          const projectIds = await runtimeProjectIds(storage, runtime)
+          const projectDetails: Record<string, unknown> = {}
+          for (const projectId of projectIds) {
+            const result = await step.applyProject(
+              createProjectStorage(storage, projectId),
+              projectId,
+              runtime,
+            )
+            if (result) projectDetails[projectId] = result
+          }
+          details.projectIds = projectIds
+          if (Object.keys(projectDetails).length > 0) details.projects = projectDetails
+        }
+
         await storage.set(receiptKey, {
           schemaVersion: 1,
           upgradeId: step.id,
           fromVersion: step.fromVersion,
           toVersion: step.toVersion,
           completedAt: now.toISOString(),
-          ...(details ? { details } : {}),
+          ...(Object.keys(details).length > 0 ? { details } : {}),
         } satisfies RuntimeUpgradeReceiptV1)
-      }
 
-      record = {
-        ...record,
-        currentVersion: step.toVersion,
-        updatedAt: now.toISOString(),
-        lastUpgradeId: step.id,
-      }
-      await storage.set(key, record)
+        const next: RuntimeSchemaRecordV1 = {
+          ...current,
+          currentVersion: step.toVersion,
+          updatedAt: now.toISOString(),
+          lastUpgradeId: step.id,
+        }
+        await storage.set(key, next)
+        return next
+      })
     }
-
     return record
   })
 }
@@ -621,20 +705,41 @@ function scopedKey(projectId: string, key: string) {
   return `project/${projectId}/${key}`
 }
 
-export function createProjectStorage(raw: RawStorage, projectId: string): RawStorage {
+export function createProjectStorage(
+  raw: RawStorage,
+  projectId: string,
+  options: { expectedRuntimeVersion?: number } = {},
+): RawStorage {
+  const expectedVersion = options.expectedRuntimeVersion
+  const assertVersion = async () => {
+    if (expectedVersion !== undefined) {
+      await assertRuntimeStateVersion(raw, expectedVersion)
+    }
+  }
+
   const scoped: RawStorage = {
-    get(key) {
+    async get(key) {
+      await assertVersion()
       return raw.get(scopedKey(projectId, key))
     },
-    set(key, value) {
-      return raw.set(scopedKey(projectId, key), value)
+    async set(key, value) {
+      const write = async () => {
+        await assertVersion()
+        return raw.set(scopedKey(projectId, key), value)
+      }
+      return raw.transaction ? raw.transaction(write) : write()
     },
-    scan(input) {
+    async scan(input) {
+      await assertVersion()
       return raw.scan({ ...input, prefix: scopedKey(projectId, input.prefix) })
     },
   }
   if (raw.transaction) {
-    scoped.transaction = (fn) => raw.transaction!(fn)
+    scoped.transaction = (fn) =>
+      raw.transaction!(async () => {
+        await assertVersion()
+        return fn()
+      })
   }
   return scoped
 }
