@@ -184,7 +184,7 @@ This applies to work steps, gates, and agent-owned OQ authority dispatches, incl
 
 A grant permits exactly one additional dispatch. It does not reset prior attempts or the workflow-wide budget. Do not grant budget for an unchanged retry, and do not pre-grant budget while capacity remains. Agents do not extend their own budget; General owns the grant.
 
-If the per-step extra-grant cap or workflow-wide dispatch cap is exhausted, preserve completed work and report the real execution boundary instead of bypassing it.
+If the per-target extra-grant cap or workflow-wide dispatch cap is exhausted, preserve completed work and report the real execution boundary instead of bypassing it.
 
 
 ## Build task graph
