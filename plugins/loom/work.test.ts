@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test"
 import type { TaskSpec } from "./tasks"
 import {
   completeObjective,
+  completeWaveForTasks,
   createWorkHierarchy,
   materializeWorkPlan,
   nextRunnableWaves,
@@ -82,6 +83,8 @@ describe("Loom persistent work hierarchy", () => {
       ],
       now,
     )
+    completeWaveForTasks(work, ["a", "b"], now)
+    completeWaveForTasks(work, ["c"], now)
 
     expect(workTree(work).phases[0].status).toBe("complete")
     expect(work.objectiveStatus).toBe("active")
@@ -104,6 +107,9 @@ describe("Loom persistent work hierarchy", () => {
       ],
       now,
     )
+    expect(nextRunnableWaves(work)).toHaveLength(0)
+
+    completeWaveForTasks(work, ["a", "b"], now)
     expect(nextRunnableWaves(work).map((wave) => wave.id)).toEqual(["runtime"])
   })
 
@@ -135,6 +141,7 @@ describe("Loom persistent work hierarchy", () => {
       ],
       now,
     )
+    completeWaveForTasks(work, ["a", "b"], now)
 
     expect(() => validateWorkflowWave(work, [task("c")], true)).not.toThrow()
   })
