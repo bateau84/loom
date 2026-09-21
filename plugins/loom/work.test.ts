@@ -174,6 +174,7 @@ describe("Loom persistent work hierarchy", () => {
     syncWorkTaskStatuses(work, "wf-1", work.generation, [{ taskId: "a", complete: true }], now)
 
     const oldGeneration = work.generation
+    releaseWorkflowWave(work, "wf-1", oldGeneration, ["a", "b"], "release-before-replan")
     materializeWorkPlan(work, "wf-2", plan(), "later")
 
     expect(work.generation).toBe(oldGeneration + 1)
