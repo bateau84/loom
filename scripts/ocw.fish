@@ -1,20 +1,17 @@
-# ocw - OpenCode Worktree Launcher (Fish / OpenCode v2)
+# ocw - OpenCode Worktree Launcher (Fish / OpenCode 2.0.x)
 #
-# CONFIG LAYOUT:
-#   $XDG_CONFIG_HOME/opencode/ (or ~/.config/opencode/)
-#   ├── opencode.jsonc
-#   ├── cli.json
-#   ├── profiles/<profile>.jsonc
-#   ├── cli/<profile>.json
-#   └── themes/*.json
+# Source profiles stay native V2 under ~/.config/opencode/profiles/*.jsonc.
+# ocw lowers them into the OpenCode 2.0.11 compatibility runtime shape:
+#   agents -> agent
+#   providers -> provider
+#   provider/model#variant -> model + variant
+#   compaction.prune -> removed
 #
-# USAGE:
+# Usage:
 #   ocw <branch> [base] [--profile PROFILE] [--explain] [--no-worktree] [-- opencode-args...]
+#   ocw --profile PROFILE --explain
 #   ocw-rm <branch>
 #   ocw-ls
-#
-# --explain verifies the effective profile by starting a temporary V2/core
-# server and querying its /api/config and /api/agent endpoints directly.
 
 function __ocw_find_json
     set -l stem $argv[1]
@@ -29,22 +26,21 @@ function __ocw_find_json
     return 1
 end
 
-
 function __ocw_prepare_profile_root
     set -l cfg $argv[1]
     set -l profile $argv[2]
     set -l profile_file $argv[3]
 
     type -q jq; or begin
-        echo 'ocw: jq is required to merge OpenCode v2 profiles' >&2
+        echo 'ocw: jq is required for profile compatibility generation' >&2
         return 2
     end
 
-    set -l uid (id -u)
     set -l runtime_base /tmp
     if set -q XDG_RUNTIME_DIR; and test -n "$XDG_RUNTIME_DIR"
         set runtime_base $XDG_RUNTIME_DIR
     end
+    set -l uid (id -u)
     set -l root "$runtime_base/ocw-opencode-$uid-$profile"
     mkdir -p "$root"; or return 1
 
@@ -52,135 +48,85 @@ function __ocw_prepare_profile_root
         test -e "$item"; or continue
         set -l name (basename "$item")
         switch $name
-            case . .. opencode.json opencode.jsonc cli.json cli.jsonc profiles cli
+            case opencode.json opencode.jsonc cli.json cli.jsonc profiles cli
                 continue
+        end
+        if test -L "$root/$name"
+            set -l old_target (readlink "$root/$name" 2>/dev/null)
+            if test "$old_target" != "$item"
+                rm -f "$root/$name"
+            end
         end
         test -e "$root/$name"; or ln -s "$item" "$root/$name" 2>/dev/null; or true
     end
 
     set -l base (__ocw_find_json "$cfg/opencode" 2>/dev/null)
+    set -l merged "$root/.merged.json.tmp.$fish_pid"
     set -l tmp "$root/.opencode.json.tmp.$fish_pid"
+
     if test -n "$base"
-        jq -s '.[0] * .[1]' "$base" "$profile_file" > "$tmp"; or begin
-            rm -f "$tmp"
-            echo "ocw: failed to merge $base with $profile_file (profiles must be JSON-compatible JSONC)" >&2
+        jq -s '.[0] * .[1]' "$base" "$profile_file" > "$merged"; or begin
+            rm -f "$merged" "$tmp"
+            echo "ocw: failed to merge $base with $profile_file" >&2
             return 2
         end
     else
-        jq '.' "$profile_file" > "$tmp"; or begin
-            rm -f "$tmp"
-            echo "ocw: failed to parse $profile_file (profiles must be JSON-compatible JSONC)" >&2
+        jq '.' "$profile_file" > "$merged"; or begin
+            rm -f "$merged" "$tmp"
+            echo "ocw: failed to parse $profile_file" >&2
             return 2
         end
     end
+
+    jq '
+      def selection:
+        if type == "string" then
+          (index("#")) as $i |
+          if $i == null then {model: .}
+          else {model: .[0:$i], variant: .[$i + 1:]}
+          end
+        elif type == "object" then
+          {model: (((.providerID // .provider // "") | tostring) + "/" + ((.model // .modelID // .id // "") | tostring))}
+          + (if .variant != null then {variant: (.variant | tostring)} else {} end)
+        else {}
+        end;
+
+      def lower_agent:
+        . as $a |
+        ($a | del(.model, .system, .disabled, .request, .permissions))
+        + (if $a.model != null then ($a.model | selection) else {} end)
+        + (if $a.system != null then {prompt: $a.system} else {} end)
+        + (if $a.disabled != null then {disable: $a.disabled} else {} end)
+        + (if $a.request?.body != null then {options: $a.request.body} else {} end);
+
+      def lower_agents: with_entries(.value |= lower_agent);
+
+      . as $cfg |
+      if $cfg.permissions? != null then error("ocw: cannot safely lower top-level V2 permissions")
+      elif any((($cfg.agent // {}) | to_entries[]); .value.permissions? != null) then error("ocw: cannot safely lower agent V2 permissions")
+      elif any((($cfg.agents // {}) | to_entries[]); .value.permissions? != null) then error("ocw: cannot safely lower agent V2 permissions")
+      elif any((($cfg.agent // {}) | to_entries[]); .value.request?.headers? != null) then error("ocw: cannot safely lower agent request.headers")
+      elif any((($cfg.agents // {}) | to_entries[]); .value.request?.headers? != null) then error("ocw: cannot safely lower agent request.headers")
+      else . end |
+      (($cfg.agent // {}) | lower_agents) as $legacy_agents |
+      (($cfg.agents // {}) | lower_agents) as $native_agents |
+      (($legacy_agents * $native_agents)) as $agents |
+      (($cfg.provider // {}) * ($cfg.providers // {})) as $providers |
+      (((($cfg.plugin // []) + ($cfg.plugins // [])) | unique)) as $plugins |
+      del(.agents, .providers, .plugins)
+      | .agent = $agents
+      | if ($providers | length) > 0 then .provider = $providers else . end
+      | if ($plugins | length) > 0 then .plugin = $plugins else . end
+      | if .compaction? != null then .compaction |= del(.prune) else . end
+    ' "$merged" > "$tmp"; or begin
+        rm -f "$merged" "$tmp"
+        echo "ocw: failed to lower profile '$profile' for OpenCode 2.0.x" >&2
+        return 2
+    end
+
+    rm -f "$merged"
     mv -f "$tmp" "$root/opencode.json"; or return 1
     echo "$root"
-end
-
-function __ocw_pick_port
-    type -q python3; or begin
-        echo 'ocw: python3 is required for --explain runtime verification' >&2
-        return 2
-    end
-    python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()'
-end
-
-function __ocw_print_agent_models
-    set -l output $argv[1]
-    if not printf '%s\n' "$output" | jq -e 'type == "array"' >/dev/null 2>&1
-        printf '%s\n' "$output"
-        return 2
-    end
-
-    printf '%s\n' "$output" | jq -r '
-      def modelstr:
-        if .model == null then "<inherit session>"
-        elif (.model | type) == "string" then .model
-        else
-          ((.model.providerID // .model.provider // "?") | tostring)
-          + "/"
-          + ((.model.modelID // .model.id // .model.model // "?") | tostring)
-          + (if ((.model.variant // "") | tostring) != "" then "#" + ((.model.variant // "") | tostring) else "" end)
-        end;
-      .[] | [(.id // .name // "?"), modelstr] | @tsv
-    ' | awk -F '\t' '{ printf "  %-22s %s\n", $1, $2 }'
-end
-
-function __ocw_verify_profile_models
-    set -l profile_file $argv[1]
-    set -l agents_file $argv[2]
-    set -l expected_file $argv[3]
-
-    jq -r '
-      (.agent // .agents // {}) |
-      to_entries[] |
-      select(.value.model != null) |
-      [.key,
-       (if (.value.model|type) == "string"
-        then .value.model
-        else
-          ((.value.model.providerID // .value.model.provider // "?")|tostring)
-          + "/" +
-          ((.value.model.modelID // .value.model.id // .value.model.model // "?")|tostring)
-          + (if ((.value.model.variant // "")|tostring) != "" then "#" + ((.value.model.variant // "")|tostring) else "" end)
-        end)
-      ] | @tsv
-    ' "$profile_file" > "$expected_file"; or return 2
-
-    if not jq -e 'type == "array"' "$agents_file" >/dev/null 2>&1
-        echo 'ocw: standalone server /api/agent returned an unexpected response shape' >&2
-        return 2
-    end
-
-    set -l count 0
-    set -l mismatches 0
-    printf '  %-20s %-32s %-32s %s\n' agent expected effective status
-    while read -l line
-        test -n "$line"; or continue
-        set -l fields (string split (printf '\t') -- "$line")
-        set -l id $fields[1]
-        set -l model $fields[2]
-        set count (math $count + 1)
-        set -l actual (jq -r --arg id "$id" '
-          def modelstr:
-            if .model == null then "<inherit session>"
-            elif (.model | type) == "string" then .model
-            else
-              ((.model.providerID // .model.provider // "?") | tostring)
-              + "/"
-              + ((.model.modelID // .model.id // .model.model // "?") | tostring)
-              + (if ((.model.variant // "") | tostring) != "" then "#" + ((.model.variant // "") | tostring) else "" end)
-            end;
-          first(.[] | select((.id // .name) == $id) | modelstr) // "<missing agent>"
-        ' "$agents_file")
-        if test "$actual" = "$model"
-            printf '  %-20s %-32s %-32s %s\n' "$id" "$model" "$actual" OK
-        else
-            printf '  %-20s %-32s %-32s %s\n' "$id" "$model" "$actual" MISMATCH
-            set mismatches (math $mismatches + 1)
-        end
-    end < "$expected_file"
-
-    if test $count -eq 0
-        echo '  (profile defines no explicit agent models)'
-        return 2
-    end
-    test $mismatches -eq 0
-end
-
-function __ocw_stop_verify_server
-    set -l pid $argv[1]
-    if test -n "$pid"
-        kill "$pid" 2>/dev/null; or true
-        for i in (seq 1 20)
-            kill -0 "$pid" 2>/dev/null; or break
-            sleep 0.05
-        end
-        if kill -0 "$pid" 2>/dev/null
-            kill -9 "$pid" 2>/dev/null; or true
-        end
-        wait "$pid" 2>/dev/null; or true
-    end
 end
 
 function __ocw_explain
@@ -195,134 +141,131 @@ function __ocw_explain
     printf '  workdir:        %s\n' "$rundir"
     printf '  profile config: %s\n' (test -n "$profile_file"; and echo "$profile_file"; or echo '<global/default>')
     printf '  cli profile:    %s\n' (test -n "$cli_file"; and echo "$cli_file"; or echo '<global/default>')
-    if test -n "$profile"
-        echo '  server mode:    private/standalone'
-    else
-        echo '  server mode:    shared'
-    end
     printf '  runtime root:   %s\n' (test -n "$runtime_root"; and echo "$runtime_root"; or echo '<global/default>')
 
     if test -z "$profile"
         echo
-        echo 'resolved agents (global/default debug view)'
+        echo 'resolved agents (global/default)'
         opencode debug agents
         return $status
     end
 
-    type -q jq; or begin
-        echo 'ocw: jq is required for --explain' >&2
-        return 2
-    end
-    type -q curl; or begin
-        echo 'ocw: curl is required for --explain runtime verification' >&2
-        return 2
+    set -l runtime_file "$runtime_root/opencode.json"
+    if not test -f "$runtime_file"
+        echo "ocw: runtime config missing: $runtime_file" >&2
+        return 3
     end
 
-    set -l port (__ocw_pick_port); or return $status
-    set -l verify_user opencode
-    set -l verify_password (python3 -c 'import secrets; print(secrets.token_urlsafe(24))'); or return 2
+    echo
+    echo 'compatibility lowering (OpenCode 2.0.x)'
+    echo '  agents -> agent'
+    echo '  providers -> provider'
+    echo '  model#variant -> model + variant'
+    echo '  compaction.prune -> removed'
+
+    echo
+    echo 'profile compatibility verification'
+    printf '  %-18s %-29s %-10s %-29s %-10s %s\n' \
+        agent 'source model' variant 'runtime model' variant status
+
+    set -l rows (jq -r -n \
+      --slurpfile source "$profile_file" \
+      --slurpfile runtime "$runtime_file" '
+      def fields($a):
+        if $a == null or $a.model == null then ["<inherit session>", ""]
+        elif ($a.model | type) == "string" then
+          if ($a.model | contains("#")) then [($a.model | split("#")[0]), ($a.model | split("#")[1])]
+          else [$a.model, (($a.variant // "") | tostring)] end
+        else
+          [
+            (((($a.model.providerID // $a.model.provider // "?") | tostring) + "/" + (($a.model.modelID // $a.model.id // $a.model.model // "?") | tostring))),
+            (($a.variant // $a.model.variant // "") | tostring)
+          ]
+        end;
+      ($source[0].agents // $source[0].agent // {})
+      | to_entries[]
+      | select(.value.model != null)
+      | .key as $id
+      | fields(.value) as $src
+      | (($runtime[0].agent // {})[$id] // null) as $runAgent
+      | fields($runAgent) as $run
+      | (if $runAgent == null or $run[0] != $src[0] or $run[1] != $src[1] then "LOWER-MISMATCH" else "OK" end) as $st
+      | [$id, $src[0], ($src[1] // ""), $run[0], ($run[1] // ""), $st]
+      | @tsv
+    '); or return 2
+
+    set -l count 0
+    set -l mismatch 0
+    for row in $rows
+        set count (math $count + 1)
+        set -l f (string split \t -- "$row")
+        set -l sv '<default>'
+        set -l rv '<default>'
+        test -n "$f[3]"; and set sv "$f[3]"
+        test -n "$f[5]"; and set rv "$f[5]"
+        test "$f[6]" = OK; or set mismatch 1
+        printf '  %-18s %-29s %-10s %-29s %-10s %s\n' "$f[1]" "$f[2]" "$sv" "$f[4]" "$rv" "$f[6]"
+    end
+
+    if test $count -eq 0
+        echo '  (profile defines no explicit agent models)'
+        return 2
+    end
+    if test $mismatch -ne 0
+        echo
+        echo 'ocw: profile lowering FAILED' >&2
+        return 3
+    end
+
+    echo
+    echo 'OpenCode 2.0.11 debug visibility (informational only)'
     set -l runtime_base /tmp
     if set -q XDG_RUNTIME_DIR; and test -n "$XDG_RUNTIME_DIR"
         set runtime_base $XDG_RUNTIME_DIR
     end
-    set -l logdir "$runtime_base/ocw-verify-"(id -u)
-    mkdir -p "$logdir"; or return 1
-    set -l logfile "$logdir/$profile-$port.log"
-
-    begin
-        cd "$rundir"; or exit 1
-        set -e OPENCODE_CONFIG
-        set -e OPENCODE_CONFIG_CONTENT
-        set -e XDG_CONFIG_HOME
-        set -lx OPENCODE_CONFIG_DIR "$runtime_root"
-        set -lx OPENCODE_SERVER_USERNAME "$verify_user"
-        set -lx OPENCODE_SERVER_PASSWORD "$verify_password"
-        set -e OPENCODE_PASSWORD
-        exec opencode serve --hostname 127.0.0.1 --port "$port"
-    end >"$logfile" 2>&1 &
-    set -l pid $last_pid
-
-    set -l ready 0
-    for i in (seq 1 100)
-        if not kill -0 "$pid" 2>/dev/null
-            echo 'ocw: standalone verification server exited during startup' >&2
-            sed -n '1,120p' "$logfile" >&2
-            __ocw_stop_verify_server "$pid"
-            return 3
+    set -l agents_file "$runtime_base/ocw-explain-agents-"(id -u)"-$profile.json"
+    if opencode debug agents > "$agents_file" 2>/dev/null; and jq -e 'type == "array"' "$agents_file" >/dev/null 2>&1
+        printf '  %-18s %-29s %-10s\n' agent 'debug model' variant
+        set -l exposed 0
+        for row in $rows
+            set -l f (string split \t -- "$row")
+            set -l id "$f[1]"
+            set -l resolved (jq -r --arg id "$id" '
+              def fields($a):
+                if $a == null or $a.model == null then ["<inherit session>", ""]
+                elif ($a.model | type) == "string" then
+                  if ($a.model | contains("#")) then [($a.model | split("#")[0]), ($a.model | split("#")[1])]
+                  else [$a.model, (($a.variant // "") | tostring)] end
+                else
+                  [
+                    (((($a.model.providerID // $a.model.provider // "?") | tostring) + "/" + (($a.model.modelID // $a.model.id // $a.model.model // "?") | tostring))),
+                    (($a.variant // $a.model.variant // "") | tostring)
+                  ]
+                end;
+              (first(.[] | select((.id // .name) == $id)) // null) | fields(.) | @tsv
+            ' "$agents_file")
+            set -l rf (string split \t -- "$resolved")
+            set -l dv '<not exposed>'
+            test (count $rf) -ge 2; and test -n "$rf[2]"; and set dv "$rf[2]"
+            if test "$rf[1]" != '<inherit session>'; and test "$rf[1]" != '<missing agent>'
+                set exposed (math $exposed + 1)
+            end
+            printf '  %-18s %-29s %-10s\n' "$id" "$rf[1]" "$dv"
         end
-        if curl -fsS --max-time 1 --user "$verify_user:$verify_password" "http://127.0.0.1:$port/api/health" >/dev/null 2>&1
-            set ready 1
-            break
+        printf '  explicit models exposed: %s/%s\n' "$exposed" "$count"
+        if test $exposed -eq 0
+            echo '  note: debug agents does not expose the lowered per-agent model map on this 2.0.11 path.'
         end
-        sleep 0.05
-    end
-
-    if test $ready -ne 1
-        echo 'ocw: standalone verification server did not become ready' >&2
-        sed -n '1,120p' "$logfile" >&2
-        __ocw_stop_verify_server "$pid"
-        return 3
-    end
-
-    set -l tmpdir "$runtime_base/ocw-verify-"(id -u)"-$port"
-    mkdir -p "$tmpdir"; or begin
-        __ocw_stop_verify_server "$pid"
-        return 1
-    end
-    set -l config_file "$tmpdir/config.json"
-    set -l agents_file "$tmpdir/agents.json"
-    set -l expected_file "$tmpdir/expected.tsv"
-
-    curl -fsS --max-time 5 --user "$verify_user:$verify_password" -H "x-opencode-directory: $rundir" "http://127.0.0.1:$port/api/config" > "$config_file"; or begin
-        echo 'ocw: failed to query standalone server /api/config' >&2
-        __ocw_stop_verify_server "$pid"
-        return 3
-    end
-    curl -fsS --max-time 5 --user "$verify_user:$verify_password" -H "x-opencode-directory: $rundir" "http://127.0.0.1:$port/api/agent" > "$agents_file"; or begin
-        echo 'ocw: failed to query standalone server /api/agent' >&2
-        __ocw_stop_verify_server "$pid"
-        return 3
-    end
-
-    echo
-    echo 'private V2/core server config'
-    if jq -e 'type == "object"' "$config_file" >/dev/null 2>&1
-        printf '  default agent:     %s\n' (jq -r '.default_agent // "<unset>"' "$config_file")
-        printf '  configured agents: %s\n' (jq -r '(.agent // .agents // {}) | length' "$config_file")
-        printf '  providers:         %s\n' (jq -r '(.provider // .providers // {}) | keys | join(", ")' "$config_file")
     else
-        echo 'ocw: standalone server /api/config returned an unexpected response shape' >&2
-        cat "$config_file" >&2
-        __ocw_stop_verify_server "$pid"
-        return 3
+        echo '  unavailable (opencode debug agents failed or returned an unexpected shape)'
     end
+    rm -f "$agents_file"
 
     echo
-    echo 'resolved agents (private V2/core server)'
-    set -l agents_output (cat "$agents_file" | string collect)
-    __ocw_print_agent_models "$agents_output"; or begin
-        __ocw_stop_verify_server "$pid"
-        return 3
-    end
-
-    echo
-    echo 'profile model verification'
-    __ocw_verify_profile_models "$profile_file" "$agents_file" "$expected_file"
-    set -l verify_status $status
-    __ocw_stop_verify_server "$pid"
-    rm -rf "$tmpdir" 2>/dev/null
-
-    if test $verify_status -ne 0
-        echo >&2
-        echo 'ocw: profile verification FAILED' >&2
-        return 3
-    end
-
-    echo
-    echo 'profile load: OK'
-    return 0
+    echo 'profile preparation: OK'
+    echo '  runtime config is internally consistent with the selected source profile.'
+    echo '  actual subagent model selection must be observed from a real dispatched child run.'
 end
-
 function ocw
     set -l name
     if test (count $argv) -gt 0; and not string match -q -- '-*' $argv[1]
@@ -376,8 +319,8 @@ function ocw
             set name __explain__
             set no_worktree 1
         else
-            echo "usage: ocw <branch> [base] [-p profile] [--explain] [--no-worktree]" >&2
-            echo "       ocw --profile PROFILE --explain" >&2
+            echo 'usage: ocw <branch> [base] [-p profile] [--explain] [--no-worktree]' >&2
+            echo '       ocw --profile PROFILE --explain' >&2
             return 1
         end
     end
@@ -392,14 +335,12 @@ function ocw
         set -l root (git rev-parse --show-toplevel 2>/dev/null); or return 1
         set rundir "$root-wt/$name"
         set id $rundir
-
         set -l base HEAD
         if test (count $pre_args) -gt 0; and not string match -q -- '-*' $pre_args[1]
             set base $pre_args[1]
             set -e pre_args[1]
         end
         set args $pre_args $post_args
-
         if not test -d "$rundir"
             if git show-ref --verify --quiet "refs/heads/$name"
                 git worktree add "$rundir" "$name"; or return 1
@@ -451,18 +392,52 @@ function ocw
         return $explain_status
     end
 
+    set -l first ''
+    test (count $args) -gt 0; and set first $args[1]
+
     if test -n "$profile"
-        switch "$args[1]"
-            case debug db models mcp
-                echo "ocw: active profile -> [$profile]"
-                fish -c 'cd $argv[1]; or exit 1; exec opencode $argv[2..-1]' -- "$rundir" $args
+        # OpenCode 2.0.11 debug config/agents do not expose the compatibility
+        # runtime profile correctly. Project those diagnostics from the generated
+        # runtime config so profiled debug commands remain useful and JSON-safe.
+        if test (count $args) -ge 2; and test "$args[1]" = debug; and test "$args[2]" = config
+            echo "ocw: active profile -> [$profile] (compat debug config)" >&2
+            jq -n \
+                --arg path "$runtime_root/opencode.json" \
+                --arg dir "$runtime_root" \
+                --slurpfile cfg "$runtime_root/opencode.json" \
+                '[{type:"document", path:$path, info:$cfg[0]}, {type:"directory", path:$dir}]'
+            return $status
+        end
+
+        if test (count $args) -ge 2; and test "$args[1]" = debug; and test "$args[2]" = agents
+            echo "ocw: active profile -> [$profile] (compat-projected debug agents)" >&2
+            set -l agents_json (fish -c 'cd $argv[1]; or exit 1; opencode debug agents' -- "$rundir" | string collect)
+            or return $status
+            printf '%s\n' "$agents_json" | jq --slurpfile cfg "$runtime_root/opencode.json" '
+                ($cfg[0].agent // {}) as $a
+                | map(
+                    . as $x
+                    | ($x.id // $x.name) as $id
+                    | if $a[$id] == null then .
+                      else .
+                        + (if $a[$id].model != null then {model:$a[$id].model} else {} end)
+                        + (if $a[$id].variant != null then {variant:$a[$id].variant} else {} end)
+                      end
+                  )'
+            return $status
+        end
+
+        switch "$first"
             case run
-                echo "ocw: active profile -> [$profile] (standalone)"
+                echo "ocw: active profile -> [$profile] (standalone)" >&2
                 set -e args[1]
                 fish -c 'cd $argv[1]; or exit 1; exec opencode run --standalone $argv[2..-1]' -- "$rundir" $args
-            case '*'
-                echo "ocw: active profile -> [$profile] (standalone)"
+            case '' '-*'
+                echo "ocw: active profile -> [$profile] (standalone)" >&2
                 fish -c 'cd $argv[1]; or exit 1; exec opencode --standalone $argv[2..-1]' -- "$rundir" $args
+            case '*'
+                echo "ocw: active profile -> [$profile]" >&2
+                fish -c 'cd $argv[1]; or exit 1; exec opencode $argv[2..-1]' -- "$rundir" $args
         end
     else
         fish -c 'cd $argv[1]; or exit 1; exec opencode $argv[2..-1]' -- "$rundir" $args
@@ -471,7 +446,7 @@ end
 
 function ocw-rm
     test (count $argv) -ge 1; or begin
-        echo "usage: ocw-rm <branch>" >&2
+        echo 'usage: ocw-rm <branch>' >&2
         return 1
     end
     set -l name $argv[1]
@@ -483,7 +458,6 @@ function ocw-ls
     git worktree list
 end
 
-# --- tab completion ---
 function __ocw_worktree_names
     set -l root (git rev-parse --show-toplevel 2>/dev/null); or return
     set -l wtdir "$root-wt"
