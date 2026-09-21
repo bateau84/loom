@@ -12,7 +12,7 @@ on:
         required: false
         type: string
       target_transport:
-        description: Target model transport. Skill eval targets require opencode.
+        description: Target model transport. Skill-owned suites support OpenCode or GitHub Copilot; native skill-routing cases require OpenCode.
         required: true
         default: opencode
         type: choice
