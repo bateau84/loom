@@ -52,6 +52,8 @@ describe("Loom external dashboard", () => {
     expect(html).toContain("No winner is selected")
     expect(html).toContain("OpenCode sessions")
     expect(html).toContain("stale/offline")
+    expect(html).toContain('.badge[data-state="consistency conflict"]::before')
+    expect(html).toContain('.badge[data-state="stale/offline"]::before')
     expect(html).toContain("Missing telemetry is not treated as zero or success")
     expect(html).toContain("Loom-authoritative")
     expect(html).toContain(":focus-visible")
