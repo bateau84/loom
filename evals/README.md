@@ -134,12 +134,30 @@ bun run eval:live -- --target-kind skill --target web-ui-design --model openai/g
 
 Skill evaluation has two complementary sources:
 
-- central runtime cases in `evals/skills.json` test production-role skill discovery and companion-methodology behavior;
+- central runtime cases in `evals/skills.json` test production-role skill discovery and companion-methodology behavior with one normal runtime execution;
 - skill-owned cases are discovered automatically from **every `*.json` file directly under `skills/<skill>/evals/`**, regardless of filename. Existing legacy shapes (`{skill,cases}`, `{skill_name,evals}`, and top-level arrays) are normalized at runtime.
 
-Skill-owned cases run through an isolated synthetic target agent that explicitly loads the selected skill before answering. This evaluates the skill's own behavioral guidance without requiring the user to duplicate its cases into the central corpus. The harness still requires the runner's `skills_loaded` result to confirm the native `skill` call completed successfully.
+Skill-owned cases use **ablation**, not the agent-eval one-shot contract. Loom runs the same prompt twice:
 
-Central native skill-routing cases require `--target-transport opencode` because they assert real `skill` tool loading and companion-file behavior. Skill-owned suites under `skills/<skill>/evals/*.json` are provider-neutral: with OpenCode, Loom verifies a completed native skill load; with GitHub Copilot CLI, Loom injects the skill's `SKILL.md` methodology into the isolated system context, matching the repository's established bare skill-eval harness pattern. Copilot may be used for the target, judge, or both for skill-owned suites.
+1. **baseline** — isolated model capability without the target skill available;
+2. **candidate** — isolated model capability with only the target skill available/applied.
+
+Both responses are judged independently against the same positive expectations, negative expectations, and named trap. The evidence artifact records:
+
+- baseline absolute behavior score;
+- candidate absolute behavior score;
+- candidate absolute PASS/FAIL;
+- score delta in percentage points;
+- whether the skill fixed or introduced the named trap;
+- a skill-value classification: `material-improvement`, `improvement`, `neutral`, or `regression`.
+
+A skill-owned case still returns PASS only when the **candidate** satisfies the full benchmark. A candidate that improves substantially but misses one requirement remains an absolute FAIL, while the artifact preserves the improvement instead of collapsing the result to one boolean.
+
+With OpenCode, the baseline project contains no target skill and the candidate project contains only that skill; candidate evidence must confirm a completed native `skill` load. With GitHub Copilot CLI, Loom supplies no skill methodology to the baseline and injects the target `SKILL.md` only into the candidate system context. This preserves the same causal comparison across transports.
+
+Central native skill-routing cases still require `--target-transport opencode` because they assert real production-role `skill` loading and companion-file behavior. Skill-owned ablation suites are provider-neutral and may use OpenCode or GitHub Copilot CLI for target and judge.
+
+Each skill-owned case therefore makes four model calls per iteration: baseline target, baseline judge, candidate target, and candidate judge.
 
 The harness chooses Podman first, then Docker. Override it explicitly with `--engine podman` or `--engine docker`. For rootless Podman on SELinux hosts, Loom disables container SELinux labeling for the eval container rather than relabeling your repository or credential files.
 
