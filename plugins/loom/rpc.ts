@@ -2,6 +2,40 @@ import type { Rpc } from "@opencode/plugin/rpc"
 
 export type LoomSidebarTaskStatus = "complete" | "failed" | "runnable" | "pending"
 export type LoomSidebarState = "idle" | "active" | "blocked" | "complete"
+export type LoomSidebarWorkStatus =
+  | "pending"
+  | "active"
+  | "blocked"
+  | "complete"
+  | "cancelled"
+  | "superseded"
+
+export type LoomSidebarWork = {
+  objective: {
+    id: string
+    title: string
+    status: LoomSidebarWorkStatus
+    progress: { finished: number; total: number }
+  }
+  generation: number
+  phases: Array<{
+    id: string
+    title: string
+    status: LoomSidebarWorkStatus
+    progress: { finished: number; total: number }
+    waves: Array<{
+      id: string
+      title: string
+      status: LoomSidebarWorkStatus
+      progress: { finished: number; total: number }
+      tasks: Array<{
+        id: string
+        title: string
+        status: LoomSidebarTaskStatus
+      }>
+    }>
+  }>
+}
 
 export type LoomSidebarSnapshot = {
   active: boolean
@@ -12,6 +46,7 @@ export type LoomSidebarSnapshot = {
     total: number
     failed: number
   }
+  work?: LoomSidebarWork
   tasks: Array<{
     id: string
     title: string
@@ -26,6 +61,26 @@ export type LoomSidebarSnapshot = {
   openQuestions: number
   openVerification: number
 }
+
+const progressSchema = {
+  type: "object",
+  properties: {
+    finished: { type: "number" },
+    total: { type: "number" },
+  },
+  required: ["finished", "total"],
+  additionalProperties: false,
+} as const
+
+const workStatusSchema = {
+  type: "string",
+  enum: ["pending", "active", "blocked", "complete", "cancelled", "superseded"],
+} as const
+
+const taskStatusSchema = {
+  type: "string",
+  enum: ["complete", "failed", "runnable", "pending"],
+} as const
 
 export const LoomRpc = {
   id: "loom.control",
@@ -55,6 +110,66 @@ export const LoomRpc = {
             required: ["finished", "total", "failed"],
             additionalProperties: false,
           },
+          work: {
+            type: "object",
+            properties: {
+              objective: {
+                type: "object",
+                properties: {
+                  id: { type: "string" },
+                  title: { type: "string" },
+                  status: workStatusSchema,
+                  progress: progressSchema,
+                },
+                required: ["id", "title", "status", "progress"],
+                additionalProperties: false,
+              },
+              generation: { type: "number" },
+              phases: {
+                type: "array",
+                items: {
+                  type: "object",
+                  properties: {
+                    id: { type: "string" },
+                    title: { type: "string" },
+                    status: workStatusSchema,
+                    progress: progressSchema,
+                    waves: {
+                      type: "array",
+                      items: {
+                        type: "object",
+                        properties: {
+                          id: { type: "string" },
+                          title: { type: "string" },
+                          status: workStatusSchema,
+                          progress: progressSchema,
+                          tasks: {
+                            type: "array",
+                            items: {
+                              type: "object",
+                              properties: {
+                                id: { type: "string" },
+                                title: { type: "string" },
+                                status: taskStatusSchema,
+                              },
+                              required: ["id", "title", "status"],
+                              additionalProperties: false,
+                            },
+                          },
+                        },
+                        required: ["id", "title", "status", "progress", "tasks"],
+                        additionalProperties: false,
+                      },
+                    },
+                  },
+                  required: ["id", "title", "status", "progress", "waves"],
+                  additionalProperties: false,
+                },
+              },
+            },
+            required: ["objective", "generation", "phases"],
+            additionalProperties: false,
+          },
           tasks: {
             type: "array",
             items: {
@@ -62,7 +177,7 @@ export const LoomRpc = {
               properties: {
                 id: { type: "string" },
                 title: { type: "string" },
-                status: { type: "string", enum: ["complete", "failed", "runnable", "pending"] },
+                status: taskStatusSchema,
               },
               required: ["id", "title", "status"],
               additionalProperties: false,
