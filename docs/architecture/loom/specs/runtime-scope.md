@@ -173,11 +173,22 @@ After an interrupted commit, readers MUST observe either the previous complete a
 
 The workflow aggregate owns workflow transitions, OQs, verification, budgets, completion/reopen, and related workflow state. The work aggregate owns Objective/Phase/Wave/Task hierarchy and claims. Operations spanning both acquire both locks.
 
-## Migration
+## Migration and runtime upgrades
 
 Scoped records are canonical. Legacy fallback is bounded and only allowed when destination is absent.
 
-Migration requires unambiguous project provenance; path alone is insufficient after path reuse. Ambiguous records remain unmigrated and are reported.
+The canonical runtime store carries an installation-wide `runtime-schema` record. Runtime schema changes are implemented as ordered, idempotent `fromVersion → toVersion` upgrade steps under the installation migration lock. The step mutation, durable receipt, and schema-version advance occur in the same transactional mutation boundary when the transactional store is active. A build MUST refuse state whose runtime version is newer than it understands, and MUST refuse an upgrade when no contiguous registered path exists.
+
+Pre-project-epoch OpenCode plugin state has one additional in-place-upgrade continuity rule. Loom MAY reconcile the exact legacy state bound to a resumed OpenCode session when all of the following hold:
+
+1. the host returns the exact same OpenCode session ID being resumed;
+2. that host session belongs to the current OpenCode project identity;
+3. the legacy `session/<sessionId>` and/or `session-intent/<sessionId>` binding names the state being migrated;
+4. the legacy workflow has no conflicting Loom `projectId`.
+
+This is **session continuity provenance**, not path inference and not user/model confirmation. Loom records a durable upgrade-reconciliation receipt containing the target project epoch and hashed session identity. A supplied workflow ID, canonical path, or free-form confirmation string can never create this provenance.
+
+If durable legacy state already names a different Loom project epoch, session continuity MUST NOT override it. If the exact host-session proof is absent or mismatched, ambiguous records remain unmigrated and are reported.
 
 ## Conformance evidence
 
