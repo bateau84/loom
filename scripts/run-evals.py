@@ -1038,6 +1038,13 @@ def run_skill_ablation_case(
     if args.judge_transport != args.target_transport and not args.judge_model:
         raise RuntimeError("--judge-model is required when target and judge transports differ")
 
+    case_label = case["id"] if args.iterations == 1 else f"{case['id']}#{iteration}"
+    case_started = time.perf_counter()
+    baseline_target_seconds = 0.0
+    baseline_judge_seconds = 0.0
+    candidate_target_seconds = 0.0
+    candidate_judge_seconds = 0.0
+
     target_image = image_for_transport(args, args.target_transport)
     judge_image = image_for_transport(args, args.judge_transport)
     skill = str(case["skill"])
@@ -1065,6 +1072,15 @@ def run_skill_ablation_case(
         "baseline": {},
         "candidate": {},
     }
+
+    def update_timing() -> None:
+        artifact["timing"] = {
+            "baseline_target_seconds": round(baseline_target_seconds, 3),
+            "baseline_judge_seconds": round(baseline_judge_seconds, 3),
+            "candidate_target_seconds": round(candidate_target_seconds, 3),
+            "candidate_judge_seconds": round(candidate_judge_seconds, 3),
+            "total_seconds": round(time.perf_counter() - case_started, 3),
+        }
 
     def target_system(with_skill: bool) -> str:
         if args.target_transport != "github-copilot-cli":
@@ -1133,8 +1149,20 @@ def run_skill_ablation_case(
             return result, None, "judge parse failed: " + str(exc)
 
     try:
+        print(
+            f"{case_label} [skill:{skill}/ablation] baseline target "
+            f"({args.target_transport}, {args.model}) ...",
+            flush=True,
+        )
+        phase_started = time.perf_counter()
         baseline_target = run_target(baseline_project, with_skill=False)
+        baseline_target_seconds = time.perf_counter() - phase_started
         baseline_target_error = transport_error(baseline_target)
+        print(
+            f"{case_label} baseline target "
+            f"{'ERROR' if baseline_target_error else 'done'} in {baseline_target_seconds:.1f}s",
+            flush=True,
+        )
         baseline_loaded = list(baseline_target.get("skills_loaded") or [])
         if not baseline_target_error and skill in baseline_loaded:
             baseline_target_error = "baseline contaminated by target skill load: " + skill
@@ -1148,10 +1176,22 @@ def run_skill_ablation_case(
         if baseline_target_error:
             artifact["target"] = baseline_target
             artifact["target_error"] = "baseline: " + baseline_target_error
+            update_timing()
             write_case_artifact(case, args, iteration, artifact)
             return artifact
 
+        print(
+            f"{case_label} baseline judge ({args.judge_transport}, {judge_model}) ...",
+            flush=True,
+        )
+        phase_started = time.perf_counter()
         baseline_judge_result, baseline_grade, baseline_judge_error = run_judge(baseline_target)
+        baseline_judge_seconds = time.perf_counter() - phase_started
+        print(
+            f"{case_label} baseline judge "
+            f"{'ERROR' if baseline_judge_error else 'done'} in {baseline_judge_seconds:.1f}s",
+            flush=True,
+        )
         artifact["baseline"].update({
             "judge_transport_result": baseline_judge_result,
             "semantic": baseline_grade,
@@ -1161,6 +1201,7 @@ def run_skill_ablation_case(
             artifact["target"] = baseline_target
             artifact["judge_transport_result"] = baseline_judge_result
             artifact["judge_error"] = "baseline: " + str(baseline_judge_error or "missing semantic grade")
+            update_timing()
             write_case_artifact(case, args, iteration, artifact)
             return artifact
 
@@ -1170,8 +1211,19 @@ def run_skill_ablation_case(
         )
         artifact["baseline"]["behavior_score"] = baseline_score
 
+        print(
+            f"{case_label} candidate target ({args.target_transport}, {args.model}) ...",
+            flush=True,
+        )
+        phase_started = time.perf_counter()
         candidate_target = run_target(candidate_project, with_skill=True)
+        candidate_target_seconds = time.perf_counter() - phase_started
         candidate_target_error = transport_error(candidate_target)
+        print(
+            f"{case_label} candidate target "
+            f"{'ERROR' if candidate_target_error else 'done'} in {candidate_target_seconds:.1f}s",
+            flush=True,
+        )
         candidate_actions = normalized_target_actions(candidate_target) if not candidate_target_error else []
         candidate_deterministic = (
             deterministic_failures(
@@ -1197,10 +1249,22 @@ def run_skill_ablation_case(
         artifact["deterministic_failures"] = candidate_deterministic
 
         if candidate_target_error:
+            update_timing()
             write_case_artifact(case, args, iteration, artifact)
             return artifact
 
+        print(
+            f"{case_label} candidate judge ({args.judge_transport}, {judge_model}) ...",
+            flush=True,
+        )
+        phase_started = time.perf_counter()
         candidate_judge_result, candidate_grade, candidate_judge_error = run_judge(candidate_target)
+        candidate_judge_seconds = time.perf_counter() - phase_started
+        print(
+            f"{case_label} candidate judge "
+            f"{'ERROR' if candidate_judge_error else 'done'} in {candidate_judge_seconds:.1f}s",
+            flush=True,
+        )
         artifact["candidate"].update({
             "judge_transport_result": candidate_judge_result,
             "semantic": candidate_grade,
@@ -1211,6 +1275,7 @@ def run_skill_ablation_case(
         artifact["judge_error"] = candidate_judge_error
 
         if candidate_judge_error or not isinstance(candidate_grade, dict):
+            update_timing()
             write_case_artifact(case, args, iteration, artifact)
             return artifact
 
@@ -1245,6 +1310,7 @@ def run_skill_ablation_case(
             "classification": "pass" if candidate_pass else "behavioral-fail",
             "passed": candidate_pass,
         })
+        update_timing()
         write_case_artifact(case, args, iteration, artifact)
         return artifact
     finally:
