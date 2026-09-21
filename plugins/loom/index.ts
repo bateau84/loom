@@ -248,6 +248,23 @@ async function activeWorkflow(ctx: any, sessionID: string): Promise<Workflow | u
   return id ? readWorkflow(ctx, id) : undefined
 }
 
+async function assertWorkerWorkClaim(ctx: any, workflowId: string, stepId: string) {
+  const workflow = await readWorkflow(ctx, workflowId)
+  if (!workflow) throw new Error("Workflow not found.")
+  const step = workflow.steps.find((candidate) => candidate.id === stepId)
+  if (!step) throw new Error("Step not found.")
+  if (!step.task || !workflow.work) return
+
+  const work = await readWork(ctx, workflow.work.objectiveId)
+  if (!work) throw new Error("Persistent work hierarchy not found.")
+  assertWaveClaimForTasks(
+    work,
+    workflow.id,
+    workflow.work.generation,
+    plannedTaskSteps(workflow).map((taskStep) => taskStep.task!.id),
+  )
+}
+
 async function readQuestions(ctx: any, workflowId: string): Promise<OpenQuestion[]> {
   const ids = ((await ctx.storage.get(oqIndexKey(workflowId))) as string[] | undefined) ?? []
   const questions = await Promise.all(
@@ -3061,10 +3078,21 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
     await ctx.permission.hook("evaluate", async (event) => {
       if (event.agent === "worker" && event.action === "shell") {
-        if (shellResourcesAllowed(event.resources)) return
-
         const workflowId = (await ctx.storage.get(sessionKey(event.sessionID))) as string | undefined
         const stepId = (await ctx.storage.get(sessionStepKey(event.sessionID))) as string | undefined
+
+        if (workflowId && stepId) {
+          try {
+            await assertWorkerWorkClaim(ctx, workflowId, stepId)
+          } catch (error) {
+            event.effect = "deny"
+            event.message = error instanceof Error ? error.message : String(error)
+            return
+          }
+        }
+
+        if (shellResourcesAllowed(event.resources)) return
+
         const scope =
           workflowId && stepId
             ? ((await ctx.storage.get(scopeKey(workflowId, stepId))) as TaskScope | undefined)
@@ -3084,6 +3112,14 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         if (!workflowId || !stepId) {
           event.effect = "deny"
           event.message = "Worker must call loom_attach before editing."
+          return
+        }
+
+        try {
+          await assertWorkerWorkClaim(ctx, workflowId, stepId)
+        } catch (error) {
+          event.effect = "deny"
+          event.message = error instanceof Error ? error.message : String(error)
           return
         }
 
