@@ -23,5 +23,7 @@ tags: [requirements, loom, index]
 - [BR-014 — Support Deliberate Sparring Before Execution](br-014-support-deliberate-sparring.md)
 - [BR-015 — YuHaul Is the Minimum End-to-End Proof](br-015-yuhaul-is-minimum-proof.md)
 - [BR-016 — OpenCode Is the Required Initial Host](br-016-opencode-required-initial-host.md)
+- [BR-017 — Concurrent Sessions and Projects Are Compartmentalized](br-017-concurrent-sessions-projects-compartmentalized.md)
+- [BR-018 — External Operational Dashboard](br-018-external-operational-dashboard.md)
 
 Each requirement is its own OKF document so relationships, dependencies, retrieval, and future supersession remain explicit and machine-discoverable.

@@ -36,6 +36,8 @@ At the start of a gate, inspect `loom_verification action=status`. Any open requ
 - otherwise FAIL with the exact capability/proof gap so General can use another authorized path;
 - never waive an open persisted requirement through prose.
 
+Before using workflow state, first call `loom_attach` with the General-issued `grantId`, assigned workflow ID, and exact step ID (or question ID for an OQ dispatch). Never attach from selectors alone.
+
 When the assigned Loom review step is complete, call `loom_complete` with the workflow ID, exact step ID, and a short verdict/evidence summary.
 
 For Loom gate completion, call `loom_complete` with `outcome: pass` or `outcome: fail`. A failed gate must never be reported as complete/pass.

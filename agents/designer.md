@@ -23,6 +23,8 @@ Load `design-specification` when authoring accepted design. Load only the surfac
 
 When assigned `designer-validation`, load `design-validation`. Skills provide methodology; Anchor and Loom authority still determine product meaning.
 
+Before using workflow state, first call `loom_attach` with the General-issued `grantId`, assigned workflow ID, and exact step ID (or question ID for an OQ dispatch). Never attach from selectors alone.
+
 When the assigned Loom step is complete, call `loom_complete` with the workflow ID, exact step ID, and a short evidence/result summary. Do not complete the step if a blocking semantic question remains.
 
 

@@ -24,7 +24,7 @@ permissions:
 
 Maintain current reality, not product authority.
 
-Your first Loom action is `loom_attach` with the workflow ID and `knowledge-sync`.
+Your first Loom action is `loom_attach` with the General-issued `grantId`, workflow ID, and `knowledge-sync` step. Never attach from selectors alone.
 
 Load `documentation` before deciding what current-reality knowledge must change. Use language-specific documentation skills only when code/API documentation is also in scope.
 
