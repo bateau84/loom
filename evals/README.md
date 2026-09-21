@@ -129,10 +129,17 @@ Run only skill cases, or one skill's cases:
 
 ```bash
 bun run eval:live -- --target-kind skill --model openai/gpt-5.5
-bun run eval:live -- --target-kind skill --target golang-concurrency --model openai/gpt-5.5
+bun run eval:live -- --target-kind skill --target web-ui-design --model openai/gpt-5.5
 ```
 
-Skill prompts do not name the skill under test. The harness requires the runner's `skills_loaded` result to confirm the intended native `skill` call completed successfully; merely attempting the tool or producing plausible domain prose cannot PASS.
+Skill evaluation has two complementary sources:
+
+- central runtime cases in `evals/skills.json` test production-role skill discovery and companion-methodology behavior;
+- skill-owned cases are discovered automatically from **every `*.json` file directly under `skills/<skill>/evals/`**, regardless of filename. Existing legacy shapes (`{skill,cases}`, `{skill_name,evals}`, and top-level arrays) are normalized at runtime.
+
+Skill-owned cases run through an isolated synthetic target agent that explicitly loads the selected skill before answering. This evaluates the skill's own behavioral guidance without requiring the user to duplicate its cases into the central corpus. The harness still requires the runner's `skills_loaded` result to confirm the native `skill` call completed successfully.
+
+Because native skill loading is an OpenCode runtime feature, skill targets require `--target-transport opencode`. GitHub Copilot CLI can still be used independently as the judge.
 
 The harness chooses Podman first, then Docker. Override it explicitly with `--engine podman` or `--engine docker`. For rootless Podman on SELinux hosts, Loom disables container SELinux labeling for the eval container rather than relabeling your repository or credential files.
 
@@ -197,7 +204,7 @@ Target and judge still run in different containers even when they use the same m
 
 The workflow grants `copilot-requests: write`. When either transport is `github-copilot-cli`, the action exposes the workflow's built-in `GITHUB_TOKEN` to the harness, and the runner passes it into the isolated Copilot invocation. No separate Copilot secret is required.
 
-Use `target_kind` and `target` to run all agent cases, all skill cases, or a specific agent/skill on demand. When `cases` is also supplied, it intersects with those target filters rather than being silently ignored. With `all=false`, at least one of `cases`, `target_kind != all`, or `target` must be explicit before inference starts.
+Use `target_kind` and `target` to run all agent cases, all skill cases, or a specific agent/skill on demand. A skill target is valid when it has central cases and/or one or more `*.json` files under `skills/<skill>/evals/`. When `cases` is also supplied, it intersects with those target filters rather than being silently ignored. With `all=false`, at least one of `cases`, `target_kind != all`, or `target` must be explicit before inference starts.
 
 ### GitHub Copilot CLI transport
 
