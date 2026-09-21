@@ -151,6 +151,24 @@ describe("Loom progress and dispatch budgets", () => {
     })
     expect(insufficient.allowed).toBe(false)
 
+    const unrecordedEvidence = grantWorkflowDispatchBudget({
+      state,
+      limits: DEFAULT_LIMITS,
+      workflow,
+      questions: [],
+      stepId: "critic-solution",
+      grantedBy: "general",
+      reason: "The corrected architecture is new material evidence for another Critic pass.",
+      progress: {
+        newEvidence: true,
+        changedHypothesis: false,
+        changedStrategy: false,
+        reducedUnresolved: true,
+      },
+      now: "now",
+    })
+    expect(unrecordedEvidence.allowed).toBe(false)
+
     const grant = grantWorkflowDispatchBudget({
       state,
       limits: DEFAULT_LIMITS,
@@ -159,6 +177,7 @@ describe("Loom progress and dispatch budgets", () => {
       stepId: "critic-solution",
       grantedBy: "general",
       reason: "The corrected architecture is new material evidence for another Critic pass.",
+      evidence: ["docs/architecture/example.md#corrected-dependency-registration"],
       progress: {
         newEvidence: true,
         changedHypothesis: false,
@@ -252,6 +271,7 @@ describe("Loom progress and dispatch budgets", () => {
       questionId: question.id,
       grantedBy: "general",
       reason: "New evidence makes another authority pass meaningful.",
+      evidence: ["evidence/oq-critic-correction"],
       progress: {
         newEvidence: true,
         changedHypothesis: false,
