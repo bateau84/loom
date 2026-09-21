@@ -310,6 +310,14 @@ export function grantWorkflowDispatchBudget(input: {
     return { allowed: false, reason: resolved.reason, state }
   }
 
+  if (resolved.target.agent === "critic" && !progress.newEvidence) {
+    return {
+      allowed: false,
+      reason: "Critic budget grants require new material evidence; changed strategy or reduced unresolved work alone is insufficient.",
+      state,
+    }
+  }
+
   const result = grantExtraDispatch({
     state,
     limits,
