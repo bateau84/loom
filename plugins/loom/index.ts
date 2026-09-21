@@ -498,6 +498,22 @@ function toolEventKey(raw: any) {
 
 const pendingToolInputs = new Map<string, unknown>()
 
+const inspectionToolNames = new Set(["find", "grep", "select", "stats"])
+
+function isLoomToolName(tool: string) {
+  return tool.startsWith("loom_") || tool.startsWith("loom.")
+}
+
+function isLoomInspectionToolName(tool: string) {
+  if (!isLoomToolName(tool)) return false
+  const leaf = tool.replace(/^loom[._]/, "")
+  return inspectionToolNames.has(leaf)
+}
+
+function skipLoomEvidence(tool: string) {
+  return isLoomToolName(tool) && !isLoomInspectionToolName(tool)
+}
+
 const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
   id: "loom",
 
@@ -554,13 +570,12 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       editor.add({
         name: "grep",
         description:
-          "Read-only bounded text search across project files. Structured replacement for grep/rg plus sort/head; supports literal or bounded regex matching and context lines.",
+          "Read-only bounded literal text search across project files. Structured replacement for grep -F / rg -F plus sort/head; supports context lines without arbitrary regex execution.",
         input: {
           type: "object",
           properties: {
             path: { type: "string", description: "Project-relative file or directory. Defaults to the project root." },
             pattern: { type: "string" },
-            regex: { type: "boolean" },
             caseSensitive: { type: "boolean" },
             glob: { type: "string", description: "Simple * and ? file/path glob." },
             context: { type: "number", description: "Context lines before and after each match, 0-5." },
@@ -3355,14 +3370,14 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
     await ctx.tool.hook("execute.before", (event) => {
       const raw = event as any
       const tool = String(raw.tool ?? "")
-      if (tool.startsWith("loom_") || tool.startsWith("loom.")) return
+      if (skipLoomEvidence(tool)) return
       pendingToolInputs.set(toolEventKey(raw), raw.input)
     })
 
     await ctx.tool.hook("execute.after", async (event) => {
       const raw = event as any
       const tool = String(raw.tool ?? "")
-      if (!tool || tool.startsWith("loom_") || tool.startsWith("loom.")) return
+      if (!tool || skipLoomEvidence(tool)) return
       if (!raw.sessionID) return
 
       const key = toolEventKey(raw)
