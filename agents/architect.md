@@ -8,6 +8,9 @@ permissions:
   - action: edit
     resource: "docs/architecture/**"
     effect: allow
+  - action: edit
+    resource: "docs/dependencies/**"
+    effect: allow
   - action: subagent
     resource: "*"
     effect: deny
