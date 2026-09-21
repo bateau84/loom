@@ -51,6 +51,23 @@ if (mode === "transaction-crash") {
   throw new Error("transaction-crash fault injection did not terminate the process")
 }
 
+if (mode === "upgrade-crash") {
+  const storage = await createTransactionalStorage(runtime)
+  await ensureRuntimeStateVersion(storage, runtime, {
+    targetVersion: 2,
+    steps: [{
+      id: "fixture-crash-v1-to-v2",
+      fromVersion: 1,
+      toVersion: 2,
+      applyProject: async (projectStorage) => {
+        await projectStorage.set("format", { version: 2 })
+        process.exit(98)
+      },
+    }],
+  })
+  throw new Error("upgrade-crash fault injection did not terminate the process")
+}
+
 if (mode === "version-skew-old") {
   const [readyPath, upgradedPath] = args
   if (!readyPath || !upgradedPath) throw new Error("version-skew-old requires readyPath and upgradedPath")

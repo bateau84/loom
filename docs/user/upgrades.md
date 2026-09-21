@@ -13,6 +13,8 @@ Loom upgrades are designed to preserve ongoing OpenCode sessions without weakeni
 
 After pulling a Loom upgrade, restart OpenCode as usual.
 
+When adopting a Loom release that introduces or changes runtime-version fencing, stop/restart all already-running OpenCode+Loom processes once. A process still executing code from before the fence existed cannot be retroactively intercepted by newer code; the durable fence protects version-skew between fence-capable releases going forward.
+
 Loom records the canonical runtime-state version under the installation's durable state root and applies any required ordered upgrade steps before normal mutable execution. Completed upgrade steps have durable receipts and are not rerun.
 
 ## Resuming an older OpenCode session

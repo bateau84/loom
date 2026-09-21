@@ -287,6 +287,31 @@ describe("Loom runtime upgrade ledger", () => {
     })
   })
 
+  test("process death during a runtime upgrade rolls back project mutation receipt and version advance", async () => {
+    await withRoots(async (root) => {
+      const legacy = new MemoryStorage()
+      const project = join(root, "upgrade-crash-project")
+      await mkdir(project, { recursive: true })
+      const runtime = await resolveRuntimeIdentity(project, legacy as any)
+      const storage = await createTransactionalStorage(runtime)
+      await ensureRuntimeStateVersion(storage, runtime)
+      await storage.set(`installation/projects/${runtime.projectId}`, { projectId: runtime.projectId })
+      await storage.set(`project/${runtime.projectId}/format`, { version: 1 })
+
+      const env = {
+        XDG_STATE_HOME: join(root, "state"),
+        XDG_RUNTIME_DIR: join(root, "runtime"),
+      }
+      const exitCode = await runFixtureExit(["upgrade-crash", project], env)
+      expect(exitCode).toBe(98)
+
+      expect(await storage.get(`project/${runtime.projectId}/format`)).toEqual({ version: 1 })
+      expect(await storage.get("installation/runtime-schema")).toMatchObject({ currentVersion: 1 })
+      const receipts = await storage.scan({ prefix: "installation/runtime-upgrades/" })
+      expect(receipts.entries).toHaveLength(0)
+    })
+  })
+
   test("transactional upgrade failure rolls back project mutation receipt and version advance together", async () => {
     await withRoots(async (root) => {
       const legacy = new MemoryStorage()
