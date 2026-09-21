@@ -28,9 +28,9 @@ The runtime result is locally true but ambiguous at the product level. Loom need
 
 ## Decision
 
-Loom should model persistent work separately from workflow execution.
+Loom models persistent work separately from workflow execution.
 
-The work hierarchy is:
+The canonical planned-product hierarchy is:
 
 ```text
 Objective
@@ -65,6 +65,8 @@ Examples:
 - `Replace authentication subsystem`
 
 An Objective is the level at which product completion is judged.
+
+**Objective authority is established before Planner.** The Objective identity and completion boundary derive from the accepted Anchor or other accepted scope authority. Planner may not create, broaden, narrow, rename-as-new-scope, or otherwise redefine that accepted outcome.
 
 ### Phase
 
@@ -138,6 +140,14 @@ Objective: Leash v1          ACTIVE
 
 A completed workflow therefore does not imply that its ancestors are complete.
 
+## Simple and Non-Product Work
+
+The hierarchy is required for Planner-driven product work where Loom must preserve progress across multiple bounded workflows.
+
+The existing simple non-product `worker` path may remain a standalone workflow when the work does not need persistent multi-wave product tracking.
+
+Loom MUST NOT manufacture empty Objective/Phase/Wave nodes only to satisfy ceremony. If simple work later becomes part of a larger tracked Objective, it may be attached through an explicit reconciliation step rather than inferred from conversational similarity.
+
 ## Independent Lifecycle State
 
 Each work node carries its own lifecycle state.
@@ -149,6 +159,7 @@ Minimum states:
 - `blocked`
 - `complete`
 - `cancelled`
+- `superseded`
 
 Additional execution-specific states may exist without changing the hierarchy contract.
 
@@ -163,6 +174,28 @@ Objective: Leash v1                 ACTIVE
     Wave: Admission + persistence   PENDING
 ```
 
+## State Ownership and Mutation
+
+Models propose work and report evidence. **The Loom control plane owns persistent hierarchy mutation.**
+
+Planner may propose and register child decomposition under the already-established Objective. Worker, Reviewer, Critic, Acceptance, General, and other agents do not directly rewrite hierarchy state through prose.
+
+Control-plane transitions own:
+
+- node creation from an accepted Planner decomposition;
+- activation/claim of runnable Tasks and Waves;
+- Task completion from authorized workflow completion plus required evidence;
+- Wave/Phase roll-up;
+- Objective completion;
+- blocking, cancellation, and supersession;
+- reconciliation after replanning.
+
+Shared hierarchy state is project-scoped and mutation is serialized or version-checked. A transition must fail on a stale expected version rather than silently overwrite newer state.
+
+Two workflows MUST NOT independently claim the same exclusive Task execution or race an ancestor from `active` to `complete`.
+
+The exact locking/storage mechanism is an implementation decision, but lost-update and double-completion behavior is not allowed.
+
 ## Completion Rules
 
 ### Task completion
@@ -173,7 +206,7 @@ A Task is complete only when its own required execution and verification evidenc
 
 A Wave is complete only when:
 
-- all required Tasks are complete;
+- all required active-generation Tasks are complete;
 - required Wave-level review/gates pass;
 - required Wave-level evidence is satisfied.
 
@@ -181,15 +214,15 @@ A Wave is complete only when:
 
 A Phase is complete only when:
 
-- all required Waves are complete;
+- all required active-generation Waves are complete;
 - any Phase-level gate or acceptance condition is satisfied.
 
 ### Objective completion
 
 An Objective is complete only when:
 
-- all required Phases are complete;
-- no mandatory child work remains unresolved;
+- all required active-generation Phases are complete;
+- no mandatory current child work remains unresolved;
 - Objective-level Product Acceptance is satisfied when applicable;
 - required final review/shipping gates pass.
 
@@ -216,46 +249,92 @@ The control plane must be able to answer:
 
 - What Objective does this workflow belong to?
 - Which Phase/Wave/Task is being executed?
+- Which plan generation is current?
 - What is complete?
 - What remains?
 - What is blocked?
+- What is superseded?
 - What is the next dependency-eligible work?
 
 ## Planner Integration
 
-Planner remains a disposable execution context, but its decomposition must be materialized into persistent Loom work state.
+Planner remains a disposable execution context and has no product authority.
+
+The Objective is established first from accepted authority. Planner decomposes **inside that Objective** and proposes child work plus execution relationships.
 
 Conceptually:
 
 ```text
-accepted solution
+accepted Objective authority
+  -> Objective identity established
   -> Planner
-  -> Objective / Phase / Wave / Task structure
+  -> Phase / Wave / Task proposal
   -> dependency DAG
   -> ownership
   -> gates
   -> verification requirements
+  -> control-plane validation/materialization
   -> persistent Loom work state
 ```
+
+Planner cannot silently change Objective meaning while changing decomposition.
 
 A separate human-readable Plan document remains optional unless another product or authority requires one.
 
 The important change is that the **semantic work structure and progress identity are durable**, not only the current bounded workflow DAG.
 
+## Replanning and Plan Generations
+
+Replanning MUST preserve historical truth.
+
+Once execution has started, Loom does not destructively rewrite the active decomposition in place. A materially changed Planner decomposition creates a new **plan generation** or explicit supersession set under the same accepted Objective.
+
+Rules:
+
+1. Completed nodes remain immutable historical records.
+2. Removed or replaced nodes become `superseded` or `cancelled`; they do not disappear.
+3. Split/merged Tasks or Waves create new node identities and explicit supersession relationships.
+4. Existing completion may carry forward only when the control plane can establish that accepted authority, parent scope, task objective, required write/effect boundary, prerequisite meaning, and verification obligations remain materially equivalent.
+5. If a changed prerequisite, authority premise, or verification requirement can invalidate prior proof, the prior completion remains historical but does not satisfy the new active generation.
+6. Dependency changes are recorded against the new generation rather than rewriting the historical graph.
+7. Ancestor completion is computed only from the current active generation and its independently satisfied gates.
+8. Replanning cannot retroactively turn a previously incomplete Objective into complete without current-generation closure.
+
+Exact generation IDs and persistence schema are implementation details.
+
+## Execution Stage vs Work Phase
+
+**Phase** is reserved for the persistent hierarchy defined here.
+
+The workflow-local runtime concept previously named `phase` is an **execution stage**: for example THINK, BUILD, VERIFY, recovery, or another control-flow position inside one workflow.
+
+New state and APIs MUST use `executionStage` (or an equivalent unambiguous name), not `phase`, for that runtime concept.
+
+Legacy workflow snapshots containing a top-level workflow `phase` field are interpreted as legacy **execution-stage** metadata only. They MUST NOT be promoted into a hierarchical Phase without explicit reconciliation.
+
 ## Gate Scope
 
-Gates attach to the work level they protect.
+Gates attach to the work level they protect, and their scope is persisted.
 
 Examples:
 
-- Solution/readiness gate: Objective or planning boundary
-- implementation review: Wave
-- Product Acceptance: Wave and/or Objective depending on what is being proven
-- final holistic review: Objective
+- solution/readiness gate: Objective or planning boundary;
+- implementation review: Wave;
+- Wave acceptance/integration proof: Wave;
+- Product Acceptance: Objective;
+- final holistic review: Objective.
 
 A gate PASS only authorizes completion or progression at its declared scope.
 
-A Wave-level Product Acceptance PASS MUST NOT be interpreted as Objective-level Product Acceptance.
+### Product Acceptance boundary
+
+Loom's existing **Product Acceptance** meaning remains whole-product proof against accepted Anchor/requirement outcomes through the real product-owned composition.
+
+Objective-level Product Acceptance is therefore the Product Acceptance result used for Objective completion.
+
+A Wave may carry scoped **Wave acceptance** or integration evidence for criteria owned by that Wave. Such evidence may contribute to later Product Acceptance, but it is never equivalent to whole-product Product Acceptance unless that Wave itself is the complete accepted product outcome.
+
+A Wave-level PASS MUST NOT be promoted into Objective-level Product Acceptance by roll-up.
 
 ## Control-Plane Consequences
 
@@ -266,21 +345,29 @@ At minimum, future implementation must support:
 - stable work-node IDs;
 - node type: Objective / Phase / Wave / Task;
 - parent ID;
+- plan generation / supersession identity;
 - lifecycle state;
 - dependency references;
 - workflow-to-work-scope attachment;
-- completion roll-up that checks ancestor criteria rather than blindly propagating success;
+- persisted gate scope;
+- serialized or version-checked hierarchy mutation;
+- exclusive active Task claim where required;
+- completion roll-up that checks current-generation ancestor criteria rather than blindly propagating success;
 - queries suitable for status/sidebar views.
 
 Exact storage schema and tool API are implementation decisions and are intentionally not prescribed here.
 
 ## Backward Compatibility
 
-Existing workflows without hierarchy metadata should remain readable.
+Existing workflows without hierarchy metadata remain readable.
 
-They should be treated as standalone legacy execution records unless explicitly attached to a reconstructed Objective.
+They are treated as standalone legacy execution records unless explicitly attached to a reconstructed Objective.
 
 Loom MUST NOT infer that an old `workflow=complete` record proves a larger Objective complete.
+
+Legacy workflow `phase` metadata is interpreted only as an execution stage, never as a persistent hierarchical Phase.
+
+Historical task graphs remain historical evidence. Attaching them to a reconstructed Objective requires explicit reconciliation and does not fabricate ancestor completion.
 
 ## Example: Leash v1
 
@@ -327,14 +414,20 @@ The implementation should eventually prove at least these cases:
 1. Completing every step in a Wave workflow marks the Wave complete but leaves an incomplete ancestor Objective active.
 2. A new session can attach another workflow to the same persistent Objective and recover remaining work.
 3. Parent completion is rejected while a mandatory descendant remains pending or blocked.
-4. Wave-level gate success cannot satisfy an Objective-level gate.
+4. Wave-level gate success cannot satisfy an Objective-level Product Acceptance or final gate.
 5. Dependency eligibility is computed from the DAG without losing hierarchy.
 6. Legacy standalone workflows remain readable without fabricating parent completion.
-7. Status/UI can show both bounded workflow completion and parent Objective progress.
+7. Legacy workflow `phase` is interpreted as execution-stage metadata, not hierarchical Phase.
+8. Two concurrent workflows cannot both exclusively claim the same Task or overwrite hierarchy state from stale versions.
+9. Replanning preserves completed historical nodes and supersedes/replaces work without rewriting history.
+10. Changed prerequisites or verification requirements prevent invalid carry-forward of stale completion.
+11. Simple non-product work can remain standalone without ceremonial empty hierarchy nodes.
+12. Status/UI can show both bounded workflow completion and parent Objective progress.
 
 ## Satisfies
 
 - [BR-001](../../requirements/loom/br-001-run-autonomously-to-real-boundary.md)
 - [BR-004](../../requirements/loom/br-004-produce-the-whole-product.md)
+- [BR-007](../../requirements/loom/br-007-evidence-outranks-model-claims.md)
 - [BR-008](../../requirements/loom/br-008-bounded-autonomy-and-progress.md)
 - [BR-010](../../requirements/loom/br-010-fresh-sessions-start-from-map.md)
