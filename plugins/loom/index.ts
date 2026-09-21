@@ -79,6 +79,7 @@ import {
   createWorkHierarchy,
   materializeWorkPlan,
   nextRunnableWaves,
+  reopenWaveForTasks,
   objectiveIdForAnchor,
   syncWorkTaskStatuses,
   validateWorkflowWave,
@@ -1230,14 +1231,19 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               await withWorkLock(workflow.work.objectiveId, async () => {
                 const work = await readWork(ctx, workflow.work!.objectiveId)
                 if (!work) return
+                const now = new Date().toISOString()
+                const taskIds = plannedTaskSteps(workflow).map((taskStep) => taskStep.task!.id)
                 syncWorkTaskStatuses(
                   work,
                   plannedTaskSteps(workflow).map((taskStep) => ({
                     taskId: taskStep.task!.id,
                     complete: taskStep.status === "complete",
                   })),
-                  new Date().toISOString(),
+                  now,
                 )
+                if (reset.includes("review-implementation") && taskIds.length > 0) {
+                  reopenWaveForTasks(work, taskIds, now)
+                }
                 await ctx.storage.set(workKey(work.objectiveId), work)
               })
             }
