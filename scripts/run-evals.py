@@ -645,6 +645,7 @@ def deterministic_failures(
     case: dict[str, Any],
     tools: list[str],
     actions: list[dict[str, Any]] | None = None,
+    loaded_skills: list[str] | None = None,
 ) -> list[str]:
     failures: list[str] = []
     assertions = case.get("tools") or {}
@@ -658,10 +659,8 @@ def deterministic_failures(
 
     observed_actions = actions or []
     skill = case.get("skill")
-    if skill:
-        required_skill = {"tool": "skill", "arg": "name", "equals": skill}
-        if not any(action_matches(action, required_skill) for action in observed_actions):
-            failures.append("skill under test not loaded: " + str(skill))
+    if skill and skill not in set(loaded_skills or []):
+        failures.append("skill under test not confirmed loaded: " + str(skill))
 
     action_assertions = case.get("actions") or {}
     for required in action_assertions.get("requires", []):
@@ -799,7 +798,12 @@ def run_case(
         target_error = transport_error(target)
         observed_actions = normalized_target_actions(target) if not target_error else []
         deterministic = (
-            deterministic_failures(case, list(target.get("tools") or []), observed_actions)
+            deterministic_failures(
+                case,
+                list(target.get("tools") or []),
+                observed_actions,
+                list(target.get("skills_loaded") or []),
+            )
             if not target_error
             else []
         )
