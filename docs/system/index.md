@@ -37,3 +37,7 @@ For concurrency, persistence, session attachment, or cross-project behavior, sta
 - `plugins/loom/**`
 - `dashboard/**`
 - `opencode.json`
+
+## User operations
+
+- [Runtime Upgrades](../user/upgrades.md) — versioned state upgrades and resumed-session reconciliation.

@@ -297,24 +297,29 @@ V1 assumes one user's Loom installation/storage domain is host-local. If Loom la
 
 Existing unscoped keys cannot simply be renamed blindly.
 
-Migration strategy:
+Migration and upgrade strategy:
 
 1. establish the current project epoch identity before any legacy lookup;
-2. new writes use the scoped namespace only;
-3. reads may perform a bounded legacy lookup when the scoped record is absent;
-4. a legacy record is migrated only when its project can be established unambiguously from stored/session/workflow metadata; canonical path alone is not sufficient proof after path reuse;
-5. migration runs under the same cross-process mutation guard as the destination aggregate;
-6. ambiguous legacy records are reported, not merged;
-7. once migrated, the scoped record becomes canonical and future mutations never update the legacy key;
-8. migration tests include identical Anchor paths in multiple project fixtures plus a stale/path-reuse fixture.
+2. initialize/validate the installation's versioned runtime-schema ledger before normal mutable execution;
+3. future canonical-store schema changes run as ordered, idempotent, transactionally recorded upgrade steps with durable receipts;
+4. new writes use the scoped namespace only;
+5. reads may perform a bounded legacy lookup when the scoped record is absent;
+6. a legacy record is migrated when its project can be established unambiguously from stored workflow metadata **or** from exact resumed-session continuity supplied by the OpenCode host; canonical path alone is never sufficient proof after path reuse;
+7. resumed-session continuity requires the exact legacy session binding, exact resumed OpenCode session ID, matching OpenCode project identity, and no conflicting stored Loom project epoch;
+8. free-form user/model confirmation is not provenance and cannot authorize migration;
+9. migration runs under the same cross-process mutation guard as the destination aggregate;
+10. ambiguous or conflicting legacy records are reported, not merged;
+11. successful continuity reconciliation writes a durable receipt identifying the target project epoch and hashed source session;
+12. once migrated, the scoped record becomes canonical and future mutations never update the legacy execution key;
+13. migration tests include identical Anchor paths, stale/path-reuse, resumed pre-upgrade sessions, mismatched sessions, and conflicting project provenance.
 
-Migration is a compatibility mechanism, not a permanent dual-authority mode.
+Migration is a compatibility mechanism, not a permanent dual-authority mode. The runtime-schema ledger is the mechanism for future upgrades; per-session legacy reconciliation exists only where an older schema did not record enough project identity for an eager installation-wide migration.
 
 ## Runtime failure semantics
 
 - inability to establish an unambiguous durable project identity prevents durable Loom execution for that project;
 - inability to access the installation-shared mutation guard prevents participation in mutable shared Loom state;
-- ambiguous legacy records are reported and left unmigrated rather than guessed or merged;
+- ambiguous legacy records are reported and left unmigrated rather than guessed or merged; exact resumed-session continuity is accepted only under the bounded host-proof rule above;
 - a stale process must re-acquire the cross-process guard and re-read current durable state before committing;
 - cross-project or unrelated-workflow access mismatch is rejected, never repaired through a global fallback search;
 - non-Git folders that cannot persist a project marker may run only in an explicitly non-durable mode whose state cannot be mistaken for durable compartmentalized execution.

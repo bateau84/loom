@@ -1,5 +1,5 @@
 import type * as OpenCodePlugin from "@opencode/plugin"
-import { consumeDispatchGrantLocked, createProjectStorage, createTransactionalStorage, findUsableDispatchGrant, importLegacyPluginStorage, issueDispatchGrantLocked, migrateLegacySessionState, resolveRuntimeIdentity, sessionBoundToOq, sessionBoundToStep, sessionBoundToWorkflow, withRuntimeLock, withRuntimeLocks, type LoomRuntimeIdentity } from "./runtime"
+import { consumeDispatchGrantLocked, createProjectStorage, createTransactionalStorage, ensureRuntimeStateVersion, findUsableDispatchGrant, importLegacyPluginStorage, issueDispatchGrantLocked, migrateLegacySessionState, resolveRuntimeIdentity, sessionBoundToOq, sessionBoundToStep, sessionBoundToWorkflow, withRuntimeLock, withRuntimeLocks, type LoomRuntimeIdentity } from "./runtime"
 import { LoomRpc } from "./rpc"
 import { buildSidebarSnapshot } from "./sidebar"
 import { renderToolOutput } from "./presentation"
@@ -650,6 +650,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
     const legacyStorage = ctx.storage as any
     const runtime = await resolveRuntimeIdentity(ctx.location.project.canonical, legacyStorage)
     const rawStorage = await createTransactionalStorage(runtime)
+    await ensureRuntimeStateVersion(rawStorage, runtime)
     await importLegacyPluginStorage(legacyStorage, rawStorage, runtime)
     await rawStorage.set("installation/id", runtime.installationId)
     await rawStorage.set(`installation/projects/${runtime.projectId}`, {
@@ -676,10 +677,26 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
     const ensureLegacySession = async (sessionID: string) => {
       if (legacyCheckedSessions.has(sessionID)) return
       const session = await ctx.session.get({ sessionID })
+      const sessionProjectId =
+        typeof session.projectID === "string" ? session.projectID : ""
+      const currentProjectId =
+        typeof ctx.location.project.id === "string" ? ctx.location.project.id : ""
+      const resumeProof =
+        typeof session.id === "string" &&
+        session.id === sessionID &&
+        sessionProjectId.length > 0 &&
+        currentProjectId.length > 0
+          ? {
+              kind: "opencode-host-session" as const,
+              sessionId: session.id,
+              projectId: sessionProjectId,
+            }
+          : undefined
       await migrateLegacySessionState(legacyStorage, scopedStorage, runtime, {
         sessionId: sessionID,
-        sessionProjectId: String(session.projectID),
-        currentProjectId: String(ctx.location.project.id),
+        sessionProjectId,
+        currentProjectId,
+        ...(resumeProof ? { resumeProof } : {}),
       })
       legacyCheckedSessions.add(sessionID)
     }

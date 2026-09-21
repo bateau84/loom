@@ -46,6 +46,38 @@ const execFileAsync = promisify(execFile)
 const PROJECT_PREFIX = "project/"
 const GLOBAL_PREFIXES = ["installation/", "episode/", "heuristic/"]
 
+export const RUNTIME_BASELINE_VERSION = 1
+export const RUNTIME_STATE_VERSION = 1
+
+export type RuntimeUpgradeStep = {
+  id: string
+  fromVersion: number
+  toVersion: number
+  apply: (
+    storage: RawStorage,
+    runtime: LoomRuntimeIdentity,
+  ) => Promise<Record<string, unknown> | void>
+}
+
+type RuntimeSchemaRecordV1 = {
+  schemaVersion: 1
+  currentVersion: number
+  initializedAt: string
+  updatedAt: string
+  lastUpgradeId?: string
+}
+
+type RuntimeUpgradeReceiptV1 = {
+  schemaVersion: 1
+  upgradeId: string
+  fromVersion: number
+  toVersion: number
+  completedAt: string
+  details?: Record<string, unknown>
+}
+
+const RUNTIME_UPGRADE_STEPS: RuntimeUpgradeStep[] = []
+
 function sha256(value: string) {
   return createHash("sha256").update(value).digest("hex")
 }
@@ -288,16 +320,15 @@ function runtimeLockPath(runtime: LoomRuntimeIdentity, resource: RuntimeLockReso
   )
 }
 
-export async function withRuntimeLocks<T>(
+async function withRuntimeLockPaths<T>(
   runtime: LoomRuntimeIdentity,
-  resources: RuntimeLockResource[],
+  lockPaths: string[],
   fn: () => Promise<T>,
 ): Promise<T> {
-  const lockPaths = [...new Set(resources.map((resource) => runtimeLockPath(runtime, resource)))].sort()
   const releases: Array<() => Promise<void>> = []
 
   try {
-    for (const lockPath of lockPaths) {
+    for (const lockPath of [...new Set(lockPaths)].sort()) {
       releases.push(await acquireFlock(lockPath))
     }
     const store = transactionalStores.get(runtime.stateRoot)
@@ -315,6 +346,35 @@ export async function withRuntimeLocks<T>(
   }
 }
 
+export async function withRuntimeLocks<T>(
+  runtime: LoomRuntimeIdentity,
+  resources: RuntimeLockResource[],
+  fn: () => Promise<T>,
+): Promise<T> {
+  return withRuntimeLockPaths(
+    runtime,
+    resources.map((resource) => runtimeLockPath(runtime, resource)),
+    fn,
+  )
+}
+
+export async function withInstallationRuntimeLock<T>(
+  runtime: LoomRuntimeIdentity,
+  aggregate: string,
+  resourceIdentity: string,
+  fn: () => Promise<T>,
+): Promise<T> {
+  const lockPath = join(
+    runtime.runtimeRoot,
+    "locks",
+    runtime.installationId,
+    "installation",
+    aggregate,
+    `${sha256(resourceIdentity)}.lock`,
+  )
+  return withRuntimeLockPaths(runtime, [lockPath], fn)
+}
+
 export async function withRuntimeLock<T>(
   runtime: LoomRuntimeIdentity,
   aggregate: string,
@@ -322,6 +382,120 @@ export async function withRuntimeLock<T>(
   fn: () => Promise<T>,
 ): Promise<T> {
   return withRuntimeLocks(runtime, [{ aggregate, resourceIdentity }], fn)
+}
+
+function validateRuntimeSchemaRecord(value: unknown): RuntimeSchemaRecordV1 {
+  if (
+    !value ||
+    typeof value !== "object" ||
+    (value as any).schemaVersion !== 1 ||
+    !Number.isSafeInteger((value as any).currentVersion) ||
+    (value as any).currentVersion < RUNTIME_BASELINE_VERSION
+  ) {
+    throw new Error("Unsupported Loom runtime schema metadata.")
+  }
+  return value as RuntimeSchemaRecordV1
+}
+
+export async function ensureRuntimeStateVersion(
+  storage: RawStorage,
+  runtime: LoomRuntimeIdentity,
+  options: {
+    targetVersion?: number
+    steps?: RuntimeUpgradeStep[]
+    now?: Date
+  } = {},
+): Promise<RuntimeSchemaRecordV1> {
+  const targetVersion = options.targetVersion ?? RUNTIME_STATE_VERSION
+  const steps = options.steps ?? RUNTIME_UPGRADE_STEPS
+  const now = options.now ?? new Date()
+
+  if (!Number.isSafeInteger(targetVersion) || targetVersion < RUNTIME_BASELINE_VERSION) {
+    throw new Error(`Invalid Loom runtime target version: ${targetVersion}`)
+  }
+
+  return withInstallationRuntimeLock(runtime, "migration", "runtime-state-version", async () => {
+    const key = "installation/runtime-schema"
+    const existing = await storage.get(key)
+    let record: RuntimeSchemaRecordV1
+
+    if (existing === undefined) {
+      record = {
+        schemaVersion: 1,
+        currentVersion: RUNTIME_BASELINE_VERSION,
+        initializedAt: now.toISOString(),
+        updatedAt: now.toISOString(),
+      }
+      await storage.set(key, record)
+    } else {
+      record = validateRuntimeSchemaRecord(existing)
+    }
+
+    if (record.currentVersion > targetVersion) {
+      throw new Error(
+        `Loom runtime state version ${record.currentVersion} is newer than this build supports (${targetVersion}).`,
+      )
+    }
+
+    const byFrom = new Map<number, RuntimeUpgradeStep>()
+    for (const step of steps) {
+      if (
+        !step.id ||
+        !Number.isSafeInteger(step.fromVersion) ||
+        !Number.isSafeInteger(step.toVersion) ||
+        step.toVersion <= step.fromVersion
+      ) {
+        throw new Error(`Invalid Loom runtime upgrade step: ${step.id || "<unnamed>"}`)
+      }
+      if (byFrom.has(step.fromVersion)) {
+        throw new Error(`Multiple Loom runtime upgrades start at version ${step.fromVersion}.`)
+      }
+      byFrom.set(step.fromVersion, step)
+    }
+
+    while (record.currentVersion < targetVersion) {
+      const step = byFrom.get(record.currentVersion)
+      if (!step || step.toVersion > targetVersion) {
+        throw new Error(
+          `No Loom runtime upgrade path from version ${record.currentVersion} to ${targetVersion}.`,
+        )
+      }
+
+      const receiptKey =
+        `installation/runtime-upgrades/${step.fromVersion}-${step.toVersion}/${sha256(step.id)}`
+      const priorReceipt = (await storage.get(receiptKey)) as RuntimeUpgradeReceiptV1 | undefined
+      let details: Record<string, unknown> | undefined
+
+      if (
+        priorReceipt?.schemaVersion === 1 &&
+        priorReceipt.upgradeId === step.id &&
+        priorReceipt.fromVersion === step.fromVersion &&
+        priorReceipt.toVersion === step.toVersion
+      ) {
+        details = priorReceipt.details
+      } else {
+        details = (await step.apply(storage, runtime)) ?? undefined
+        await storage.set(receiptKey, {
+          schemaVersion: 1,
+          upgradeId: step.id,
+          fromVersion: step.fromVersion,
+          toVersion: step.toVersion,
+          completedAt: now.toISOString(),
+          ...(details ? { details } : {}),
+        } satisfies RuntimeUpgradeReceiptV1)
+      }
+
+      record = {
+        ...record,
+        currentVersion: step.toVersion,
+        updatedAt: now.toISOString(),
+        lastUpgradeId: step.id,
+      }
+      await storage.set(key, record)
+    }
+
+    return record
+  })
 }
 
 async function installationIdentity(stateRoot: string) {
@@ -745,11 +919,22 @@ export async function importLegacyPluginStorage(
   })
 }
 
+export type LegacyMigrationProvenance =
+  | "project-epoch"
+  | "opencode-session-continuity"
+
+export type LegacySessionResumeProof = {
+  kind: "opencode-host-session"
+  sessionId: string
+  projectId: string
+}
+
 export type LegacyMigrationResult = {
   status: "none" | "migrated" | "already-scoped"
   workflowId?: string
   intentId?: string
   migratedKeys: number
+  provenance?: LegacyMigrationProvenance
 }
 
 async function copyLegacyKey(
@@ -792,6 +977,10 @@ async function copyLegacyPrefix(
   return migrated
 }
 
+function migrationRefusalKey(runtime: LoomRuntimeIdentity, sessionId: string) {
+  return `installation/migration-refusal/${runtime.projectId}/${sha256(sessionId)}`
+}
+
 async function recordMigrationRefusal(
   raw: RawStorage,
   runtime: LoomRuntimeIdentity,
@@ -799,7 +988,7 @@ async function recordMigrationRefusal(
   reason: string,
 ) {
   await raw.set(
-    `installation/migration-refusal/${runtime.projectId}/${sha256(sessionId)}`,
+    migrationRefusalKey(runtime, sessionId),
     {
       schemaVersion: 1,
       projectId: runtime.projectId,
@@ -810,6 +999,62 @@ async function recordMigrationRefusal(
   )
 }
 
+function validHostSessionResumeProof(
+  input: {
+    sessionId: string
+    sessionProjectId: string
+    currentProjectId: string
+    resumeProof?: LegacySessionResumeProof
+  },
+) {
+  return (
+    input.sessionProjectId.length > 0 &&
+    input.currentProjectId.length > 0 &&
+    input.sessionProjectId === input.currentProjectId &&
+    input.resumeProof?.kind === "opencode-host-session" &&
+    input.resumeProof.sessionId === input.sessionId &&
+    input.resumeProof.projectId === input.sessionProjectId
+  )
+}
+
+async function recordLegacySessionReconciliation(
+  legacy: RawStorage,
+  scoped: RawStorage,
+  runtime: LoomRuntimeIdentity,
+  input: {
+    sessionId: string
+    sessionProjectId: string
+    workflowId?: string
+    intentId?: string
+  },
+) {
+  const now = new Date().toISOString()
+  await scoped.set(
+    `installation/upgrade-reconciliation/legacy-session-v0-to-runtime-v1/${runtime.projectId}/${sha256(input.sessionId)}`,
+    {
+      schemaVersion: 1,
+      upgradeId: "legacy-session-v0-to-runtime-v1",
+      projectId: runtime.projectId,
+      sessionIdHash: sha256(input.sessionId),
+      openCodeProjectId: input.sessionProjectId,
+      ...(input.workflowId ? { workflowId: input.workflowId } : {}),
+      ...(input.intentId ? { intentId: input.intentId } : {}),
+      provenance: "opencode-session-continuity",
+      reconciledAt: now,
+    },
+  )
+
+  const refusalKey = migrationRefusalKey(runtime, input.sessionId)
+  const priorRefusal = await legacy.get(refusalKey)
+  if (priorRefusal && typeof priorRefusal === "object") {
+    await legacy.set(refusalKey, {
+      ...(priorRefusal as Record<string, unknown>),
+      resolvedAt: now,
+      resolution: "opencode-session-continuity",
+    })
+  }
+}
+
 export async function migrateLegacySessionState(
   raw: RawStorage,
   scoped: RawStorage,
@@ -818,6 +1063,7 @@ export async function migrateLegacySessionState(
     sessionId: string
     sessionProjectId: string
     currentProjectId: string
+    resumeProof?: LegacySessionResumeProof
   },
 ): Promise<LegacyMigrationResult> {
   const sessionKey = `session/${input.sessionId}`
@@ -848,18 +1094,30 @@ export async function migrateLegacySessionState(
   const legacyWorkflowForProvenance = hasLegacyWorkflow
     ? await raw.get(`workflow/${legacyWorkflowId}`)
     : undefined
+  if (hasLegacyWorkflow && (!legacyWorkflowForProvenance || typeof legacyWorkflowForProvenance !== "object")) {
+    const reason = "legacy session is bound to a missing workflow record."
+    await recordMigrationRefusal(raw, runtime, input.sessionId, reason)
+    throw new Error(`Legacy Loom migration refused: ${reason}`)
+  }
+
   const explicitLegacyProjectId =
     legacyWorkflowForProvenance && typeof legacyWorkflowForProvenance === "object"
       ? (legacyWorkflowForProvenance as any).projectId
       : undefined
 
-  if (!hasLegacyWorkflow || explicitLegacyProjectId !== runtime.projectId) {
-    const reason =
-      !hasLegacyWorkflow
-        ? "legacy state has no workflow with durable project provenance."
-        : explicitLegacyProjectId === undefined
-          ? "legacy workflow predates durable project epochs and has no unambiguous project provenance."
-          : "legacy workflow explicitly belongs to another project epoch."
+  let provenance: LegacyMigrationProvenance
+  if (explicitLegacyProjectId === runtime.projectId) {
+    provenance = "project-epoch"
+  } else if (explicitLegacyProjectId !== undefined) {
+    const reason = "legacy workflow explicitly belongs to another project epoch."
+    await recordMigrationRefusal(raw, runtime, input.sessionId, reason)
+    throw new Error(`Legacy Loom migration refused: ${reason}`)
+  } else if (validHostSessionResumeProof(input)) {
+    provenance = "opencode-session-continuity"
+  } else {
+    const reason = hasLegacyWorkflow
+      ? "legacy workflow predates durable project epochs and has no unambiguous project provenance or exact resumed-session continuity proof."
+      : "legacy intent predates durable project epochs and has no exact resumed-session continuity proof."
     await recordMigrationRefusal(raw, runtime, input.sessionId, reason)
     throw new Error(`Legacy Loom migration refused: ${reason}`)
   }
@@ -995,10 +1253,28 @@ export async function migrateLegacySessionState(
     objectiveId = result.objectiveId
   }
 
+  if (!objectiveId && migratedWorkflowId) {
+    const scopedWorkflow = await scoped.get(`workflow/${migratedWorkflowId}`)
+    const resumedWorkId =
+      scopedWorkflow && typeof scopedWorkflow === "object"
+        ? (scopedWorkflow as any).work?.objectiveId
+        : undefined
+    if (typeof resumedWorkId === "string") objectiveId = resumedWorkId
+  }
+
   if (objectiveId) {
     await withRuntimeLock(runtime, "work", objectiveId, async () => {
       const work = await copyLegacyKey(raw, scoped, `work/${encodeURIComponent(objectiveId)}`)
       if (work.copied) migratedKeys++
+    })
+  }
+
+  if (provenance === "opencode-session-continuity") {
+    await recordLegacySessionReconciliation(raw, scoped, runtime, {
+      sessionId: input.sessionId,
+      sessionProjectId: input.sessionProjectId,
+      ...(migratedWorkflowId ? { workflowId: migratedWorkflowId } : {}),
+      ...(migratedIntentId ? { intentId: migratedIntentId } : {}),
     })
   }
 
@@ -1007,6 +1283,7 @@ export async function migrateLegacySessionState(
     ...(migratedWorkflowId ? { workflowId: migratedWorkflowId } : {}),
     ...(migratedIntentId ? { intentId: migratedIntentId } : {}),
     migratedKeys,
+    provenance,
   }
 }
 

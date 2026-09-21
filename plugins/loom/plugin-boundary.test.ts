@@ -27,7 +27,9 @@ type RegisteredTool = {
   execute: (input: unknown, tool: { agent: string; sessionID: string }) => Promise<{ content: string }>
 }
 
-async function harness() {
+async function harness(
+  seed?: (storage: MemoryStorage, root: string, projectID: string) => void | Promise<void>,
+) {
   const root = await mkdtemp(join(tmpdir(), "loom-plugin-boundary-"))
   roots.push(root)
   await mkdir(join(root, "src"), { recursive: true })
@@ -42,6 +44,7 @@ async function harness() {
   const registered = new Map<string, RegisteredTool>()
   const storage = new MemoryStorage()
   const projectID = "opencode-project-a"
+  await seed?.(storage, root, projectID)
 
   const ctx: any = {
     location: {
@@ -103,6 +106,60 @@ afterEach(async () => {
 })
 
 describe("Loom registered plugin boundary", () => {
+  test("resumed pre-upgrade OpenCode session automatically reconciles its ongoing workflow", async () => {
+    const sessionID = "resumed-general-session"
+    const workflowId = "legacy-workflow"
+    const { call, restore } = await harness(async (storage) => {
+      await storage.set(`session/${sessionID}`, workflowId)
+      await storage.set(`workflow/${workflowId}`, {
+        id: workflowId,
+        anchor: "docs/anchors/leash-v1/anchor.md",
+        createdBySession: sessionID,
+        createdAt: "before-project-scoping",
+        steps: [
+          {
+            id: "worker",
+            agent: "worker",
+            kind: "work",
+            dependsOn: [],
+            status: "pending",
+          },
+        ],
+      })
+      await storage.set(`budget/${workflowId}`, {
+        totalDispatches: 0,
+        byKey: {},
+        seenDispatches: [],
+        grants: [],
+      })
+    })
+
+    try {
+      const status = await call(
+        "status",
+        { workflowId, detail: true },
+        "general",
+        sessionID,
+      )
+      expect(status.error).toBeUndefined()
+      expect(status.workflow).toMatchObject({
+        id: workflowId,
+        revision: 0,
+      })
+      expect(typeof status.workflow.projectId).toBe("string")
+
+      const duplicateStart = await call(
+        "start",
+        { anchor: "docs/anchors/leash-v1/anchor.md" },
+        "general",
+        sessionID,
+      )
+      expect(duplicateStart.error).toContain("still bound to an active workflow")
+    } finally {
+      restore()
+    }
+  })
+
   test("fresh Worker and Reviewer sessions share one workflow only through grant attachment", async () => {
     const { call, restore } = await harness()
     try {
