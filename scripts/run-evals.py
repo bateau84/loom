@@ -295,6 +295,15 @@ def pass_env(command: list[str], names: tuple[str, ...] | list[str], host_env: d
             command += ["--env", name]
 
 
+def prepare_node_modules_mount(project: Path, source: Path | None) -> Path | None:
+    if source is None:
+        return None
+    if not source.is_dir():
+        raise RuntimeError("runtime eval requires node_modules; run bun install first")
+    (project / "node_modules").mkdir(exist_ok=True)
+    return source
+
+
 def image_for_transport(args: argparse.Namespace, transport: str) -> str:
     if args.image:
         return args.image
@@ -333,6 +342,10 @@ def invoke_container(
     extra_envs: list[str],
     skill: str | None = None,
 ) -> dict[str, Any]:
+    node_modules = prepare_node_modules_mount(
+        project,
+        ROOT / "node_modules" if mount_node_modules else None,
+    )
     runner_bin = os.environ.get("OPENCODE_EVAL_RUNNER_BIN") or shutil.which("opencode-eval-runner")
     if runner_bin:
         with tempfile.TemporaryDirectory(prefix="loom-eval-runner-cli-") as tmp:
@@ -372,10 +385,7 @@ def invoke_container(
                 command += ["--database", str(database_seed)]
             if config_root:
                 command += ["--config-root", str(config_root)]
-            if mount_node_modules:
-                node_modules = ROOT / "node_modules"
-                if not node_modules.is_dir():
-                    raise RuntimeError("runtime eval requires node_modules; run bun install first")
+            if node_modules:
                 command += ["--mount", f"{node_modules}:/workspace/node_modules:ro"]
             for name in extra_envs:
                 command += ["--env", name]
@@ -464,10 +474,7 @@ def invoke_container(
         command += volume(project, "/workspace", True)
         command += volume(input_dir, "/input", True)
 
-        if mount_node_modules:
-            node_modules = ROOT / "node_modules"
-            if not node_modules.is_dir():
-                raise RuntimeError("runtime eval requires node_modules; run bun install first")
+        if node_modules:
             command += volume(node_modules, "/workspace/node_modules", True)
 
         if auth:
