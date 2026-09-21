@@ -505,6 +505,8 @@ def pass_env(command: list[str], names: tuple[str, ...] | list[str], host_env: d
 
 def _sensitive_key(name: str) -> bool:
     lowered = name.lower().replace("-", "_")
+    if lowered == "key" or lowered.endswith("_key"):
+        return True
     return any(
         token in lowered
         for token in (
@@ -516,6 +518,8 @@ def _sensitive_key(name: str) -> bool:
             "credential",
             "access",
             "refresh",
+            "authorization",
+            "cookie",
         )
     )
 
