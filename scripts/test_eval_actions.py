@@ -4,6 +4,7 @@ from __future__ import annotations
 import importlib.util
 import json
 from pathlib import Path
+import tempfile
 import unittest
 
 MODULE_PATH = Path(__file__).resolve().parent / "run-evals.py"
@@ -15,8 +16,6 @@ SPEC.loader.exec_module(RUN_EVALS)
 
 class MountPreparationTests(unittest.TestCase):
     def test_runtime_mountpoint_exists_before_read_only_workspace_mount(self):
-        import tempfile
-
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             project = root / "project"
@@ -28,6 +27,102 @@ class MountPreparationTests(unittest.TestCase):
 
             self.assertEqual(resolved, source)
             self.assertTrue((project / "node_modules").is_dir())
+
+
+
+class SkillOwnedEvalDiscoveryTests(unittest.TestCase):
+    def test_discovers_every_json_filename_inside_skill_evals_folder(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            skills = Path(tmp) / "skills"
+            eval_dir = skills / "demo-skill" / "evals"
+            eval_dir.mkdir(parents=True)
+            (eval_dir / "anything.json").write_text(
+                json.dumps({
+                    "skill": "demo-skill",
+                    "cases": [{
+                        "id": "A",
+                        "prompt": "do A",
+                        "trap": "miss A",
+                        "expectations": ["does A"],
+                        "negative_expectations": ["does not do B"],
+                    }],
+                }),
+                encoding="utf-8",
+            )
+            (eval_dir / "another-name.json").write_text(
+                json.dumps({
+                    "skill_name": "demo-skill",
+                    "evals": [{
+                        "id": 2,
+                        "prompt": "do C",
+                        "trap": "miss C",
+                        "expectations": ["does C"],
+                    }],
+                }),
+                encoding="utf-8",
+            )
+            (eval_dir / "third.json").write_text(
+                json.dumps([{
+                    "id": "three",
+                    "prompt": "do D",
+                    "expectations": ["does D"],
+                }]),
+                encoding="utf-8",
+            )
+            (eval_dir / "ignored.txt").write_text("not an eval", encoding="utf-8")
+
+            files = RUN_EVALS.skill_eval_files(skills)
+            cases = RUN_EVALS.load_skill_owned_cases(skills)
+
+            self.assertEqual(
+                [path.name for path in files],
+                ["another-name.json", "anything.json", "third.json"],
+            )
+            self.assertEqual(len(cases), 3)
+            self.assertTrue(all(case["skill"] == "demo-skill" for case in cases))
+            self.assertTrue(all(case["agent"] == RUN_EVALS.SKILL_EVAL_AGENT for case in cases))
+            self.assertTrue(all(case["_skill_owned"] is True for case in cases))
+            self.assertEqual(
+                {case["id"] for case in cases},
+                {"SKILL-demo-skill-A", "SKILL-demo-skill-2", "SKILL-demo-skill-three"},
+            )
+
+    def test_existing_web_ui_design_suite_is_discovered(self):
+        cases = RUN_EVALS.load_skill_owned_cases(RUN_EVALS.ROOT / "skills")
+        web_cases = [case for case in cases if case["skill"] == "web-ui-design"]
+
+        self.assertEqual(len(web_cases), 4)
+        self.assertEqual(
+            {case["_skill_eval_source_id"] for case in web_cases},
+            {"Web-01", "Web-02", "Web-03", "Web-04"},
+        )
+        self.assertTrue(all(case["execution"] == "runtime" for case in web_cases))
+        self.assertTrue(all(case["tools"] == {"requires": ["skill"]} for case in web_cases))
+
+    def test_skill_owned_project_uses_synthetic_skill_loading_agent(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            eval_path = Path(tmp) / "skills" / "demo-skill" / "evals" / "custom.json"
+            eval_path.parent.mkdir(parents=True)
+            raw = {
+                "id": "one",
+                "prompt": "answer using the method",
+                "expectations": ["uses the method"],
+            }
+            case = RUN_EVALS.normalize_skill_eval_case("demo-skill", raw, eval_path, 0)
+
+        temp, target_project, _, = RUN_EVALS.setup_projects(case)
+        try:
+            agent = (
+                target_project
+                / ".opencode"
+                / "agents"
+                / f"{RUN_EVALS.SKILL_EVAL_AGENT}.md"
+            ).read_text(encoding="utf-8")
+            self.assertIn("Load the native skill `demo-skill` before answering", agent)
+        finally:
+            import shutil
+            shutil.rmtree(temp, ignore_errors=True)
+
 
 
 class ActionAssertionTests(unittest.TestCase):
