@@ -138,8 +138,6 @@ jobs:
               args+=(--all)
             elif [[ -n "$EVAL_CASES" ]]; then
               args+=(--cases "$EVAL_CASES")
-            elif [[ -z "$EVAL_TARGET" && "$EVAL_TARGET_KIND" == "all" ]]; then
-              args+=(--cases "INTENT-01,REVIEW-01,WORK-01,CRITIC-01")
             fi
             "${args[@]}"
 
