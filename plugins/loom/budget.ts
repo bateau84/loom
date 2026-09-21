@@ -23,6 +23,7 @@ export type BudgetGrant = {
   grantedBy: string
   reason: string
   progress: ProgressSignal
+  evidence: string[]
   grantedAt: string
 }
 
@@ -127,9 +128,10 @@ export function grantExtraDispatch(input: {
   grantedBy: string
   reason: string
   progress: ProgressSignal
+  evidence?: string[]
   now: string
 }): ExtraDispatchGrantResult {
-  const { state, limits, key, agent, grantedBy, reason, progress, now } = input
+  const { state, limits, key, agent, grantedBy, reason, progress, evidence = [], now } = input
   const used = state.byKey[key] ?? 0
   const currentLimit = effectiveStepLimit(state, key, agent, limits)
   const grants = grantsForKey(state, key)
@@ -171,6 +173,7 @@ export function grantExtraDispatch(input: {
     grantedBy,
     reason: reason.trim(),
     progress,
+    evidence: evidence.map((item) => item.trim()).filter(Boolean),
     grantedAt: now,
   }
   if (!state.grants) state.grants = []
@@ -293,9 +296,10 @@ export function grantWorkflowDispatchBudget(input: {
   grantedBy: string
   reason: string
   progress: ProgressSignal
+  evidence?: string[]
   now: string
 }): WorkflowDispatchGrantResult {
-  const { state, limits, workflow, questions, stepId, questionId, grantedBy, reason, progress, now } = input
+  const { state, limits, workflow, questions, stepId, questionId, grantedBy, reason, progress, evidence = [], now } = input
 
   if (grantedBy !== "general") {
     return {
@@ -318,6 +322,14 @@ export function grantWorkflowDispatchBudget(input: {
     }
   }
 
+  if (resolved.target.agent === "critic" && evidence.map((item) => item.trim()).filter(Boolean).length === 0) {
+    return {
+      allowed: false,
+      reason: "Critic budget grants must record the new material evidence that justifies another Critic dispatch.",
+      state,
+    }
+  }
+
   const result = grantExtraDispatch({
     state,
     limits,
@@ -326,6 +338,7 @@ export function grantWorkflowDispatchBudget(input: {
     grantedBy,
     reason,
     progress,
+    evidence,
     now,
   })
 
