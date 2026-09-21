@@ -13,8 +13,6 @@ jobs:
   skill-proof:
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    env:
-      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
     steps:
       - uses: actions/checkout@v4
 
@@ -35,10 +33,11 @@ jobs:
             python3 scripts/run-evals.py \
               --engine docker \
               --target-kind skill \
-              --model openai/gpt-5.5 \
+              --model github-copilot/gpt-5.4 \
               --target-transport opencode \
               --judge-transport github-copilot-cli \
-              --judge-model gpt-5.4
+              --judge-model gpt-5.4 \
+              --env GITHUB_TOKEN
 
       - uses: actions/upload-artifact@v4
         if: always()
