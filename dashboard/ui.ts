@@ -110,7 +110,7 @@ button:focus-visible, select:focus-visible, input:focus-visible, a:focus-visible
   </header>
   <nav id="breadcrumbs" class="breadcrumbs" aria-label="Location"></nav>
   <div id="projection-status" class="notice projection-status" role="status" hidden></div>
-  <main id="main" tabindex="-1"></main>
+  <main id="main" tabindex="-1"><section class="panel empty"><strong>Loading Loom projection…</strong></section></main>
   <div id="live" class="sr-live" aria-live="polite" aria-atomic="true"></div>
 </div>
 <script>
