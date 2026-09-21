@@ -33,6 +33,7 @@ jobs:
             python3 scripts/run-evals.py \
               --engine docker \
               --target-kind skill \
+              --parallel 3 \
               --model opencode/big-pickle \
               --target-transport opencode \
               --judge-transport opencode \
