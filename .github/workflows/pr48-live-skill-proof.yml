@@ -22,7 +22,7 @@ jobs:
 
       - run: bun install
 
-      - name: Run one skill eval through real OpenCode
+      - name: Run all skill evals through real OpenCode
         uses: bateau84/opencode-eval-runner@bd02908d134ccec81d4497604b7b115606cf9b45
         with:
           engine: docker
@@ -32,11 +32,11 @@ jobs:
           command: |
             python3 scripts/run-evals.py \
               --engine docker \
-              --cases SKILL-GO-CONC-01 \
+              --target-kind skill \
               --model opencode/big-pickle \
               --target-transport opencode \
-              --judge-transport github-copilot-cli \
-              --judge-model gpt-5.4
+              --judge-transport opencode \
+              --judge-model opencode/big-pickle
 
       - uses: actions/upload-artifact@v4
         if: always()
