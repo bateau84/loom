@@ -34,7 +34,7 @@ jobs:
               --env GITHUB_TOKEN \
               --entrypoint opencode \
               "$OPENCODE_EVAL_RUNNER_OPENCODE_IMAGE" \
-              models
+              models --standalone
 
       - uses: actions/upload-artifact@v4
         if: always()
