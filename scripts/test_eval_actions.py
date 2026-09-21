@@ -15,6 +15,14 @@ SPEC.loader.exec_module(RUN_EVALS)
 
 
 class WorkflowCredentialTests(unittest.TestCase):
+    def test_live_workflow_uploads_hidden_eval_artifacts(self):
+        workflow = (
+            RUN_EVALS.ROOT / ".github" / "workflows" / "loom-live-evals.yml"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("path: .loom-evals/", workflow)
+        self.assertIn("include-hidden-files: true", workflow)
+
     def test_live_workflow_forwards_opencode_api_key_explicitly(self):
         workflow = (
             RUN_EVALS.ROOT / ".github" / "workflows" / "loom-live-evals.yml"
