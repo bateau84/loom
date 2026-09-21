@@ -1,11 +1,13 @@
 import { describe, expect, test } from "bun:test"
 import type { TaskSpec } from "./tasks"
 import {
+  claimWorkflowWave,
   completeObjective,
   completeWaveForTasks,
   createWorkHierarchy,
   materializeWorkPlan,
   nextRunnableWaves,
+  releaseWorkflowWave,
   reopenWaveForTasks,
   syncWorkTaskStatuses,
   validateWorkflowWave,
@@ -64,7 +66,8 @@ describe("Loom persistent work hierarchy", () => {
     expect(tree.objective.progress).toEqual({ finished: 0, total: 3 })
     expect(tree.phases[0].waves.map((wave) => wave.id)).toEqual(["foundation", "runtime"])
 
-    syncWorkTaskStatuses(work, [{ taskId: "a", complete: true }], now)
+    claimWorkflowWave(work, "wf-1", work.generation, [task("a"), task("b", ["a"])], false, now)
+    syncWorkTaskStatuses(work, "wf-1", work.generation, [{ taskId: "a", complete: true }], now)
     const progressed = workTree(work)
     expect(progressed.objective.progress).toEqual({ finished: 1, total: 3 })
     expect(progressed.phases[0].status).toBe("active")
@@ -75,22 +78,33 @@ describe("Loom persistent work hierarchy", () => {
   test("keeps Objective active until explicit objective completion", () => {
     const work = createWorkHierarchy("docs/anchors/product/anchor.md", "wf-1", now)
     materializeWorkPlan(work, "wf-1", plan(), now)
+    claimWorkflowWave(work, "wf-1", work.generation, [task("a"), task("b", ["a"])], false, now)
     syncWorkTaskStatuses(
       work,
+      "wf-1",
+      work.generation,
       [
         { taskId: "a", complete: true },
         { taskId: "b", complete: true },
-        { taskId: "c", complete: true },
       ],
       now,
     )
-    completeWaveForTasks(work, ["a", "b"], now)
-    completeWaveForTasks(work, ["c"], now)
+    completeWaveForTasks(work, "wf-1", work.generation, ["a", "b"], now)
+
+    claimWorkflowWave(work, "wf-2", work.generation, [task("c")], true, now)
+    syncWorkTaskStatuses(
+      work,
+      "wf-2",
+      work.generation,
+      [{ taskId: "c", complete: true }],
+      now,
+    )
+    completeWaveForTasks(work, "wf-2", work.generation, ["c"], now)
 
     expect(workTree(work).phases[0].status).toBe("complete")
     expect(work.objectiveStatus).toBe("active")
 
-    completeObjective(work, now)
+    completeObjective(work, work.generation, now)
     expect(work.objectiveStatus).toBe("complete")
   })
 
@@ -100,8 +114,11 @@ describe("Loom persistent work hierarchy", () => {
 
     expect(nextRunnableWaves(work).map((wave) => wave.id)).toEqual(["foundation"])
 
+    claimWorkflowWave(work, "wf-1", work.generation, [task("a"), task("b", ["a"])], false, now)
     syncWorkTaskStatuses(
       work,
+      "wf-1",
+      work.generation,
       [
         { taskId: "a", complete: true },
         { taskId: "b", complete: true },
@@ -110,7 +127,7 @@ describe("Loom persistent work hierarchy", () => {
     )
     expect(nextRunnableWaves(work)).toHaveLength(0)
 
-    completeWaveForTasks(work, ["a", "b"], now)
+    completeWaveForTasks(work, "wf-1", work.generation, ["a", "b"], now)
     expect(nextRunnableWaves(work).map((wave) => wave.id)).toEqual(["runtime"])
   })
 
@@ -134,15 +151,18 @@ describe("Loom persistent work hierarchy", () => {
       "final remaining Wave",
     )
 
+    claimWorkflowWave(work, "wf-1", work.generation, [task("a"), task("b", ["a"])], false, now)
     syncWorkTaskStatuses(
       work,
+      "wf-1",
+      work.generation,
       [
         { taskId: "a", complete: true },
         { taskId: "b", complete: true },
       ],
       now,
     )
-    completeWaveForTasks(work, ["a", "b"], now)
+    completeWaveForTasks(work, "wf-1", work.generation, ["a", "b"], now)
 
     expect(() => validateWorkflowWave(work, [task("c")], true)).not.toThrow()
   })
@@ -150,7 +170,8 @@ describe("Loom persistent work hierarchy", () => {
   test("replanning preserves old completed history and creates a new generation", () => {
     const work = createWorkHierarchy("docs/anchors/product/anchor.md", "wf-1", now)
     materializeWorkPlan(work, "wf-1", plan(), now)
-    syncWorkTaskStatuses(work, [{ taskId: "a", complete: true }], now)
+    claimWorkflowWave(work, "wf-1", work.generation, [task("a"), task("b", ["a"])], false, now)
+    syncWorkTaskStatuses(work, "wf-1", work.generation, [{ taskId: "a", complete: true }], now)
 
     const oldGeneration = work.generation
     materializeWorkPlan(work, "wf-2", plan(), "later")
@@ -171,20 +192,79 @@ describe("Loom persistent work hierarchy", () => {
   test("reopening implementation review invalidates Wave and Objective roll-up", () => {
     const work = createWorkHierarchy("docs/anchors/product/anchor.md", "wf-1", now)
     materializeWorkPlan(work, "wf-1", plan(), now)
+    claimWorkflowWave(work, "wf-1", work.generation, [task("a"), task("b", ["a"])], false, now)
     syncWorkTaskStatuses(
       work,
+      "wf-1",
+      work.generation,
       [
         { taskId: "a", complete: true },
         { taskId: "b", complete: true },
       ],
       now,
     )
-    completeWaveForTasks(work, ["a", "b"], now)
+    completeWaveForTasks(work, "wf-1", work.generation, ["a", "b"], now)
     expect(workTree(work).phases[0].waves[0].status).toBe("complete")
 
-    reopenWaveForTasks(work, ["a", "b"], "later")
+    reopenWaveForTasks(work, "wf-1", work.generation, ["a", "b"], "later")
     expect(workTree(work).phases[0].waves[0].status).toBe("active")
     expect(workTree(work).phases[0].status).toBe("active")
+  })
+
+
+  test("rejects stale workflow completion after a new plan generation", () => {
+    const work = createWorkHierarchy("docs/anchors/product/anchor.md", "wf-old", now)
+    materializeWorkPlan(work, "wf-old", plan(), now)
+    const oldGeneration = work.generation
+
+    claimWorkflowWave(
+      work,
+      "wf-old",
+      oldGeneration,
+      [task("a"), task("b", ["a"])],
+      false,
+      now,
+    )
+
+    materializeWorkPlan(work, "wf-new", plan(), "later")
+    expect(work.generation).toBe(oldGeneration + 1)
+
+    expect(() =>
+      syncWorkTaskStatuses(
+        work,
+        "wf-old",
+        oldGeneration,
+        [{ taskId: "a", complete: true }],
+        "stale-completion",
+      ),
+    ).toThrow("Stale workflow generation")
+  })
+
+  test("rejects a second workflow claiming the same Wave", () => {
+    const work = createWorkHierarchy("docs/anchors/product/anchor.md", "wf-1", now)
+    materializeWorkPlan(work, "wf-1", plan(), now)
+    const generation = work.generation
+    const tasks = [task("a"), task("b", ["a"])]
+
+    claimWorkflowWave(work, "wf-1", generation, tasks, false, now)
+
+    expect(() =>
+      claimWorkflowWave(work, "wf-2", generation, tasks, false, "later"),
+    ).toThrow(/already claimed/)
+  })
+
+  test("explicit release lets another workflow recover the Wave", () => {
+    const work = createWorkHierarchy("docs/anchors/product/anchor.md", "wf-1", now)
+    materializeWorkPlan(work, "wf-1", plan(), now)
+    const generation = work.generation
+    const tasks = [task("a"), task("b", ["a"])]
+
+    claimWorkflowWave(work, "wf-1", generation, tasks, false, now)
+    releaseWorkflowWave(work, "wf-1", generation, ["a", "b"], "released")
+
+    expect(() =>
+      claimWorkflowWave(work, "wf-2", generation, tasks, false, "later"),
+    ).not.toThrow()
   })
 
 })
