@@ -97,7 +97,8 @@ class SkillOwnedEvalDiscoveryTests(unittest.TestCase):
             {"Web-01", "Web-02", "Web-03", "Web-04"},
         )
         self.assertTrue(all(case["execution"] == "runtime" for case in web_cases))
-        self.assertTrue(all(case["tools"] == {"requires": ["skill"]} for case in web_cases))
+        self.assertTrue(all(case.get("_skill_owned") is True for case in web_cases))
+        self.assertTrue(all("tools" not in case for case in web_cases))
 
     def test_skill_owned_case_exposes_local_id_and_name_selectors(self):
         case = {
