@@ -2388,6 +2388,66 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
 
       editor.add({
+        name: "work_release",
+        description:
+          "Release this workflow's persistent Wave claim when abandoning or recovering bounded work. General only; completed Wave history is unchanged.",
+        input: {
+          type: "object",
+          properties: {
+            workflowId: { type: "string" },
+            reason: { type: "string" },
+          },
+          required: ["workflowId", "reason"],
+          additionalProperties: false,
+        },
+        options: { namespace: "loom", codemode: false },
+        execute: async (input, tool) => {
+          if (tool.agent !== "general") {
+            return { content: renderToolOutput({ error: "Only general may release a Loom Wave claim." }) }
+          }
+
+          const value = input as { workflowId: string; reason: string }
+          if (!value.reason.trim()) {
+            return { content: renderToolOutput({ error: "Wave claim release requires a concrete reason." }) }
+          }
+
+          const workflow = await readWorkflow(ctx, value.workflowId)
+          if (!workflow?.work) {
+            return { content: renderToolOutput({ error: "Workflow has no persistent work claim." }) }
+          }
+
+          const taskIds = plannedTaskSteps(workflow).map((taskStep) => taskStep.task!.id)
+          if (taskIds.length === 0) {
+            return { content: renderToolOutput({ error: "Workflow has no planned Wave Tasks to release." }) }
+          }
+
+          try {
+            await withWorkLock(workflow.work.objectiveId, async () => {
+              const work = await readWork(ctx, workflow.work!.objectiveId)
+              if (!work) throw new Error("Persistent work hierarchy not found.")
+              releaseWorkflowWave(
+                work,
+                workflow.id,
+                workflow.work!.generation,
+                taskIds,
+                new Date().toISOString(),
+              )
+              await ctx.storage.set(workKey(work.objectiveId), work)
+            })
+
+            await ctx.storage.set(
+              `work-release/${workflow.id}/${crypto.randomUUID()}`,
+              { reason: value.reason, at: new Date().toISOString(), by: tool.agent },
+            )
+            return { content: renderToolOutput({ released: true, workflowId: workflow.id, reason: value.reason }) }
+          } catch (error) {
+            return { content: renderToolOutput({ error: error instanceof Error ? error.message : String(error) }) }
+          }
+        },
+      })
+
+
+      editor.add({
         name: "task_plan",
         description:
           "Create the bounded Worker DAG for exactly one remaining runnable Wave from the persistent work plan. Planner only. Tasks become real workflow steps with immutable write scopes.",
@@ -2437,16 +2497,34 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             if (!workflow.work) {
               throw new Error("Persistent work plan is missing. Call loom_work_plan before loom_task_plan.")
             }
-            const work = await readWork(ctx, workflow.work.objectiveId)
-            if (!work) throw new Error("Persistent work hierarchy not found.")
 
-            const wave = validateWorkflowWave(
-              work,
-              tasks,
-              (workflow.effects?.workLevel ?? "objective") === "objective",
-            )
             const steps = applyTaskPlan(workflow, tasks)
-            workflow.work = { objectiveId: work.objectiveId, generation: work.generation }
+
+            const claimed = await withWorkLock(workflow.work.objectiveId, async () => {
+              const work = await readWork(ctx, workflow.work!.objectiveId)
+              if (!work) throw new Error("Persistent work hierarchy not found.")
+
+              assertWorkGeneration(work, workflow.work!.generation)
+              const wave = claimWorkflowWave(
+                work,
+                workflow.id,
+                workflow.work!.generation,
+                tasks,
+                (workflow.effects?.workLevel ?? "objective") === "objective",
+                new Date().toISOString(),
+              )
+              await ctx.storage.set(workKey(work.objectiveId), work)
+
+              const persisted = await readWork(ctx, work.objectiveId)
+              if (!persisted) throw new Error("Persistent work hierarchy disappeared after claim.")
+              assertWaveClaimForTasks(
+                persisted,
+                workflow.id,
+                workflow.work!.generation,
+                tasks.map((task) => task.id),
+              )
+              return { work: persisted, wave }
+            })
 
             for (const step of steps) {
               const scope: TaskScope = {
@@ -2460,8 +2538,8 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             await ctx.storage.set(workflowKey(workflow.id), workflow)
             return {
               content: renderToolOutput({
-                wave: { id: wave.logicalId, title: wave.title },
-                generation: work.generation,
+                wave: { id: claimed.wave.logicalId, title: claimed.wave.title },
+                generation: claimed.work.generation,
                 tasks: steps.map((step) => ({
                   stepId: step.id,
                   task: step.task,
@@ -2597,6 +2675,20 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               return { content: renderToolOutput({ error: "Worker step has no declared task scope." }) }
             }
 
+            if (step.task && workflow.work) {
+              const work = await readWork(ctx, workflow.work.objectiveId)
+              if (!work) return { content: renderToolOutput({ error: "Persistent work hierarchy not found." }) }
+              try {
+                assertWaveClaimForTasks(
+                  work,
+                  workflow.id,
+                  workflow.work.generation,
+                  plannedTaskSteps(workflow).map((taskStep) => taskStep.task!.id),
+                )
+              } catch (error) {
+                return { content: renderToolOutput({ error: error instanceof Error ? error.message : String(error) }) }
+              }
+            }
           }
 
           await ctx.storage.set(sessionKey(tool.sessionID), workflowId)
