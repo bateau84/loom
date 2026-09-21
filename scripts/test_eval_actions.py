@@ -121,6 +121,23 @@ class SkillOwnedEvalDiscoveryTests(unittest.TestCase):
         self.assertTrue(all(case.get("_skill_owned") is True for case in web_cases))
         self.assertTrue(all("tools" not in case for case in web_cases))
 
+    def test_skill_owned_case_without_trap_does_not_invent_one_from_description(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "skills" / "demo-skill" / "evals" / "case.json"
+            path.parent.mkdir(parents=True)
+            raw = {
+                "id": 1,
+                "name": "demo",
+                "description": "Descriptive metadata, not a failure trap.",
+                "prompt": "Do the thing.",
+                "expectations": ["Does the thing."],
+            }
+
+            case = RUN_EVALS.normalize_skill_eval_case("demo-skill", raw, path, 0)
+
+        self.assertEqual(case["trap"], "")
+        self.assertFalse(case["_skill_trap_declared"])
+
     def test_skill_owned_case_exposes_local_id_and_name_selectors(self):
         case = {
             "id": "SKILL-web-ui-design-Web-01",
