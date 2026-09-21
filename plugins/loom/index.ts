@@ -38,7 +38,7 @@ import {
 } from "./evidence"
 import {
   DEFAULT_LIMITS,
-  grantExtraDispatch,
+  grantWorkflowDispatchBudget,
   hasMaterialProgress,
   newBudgetState,
   recordDispatch,
@@ -1350,6 +1350,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           properties: {
             workflowId: { type: "string" },
             stepId: { type: "string" },
+            questionId: { type: "string" },
             reason: { type: "string" },
             newEvidence: { type: "boolean" },
             changedHypothesis: { type: "boolean" },
@@ -2274,7 +2275,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       editor.add({
         name: "budget_grant",
         description:
-          "Grant exactly one extra dispatch to an exhausted runnable workflow step after material progress. General only. Applies to work and gate steps; dispatch history and the workflow-wide total limit are preserved.",
+          "Grant exactly one extra dispatch to an exhausted runnable workflow step or unanswered agent-owned OQ after material progress. General only; dispatch history and the workflow-wide total limit are preserved.",
         input: {
           type: "object",
           properties: {
@@ -2298,18 +2299,15 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               additionalProperties: false,
             },
           },
-          required: ["workflowId", "stepId", "reason", "progress"],
+          required: ["workflowId", "reason", "progress"],
           additionalProperties: false,
         },
         options: { namespace: "loom", codemode: false },
         execute: async (input, tool) => {
-          if (tool.agent !== "general") {
-            return { content: renderToolOutput({ error: "Only general may grant extra Loom dispatch budget." }) }
-          }
-
           const value = input as {
             workflowId: string
-            stepId: string
+            stepId?: string
+            questionId?: string
             reason: string
             progress: ProgressSignal
           }
@@ -2317,47 +2315,29 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           const workflow = await readWorkflow(ctx, value.workflowId)
           if (!workflow) return { content: renderToolOutput({ error: "Workflow not found." }) }
 
-          const step = workflow.steps.find((candidate) => candidate.id === value.stepId)
-          if (!step) return { content: renderToolOutput({ error: "Step not found." }) }
-          if (step.status !== "pending") {
-            return {
-              content: renderToolOutput({
-                error: "Budget grants apply only to pending steps. Reopen failed work or gates before granting another dispatch.",
-                step: { id: step.id, status: step.status },
-              }),
-            }
-          }
-          if (!runnable(workflow).some((candidate) => candidate.id === step.id)) {
-            return {
-              content: renderToolOutput({
-                error: "Budget grants apply only when the exhausted step is currently runnable.",
-                step: { id: step.id, status: step.status, dependsOn: step.dependsOn },
-              }),
-            }
-          }
-
+          const questions = await readQuestions(ctx, value.workflowId)
           const limits = await readLimits(ctx, value.workflowId)
           const state = await readBudget(ctx, value.workflowId)
-          const key = `step:${step.id}`
-          const result = grantExtraDispatch({
+          const result = grantWorkflowDispatchBudget({
             state,
             limits,
-            key,
-            agent: step.agent,
+            workflow,
+            questions,
+            stepId: value.stepId,
+            questionId: value.questionId,
             grantedBy: tool.agent,
             reason: value.reason,
             progress: value.progress,
             now: new Date().toISOString(),
           })
 
-          if (!result.allowed) {
+          if (!result.allowed || !result.target) {
             return {
               content: renderToolOutput({
                 error: result.reason,
-                step: {
-                  id: step.id,
-                  agent: step.agent,
-                  used: state.byKey[key] ?? 0,
+                target: {
+                  stepId: value.stepId,
+                  questionId: value.questionId,
                 },
                 limits,
               }),
@@ -2368,13 +2348,10 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           return {
             content: renderToolOutput({
               granted: true,
-              step: {
-                id: step.id,
-                agent: step.agent,
-                used: state.byKey[key] ?? 0,
-                previousLimit: result.previousLimit,
-                newLimit: result.newLimit,
-              },
+              target: result.target,
+              used: state.byKey[result.target.key] ?? 0,
+              previousLimit: result.previousLimit,
+              newLimit: result.newLimit,
               grant: result.grant,
               workflowDispatches: {
                 used: state.totalDispatches,
