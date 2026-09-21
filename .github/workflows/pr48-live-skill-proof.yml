@@ -22,7 +22,7 @@ jobs:
 
       - run: bun install
 
-      - name: Probe OpenCode GitHub Copilot models
+      - name: Run one skill eval through real OpenCode
         uses: bateau84/opencode-eval-runner@bd02908d134ccec81d4497604b7b115606cf9b45
         with:
           engine: docker
@@ -30,11 +30,13 @@ jobs:
           copilot-image: ghcr.io/bateau84/opencode-eval-runner@sha256:fbc8f007ff339c6a6d47d4b1113874084cbf0eb7e62c7bb69bf9ccd70cdae799
           artifact-dir: .loom-evals
           command: |
-            docker run --rm \
-              --env GITHUB_TOKEN \
-              --entrypoint opencode \
-              "$OPENCODE_EVAL_RUNNER_OPENCODE_IMAGE" \
-              models --standalone
+            python3 scripts/run-evals.py \
+              --engine docker \
+              --cases SKILL-GO-CONC-01 \
+              --model opencode/big-pickle \
+              --target-transport opencode \
+              --judge-transport github-copilot-cli \
+              --judge-model gpt-5.4
 
       - uses: actions/upload-artifact@v4
         if: always()
