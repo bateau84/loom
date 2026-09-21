@@ -243,6 +243,65 @@ describe("Loom runtime upgrade ledger", () => {
     })
   })
 
+  test("project upgrade callbacks cannot escape their assigned project namespace", async () => {
+    await withRoots(async (root) => {
+      const legacy = new MemoryStorage()
+      const project = join(root, "project")
+      await mkdir(project, { recursive: true })
+      const runtime = await resolveRuntimeIdentity(project, legacy as any)
+      const storage = await createTransactionalStorage(runtime)
+      await ensureRuntimeStateVersion(storage, runtime)
+      await storage.set(`installation/projects/${runtime.projectId}`, { projectId: runtime.projectId })
+
+      await expect(
+        ensureRuntimeStateVersion(storage, runtime, {
+          targetVersion: 2,
+          steps: [{
+            id: "test-project-escape-v1-to-v2",
+            fromVersion: 1,
+            toVersion: 2,
+            applyProject: async (projectStorage: any) => {
+              await projectStorage.set("installation/escape", { unsafe: true })
+            },
+          }],
+        }),
+      ).rejects.toThrow("may not escape its project namespace")
+
+      expect(await storage.get("installation/escape")).toBeUndefined()
+      expect(await storage.get("installation/runtime-schema")).toMatchObject({ currentVersion: 1 })
+    })
+  })
+
+  test("installation upgrade callbacks cannot mutate project-scoped state", async () => {
+    await withRoots(async (root) => {
+      const legacy = new MemoryStorage()
+      const project = join(root, "project")
+      await mkdir(project, { recursive: true })
+      const runtime = await resolveRuntimeIdentity(project, legacy as any)
+      const storage = await createTransactionalStorage(runtime)
+      await ensureRuntimeStateVersion(storage, runtime)
+      const projectKey = `project/${runtime.projectId}/format`
+      await storage.set(projectKey, { version: 1 })
+
+      await expect(
+        ensureRuntimeStateVersion(storage, runtime, {
+          targetVersion: 2,
+          steps: [{
+            id: "test-installation-escape-v1-to-v2",
+            fromVersion: 1,
+            toVersion: 2,
+            applyInstallation: async (installationStorage: any) => {
+              await installationStorage.set(projectKey, { version: 2 })
+            },
+          }],
+        }),
+      ).rejects.toThrow("may not access project-scoped key")
+
+      expect(await storage.get(projectKey)).toEqual({ version: 1 })
+      expect(await storage.get("installation/runtime-schema")).toMatchObject({ currentVersion: 1 })
+    })
+  })
+
   test("project-scoped upgrade callbacks migrate every canonical project before advancing the installation version", async () => {
     await withRoots(async (root) => {
       const legacy = new MemoryStorage()

@@ -454,6 +454,61 @@ async function storageTransaction<T>(storage: RawStorage, fn: () => Promise<T>):
   return storage.transaction ? storage.transaction(fn) : fn()
 }
 
+function isInstallationUpgradeKey(key: string) {
+  return GLOBAL_PREFIXES.some((prefix) => key.startsWith(prefix))
+}
+
+function createInstallationUpgradeStorage(raw: RawStorage): RawStorage {
+  const requireGlobal = (key: string) => {
+    if (!isInstallationUpgradeKey(key)) {
+      throw new Error(
+        `Installation runtime upgrade may not access project-scoped key: ${key}`,
+      )
+    }
+    return key
+  }
+  const storage: RawStorage = {
+    get(key) {
+      return raw.get(requireGlobal(key))
+    },
+    set(key, value) {
+      return raw.set(requireGlobal(key), value)
+    },
+    scan(input) {
+      return raw.scan({ ...input, prefix: requireGlobal(input.prefix) })
+    },
+  }
+  if (raw.transaction) storage.transaction = (fn) => raw.transaction!(fn)
+  return storage
+}
+
+function createProjectUpgradeStorage(raw: RawStorage, projectId: string): RawStorage {
+  const qualify = (key: string) => {
+    if (
+      key.startsWith(PROJECT_PREFIX) ||
+      GLOBAL_PREFIXES.some((prefix) => key.startsWith(prefix))
+    ) {
+      throw new Error(
+        `Project runtime upgrade for ${projectId} may not escape its project namespace: ${key}`,
+      )
+    }
+    return `${PROJECT_PREFIX}${projectId}/${key}`
+  }
+  const storage: RawStorage = {
+    get(key) {
+      return raw.get(qualify(key))
+    },
+    set(key, value) {
+      return raw.set(qualify(key), value)
+    },
+    scan(input) {
+      return raw.scan({ ...input, prefix: qualify(input.prefix) })
+    },
+  }
+  if (raw.transaction) storage.transaction = (fn) => raw.transaction!(fn)
+  return storage
+}
+
 export async function ensureRuntimeStateVersion(
   storage: RawStorage,
   runtime: LoomRuntimeIdentity,
@@ -541,7 +596,10 @@ export async function ensureRuntimeStateVersion(
 
         const details: Record<string, unknown> = {}
         if (step.applyInstallation) {
-          const installationDetails = await step.applyInstallation(storage, runtime)
+          const installationDetails = await step.applyInstallation(
+            createInstallationUpgradeStorage(storage),
+            runtime,
+          )
           if (installationDetails) details.installation = installationDetails
         }
         if (step.applyProject) {
@@ -549,7 +607,7 @@ export async function ensureRuntimeStateVersion(
           const projectDetails: Record<string, unknown> = {}
           for (const projectId of projectIds) {
             const result = await step.applyProject(
-              createProjectStorage(storage, projectId),
+              createProjectUpgradeStorage(storage, projectId),
               projectId,
               runtime,
             )
