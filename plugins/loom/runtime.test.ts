@@ -771,6 +771,20 @@ describe("Loom runtime identity and scoped storage", () => {
         ],
       })
 
+      await expect(
+        migrateLegacySessionState(legacy as any, scoped, runtime, {
+          sessionId: "old-planner",
+          sessionProjectId: "",
+          currentProjectId: "opencode-project-a",
+        }),
+      ).rejects.toThrow("no unambiguous project provenance")
+
+      const refusedBeforeAdmission = await legacy.scan({ prefix: "installation/migration-refusal/" })
+      expect(refusedBeforeAdmission.entries).toHaveLength(1)
+      expect(refusedBeforeAdmission.entries[0].value).toMatchObject({
+        projectId: runtime.projectId,
+      })
+
       const primary = await migrateLegacySessionState(legacy as any, scoped, runtime, {
         sessionId: "old-general",
         sessionProjectId: "opencode-project-a",
@@ -802,6 +816,13 @@ describe("Loom runtime identity and scoped storage", () => {
         "canonical-workflow",
         "opencode-session-continuity",
       ])
+
+      const refusalAfterAdmission = await legacy.scan({ prefix: "installation/migration-refusal/" })
+      expect(refusalAfterAdmission.entries).toHaveLength(1)
+      expect(refusalAfterAdmission.entries[0].value).toMatchObject({
+        resolution: "canonical-workflow",
+      })
+      expect(typeof (refusalAfterAdmission.entries[0].value as any).resolvedAt).toBe("string")
     })
   })
 
