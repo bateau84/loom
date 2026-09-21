@@ -133,7 +133,7 @@ describe("Loom progress and dispatch budgets", () => {
       }).allowed,
     ).toBe(false)
 
-    const grant = grantWorkflowDispatchBudget({
+    const insufficient = grantWorkflowDispatchBudget({
       state,
       limits: DEFAULT_LIMITS,
       workflow,
@@ -143,6 +143,24 @@ describe("Loom progress and dispatch budgets", () => {
       reason: "Architecture correction reduced the unresolved set.",
       progress: {
         newEvidence: false,
+        changedHypothesis: false,
+        changedStrategy: false,
+        reducedUnresolved: true,
+      },
+      now: "now",
+    })
+    expect(insufficient.allowed).toBe(false)
+
+    const grant = grantWorkflowDispatchBudget({
+      state,
+      limits: DEFAULT_LIMITS,
+      workflow,
+      questions: [],
+      stepId: "critic-solution",
+      grantedBy: "general",
+      reason: "The corrected architecture is new material evidence for another Critic pass.",
+      progress: {
+        newEvidence: true,
         changedHypothesis: false,
         changedStrategy: false,
         reducedUnresolved: true,
@@ -276,7 +294,6 @@ describe("Loom progress and dispatch budgets", () => {
   test("bounded grants apply to gate-owning agents as well as workers", () => {
     const cases = [
       { agent: "reviewer", base: DEFAULT_LIMITS.maxReviewerDispatchesPerStep },
-      { agent: "critic", base: DEFAULT_LIMITS.maxCriticDispatchesPerStep },
       { agent: "designer", base: DEFAULT_LIMITS.maxDispatchesPerStep },
       { agent: "acceptance", base: DEFAULT_LIMITS.maxDispatchesPerStep },
     ]
