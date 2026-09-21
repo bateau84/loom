@@ -504,6 +504,29 @@ export function completeWaveForTasks(
   return hierarchy
 }
 
+export function reopenWaveForTasks(
+  hierarchy: WorkHierarchy,
+  taskIds: string[],
+  now: string,
+) {
+  const tasks = activeTaskMap(hierarchy)
+  const selected = taskIds.map((id) => tasks.get(id))
+  if (selected.some((task) => !task)) return hierarchy
+  const parentIds = new Set(selected.map((task) => task!.parentId))
+  if (parentIds.size !== 1) return hierarchy
+
+  const waveId = [...parentIds][0]!
+  const wave = activeNodes(hierarchy).find((node) => node.id === waveId && node.type === "wave")
+  if (!wave || wave.status !== "complete") return hierarchy
+
+  wave.status = "active"
+  wave.updatedAt = now
+  recomputeRollup(hierarchy, now)
+  hierarchy.version++
+  hierarchy.updatedAt = now
+  return hierarchy
+}
+
 export function completeObjective(hierarchy: WorkHierarchy, now: string) {
   const phases = activeNodes(hierarchy).filter((node) => node.type === "phase")
   if (phases.length === 0) throw new Error("Objective has no active work plan.")
