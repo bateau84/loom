@@ -154,7 +154,7 @@ describe("Loom registered plugin boundary", () => {
         "general",
         sessionID,
       )
-      expect(duplicateStart.error).toContain("already has an active workflow")
+      expect(duplicateStart.error).toContain("still bound to an active workflow")
     } finally {
       restore()
     }
