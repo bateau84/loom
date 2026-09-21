@@ -23,6 +23,7 @@ DEFAULT_SUITES = [
     ROOT / "evals" / "everyday.json",
     ROOT / "evals" / "front-door.json",
     ROOT / "evals" / "verification.json",
+    ROOT / "evals" / "skills.json",
 ]
 PROVIDER_ENVS = ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "OPENROUTER_API_KEY")
 COPILOT_ENVS = ("COPILOT_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN")
@@ -103,6 +104,14 @@ def load_cases(suite_paths: list[Path]) -> list[dict[str, Any]]:
         data = json.loads(path.read_text(encoding="utf-8"))
         cases.extend(data["cases"])
     return cases
+
+
+def case_target_kind(case: dict[str, Any]) -> str:
+    return "skill" if case.get("skill") else "agent"
+
+
+def case_target_name(case: dict[str, Any]) -> str:
+    return str(case.get("skill") or case["agent"])
 
 
 def safe_fixture_path(project: Path, value: str) -> Path:
@@ -322,7 +331,100 @@ def invoke_container(
     container_timeout: int,
     mount_node_modules: bool,
     extra_envs: list[str],
+    skill: str | None = None,
 ) -> dict[str, Any]:
+    runner_bin = os.environ.get("OPENCODE_EVAL_RUNNER_BIN") or shutil.which("opencode-eval-runner")
+    if runner_bin:
+        with tempfile.TemporaryDirectory(prefix="loom-eval-runner-cli-") as tmp:
+            root = Path(tmp)
+            prompt_file = root / "prompt.txt"
+            system_file = root / "system.txt"
+            result_file = root / "result.json"
+            prompt_file.write_text(prompt, encoding="utf-8")
+            system_file.write_text(system, encoding="utf-8")
+
+            command = [
+                runner_bin,
+                "invoke",
+                "--engine", engine,
+                "--image", image,
+                "--transport", transport,
+                "--workspace", str(project),
+                "--workspace-mode", "ro",
+                "--model", model,
+                "--prompt-file", str(prompt_file),
+                "--system-file", str(system_file),
+                "--output", str(result_file),
+                "--timeout-seconds", str(timeout),
+                "--container-timeout", str(container_timeout),
+            ]
+            if agent:
+                command += ["--agent", agent]
+            if skill:
+                command += ["--skill", skill]
+            if auth:
+                command += ["--auth", str(auth)]
+            if config:
+                command += ["--config", str(config)]
+            if models_catalog:
+                command += ["--models-catalog", str(models_catalog)]
+            if database_seed:
+                command += ["--database", str(database_seed)]
+            if config_root:
+                command += ["--config-root", str(config_root)]
+            if mount_node_modules:
+                node_modules = ROOT / "node_modules"
+                if not node_modules.is_dir():
+                    raise RuntimeError("runtime eval requires node_modules; run bun install first")
+                command += ["--mount", f"{node_modules}:/workspace/node_modules:ro"]
+            for name in extra_envs:
+                command += ["--env", name]
+
+            proc = subprocess.run(
+                command,
+                cwd=ROOT,
+                env=host_environment_for_transport(transport),
+                capture_output=True,
+                text=True,
+                timeout=container_timeout + 30,
+                check=False,
+            )
+            if not result_file.is_file():
+                detail = " | ".join(part.strip() for part in (proc.stderr, proc.stdout) if part.strip())
+                return {
+                    "exit_code": proc.returncode,
+                    "text": "",
+                    "tools": [],
+                    "actions": [],
+                    "stderr": "opencode-eval-runner did not produce result JSON"
+                    + (": " + detail[:4000] if detail else ""),
+                    "stdout": proc.stdout[:100000],
+                    "infrastructure_error": True,
+                }
+            try:
+                result = json.loads(result_file.read_text(encoding="utf-8"))
+            except json.JSONDecodeError as exc:
+                return {
+                    "exit_code": proc.returncode,
+                    "text": "",
+                    "tools": [],
+                    "actions": [],
+                    "stderr": "opencode-eval-runner result was invalid JSON: " + str(exc),
+                    "stdout": proc.stdout[:100000],
+                    "infrastructure_error": True,
+                }
+            if not isinstance(result, dict):
+                return {
+                    "exit_code": proc.returncode,
+                    "text": "",
+                    "tools": [],
+                    "actions": [],
+                    "stderr": "opencode-eval-runner result was not an object",
+                    "stdout": proc.stdout[:100000],
+                    "infrastructure_error": True,
+                }
+            return result
+
     with tempfile.TemporaryDirectory(prefix="loom-eval-invoke-") as tmp:
         root = Path(tmp)
         input_dir = root / "input"
@@ -386,6 +488,8 @@ def invoke_container(
             f"EVAL_MODEL={model}",
             "--env",
             f"EVAL_AGENT={agent}",
+            "--env",
+            f"EVAL_SKILL={skill or ''}",
             "--env",
             "EVAL_PROMPT_FILE=/input/prompt.txt",
             "--env",
@@ -553,6 +657,12 @@ def deterministic_failures(
             failures.append("forbidden tool observed: " + forbidden)
 
     observed_actions = actions or []
+    skill = case.get("skill")
+    if skill:
+        required_skill = {"tool": "skill", "arg": "name", "equals": skill}
+        if not any(action_matches(action, required_skill) for action in observed_actions):
+            failures.append("skill under test not loaded: " + str(skill))
+
     action_assertions = case.get("actions") or {}
     for required in action_assertions.get("requires", []):
         if not any(action_matches(action, required) for action in observed_actions):
@@ -568,6 +678,7 @@ def judge_prompt(case: dict[str, Any], text: str, tools: list[str]) -> str:
         "Evaluate this Loom behavioral case.",
         "",
         "CASE: " + case["id"],
+        "TARGET: " + case_target_kind(case) + ":" + case_target_name(case),
         "EXECUTION MODE: " + case["execution"],
         "TRAP: " + case["trap"],
         "",
@@ -683,6 +794,7 @@ def run_case(
             container_timeout=args.container_timeout,
             mount_node_modules=case["execution"] == "runtime",
             extra_envs=args.env,
+            skill=str(case.get("skill") or "") or None,
         )
         target_error = transport_error(target)
         observed_actions = normalized_target_actions(target) if not target_error else []
@@ -716,6 +828,7 @@ def run_case(
                 container_timeout=args.container_timeout,
                 mount_node_modules=False,
                 extra_envs=args.env,
+                skill=None,
             )
             judge_error = transport_error(judge_result)
             if not judge_error:
@@ -737,6 +850,8 @@ def run_case(
             "case": case["id"],
             "iteration": iteration,
             "agent": case["agent"],
+            "target_kind": case_target_kind(case),
+            "skill": case.get("skill"),
             "execution": case["execution"],
             "target_image": target_image,
             "judge_image": judge_image,
@@ -780,6 +895,8 @@ def main() -> int:
     parser.add_argument("--all", action="store_true")
     parser.add_argument("--cases", default="")
     parser.add_argument("--suite", action="append", default=[])
+    parser.add_argument("--target-kind", choices=("all", "agent", "skill"), default="all")
+    parser.add_argument("--target", default="", help="Comma-separated agent/skill target names.")
     parser.add_argument("--model")
     parser.add_argument("--judge-model")
     parser.add_argument("--target-transport", choices=("opencode", "github-copilot-cli"), default="opencode")
@@ -820,9 +937,10 @@ def main() -> int:
 
     if args.list:
         for case in cases:
-            print("%s\t%s\t%s\t%s" % (
+            print("%s\t%s\t%s\t%s\t%s" % (
                 case["id"],
-                case["agent"],
+                case_target_kind(case),
+                case_target_name(case),
                 case["execution"],
                 ",".join(case["requirements"]),
             ))
@@ -836,16 +954,35 @@ def main() -> int:
         parser.error("--parallel must be >= 1 when a limit is supplied")
 
     selected_ids = {value.strip() for value in args.cases.split(",") if value.strip()}
-    if not args.all and not selected_ids:
-        parser.error("live evals spend model inference; pass --cases ID1,ID2 or --all explicitly")
+    selected_targets = {value.strip() for value in args.target.split(",") if value.strip()}
+    if not args.all and not selected_ids and not selected_targets and args.target_kind == "all":
+        parser.error(
+            "live evals spend model inference; pass --cases, --target, --target-kind agent/skill, or --all explicitly"
+        )
 
     known = {case["id"] for case in cases}
     missing = sorted(selected_ids - known)
     if missing:
         parser.error("unknown case id(s): " + ", ".join(missing))
 
+    candidates = [
+        case for case in cases
+        if args.target_kind == "all" or case_target_kind(case) == args.target_kind
+    ]
+    known_targets = {case_target_name(case) for case in candidates}
+    missing_targets = sorted(selected_targets - known_targets)
+    if missing_targets:
+        parser.error("unknown target(s) for selected kind: " + ", ".join(missing_targets))
+
+    selected = [
+        case for case in candidates
+        if (args.all or not selected_ids or case["id"] in selected_ids)
+        and (not selected_targets or case_target_name(case) in selected_targets)
+    ]
+    if not selected:
+        parser.error("selection matched no behavioral eval cases")
+
     engine = resolve_engine(args.engine)
-    selected = [case for case in cases if args.all or case["id"] in selected_ids]
     jobs = [
         (case, iteration)
         for case in selected
@@ -880,7 +1017,13 @@ def main() -> int:
             return case, iteration, None, str(exc)
 
     def report(case: dict[str, Any], iteration: int, result: dict[str, Any] | None, error: str | None) -> bool:
-        prefix = "%s [%s/%s]" % (label(case, iteration), case["agent"], case["execution"])
+        target_label = case_target_kind(case) + ":" + case_target_name(case)
+        prefix = "%s [%s via %s/%s]" % (
+            label(case, iteration),
+            target_label,
+            case["agent"],
+            case["execution"],
+        )
         if error is not None:
             print(prefix + " ... ERROR")
             print("  - " + error)

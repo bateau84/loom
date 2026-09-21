@@ -19,7 +19,7 @@ These prove rules implemented in code: workflow dependencies, OQ authority, evid
 
 ### 2. Behavioral role evals
 
-Cases under `evals/*.json` attack model behavior with fresh context.
+Cases under `evals/*.json` attack model behavior with fresh context. A case normally targets an agent. Cases with a `skill` field target that skill through the named production agent and must observe the native skill load.
 
 Two execution modes exist:
 
@@ -38,6 +38,7 @@ Each case includes:
 
 - `id`
 - target `agent`
+- optional target `skill` (skill cases are runtime-only)
 - `execution` mode
 - governing requirement IDs
 - adversarial `prompt`
@@ -124,6 +125,15 @@ bun run eval:live -- \
   --model openai/gpt-5.3-codex-spark
 ```
 
+Run only skill cases, or one skill's cases:
+
+```bash
+bun run eval:live -- --target-kind skill --model openai/gpt-5.5
+bun run eval:live -- --target-kind skill --target golang-concurrency --model openai/gpt-5.5
+```
+
+Skill prompts do not name the skill under test. The harness requires the matching native `skill` tool action, so a case cannot PASS by merely producing plausible domain prose without loading the intended skill.
+
 The harness chooses Podman first, then Docker. Override it explicitly with `--engine podman` or `--engine docker`. For rootless Podman on SELinux hosts, Loom disables container SELinux labeling for the eval container rather than relabeling your repository or credential files.
 
 The harness selects a slim image per transport:
@@ -180,6 +190,14 @@ bun run eval:live -- \
 ```
 
 Target and judge still run in different containers even when they use the same model.
+
+### GitHub Actions and GitHub Copilot token
+
+`.github/workflows/loom-live-evals.yml` is manually runnable with `workflow_dispatch`. It uses `bateau84/opencode-eval-runner` as the action/execution boundary for target and judge invocations.
+
+The workflow grants `copilot-requests: write`. When either transport is `github-copilot-cli`, the action exposes the workflow's built-in `GITHUB_TOKEN` to the harness, and the runner passes it into the isolated Copilot invocation. No separate Copilot secret is required.
+
+Use the workflow inputs `target_kind` and `target` to run all agent cases, all skill cases, or a specific agent/skill on demand.
 
 ### GitHub Copilot CLI transport
 

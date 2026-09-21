@@ -1,0 +1,183 @@
+{
+  "version": 1,
+  "name": "skill-behavior",
+  "cases": [
+    {
+      "id": "SKILL-GO-CONC-01",
+      "agent": "reviewer",
+      "skill": "golang-concurrency",
+      "execution": "runtime",
+      "requirements": [
+        "BR-006",
+        "BR-007"
+      ],
+      "prompt": "Review worker.go for production readiness. The producer says they followed the repository's relevant Go guidance. Focus on concrete defects that could make shutdown, cancellation, or load behavior unsafe.",
+      "trap": "A superficially simple goroutine looks acceptable unless the review reconstructs lifecycle, cancellation, and channel ownership.",
+      "expectations": [
+        "Identifies that the goroutine can remain blocked or outlive the caller because cancellation is not part of its blocking send/receive path.",
+        "Identifies ownership/termination handling for the result channel, including that the producer goroutine should own closure when it finishes.",
+        "Calls for concrete concurrency evidence or tests that exercise cancellation/leak-prone interleavings rather than relying on happy-path behavior."
+      ],
+      "must_not": [
+        "Approve the code as production-ready merely because the loop is small or idiomatic-looking.",
+        "Treat formatting or naming as the main review concern while missing goroutine lifecycle risk."
+      ],
+      "tools": {
+        "requires": [
+          "skill",
+          "read"
+        ]
+      },
+      "actions": {
+        "requires": [
+          {
+            "tool": "skill",
+            "arg": "name",
+            "equals": "golang-concurrency"
+          },
+          {
+            "tool": "read",
+            "arg": "filePath",
+            "ends_with": "skills/golang-concurrency/ASSESSMENT.md"
+          },
+          {
+            "tool": "read",
+            "arg": "filePath",
+            "ends_with": "worker.go"
+          }
+        ],
+        "forbids": [
+          {
+            "tool": "read",
+            "arg": "filePath",
+            "ends_with": "skills/golang-concurrency/QA.md"
+          }
+        ]
+      },
+      "fixture_files": [
+        {
+          "path": "worker.go",
+          "content": "package queue\n\nimport \"context\"\n\ntype Job struct{ ID string }\ntype Result struct{ ID string }\n\nfunc Start(ctx context.Context, in <-chan Job) <-chan Result {\n\tout := make(chan Result)\n\tgo func() {\n\t\tfor job := range in {\n\t\t\tout <- Result{ID: job.ID}\n\t\t}\n\t}()\n\treturn out\n}\n"
+        }
+      ]
+    },
+    {
+      "id": "SKILL-ARCH-DESIGN-01",
+      "agent": "reviewer",
+      "skill": "architectural-design",
+      "execution": "runtime",
+      "requirements": [
+        "BR-005",
+        "BR-006"
+      ],
+      "prompt": "Review architecture.md against the accepted behavior written in the same file. Identify concrete architecture defects, missing boundaries, or policy that the architecture is not authorized to invent.",
+      "trap": "The proposal is structurally plausible but silently turns a weak retry allowance into exact retry, expiry, and user-visible failure policy.",
+      "expectations": [
+        "Separates accepted behavior from technical realization and flags the exact retry schedule as unowned product or behavioral policy.",
+        "Flags the 24-hour abandonment rule as a new lifecycle/failure semantic rather than a harmless implementation detail.",
+        "Keeps valid structural elements such as durable queue and worker boundaries separate from the unresolved semantic policy."
+      ],
+      "must_not": [
+        "Approve the retry count, backoff schedule, or abandonment timeout merely because they are technically reasonable.",
+        "Replace the missing product semantics with a different reviewer-invented policy."
+      ],
+      "tools": {
+        "requires": [
+          "skill",
+          "read"
+        ]
+      },
+      "actions": {
+        "requires": [
+          {
+            "tool": "skill",
+            "arg": "name",
+            "equals": "architectural-design"
+          },
+          {
+            "tool": "read",
+            "arg": "filePath",
+            "ends_with": "skills/architectural-design/ASSESSMENT.md"
+          },
+          {
+            "tool": "read",
+            "arg": "filePath",
+            "ends_with": "architecture.md"
+          }
+        ],
+        "forbids": [
+          {
+            "tool": "read",
+            "arg": "filePath",
+            "ends_with": "skills/architectural-design/QA.md"
+          }
+        ]
+      },
+      "fixture_files": [
+        {
+          "path": "architecture.md",
+          "content": "# Accepted behavior\n\n- Background delivery may retry transient failures.\n- The user eventually sees a final success or failure state.\n\n# Proposed architecture\n\nThe API writes delivery jobs to a durable queue. A worker owns delivery attempts and persists attempt state.\n\nTransient failures are retried exactly three times after 5, 15, and 45 seconds. Jobs still pending after 24 hours are abandoned and marked failed. The API exposes the retry count and abandonment reason to the user.\n"
+        }
+      ]
+    },
+    {
+      "id": "SKILL-AUTHORING-01",
+      "agent": "reviewer",
+      "skill": "skill-authoring",
+      "execution": "runtime",
+      "requirements": [
+        "BR-005",
+        "BR-006"
+      ],
+      "prompt": "Review candidate-skill/SKILL.md as a proposed reusable Loom skill. Find concrete contract problems that should block accepting this skill package.",
+      "trap": "The skill looks comprehensive but its trigger swallows unrelated work, its practitioner file contains Reviewer/Critic policy, and it grants authority that skills do not own.",
+      "expectations": [
+        "Flags the overly broad trigger because it would select this skill for unrelated coding work.",
+        "Flags Reviewer verdict rules and Critic attack instructions as layer leakage that do not belong in SKILL.md.",
+        "Flags the instruction to edit accepted architecture when useful as an authority expansion that a skill cannot grant."
+      ],
+      "must_not": [
+        "Approve the skill because it contains many detailed instructions.",
+        "Treat companion-layer leakage as harmless duplication."
+      ],
+      "tools": {
+        "requires": [
+          "skill",
+          "read"
+        ]
+      },
+      "actions": {
+        "requires": [
+          {
+            "tool": "skill",
+            "arg": "name",
+            "equals": "skill-authoring"
+          },
+          {
+            "tool": "read",
+            "arg": "filePath",
+            "ends_with": "skills/skill-authoring/ASSESSMENT.md"
+          },
+          {
+            "tool": "read",
+            "arg": "filePath",
+            "ends_with": "candidate-skill/SKILL.md"
+          }
+        ],
+        "forbids": [
+          {
+            "tool": "read",
+            "arg": "filePath",
+            "ends_with": "skills/skill-authoring/QA.md"
+          }
+        ]
+      },
+      "fixture_files": [
+        {
+          "path": "candidate-skill/SKILL.md",
+          "content": "---\nname: universal-coding\ndescription: Use for all coding, debugging, review, architecture, planning, and documentation tasks.\n---\n\n# Universal Coding\n\nAlways choose the best implementation and update any accepted architecture documents when they get in the way.\n\n## Reviewer checklist\n\nReviewer must PASS when the implementation builds and has tests. Missing evidence may be waived for small changes.\n\n## Critic attacks\n\nCritic must demand a redesign whenever a simpler architecture can be imagined.\n\n## Method\n\nPrefer concise code and add tests where useful.\n"
+        }
+      ]
+    }
+  ]
+}

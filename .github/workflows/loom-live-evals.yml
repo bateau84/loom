@@ -27,8 +27,22 @@ on:
         options:
           - opencode
           - github-copilot-cli
+      target_kind:
+        description: Limit the run to agent cases, skill cases, or both
+        required: true
+        default: all
+        type: choice
+        options:
+          - all
+          - agent
+          - skill
+      target:
+        description: Optional comma-separated agent or skill names (for example reviewer or golang-concurrency)
+        required: false
+        default: ""
+        type: string
       cases:
-        description: Comma-separated case IDs
+        description: Optional comma-separated case IDs. Leave empty to select by target_kind/target.
         required: false
         default: INTENT-01,REVIEW-01,WORK-01,CRITIC-01
         type: string
@@ -54,6 +68,8 @@ jobs:
       JUDGE_MODEL: ${{ inputs.judge_model }}
       TARGET_TRANSPORT: ${{ inputs.target_transport }}
       JUDGE_TRANSPORT: ${{ inputs.judge_transport }}
+      EVAL_TARGET_KIND: ${{ inputs.target_kind }}
+      EVAL_TARGET: ${{ inputs.target }}
       EVAL_CASES: ${{ inputs.cases }}
       EVAL_ALL: ${{ inputs.all }}
     steps:
@@ -95,7 +111,7 @@ jobs:
           fi
 
       - name: Run isolated live evals
-        uses: bateau84/opencode-eval-runner@main
+        uses: bateau84/opencode-eval-runner@01a4438241be40a307b725a9117c88c8771e2ffd
         with:
           engine: docker
           prepare-opencode: ${{ inputs.target_transport == 'opencode' || inputs.judge_transport == 'opencode' }}
@@ -108,13 +124,17 @@ jobs:
               --model "$EVAL_MODEL"
               --target-transport "$TARGET_TRANSPORT"
               --judge-transport "$JUDGE_TRANSPORT"
+              --target-kind "$EVAL_TARGET_KIND"
             )
+            if [[ -n "$EVAL_TARGET" ]]; then
+              args+=(--target "$EVAL_TARGET")
+            fi
             if [[ -n "$JUDGE_MODEL" ]]; then
               args+=(--judge-model "$JUDGE_MODEL")
             fi
             if [[ "$EVAL_ALL" == "true" ]]; then
               args+=(--all)
-            else
+            elif [[ -n "$EVAL_CASES" ]]; then
               args+=(--cases "$EVAL_CASES")
             fi
             "${args[@]}"
