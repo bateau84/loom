@@ -307,4 +307,24 @@ describe("Loom routing DAG", () => {
     expect(next.find((step) => step.id === "diagnostic")?.status).toBe("complete")
     expect(next.find((step) => step.id === "diagnostic")?.summary).toBe("confirmed structural defect")
   })
+
+  test("bounded Wave workflow omits Objective Product Acceptance and final Critic", () => {
+    const w = workflow(buildSteps({
+      humanFacing: false,
+      behavioral: false,
+      structural: false,
+      externalUnknown: false,
+      diagnostic: false,
+      productOutcome: true,
+      workLevel: "wave",
+    }))
+
+    expect(w.steps.map((step) => step.id)).toEqual([
+      "critic-solution",
+      "plan",
+      "review-implementation",
+      "knowledge-sync",
+    ])
+  })
+
 })
