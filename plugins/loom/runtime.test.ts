@@ -749,6 +749,152 @@ describe("Loom runtime identity and scoped storage", () => {
     })
   })
 
+  test("legacy session bound to an already canonical workflow inherits that workflow's project provenance", async () => {
+    await withRoots(async (root) => {
+      const legacy = new MemoryStorage()
+      const canonical = new MemoryStorage()
+      const project = join(root, "project")
+      await mkdir(project, { recursive: true })
+      const runtime = await resolveRuntimeIdentity(project, canonical as any)
+      const scoped = createProjectStorage(canonical as any, runtime.projectId)
+
+      await legacy.set("session/old-general", "workflow-a")
+      await legacy.set("session/old-planner", "workflow-a")
+      await legacy.set("session-step/old-planner", "plan")
+      await legacy.set("workflow/workflow-a", {
+        id: "workflow-a",
+        anchor: "docs/anchors/example.md",
+        createdBySession: "old-general",
+        createdAt: "before-project-scoping",
+        steps: [
+          { id: "plan", agent: "planner", kind: "work", dependsOn: [], status: "pending" },
+        ],
+      })
+
+      const primary = await migrateLegacySessionState(legacy as any, scoped, runtime, {
+        sessionId: "old-general",
+        sessionProjectId: "opencode-project-a",
+        currentProjectId: "opencode-project-a",
+        resumeProof: {
+          kind: "opencode-host-session",
+          sessionId: "old-general",
+          projectId: "opencode-project-a",
+        },
+      })
+      expect(primary.provenance).toBe("opencode-session-continuity")
+
+      const secondary = await migrateLegacySessionState(legacy as any, scoped, runtime, {
+        sessionId: "old-planner",
+        sessionProjectId: "",
+        currentProjectId: "opencode-project-a",
+      })
+
+      expect(secondary.status).toBe("migrated")
+      expect(secondary.provenance).toBe("canonical-workflow")
+      expect(await scoped.get("session/old-planner")).toBe("workflow-a")
+      expect(await scoped.get("session-step/old-planner")).toBe("plan")
+
+      const receipts = await scoped.scan({
+        prefix: "installation/upgrade-reconciliation/legacy-session-v0-to-runtime-v1/",
+      })
+      expect(receipts.entries).toHaveLength(2)
+      expect(receipts.entries.map((entry: any) => (entry.value as any).provenance).sort()).toEqual([
+        "canonical-workflow",
+        "opencode-session-continuity",
+      ])
+    })
+  })
+
+  test("canonical workflow admission cannot launder a different legacy workflow", async () => {
+    await withRoots(async (root) => {
+      const legacy = new MemoryStorage()
+      const canonical = new MemoryStorage()
+      const project = join(root, "project")
+      await mkdir(project, { recursive: true })
+      const runtime = await resolveRuntimeIdentity(project, canonical as any)
+      const scoped = createProjectStorage(canonical as any, runtime.projectId)
+
+      await legacy.set("session/old-general", "workflow-a")
+      await legacy.set("workflow/workflow-a", {
+        id: "workflow-a",
+        anchor: "docs/anchors/example.md",
+        createdBySession: "old-general",
+        createdAt: "before-project-scoping",
+        steps: [],
+      })
+      await migrateLegacySessionState(legacy as any, scoped, runtime, {
+        sessionId: "old-general",
+        sessionProjectId: "opencode-project-a",
+        currentProjectId: "opencode-project-a",
+        resumeProof: {
+          kind: "opencode-host-session",
+          sessionId: "old-general",
+          projectId: "opencode-project-a",
+        },
+      })
+
+      await legacy.set("session/unrelated-session", "workflow-b")
+      await legacy.set("workflow/workflow-b", {
+        id: "workflow-b",
+        anchor: "docs/anchors/other.md",
+        createdBySession: "unrelated-session",
+        createdAt: "before-project-scoping",
+        steps: [],
+      })
+
+      await expect(
+        migrateLegacySessionState(legacy as any, scoped, runtime, {
+          sessionId: "unrelated-session",
+          sessionProjectId: "",
+          currentProjectId: "opencode-project-a",
+        }),
+      ).rejects.toThrow("no unambiguous project provenance")
+
+      expect(await scoped.get("session/unrelated-session")).toBeUndefined()
+      expect(await scoped.get("workflow/workflow-b")).toBeUndefined()
+    })
+  })
+
+  test("explicit conflicting legacy project provenance outranks an existing canonical workflow", async () => {
+    await withRoots(async (root) => {
+      const legacy = new MemoryStorage()
+      const canonical = new MemoryStorage()
+      const project = join(root, "project")
+      await mkdir(project, { recursive: true })
+      const runtime = await resolveRuntimeIdentity(project, canonical as any)
+      const scoped = createProjectStorage(canonical as any, runtime.projectId)
+
+      await scoped.set("workflow/workflow-a", {
+        id: "workflow-a",
+        projectId: runtime.projectId,
+        revision: 1,
+        anchor: "docs/anchors/example.md",
+        createdBySession: "safe-session",
+        createdAt: "now",
+        steps: [],
+      })
+      await legacy.set("session/conflicting-session", "workflow-a")
+      await legacy.set("workflow/workflow-a", {
+        id: "workflow-a",
+        projectId: "another-project-epoch",
+        anchor: "docs/anchors/example.md",
+        createdBySession: "conflicting-session",
+        createdAt: "old",
+        steps: [],
+      })
+
+      await expect(
+        migrateLegacySessionState(legacy as any, scoped, runtime, {
+          sessionId: "conflicting-session",
+          sessionProjectId: "",
+          currentProjectId: "opencode-project-a",
+        }),
+      ).rejects.toThrow("another project epoch")
+
+      expect(await scoped.get("session/conflicting-session")).toBeUndefined()
+    })
+  })
+
   test("missing host project identity cannot become session-continuity provenance", async () => {
     await withRoots(async (root) => {
       const legacy = new MemoryStorage()
