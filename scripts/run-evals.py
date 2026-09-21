@@ -946,6 +946,47 @@ def parse_judge(text: str) -> dict[str, Any]:
     return value
 
 
+def judge_contract_error(case: dict[str, Any], grade: dict[str, Any]) -> str | None:
+    expectations = grade.get("expectations")
+    violations = grade.get("violations")
+    if not isinstance(expectations, list) or len(expectations) != len(case["expectations"]):
+        return (
+            "judge returned %d expectation result(s); expected %d"
+            % (
+                len(expectations) if isinstance(expectations, list) else 0,
+                len(case["expectations"]),
+            )
+        )
+    if not isinstance(violations, list) or len(violations) != len(case["must_not"]):
+        return (
+            "judge returned %d violation result(s); expected %d"
+            % (
+                len(violations) if isinstance(violations, list) else 0,
+                len(case["must_not"]),
+            )
+        )
+    for index, item in enumerate(expectations):
+        if not isinstance(item, dict) or not isinstance(item.get("met"), bool):
+            return f"judge expectation[{index}] missing boolean met"
+    for index, item in enumerate(violations):
+        if not isinstance(item, dict) or not isinstance(item.get("violated"), bool):
+            return f"judge violation[{index}] missing boolean violated"
+    return None
+
+
+def semantic_pass(case: dict[str, Any], grade: dict[str, Any]) -> bool:
+    if judge_contract_error(case, grade):
+        return False
+    if any(item.get("met") is not True for item in grade["expectations"]):
+        return False
+    if any(item.get("violated") is not False for item in grade["violations"]):
+        return False
+    trap_declared = bool(case.get("_skill_trap_declared")) if case.get("_skill_owned") else bool(str(case.get("trap") or "").strip())
+    if trap_declared and grade.get("trap_observed") is not False:
+        return False
+    return True
+
+
 def semantic_behavior_score(grade: dict[str, Any], *, trap_declared: bool) -> float:
     satisfied = 0
     total = 0
@@ -1236,6 +1277,10 @@ def run_skill_ablation_case(
             f"{'ERROR' if baseline_judge_error else 'done'} in {baseline_judge_seconds:.1f}s",
             flush=True,
         )
+        if not baseline_judge_error and isinstance(baseline_grade, dict):
+            contract_error = judge_contract_error(case, baseline_grade)
+            if contract_error:
+                baseline_judge_error = "judge contract invalid: " + contract_error
         artifact["baseline"].update({
             "judge_transport_result": baseline_judge_result,
             "semantic": baseline_grade,
@@ -1309,6 +1354,10 @@ def run_skill_ablation_case(
             f"{'ERROR' if candidate_judge_error else 'done'} in {candidate_judge_seconds:.1f}s",
             flush=True,
         )
+        if not candidate_judge_error and isinstance(candidate_grade, dict):
+            contract_error = judge_contract_error(case, candidate_grade)
+            if contract_error:
+                candidate_judge_error = "judge contract invalid: " + contract_error
         artifact["candidate"].update({
             "judge_transport_result": candidate_judge_result,
             "semantic": candidate_grade,
@@ -1339,7 +1388,7 @@ def run_skill_ablation_case(
             and baseline_grade.get("trap_observed") is False
             and candidate_grade.get("trap_observed") is True
         )
-        candidate_pass = not candidate_deterministic and candidate_grade.get("passed") is True
+        candidate_pass = not candidate_deterministic and semantic_pass(case, candidate_grade)
 
         artifact["candidate"]["behavior_score"] = candidate_score
         artifact.update({
@@ -1528,6 +1577,9 @@ def run_case(
             if not judge_error:
                 try:
                     judge = parse_judge(str(judge_result.get("text") or ""))
+                    contract_error = judge_contract_error(case, judge)
+                    if contract_error:
+                        judge_error = "judge contract invalid: " + contract_error
                 except Exception as exc:
                     judge_error = "judge parse failed: " + str(exc)
 
@@ -1536,7 +1588,7 @@ def run_case(
             not non_evidence
             and not deterministic
             and isinstance(judge, dict)
-            and judge.get("passed") is True
+            and semantic_pass(case, judge)
         )
         classification = "pass" if passed else "non-evidence" if non_evidence else "behavioral-fail"
         total_seconds = time.perf_counter() - case_started
@@ -1595,7 +1647,7 @@ def main() -> int:
     parser.add_argument(
         "--network",
         metavar="MODE",
-        help="Optional OCI network mode/name passed to target and judge containers. When set, Loom uses the direct container path because the pinned eval-runner CLI does not expose network selection.",
+        help="Optional OCI network mode/name passed through the eval-runner to target and judge containers.",
     )
     parser.add_argument("--image", help="Override both transport images with one explicit image.")
     parser.add_argument("--opencode-image")
