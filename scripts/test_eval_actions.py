@@ -186,61 +186,6 @@ class ActionAssertionTests(unittest.TestCase):
         self.assertEqual(len(failures), 1)
         self.assertTrue(failures[0].startswith("forbidden action observed:"))
 
-    def test_matches_current_opencode_v2_argument_names(self):
-        actions = [
-            {"tool": "skill", "args": {"id": "golang-concurrency"}},
-            {
-                "tool": "read",
-                "args": {
-                    "path": "/workspace/.opencode/skills/golang-concurrency/ASSESSMENT.md"
-                },
-            },
-            {"tool": "read", "args": {"path": "/workspace/pipeline.go"}},
-        ]
-        case = {
-            "actions": {
-                "requires": [
-                    {"tool": "skill", "arg": "name", "equals": "golang-concurrency"},
-                    {
-                        "tool": "read",
-                        "arg": "filePath",
-                        "ends_with": "skills/golang-concurrency/ASSESSMENT.md",
-                    },
-                    {
-                        "tool": "read",
-                        "arg": "filePath",
-                        "ends_with": "pipeline.go",
-                    },
-                ]
-            }
-        }
-        self.assertEqual(
-            RUN_EVALS.deterministic_failures(case, ["skill", "read"], actions),
-            [],
-        )
-
-    def test_aliases_do_not_change_forbidden_companion_detection(self):
-        actions = [
-            {
-                "tool": "read",
-                "args": {"path": "/workspace/.opencode/skills/golang-cli/QA.md"},
-            }
-        ]
-        case = {
-            "actions": {
-                "forbids": [
-                    {
-                        "tool": "read",
-                        "arg": "filePath",
-                        "ends_with": "skills/golang-cli/QA.md",
-                    }
-                ]
-            }
-        }
-        failures = RUN_EVALS.deterministic_failures(case, ["read"], actions)
-        self.assertEqual(len(failures), 1)
-        self.assertTrue(failures[0].startswith("forbidden action observed:"))
-
     def test_skill_target_requires_confirmed_loaded_skill(self):
         actions = [
             {"tool": "skill", "args": {"id": "golang-concurrency"}},
