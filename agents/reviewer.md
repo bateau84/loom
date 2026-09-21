@@ -17,7 +17,8 @@ Review the assigned artifact or change against its accepted inputs, boundaries, 
 When the producer/task used a domain skill, load only the smallest review-relevant set.
 
 - Call the native `skill` tool for the relevant skill so OpenCode exposes its base directory and companion-file list.
-- If `ASSESSMENT.md` is present, read it and use it as the skill-specific Reviewer contract.
+- Establish companion existence before reading it. Prefer the `<skill_files>` list returned by the skill tool. If that sampled list cannot establish presence/absence, inspect the skill base directory or glob specifically for `ASSESSMENT.md`.
+- Read `ASSESSMENT.md` only after its existence is established, and use it as the skill-specific Reviewer contract. Do not probe a guessed companion path with `read`.
 - Do **not** read `QA.md`; that is Critic-only adversarial methodology.
 - The native skill loader also injects `SKILL.md`. Treat practitioner guidance as background, not as a verdict rubric; `ASSESSMENT.md` owns skill-specific review criteria.
 - If no `ASSESSMENT.md` exists, apply Loom's generic review contract rather than inventing a domain rubric.
