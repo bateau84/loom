@@ -59,6 +59,8 @@ The runtime upgrade ledger provides a single mechanism for later state-format ch
 
 Upgrade steps must be idempotent. A failed transactional step leaves the prior complete version/data generation intact. Loom refuses runtime state created by a newer build or a missing upgrade path instead of guessing.
 
+A project that has not been opened for a long time may still have records only in OpenCode's older plugin storage. If that project returns after the canonical Loom installation has already advanced to a newer runtime schema, Loom treats those records as baseline-version input and runs the registered idempotent upgrade callbacks over the imported project/global records before committing them. The old-format records are never exposed as canonical newer-version state.
+
 ### Already-running OpenCode processes
 
 An upgrade may happen while another OpenCode+Loom process from the previous build is still alive. Loom does not let that older process keep writing after the shared runtime schema advances.

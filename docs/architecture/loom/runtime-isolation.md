@@ -318,6 +318,8 @@ Migration is a compatibility mechanism, not a permanent dual-authority mode. The
 
 The installation-wide schema version is authoritative across all canonical project namespaces. A project-format step cannot advance that version after migrating only the project that happened to start Loom first: the framework enumerates persisted project registries and project namespaces and invokes the step for every one before commit. Normal project-scoped mutations are runtime-version fenced. If another process upgrades the shared store, an already-running older Loom process fails closed on its next canonical project-state access/mutation and must restart with the current build. A mutation already in flight serializes through the SQLite transaction boundary before the upgrade, so the upgrade transforms its committed old-version result rather than racing an incompatible write.
 
+Legacy OpenCode plugin storage is treated as baseline-version input even when it is discovered **after** the canonical installation has already advanced. A late legacy import copies and transforms its current project's records plus imported global learning state through the registered idempotent baseline→current callbacks inside one installation migration transaction before the import marker commits. Late-returning projects therefore cannot inject old-format records into a newer canonical store.
+
 ## Runtime failure semantics
 
 - inability to establish an unambiguous durable project identity prevents durable Loom execution for that project;
