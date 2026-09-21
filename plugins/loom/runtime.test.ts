@@ -749,6 +749,39 @@ describe("Loom runtime identity and scoped storage", () => {
     })
   })
 
+  test("missing host project identity cannot become session-continuity provenance", async () => {
+    await withRoots(async (root) => {
+      const legacy = new MemoryStorage()
+      const canonical = new MemoryStorage()
+      const project = join(root, "project")
+      await mkdir(project, { recursive: true })
+      const runtime = await resolveRuntimeIdentity(project, canonical as any)
+      const scoped = createProjectStorage(canonical as any, runtime.projectId)
+
+      await legacy.set("session/resumed-session", "workflow-a")
+      await legacy.set("workflow/workflow-a", {
+        id: "workflow-a",
+        anchor: "docs/anchors/example.md",
+        createdBySession: "resumed-session",
+        createdAt: "before-project-scoping",
+        steps: [],
+      })
+
+      await expect(
+        migrateLegacySessionState(legacy as any, scoped, runtime, {
+          sessionId: "resumed-session",
+          sessionProjectId: "",
+          currentProjectId: "",
+          resumeProof: {
+            kind: "opencode-host-session",
+            sessionId: "resumed-session",
+            projectId: "",
+          },
+        }),
+      ).rejects.toThrow("exact resumed-session continuity proof")
+    })
+  })
+
   test("resumed-session proof cannot adopt another session's legacy binding", async () => {
     await withRoots(async (root) => {
       const legacy = new MemoryStorage()
