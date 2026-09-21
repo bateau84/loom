@@ -331,6 +331,7 @@ describe("Loom crash-safe durable storage", () => {
       await mkdir(project, { recursive: true })
       const runtime = await resolveRuntimeIdentity(project, legacy as any)
       const storage = await createTransactionalStorage(runtime)
+      await ensureRuntimeStateVersion(storage, runtime)
       const workflowKey = "project/p/workflow/w"
       const budgetKey = "project/p/budget/w"
 
@@ -373,6 +374,7 @@ describe("Loom crash-safe durable storage", () => {
       await mkdir(project, { recursive: true })
       const runtime = await resolveRuntimeIdentity(project, legacy as any)
       const transactional = await createTransactionalStorage(runtime)
+      await ensureRuntimeStateVersion(transactional, runtime)
 
       await legacy.set(`project/${runtime.projectId}/workflow/w`, {
         id: "w",

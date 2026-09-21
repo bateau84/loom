@@ -42,6 +42,7 @@ if (mode === "transaction-crash") {
     throw new Error("transaction-crash mode requires workflowKey and budgetKey")
   }
   const storage = await createTransactionalStorage(runtime)
+  await ensureRuntimeStateVersion(storage, runtime)
   await withRuntimeLock(runtime, "workflow", "crash-test", async () => {
     await storage.set(workflowKey, { revision: 2, state: "after" })
     await storage.set(budgetKey, { dispatches: 2 })
