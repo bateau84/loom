@@ -201,7 +201,10 @@ describe("Loom structured inspection", () => {
 
     expect(result.count).toBe(2)
     expect(result.totalBytes).toBeGreaterThan(0)
-    expect(result.entries.every((entry) => typeof entry.lines === "number")).toBe(true)
+    const linesByPath = new Map(result.entries.map((entry) => [entry.path, entry.lines]))
+    expect(linesByPath.get("docs/reports/a.md")).toBe(3)
+    expect(linesByPath.get("src/results.log")).toBe(4)
+    expect(result.totalLines).toBe(7)
   })
 
   test("rejects lexical path escape", async () => {
