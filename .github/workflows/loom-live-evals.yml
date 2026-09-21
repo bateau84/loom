@@ -118,8 +118,8 @@ jobs:
           copilot-image: ghcr.io/bateau84/opencode-eval-runner@sha256:fbc8f007ff339c6a6d47d4b1113874084cbf0eb7e62c7bb69bf9ccd70cdae799
           prepare-opencode: ${{ inputs.target_transport == 'opencode' || inputs.judge_transport == 'opencode' }}
           prepare-copilot: ${{ inputs.target_transport == 'github-copilot-cli' || inputs.judge_transport == 'github-copilot-cli' }}
-          opencode-image: ghcr.io/bateau84/opencode-eval-runner:opencode-sha-bd02908d134ccec81d4497604b7b115606cf9b45
-          copilot-image: ghcr.io/bateau84/opencode-eval-runner:copilot-sha-bd02908d134ccec81d4497604b7b115606cf9b45
+          opencode-image: ghcr.io/bateau84/opencode-eval-runner:opencode-sha-bd02908
+          copilot-image: ghcr.io/bateau84/opencode-eval-runner:copilot-sha-bd02908
           artifact-dir: .loom-evals
           command: |
             args=(
@@ -140,6 +140,8 @@ jobs:
               args+=(--all)
             elif [[ -n "$EVAL_CASES" ]]; then
               args+=(--cases "$EVAL_CASES")
+            elif [[ -z "$EVAL_TARGET" && "$EVAL_TARGET_KIND" == "all" ]]; then
+              args+=(--cases "INTENT-01,REVIEW-01,WORK-01,CRITIC-01")
             fi
             "${args[@]}"
 
