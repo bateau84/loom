@@ -73,6 +73,19 @@ import {
 } from "./acceptance"
 import { taskStepId, validateTaskPlan, type TaskSpec } from "./tasks"
 import {
+  attachWorkflowToWork,
+  completeObjective,
+  createWorkHierarchy,
+  materializeWorkPlan,
+  nextRunnableWaves,
+  objectiveIdForAnchor,
+  syncWorkTaskStatuses,
+  validateWorkflowWave,
+  workTree,
+  type WorkHierarchy,
+  type WorkPlanPhase,
+} from "./work"
+import {
   createKnowledgeReport,
   invalidateKnowledgeReport,
   type KnowledgeReport,
@@ -166,6 +179,47 @@ async function readLimits(ctx: any, workflowId: string): Promise<ExecutionLimits
 
 function workflowKey(id: string) {
   return `workflow/${id}`
+}
+
+function workKey(objectiveId: string) {
+  return `work/${encodeURIComponent(objectiveId)}`
+}
+
+const workQueues = new Map<string, Promise<void>>()
+
+async function withWorkLock<T>(objectiveId: string, fn: () => Promise<T>): Promise<T> {
+  const previous = workQueues.get(objectiveId) ?? Promise.resolve()
+  let release!: () => void
+  const hold = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  const queued = previous.then(() => hold)
+  workQueues.set(objectiveId, queued)
+  await previous
+
+  try {
+    return await fn()
+  } finally {
+    release()
+    if (workQueues.get(objectiveId) === queued) workQueues.delete(objectiveId)
+  }
+}
+
+async function readWork(ctx: any, objectiveId: string): Promise<WorkHierarchy | undefined> {
+  return (await ctx.storage.get(workKey(objectiveId))) as WorkHierarchy | undefined
+}
+
+async function ensureWorkForWorkflow(ctx: any, workflow: Workflow): Promise<WorkHierarchy> {
+  const objectiveId = objectiveIdForAnchor(workflow.anchor)
+  return withWorkLock(objectiveId, async () => {
+    const now = new Date().toISOString()
+    const existing = await readWork(ctx, objectiveId)
+    const work = existing ?? createWorkHierarchy(workflow.anchor, workflow.id, now)
+    attachWorkflowToWork(work, workflow.id, now)
+    await ctx.storage.set(workKey(objectiveId), work)
+    workflow.work = { objectiveId, generation: work.generation }
+    return work
+  })
 }
 
 function sessionKey(id: string) {
@@ -421,7 +475,8 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         const { sessionID } = input as { sessionID: string }
         const workflow = await activeWorkflow(ctx, sessionID)
         const questions = workflow ? await readQuestions(ctx, workflow.id) : []
-        return buildSidebarSnapshot(workflow, questions)
+        const work = workflow?.work ? await readWork(ctx, workflow.work.objectiveId) : undefined
+        return buildSidebarSnapshot(workflow, questions, work)
       },
     })
 
@@ -779,7 +834,13 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             },
             productOutcome: {
               type: "boolean",
-              description: "True for a product-outcome workflow that requires planning and Product Acceptance.",
+              description: "True for product work that requires Planner decomposition.",
+            },
+            workLevel: {
+              type: "string",
+              enum: ["objective", "wave"],
+              description:
+                "Objective runs may close whole-product Product Acceptance. Wave runs execute one bounded Wave and leave the parent Objective active. Defaults to objective.",
             },
           },
           required: [
@@ -820,7 +881,18 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             }
           }
 
-          const effects = input as Effects
+          const rawEffects = input as Effects
+          const effects: Effects = {
+            ...rawEffects,
+            ...(rawEffects.productOutcome
+              ? { workLevel: rawEffects.workLevel ?? "objective" }
+              : {}),
+          }
+
+          if (effects.productOutcome) {
+            await ensureWorkForWorkflow(ctx, workflow)
+          }
+
           const next = buildSteps(effects)
           preserveSatisfied(workflow.steps, next)
 
@@ -874,19 +946,27 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           const budget = await readBudget(ctx, workflow.id)
           const acceptance = (await ctx.storage.get(acceptanceKey(workflow.id))) as AcceptancePlan | undefined
           const knowledge = (await ctx.storage.get(knowledgeKey(workflow.id))) as KnowledgeReport | undefined
+          const work = workflow.work ? await readWork(ctx, workflow.work.objectiveId) : undefined
           const detail = Boolean((input as { detail?: boolean }).detail)
+          const workSummary = work
+            ? { tree: workTree(work), nextRunnableWaves: nextRunnableWaves(work), version: work.version }
+            : null
 
           if (!detail) {
             return {
-              content: renderToolOutput(
-                compactWorkflowState(workflow, questions, budget, limits, acceptance, knowledge),
-              ),
+              content: renderToolOutput({
+                ...compactWorkflowState(workflow, questions, budget, limits, acceptance, knowledge),
+                work: workSummary,
+              }),
             }
           }
 
           return {
             content: renderToolOutput({
-              summary: compactWorkflowState(workflow, questions, budget, limits, acceptance, knowledge),
+              summary: {
+                ...compactWorkflowState(workflow, questions, budget, limits, acceptance, knowledge),
+                work: workSummary,
+              },
               workflow,
               runnable: runnable(workflow).map((step) => ({ id: step.id, agent: step.agent })),
               questions: questionState(questions, workflow),
@@ -993,6 +1073,34 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           }
 
           const evidenceBound = await bindSessionEvidence(ctx, tool.sessionID, workflowId, stepId)
+
+          if (workflow.work) {
+            await withWorkLock(workflow.work.objectiveId, async () => {
+              const work = await readWork(ctx, workflow.work!.objectiveId)
+              if (!work) throw new Error("Persistent work hierarchy not found.")
+
+              syncWorkTaskStatuses(
+                work,
+                plannedTaskSteps(workflow).map((taskStep) => ({
+                  taskId: taskStep.task!.id,
+                  complete: taskStep.status === "complete",
+                })),
+                new Date().toISOString(),
+              )
+
+              if (
+                stepId === "critic-final" &&
+                resolvedOutcome === "pass" &&
+                (workflow.effects?.workLevel ?? "objective") === "objective"
+              ) {
+                completeObjective(work, new Date().toISOString())
+              }
+
+              await ctx.storage.set(workKey(work.objectiveId), work)
+              workflow.work = { objectiveId: work.objectiveId, generation: work.generation }
+            })
+          }
+
           await ctx.storage.set(workflowKey(workflow.id), workflow)
 
           return {
@@ -1090,6 +1198,22 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               `progress/${workflowId}/${stepId}/${crypto.randomUUID()}`,
               { reason: value.reason, ...progress, at: new Date().toISOString() },
             )
+            if (workflow.work) {
+              await withWorkLock(workflow.work.objectiveId, async () => {
+                const work = await readWork(ctx, workflow.work!.objectiveId)
+                if (!work) return
+                syncWorkTaskStatuses(
+                  work,
+                  plannedTaskSteps(workflow).map((taskStep) => ({
+                    taskId: taskStep.task!.id,
+                    complete: taskStep.status === "complete",
+                  })),
+                  new Date().toISOString(),
+                )
+                await ctx.storage.set(workKey(work.objectiveId), work)
+              })
+            }
+
             await ctx.storage.set(workflowKey(workflow.id), workflow)
             return {
               content: renderToolOutput({
