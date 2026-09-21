@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { buildSidebarSnapshot, selectSidebarTasks } from "./sidebar"
 import type { Workflow } from "./workflow"
+import { createWorkHierarchy, materializeWorkPlan, syncWorkTaskStatuses } from "./work"
 
 describe("Loom sidebar snapshot", () => {
   test("shows planned tasks and runnable state", () => {
@@ -142,6 +143,85 @@ describe("Loom sidebar snapshot", () => {
 
     const transpiler = new Bun.Transpiler({ loader: "tsx", target: "bun" })
     expect(() => transpiler.transformSync(view)).not.toThrow()
+  })
+
+
+  test("shows Objective, Phase, Wave, and Task progress together", () => {
+    const workflow: Workflow = {
+      id: "wf-hierarchy",
+      anchor: "docs/anchors/leash-v1/anchor.md",
+      createdBySession: "session-1",
+      createdAt: "now",
+      work: { objectiveId: "objective:docs/anchors/leash-v1/anchor.md", generation: 1 },
+      steps: [
+        { id: "plan", agent: "planner", kind: "work", dependsOn: [], status: "complete" },
+        {
+          id: "task:a",
+          agent: "worker",
+          kind: "work",
+          dependsOn: ["plan"],
+          status: "complete",
+          task: {
+            id: "a",
+            title: "Task A",
+            objective: "Build A",
+            dependsOn: [],
+            write: ["internal/a/**"],
+            skills: ["golang"],
+            verify: ["go test ./..."],
+          },
+        },
+        {
+          id: "task:b",
+          agent: "worker",
+          kind: "work",
+          dependsOn: ["plan", "task:a"],
+          status: "pending",
+          task: {
+            id: "b",
+            title: "Task B",
+            objective: "Build B",
+            dependsOn: ["a"],
+            write: ["internal/b/**"],
+            skills: ["golang"],
+            verify: ["go test ./..."],
+          },
+        },
+      ],
+    }
+
+    const work = createWorkHierarchy(workflow.anchor, workflow.id, "now")
+    materializeWorkPlan(
+      work,
+      workflow.id,
+      [
+        {
+          id: "core",
+          title: "Core",
+          waves: [
+            {
+              id: "foundation",
+              title: "Foundation",
+              tasks: [
+                { id: "a", title: "Task A", objective: "Build A", dependsOn: [] },
+                { id: "b", title: "Task B", objective: "Build B", dependsOn: ["a"] },
+              ],
+            },
+          ],
+        },
+      ],
+      "now",
+    )
+    syncWorkTaskStatuses(work, [{ taskId: "a", complete: true }], "later")
+
+    const snapshot = buildSidebarSnapshot(workflow, [], work)
+    expect(snapshot.work?.objective.progress).toEqual({ finished: 1, total: 2 })
+    expect(snapshot.work?.phases[0].title).toBe("Core")
+    expect(snapshot.work?.phases[0].waves[0].title).toBe("Foundation")
+    expect(snapshot.work?.phases[0].waves[0].tasks).toEqual([
+      { id: "a", title: "Task A", status: "complete" },
+      { id: "b", title: "Task B", status: "runnable" },
+    ])
   })
 
 })
