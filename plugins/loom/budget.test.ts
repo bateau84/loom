@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test"
 import {
   DEFAULT_LIMITS,
   grantExtraDispatch,
+  grantWorkflowDispatchBudget,
   hasMaterialProgress,
   newBudgetState,
   recordDispatch,
@@ -82,6 +83,300 @@ describe("Loom progress and dispatch budgets", () => {
     ).toBe(false)
   })
 
+  test("workflow grant policy accepts exhausted runnable gates and rejects non-General grants", () => {
+    const workflow = {
+      id: "wf-gate",
+      anchor: "docs/anchors/test/anchor.md",
+      createdBySession: "session",
+      createdAt: "now",
+      steps: [
+        {
+          id: "critic-solution",
+          agent: "critic",
+          kind: "gate" as const,
+          dependsOn: [],
+          status: "pending" as const,
+        },
+      ],
+    }
+    const state = newBudgetState()
+    const key = "step:critic-solution"
+
+    for (const id of ["c1", "c2"]) {
+      expect(
+        recordDispatch({
+          state,
+          limits: DEFAULT_LIMITS,
+          dispatchID: id,
+          key,
+          agent: "critic",
+        }).allowed,
+      ).toBe(true)
+    }
+
+    expect(
+      grantWorkflowDispatchBudget({
+        state,
+        limits: DEFAULT_LIMITS,
+        workflow,
+        questions: [],
+        stepId: "critic-solution",
+        grantedBy: "critic",
+        reason: "Self extension must not be allowed.",
+        progress: {
+          newEvidence: true,
+          changedHypothesis: false,
+          changedStrategy: false,
+          reducedUnresolved: false,
+        },
+        now: "now",
+      }).allowed,
+    ).toBe(false)
+
+    const insufficient = grantWorkflowDispatchBudget({
+      state,
+      limits: DEFAULT_LIMITS,
+      workflow,
+      questions: [],
+      stepId: "critic-solution",
+      grantedBy: "general",
+      reason: "Architecture correction reduced the unresolved set.",
+      progress: {
+        newEvidence: false,
+        changedHypothesis: false,
+        changedStrategy: false,
+        reducedUnresolved: true,
+      },
+      now: "now",
+    })
+    expect(insufficient.allowed).toBe(false)
+
+    const unrecordedEvidence = grantWorkflowDispatchBudget({
+      state,
+      limits: DEFAULT_LIMITS,
+      workflow,
+      questions: [],
+      stepId: "critic-solution",
+      grantedBy: "general",
+      reason: "The corrected architecture is new material evidence for another Critic pass.",
+      progress: {
+        newEvidence: true,
+        changedHypothesis: false,
+        changedStrategy: false,
+        reducedUnresolved: true,
+      },
+      now: "now",
+    })
+    expect(unrecordedEvidence.allowed).toBe(false)
+
+    const grant = grantWorkflowDispatchBudget({
+      state,
+      limits: DEFAULT_LIMITS,
+      workflow,
+      questions: [],
+      stepId: "critic-solution",
+      grantedBy: "general",
+      reason: "The corrected architecture is new material evidence for another Critic pass.",
+      evidence: ["docs/architecture/example.md#corrected-dependency-registration"],
+      progress: {
+        newEvidence: true,
+        changedHypothesis: false,
+        changedStrategy: false,
+        reducedUnresolved: true,
+      },
+      now: "now",
+    })
+
+    expect(grant.allowed).toBe(true)
+    if (!grant.allowed) throw new Error(grant.reason)
+    expect(grant.target).toEqual({
+      kind: "step",
+      id: "critic-solution",
+      key,
+      agent: "critic",
+      stepKind: "gate",
+    })
+    expect(grant.previousLimit).toBe(DEFAULT_LIMITS.maxCriticDispatchesPerStep)
+    expect(grant.newLimit).toBe(DEFAULT_LIMITS.maxCriticDispatchesPerStep + 1)
+    expect(
+      recordDispatch({
+        state,
+        limits: DEFAULT_LIMITS,
+        dispatchID: "c3",
+        key,
+        agent: "critic",
+      }).allowed,
+    ).toBe(true)
+    expect(
+      recordDispatch({
+        state,
+        limits: DEFAULT_LIMITS,
+        dispatchID: "c4",
+        key,
+        agent: "critic",
+      }).allowed,
+    ).toBe(false)
+  })
+
+  test("workflow grant policy recovers exhausted agent-owned OQ dispatches", () => {
+    const workflow = {
+      id: "wf-oq",
+      anchor: "docs/anchors/test/anchor.md",
+      createdBySession: "session",
+      createdAt: "now",
+      steps: [
+        {
+          id: "worker",
+          agent: "worker",
+          kind: "work" as const,
+          dependsOn: [],
+          status: "pending" as const,
+        },
+      ],
+    }
+    const question = {
+      id: "oq-1",
+      workflowId: workflow.id,
+      question: "Which authority owns this correction?",
+      raisedByAgent: "worker",
+      raisedByStepId: "worker",
+      requiredAuthority: "critic" as const,
+      blocking: true,
+      consumerStepIds: ["worker"],
+      evidence: [],
+      status: "open" as const,
+      reconciliations: {},
+      createdAt: "now",
+    }
+    const state = newBudgetState()
+    const key = "oq:oq-1"
+
+    for (const id of ["oq-c1", "oq-c2"]) {
+      expect(
+        recordDispatch({
+          state,
+          limits: DEFAULT_LIMITS,
+          dispatchID: id,
+          key,
+          agent: "critic",
+        }).allowed,
+      ).toBe(true)
+    }
+
+    const grant = grantWorkflowDispatchBudget({
+      state,
+      limits: DEFAULT_LIMITS,
+      workflow,
+      questions: [question],
+      questionId: question.id,
+      grantedBy: "general",
+      reason: "New evidence makes another authority pass meaningful.",
+      evidence: ["evidence/oq-critic-correction"],
+      progress: {
+        newEvidence: true,
+        changedHypothesis: false,
+        changedStrategy: false,
+        reducedUnresolved: false,
+      },
+      now: "now",
+    })
+
+    expect(grant.allowed).toBe(true)
+    if (!grant.allowed) throw new Error(grant.reason)
+    expect(grant.target).toEqual({
+      kind: "question",
+      id: question.id,
+      key,
+      agent: "critic",
+    })
+    expect(grant.previousLimit).toBe(DEFAULT_LIMITS.maxCriticDispatchesPerStep)
+    expect(grant.newLimit).toBe(DEFAULT_LIMITS.maxCriticDispatchesPerStep + 1)
+    expect(
+      recordDispatch({
+        state,
+        limits: DEFAULT_LIMITS,
+        dispatchID: "oq-c3",
+        key,
+        agent: "critic",
+      }).allowed,
+    ).toBe(true)
+    expect(
+      recordDispatch({
+        state,
+        limits: DEFAULT_LIMITS,
+        dispatchID: "oq-c4",
+        key,
+        agent: "critic",
+      }).allowed,
+    ).toBe(false)
+  })
+
+  test("bounded grants apply to gate-owning agents as well as workers", () => {
+    const cases = [
+      { agent: "reviewer", base: DEFAULT_LIMITS.maxReviewerDispatchesPerStep },
+      { agent: "designer", base: DEFAULT_LIMITS.maxDispatchesPerStep },
+      { agent: "acceptance", base: DEFAULT_LIMITS.maxDispatchesPerStep },
+    ]
+
+    for (const item of cases) {
+      const state = newBudgetState()
+      const key = `step:${item.agent}-gate`
+
+      for (let attempt = 1; attempt <= item.base; attempt++) {
+        expect(
+          recordDispatch({
+            state,
+            limits: DEFAULT_LIMITS,
+            dispatchID: `${item.agent}-${attempt}`,
+            key,
+            agent: item.agent,
+          }).allowed,
+        ).toBe(true)
+      }
+
+      expect(
+        recordDispatch({
+          state,
+          limits: DEFAULT_LIMITS,
+          dispatchID: `${item.agent}-blocked`,
+          key,
+          agent: item.agent,
+        }).allowed,
+      ).toBe(false)
+
+      const grant = grantExtraDispatch({
+        state,
+        limits: DEFAULT_LIMITS,
+        key,
+        agent: item.agent,
+        grantedBy: "general",
+        reason: "Material progress justifies one more independent pass.",
+        progress: {
+          newEvidence: true,
+          changedHypothesis: false,
+          changedStrategy: false,
+          reducedUnresolved: true,
+        },
+        now: "2026-09-21T17:45:00Z",
+      })
+
+      expect(grant.allowed).toBe(true)
+      if (!grant.allowed) throw new Error(grant.reason)
+      expect(grant.previousLimit).toBe(item.base)
+      expect(grant.newLimit).toBe(item.base + 1)
+
+      expect(
+        recordDispatch({
+          state,
+          limits: DEFAULT_LIMITS,
+          dispatchID: `${item.agent}-extra`,
+          key,
+          agent: item.agent,
+        }).allowed,
+      ).toBe(true)
+    }
+  })
+
   test("one material-progress grant allows exactly one extra dispatch without resetting history", () => {
     const state = newBudgetState()
     const key = "step:task:cli-agent-dry-run"
@@ -125,6 +420,7 @@ describe("Loom progress and dispatch budgets", () => {
     })
 
     expect(grant.allowed).toBe(true)
+    if (!grant.allowed) throw new Error(grant.reason)
     expect(grant.previousLimit).toBe(3)
     expect(grant.newLimit).toBe(4)
     expect(state.totalDispatches).toBe(3)
