@@ -287,6 +287,44 @@ class SkillOwnedEvalDiscoveryTests(unittest.TestCase):
 
 
 
+class TransportDiagnosticTests(unittest.TestCase):
+    def test_transport_error_prefers_terminal_json_error_event(self):
+        stdout = "\n".join([
+            json.dumps({"type": "step_start", "timestamp": 1}),
+            json.dumps({
+                "type": "error",
+                "error": {
+                    "type": "provider.auth",
+                    "message": "token expired",
+                    "status": 401,
+                },
+            }),
+        ])
+        result = {
+            "exit_code": 1,
+            "stderr": "",
+            "stdout": stdout,
+            "text": "",
+        }
+
+        self.assertEqual(
+            RUN_EVALS.transport_error(result),
+            "transport exited 1: provider.auth: token expired (status=401)",
+        )
+
+    def test_transport_error_uses_tail_when_no_structured_error_exists(self):
+        result = {
+            "exit_code": 1,
+            "stderr": "",
+            "stdout": "first\nsecond\nlast failure detail",
+            "text": "",
+        }
+
+        self.assertTrue(
+            RUN_EVALS.transport_error(result).endswith("first | second | last failure detail")
+        )
+
+
 class ActionAssertionTests(unittest.TestCase):
     def test_invoke_container_forwards_explicit_network_mode(self):
         class Result:
