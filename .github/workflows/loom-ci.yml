@@ -30,8 +30,17 @@ jobs:
         with:
           bun-version: 1.4.2
       - run: bun install --frozen-lockfile
+      - name: Install OpenCode V2 for zero-inference host integration
+        run: npm install --global @opencode/cli@2.0.11
+      - run: bun run integration:opencode
       - run: bun run test
       - run: bun run typecheck
+      - name: Install Playwright Chromium for dashboard Designer validation
+        run: |
+          npm install --no-save --package-lock=false --legacy-peer-deps @playwright/test@1.55.0
+          npx playwright install --with-deps chromium
+      - name: Run dashboard browser Designer validation
+        run: npx playwright test dashboard/e2e.spec.mjs --browser=chromium --workers=1
       - run: bun run eval:validate
       - run: bun run eval:harness-test
       - run: bun run skills:validate
