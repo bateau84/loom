@@ -777,8 +777,7 @@ export function validateWorkflowWave(
     (node) =>
       node.type === "wave" &&
       node.status !== "complete" &&
-      node.status !== "cancelled" &&
-      !node.claimedByWorkflowId,
+      node.status !== "cancelled",
   )
   if (objectiveClosure && activeWaves.length > 1) {
     throw new Error(
