@@ -13,3 +13,6 @@ tsconfigi*.json
 tui*.json
 opencode*.json
 opencode*.jsonc
+profiles/**
+cli/**
+tui/**
