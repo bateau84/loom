@@ -53,6 +53,7 @@ describe("Loom external dashboard", () => {
     expect(html).toContain("Budget used/limit")
     expect(html).toContain("Tasks complete")
     expect(html).toContain("claimed by")
+    expect(html).toContain("Loading Loom projection…")
     expect(html).toContain("No Loom instances discovered.")
     expect(html).toContain("No active or recent workflows.")
     expect(html).toContain("No workflows match the current filters.")
