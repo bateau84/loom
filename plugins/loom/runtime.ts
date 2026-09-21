@@ -922,6 +922,7 @@ export async function importLegacyPluginStorage(
 export type LegacyMigrationProvenance =
   | "project-epoch"
   | "opencode-session-continuity"
+  | "canonical-workflow"
 
 export type LegacySessionResumeProof = {
   kind: "opencode-host-session"
@@ -1024,6 +1025,7 @@ async function recordLegacySessionReconciliation(
   input: {
     sessionId: string
     sessionProjectId: string
+    provenance: Extract<LegacyMigrationProvenance, "opencode-session-continuity" | "canonical-workflow">
     workflowId?: string
     intentId?: string
   },
@@ -1036,10 +1038,10 @@ async function recordLegacySessionReconciliation(
       upgradeId: "legacy-session-v0-to-runtime-v1",
       projectId: runtime.projectId,
       sessionIdHash: sha256(input.sessionId),
-      openCodeProjectId: input.sessionProjectId,
+      ...(input.sessionProjectId ? { openCodeProjectId: input.sessionProjectId } : {}),
       ...(input.workflowId ? { workflowId: input.workflowId } : {}),
       ...(input.intentId ? { intentId: input.intentId } : {}),
-      provenance: "opencode-session-continuity",
+      provenance: input.provenance,
       reconciledAt: now,
     },
   )
@@ -1050,7 +1052,7 @@ async function recordLegacySessionReconciliation(
     await legacy.set(refusalKey, {
       ...(priorRefusal as Record<string, unknown>),
       resolvedAt: now,
-      resolution: "opencode-session-continuity",
+      resolution: input.provenance,
     })
   }
 }
@@ -1084,16 +1086,23 @@ export async function migrateLegacySessionState(
     }
   }
 
-  if (input.sessionProjectId !== input.currentProjectId) {
+  if (
+    input.sessionProjectId.length > 0 &&
+    input.currentProjectId.length > 0 &&
+    input.sessionProjectId !== input.currentProjectId
+  ) {
     const reason =
       "OpenCode session project does not match the current plugin location; legacy ownership is ambiguous."
     await recordMigrationRefusal(raw, runtime, input.sessionId, reason)
     throw new Error(`Legacy Loom migration refused: ${reason}`)
   }
 
-  const legacyWorkflowForProvenance = hasLegacyWorkflow
-    ? await raw.get(`workflow/${legacyWorkflowId}`)
-    : undefined
+  const [legacyWorkflowForProvenance, canonicalWorkflowForProvenance] = hasLegacyWorkflow
+    ? await Promise.all([
+        raw.get(`workflow/${legacyWorkflowId}`),
+        scoped.get(`workflow/${legacyWorkflowId}`),
+      ])
+    : [undefined, undefined]
   if (hasLegacyWorkflow && (!legacyWorkflowForProvenance || typeof legacyWorkflowForProvenance !== "object")) {
     const reason = "legacy session is bound to a missing workflow record."
     await recordMigrationRefusal(raw, runtime, input.sessionId, reason)
@@ -1105,6 +1114,11 @@ export async function migrateLegacySessionState(
       ? (legacyWorkflowForProvenance as any).projectId
       : undefined
 
+  const canonicalProjectId =
+    canonicalWorkflowForProvenance && typeof canonicalWorkflowForProvenance === "object"
+      ? (canonicalWorkflowForProvenance as any).projectId
+      : undefined
+
   let provenance: LegacyMigrationProvenance
   if (explicitLegacyProjectId === runtime.projectId) {
     provenance = "project-epoch"
@@ -1112,11 +1126,17 @@ export async function migrateLegacySessionState(
     const reason = "legacy workflow explicitly belongs to another project epoch."
     await recordMigrationRefusal(raw, runtime, input.sessionId, reason)
     throw new Error(`Legacy Loom migration refused: ${reason}`)
+  } else if (canonicalProjectId === runtime.projectId) {
+    provenance = "canonical-workflow"
+  } else if (canonicalProjectId !== undefined) {
+    const reason = "canonical workflow belongs to another project epoch."
+    await recordMigrationRefusal(raw, runtime, input.sessionId, reason)
+    throw new Error(`Legacy Loom migration refused: ${reason}`)
   } else if (validHostSessionResumeProof(input)) {
     provenance = "opencode-session-continuity"
   } else {
     const reason = hasLegacyWorkflow
-      ? "legacy workflow predates durable project epochs and has no unambiguous project provenance or exact resumed-session continuity proof."
+      ? "legacy workflow predates durable project epochs and has no unambiguous project provenance, admitted canonical workflow, or exact resumed-session continuity proof."
       : "legacy intent predates durable project epochs and has no exact resumed-session continuity proof."
     await recordMigrationRefusal(raw, runtime, input.sessionId, reason)
     throw new Error(`Legacy Loom migration refused: ${reason}`)
@@ -1269,10 +1289,11 @@ export async function migrateLegacySessionState(
     })
   }
 
-  if (provenance === "opencode-session-continuity") {
+  if (provenance === "opencode-session-continuity" || provenance === "canonical-workflow") {
     await recordLegacySessionReconciliation(raw, scoped, runtime, {
       sessionId: input.sessionId,
       sessionProjectId: input.sessionProjectId,
+      provenance,
       ...(migratedWorkflowId ? { workflowId: migratedWorkflowId } : {}),
       ...(migratedIntentId ? { intentId: migratedIntentId } : {}),
     })
