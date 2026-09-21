@@ -136,14 +136,14 @@ Skill prompts do not name the skill under test. The harness requires the runner'
 
 The harness chooses Podman first, then Docker. Override it explicitly with `--engine podman` or `--engine docker`. For rootless Podman on SELinux hosts, Loom disables container SELinux labeling for the eval container rather than relabeling your repository or credential files.
 
-The harness selects a slim image per transport:
+The harness pins the runner images by digest so the Action source and container runtime cannot drift independently:
 
 ```text
-OpenCode: ghcr.io/bateau84/opencode-eval-runner:opencode-edge
-Copilot:  ghcr.io/bateau84/opencode-eval-runner:copilot-edge
+OpenCode: ghcr.io/bateau84/opencode-eval-runner@sha256:279af644d0d05a17fecc0a277dc9648e0d03fb7d3c74a1f0fa05303c8c552f83
+Copilot:  ghcr.io/bateau84/opencode-eval-runner@sha256:fbc8f007ff339c6a6d47d4b1113874084cbf0eb7e62c7bb69bf9ccd70cdae799
 ```
 
-Override them independently with `--opencode-image` / `--copilot-image`, or use `--image` to force one explicit image for both transports.
+Override them independently with `--opencode-image` / `--copilot-image`, or use `--image` to force one explicit image for both transports. Changing the pinned runner revision and image digests is one compatibility update.
 
 The OpenCode transport automatically detects the normal auth, V2 credential database, and model catalog when present:
 
@@ -197,7 +197,7 @@ Target and judge still run in different containers even when they use the same m
 
 The workflow grants `copilot-requests: write`. When either transport is `github-copilot-cli`, the action exposes the workflow's built-in `GITHUB_TOKEN` to the harness, and the runner passes it into the isolated Copilot invocation. No separate Copilot secret is required.
 
-Use the workflow inputs `target_kind` and `target` to run all agent cases, all skill cases, or a specific agent/skill on demand.
+Use `target_kind` and `target` to run all agent cases, all skill cases, or a specific agent/skill on demand. When `cases` is also supplied, it intersects with those target filters rather than being silently ignored. With `all=false`, at least one of `cases`, `target_kind != all`, or `target` must be explicit before inference starts.
 
 ### GitHub Copilot CLI transport
 
