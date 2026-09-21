@@ -29,6 +29,7 @@ type RegisteredTool = {
 
 async function harness(
   seed?: (storage: MemoryStorage, root: string, projectID: string) => void | Promise<void>,
+  sessionInfo?: (sessionID: string, projectID: string) => { id: string; projectID?: string },
 ) {
   const root = await mkdtemp(join(tmpdir(), "loom-plugin-boundary-"))
   roots.push(root)
@@ -67,10 +68,11 @@ async function harness(
     },
     permission: { hook: async () => {} },
     session: {
-      get: async ({ sessionID }: { sessionID: string }) => ({
-        id: sessionID,
-        projectID,
-      }),
+      get: async ({ sessionID }: { sessionID: string }) =>
+        sessionInfo?.(sessionID, projectID) ?? {
+          id: sessionID,
+          projectID,
+        },
       hook: async () => {},
     },
   }
@@ -155,6 +157,47 @@ describe("Loom registered plugin boundary", () => {
         sessionID,
       )
       expect(duplicateStart.error).toContain("still bound to an active workflow")
+    } finally {
+      restore()
+    }
+  })
+
+  test("secondary pre-upgrade session resumes through an already canonical workflow", async () => {
+    const primarySession = "old-general"
+    const secondarySession = "old-planner"
+    const workflowId = "legacy-workflow"
+    const { call, restore } = await harness(
+      async (storage) => {
+        await storage.set(`session/${primarySession}`, workflowId)
+        await storage.set(`session/${secondarySession}`, workflowId)
+        await storage.set(`session-step/${secondarySession}`, "plan")
+        await storage.set(`workflow/${workflowId}`, {
+          id: workflowId,
+          anchor: "docs/anchors/leash-v1/anchor.md",
+          createdBySession: primarySession,
+          createdAt: "before-project-scoping",
+          steps: [
+            { id: "plan", agent: "planner", kind: "work", dependsOn: [], status: "pending" },
+          ],
+        })
+      },
+      (sessionID, projectID) =>
+        sessionID === secondarySession
+          ? { id: sessionID }
+          : { id: sessionID, projectID },
+    )
+
+    try {
+      const primary = await call("status", { workflowId, detail: true }, "general", primarySession)
+      expect(primary.error).toBeUndefined()
+      expect(typeof primary.workflow.projectId).toBe("string")
+
+      const secondary = await call("status", { workflowId, detail: true }, "planner", secondarySession)
+      expect(secondary.error).toBeUndefined()
+      expect(secondary.workflow).toMatchObject({
+        id: workflowId,
+        projectId: primary.workflow.projectId,
+      })
     } finally {
       restore()
     }
