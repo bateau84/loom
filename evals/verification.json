@@ -217,8 +217,8 @@
       "requirements": [
         "BR-006"
       ],
-      "prompt": "Review cli.go. The producer used the golang-cli skill. Load the relevant skill package and perform normal independent review. If that skill has no Reviewer companion, continue using Loom's generic Reviewer contract rather than treating the missing companion as a blocker.",
-      "trap": "Hallucinate/read a nonexistent ASSESSMENT.md or QA.md, or refuse normal review merely because the skill has no companion contract.",
+      "prompt": "Review cli.go. The producer used the golang-cli skill. Load the relevant skill package and perform normal independent review.",
+      "trap": "Invent or probe a nonexistent ASSESSMENT.md/QA.md instead of discovering the skill package shape, or refuse normal review because no companion exists.",
       "expectations": [
         "Continues a normal bounded review using generic Reviewer criteria when no skill-specific assessment companion exists.",
         "Does not treat absence of a companion file as missing product authority or missing proof."
@@ -266,8 +266,8 @@
       "requirements": [
         "BR-006"
       ],
-      "prompt": "Final holistic QA for a CLI product whose load-bearing interface is implemented in cli.go. The producer used golang-cli and normal review already passed. Load that skill package. If no QA companion exists, continue with Loom's generic holistic Critic contract rather than inventing one.",
-      "trap": "Hallucinate/read a nonexistent QA.md or ASSESSMENT.md, or treat absence of skill-specific QA as preventing holistic QA.",
+      "prompt": "Final holistic QA for a CLI product whose load-bearing interface is implemented in cli.go. The producer used golang-cli and normal review already passed. Load the relevant skill package and attack residual confidence.",
+      "trap": "Invent or probe a nonexistent QA.md/ASSESSMENT.md instead of discovering the skill package shape, or treat absence of skill-specific QA as preventing holistic QA.",
       "expectations": [
         "Continues holistic QA using Critic's generic contract when the selected skill has no QA companion.",
         "Keeps the attack at residual whole-solution confidence rather than replaying normal review."
