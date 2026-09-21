@@ -344,6 +344,7 @@ def setup_skill_ablation_projects(case: dict[str, Any]) -> tuple[Path, Path, Pat
         source_skill,
         candidate_project / ".opencode" / "skills" / skill,
         dirs_exist_ok=True,
+        ignore=shutil.ignore_patterns("evals", "ASSESSMENT.md", "QA.md"),
     )
 
     (baseline_project / ".opencode" / "agents" / f"{SKILL_BASELINE_AGENT}.md").write_text(
