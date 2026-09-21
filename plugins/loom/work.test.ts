@@ -225,6 +225,7 @@ describe("Loom persistent work hierarchy", () => {
       false,
       now,
     )
+    releaseWorkflowWave(work, "wf-old", oldGeneration, ["a", "b"], "release-before-replan")
 
     materializeWorkPlan(work, "wf-new", plan(), "later")
     expect(work.generation).toBe(oldGeneration + 1)
@@ -265,6 +266,24 @@ describe("Loom persistent work hierarchy", () => {
     expect(() =>
       claimWorkflowWave(work, "wf-2", generation, tasks, false, "later"),
     ).not.toThrow()
+  })
+
+
+  test("blocks replanning while a Wave claim is active", () => {
+    const work = createWorkHierarchy("docs/anchors/product/anchor.md", "wf-1", now)
+    materializeWorkPlan(work, "wf-1", plan(), now)
+    claimWorkflowWave(
+      work,
+      "wf-1",
+      work.generation,
+      [task("a"), task("b", ["a"])],
+      false,
+      now,
+    )
+
+    expect(() => materializeWorkPlan(work, "wf-2", plan(), "later")).toThrow(
+      "while a Wave is claimed",
+    )
   })
 
 })
