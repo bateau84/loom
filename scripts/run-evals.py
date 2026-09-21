@@ -503,6 +503,116 @@ def pass_env(command: list[str], names: tuple[str, ...] | list[str], host_env: d
             command += ["--env", name]
 
 
+def _sensitive_key(name: str) -> bool:
+    lowered = name.lower().replace("-", "_")
+    return any(
+        token in lowered
+        for token in (
+            "api_key",
+            "apikey",
+            "token",
+            "secret",
+            "password",
+            "credential",
+            "access",
+            "refresh",
+        )
+    )
+
+
+def _collect_json_secrets(value: Any, found: set[str], *, sensitive: bool = False) -> None:
+    if isinstance(value, dict):
+        for key, child in value.items():
+            _collect_json_secrets(
+                child,
+                found,
+                sensitive=sensitive or _sensitive_key(str(key)),
+            )
+        return
+    if isinstance(value, list):
+        for child in value:
+            _collect_json_secrets(child, found, sensitive=sensitive)
+        return
+    if sensitive and isinstance(value, str) and len(value) >= 8:
+        found.add(value)
+
+
+def collect_sensitive_values(
+    host_env: dict[str, str],
+    extra_envs: list[str],
+    auth: Path | None,
+    config: Path | None,
+    models_catalog: Path | None,
+    database_seed: Path | None,
+) -> list[str]:
+    found: set[str] = set()
+    env_names = set(PROVIDER_ENVS) | set(COPILOT_ENVS) | set(extra_envs) | {"OPENCODE_API_KEY"}
+    for name in env_names:
+        value = host_env.get(name, "")
+        if len(value) >= 8:
+            found.add(value)
+
+    for path in (auth, config, models_catalog):
+        if not path or not path.is_file():
+            continue
+        try:
+            parsed = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            continue
+        _collect_json_secrets(parsed, found)
+
+    if database_seed and database_seed.is_file():
+        try:
+            with sqlite3.connect(f"file:{database_seed}?mode=ro", uri=True) as db:
+                columns = [row[1] for row in db.execute('PRAGMA table_info("credential")')]
+                if columns:
+                    rows = db.execute(
+                        "SELECT " + ", ".join('"' + col.replace('"', '""') + '"' for col in columns)
+                        + ' FROM "credential"'
+                    ).fetchall()
+                    for row in rows:
+                        for column, value in zip(columns, row):
+                            if isinstance(value, bytes):
+                                try:
+                                    value = value.decode("utf-8")
+                                except UnicodeDecodeError:
+                                    continue
+                            if not isinstance(value, str):
+                                continue
+                            if _sensitive_key(column) and len(value) >= 8:
+                                found.add(value)
+                                continue
+                            if value[:1] in ("{", "["):
+                                try:
+                                    parsed = json.loads(value)
+                                except json.JSONDecodeError:
+                                    continue
+                                _collect_json_secrets(parsed, found)
+        except sqlite3.Error:
+            pass
+
+    return sorted(found, key=len, reverse=True)
+
+
+def redact_sensitive_values(value: Any, secrets: list[str]) -> Any:
+    if not secrets:
+        return value
+    if isinstance(value, str):
+        redacted = value
+        for secret in secrets:
+            if secret:
+                redacted = redacted.replace(secret, "***REDACTED***")
+        return redacted
+    if isinstance(value, list):
+        return [redact_sensitive_values(item, secrets) for item in value]
+    if isinstance(value, dict):
+        return {
+            key: redact_sensitive_values(item, secrets)
+            for key, item in value.items()
+        }
+    return value
+
+
 def prepare_node_modules_mount(project: Path, source: Path | None) -> Path | None:
     if source is None:
         return None
@@ -555,6 +665,15 @@ def invoke_container(
         project,
         ROOT / "node_modules" if mount_node_modules else None,
     )
+    host_env = host_environment_for_transport(transport)
+    secrets = collect_sensitive_values(
+        host_env,
+        extra_envs,
+        auth,
+        config,
+        models_catalog,
+        database_seed,
+    )
     runner_bin = os.environ.get("OPENCODE_EVAL_RUNNER_BIN") or shutil.which("opencode-eval-runner")
     if runner_bin:
         with tempfile.TemporaryDirectory(prefix="loom-eval-runner-cli-") as tmp:
@@ -604,7 +723,7 @@ def invoke_container(
             proc = subprocess.run(
                 command,
                 cwd=ROOT,
-                env=host_environment_for_transport(transport),
+                env=host_env,
                 capture_output=True,
                 text=True,
                 timeout=container_timeout + 30,
@@ -644,7 +763,7 @@ def invoke_container(
                     "stdout": proc.stdout[:100000],
                     "infrastructure_error": True,
                 }
-            return result
+            return redact_sensitive_values(result, secrets)
 
     with tempfile.TemporaryDirectory(prefix="loom-eval-invoke-") as tmp:
         root = Path(tmp)
@@ -719,7 +838,6 @@ def invoke_container(
         ]
         if expected_plugin:
             command += ["--env", f"EVAL_EXPECT_PLUGIN={expected_plugin}"]
-        host_env = host_environment_for_transport(transport)
         pass_env(command, PROVIDER_ENVS, host_env)
         if transport == "github-copilot-cli":
             pass_env(command, COPILOT_ENVS, host_env)
@@ -759,7 +877,7 @@ def invoke_container(
                 "stdout": "",
                 "infrastructure_error": True,
             }
-        return result
+        return redact_sensitive_values(result, secrets)
 
 
 def normalize_tool(value: str) -> str:
