@@ -463,6 +463,23 @@ def extract_observed_actions(raw_stdout: str) -> list[dict[str, Any]]:
     return actions
 
 
+def normalized_target_actions(target: dict[str, Any]) -> list[dict[str, Any]]:
+    value = target.get("actions")
+    if isinstance(value, list):
+        normalized: list[dict[str, Any]] = []
+        for item in value:
+            if not isinstance(item, dict) or not isinstance(item.get("tool"), str):
+                continue
+            args = item.get("args")
+            normalized.append({
+                "tool": item["tool"],
+                "args": args if isinstance(args, dict) else {},
+            })
+        if normalized:
+            return normalized
+    return extract_observed_actions(str(target.get("stdout") or ""))
+
+
 def resolve_action_arg(args: dict[str, Any], dotted: str) -> Any:
     value: Any = args
     for segment in dotted.split("."):
@@ -641,7 +658,7 @@ def run_case(
             extra_envs=args.env,
         )
         target_error = transport_error(target)
-        observed_actions = extract_observed_actions(str(target.get("stdout") or "")) if not target_error else []
+        observed_actions = normalized_target_actions(target) if not target_error else []
         deterministic = (
             deterministic_failures(case, list(target.get("tools") or []), observed_actions)
             if not target_error
@@ -859,6 +876,16 @@ def main() -> int:
         observed_tools = list((result.get("target") or {}).get("tools") or [])
         if observed_tools:
             print("  - observed tools: " + ", ".join(observed_tools))
+        observed_actions = list(result.get("observed_actions") or [])
+        if observed_actions:
+            preview = ", ".join(
+                "%s(%s)" % (
+                    action.get("tool"),
+                    json.dumps(action.get("args") or {}, sort_keys=True),
+                )
+                for action in observed_actions[:12]
+            )
+            print("  - observed actions: " + preview)
         semantic = result.get("semantic")
         if isinstance(semantic, dict) and semantic.get("passed") is False:
             print("  - " + str(semantic.get("summary", "semantic judge failed")))
