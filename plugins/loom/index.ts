@@ -2281,6 +2281,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           properties: {
             workflowId: { type: "string" },
             stepId: { type: "string" },
+            questionId: { type: "string" },
             reason: { type: "string" },
             progress: {
               type: "object",
