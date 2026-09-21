@@ -27,14 +27,16 @@ A restarted **same OpenCode session** is reconciled automatically when Loom can 
 
 The migrated workflow is assigned the current durable project epoch and a reconciliation receipt is stored. Existing workflow progress, budget, OQs, evidence and session attachment are migrated where present.
 
-This is why restarting an old session after upgrading Loom is supported without asking the model to create a new workflow.
+After that workflow has been safely admitted to the current project epoch, other pre-upgrade sessions that already have a durable legacy binding to **that exact same workflow** can also be reconciled. This covers older Planner/Worker/Reviewer/etc. sessions whose OpenCode host metadata may no longer expose the original project field after an upgrade. Loom uses the already-canonical workflow as provenance; it does not infer ownership from a path or a caller-supplied workflow ID.
+
+This is why restarting an old session after upgrading Loom is supported without asking the model to create a new workflow or abandon the ongoing Objective.
 
 ## When Loom still refuses
 
 Loom refuses migration when:
 
-- the OpenCode session belongs to another project;
-- a different session tries to adopt the legacy binding;
+- the OpenCode session explicitly belongs to another project;
+- a session has no durable legacy binding to the already-admitted workflow it is trying to resume;
 - the legacy workflow explicitly names another Loom project epoch;
 - only a filesystem path or caller-supplied workflow ID connects the state to the current project.
 
