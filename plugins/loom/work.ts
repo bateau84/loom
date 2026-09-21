@@ -266,6 +266,20 @@ export function materializeWorkPlan(
   now: string,
 ) {
   const phases = validateWorkPlan(phaseInputs)
+
+  if (
+    hierarchy.generation > 0 &&
+    hierarchy.nodes.some(
+      (node) =>
+        node.generation === hierarchy.generation &&
+        Boolean(node.claimedByWorkflowId),
+    )
+  ) {
+    throw new Error(
+      "Cannot replace the active work-plan generation while a Wave is claimed. Release/finish the claimed workflow first.",
+    )
+  }
+
   const nextGeneration = hierarchy.generation + 1
 
   for (const node of hierarchy.nodes) {
