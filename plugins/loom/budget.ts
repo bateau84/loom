@@ -105,6 +105,20 @@ export function recordDispatch(input: {
   return { allowed: true, duplicate: false, state }
 }
 
+export type ExtraDispatchGrantResult =
+  | {
+      allowed: true
+      grant: BudgetGrant
+      previousLimit: number
+      newLimit: number
+      state: BudgetState
+    }
+  | {
+      allowed: false
+      reason: string
+      state: BudgetState
+    }
+
 export function grantExtraDispatch(input: {
   state: BudgetState
   limits: ExecutionLimits
@@ -114,7 +128,7 @@ export function grantExtraDispatch(input: {
   reason: string
   progress: ProgressSignal
   now: string
-}) {
+}): ExtraDispatchGrantResult {
   const { state, limits, key, agent, grantedBy, reason, progress, now } = input
   const used = state.byKey[key] ?? 0
   const currentLimit = effectiveStepLimit(state, key, agent, limits)
@@ -141,7 +155,7 @@ export function grantExtraDispatch(input: {
   if (used < currentLimit) {
     return {
       allowed: false,
-      reason: `Step still has dispatch capacity: ${used}/${currentLimit} used.`,
+      reason: `Target still has dispatch capacity: ${used}/${currentLimit} used.`,
       state,
     }
   }
@@ -187,12 +201,31 @@ export type BudgetGrantTarget =
       agent: string
     }
 
+export type ResolveBudgetGrantTargetResult =
+  | { target: BudgetGrantTarget; reason?: undefined }
+  | { target?: undefined; reason: string }
+
+export type WorkflowDispatchGrantResult =
+  | {
+      allowed: true
+      target: BudgetGrantTarget
+      grant: BudgetGrant
+      previousLimit: number
+      newLimit: number
+      state: BudgetState
+    }
+  | {
+      allowed: false
+      reason: string
+      state: BudgetState
+    }
+
 export function resolveBudgetGrantTarget(input: {
   workflow: Workflow
   questions: OpenQuestion[]
   stepId?: string
   questionId?: string
-}) {
+}): ResolveBudgetGrantTargetResult {
   const { workflow, questions, stepId, questionId } = input
   const targetCount = Number(Boolean(stepId)) + Number(Boolean(questionId))
 
@@ -261,7 +294,7 @@ export function grantWorkflowDispatchBudget(input: {
   reason: string
   progress: ProgressSignal
   now: string
-}) {
+}): WorkflowDispatchGrantResult {
   const { state, limits, workflow, questions, stepId, questionId, grantedBy, reason, progress, now } = input
 
   if (grantedBy !== "general") {
@@ -288,7 +321,16 @@ export function grantWorkflowDispatchBudget(input: {
     now,
   })
 
-  return { ...result, target: resolved.target }
+  if (!result.allowed) return result
+
+  return {
+    allowed: true,
+    target: resolved.target,
+    grant: result.grant,
+    previousLimit: result.previousLimit,
+    newLimit: result.newLimit,
+    state,
+  }
 }
 
 export function hasMaterialProgress(signal: ProgressSignal) {
