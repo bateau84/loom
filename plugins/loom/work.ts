@@ -412,9 +412,15 @@ function recomputeRollup(hierarchy: WorkHierarchy, now: string) {
   const waves = nodes.filter((node) => node.type === "wave")
   for (const wave of waves) {
     const tasks = nodes.filter((node) => node.type === "task" && node.parentId === wave.id)
-    const complete = tasks.length > 0 && tasks.every((task) => task.status === "complete")
+    const allTasksComplete = tasks.length > 0 && tasks.every((task) => task.status === "complete")
     const started = tasks.some((task) => task.status === "complete" || task.status === "active")
-    const next: WorkNodeStatus = complete ? "complete" : started ? "active" : "pending"
+
+    // Task completion makes a Wave reviewable, not complete. Wave completion is
+    // an explicit transition after review-implementation passes.
+    let next: WorkNodeStatus
+    if (wave.status === "complete" && allTasksComplete) next = "complete"
+    else next = started ? "active" : "pending"
+
     if (wave.status !== next) {
       wave.status = next
       wave.updatedAt = now
@@ -465,6 +471,36 @@ export function syncWorkTaskStatuses(
     hierarchy.version++
     hierarchy.updatedAt = now
   }
+  return hierarchy
+}
+
+export function completeWaveForTasks(
+  hierarchy: WorkHierarchy,
+  taskIds: string[],
+  now: string,
+) {
+  const tasks = activeTaskMap(hierarchy)
+  const selected = taskIds.map((id) => tasks.get(id))
+  if (selected.some((task) => !task)) throw new Error("Wave completion references unknown Task.")
+  const parentIds = new Set(selected.map((task) => task!.parentId))
+  if (parentIds.size !== 1) throw new Error("Wave completion Tasks must belong to exactly one Wave.")
+
+  const waveId = [...parentIds][0]!
+  const wave = activeNodes(hierarchy).find((node) => node.id === waveId && node.type === "wave")
+  if (!wave) throw new Error("Wave not found.")
+
+  const waveTasks = activeNodes(hierarchy).filter(
+    (node) => node.type === "task" && node.parentId === wave.id,
+  )
+  if (waveTasks.some((task) => task.status !== "complete")) {
+    throw new Error("Wave cannot complete before every Task is complete.")
+  }
+
+  wave.status = "complete"
+  wave.updatedAt = now
+  recomputeRollup(hierarchy, now)
+  hierarchy.version++
+  hierarchy.updatedAt = now
   return hierarchy
 }
 
@@ -525,10 +561,15 @@ export function validateWorkflowWave(
     for (const dependency of task.dependsOn ?? []) {
       const dep = taskMap.get(dependency)
       if (!dep) throw new Error(`Work Task ${task.logicalId} depends on missing Task ${dependency}.`)
-      if (dep.parentId !== waveId && dep.status !== "complete") {
-        throw new Error(
-          `Wave is not runnable: Task ${task.logicalId} waits for incomplete external Task ${dependency}.`,
+      if (dep.parentId !== waveId) {
+        const dependencyWave = activeNodes(hierarchy).find(
+          (node) => node.id === dep.parentId && node.type === "wave",
         )
+        if (dep.status !== "complete" || dependencyWave?.status !== "complete") {
+          throw new Error(
+            `Wave is not runnable: Task ${task.logicalId} waits for incomplete reviewed external Task ${dependency}.`,
+          )
+        }
       }
     }
 
@@ -564,7 +605,12 @@ export function nextRunnableWaves(hierarchy: WorkHierarchy) {
         .every((task) =>
           (task.dependsOn ?? []).every((dependency) => {
             const dep = tasks.get(dependency)
-            return Boolean(dep && (dep.parentId === wave.id || dep.status === "complete"))
+            if (!dep) return false
+            if (dep.parentId === wave.id) return true
+            const dependencyWave = nodes.find(
+              (node) => node.id === dep.parentId && node.type === "wave",
+            )
+            return dep.status === "complete" && dependencyWave?.status === "complete"
           }),
         ),
     )
