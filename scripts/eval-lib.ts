@@ -13,6 +13,7 @@ export type ActionAssertion = {
 export type EvalCase = {
   id: string
   agent: string
+  skill?: string
   execution: EvalExecution
   requirements: string[]
   prompt: string
@@ -62,6 +63,16 @@ export function validateSuite(suite: EvalSuite, repoRoot: string) {
     if (!item.agent?.trim()) errors.push(`${label}: agent is required`)
     else if (!existsSync(join(repoRoot, "agents", `${item.agent}.md`))) {
       errors.push(`${label}: unknown agent ${item.agent}`)
+    }
+    if (item.skill !== undefined) {
+      if (typeof item.skill !== "string" || !item.skill.trim()) {
+        errors.push(`${label}: skill must be a non-empty string when present`)
+      } else if (!existsSync(join(repoRoot, "skills", item.skill, "SKILL.md"))) {
+        errors.push(`${label}: unknown skill ${item.skill}`)
+      }
+      if (item.execution !== "runtime") {
+        errors.push(`${label}: skill evals require runtime execution so skill loading is observable`)
+      }
     }
 
     if (!["runtime", "role-decision"].includes(item.execution)) {

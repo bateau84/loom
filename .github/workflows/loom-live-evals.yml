@@ -12,7 +12,7 @@ on:
         required: false
         type: string
       target_transport:
-        description: Target model transport
+        description: Target model transport. Skill-owned suites support OpenCode or GitHub Copilot; native skill-routing cases require OpenCode.
         required: true
         default: opencode
         type: choice
@@ -27,10 +27,24 @@ on:
         options:
           - opencode
           - github-copilot-cli
-      cases:
-        description: Comma-separated case IDs
+      target_kind:
+        description: Limit the run to agent cases, skill cases, or both
+        required: true
+        default: all
+        type: choice
+        options:
+          - all
+          - agent
+          - skill
+      target:
+        description: Optional comma-separated agent or skill names. Skill names discover every *.json under skills/<skill>/evals/.
         required: false
-        default: INTENT-01,REVIEW-01,WORK-01,CRITIC-01
+        default: ""
+        type: string
+      cases:
+        description: Optional comma-separated case IDs. Combines with target_kind/target when supplied.
+        required: false
+        default: ""
         type: string
       all:
         description: Run the full behavioral corpus
@@ -47,23 +61,24 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 90
     env:
-      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
       EVAL_MODEL: ${{ inputs.model }}
       JUDGE_MODEL: ${{ inputs.judge_model }}
       TARGET_TRANSPORT: ${{ inputs.target_transport }}
       JUDGE_TRANSPORT: ${{ inputs.judge_transport }}
+      EVAL_TARGET_KIND: ${{ inputs.target_kind }}
+      EVAL_TARGET: ${{ inputs.target }}
       EVAL_CASES: ${{ inputs.cases }}
       EVAL_ALL: ${{ inputs.all }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
 
-      - uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
           bun-version: 1.4.2
 
-      - run: bun install
+      - run: bun install --frozen-lockfile
 
       - name: Validate corpus
         run: bun run eval:validate
@@ -95,9 +110,16 @@ jobs:
           fi
 
       - name: Run isolated live evals
-        uses: bateau84/opencode-eval-runner@main
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+        uses: bateau84/opencode-eval-runner@a22f09a0494014a87abf3292e4815fe42b85f035
         with:
           engine: docker
+          opencode-image: ghcr.io/bateau84/opencode-eval-runner@sha256:5cc9571629bfba84636d5205e04ed6a0b6cbd77369061a25ccee5377631570ae
+          copilot-image: ghcr.io/bateau84/opencode-eval-runner@sha256:ada713db25e57a76d1e35a9bbd2c507bb2f3300c128ea44efc8b3d74d80dcdc9
           prepare-opencode: ${{ inputs.target_transport == 'opencode' || inputs.judge_transport == 'opencode' }}
           prepare-copilot: ${{ inputs.target_transport == 'github-copilot-cli' || inputs.judge_transport == 'github-copilot-cli' }}
           artifact-dir: .loom-evals
@@ -108,20 +130,28 @@ jobs:
               --model "$EVAL_MODEL"
               --target-transport "$TARGET_TRANSPORT"
               --judge-transport "$JUDGE_TRANSPORT"
+              --target-kind "$EVAL_TARGET_KIND"
             )
+            if [[ -n "$EVAL_TARGET" ]]; then
+              args+=(--target "$EVAL_TARGET")
+            fi
             if [[ -n "$JUDGE_MODEL" ]]; then
               args+=(--judge-model "$JUDGE_MODEL")
             fi
+            if [[ -n "${OPENCODE_API_KEY:-}" ]]; then
+              args+=(--env OPENCODE_API_KEY)
+            fi
             if [[ "$EVAL_ALL" == "true" ]]; then
               args+=(--all)
-            else
+            elif [[ -n "$EVAL_CASES" ]]; then
               args+=(--cases "$EVAL_CASES")
             fi
             "${args[@]}"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
           name: loom-live-evals
           path: .loom-evals/
           if-no-files-found: warn
+          include-hidden-files: true

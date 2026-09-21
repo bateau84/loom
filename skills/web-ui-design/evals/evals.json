@@ -6,14 +6,15 @@
     {
       "id": "Web-01",
       "name": "spa-back-button-and-url-design",
-      "trap": "Designer specifies SPA navigation without addressing URL state management or back-button behavior — produces a navigation spec where every view transition is described as a visual/component change with no mention of pushState, URL structure, or what the back button should return to. The browser-as-co-host constraint is invisible in the design.",
+      "trap": "Designer specifies SPA navigation without addressing URL state management or back-button behavior — produces a navigation spec where every view transition is described as a visual/component change with no browser-history contract, URL structure, or explicit Back behavior. The browser-as-co-host constraint is invisible in the design.",
       "prompt": "We're building a project management SPA with three main sections: a Projects list, a Project detail view (with tabs for Tasks, Members, and Settings), and a Task detail view that opens as a sidebar. When the user clicks a project, they see the project detail. When they click a task, the task detail sidebar opens alongside the project view. Design the navigation model for this application.",
       "expectations": [
         "Designer must specify URL structure for all navigation states: the Projects list URL, the Project detail URL (including which tab is active), and the Task detail URL — all three states must have distinct, shareable URLs",
         "Designer must specify what happens when the user presses Back from the Task detail view: do they return to the Project detail with the task sidebar closed? Do they return to the previously active tab? The design must be explicit",
         "Designer must specify what happens when the user presses Back from the Project detail view: they return to the Projects list — the specification must name this and confirm the Projects list URL is the correct back-navigation destination",
-        "Designer must address the tab state within the Project detail view: if the user is on the Members tab, navigates to a task and back, do they return to the Members tab? This is a URL architecture decision — either the tab is in the URL (persistent, back works) or it is component state (ephemeral, back returns to default tab)",
-        "Designer must specify that client-side navigation must push browser history entries (pushState) for every route change — this is a design specification requirement, not an implementation detail the coder invents",
+        "Designer must define deterministic tab/history semantics for the Project detail view: the active tab must be represented explicitly in the URL or intentionally ephemeral, tab changes must have predictable browser-history behavior, and opening/closing Task detail must have a deterministic relationship to the Tasks route rather than leaving the Back destination ambiguous",
+        "Designer must specify which meaningful SPA navigations create browser history entries: selecting a project, switching project tabs, and opening a task must create navigable history entries so Back traverses those states predictably",
+        "Designer must explicitly define history behavior when closing Task detail: history.back() is valid when the sidebar was opened through navigation, while a direct/deep-linked task may navigate to the parent task-list URL; the design must not use replace/history behavior that breaks expected Back navigation",
         "Designer must specify what a user sees when they copy the Task detail URL and open it in a new tab — the expected behavior is the Project detail view with the task sidebar open, not a blank page or error"
       ],
       "negative_expectations": [

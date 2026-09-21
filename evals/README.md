@@ -19,7 +19,7 @@ These prove rules implemented in code: workflow dependencies, OQ authority, evid
 
 ### 2. Behavioral role evals
 
-Cases under `evals/*.json` attack model behavior with fresh context.
+Cases under `evals/*.json` attack model behavior with fresh context. A case normally targets an agent. Cases with a `skill` field target that skill through the named production agent and must observe the native skill load.
 
 Two execution modes exist:
 
@@ -38,6 +38,7 @@ Each case includes:
 
 - `id`
 - target `agent`
+- optional target `skill` (skill cases are runtime-only)
 - `execution` mode
 - governing requirement IDs
 - adversarial `prompt`
@@ -124,16 +125,52 @@ bun run eval:live -- \
   --model openai/gpt-5.3-codex-spark
 ```
 
-The harness chooses Podman first, then Docker. Override it explicitly with `--engine podman` or `--engine docker`. For rootless Podman on SELinux hosts, Loom disables container SELinux labeling for the eval container rather than relabeling your repository or credential files.
+Run only skill cases, or one skill's cases:
 
-The harness selects a slim image per transport:
-
-```text
-OpenCode: ghcr.io/bateau84/opencode-eval-runner:opencode-edge
-Copilot:  ghcr.io/bateau84/opencode-eval-runner:copilot-edge
+```bash
+bun run eval:live -- --target-kind skill --model openai/gpt-5.5
+bun run eval:live -- --target-kind skill --target web-ui-design --model openai/gpt-5.5
 ```
 
-Override them independently with `--opencode-image` / `--copilot-image`, or use `--image` to force one explicit image for both transports.
+Skill evaluation has two complementary sources:
+
+- central runtime cases in `evals/skills.json` test production-role skill discovery and companion-methodology behavior with one normal runtime execution;
+- skill-owned cases are discovered automatically from **every `*.json` file directly under `skills/<skill>/evals/`**, regardless of filename. Existing legacy shapes (`{skill,cases}`, `{skill_name,evals}`, and top-level arrays) are normalized at runtime.
+
+Skill-owned cases use **ablation**, not the agent-eval one-shot contract. Loom runs the same prompt twice:
+
+1. **baseline** — isolated model capability without the target skill available;
+2. **candidate** — isolated model capability with only the target skill available/applied.
+
+Both responses are judged independently against the same positive expectations, negative expectations, and named trap. The evidence artifact records:
+
+- baseline absolute behavior score;
+- candidate absolute behavior score;
+- candidate absolute PASS/FAIL;
+- score delta in percentage points;
+- whether the skill fixed or introduced the named trap;
+- a per-iteration skill-value classification: `material-improvement`, `improvement`, `neutral`, or `regression`.
+
+A skill-owned case still returns PASS only when the **candidate** satisfies the full benchmark. A candidate that improves substantially but misses one requirement remains an absolute FAIL, while the artifact preserves the improvement instead of collapsing the result to one boolean.
+
+A single baseline/candidate pair is one stochastic observation, not proof of stable skill value. Use multiple iterations (and preferably an independent judge model) when the delta itself is load-bearing. The classification describes the observed iteration; it is not a cross-model or statistical claim.
+
+With OpenCode, the baseline project contains no target skill and the candidate project contains only that skill; candidate evidence must confirm a completed native `skill` load. With GitHub Copilot CLI, Loom supplies no skill methodology to the baseline and injects the target `SKILL.md` only into the candidate system context. This preserves the same controlled baseline/candidate contrast across transports.
+
+Central native skill-routing cases still require `--target-transport opencode` because they assert real production-role `skill` loading and companion-file behavior. Skill-owned ablation suites are provider-neutral and may use OpenCode or GitHub Copilot CLI for target and judge.
+
+Each skill-owned case therefore makes four model calls per iteration: baseline target, baseline judge, candidate target, and candidate judge.
+
+The harness chooses Podman first, then Docker. Override it explicitly with `--engine podman` or `--engine docker`. For rootless Podman on SELinux hosts, Loom disables container SELinux labeling for the eval container rather than relabeling your repository or credential files.
+
+The harness pins the runner images by digest so the Action source and container runtime cannot drift independently:
+
+```text
+OpenCode: ghcr.io/bateau84/opencode-eval-runner@sha256:5cc9571629bfba84636d5205e04ed6a0b6cbd77369061a25ccee5377631570ae
+Copilot:  ghcr.io/bateau84/opencode-eval-runner@sha256:ada713db25e57a76d1e35a9bbd2c507bb2f3300c128ea44efc8b3d74d80dcdc9
+```
+
+Override them independently with `--opencode-image` / `--copilot-image`, or use `--image` to force one explicit image for both transports. Changing the pinned runner revision and image digests is one compatibility update.
 
 The OpenCode transport automatically detects the normal auth, V2 credential database, and model catalog when present:
 
@@ -180,6 +217,27 @@ bun run eval:live -- \
 ```
 
 Target and judge still run in different containers even when they use the same model.
+
+### GitHub Actions credentials
+
+`.github/workflows/loom-live-evals.yml` is manually runnable with `workflow_dispatch`. It uses `bateau84/opencode-eval-runner` as the action/execution boundary for target and judge invocations.
+
+For OpenCode Zen/Go in Actions, add a repository secret named `OPENCODE_API_KEY`. Loom forwards it explicitly into isolated OpenCode target/judge containers. Use normal OpenCode model references:
+
+```text
+Zen: opencode/<model-id>
+Go:  opencode-go/<model-id>
+```
+
+For example: `opencode/gpt-5.4` or `opencode-go/kimi-k3`. The existing `OPENCODE_AUTH_JSON` secret path remains available for credentials that must be represented through OpenCode's auth file rather than a provider environment variable.
+
+Before result JSON is persisted under `.loom-evals/` or uploaded as an artifact, Loom redacts known provider/token environment values plus credential material discovered in auth/config JSON and the sanitized credential database. Raw model/tool evidence remains useful for diagnosis without intentionally preserving those credential values.
+
+This redaction is defense-in-depth, not a trust substitute for hostile checked-out code. The live workflow executes repository-owned harness code while provider credentials are available to the eval step, so dispatch secret-bearing live evals only on refs you trust. Do not use a manual live run as an approval mechanism for untrusted pull-request bytes.
+
+For GitHub Copilot CLI, the workflow grants `copilot-requests: write`. When either transport is `github-copilot-cli`, the action exposes the workflow's built-in `GITHUB_TOKEN` to the harness, and the runner passes it into the isolated Copilot invocation. No separate Copilot secret is required.
+
+Use `target_kind` and `target` to run all agent cases, all skill cases, or a specific agent/skill on demand. A skill target is valid when it has central cases and/or one or more `*.json` files under `skills/<skill>/evals/`. For a selected skill, `cases` may use either the normalized global ID (for example `SKILL-web-ui-design-Web-01`) or the skill-local ID/name from its JSON file (for example `Web-01`). When `cases` is also supplied, it intersects with those target filters rather than being silently ignored. With `all=false`, at least one of `cases`, `target_kind != all`, or `target` must be explicit before inference starts.
 
 ### GitHub Copilot CLI transport
 
@@ -228,10 +286,12 @@ Each container emits one JSON result on stdout. The Loom host harness writes `.l
 
 ## Cost control
 
-`eval:live` refuses to run unless either:
+`eval:live` refuses to run unless selection is explicit through at least one of:
 
-- `--cases ID1,ID2` is supplied, or
-- `--all` is supplied explicitly.
+- `--cases ID1,ID2`;
+- `--target name1,name2`;
+- `--target-kind agent` or `--target-kind skill`;
+- `--all`.
 
 There is no inference-bearing eval in normal PR CI.
 
