@@ -12,6 +12,8 @@ describe("Loom sidebar snapshot", () => {
   test("shows planned tasks and runnable state", () => {
     const workflow: Workflow = {
       id: "wf-1",
+      projectId: "project-test",
+      revision: 0,
       anchor: "docs/anchors/leash-v1/anchor.md",
       createdBySession: "session-1",
       createdAt: "now",
@@ -154,6 +156,8 @@ describe("Loom sidebar snapshot", () => {
   test("shows Objective, Phase, Wave, and Task progress together", () => {
     const workflow: Workflow = {
       id: "wf-hierarchy",
+      projectId: "project-test",
+      revision: 0,
       anchor: "docs/anchors/leash-v1/anchor.md",
       createdBySession: "session-1",
       createdAt: "now",

@@ -50,7 +50,7 @@ A statement such as "tests pass" without ledger-backed observed evidence is not 
 
 ## Task attachment
 
-Your first Loom action for an implementation step is `loom_attach` with the assigned workflow ID and step ID.
+Your first Loom action for an implementation step is `loom_attach` with the General-issued `grantId`, assigned workflow ID, and exact step ID. Never attach from selectors alone.
 
 For planned `task:*` work, the attachment response is the task envelope: objective, dependencies, skills, verification expectations, and immutable write scope. Follow that envelope instead of relying on General to restate the task.
 

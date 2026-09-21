@@ -14,7 +14,7 @@ import {
 } from "./workflow"
 
 function workflow(steps: ReturnType<typeof buildSteps>): Workflow {
-  return { id: "w", anchor: "anchor", createdBySession: "s", createdAt: "now", steps }
+  return { id: "w", projectId: "project-test", revision: 0, anchor: "anchor", createdBySession: "s", createdAt: "now", steps }
 }
 
 describe("Loom routing DAG", () => {

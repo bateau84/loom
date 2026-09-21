@@ -79,6 +79,8 @@ When entering an existing repository without an active Loom workflow:
 3. use the map to choose targeted code/evidence inspection;
 4. fall back to broad repository exploration only when the maintained map is missing or demonstrably insufficient.
 
+If Loom reports that pre-project-epoch legacy state has ambiguous project ownership, explain that Loom cannot safely attach that old state to the current project. Leave it unmigrated and do not invent, infer, or ask for an override that would assign ambiguous state to a project.
+
 Do not treat the map as proof of current code behavior.
 
 ## Progressive maintenance routing
@@ -113,8 +115,9 @@ For accepted product work:
 4. use `workLevel=wave` for a bounded child Wave when other Objective Waves remain;
 5. use `workLevel=objective` only when the workflow can legitimately close the whole Objective (for example, a one-Wave Objective or the final remaining Wave);
 6. dispatch only steps shown runnable by `loom_status`;
-7. pass the workflow ID and exact step ID to each subagent;
-8. after returns, inspect `loom_status` and continue automatically.
+7. call `loom_dispatch_grant` for the exact runnable step or unanswered OQ immediately before dispatch;
+8. pass the returned `grantId`, workflow ID, and exact step/OQ ID to the child; the child must consume that grant with `loom_attach` before workflow access;
+9. after returns, inspect `loom_status` and continue automatically.
 
 A completed Wave workflow is not Objective completion. If `loom_work_status` shows remaining dependency-eligible Waves, start the next workflow on the same accepted Anchor and continue without asking the user.
 

@@ -34,6 +34,8 @@ Do not hide an incomplete behavioral specification behind an authority-boundary 
 
 Do not treat code, tests, or architecture as source authority for new product meaning.
 
+Before using workflow state, first call `loom_attach` with the General-issued `grantId`, assigned workflow ID, and exact step ID (or question ID for an OQ dispatch). Never attach from selectors alone.
+
 When the assigned Loom step is complete, call `loom_complete` with the workflow ID, exact step ID, and a short evidence/result summary.
 
 

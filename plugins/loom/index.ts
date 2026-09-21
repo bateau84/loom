@@ -1,7 +1,9 @@
 import type * as OpenCodePlugin from "@opencode/plugin"
+import { consumeDispatchGrantLocked, createProjectStorage, createTransactionalStorage, findUsableDispatchGrant, importLegacyPluginStorage, issueDispatchGrantLocked, migrateLegacySessionState, resolveRuntimeIdentity, sessionBoundToOq, sessionBoundToStep, sessionBoundToWorkflow, withRuntimeLock, withRuntimeLocks, type LoomRuntimeIdentity } from "./runtime"
 import { LoomRpc } from "./rpc"
 import { buildSidebarSnapshot } from "./sidebar"
 import { renderToolOutput } from "./presentation"
+import { createDashboardPublisher } from "./dashboard"
 import {
   addVerificationRequirement,
   applyTaskPlan,
@@ -142,7 +144,12 @@ async function readIntent(ctx: any, id: string): Promise<IntentSession | undefin
   return (await ctx.storage.get(intentKey(id))) as IntentSession | undefined
 }
 
-async function activeIntent(ctx: any, sessionID: string): Promise<IntentSession | undefined> {
+async function activeIntent(
+  ctx: any,
+  sessionID: string,
+  ensureLegacy?: (sessionID: string) => Promise<void>,
+): Promise<IntentSession | undefined> {
+  await ensureLegacy?.(sessionID)
   const id = (await ctx.storage.get(sessionIntentKey(sessionID))) as string | undefined
   return id ? readIntent(ctx, id) : undefined
 }
@@ -175,6 +182,10 @@ function sessionStepKey(sessionID: string) {
   return `session-step/${sessionID}`
 }
 
+function sessionOqKey(sessionID: string) {
+  return `session-oq/${sessionID}`
+}
+
 function budgetKey(workflowId: string) {
   return `budget/${workflowId}`
 }
@@ -200,33 +211,37 @@ function workKey(objectiveId: string) {
   return `work/${encodeURIComponent(objectiveId)}`
 }
 
-const workQueues = new Map<string, Promise<void>>()
+async function withWorkLock<T>(
+  runtime: LoomRuntimeIdentity,
+  objectiveId: string,
+  fn: () => Promise<T>,
+): Promise<T> {
+  return withRuntimeLock(runtime, "work", objectiveId, fn)
+}
 
-async function withWorkLock<T>(objectiveId: string, fn: () => Promise<T>): Promise<T> {
-  const previous = workQueues.get(objectiveId) ?? Promise.resolve()
-  let release!: () => void
-  const hold = new Promise<void>((resolve) => {
-    release = resolve
-  })
-  const queued = previous.then(() => hold)
-  workQueues.set(objectiveId, queued)
-  await previous
-
-  try {
-    return await fn()
-  } finally {
-    release()
-    if (workQueues.get(objectiveId) === queued) workQueues.delete(objectiveId)
-  }
+async function withWorkflowWorkLocks<T>(
+  runtime: LoomRuntimeIdentity,
+  workflowId: string,
+  objectiveId: string,
+  fn: () => Promise<T>,
+): Promise<T> {
+  return withRuntimeLocks(
+    runtime,
+    [
+      { aggregate: "workflow", resourceIdentity: workflowId },
+      { aggregate: "work", resourceIdentity: objectiveId },
+    ],
+    fn,
+  )
 }
 
 async function readWork(ctx: any, objectiveId: string): Promise<WorkHierarchy | undefined> {
   return (await ctx.storage.get(workKey(objectiveId))) as WorkHierarchy | undefined
 }
 
-async function ensureWorkForWorkflow(ctx: any, workflow: Workflow): Promise<WorkHierarchy> {
+async function ensureWorkForWorkflow(ctx: any, runtime: LoomRuntimeIdentity, workflow: Workflow): Promise<WorkHierarchy> {
   const objectiveId = objectiveIdForAnchor(workflow.anchor)
-  return withWorkLock(objectiveId, async () => {
+  return withWorkLock(runtime, objectiveId, async () => {
     const now = new Date().toISOString()
     const existing = await readWork(ctx, objectiveId)
     const work = existing ?? createWorkHierarchy(workflow.anchor, workflow.id, now)
@@ -241,6 +256,44 @@ function sessionKey(id: string) {
   return `session/${id}`
 }
 
+function bindingReleaseKey(workflowId: string, sessionID: string) {
+  return `binding-release/${workflowId}/${sessionID}`
+}
+
+function workflowBindingTerminal(workflow: Workflow) {
+  if (workflow.steps.length === 0) return false
+  if (workflow.steps.every((step) => ["complete", "passed", "failed"].includes(step.status))) {
+    return true
+  }
+  return (
+    runnable(workflow).length === 0 &&
+    workflow.steps.some((step) => step.status === "failed")
+  )
+}
+
+async function assertSessionRebindingAllowedLocked(
+  ctx: any,
+  sessionID: string,
+  observedBinding: string | undefined,
+  nextWorkflowId: string,
+) {
+  const currentBinding = (await ctx.storage.get(sessionKey(sessionID))) as string | undefined
+  if (currentBinding !== observedBinding) {
+    throw new Error("Session workflow binding changed concurrently; retry the Loom transition.")
+  }
+  if (!currentBinding || currentBinding === nextWorkflowId) return currentBinding
+
+  const previous = await readWorkflow(ctx, currentBinding)
+  if (!previous) throw new Error("Current session workflow binding points to missing state.")
+  const released = await ctx.storage.get(bindingReleaseKey(currentBinding, sessionID))
+  if (!workflowBindingTerminal(previous) && !released) {
+    throw new Error(
+      "Session is still bound to an active workflow. Complete/fail it or explicitly release the binding before switching workflows.",
+    )
+  }
+  return currentBinding
+}
+
 function oqIndexKey(workflowId: string) {
   return `oq-index/${workflowId}`
 }
@@ -253,9 +306,85 @@ async function readWorkflow(ctx: any, id: string): Promise<Workflow | undefined>
   return (await ctx.storage.get(workflowKey(id))) as Workflow | undefined
 }
 
-async function activeWorkflow(ctx: any, sessionID: string): Promise<Workflow | undefined> {
+async function validateWorkflowMutationLocked(
+  ctx: any,
+  runtime: LoomRuntimeIdentity,
+  workflow: Workflow,
+): Promise<Workflow> {
+  const current = await readWorkflow(ctx, workflow.id)
+  if (!current) throw new Error("Workflow disappeared before mutation commit.")
+  if (current.projectId !== runtime.projectId) {
+    throw new Error("Workflow belongs to another project.")
+  }
+  if (current.revision !== workflow.revision) {
+    throw new Error(
+      `Stale workflow revision: expected ${workflow.revision}, current ${current.revision}.`,
+    )
+  }
+  return current
+}
+
+async function persistWorkflowMutationLocked(
+  ctx: any,
+  runtime: LoomRuntimeIdentity,
+  workflow: Workflow,
+): Promise<Workflow> {
+  const current = await validateWorkflowMutationLocked(ctx, runtime, workflow)
+  workflow.revision = current.revision + 1
+  await ctx.storage.set(workflowKey(workflow.id), workflow)
+  return workflow
+}
+
+async function persistWorkflowMutation(
+  ctx: any,
+  runtime: LoomRuntimeIdentity,
+  workflow: Workflow,
+): Promise<Workflow> {
+  return withRuntimeLock(runtime, "workflow", workflow.id, async () =>
+    persistWorkflowMutationLocked(ctx, runtime, workflow),
+  )
+}
+
+async function bumpWorkflowRevisionLocked(
+  ctx: any,
+  runtime: LoomRuntimeIdentity,
+  workflowId: string,
+): Promise<Workflow> {
+  const current = await readWorkflow(ctx, workflowId)
+  if (!current) throw new Error("Workflow disappeared during guarded mutation.")
+  if (current.projectId !== runtime.projectId) throw new Error("Workflow belongs to another project.")
+  current.revision += 1
+  await ctx.storage.set(workflowKey(current.id), current)
+  return current
+}
+
+async function activeWorkflow(
+  ctx: any,
+  sessionID: string,
+  ensureLegacy?: (sessionID: string) => Promise<void>,
+): Promise<Workflow | undefined> {
+  await ensureLegacy?.(sessionID)
   const id = (await ctx.storage.get(sessionKey(sessionID))) as string | undefined
   return id ? readWorkflow(ctx, id) : undefined
+}
+
+async function readBoundWorkflow(
+  ctx: any,
+  sessionID: string,
+  workflowId: string,
+  ensureLegacy?: (sessionID: string) => Promise<void>,
+): Promise<Workflow | undefined> {
+  await ensureLegacy?.(sessionID)
+  if (!(await sessionBoundToWorkflow(ctx.storage as any, sessionID, workflowId))) return undefined
+  return readWorkflow(ctx, workflowId)
+}
+
+async function exactStepBinding(ctx: any, sessionID: string, workflowId: string, stepId: string) {
+  return sessionBoundToStep(ctx.storage as any, sessionID, workflowId, stepId)
+}
+
+async function exactOqBinding(ctx: any, sessionID: string, workflowId: string, questionId: string) {
+  return sessionBoundToOq(ctx.storage as any, sessionID, workflowId, questionId)
 }
 
 async function assertWorkerWorkClaim(ctx: any, workflowId: string, stepId: string) {
@@ -518,10 +647,47 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
   id: "loom",
 
   async setup(ctx) {
+    const legacyStorage = ctx.storage as any
+    const runtime = await resolveRuntimeIdentity(ctx.location.project.canonical, legacyStorage)
+    const rawStorage = await createTransactionalStorage(runtime)
+    await importLegacyPluginStorage(legacyStorage, rawStorage, runtime)
+    await rawStorage.set("installation/id", runtime.installationId)
+    await rawStorage.set(`installation/projects/${runtime.projectId}`, {
+      projectId: runtime.projectId,
+      canonicalLocation: runtime.canonicalLocation,
+      identitySource: runtime.identitySource,
+      markerLocation: runtime.markerLocation,
+      lastSeenAt: new Date().toISOString(),
+    })
+
+    const scopedStorage = createProjectStorage(rawStorage, runtime.projectId)
+    ctx = new Proxy(ctx, {
+      get(target, property, receiver) {
+        if (property === "storage") return scopedStorage
+        return Reflect.get(target, property, receiver)
+      },
+    }) as typeof ctx
+
+    const dashboardPublisher = createDashboardPublisher(scopedStorage, runtime)
+    dashboardPublisher.trigger()
+    dashboardPublisher.startHeartbeat()
+
+    const legacyCheckedSessions = new Set<string>()
+    const ensureLegacySession = async (sessionID: string) => {
+      if (legacyCheckedSessions.has(sessionID)) return
+      const session = await ctx.session.get({ sessionID })
+      await migrateLegacySessionState(legacyStorage, scopedStorage, runtime, {
+        sessionId: sessionID,
+        sessionProjectId: String(session.projectID),
+        currentProjectId: String(ctx.location.project.id),
+      })
+      legacyCheckedSessions.add(sessionID)
+    }
+
     await ctx.rpc.register(LoomRpc, {
       sidebar: async (input) => {
         const { sessionID } = input as { sessionID: string }
-        const workflow = await activeWorkflow(ctx, sessionID)
+        const workflow = await activeWorkflow(ctx, sessionID, ensureLegacySession)
         const questions = workflow ? await readQuestions(ctx, workflow.id) : []
         const work = workflow?.work ? await readWork(ctx, workflow.work.objectiveId) : undefined
         return buildSidebarSnapshot(workflow, questions, work)
@@ -537,6 +703,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         name: "loom",
         description: "Loom workflow control, shared questions, routing, step state, and bounded project inspection.",
       })
+
 
       editor.add({
         name: "find",
@@ -685,7 +852,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             return { content: renderToolOutput({ error: "Only general may run Loom intent shaping." }) }
           }
 
-          const existing = await activeIntent(ctx, tool.sessionID)
+          const existing = await activeIntent(ctx, tool.sessionID, ensureLegacySession)
           if (existing && existing.state !== "accepted") {
             return { content: renderToolOutput({ error: "An active intent interview already exists.", intent: existing }) }
           }
@@ -714,7 +881,8 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         options: { namespace: "loom", codemode: false },
         execute: async (input, tool) => {
           const requested = (input as { intentId?: string }).intentId
-          const session = requested ? await readIntent(ctx, requested) : await activeIntent(ctx, tool.sessionID)
+          await ensureLegacySession(tool.sessionID)
+          const session = requested ? await readIntent(ctx, requested) : await activeIntent(ctx, tool.sessionID, ensureLegacySession)
           return { content: renderToolOutput({ intent: session ?? null }) }
         },
       })
@@ -739,7 +907,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           if (tool.agent !== "general") {
             return { content: renderToolOutput({ error: "Only general may ask Loom intent questions." }) }
           }
-          const session = await activeIntent(ctx, tool.sessionID)
+          const session = await activeIntent(ctx, tool.sessionID, ensureLegacySession)
           if (!session) return { content: renderToolOutput({ error: "No active intent interview." }) }
 
           const value = input as { branch: string; question: string; recommendation: string; why: string }
@@ -776,7 +944,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           if (tool.agent !== "general") {
             return { content: renderToolOutput({ error: "Only general may resolve Loom intent branches." }) }
           }
-          const session = await activeIntent(ctx, tool.sessionID)
+          const session = await activeIntent(ctx, tool.sessionID, ensureLegacySession)
           if (!session) return { content: renderToolOutput({ error: "No active intent interview." }) }
 
           const value = input as {
@@ -822,7 +990,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           if (tool.agent !== "general") {
             return { content: renderToolOutput({ error: "Only general may prepare a Loom Anchor draft." }) }
           }
-          const session = await activeIntent(ctx, tool.sessionID)
+          const session = await activeIntent(ctx, tool.sessionID, ensureLegacySession)
           if (!session) return { content: renderToolOutput({ error: "No active intent interview." }) }
 
           const value = input as {
@@ -860,7 +1028,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           if (tool.agent !== "general") {
             return { content: renderToolOutput({ error: "Only general may reopen Loom intent." }) }
           }
-          const session = await activeIntent(ctx, tool.sessionID)
+          const session = await activeIntent(ctx, tool.sessionID, ensureLegacySession)
           if (!session) return { content: renderToolOutput({ error: "No active intent interview." }) }
           try {
             reopenIntent(session)
@@ -890,7 +1058,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           if (tool.agent !== "general") {
             return { content: renderToolOutput({ error: "Only general may record Anchor acceptance." }) }
           }
-          const session = await activeIntent(ctx, tool.sessionID)
+          const session = await activeIntent(ctx, tool.sessionID, ensureLegacySession)
           if (!session) return { content: renderToolOutput({ error: "No active intent interview." }) }
 
           const value = input as { anchorPath: string; confirmation: string }
@@ -941,7 +1109,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           }
 
           const { anchor } = input as { anchor: string }
-          const intent = await activeIntent(ctx, tool.sessionID)
+          const intent = await activeIntent(ctx, tool.sessionID, ensureLegacySession)
           if (intent && intent.state !== "accepted") {
             return {
               content: renderToolOutput({
@@ -962,6 +1130,8 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           const id = crypto.randomUUID()
           const workflow: Workflow = {
             id,
+            projectId: runtime.projectId,
+            revision: 0,
             anchor,
             createdBySession: tool.sessionID,
             createdAt: new Date().toISOString(),
@@ -969,27 +1139,51 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           }
 
           const existingObjectiveId = objectiveIdForAnchor(anchor)
-          const existingWork = await readWork(ctx, existingObjectiveId)
-          if (existingWork) {
-            await withWorkLock(existingObjectiveId, async () => {
+          const observedBinding = (await ctx.storage.get(sessionKey(tool.sessionID))) as string | undefined
+          const resources = [
+            { aggregate: "workflow", resourceIdentity: id },
+            { aggregate: "work", resourceIdentity: existingObjectiveId },
+            ...(observedBinding && observedBinding !== id
+              ? [{ aggregate: "workflow", resourceIdentity: observedBinding }]
+              : []),
+          ]
+
+          try {
+            await withRuntimeLocks(runtime, resources, async () => {
+              const previousBinding = await assertSessionRebindingAllowedLocked(
+                ctx,
+                tool.sessionID,
+                observedBinding,
+                id,
+              )
+
               const current = await readWork(ctx, existingObjectiveId)
-              if (!current) return
-              attachWorkflowToWork(current, workflow.id, new Date().toISOString())
-              await ctx.storage.set(workKey(current.objectiveId), current)
-              workflow.work = {
-                objectiveId: current.objectiveId,
-                generation: current.generation,
+              if (current) {
+                attachWorkflowToWork(current, workflow.id, new Date().toISOString())
+                await ctx.storage.set(workKey(current.objectiveId), current)
+                workflow.work = {
+                  objectiveId: current.objectiveId,
+                  generation: current.generation,
+                }
+              }
+
+              await ctx.storage.set(workflowKey(id), workflow)
+              await ctx.storage.set(sessionKey(tool.sessionID), id)
+              await ctx.storage.set(sessionStepKey(tool.sessionID), "")
+              await ctx.storage.set(sessionOqKey(tool.sessionID), "")
+              if (intent?.acceptedAnchor?.path === anchor) {
+                await ctx.storage.set(sessionIntentKey(tool.sessionID), "")
+              }
+              await ctx.storage.set(limitsKey(id), DEFAULT_LIMITS)
+              await ctx.storage.set(budgetKey(id), newBudgetState())
+
+              if (previousBinding && previousBinding !== id) {
+                await bumpWorkflowRevisionLocked(ctx, runtime, previousBinding)
               }
             })
+          } catch (error) {
+            return { content: renderToolOutput({ error: error instanceof Error ? error.message : String(error) }) }
           }
-
-          await ctx.storage.set(workflowKey(id), workflow)
-          await ctx.storage.set(sessionKey(tool.sessionID), id)
-          if (intent?.acceptedAnchor?.path === anchor) {
-            await ctx.storage.set(sessionIntentKey(tool.sessionID), "")
-          }
-          await ctx.storage.set(limitsKey(id), DEFAULT_LIMITS)
-          await ctx.storage.set(budgetKey(id), newBudgetState())
 
           return { content: renderToolOutput({ workflowId: id, anchor, status: "started" }) }
         },
@@ -1050,7 +1244,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             return { content: renderToolOutput({ error: "Only general may route Loom workflows." }) }
           }
 
-          const workflow = await activeWorkflow(ctx, tool.sessionID)
+          const workflow = await activeWorkflow(ctx, tool.sessionID, ensureLegacySession)
           if (!workflow) {
             return { content: renderToolOutput({ error: "No active Loom workflow. Call loom_start first." }) }
           }
@@ -1080,17 +1274,31 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               : {}),
           }
 
-          if (effects.productOutcome) {
-            await ensureWorkForWorkflow(ctx, workflow)
+          const applyRouteMutation = () => {
+            const next = buildSteps(effects)
+            preserveSatisfied(workflow.steps, next)
+            workflow.effects = effects
+            workflow.steps = next
+            reconcileVerificationAfterRoute(workflow)
           }
 
-          const next = buildSteps(effects)
-          preserveSatisfied(workflow.steps, next)
-
-          workflow.effects = effects
-          workflow.steps = next
-          reconcileVerificationAfterRoute(workflow)
-          await ctx.storage.set(workflowKey(workflow.id), workflow)
+          if (effects.productOutcome) {
+            const objectiveId = objectiveIdForAnchor(workflow.anchor)
+            await withWorkflowWorkLocks(runtime, workflow.id, objectiveId, async () => {
+              await validateWorkflowMutationLocked(ctx, runtime, workflow)
+              const now = new Date().toISOString()
+              const existing = await readWork(ctx, objectiveId)
+              const work = existing ?? createWorkHierarchy(workflow.anchor, workflow.id, now)
+              attachWorkflowToWork(work, workflow.id, now)
+              await ctx.storage.set(workKey(objectiveId), work)
+              workflow.work = { objectiveId, generation: work.generation }
+              applyRouteMutation()
+              await persistWorkflowMutationLocked(ctx, runtime, workflow)
+            })
+          } else {
+            applyRouteMutation()
+            await persistWorkflowMutation(ctx, runtime, workflow)
+          }
 
           const questions = await readQuestions(ctx, workflow.id)
           return {
@@ -1127,8 +1335,8 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         execute: async (input, tool) => {
           const requested = (input as { workflowId?: string; detail?: boolean }).workflowId
           const workflow = requested
-            ? await readWorkflow(ctx, requested)
-            : await activeWorkflow(ctx, tool.sessionID)
+            ? await readBoundWorkflow(ctx, tool.sessionID, requested, ensureLegacySession)
+            : await activeWorkflow(ctx, tool.sessionID, ensureLegacySession)
 
           if (!workflow) return { content: renderToolOutput({ error: "Workflow not found." }) }
 
@@ -1196,8 +1404,11 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             outcome?: "complete" | "pass" | "fail"
           }
 
-          const workflow = await readWorkflow(ctx, workflowId)
-          if (!workflow) return { content: renderToolOutput({ error: "Workflow not found." }) }
+          const workflow = await readBoundWorkflow(ctx, tool.sessionID, workflowId, ensureLegacySession)
+          if (!workflow) return { content: renderToolOutput({ error: "Workflow not found or current session is not bound to it." }) }
+          if (!(await exactStepBinding(ctx, tool.sessionID, workflowId, stepId))) {
+            return { content: renderToolOutput({ error: "Step completion requires the exact attached workflow step." }) }
+          }
 
           const questions = await readQuestions(ctx, workflowId)
           const blocking = blockingQuestionsForStep(questions, stepId)
@@ -1257,10 +1468,23 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             }
           }
 
-          if (workflow.work) {
-            const work = await readWork(ctx, workflow.work.objectiveId)
-            if (!work) return { content: renderToolOutput({ error: "Persistent work hierarchy not found." }) }
-            try {
+          let evidenceBound = 0
+          const commitCompletion = async () => {
+            await validateWorkflowMutationLocked(ctx, runtime, workflow)
+
+            const currentQuestions = await readQuestions(ctx, workflowId)
+            const currentBlocking = blockingQuestionsForStep(currentQuestions, stepId)
+            if (currentBlocking.length > 0) {
+              throw new Error("Step has unresolved blocking questions.")
+            }
+
+            finishStep(workflow, stepId, tool.agent, resolvedOutcome, summary)
+            evidenceBound = await bindSessionEvidence(ctx, tool.sessionID, workflowId, stepId)
+
+            if (workflow.work) {
+              const work = await readWork(ctx, workflow.work.objectiveId)
+              if (!work) throw new Error("Persistent work hierarchy not found.")
+
               assertWorkGeneration(work, workflow.work.generation)
               const taskIds = plannedTaskSteps(workflow).map((taskStep) => taskStep.task!.id)
               if (taskIds.length > 0) {
@@ -1271,46 +1495,30 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                   taskIds,
                 )
               }
-            } catch (error) {
-              return { content: renderToolOutput({ error: error instanceof Error ? error.message : String(error) }) }
-            }
-          }
 
-          try {
-            finishStep(workflow, stepId, tool.agent, resolvedOutcome, summary)
-          } catch (error) {
-            return { content: renderToolOutput({ error: error instanceof Error ? error.message : String(error) }) }
-          }
-
-          const evidenceBound = await bindSessionEvidence(ctx, tool.sessionID, workflowId, stepId)
-
-          if (workflow.work) {
-            await withWorkLock(workflow.work.objectiveId, async () => {
-              const work = await readWork(ctx, workflow.work!.objectiveId)
-              if (!work) throw new Error("Persistent work hierarchy not found.")
-
+              const now = new Date().toISOString()
               syncWorkTaskStatuses(
                 work,
                 workflow.id,
-                workflow.work!.generation,
+                workflow.work.generation,
                 plannedTaskSteps(workflow).map((taskStep) => ({
                   taskId: taskStep.task!.id,
                   complete: taskStep.status === "complete",
                 })),
-                new Date().toISOString(),
+                now,
               )
 
               if (
                 stepId === "review-implementation" &&
                 resolvedOutcome === "pass" &&
-                plannedTaskSteps(workflow).length > 0
+                taskIds.length > 0
               ) {
                 completeWaveForTasks(
                   work,
                   workflow.id,
-                  workflow.work!.generation,
-                  plannedTaskSteps(workflow).map((taskStep) => taskStep.task!.id),
-                  new Date().toISOString(),
+                  workflow.work.generation,
+                  taskIds,
+                  now,
                 )
               }
 
@@ -1319,14 +1527,29 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 resolvedOutcome === "pass" &&
                 (workflow.effects?.workLevel ?? "objective") === "objective"
               ) {
-                completeObjective(work, workflow.work!.generation, new Date().toISOString())
+                completeObjective(work, workflow.work.generation, now)
               }
 
               await ctx.storage.set(workKey(work.objectiveId), work)
-            })
+            }
+
+            await persistWorkflowMutationLocked(ctx, runtime, workflow)
           }
 
-          await ctx.storage.set(workflowKey(workflow.id), workflow)
+          try {
+            if (workflow.work) {
+              await withWorkflowWorkLocks(
+                runtime,
+                workflow.id,
+                workflow.work.objectiveId,
+                commitCompletion,
+              )
+            } else {
+              await withRuntimeLock(runtime, "workflow", workflow.id, commitCompletion)
+            }
+          } catch (error) {
+            return { content: renderToolOutput({ error: error instanceof Error ? error.message : String(error) }) }
+          }
 
           return {
             content: renderToolOutput({
@@ -1396,62 +1619,61 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             }
           }
 
-          const workflow = await readWorkflow(ctx, workflowId)
+          const workflow = await readBoundWorkflow(ctx, tool.sessionID, workflowId, ensureLegacySession)
           if (!workflow) return { content: renderToolOutput({ error: "Workflow not found." }) }
 
-          if (workflow.work) {
-            const work = await readWork(ctx, workflow.work.objectiveId)
-            if (!work) return { content: renderToolOutput({ error: "Persistent work hierarchy not found." }) }
-            try {
-              assertWorkGeneration(work, workflow.work.generation)
-              const taskIds = plannedTaskSteps(workflow).map((taskStep) => taskStep.task!.id)
-              if (taskIds.length > 0) {
-                assertWaveClaimForTasks(
-                  work,
-                  workflow.id,
-                  workflow.work.generation,
-                  taskIds,
-                )
-              }
-            } catch (error) {
-              return { content: renderToolOutput({ error: error instanceof Error ? error.message : String(error) }) }
-            }
-          }
-
           try {
-            const reset = reopenFrom(workflow, stepId)
-            resetVerificationAfterReopen(workflow, reset)
+            let reset: string[] = []
+            const commitReopen = async () => {
+              await validateWorkflowMutationLocked(ctx, runtime, workflow)
 
-            if (reset.includes("product-acceptance")) {
-              const acceptance = (await ctx.storage.get(acceptanceKey(workflowId))) as AcceptancePlan | undefined
-              if (acceptance) {
-                resetAcceptance(acceptance)
-                await ctx.storage.set(acceptanceKey(workflowId), acceptance)
+              let work: WorkHierarchy | undefined
+              if (workflow.work) {
+                work = await readWork(ctx, workflow.work.objectiveId)
+                if (!work) throw new Error("Persistent work hierarchy not found.")
+                assertWorkGeneration(work, workflow.work.generation)
+                const taskIds = plannedTaskSteps(workflow).map((taskStep) => taskStep.task!.id)
+                if (taskIds.length > 0) {
+                  assertWaveClaimForTasks(
+                    work,
+                    workflow.id,
+                    workflow.work.generation,
+                    taskIds,
+                  )
+                }
               }
-            }
 
-            if (reset.includes("knowledge-sync")) {
-              const knowledge = (await ctx.storage.get(knowledgeKey(workflowId))) as KnowledgeReport | undefined
-              if (knowledge) {
-                invalidateKnowledgeReport(knowledge)
-                await ctx.storage.set(knowledgeKey(workflowId), knowledge)
+              reset = reopenFrom(workflow, stepId)
+              resetVerificationAfterReopen(workflow, reset)
+
+              if (reset.includes("product-acceptance")) {
+                const acceptance = (await ctx.storage.get(acceptanceKey(workflowId))) as AcceptancePlan | undefined
+                if (acceptance) {
+                  resetAcceptance(acceptance)
+                  await ctx.storage.set(acceptanceKey(workflowId), acceptance)
+                }
               }
-            }
 
-            await ctx.storage.set(
-              `progress/${workflowId}/${stepId}/${crypto.randomUUID()}`,
-              { reason: value.reason, ...progress, at: new Date().toISOString() },
-            )
-            if (workflow.work) {
-              await withWorkLock(workflow.work.objectiveId, async () => {
-                const work = await readWork(ctx, workflow.work!.objectiveId)
-                if (!work) return
-                const now = new Date().toISOString()
+              if (reset.includes("knowledge-sync")) {
+                const knowledge = (await ctx.storage.get(knowledgeKey(workflowId))) as KnowledgeReport | undefined
+                if (knowledge) {
+                  invalidateKnowledgeReport(knowledge)
+                  await ctx.storage.set(knowledgeKey(workflowId), knowledge)
+                }
+              }
+
+              const now = new Date().toISOString()
+              await ctx.storage.set(
+                `progress/${workflowId}/${stepId}/${crypto.randomUUID()}`,
+                { reason: value.reason, ...progress, at: now },
+              )
+
+              if (work && workflow.work) {
                 const taskIds = plannedTaskSteps(workflow).map((taskStep) => taskStep.task!.id)
                 syncWorkTaskStatuses(
                   work,
                   workflow.id,
-                  workflow.work!.generation,
+                  workflow.work.generation,
                   plannedTaskSteps(workflow).map((taskStep) => ({
                     taskId: taskStep.task!.id,
                     complete: taskStep.status === "complete",
@@ -1462,16 +1684,28 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                   reopenWaveForTasks(
                     work,
                     workflow.id,
-                    workflow.work!.generation,
+                    workflow.work.generation,
                     taskIds,
                     now,
                   )
                 }
                 await ctx.storage.set(workKey(work.objectiveId), work)
-              })
+              }
+
+              await persistWorkflowMutationLocked(ctx, runtime, workflow)
             }
 
-            await ctx.storage.set(workflowKey(workflow.id), workflow)
+            if (workflow.work) {
+              await withWorkflowWorkLocks(
+                runtime,
+                workflow.id,
+                workflow.work.objectiveId,
+                commitReopen,
+              )
+            } else {
+              await withRuntimeLock(runtime, "workflow", workflow.id, commitReopen)
+            }
+
             return {
               content: renderToolOutput({
                 reopened: stepId,
@@ -1517,23 +1751,32 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             consumerStepIds?: string[]
             evidence?: string[]
           }
-          const workflow = await readWorkflow(ctx, value.workflowId)
-          if (!workflow) return { content: renderToolOutput({ error: "Workflow not found." }) }
+          const workflow = await readBoundWorkflow(ctx, tool.sessionID, value.workflowId, ensureLegacySession)
+          if (!workflow) return { content: renderToolOutput({ error: "Workflow not found or current session is not bound to it." }) }
+          if (!(await exactStepBinding(ctx, tool.sessionID, value.workflowId, value.stepId))) {
+            return { content: renderToolOutput({ error: "Raising a workflow OQ requires the exact attached workflow step." }) }
+          }
 
           try {
-            const question = raiseQuestion({
-              id: crypto.randomUUID(),
-              workflow,
-              question: value.question,
-              raisedByAgent: tool.agent,
-              raisedByStepId: value.stepId,
-              requiredAuthority: value.requiredAuthority,
-              blocking: value.blocking,
-              consumerStepIds: value.consumerStepIds,
-              evidence: value.evidence,
-              now: new Date().toISOString(),
+            const question = await withRuntimeLock(runtime, "workflow", value.workflowId, async () => {
+              const current = await readWorkflow(ctx, value.workflowId)
+              if (!current) throw new Error("Workflow not found.")
+              const created = raiseQuestion({
+                id: crypto.randomUUID(),
+                workflow: current,
+                question: value.question,
+                raisedByAgent: tool.agent,
+                raisedByStepId: value.stepId,
+                requiredAuthority: value.requiredAuthority,
+                blocking: value.blocking,
+                consumerStepIds: value.consumerStepIds,
+                evidence: value.evidence,
+                now: new Date().toISOString(),
+              })
+              await appendQuestion(ctx, created)
+              await bumpWorkflowRevisionLocked(ctx, runtime, value.workflowId)
+              return created
             })
-            await appendQuestion(ctx, question)
             await bindSessionEvidence(ctx, tool.sessionID, value.workflowId, value.stepId)
             return {
               content: renderToolOutput({
@@ -1562,7 +1805,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         options: { namespace: "loom", codemode: false },
         execute: async (input, tool) => {
           const { workflowId, stepId } = input as { workflowId: string; stepId?: string }
-          const workflow = await readWorkflow(ctx, workflowId)
+          const workflow = await readBoundWorkflow(ctx, tool.sessionID, workflowId, ensureLegacySession)
           if (!workflow) return { content: renderToolOutput({ error: "Workflow not found." }) }
 
           const questions = await readQuestions(ctx, workflowId)
@@ -1599,19 +1842,29 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             source: "agent" | "user"
             evidence?: string[]
           }
-          const question = (await ctx.storage.get(oqKey(value.workflowId, value.questionId))) as OpenQuestion | undefined
-          if (!question) return { content: renderToolOutput({ error: "Question not found." }) }
+          const workflow = await readBoundWorkflow(ctx, tool.sessionID, value.workflowId, ensureLegacySession)
+          if (!workflow) return { content: renderToolOutput({ error: "Workflow not found or current session is not bound to it." }) }
+
+          if (value.source === "agent" && !(await exactOqBinding(ctx, tool.sessionID, value.workflowId, value.questionId))) {
+            return { content: renderToolOutput({ error: "Agent OQ answers require the exact OQ dispatch-grant attachment." }) }
+          }
 
           try {
-            answerQuestion(
-              question,
-              tool.agent,
-              value.source,
-              value.answer,
-              value.evidence ?? [],
-              new Date().toISOString(),
-            )
-            await saveQuestion(ctx, question)
+            const question = await withRuntimeLock(runtime, "workflow", value.workflowId, async () => {
+              const current = (await ctx.storage.get(oqKey(value.workflowId, value.questionId))) as OpenQuestion | undefined
+              if (!current) throw new Error("Question not found.")
+              answerQuestion(
+                current,
+                tool.agent,
+                value.source,
+                value.answer,
+                value.evidence ?? [],
+                new Date().toISOString(),
+              )
+              await saveQuestion(ctx, current)
+              await bumpWorkflowRevisionLocked(ctx, runtime, value.workflowId)
+              return current
+            })
             return { content: renderToolOutput({ question }) }
           } catch (error) {
             return { content: renderToolOutput({ error: error instanceof Error ? error.message : String(error) }) }
@@ -1647,21 +1900,30 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             disposition: OQDisposition
             summary: string
           }
-          const workflow = await readWorkflow(ctx, value.workflowId)
-          const question = (await ctx.storage.get(oqKey(value.workflowId, value.questionId))) as OpenQuestion | undefined
-          if (!workflow || !question) return { content: renderToolOutput({ error: "Workflow or question not found." }) }
+          const workflow = await readBoundWorkflow(ctx, tool.sessionID, value.workflowId, ensureLegacySession)
+          if (!(await exactStepBinding(ctx, tool.sessionID, value.workflowId, value.stepId))) {
+            return { content: renderToolOutput({ error: "OQ reconciliation requires the exact attached workflow step." }) }
+          }
+          if (!workflow) return { content: renderToolOutput({ error: "Workflow not found." }) }
 
           try {
-            reconcileQuestion(
-              question,
-              workflow,
-              value.stepId,
-              tool.agent,
-              value.disposition,
-              value.summary,
-              new Date().toISOString(),
-            )
-            await saveQuestion(ctx, question)
+            const question = await withRuntimeLock(runtime, "workflow", value.workflowId, async () => {
+              const currentWorkflow = await readWorkflow(ctx, value.workflowId)
+              const currentQuestion = (await ctx.storage.get(oqKey(value.workflowId, value.questionId))) as OpenQuestion | undefined
+              if (!currentWorkflow || !currentQuestion) throw new Error("Workflow or question not found.")
+              reconcileQuestion(
+                currentQuestion,
+                currentWorkflow,
+                value.stepId,
+                tool.agent,
+                value.disposition,
+                value.summary,
+                new Date().toISOString(),
+              )
+              await saveQuestion(ctx, currentQuestion)
+              await bumpWorkflowRevisionLocked(ctx, runtime, value.workflowId)
+              return currentQuestion
+            })
             return { content: renderToolOutput({ question }) }
           } catch (error) {
             return { content: renderToolOutput({ error: error instanceof Error ? error.message : String(error) }) }
@@ -1692,18 +1954,24 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             preserveAnswer: boolean
             reason: string
           }
-          const question = (await ctx.storage.get(oqKey(value.workflowId, value.questionId))) as OpenQuestion | undefined
-          if (!question) return { content: renderToolOutput({ error: "Question not found." }) }
+          const workflow = await readBoundWorkflow(ctx, tool.sessionID, value.workflowId, ensureLegacySession)
+          if (!workflow) return { content: renderToolOutput({ error: "Workflow not found or current session is not bound to it." }) }
 
           try {
-            reopenQuestion(
-              question,
-              tool.agent,
-              value.preserveAnswer,
-              value.reason,
-              new Date().toISOString(),
-            )
-            await saveQuestion(ctx, question)
+            const question = await withRuntimeLock(runtime, "workflow", value.workflowId, async () => {
+              const current = (await ctx.storage.get(oqKey(value.workflowId, value.questionId))) as OpenQuestion | undefined
+              if (!current) throw new Error("Question not found.")
+              reopenQuestion(
+                current,
+                tool.agent,
+                value.preserveAnswer,
+                value.reason,
+                new Date().toISOString(),
+              )
+              await saveQuestion(ctx, current)
+              await bumpWorkflowRevisionLocked(ctx, runtime, value.workflowId)
+              return current
+            })
             return { content: renderToolOutput({ question }) }
           } catch (error) {
             return { content: renderToolOutput({ error: error instanceof Error ? error.message : String(error) }) }
@@ -1750,8 +2018,8 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           }
 
           const workflow = value.workflowId
-            ? await readWorkflow(ctx, value.workflowId)
-            : await activeWorkflow(ctx, tool.sessionID)
+            ? await readBoundWorkflow(ctx, tool.sessionID, value.workflowId, ensureLegacySession)
+            : await activeWorkflow(ctx, tool.sessionID, ensureLegacySession)
           if (!workflow) return { content: renderToolOutput({ error: "Workflow not found." }) }
 
           if (value.action === "status") {
@@ -1805,7 +2073,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 statement: value.statement,
                 now: new Date().toISOString(),
               })
-              await ctx.storage.set(workflowKey(workflow.id), workflow)
+              await persistWorkflowMutation(ctx, runtime, workflow)
               return {
                 content: renderToolOutput({
                   requirement: {
@@ -1866,7 +2134,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               observationIds: observations.map((observation) => observation.id),
               provedAt: new Date().toISOString(),
             })
-            await ctx.storage.set(workflowKey(workflow.id), workflow)
+            await persistWorkflowMutation(ctx, runtime, workflow)
             return {
               content: renderToolOutput({
                 proven: proven.id,
@@ -1953,7 +2221,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             observationIds: string[]
           }
 
-          const workflow = await readWorkflow(ctx, value.workflowId)
+          const workflow = await readBoundWorkflow(ctx, tool.sessionID, value.workflowId, ensureLegacySession)
           if (!workflow) return { content: renderToolOutput({ error: "Workflow not found." }) }
 
           const step = workflow.steps.find((candidate) => candidate.id === value.stepId)
@@ -1982,16 +2250,19 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               now: new Date().toISOString(),
             })
 
-            for (const observation of observations) {
-              const next = { ...observation, workflowId: value.workflowId, stepId: value.stepId }
-              await ctx.storage.set(evidenceKey(observation.id), next)
-              await ctx.storage.set(
-                `${stepEvidencePrefix(value.workflowId, value.stepId)}${observation.id}`,
-                observation.id,
-              )
-            }
-            await ctx.storage.set(`${claimPrefix(value.workflowId, value.stepId)}${claim.id}`, claim)
-            await ctx.storage.set(claimIdKey(claim.id), claim)
+            await withRuntimeLock(runtime, "workflow", value.workflowId, async () => {
+              for (const observation of observations) {
+                const next = { ...observation, workflowId: value.workflowId, stepId: value.stepId }
+                await ctx.storage.set(evidenceKey(observation.id), next)
+                await ctx.storage.set(
+                  `${stepEvidencePrefix(value.workflowId, value.stepId)}${observation.id}`,
+                  observation.id,
+                )
+              }
+              await ctx.storage.set(`${claimPrefix(value.workflowId, value.stepId)}${claim.id}`, claim)
+              await ctx.storage.set(claimIdKey(claim.id), claim)
+              await bumpWorkflowRevisionLocked(ctx, runtime, value.workflowId)
+            })
 
             return { content: renderToolOutput({ claim }) }
           } catch (error) {
@@ -2013,8 +2284,11 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           additionalProperties: false,
         },
         options: { namespace: "loom", codemode: false },
-        execute: async (input) => {
+        execute: async (input, tool) => {
           const { workflowId, stepId } = input as { workflowId: string; stepId: string }
+          if (!(await readBoundWorkflow(ctx, tool.sessionID, workflowId, ensureLegacySession))) {
+            return { content: renderToolOutput({ error: "Workflow not found or current session is not bound to it." }) }
+          }
           const observations = await stepObservations(ctx, workflowId, stepId)
           const claims = await stepClaims(ctx, workflowId, stepId)
           return { content: renderToolOutput({ observations, claims }) }
@@ -2050,7 +2324,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             okfObservationIds: string[]
           }
 
-          const workflow = await readWorkflow(ctx, value.workflowId)
+          const workflow = await readBoundWorkflow(ctx, tool.sessionID, value.workflowId, ensureLegacySession)
           if (!workflow) return { content: renderToolOutput({ error: "Workflow not found." }) }
 
           const attachedWorkflow = (await ctx.storage.get(sessionKey(tool.sessionID))) as string | undefined
@@ -2070,15 +2344,24 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           }
 
           try {
-            const report = createKnowledgeReport({
-              workflowId: value.workflowId,
-              changedDocs: value.changedDocs,
-              unchangedReason: value.unchangedReason,
-              observations,
-              recordedBy: tool.agent,
-              now: new Date().toISOString(),
+            const report = await withRuntimeLock(runtime, "workflow", value.workflowId, async () => {
+              const currentWorkflow = await readWorkflow(ctx, value.workflowId)
+              if (!currentWorkflow) throw new Error("Workflow not found.")
+              if (currentWorkflow.projectId !== runtime.projectId) {
+                throw new Error("Workflow belongs to another project.")
+              }
+              const next = createKnowledgeReport({
+                workflowId: value.workflowId,
+                changedDocs: value.changedDocs,
+                unchangedReason: value.unchangedReason,
+                observations,
+                recordedBy: tool.agent,
+                now: new Date().toISOString(),
+              })
+              await ctx.storage.set(knowledgeKey(value.workflowId), next)
+              await bumpWorkflowRevisionLocked(ctx, runtime, value.workflowId)
+              return next
             })
-            await ctx.storage.set(knowledgeKey(value.workflowId), report)
             return { content: renderToolOutput({ report }) }
           } catch (error) {
             return { content: renderToolOutput({ error: error instanceof Error ? error.message : String(error) }) }
@@ -2096,8 +2379,11 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           additionalProperties: false,
         },
         options: { namespace: "loom", codemode: false },
-        execute: async (input) => {
+        execute: async (input, tool) => {
           const { workflowId } = input as { workflowId: string }
+          if (!(await readBoundWorkflow(ctx, tool.sessionID, workflowId, ensureLegacySession))) {
+            return { content: renderToolOutput({ error: "Workflow not found or current session is not bound to it." }) }
+          }
           const report = (await ctx.storage.get(knowledgeKey(workflowId))) as KnowledgeReport | undefined
           return { content: renderToolOutput({ report: report ?? null }) }
         },
@@ -2138,25 +2424,35 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             workflowId: string
             scenarios: Array<{ id: string; title: string; criteria: string[] }>
           }
-          const workflow = await readWorkflow(ctx, value.workflowId)
+          const workflow = await readBoundWorkflow(ctx, tool.sessionID, value.workflowId, ensureLegacySession)
           if (!workflow) return { content: renderToolOutput({ error: "Workflow not found." }) }
           if (!workflow.steps.some((step) => step.id === "product-acceptance")) {
             return { content: renderToolOutput({ error: "Workflow does not require Product Acceptance." }) }
           }
 
-          const existing = (await ctx.storage.get(acceptanceKey(value.workflowId))) as AcceptancePlan | undefined
-          if (existing?.scenarios.some((scenario) => scenario.outcome !== "pending")) {
-            return { content: renderToolOutput({ error: "Product Acceptance plan cannot change after results exist; reopen/reset first." }) }
-          }
-
           try {
-            const plan = createAcceptancePlan({
-              workflowId: value.workflowId,
-              createdBy: tool.agent,
-              scenarios: value.scenarios,
-              now: new Date().toISOString(),
+            const plan = await withRuntimeLock(runtime, "workflow", value.workflowId, async () => {
+              const currentWorkflow = await readWorkflow(ctx, value.workflowId)
+              if (!currentWorkflow) throw new Error("Workflow not found.")
+              if (currentWorkflow.projectId !== runtime.projectId) {
+                throw new Error("Workflow belongs to another project.")
+              }
+
+              const existing = (await ctx.storage.get(acceptanceKey(value.workflowId))) as AcceptancePlan | undefined
+              if (existing?.scenarios.some((scenario) => scenario.outcome !== "pending")) {
+                throw new Error("Product Acceptance plan cannot change after results exist; reopen/reset first.")
+              }
+
+              const next = createAcceptancePlan({
+                workflowId: value.workflowId,
+                createdBy: tool.agent,
+                scenarios: value.scenarios,
+                now: new Date().toISOString(),
+              })
+              await ctx.storage.set(acceptanceKey(value.workflowId), next)
+              await bumpWorkflowRevisionLocked(ctx, runtime, value.workflowId)
+              return next
             })
-            await ctx.storage.set(acceptanceKey(value.workflowId), plan)
             return { content: renderToolOutput({ plan, readiness: acceptanceReadiness(plan) }) }
           } catch (error) {
             return { content: renderToolOutput({ error: error instanceof Error ? error.message : String(error) }) }
@@ -2174,8 +2470,11 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           additionalProperties: false,
         },
         options: { namespace: "loom", codemode: false },
-        execute: async (input) => {
+        execute: async (input, tool) => {
           const { workflowId } = input as { workflowId: string }
+          if (!(await readBoundWorkflow(ctx, tool.sessionID, workflowId, ensureLegacySession))) {
+            return { content: renderToolOutput({ error: "Workflow not found or current session is not bound to it." }) }
+          }
           const plan = (await ctx.storage.get(acceptanceKey(workflowId))) as AcceptancePlan | undefined
           return {
             content: renderToolOutput({
@@ -2215,36 +2514,44 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             evidenceClaimIds: string[]
             note: string
           }
-          const plan = (await ctx.storage.get(acceptanceKey(value.workflowId))) as AcceptancePlan | undefined
-          if (!plan) return { content: renderToolOutput({ error: "Product Acceptance plan not found." }) }
-
-          const records = await Promise.all(
-            value.evidenceClaimIds.map((id) => ctx.storage.get(claimIdKey(id)) as Promise<EvidenceClaim | undefined>),
-          )
-          const claims = records.filter((claim): claim is EvidenceClaim => Boolean(claim))
-          if (claims.length !== value.evidenceClaimIds.length) {
-            return { content: renderToolOutput({ error: "Every Product Acceptance evidence claim id must exist." }) }
+          if (!(await readBoundWorkflow(ctx, tool.sessionID, value.workflowId, ensureLegacySession))) {
+            return { content: renderToolOutput({ error: "Workflow not found or current session is not bound to it." }) }
           }
-          if (claims.some((claim) => claim.byAgent !== "acceptance")) {
-            return { content: renderToolOutput({ error: "Product Acceptance evidence claims must be produced by acceptance." }) }
+          if (!(await exactStepBinding(ctx, tool.sessionID, value.workflowId, "product-acceptance"))) {
+            return { content: renderToolOutput({ error: "Product Acceptance results require the exact product-acceptance attachment." }) }
           }
 
           try {
-            const scenario = recordAcceptanceResult({
-              plan,
-              scenarioId: value.scenarioId,
-              outcome: value.outcome,
-              claims,
-              byAgent: tool.agent,
-              note: value.note,
-              now: new Date().toISOString(),
+            const result = await withRuntimeLock(runtime, "workflow", value.workflowId, async () => {
+              const plan = (await ctx.storage.get(acceptanceKey(value.workflowId))) as AcceptancePlan | undefined
+              if (!plan) throw new Error("Product Acceptance plan not found.")
+
+              const records = await Promise.all(
+                value.evidenceClaimIds.map((id) => ctx.storage.get(claimIdKey(id)) as Promise<EvidenceClaim | undefined>),
+              )
+              const claims = records.filter((claim): claim is EvidenceClaim => Boolean(claim))
+              if (claims.length !== value.evidenceClaimIds.length) {
+                throw new Error("Every Product Acceptance evidence claim id must exist.")
+              }
+              if (claims.some((claim) => claim.byAgent !== "acceptance")) {
+                throw new Error("Product Acceptance evidence claims must be produced by acceptance.")
+              }
+
+              const scenario = recordAcceptanceResult({
+                plan,
+                scenarioId: value.scenarioId,
+                outcome: value.outcome,
+                claims,
+                byAgent: tool.agent,
+                note: value.note,
+                now: new Date().toISOString(),
+              })
+              await ctx.storage.set(acceptanceKey(value.workflowId), plan)
+              await bumpWorkflowRevisionLocked(ctx, runtime, value.workflowId)
+              return { scenario, readiness: acceptanceReadiness(plan) }
             })
-            await ctx.storage.set(acceptanceKey(value.workflowId), plan)
             return {
-              content: renderToolOutput({
-                scenario,
-                readiness: acceptanceReadiness(plan),
-              }),
+              content: renderToolOutput(result),
             }
           } catch (error) {
             return { content: renderToolOutput({ error: error instanceof Error ? error.message : String(error) }) }
@@ -2262,8 +2569,11 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           additionalProperties: false,
         },
         options: { namespace: "loom", codemode: false },
-        execute: async (input) => {
+        execute: async (input, tool) => {
           const { workflowId } = input as { workflowId: string }
+          if (!(await readBoundWorkflow(ctx, tool.sessionID, workflowId, ensureLegacySession))) {
+            return { content: renderToolOutput({ error: "Workflow not found or current session is not bound to it." }) }
+          }
           const limits = await readLimits(ctx, workflowId)
           const state = await readBudget(ctx, workflowId)
           return { content: renderToolOutput({ limits, state }) }
@@ -2305,6 +2615,10 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         },
         options: { namespace: "loom", codemode: false },
         execute: async (input, tool) => {
+          if (tool.agent !== "general") {
+            return { content: renderToolOutput({ error: "Only general may grant extra Loom dispatch budget." }) }
+          }
+
           const value = input as {
             workflowId: string
             stepId?: string
@@ -2314,51 +2628,67 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             progress: ProgressSignal
           }
 
-          const workflow = await readWorkflow(ctx, value.workflowId)
-          if (!workflow) return { content: renderToolOutput({ error: "Workflow not found." }) }
+          if (!(await readBoundWorkflow(ctx, tool.sessionID, value.workflowId, ensureLegacySession))) {
+            return { content: renderToolOutput({ error: "Workflow not found or current session is not bound to it." }) }
+          }
 
-          const questions = await readQuestions(ctx, value.workflowId)
-          const limits = await readLimits(ctx, value.workflowId)
-          const state = await readBudget(ctx, value.workflowId)
-          const result = grantWorkflowDispatchBudget({
-            state,
-            limits,
-            workflow,
-            questions,
-            stepId: value.stepId,
-            questionId: value.questionId,
-            grantedBy: tool.agent,
-            reason: value.reason,
-            progress: value.progress,
-            evidence: value.evidence,
-            now: new Date().toISOString(),
+          const mutation = await withRuntimeLock(runtime, "workflow", value.workflowId, async () => {
+            const workflow = await readBoundWorkflow(
+              ctx,
+              tool.sessionID,
+              value.workflowId,
+              ensureLegacySession,
+            )
+            if (!workflow) throw new Error("Workflow not found or current session is not bound to it.")
+
+            const questions = await readQuestions(ctx, value.workflowId)
+            const limits = await readLimits(ctx, value.workflowId)
+            const state = await readBudget(ctx, value.workflowId)
+            const result = grantWorkflowDispatchBudget({
+              state,
+              limits,
+              workflow,
+              questions,
+              stepId: value.stepId,
+              questionId: value.questionId,
+              grantedBy: tool.agent,
+              reason: value.reason,
+              progress: value.progress,
+              evidence: value.evidence,
+              now: new Date().toISOString(),
+            })
+
+            if (result.allowed) {
+              await ctx.storage.set(budgetKey(value.workflowId), state)
+              await bumpWorkflowRevisionLocked(ctx, runtime, value.workflowId)
+            }
+            return { limits, state, result }
           })
 
-          if (!result.allowed) {
+          if (!mutation.result.allowed) {
             return {
               content: renderToolOutput({
-                error: result.reason,
+                error: mutation.result.reason,
                 target: {
                   stepId: value.stepId,
                   questionId: value.questionId,
                 },
-                limits,
+                limits: mutation.limits,
               }),
             }
           }
 
-          await ctx.storage.set(budgetKey(value.workflowId), state)
           return {
             content: renderToolOutput({
               granted: true,
-              target: result.target,
-              used: state.byKey[result.target.key] ?? 0,
-              previousLimit: result.previousLimit,
-              newLimit: result.newLimit,
-              grant: result.grant,
+              target: mutation.result.target,
+              used: mutation.state.byKey[mutation.result.target.key] ?? 0,
+              previousLimit: mutation.result.previousLimit,
+              newLimit: mutation.result.newLimit,
+              grant: mutation.result.grant,
               workflowDispatches: {
-                used: state.totalDispatches,
-                limit: limits.maxTotalDispatches,
+                used: mutation.state.totalDispatches,
+                limit: mutation.limits.maxTotalDispatches,
               },
             }),
           }
@@ -2430,7 +2760,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             replaceReason?: string
             phases: WorkPlanPhase[]
           }
-          const workflow = await readWorkflow(ctx, value.workflowId)
+          const workflow = await readBoundWorkflow(ctx, tool.sessionID, value.workflowId, ensureLegacySession)
           if (!workflow) return { content: renderToolOutput({ error: "Workflow not found." }) }
 
           const planStep = workflow.steps.find((step) => step.id === "plan")
@@ -2439,14 +2769,16 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             return { content: renderToolOutput({ error: "Planning step is not currently runnable." }) }
           }
 
-          if (!workflow.work) {
-            await ensureWorkForWorkflow(ctx, workflow)
-          }
-
           try {
-            const result = await withWorkLock(workflow.work!.objectiveId, async () => {
-              const work = await readWork(ctx, workflow.work!.objectiveId)
-              if (!work) throw new Error("Persistent Objective was not initialized.")
+            const objectiveId = workflow.work?.objectiveId ?? objectiveIdForAnchor(workflow.anchor)
+            const result = await withWorkflowWorkLocks(runtime, workflow.id, objectiveId, async () => {
+              await validateWorkflowMutationLocked(ctx, runtime, workflow)
+              const now = new Date().toISOString()
+              let work = await readWork(ctx, objectiveId)
+              if (!work) {
+                work = createWorkHierarchy(workflow.anchor, workflow.id, now)
+                attachWorkflowToWork(work, workflow.id, now)
+              }
 
               if (work.generation > 0) {
                 if (value.expectedVersion === undefined) {
@@ -2464,10 +2796,10 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 }
               }
 
-              materializeWorkPlan(work, workflow.id, value.phases, new Date().toISOString())
+              materializeWorkPlan(work, workflow.id, value.phases, now)
               await ctx.storage.set(workKey(work.objectiveId), work)
               workflow.work = { objectiveId: work.objectiveId, generation: work.generation }
-              await ctx.storage.set(workflowKey(workflow.id), workflow)
+              await persistWorkflowMutationLocked(ctx, runtime, workflow)
               return work
             })
 
@@ -2505,13 +2837,20 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
           if (!objectiveId) {
             const workflow = value.workflowId
-              ? await readWorkflow(ctx, value.workflowId)
-              : await activeWorkflow(ctx, tool.sessionID)
+              ? await readBoundWorkflow(ctx, tool.sessionID, value.workflowId, ensureLegacySession)
+              : await activeWorkflow(ctx, tool.sessionID, ensureLegacySession)
             objectiveId = workflow?.work?.objectiveId
           }
 
           if (!objectiveId) {
             return { content: renderToolOutput({ error: "No persistent work Objective is attached." }) }
+          }
+
+          if (value.objectiveId) {
+            const active = await activeWorkflow(ctx, tool.sessionID, ensureLegacySession)
+            if (!active?.work || active.work.objectiveId !== value.objectiveId) {
+              return { content: renderToolOutput({ error: "Current session is not bound to a workflow for this Objective." }) }
+            }
           }
 
           const work = await readWork(ctx, objectiveId)
@@ -2554,7 +2893,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             return { content: renderToolOutput({ error: "Wave claim release requires a concrete reason." }) }
           }
 
-          const workflow = await readWorkflow(ctx, value.workflowId)
+          const workflow = await readBoundWorkflow(ctx, tool.sessionID, value.workflowId, ensureLegacySession)
           if (!workflow?.work) {
             return { content: renderToolOutput({ error: "Workflow has no persistent work claim." }) }
           }
@@ -2565,23 +2904,43 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           }
 
           try {
-            await withWorkLock(workflow.work.objectiveId, async () => {
-              const work = await readWork(ctx, workflow.work!.objectiveId)
-              if (!work) throw new Error("Persistent work hierarchy not found.")
-              releaseWorkflowWave(
-                work,
-                workflow.id,
-                workflow.work!.generation,
-                taskIds,
-                new Date().toISOString(),
-              )
-              await ctx.storage.set(workKey(work.objectiveId), work)
-            })
+            await withWorkflowWorkLocks(
+              runtime,
+              workflow.id,
+              workflow.work.objectiveId,
+              async () => {
+                await validateWorkflowMutationLocked(ctx, runtime, workflow)
+                const work = await readWork(ctx, workflow.work!.objectiveId)
+                if (!work) throw new Error("Persistent work hierarchy not found.")
+                assertWorkGeneration(work, workflow.work!.generation)
+                assertWaveClaimForTasks(
+                  work,
+                  workflow.id,
+                  workflow.work!.generation,
+                  taskIds,
+                )
 
-            await ctx.storage.set(
-              `work-release/${workflow.id}/${crypto.randomUUID()}`,
-              { reason: value.reason, at: new Date().toISOString(), by: tool.agent },
+                const now = new Date().toISOString()
+                releaseWorkflowWave(
+                  work,
+                  workflow.id,
+                  workflow.work!.generation,
+                  taskIds,
+                  now,
+                )
+                await ctx.storage.set(workKey(work.objectiveId), work)
+                await ctx.storage.set(
+                  `work-release/${workflow.id}/${crypto.randomUUID()}`,
+                  { reason: value.reason, at: now, by: tool.agent },
+                )
+                await ctx.storage.set(
+                  bindingReleaseKey(workflow.id, tool.sessionID),
+                  { reason: value.reason, at: now, by: tool.agent },
+                )
+                await persistWorkflowMutationLocked(ctx, runtime, workflow)
+              },
             )
+
             return { content: renderToolOutput({ released: true, workflowId: workflow.id, reason: value.reason }) }
           } catch (error) {
             return { content: renderToolOutput({ error: error instanceof Error ? error.message : String(error) }) }
@@ -2626,7 +2985,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           }
 
           const value = input as { workflowId: string; tasks: TaskSpec[] }
-          const workflow = await readWorkflow(ctx, value.workflowId)
+          const workflow = await readBoundWorkflow(ctx, tool.sessionID, value.workflowId, ensureLegacySession)
           if (!workflow) return { content: renderToolOutput({ error: "Workflow not found." }) }
 
           const planStep = workflow.steps.find((step) => step.id === "plan")
@@ -2641,44 +3000,50 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               throw new Error("Persistent work plan is missing. Call loom_work_plan before loom_task_plan.")
             }
 
-            const steps = applyTaskPlan(workflow, tasks)
+            const claimed = await withWorkflowWorkLocks(
+              runtime,
+              workflow.id,
+              workflow.work.objectiveId,
+              async () => {
+                await validateWorkflowMutationLocked(ctx, runtime, workflow)
+                const work = await readWork(ctx, workflow.work!.objectiveId)
+                if (!work) throw new Error("Persistent work hierarchy not found.")
 
-            const claimed = await withWorkLock(workflow.work.objectiveId, async () => {
-              const work = await readWork(ctx, workflow.work!.objectiveId)
-              if (!work) throw new Error("Persistent work hierarchy not found.")
+                assertWorkGeneration(work, workflow.work!.generation)
+                const steps = applyTaskPlan(workflow, tasks)
+                const wave = claimWorkflowWave(
+                  work,
+                  workflow.id,
+                  workflow.work!.generation,
+                  tasks,
+                  (workflow.effects?.workLevel ?? "objective") === "objective",
+                  new Date().toISOString(),
+                )
 
-              assertWorkGeneration(work, workflow.work!.generation)
-              const wave = claimWorkflowWave(
-                work,
-                workflow.id,
-                workflow.work!.generation,
-                tasks,
-                (workflow.effects?.workLevel ?? "objective") === "objective",
-                new Date().toISOString(),
-              )
-              await ctx.storage.set(workKey(work.objectiveId), work)
+                for (const step of steps) {
+                  const scope: TaskScope = {
+                    workflowId: value.workflowId,
+                    stepId: step.id,
+                    write: step.task!.write,
+                  }
+                  await ctx.storage.set(scopeKey(value.workflowId, step.id), scope)
+                }
 
-              const persisted = await readWork(ctx, work.objectiveId)
-              if (!persisted) throw new Error("Persistent work hierarchy disappeared after claim.")
-              assertWaveClaimForTasks(
-                persisted,
-                workflow.id,
-                workflow.work!.generation,
-                tasks.map((task) => task.id),
-              )
-              return { work: persisted, wave }
-            })
+                await ctx.storage.set(workKey(work.objectiveId), work)
+                await persistWorkflowMutationLocked(ctx, runtime, workflow)
 
-            for (const step of steps) {
-              const scope: TaskScope = {
-                workflowId: value.workflowId,
-                stepId: step.id,
-                write: step.task!.write,
-              }
-              await ctx.storage.set(scopeKey(value.workflowId, step.id), scope)
-            }
-
-            await ctx.storage.set(workflowKey(workflow.id), workflow)
+                const persisted = await readWork(ctx, work.objectiveId)
+                if (!persisted) throw new Error("Persistent work hierarchy disappeared after claim.")
+                assertWaveClaimForTasks(
+                  persisted,
+                  workflow.id,
+                  workflow.work!.generation,
+                  tasks.map((task) => task.id),
+                )
+                return { work: persisted, wave, steps }
+              },
+            )
+            const steps = claimed.steps
             return {
               content: renderToolOutput({
                 wave: { id: claimed.wave.logicalId, title: claimed.wave.title },
@@ -2706,9 +3071,9 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           additionalProperties: false,
         },
         options: { namespace: "loom", codemode: false },
-        execute: async (input) => {
+        execute: async (input, tool) => {
           const { workflowId } = input as { workflowId: string }
-          const workflow = await readWorkflow(ctx, workflowId)
+          const workflow = await readBoundWorkflow(ctx, tool.sessionID, workflowId, ensureLegacySession)
           if (!workflow) return { content: renderToolOutput({ error: "Workflow not found." }) }
           const tasks = plannedTaskSteps(workflow)
           const runnableIDs = new Set(runnable(workflow).map((step) => step.id))
@@ -2747,7 +3112,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           }
 
           const value = input as { workflowId: string; stepId: string; write: string[] }
-          const workflow = await readWorkflow(ctx, value.workflowId)
+          const workflow = await readBoundWorkflow(ctx, tool.sessionID, value.workflowId, ensureLegacySession)
           if (!workflow) return { content: renderToolOutput({ error: "Workflow not found." }) }
 
           const step = workflow.steps.find((candidate) => candidate.id === value.stepId)
@@ -2773,77 +3138,249 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             stepId: value.stepId,
             write: value.write,
           }
-          await ctx.storage.set(scopeKey(value.workflowId, value.stepId), scope)
+          await withRuntimeLock(runtime, "workflow", value.workflowId, async () => {
+            await ctx.storage.set(scopeKey(value.workflowId, value.stepId), scope)
+            await bumpWorkflowRevisionLocked(ctx, runtime, value.workflowId)
+          })
           return { content: renderToolOutput({ scope }) }
+        },
+      })
+
+      editor.add({
+        name: "dispatch_grant",
+        description:
+          "Issue one short-lived, single-use attachment grant for an exact runnable workflow step or unanswered OQ. General only; pass the returned grantId to the child session.",
+        input: {
+          type: "object",
+          properties: {
+            workflowId: { type: "string" },
+            stepId: { type: "string" },
+            questionId: { type: "string" },
+          },
+          required: ["workflowId"],
+          additionalProperties: false,
+        },
+        options: { namespace: "loom", codemode: false },
+        execute: async (input, tool) => {
+          if (tool.agent !== "general") {
+            return { content: renderToolOutput({ error: "Only general may issue dispatch grants." }) }
+          }
+
+          const value = input as { workflowId: string; stepId?: string; questionId?: string }
+          if (Boolean(value.stepId) === Boolean(value.questionId)) {
+            return { content: renderToolOutput({ error: "Provide exactly one of stepId or questionId." }) }
+          }
+
+          const active = await activeWorkflow(ctx, tool.sessionID, ensureLegacySession)
+          if (!active || active.id !== value.workflowId) {
+            return { content: renderToolOutput({ error: "General is not bound to this workflow." }) }
+          }
+
+          let expectedAgent: string
+          if (value.stepId) {
+            const step = active.steps.find((candidate) => candidate.id === value.stepId)
+            if (!step) return { content: renderToolOutput({ error: "Step not found." }) }
+            if (!runnable(active).some((candidate) => candidate.id === step.id)) {
+              return { content: renderToolOutput({ error: "Step is not currently runnable." }) }
+            }
+            expectedAgent = step.agent
+          } else {
+            const question = (await ctx.storage.get(
+              oqKey(value.workflowId, value.questionId!),
+            )) as OpenQuestion | undefined
+            if (!question || question.status === "closed" || question.answer) {
+              return { content: renderToolOutput({ error: "Question is not an unanswered active OQ." }) }
+            }
+            if (question.requiredAuthority === "user") {
+              return { content: renderToolOutput({ error: "User-owned OQs are not dispatched to child agents." }) }
+            }
+            expectedAgent = question.requiredAuthority
+          }
+
+          try {
+            const grant = await withRuntimeLock(runtime, "workflow", value.workflowId, async () => {
+              const currentBinding = (await ctx.storage.get(sessionKey(tool.sessionID))) as string | undefined
+              if (currentBinding !== value.workflowId) {
+                throw new Error("General is no longer bound to this workflow.")
+              }
+              const current = await readWorkflow(ctx, value.workflowId)
+              if (!current) throw new Error("Workflow not found.")
+
+              if (value.stepId) {
+                const step = current.steps.find((candidate) => candidate.id === value.stepId)
+                if (!step || step.agent !== expectedAgent) {
+                  throw new Error("Dispatch target changed before grant issuance.")
+                }
+                if (!runnable(current).some((candidate) => candidate.id === value.stepId)) {
+                  throw new Error("Step is no longer runnable.")
+                }
+              } else {
+                const question = (await ctx.storage.get(
+                  oqKey(value.workflowId, value.questionId!),
+                )) as OpenQuestion | undefined
+                if (
+                  !question ||
+                  question.status === "closed" ||
+                  question.answer ||
+                  question.requiredAuthority !== expectedAgent
+                ) {
+                  throw new Error("OQ dispatch target changed before grant issuance.")
+                }
+              }
+
+              const created = await issueDispatchGrantLocked(ctx.storage as any, runtime, {
+                workflowId: value.workflowId,
+                ...(value.stepId ? { stepId: value.stepId } : { oqId: value.questionId! }),
+                expectedAgent,
+                issuingParentSessionId: tool.sessionID,
+              })
+              await bumpWorkflowRevisionLocked(ctx, runtime, value.workflowId)
+              return created
+            })
+            return {
+              content: renderToolOutput({
+                grantId: grant.grantId,
+                workflowId: grant.workflowId,
+                ...(grant.stepId ? { stepId: grant.stepId } : { questionId: grant.oqId }),
+                expectedAgent: grant.expectedAgent,
+                expiresAt: grant.expiresAt,
+              }),
+            }
+          } catch (error) {
+            return { content: renderToolOutput({ error: error instanceof Error ? error.message : String(error) }) }
+          }
         },
       })
 
       editor.add({
         name: "attach",
         description:
-          "Attach the current child session to its Loom workflow step. Worker must attach before editing; Loom then validates edit permissions against the declared task scope.",
+          "Consume a General-issued one-use grant and attach the current child session to its exact Loom workflow step or OQ.",
         input: {
           type: "object",
           properties: {
+            grantId: { type: "string" },
             workflowId: { type: "string" },
             stepId: { type: "string" },
+            questionId: { type: "string" },
           },
-          required: ["workflowId", "stepId"],
+          required: ["grantId", "workflowId"],
           additionalProperties: false,
         },
         options: { namespace: "loom", codemode: false },
         execute: async (input, tool) => {
-          const { workflowId, stepId } = input as { workflowId: string; stepId: string }
-          const workflow = await readWorkflow(ctx, workflowId)
-          if (!workflow) return { content: renderToolOutput({ error: "Workflow not found." }) }
-
-          const step = workflow.steps.find((candidate) => candidate.id === stepId)
-          if (!step) return { content: renderToolOutput({ error: "Step not found." }) }
-          if (step.agent !== tool.agent) {
-            return {
-              content: renderToolOutput({
-                error: `Step ${stepId} belongs to ${step.agent}, not ${tool.agent}.`,
-              }),
-            }
+          const value = input as {
+            grantId: string
+            workflowId: string
+            stepId?: string
+            questionId?: string
+          }
+          if (Boolean(value.stepId) === Boolean(value.questionId)) {
+            return { content: renderToolOutput({ error: "Provide exactly one of stepId or questionId." }) }
           }
 
-          if (!runnable(workflow).some((candidate) => candidate.id === stepId)) {
-            return { content: renderToolOutput({ error: "Step is not currently runnable; dependencies or prior gates are incomplete." }) }
+          const targetSnapshot = await readWorkflow(ctx, value.workflowId)
+          if (!targetSnapshot) return { content: renderToolOutput({ error: "Workflow not found." }) }
+          if (targetSnapshot.projectId !== runtime.projectId) {
+            return { content: renderToolOutput({ error: "Workflow belongs to another project." }) }
           }
+
+          const observedBinding = (await ctx.storage.get(sessionKey(tool.sessionID))) as string | undefined
+          const resources = [
+            { aggregate: "workflow", resourceIdentity: value.workflowId },
+            ...(observedBinding && observedBinding !== value.workflowId
+              ? [{ aggregate: "workflow", resourceIdentity: observedBinding }]
+              : []),
+            ...(tool.agent === "worker" && value.stepId && targetSnapshot.work
+              ? [{ aggregate: "work", resourceIdentity: targetSnapshot.work.objectiveId }]
+              : []),
+          ]
 
           let scope: TaskScope | undefined
-          if (tool.agent === "worker") {
-            scope = (await ctx.storage.get(scopeKey(workflowId, stepId))) as TaskScope | undefined
-            if (!scope) {
-              return { content: renderToolOutput({ error: "Worker step has no declared task scope." }) }
-            }
+          let task: TaskSpec | undefined
 
-            if (step.task && workflow.work) {
-              const work = await readWork(ctx, workflow.work.objectiveId)
-              if (!work) return { content: renderToolOutput({ error: "Persistent work hierarchy not found." }) }
-              try {
-                assertWaveClaimForTasks(
-                  work,
-                  workflow.id,
-                  workflow.work.generation,
-                  plannedTaskSteps(workflow).map((taskStep) => taskStep.task!.id),
-                )
-              } catch (error) {
-                return { content: renderToolOutput({ error: error instanceof Error ? error.message : String(error) }) }
+          try {
+            await withRuntimeLocks(runtime, resources, async () => {
+              const previousBinding = await assertSessionRebindingAllowedLocked(
+                ctx,
+                tool.sessionID,
+                observedBinding,
+                value.workflowId,
+              )
+              const workflow = await readWorkflow(ctx, value.workflowId)
+              if (!workflow) throw new Error("Workflow not found.")
+              if (workflow.projectId !== runtime.projectId) {
+                throw new Error("Workflow belongs to another project.")
               }
-            }
-          }
 
-          await ctx.storage.set(sessionKey(tool.sessionID), workflowId)
-          await ctx.storage.set(sessionStepKey(tool.sessionID), stepId)
+              if (value.stepId) {
+                const step = workflow.steps.find((candidate) => candidate.id === value.stepId)
+                if (!step) throw new Error("Step not found.")
+                if (step.agent !== tool.agent) {
+                  throw new Error(`Step ${value.stepId} belongs to ${step.agent}, not ${tool.agent}.`)
+                }
+                if (!runnable(workflow).some((candidate) => candidate.id === value.stepId)) {
+                  throw new Error("Step is not currently runnable; dependencies or prior gates are incomplete.")
+                }
+
+                task = step.task
+                if (tool.agent === "worker") {
+                  scope = (await ctx.storage.get(scopeKey(value.workflowId, value.stepId))) as TaskScope | undefined
+                  if (!scope) throw new Error("Worker step has no declared task scope.")
+
+                  if (step.task && workflow.work) {
+                    if (targetSnapshot.work?.objectiveId !== workflow.work.objectiveId) {
+                      throw new Error("Workflow work binding changed concurrently; retry attachment.")
+                    }
+                    const work = await readWork(ctx, workflow.work.objectiveId)
+                    if (!work) throw new Error("Persistent work hierarchy not found.")
+                    assertWaveClaimForTasks(
+                      work,
+                      workflow.id,
+                      workflow.work.generation,
+                      plannedTaskSteps(workflow).map((taskStep) => taskStep.task!.id),
+                    )
+                  }
+                }
+              } else {
+                const question = (await ctx.storage.get(
+                  oqKey(value.workflowId, value.questionId!),
+                )) as OpenQuestion | undefined
+                if (!question || question.status === "closed" || question.answer) {
+                  throw new Error("Question is not an unanswered active OQ.")
+                }
+                if (question.requiredAuthority !== tool.agent) {
+                  throw new Error(`Question requires ${question.requiredAuthority}, not ${tool.agent}.`)
+                }
+              }
+
+              await consumeDispatchGrantLocked(ctx.storage as any, runtime, {
+                grantId: value.grantId,
+                workflowId: value.workflowId,
+                ...(value.stepId ? { stepId: value.stepId } : { oqId: value.questionId! }),
+                expectedAgent: tool.agent,
+                consumingSessionId: tool.sessionID,
+              })
+
+              await ctx.storage.set(sessionKey(tool.sessionID), value.workflowId)
+              await ctx.storage.set(sessionStepKey(tool.sessionID), value.stepId ?? "")
+              await ctx.storage.set(sessionOqKey(tool.sessionID), value.questionId ?? "")
+              await bumpWorkflowRevisionLocked(ctx, runtime, value.workflowId)
+              if (previousBinding && previousBinding !== value.workflowId) {
+                await bumpWorkflowRevisionLocked(ctx, runtime, previousBinding)
+              }
+            })
+          } catch (error) {
+            return { content: renderToolOutput({ error: error instanceof Error ? error.message : String(error) }) }
+          }
 
           return {
             content: renderToolOutput({
               attached: true,
-              workflowId,
-              stepId,
+              workflowId: value.workflowId,
+              ...(value.stepId ? { stepId: value.stepId } : { questionId: value.questionId }),
               ...(scope ? { write: scope.write } : {}),
-              ...(step.task ? { task: step.task } : {}),
+              ...(task ? { task } : {}),
             }),
           }
         },
@@ -2862,8 +3399,11 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           additionalProperties: false,
         },
         options: { namespace: "loom", codemode: false },
-        execute: async (input) => {
+        execute: async (input, tool) => {
           const { workflowId, stepId } = input as { workflowId: string; stepId: string }
+          if (!(await readBoundWorkflow(ctx, tool.sessionID, workflowId, ensureLegacySession))) {
+            return { content: renderToolOutput({ error: "Workflow not found or current session is not bound to it." }) }
+          }
           const scope = (await ctx.storage.get(scopeKey(workflowId, stepId))) as TaskScope | undefined
           return { content: renderToolOutput({ scope: scope ?? null }) }
         },
@@ -3268,7 +3808,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       const target = event.resources.find((resource) => loomAgents.has(resource))
       if (!target) return
 
-      const workflow = await activeWorkflow(ctx, event.sessionID)
+      const workflow = await activeWorkflow(ctx, event.sessionID, ensureLegacySession)
       if (!workflow || workflow.steps.length === 0) {
         event.effect = "deny"
         event.message = "Start and route a Loom workflow before dispatching Loom subagents."
@@ -3299,8 +3839,18 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         }
       }
 
-      const limits = await readLimits(ctx, workflow.id)
-      const budget = await readBudget(ctx, workflow.id)
+      const pendingGrant = await findUsableDispatchGrant(ctx.storage as any, runtime, {
+        workflowId: workflow.id,
+        ...(runnableStep ? { stepId: runnableStep.id } : { oqId: openQuestion!.id }),
+        expectedAgent: target,
+        issuingParentSessionId: event.sessionID,
+      })
+      if (!pendingGrant) {
+        event.effect = "deny"
+        event.message = `Issue loom_dispatch_grant for the exact ${runnableStep ? `step ${runnableStep.id}` : `OQ ${openQuestion!.id}`} before dispatching ${target}, and pass its grantId to the child.`
+        return
+      }
+
       const dispatchID = [
         event.sessionID,
         event.source?.messageID ?? "message",
@@ -3308,8 +3858,17 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         target,
       ].join(":")
       const key = runnableStep ? `step:${runnableStep.id}` : `oq:${openQuestion!.id}`
-      const recorded = recordDispatch({ state: budget, limits, dispatchID, key, agent: target })
-      await ctx.storage.set(budgetKey(workflow.id), budget)
+      const recorded = await withRuntimeLock(runtime, "workflow", workflow.id, async () => {
+        const limits = await readLimits(ctx, workflow.id)
+        const budget = await readBudget(ctx, workflow.id)
+        const result = recordDispatch({ state: budget, limits, dispatchID, key, agent: target })
+        if (result.allowed) {
+          await ctx.storage.set(budgetKey(workflow.id), budget)
+          await bumpWorkflowRevisionLocked(ctx, runtime, workflow.id)
+          dashboardPublisher.trigger()
+        }
+        return result
+      })
 
       if (!recorded.allowed) {
         event.effect = "deny"
@@ -3333,7 +3892,14 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
     await ctx.tool.hook("execute.after", async (event) => {
       const raw = event as any
       const tool = String(raw.tool ?? "")
-      if (!tool || skipLoomEvidence(tool)) return
+      if (!tool) return
+
+      // Dashboard publication is read-only and failure-isolated. Trigger after
+      // Loom/control activity before evidence filtering so control-plane state
+      // changes become visible without turning projection into a dependency.
+      dashboardPublisher.trigger()
+
+      if (skipLoomEvidence(tool)) return
       if (!raw.sessionID) return
 
       const key = toolEventKey(raw)

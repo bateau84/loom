@@ -11,6 +11,8 @@ import { buildSteps, type Workflow } from "./workflow"
 function workflow(): Workflow {
   return {
     id: "w",
+    projectId: "project-test",
+    revision: 0,
     anchor: "anchor",
     createdBySession: "s",
     createdAt: "now",

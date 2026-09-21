@@ -181,7 +181,9 @@ Exact monetary hard-stop enforcement is optional until OpenCode exposes reliable
 
 Workflow state must be project-scoped and inspectable.
 
-The first implementation may use plugin durable storage keyed by project/workflow identity, with exportable workflow snapshots.
+Project scoping is a mechanical isolation boundary, not a naming convention. Every mutable execution record resolves through the caller's current project identity before workflow/session identity. Session bindings, work hierarchy, OQs, evidence, scopes, budgets, Product Acceptance, knowledge, and intent state must not be addressable across projects merely because a local identifier matches.
+
+The detailed execution namespace, membership, migration, and concurrency contract is defined in [Runtime Isolation](runtime-isolation.md). The external read-only publication contract is defined separately in [Dashboard Observability](dashboard-observability.md).
 
 Do not store accepted product authority only inside plugin storage.
 

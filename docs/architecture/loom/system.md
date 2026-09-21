@@ -74,7 +74,18 @@ An OpenCode plugin owns machine-enforced workflow mechanics:
 - OQ coordination;
 - evidence registration;
 - worker scope;
-- execution counters.
+- execution counters;
+- project/session/workflow compartment identity.
+
+Multiple simultaneous OpenCode sessions and repositories are normal operation. Mutable Loom execution state is project-scoped and session/workflow-bound so unrelated work cannot collide or leak.
+
+### Observability plane
+
+Loom publishes a bounded read-only operational projection for tools outside the OpenCode TUI.
+
+The projection aggregates explicit compartment identity and workflow status; it never becomes product authority or a workflow mutation surface. A future dashboard may enrich that projection with read-only OpenCode database statistics, but OpenCode messages/database state do not determine Loom workflow truth.
+
+See [Runtime Isolation](runtime-isolation.md) and [Dashboard Observability](dashboard-observability.md). Human-facing dashboard behavior is defined separately by [Dashboard Experience Design](../../design/loom/dashboard-experience.md).
 
 ### Knowledge plane
 
@@ -118,6 +129,8 @@ A new software mechanism is justified when the answer is already deterministic a
 - [BR-004](../../requirements/loom/br-004-produce-the-whole-product.md)
 - [BR-005](../../requirements/loom/br-005-prevent-implementation-inventing-meaning.md)
 - [BR-016](../../requirements/loom/br-016-opencode-required-initial-host.md)
+- [BR-017](../../requirements/loom/br-017-concurrent-sessions-projects-compartmentalized.md)
+- [BR-018](../../requirements/loom/br-018-external-operational-dashboard.md)
 
 ## OpenCode Basis
 

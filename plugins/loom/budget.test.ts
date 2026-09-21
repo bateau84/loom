@@ -86,6 +86,8 @@ describe("Loom progress and dispatch budgets", () => {
   test("workflow grant policy accepts exhausted runnable gates and rejects non-General grants", () => {
     const workflow = {
       id: "wf-gate",
+      projectId: "project-test",
+      revision: 0,
       anchor: "docs/anchors/test/anchor.md",
       createdBySession: "session",
       createdAt: "now",
@@ -221,6 +223,8 @@ describe("Loom progress and dispatch budgets", () => {
   test("workflow grant policy recovers exhausted agent-owned OQ dispatches", () => {
     const workflow = {
       id: "wf-oq",
+      projectId: "project-test",
+      revision: 0,
       anchor: "docs/anchors/test/anchor.md",
       createdBySession: "session",
       createdAt: "now",
