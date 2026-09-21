@@ -17,6 +17,7 @@ describe("Loom Worker shell policy", () => {
       "pytest -q",
       "cargo check",
       "rg TODO src",
+      "rg 'foo|bar' src",
       "find src -name '*.go'",
     ]) {
       expect(isAllowedWorkerShell(command)).toBe(true)
@@ -29,6 +30,7 @@ describe("Loom Worker shell policy", () => {
 
     expect(isAllowedWorkerShell(`${prefix} go list -m all`)).toBe(true)
     expect(isAllowedWorkerShell(`${prefix} go mod graph`)).toBe(true)
+    expect(isAllowedWorkerShell("GOFLAGS='-mod=readonly -trimpath' go list ./...")).toBe(true)
   })
 
   test("allows known-safe Python and XDG environment prefixes", () => {
@@ -45,9 +47,9 @@ describe("Loom Worker shell policy", () => {
     ).toBe(true)
   })
 
-  test("allows unknown environment variables only for passive inspection", () => {
-    expect(isAllowedWorkerShell("FOO=bar ls -la")).toBe(true)
-    expect(isAllowedWorkerShell("FOO='some value' cat README.md")).toBe(true)
+  test("rejects unknown environment variables", () => {
+    expect(isAllowedWorkerShell("FOO=bar ls -la")).toBe(false)
+    expect(isAllowedWorkerShell("FOO='some value' cat README.md")).toBe(false)
     expect(isAllowedWorkerShell("FOO=bar go list ./...")).toBe(false)
     expect(isAllowedWorkerShell("FOO=bar go test ./...")).toBe(false)
   })
@@ -62,6 +64,37 @@ describe("Loom Worker shell policy", () => {
       "GOENV=/tmp/goenv go list ./...",
       "GOFLAGS=-toolexec=./evil go list ./...",
       "XDG_CACHE_HOME=../cache pytest -q",
+      "XDG_CACHE_HOME='/tmp/cache;touch /tmp/pwn' pytest -q",
+    ]) {
+      expect(isAllowedWorkerShell(command)).toBe(false)
+    }
+  })
+
+  test("rejects shell control syntax even without whitespace", () => {
+    for (const command of [
+      "cat README.md>/tmp/output",
+      "cat README.md>>/tmp/output",
+      "cat</etc/passwd",
+      "go test ./...;rm -rf src",
+      "rg foo src|xargs rm",
+      "ls&touch /tmp/pwn",
+      "ls<(touch /tmp/pwn)",
+      "ls>(cat)",
+      "ls\nrm -rf src",
+    ]) {
+      expect(isAllowedWorkerShell(command)).toBe(false)
+    }
+  })
+
+  test("rejects shell expansion and process substitution in environment prefixes", () => {
+    for (const command of [
+      "XDG_CACHE_HOME=/tmp/cache>/tmp/output cat README.md",
+      "XDG_CACHE_HOME=<(touch /tmp/pwn) pytest -q",
+      "GOENV=$(touch /tmp/pwn) go list ./...",
+      "GOENV=`touch /tmp/pwn` go list ./...",
+      "GOENV=${HOME} go list ./...",
+      "GOENV=\"$HOME\" go list ./...",
+      "GOENV=off\\ value go list ./...",
     ]) {
       expect(isAllowedWorkerShell(command)).toBe(false)
     }
@@ -113,6 +146,13 @@ describe("Loom Worker shell policy", () => {
 
     expect(
       shellResourcesAllowed(
+        ["GOENV=off gofmt -w internal/agentdefinition/definition.go>/tmp/output"],
+        ["internal/agentdefinition/**"],
+      ),
+    ).toBe(false)
+
+    expect(
+      shellResourcesAllowed(
         ["gofmt -w internal/agentdefinition/definition.go docs/architecture/leash-v1/index.md"],
         ["internal/agentdefinition/**"],
       ),
@@ -139,6 +179,7 @@ describe("Loom Worker shell policy", () => {
     expect(scopedGofmtWriteTargets("FOO=bar gofmt -w a.go")).toBeUndefined()
     expect(scopedGofmtWriteTargets("gofmt -w -r 'x -> y' a.go")).toBeUndefined()
     expect(scopedGofmtWriteTargets("gofmt -w a.go && rm -rf .")).toBeUndefined()
+    expect(scopedGofmtWriteTargets("gofmt -w a.go>/tmp/output")).toBeUndefined()
     expect(scopedGofmtWriteTargets("gofmt -w /tmp/a.go")).toBeUndefined()
   })
 
