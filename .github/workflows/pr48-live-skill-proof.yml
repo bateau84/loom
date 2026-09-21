@@ -1,0 +1,48 @@
+name: PR48 Live Skill Proof
+
+on:
+  push:
+    branches:
+      - feature/action-skill-evals
+
+permissions:
+  contents: read
+  copilot-requests: write
+
+jobs:
+  skill-proof:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+
+      - run: bun install
+
+      - name: Run all skill evals through real OpenCode
+        uses: bateau84/opencode-eval-runner@bd02908d134ccec81d4497604b7b115606cf9b45
+        with:
+          engine: docker
+          opencode-image: ghcr.io/bateau84/opencode-eval-runner@sha256:279af644d0d05a17fecc0a277dc9648e0d03fb7d3c74a1f0fa05303c8c552f83
+          copilot-image: ghcr.io/bateau84/opencode-eval-runner@sha256:fbc8f007ff339c6a6d47d4b1113874084cbf0eb7e62c7bb69bf9ccd70cdae799
+          artifact-dir: .loom-evals
+          command: |
+            python3 scripts/run-evals.py \
+              --engine docker \
+              --target-kind skill \
+              --model openai/gpt-5.5 \
+              --target-transport opencode \
+              --judge-transport github-copilot-cli \
+              --judge-model gpt-5.4
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pr48-live-skill-proof
+          path: .loom-evals/
+          if-no-files-found: warn
