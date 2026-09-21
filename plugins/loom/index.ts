@@ -73,16 +73,19 @@ import {
 } from "./acceptance"
 import { taskStepId, validateTaskPlan, type TaskSpec } from "./tasks"
 import {
+  assertWaveClaimForTasks,
+  assertWorkGeneration,
   attachWorkflowToWork,
+  claimWorkflowWave,
   completeObjective,
   completeWaveForTasks,
   createWorkHierarchy,
   materializeWorkPlan,
   nextRunnableWaves,
-  reopenWaveForTasks,
   objectiveIdForAnchor,
+  releaseWorkflowWave,
+  reopenWaveForTasks,
   syncWorkTaskStatuses,
-  validateWorkflowWave,
   workTree,
   type WorkHierarchy,
   type WorkPlanPhase,
