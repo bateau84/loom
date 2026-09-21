@@ -180,6 +180,8 @@ For either target:
 - give a concrete reason;
 - record the exact progress dimensions that changed: new evidence, changed hypothesis, changed strategy, or reduced unresolved work.
 
+For **Critic** targets, a grant additionally requires **new material evidence**. A changed strategy, changed hypothesis, or reduced unresolved set alone does not justify another Critic dispatch.
+
 This applies to work steps, gates, and agent-owned OQ authority dispatches, including Reviewer, Critic, Designer validation, Acceptance, and other agent-owned work.
 
 A grant permits exactly one additional dispatch. It does not reset prior attempts or the workflow-wide budget. Do not grant budget for an unchanged retry, and do not pre-grant budget while capacity remains. Agents do not extend their own budget; General owns the grant.
