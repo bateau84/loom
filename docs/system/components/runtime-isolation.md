@@ -32,7 +32,7 @@ Execution keys are project-scoped by default. Installation identity and cross-pr
 
 Canonical execution state carries a versioned runtime-schema ledger. Future schema upgrades are ordered, idempotent and receipt-backed under the migration lock.
 
-Legacy OpenCode plugin records are imported/migrated only when provenance is unambiguous. In-place upgrades may reconcile the exact state of a resumed OpenCode session when the host proves the same session ID and OpenCode project identity and no conflicting Loom project epoch exists. This continuity migration writes an audit receipt; path guesses and free-form confirmation never count as provenance. Other ambiguous pre-project-epoch state remains unmigrated and is reported.
+Legacy OpenCode plugin records are imported/migrated only when provenance is unambiguous. In-place upgrades may reconcile the exact state of a resumed OpenCode session when the host proves the same session ID and OpenCode project identity and no conflicting Loom project epoch exists. After that workflow is canonical in the current project epoch, additional pre-upgrade sessions with durable legacy bindings to that exact workflow may inherit the canonical workflow's project provenance even when old host project metadata is absent. Each reconciliation writes an audit receipt; a different workflow, explicit project mismatch, path guess, or free-form confirmation never counts as provenance. Other ambiguous pre-project-epoch state remains unmigrated and is reported.
 
 ## Cross-process correctness
 
