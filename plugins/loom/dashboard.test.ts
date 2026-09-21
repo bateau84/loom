@@ -137,6 +137,69 @@ describe("Loom dashboard projection", () => {
     expect(snapshot.workObjectives[0].stateDigest).toHaveLength(64)
   })
 
+  test("recent activity includes OQ, verification and budget semantic changes", async () => {
+    const root = await fixture()
+    const { storage, runtime } = await populated(root)
+    const current = workflow()
+    current.verification![0].proof = {
+      byAgent: "reviewer",
+      stepId: "review-implementation",
+      statement: "verified",
+      observationIds: ["obs-1"],
+      provedAt: "2026-09-21T12:07:00.000Z",
+    }
+    await storage.set("workflow/workflow-a", current)
+    await storage.set("oq/workflow-a/OQ-1", {
+      id: "OQ-1",
+      workflowId: "workflow-a",
+      question: "Which behavior applies?",
+      raisedByAgent: "worker",
+      raisedByStepId: "task:build",
+      requiredAuthority: "reviewer",
+      blocking: true,
+      consumerStepIds: ["task:build"],
+      evidence: [],
+      status: "answered",
+      answer: {
+        by: "reviewer",
+        source: "agent",
+        text: "Use the accepted behavior.",
+        evidence: [],
+        at: "2026-09-21T12:09:00.000Z",
+      },
+      reconciliations: {},
+      createdAt: "2026-09-21T12:06:00.000Z",
+    })
+    await storage.set("budget/workflow-a", {
+      totalDispatches: 5,
+      byKey: {},
+      seenDispatches: [],
+      grants: [{
+        key: "step:review-implementation",
+        agent: "reviewer",
+        grantedBy: "general",
+        reason: "new evidence",
+        progress: {
+          newEvidence: true,
+          changedHypothesis: false,
+          changedStrategy: false,
+          reducedUnresolved: false,
+        },
+        evidence: ["obs-1"],
+        grantedAt: "2026-09-21T12:08:00.000Z",
+      }],
+    })
+
+    const snapshot = await buildProjectSnapshot(
+      storage,
+      runtime,
+      8,
+      {},
+      new Date("2026-09-21T12:10:00.000Z"),
+    )
+    expect(snapshot.workflows[0].recentActivityAt).toBe("2026-09-21T12:09:00.000Z")
+  })
+
   test("state digest is canonical across object key ordering", () => {
     expect(projectionDigest({ b: 2, a: { d: 4, c: 3 } })).toBe(
       projectionDigest({ a: { c: 3, d: 4 }, b: 2 }),
