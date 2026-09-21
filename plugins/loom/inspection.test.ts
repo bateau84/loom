@@ -89,6 +89,15 @@ afterEach(async () => {
 })
 
 describe("Loom structured inspection", () => {
+  test("inspection avoids bulk directory and whole-file line materialization", async () => {
+    const source = await Bun.file(new URL("./inspection.ts", import.meta.url)).text()
+
+    expect(source).toContain("opendir(")
+    expect(source).not.toContain("readdir(")
+    expect(source).not.toContain("readFile(")
+    expect(source).not.toContain(".split(/\\r?\\n/)")
+  })
+
   test("finds and sorts bounded paths without shell composition", async () => {
     const root = await fixture()
     const result = await findPaths(root, {
