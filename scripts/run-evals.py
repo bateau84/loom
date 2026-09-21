@@ -556,7 +556,7 @@ def invoke_container(
         ROOT / "node_modules" if mount_node_modules else None,
     )
     runner_bin = os.environ.get("OPENCODE_EVAL_RUNNER_BIN") or shutil.which("opencode-eval-runner")
-    if runner_bin and network is None:
+    if runner_bin:
         with tempfile.TemporaryDirectory(prefix="loom-eval-runner-cli-") as tmp:
             root = Path(tmp)
             prompt_file = root / "prompt.txt"
@@ -580,6 +580,8 @@ def invoke_container(
                 "--timeout-seconds", str(timeout),
                 "--container-timeout", str(container_timeout),
             ]
+            if network:
+                command += ["--network", network]
             if agent:
                 command += ["--agent", agent]
             if skill:
