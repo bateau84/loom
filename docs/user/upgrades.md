@@ -50,8 +50,17 @@ The runtime upgrade ledger provides a single mechanism for later state-format ch
 
 1. read the current runtime-state version;
 2. acquire the installation migration guard;
-3. execute the next registered `fromVersion → toVersion` step;
-4. commit the mutation, upgrade receipt and version advance together;
-5. repeat until the build's target version is reached.
+3. enumerate every canonical project namespace when the step changes project-scoped state;
+4. execute the next registered `fromVersion → toVersion` installation/project migration callbacks;
+5. commit every affected project mutation, installation mutation, upgrade receipt and version advance together;
+6. repeat until the build's target version is reached.
 
-Upgrade steps must be idempotent. Loom refuses runtime state created by a newer build or a missing upgrade path instead of guessing.
+Upgrade steps must be idempotent. A failed transactional step leaves the prior complete version/data generation intact. Loom refuses runtime state created by a newer build or a missing upgrade path instead of guessing.
+
+### Already-running OpenCode processes
+
+An upgrade may happen while another OpenCode+Loom process from the previous build is still alive. Loom does not let that older process keep writing after the shared runtime schema advances.
+
+Every normal project mutation validates the durable runtime version against the running build in the same transaction as the write. If another process upgrades the installation, an older still-running process fails closed on its next canonical project-state access/mutation and must be restarted with the current Loom build.
+
+A mutation already in flight before the upgrade is serialized by the canonical SQLite transaction boundary; the upgrade runs after that old-version mutation commits and migrates its result.

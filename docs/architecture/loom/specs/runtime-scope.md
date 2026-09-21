@@ -177,7 +177,13 @@ The workflow aggregate owns workflow transitions, OQs, verification, budgets, co
 
 Scoped records are canonical. Legacy fallback is bounded and only allowed when destination is absent.
 
-The canonical runtime store carries an installation-wide `runtime-schema` record. Runtime schema changes are implemented as ordered, idempotent `fromVersion → toVersion` upgrade steps under the installation migration lock. The step mutation, durable receipt, and schema-version advance occur in the same transactional mutation boundary when the transactional store is active. A build MUST refuse state whose runtime version is newer than it understands, and MUST refuse an upgrade when no contiguous registered path exists.
+The canonical runtime store carries an installation-wide `runtime-schema` record. Runtime schema changes are implemented as ordered, idempotent `fromVersion → toVersion` upgrade steps under the installation migration lock.
+
+The installation-wide version may advance only after the framework has processed every canonical project namespace known from persisted installation/project state. Project-format changes use the framework-owned per-project callback, which is invoked once for each enumerated project before the version advances; installation-global changes use the installation callback. The complete step — every project mutation, installation mutation, durable receipt, and schema-version advance — occurs in one storage transaction when transactional storage is active. A failed step therefore leaves the previous complete version/data generation intact.
+
+Every normal project-scoped mutable transaction validates that the durable runtime version exactly matches the running build before mutation. The version check and write occur in the same transaction. An already-running older process that encounters a store upgraded by a newer process fails closed and must be restarted; it cannot continue writing with older schema assumptions. In-flight older mutations serialize through the canonical SQLite transaction boundary before the upgrade, so the upgrade transforms their committed old-version result rather than racing an incompatible write.
+
+A build MUST refuse state whose runtime version is newer than it understands, and MUST refuse an upgrade when no contiguous registered path exists.
 
 Pre-project-epoch OpenCode plugin state has one additional in-place-upgrade continuity rule. Loom MAY reconcile the exact legacy state bound to a resumed OpenCode session when all of the following hold:
 
@@ -194,4 +200,4 @@ If durable legacy state already names a different Loom project epoch, neither se
 
 ## Conformance evidence
 
-Deterministic tests must cover identical Anchor/objective/task names across projects, same-workflow fresh child sharing, unrelated same-project workflow rejection, controlled session rebinding with prior attachment invalidation, cross-project rejection, two-process contention including mixed/missing `XDG_RUNTIME_DIR` environments sharing one durable installation, crash/fault injection during durable commit, project first-open races, path reuse, copied markers, symlinks, Git worktrees, moves, reopen/failure isolation, and ambiguous legacy migration.
+Deterministic tests must cover transactional upgrade rollback, all-project schema migration, live old/new process version skew with the old writer fenced after upgrade, identical Anchor/objective/task names across projects, same-workflow fresh child sharing, unrelated same-project workflow rejection, controlled session rebinding with prior attachment invalidation, cross-project rejection, two-process contention including mixed/missing `XDG_RUNTIME_DIR` environments sharing one durable installation, crash/fault injection during durable commit, project first-open races, path reuse, copied markers, symlinks, Git worktrees, moves, reopen/failure isolation, and ambiguous legacy migration.

@@ -301,7 +301,7 @@ Migration and upgrade strategy:
 
 1. establish the current project epoch identity before any legacy lookup;
 2. initialize/validate the installation's versioned runtime-schema ledger before normal mutable execution;
-3. future canonical-store schema changes run as ordered, idempotent, transactionally recorded upgrade steps with durable receipts;
+3. future canonical-store schema changes run as ordered, idempotent upgrade steps under the installation migration guard; project-format steps are invoked by the framework for every canonical project namespace before the installation version advances; all project mutations, installation mutations, the durable receipt, and version advance share one transactional commit boundary;
 4. new writes use the scoped namespace only;
 5. reads may perform a bounded legacy lookup when the scoped record is absent;
 6. a legacy record is migrated when its project can be established unambiguously from stored workflow metadata, from exact resumed-session continuity supplied by the OpenCode host, **or from an already-canonical scoped workflow for that exact legacy workflow binding**; canonical path alone is never sufficient proof after path reuse;
@@ -312,9 +312,11 @@ Migration and upgrade strategy:
 11. ambiguous or conflicting legacy records are reported, not merged;
 12. successful continuity/canonical-workflow reconciliation writes a durable receipt identifying the target project epoch, hashed source session, and provenance kind;
 13. once migrated, the scoped record becomes canonical and future mutations never update the legacy execution key;
-14. migration tests include identical Anchor paths, stale/path-reuse, resumed pre-upgrade sessions, secondary legacy sessions bound to an admitted canonical workflow, unrelated workflows, mismatched sessions, and conflicting project provenance.
+14. migration tests include transactional rollback of a failed schema upgrade, all-project project-format migration, a live old/new process version-skew case where the old writer is fenced after upgrade, identical Anchor paths, stale/path-reuse, resumed pre-upgrade sessions, secondary legacy sessions bound to an admitted canonical workflow, unrelated workflows, mismatched sessions, and conflicting project provenance.
 
 Migration is a compatibility mechanism, not a permanent dual-authority mode. The runtime-schema ledger is the mechanism for future upgrades; per-session legacy reconciliation exists only where an older schema did not record enough project identity for an eager installation-wide migration.
+
+The installation-wide schema version is authoritative across all canonical project namespaces. A project-format step cannot advance that version after migrating only the project that happened to start Loom first: the framework enumerates persisted project registries and project namespaces and invokes the step for every one before commit. Normal project-scoped mutations are runtime-version fenced. If another process upgrades the shared store, an already-running older Loom process fails closed on its next canonical project-state access/mutation and must restart with the current build. A mutation already in flight serializes through the SQLite transaction boundary before the upgrade, so the upgrade transforms its committed old-version result rather than racing an incompatible write.
 
 ## Runtime failure semantics
 
