@@ -350,7 +350,7 @@ test("narrow layout keeps identity and status usable without horizontal overflow
   await page.setViewportSize({ width: 390, height: 800 })
   await page.goto(`http://127.0.0.1:${port}/`)
 
-  await expect(page.getByText("Project A", { exact: false })).toBeVisible()
+  await expect(page.locator('a[data-key="project-a:workflow-a"]')).toContainText("Project A")
   await expect(page.getByText("consistency conflict", { exact: true })).toBeVisible()
   const metrics = await page.evaluate(() => ({
     scrollWidth: document.documentElement.scrollWidth,
