@@ -198,9 +198,20 @@ bun run eval:live -- \
 
 Target and judge still run in different containers even when they use the same model.
 
-### GitHub Actions and GitHub Copilot token
+### GitHub Actions credentials
 
 `.github/workflows/loom-live-evals.yml` is manually runnable with `workflow_dispatch`. It uses `bateau84/opencode-eval-runner` as the action/execution boundary for target and judge invocations.
+
+For OpenCode Zen/Go in Actions, add a repository secret named `OPENCODE_API_KEY`. Loom forwards it explicitly into isolated OpenCode target/judge containers. Use normal OpenCode model references:
+
+```text
+Zen: opencode/<model-id>
+Go:  opencode-go/<model-id>
+```
+
+For example: `opencode/gpt-5.4` or `opencode-go/kimi-k3`. The existing `OPENCODE_AUTH_JSON` secret path remains available for credentials that must be represented through OpenCode's auth file rather than a provider environment variable.
+
+For GitHub Copilot CLI, the workflow grants `copilot-requests: write` and the runner exposes the workflow's built-in `GITHUB_TOKEN`; no separate Copilot secret is required.
 
 The workflow grants `copilot-requests: write`. When either transport is `github-copilot-cli`, the action exposes the workflow's built-in `GITHUB_TOKEN` to the harness, and the runner passes it into the isolated Copilot invocation. No separate Copilot secret is required.
 
