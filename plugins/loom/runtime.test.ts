@@ -269,6 +269,23 @@ describe("Loom runtime upgrade ledger", () => {
 
       expect(await storage.get("installation/escape")).toBeUndefined()
       expect(await storage.get("installation/runtime-schema")).toMatchObject({ currentVersion: 1 })
+
+      await expect(
+        ensureRuntimeStateVersion(storage, runtime, {
+          targetVersion: 2,
+          steps: [{
+            id: "test-cross-project-escape-v1-to-v2",
+            fromVersion: 1,
+            toVersion: 2,
+            applyProject: async (projectStorage: any) => {
+              await projectStorage.set("project/another-project/format", { unsafe: true })
+            },
+          }],
+        }),
+      ).rejects.toThrow("may not escape its project namespace")
+
+      expect(await storage.get("project/another-project/format")).toBeUndefined()
+      expect(await storage.get("installation/runtime-schema")).toMatchObject({ currentVersion: 1 })
     })
   })
 
