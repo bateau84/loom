@@ -28,6 +28,7 @@ Call `loom_work_status` first.
 - Do not create empty hierarchy levels for ceremony.
 - Do not replace an existing work-plan generation merely because a new workflow started.
 - Replace an existing generation only when current authority or current-state evidence materially changes the decomposition. Use the exact `version` from `loom_work_status` as `expectedVersion` and give a concrete `replaceReason`.
+- A claimed Wave blocks plan-generation replacement. Do not bypass it. Return the claim conflict so General can finish or explicitly release the owning workflow before replanning.
 
 ## Current bounded Wave
 
