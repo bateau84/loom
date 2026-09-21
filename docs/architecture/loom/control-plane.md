@@ -20,7 +20,8 @@ Each workflow has:
 ```text
 workflow id
 anchor
-phase
+execution stage
+work scope attachment (when hierarchical work applies)
 required capabilities
 completed capabilities
 tasks
@@ -37,6 +38,10 @@ status
 Runtime state is not product authority.
 
 Durable product meaning remains in OKF documents.
+
+For Planner-driven product work, persistent work hierarchy state is separate from workflow execution state. The accepted Objective identity is established from accepted authority before Planner; Planner may propose Phase/Wave/Task decomposition only inside that Objective. The control plane validates and materializes hierarchy mutations, owns node lifecycle transitions and roll-up, and rejects stale or conflicting shared-state updates. See [Hierarchical Work Model](work-hierarchy.md).
+
+The workflow-local field historically described as `phase` is an **execution stage**, not a hierarchical Phase. New state/API vocabulary uses `executionStage` (or equivalent unambiguous naming). Legacy workflow snapshots with `phase` retain execution-stage meaning only.
 
 ## Control Tools
 
@@ -218,7 +223,9 @@ These are safety defaults, not product semantics. Later configuration may tune t
 
 Non-trivial product workflows contain a `plan` step owned by the disposable Planner context.
 
-Planner registers a bounded task graph in workflow state. V1 validation requires:
+Planner registers a bounded task graph for the current work scope. For Planner-driven product work, the graph is also materialized under the persistent Objective/Phase/Wave/Task hierarchy described in [Hierarchical Work Model](work-hierarchy.md). Planner does not own or redefine Objective meaning.
+
+V1 validation requires:
 - at least one task and no more than 24;
 - stable unique task IDs;
 - known acyclic dependencies;
@@ -238,7 +245,9 @@ Each task carries:
 
 `review-implementation` depends on completion of every planned task.
 
-The executable DAG is workflow state, not product authority. Changing product meaning still routes to Designer, Specifier, or Architect.
+The executable DAG is execution structure, not product authority. Changing product meaning still routes to Designer, Specifier, or Architect.
+
+Once task execution starts, the current graph is not destructively rewritten. Replanning creates a new hierarchy/plan generation or explicit supersession set; completed historical nodes remain immutable, and carry-forward requires control-plane validation that scope, authority, prerequisites, and verification meaning remain materially equivalent.
 
 ## Worker task scopes
 

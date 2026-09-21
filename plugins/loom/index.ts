@@ -73,6 +73,24 @@ import {
 } from "./acceptance"
 import { taskStepId, validateTaskPlan, type TaskSpec } from "./tasks"
 import {
+  assertWaveClaimForTasks,
+  assertWorkGeneration,
+  attachWorkflowToWork,
+  claimWorkflowWave,
+  completeObjective,
+  completeWaveForTasks,
+  createWorkHierarchy,
+  materializeWorkPlan,
+  nextRunnableWaves,
+  objectiveIdForAnchor,
+  releaseWorkflowWave,
+  reopenWaveForTasks,
+  syncWorkTaskStatuses,
+  workTree,
+  type WorkHierarchy,
+  type WorkPlanPhase,
+} from "./work"
+import {
   createKnowledgeReport,
   invalidateKnowledgeReport,
   type KnowledgeReport,
@@ -168,6 +186,47 @@ function workflowKey(id: string) {
   return `workflow/${id}`
 }
 
+function workKey(objectiveId: string) {
+  return `work/${encodeURIComponent(objectiveId)}`
+}
+
+const workQueues = new Map<string, Promise<void>>()
+
+async function withWorkLock<T>(objectiveId: string, fn: () => Promise<T>): Promise<T> {
+  const previous = workQueues.get(objectiveId) ?? Promise.resolve()
+  let release!: () => void
+  const hold = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  const queued = previous.then(() => hold)
+  workQueues.set(objectiveId, queued)
+  await previous
+
+  try {
+    return await fn()
+  } finally {
+    release()
+    if (workQueues.get(objectiveId) === queued) workQueues.delete(objectiveId)
+  }
+}
+
+async function readWork(ctx: any, objectiveId: string): Promise<WorkHierarchy | undefined> {
+  return (await ctx.storage.get(workKey(objectiveId))) as WorkHierarchy | undefined
+}
+
+async function ensureWorkForWorkflow(ctx: any, workflow: Workflow): Promise<WorkHierarchy> {
+  const objectiveId = objectiveIdForAnchor(workflow.anchor)
+  return withWorkLock(objectiveId, async () => {
+    const now = new Date().toISOString()
+    const existing = await readWork(ctx, objectiveId)
+    const work = existing ?? createWorkHierarchy(workflow.anchor, workflow.id, now)
+    attachWorkflowToWork(work, workflow.id, now)
+    await ctx.storage.set(workKey(objectiveId), work)
+    workflow.work = { objectiveId, generation: work.generation }
+    return work
+  })
+}
+
 function sessionKey(id: string) {
   return `session/${id}`
 }
@@ -187,6 +246,23 @@ async function readWorkflow(ctx: any, id: string): Promise<Workflow | undefined>
 async function activeWorkflow(ctx: any, sessionID: string): Promise<Workflow | undefined> {
   const id = (await ctx.storage.get(sessionKey(sessionID))) as string | undefined
   return id ? readWorkflow(ctx, id) : undefined
+}
+
+async function assertWorkerWorkClaim(ctx: any, workflowId: string, stepId: string) {
+  const workflow = await readWorkflow(ctx, workflowId)
+  if (!workflow) throw new Error("Workflow not found.")
+  const step = workflow.steps.find((candidate) => candidate.id === stepId)
+  if (!step) throw new Error("Step not found.")
+  if (!step.task || !workflow.work) return
+
+  const work = await readWork(ctx, workflow.work.objectiveId)
+  if (!work) throw new Error("Persistent work hierarchy not found.")
+  assertWaveClaimForTasks(
+    work,
+    workflow.id,
+    workflow.work.generation,
+    plannedTaskSteps(workflow).map((taskStep) => taskStep.task!.id),
+  )
 }
 
 async function readQuestions(ctx: any, workflowId: string): Promise<OpenQuestion[]> {
@@ -421,7 +497,8 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         const { sessionID } = input as { sessionID: string }
         const workflow = await activeWorkflow(ctx, sessionID)
         const questions = workflow ? await readQuestions(ctx, workflow.id) : []
-        return buildSidebarSnapshot(workflow, questions)
+        const work = workflow?.work ? await readWork(ctx, workflow.work.objectiveId) : undefined
+        return buildSidebarSnapshot(workflow, questions, work)
       },
     })
 
@@ -737,6 +814,21 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             steps: [],
           }
 
+          const existingObjectiveId = objectiveIdForAnchor(anchor)
+          const existingWork = await readWork(ctx, existingObjectiveId)
+          if (existingWork) {
+            await withWorkLock(existingObjectiveId, async () => {
+              const current = await readWork(ctx, existingObjectiveId)
+              if (!current) return
+              attachWorkflowToWork(current, workflow.id, new Date().toISOString())
+              await ctx.storage.set(workKey(current.objectiveId), current)
+              workflow.work = {
+                objectiveId: current.objectiveId,
+                generation: current.generation,
+              }
+            })
+          }
+
           await ctx.storage.set(workflowKey(id), workflow)
           await ctx.storage.set(sessionKey(tool.sessionID), id)
           if (intent?.acceptedAnchor?.path === anchor) {
@@ -779,7 +871,13 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             },
             productOutcome: {
               type: "boolean",
-              description: "True for a product-outcome workflow that requires planning and Product Acceptance.",
+              description: "True for product work that requires Planner decomposition.",
+            },
+            workLevel: {
+              type: "string",
+              enum: ["objective", "wave"],
+              description:
+                "Objective runs may close whole-product Product Acceptance. Wave runs execute one bounded Wave and leave the parent Objective active. Defaults to objective.",
             },
           },
           required: [
@@ -820,7 +918,18 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             }
           }
 
-          const effects = input as Effects
+          const rawEffects = input as Effects
+          const effects: Effects = {
+            ...rawEffects,
+            ...(rawEffects.productOutcome
+              ? { workLevel: rawEffects.workLevel ?? "objective" }
+              : {}),
+          }
+
+          if (effects.productOutcome) {
+            await ensureWorkForWorkflow(ctx, workflow)
+          }
+
           const next = buildSteps(effects)
           preserveSatisfied(workflow.steps, next)
 
@@ -874,19 +983,27 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           const budget = await readBudget(ctx, workflow.id)
           const acceptance = (await ctx.storage.get(acceptanceKey(workflow.id))) as AcceptancePlan | undefined
           const knowledge = (await ctx.storage.get(knowledgeKey(workflow.id))) as KnowledgeReport | undefined
+          const work = workflow.work ? await readWork(ctx, workflow.work.objectiveId) : undefined
           const detail = Boolean((input as { detail?: boolean }).detail)
+          const workSummary = work
+            ? { tree: workTree(work), nextRunnableWaves: nextRunnableWaves(work), version: work.version }
+            : null
 
           if (!detail) {
             return {
-              content: renderToolOutput(
-                compactWorkflowState(workflow, questions, budget, limits, acceptance, knowledge),
-              ),
+              content: renderToolOutput({
+                ...compactWorkflowState(workflow, questions, budget, limits, acceptance, knowledge),
+                work: workSummary,
+              }),
             }
           }
 
           return {
             content: renderToolOutput({
-              summary: compactWorkflowState(workflow, questions, budget, limits, acceptance, knowledge),
+              summary: {
+                ...compactWorkflowState(workflow, questions, budget, limits, acceptance, knowledge),
+                work: workSummary,
+              },
               workflow,
               runnable: runnable(workflow).map((step) => ({ id: step.id, agent: step.agent })),
               questions: questionState(questions, workflow),
@@ -986,6 +1103,25 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             }
           }
 
+          if (workflow.work) {
+            const work = await readWork(ctx, workflow.work.objectiveId)
+            if (!work) return { content: renderToolOutput({ error: "Persistent work hierarchy not found." }) }
+            try {
+              assertWorkGeneration(work, workflow.work.generation)
+              const taskIds = plannedTaskSteps(workflow).map((taskStep) => taskStep.task!.id)
+              if (taskIds.length > 0) {
+                assertWaveClaimForTasks(
+                  work,
+                  workflow.id,
+                  workflow.work.generation,
+                  taskIds,
+                )
+              }
+            } catch (error) {
+              return { content: renderToolOutput({ error: error instanceof Error ? error.message : String(error) }) }
+            }
+          }
+
           try {
             finishStep(workflow, stepId, tool.agent, resolvedOutcome, summary)
           } catch (error) {
@@ -993,6 +1129,49 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           }
 
           const evidenceBound = await bindSessionEvidence(ctx, tool.sessionID, workflowId, stepId)
+
+          if (workflow.work) {
+            await withWorkLock(workflow.work.objectiveId, async () => {
+              const work = await readWork(ctx, workflow.work!.objectiveId)
+              if (!work) throw new Error("Persistent work hierarchy not found.")
+
+              syncWorkTaskStatuses(
+                work,
+                workflow.id,
+                workflow.work!.generation,
+                plannedTaskSteps(workflow).map((taskStep) => ({
+                  taskId: taskStep.task!.id,
+                  complete: taskStep.status === "complete",
+                })),
+                new Date().toISOString(),
+              )
+
+              if (
+                stepId === "review-implementation" &&
+                resolvedOutcome === "pass" &&
+                plannedTaskSteps(workflow).length > 0
+              ) {
+                completeWaveForTasks(
+                  work,
+                  workflow.id,
+                  workflow.work!.generation,
+                  plannedTaskSteps(workflow).map((taskStep) => taskStep.task!.id),
+                  new Date().toISOString(),
+                )
+              }
+
+              if (
+                stepId === "critic-final" &&
+                resolvedOutcome === "pass" &&
+                (workflow.effects?.workLevel ?? "objective") === "objective"
+              ) {
+                completeObjective(work, workflow.work!.generation, new Date().toISOString())
+              }
+
+              await ctx.storage.set(workKey(work.objectiveId), work)
+            })
+          }
+
           await ctx.storage.set(workflowKey(workflow.id), workflow)
 
           return {
@@ -1066,6 +1245,25 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           const workflow = await readWorkflow(ctx, workflowId)
           if (!workflow) return { content: renderToolOutput({ error: "Workflow not found." }) }
 
+          if (workflow.work) {
+            const work = await readWork(ctx, workflow.work.objectiveId)
+            if (!work) return { content: renderToolOutput({ error: "Persistent work hierarchy not found." }) }
+            try {
+              assertWorkGeneration(work, workflow.work.generation)
+              const taskIds = plannedTaskSteps(workflow).map((taskStep) => taskStep.task!.id)
+              if (taskIds.length > 0) {
+                assertWaveClaimForTasks(
+                  work,
+                  workflow.id,
+                  workflow.work.generation,
+                  taskIds,
+                )
+              }
+            } catch (error) {
+              return { content: renderToolOutput({ error: error instanceof Error ? error.message : String(error) }) }
+            }
+          }
+
           try {
             const reset = reopenFrom(workflow, stepId)
             resetVerificationAfterReopen(workflow, reset)
@@ -1090,6 +1288,35 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               `progress/${workflowId}/${stepId}/${crypto.randomUUID()}`,
               { reason: value.reason, ...progress, at: new Date().toISOString() },
             )
+            if (workflow.work) {
+              await withWorkLock(workflow.work.objectiveId, async () => {
+                const work = await readWork(ctx, workflow.work!.objectiveId)
+                if (!work) return
+                const now = new Date().toISOString()
+                const taskIds = plannedTaskSteps(workflow).map((taskStep) => taskStep.task!.id)
+                syncWorkTaskStatuses(
+                  work,
+                  workflow.id,
+                  workflow.work!.generation,
+                  plannedTaskSteps(workflow).map((taskStep) => ({
+                    taskId: taskStep.task!.id,
+                    complete: taskStep.status === "complete",
+                  })),
+                  now,
+                )
+                if (reset.includes("review-implementation") && taskIds.length > 0) {
+                  reopenWaveForTasks(
+                    work,
+                    workflow.id,
+                    workflow.work!.generation,
+                    taskIds,
+                    now,
+                  )
+                }
+                await ctx.storage.set(workKey(work.objectiveId), work)
+              })
+            }
+
             await ctx.storage.set(workflowKey(workflow.id), workflow)
             return {
               content: renderToolOutput({
@@ -2014,9 +2241,233 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
 
       editor.add({
+        name: "work_plan",
+        description:
+          "Create or replace the persistent Objective/Phase/Wave/Task plan for the accepted product Objective. Planner only. Replacing an existing generation requires its exact current version and a reason.",
+        input: {
+          type: "object",
+          properties: {
+            workflowId: { type: "string" },
+            expectedVersion: { type: "number" },
+            replaceReason: { type: "string" },
+            phases: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  id: { type: "string" },
+                  title: { type: "string" },
+                  waves: {
+                    type: "array",
+                    items: {
+                      type: "object",
+                      properties: {
+                        id: { type: "string" },
+                        title: { type: "string" },
+                        tasks: {
+                          type: "array",
+                          items: {
+                            type: "object",
+                            properties: {
+                              id: { type: "string" },
+                              title: { type: "string" },
+                              objective: { type: "string" },
+                              dependsOn: { type: "array", items: { type: "string" } },
+                            },
+                            required: ["id", "title", "objective", "dependsOn"],
+                            additionalProperties: false,
+                          },
+                        },
+                      },
+                      required: ["id", "title", "tasks"],
+                      additionalProperties: false,
+                    },
+                  },
+                },
+                required: ["id", "title", "waves"],
+                additionalProperties: false,
+              },
+            },
+          },
+          required: ["workflowId", "phases"],
+          additionalProperties: false,
+        },
+        options: { namespace: "loom", codemode: false },
+        execute: async (input, tool) => {
+          if (tool.agent !== "planner") {
+            return { content: renderToolOutput({ error: "Only planner may define the persistent work plan." }) }
+          }
+
+          const value = input as {
+            workflowId: string
+            expectedVersion?: number
+            replaceReason?: string
+            phases: WorkPlanPhase[]
+          }
+          const workflow = await readWorkflow(ctx, value.workflowId)
+          if (!workflow) return { content: renderToolOutput({ error: "Workflow not found." }) }
+
+          const planStep = workflow.steps.find((step) => step.id === "plan")
+          if (!planStep) return { content: renderToolOutput({ error: "Workflow has no planning step." }) }
+          if (!runnable(workflow).some((step) => step.id === "plan")) {
+            return { content: renderToolOutput({ error: "Planning step is not currently runnable." }) }
+          }
+
+          if (!workflow.work) {
+            await ensureWorkForWorkflow(ctx, workflow)
+          }
+
+          try {
+            const result = await withWorkLock(workflow.work!.objectiveId, async () => {
+              const work = await readWork(ctx, workflow.work!.objectiveId)
+              if (!work) throw new Error("Persistent Objective was not initialized.")
+
+              if (work.generation > 0) {
+                if (value.expectedVersion === undefined) {
+                  throw new Error(
+                    "Replacing an existing work-plan generation requires expectedVersion from loom_work_status.",
+                  )
+                }
+                if (value.expectedVersion !== work.version) {
+                  throw new Error(
+                    `Stale work-plan version: expected ${value.expectedVersion}, current ${work.version}.`,
+                  )
+                }
+                if (!value.replaceReason?.trim()) {
+                  throw new Error("Replacing an existing work-plan generation requires replaceReason.")
+                }
+              }
+
+              materializeWorkPlan(work, workflow.id, value.phases, new Date().toISOString())
+              await ctx.storage.set(workKey(work.objectiveId), work)
+              workflow.work = { objectiveId: work.objectiveId, generation: work.generation }
+              await ctx.storage.set(workflowKey(workflow.id), workflow)
+              return work
+            })
+
+            return {
+              content: renderToolOutput({
+                objectiveId: result.objectiveId,
+                version: result.version,
+                generation: result.generation,
+                tree: workTree(result),
+                nextRunnableWaves: nextRunnableWaves(result),
+              }),
+            }
+          } catch (error) {
+            return { content: renderToolOutput({ error: error instanceof Error ? error.message : String(error) }) }
+          }
+        },
+      })
+
+      editor.add({
+        name: "work_status",
+        description:
+          "Inspect persistent Objective/Phase/Wave/Task progress and the next dependency-eligible Waves. Uses the current workflow when no id is supplied.",
+        input: {
+          type: "object",
+          properties: {
+            workflowId: { type: "string" },
+            objectiveId: { type: "string" },
+          },
+          additionalProperties: false,
+        },
+        options: { namespace: "loom", codemode: false },
+        execute: async (input, tool) => {
+          const value = input as { workflowId?: string; objectiveId?: string }
+          let objectiveId = value.objectiveId
+
+          if (!objectiveId) {
+            const workflow = value.workflowId
+              ? await readWorkflow(ctx, value.workflowId)
+              : await activeWorkflow(ctx, tool.sessionID)
+            objectiveId = workflow?.work?.objectiveId
+          }
+
+          if (!objectiveId) {
+            return { content: renderToolOutput({ error: "No persistent work Objective is attached." }) }
+          }
+
+          const work = await readWork(ctx, objectiveId)
+          if (!work) return { content: renderToolOutput({ error: "Persistent work Objective not found." }) }
+
+          return {
+            content: renderToolOutput({
+              objectiveId: work.objectiveId,
+              version: work.version,
+              generation: work.generation,
+              tree: workTree(work),
+              nextRunnableWaves: nextRunnableWaves(work),
+            }),
+          }
+        },
+      })
+
+
+      editor.add({
+        name: "work_release",
+        description:
+          "Release this workflow's persistent Wave claim when abandoning or recovering bounded work. General only; completed Wave history is unchanged.",
+        input: {
+          type: "object",
+          properties: {
+            workflowId: { type: "string" },
+            reason: { type: "string" },
+          },
+          required: ["workflowId", "reason"],
+          additionalProperties: false,
+        },
+        options: { namespace: "loom", codemode: false },
+        execute: async (input, tool) => {
+          if (tool.agent !== "general") {
+            return { content: renderToolOutput({ error: "Only general may release a Loom Wave claim." }) }
+          }
+
+          const value = input as { workflowId: string; reason: string }
+          if (!value.reason.trim()) {
+            return { content: renderToolOutput({ error: "Wave claim release requires a concrete reason." }) }
+          }
+
+          const workflow = await readWorkflow(ctx, value.workflowId)
+          if (!workflow?.work) {
+            return { content: renderToolOutput({ error: "Workflow has no persistent work claim." }) }
+          }
+
+          const taskIds = plannedTaskSteps(workflow).map((taskStep) => taskStep.task!.id)
+          if (taskIds.length === 0) {
+            return { content: renderToolOutput({ error: "Workflow has no planned Wave Tasks to release." }) }
+          }
+
+          try {
+            await withWorkLock(workflow.work.objectiveId, async () => {
+              const work = await readWork(ctx, workflow.work!.objectiveId)
+              if (!work) throw new Error("Persistent work hierarchy not found.")
+              releaseWorkflowWave(
+                work,
+                workflow.id,
+                workflow.work!.generation,
+                taskIds,
+                new Date().toISOString(),
+              )
+              await ctx.storage.set(workKey(work.objectiveId), work)
+            })
+
+            await ctx.storage.set(
+              `work-release/${workflow.id}/${crypto.randomUUID()}`,
+              { reason: value.reason, at: new Date().toISOString(), by: tool.agent },
+            )
+            return { content: renderToolOutput({ released: true, workflowId: workflow.id, reason: value.reason }) }
+          } catch (error) {
+            return { content: renderToolOutput({ error: error instanceof Error ? error.message : String(error) }) }
+          }
+        },
+      })
+
+
+      editor.add({
         name: "task_plan",
         description:
-          "Create or replace the bounded Worker task DAG for a product workflow. Planner only. Tasks become real workflow steps with immutable write scopes.",
+          "Create the bounded Worker DAG for exactly one remaining runnable Wave from the persistent work plan. Planner only. Tasks become real workflow steps with immutable write scopes.",
         input: {
           type: "object",
           properties: {
@@ -2060,7 +2511,37 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
           try {
             const tasks = validateTaskPlan(value.tasks)
+            if (!workflow.work) {
+              throw new Error("Persistent work plan is missing. Call loom_work_plan before loom_task_plan.")
+            }
+
             const steps = applyTaskPlan(workflow, tasks)
+
+            const claimed = await withWorkLock(workflow.work.objectiveId, async () => {
+              const work = await readWork(ctx, workflow.work!.objectiveId)
+              if (!work) throw new Error("Persistent work hierarchy not found.")
+
+              assertWorkGeneration(work, workflow.work!.generation)
+              const wave = claimWorkflowWave(
+                work,
+                workflow.id,
+                workflow.work!.generation,
+                tasks,
+                (workflow.effects?.workLevel ?? "objective") === "objective",
+                new Date().toISOString(),
+              )
+              await ctx.storage.set(workKey(work.objectiveId), work)
+
+              const persisted = await readWork(ctx, work.objectiveId)
+              if (!persisted) throw new Error("Persistent work hierarchy disappeared after claim.")
+              assertWaveClaimForTasks(
+                persisted,
+                workflow.id,
+                workflow.work!.generation,
+                tasks.map((task) => task.id),
+              )
+              return { work: persisted, wave }
+            })
 
             for (const step of steps) {
               const scope: TaskScope = {
@@ -2074,6 +2555,8 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             await ctx.storage.set(workflowKey(workflow.id), workflow)
             return {
               content: renderToolOutput({
+                wave: { id: claimed.wave.logicalId, title: claimed.wave.title },
+                generation: claimed.work.generation,
                 tasks: steps.map((step) => ({
                   stepId: step.id,
                   task: step.task,
@@ -2209,6 +2692,20 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               return { content: renderToolOutput({ error: "Worker step has no declared task scope." }) }
             }
 
+            if (step.task && workflow.work) {
+              const work = await readWork(ctx, workflow.work.objectiveId)
+              if (!work) return { content: renderToolOutput({ error: "Persistent work hierarchy not found." }) }
+              try {
+                assertWaveClaimForTasks(
+                  work,
+                  workflow.id,
+                  workflow.work.generation,
+                  plannedTaskSteps(workflow).map((taskStep) => taskStep.task!.id),
+                )
+              } catch (error) {
+                return { content: renderToolOutput({ error: error instanceof Error ? error.message : String(error) }) }
+              }
+            }
           }
 
           await ctx.storage.set(sessionKey(tool.sessionID), workflowId)
@@ -2581,10 +3078,21 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
     await ctx.permission.hook("evaluate", async (event) => {
       if (event.agent === "worker" && event.action === "shell") {
-        if (shellResourcesAllowed(event.resources)) return
-
         const workflowId = (await ctx.storage.get(sessionKey(event.sessionID))) as string | undefined
         const stepId = (await ctx.storage.get(sessionStepKey(event.sessionID))) as string | undefined
+
+        if (workflowId && stepId) {
+          try {
+            await assertWorkerWorkClaim(ctx, workflowId, stepId)
+          } catch (error) {
+            event.effect = "deny"
+            event.message = error instanceof Error ? error.message : String(error)
+            return
+          }
+        }
+
+        if (shellResourcesAllowed(event.resources)) return
+
         const scope =
           workflowId && stepId
             ? ((await ctx.storage.get(scopeKey(workflowId, stepId))) as TaskScope | undefined)
@@ -2604,6 +3112,14 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         if (!workflowId || !stepId) {
           event.effect = "deny"
           event.message = "Worker must call loom_attach before editing."
+          return
+        }
+
+        try {
+          await assertWorkerWorkClaim(ctx, workflowId, stepId)
+        } catch (error) {
+          event.effect = "deny"
+          event.message = error instanceof Error ? error.message : String(error)
           return
         }
 

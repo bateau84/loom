@@ -1,10 +1,16 @@
 import type { OpenQuestion } from "./oq"
 import { plannedTaskSteps, runnable, type Workflow } from "./workflow"
-import type { LoomSidebarSnapshot, LoomSidebarTaskStatus } from "./rpc"
+import { workTree, type WorkHierarchy } from "./work"
+import type {
+  LoomSidebarSnapshot,
+  LoomSidebarTaskStatus,
+  LoomSidebarWork,
+} from "./rpc"
 
 export function buildSidebarSnapshot(
   workflow?: Workflow,
   questions: OpenQuestion[] = [],
+  hierarchy?: WorkHierarchy,
 ): LoomSidebarSnapshot {
   if (!workflow) {
     return {
@@ -21,6 +27,9 @@ export function buildSidebarSnapshot(
 
   const ready = runnable(workflow)
   const readyIDs = new Set(ready.map((step) => step.id))
+  const readyTaskIDs = new Set(
+    ready.filter((step) => step.task).map((step) => step.task!.id),
+  )
   const failed = workflow.steps.filter((step) => step.status === "failed")
   const pending = workflow.steps.filter((step) => step.status === "pending")
   const finished = workflow.steps.filter((step) =>
@@ -34,6 +43,29 @@ export function buildSidebarSnapshot(
         ? "blocked"
         : "active"
 
+  let work: LoomSidebarWork | undefined
+  if (hierarchy) {
+    const tree = workTree(hierarchy)
+    work = {
+      ...tree,
+      phases: tree.phases.map((phase) => ({
+        ...phase,
+        waves: phase.waves.map((wave) => ({
+          ...wave,
+          tasks: wave.tasks.map((task) => ({
+            ...task,
+            status:
+              task.status === "complete"
+                ? "complete"
+                : readyTaskIDs.has(task.id)
+                  ? "runnable"
+                  : "pending",
+          })),
+        })),
+      })),
+    }
+  }
+
   return {
     active: true,
     workflowId: workflow.id,
@@ -43,6 +75,7 @@ export function buildSidebarSnapshot(
       total: workflow.steps.length,
       failed: failed.length,
     },
+    ...(work ? { work } : {}),
     tasks: plannedTaskSteps(workflow).map((step) => {
       let status: LoomSidebarTaskStatus = "pending"
       if (step.status === "failed") status = "failed"
@@ -67,7 +100,6 @@ export function buildSidebarSnapshot(
     ).length,
   }
 }
-
 
 export function selectSidebarTasks(
   tasks: LoomSidebarSnapshot["tasks"],
