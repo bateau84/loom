@@ -334,7 +334,8 @@ class ActionAssertionTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             project = Path(tmp)
-            with patch.object(RUN_EVALS.subprocess, "run", return_value=Result()) as run:
+            with patch.object(RUN_EVALS.shutil, "which", return_value=None), \
+                 patch.object(RUN_EVALS.subprocess, "run", return_value=Result()) as run:
                 result = RUN_EVALS.invoke_container(
                     engine="podman",
                     image="test-image",
@@ -370,7 +371,8 @@ class ActionAssertionTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             project = Path(tmp)
-            with patch.object(RUN_EVALS.subprocess, "run", return_value=Result()) as run:
+            with patch.object(RUN_EVALS.shutil, "which", return_value=None), \
+                 patch.object(RUN_EVALS.subprocess, "run", return_value=Result()) as run:
                 RUN_EVALS.invoke_container(
                     engine="podman",
                     image="test-image",
@@ -394,6 +396,63 @@ class ActionAssertionTests(unittest.TestCase):
                 )
 
         self.assertNotIn("--network", run.call_args.args[0])
+
+    def test_eval_runner_cli_receives_explicit_network_mode(self):
+        class Result:
+            returncode = 0
+            stdout = ""
+            stderr = ""
+
+        seen: list[str] = []
+
+        def fake_run(command, **kwargs):
+            seen.extend(command)
+            output = Path(command[command.index("--output") + 1])
+            output.write_text(
+                json.dumps({
+                    "exit_code": 0,
+                    "text": "ok",
+                    "tools": [],
+                    "actions": [],
+                    "skills_loaded": [],
+                }),
+                encoding="utf-8",
+            )
+            return Result()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            with patch.object(
+                RUN_EVALS.shutil,
+                "which",
+                side_effect=lambda name: "/usr/bin/opencode-eval-runner" if name == "opencode-eval-runner" else None,
+            ), patch.object(RUN_EVALS.subprocess, "run", side_effect=fake_run):
+                result = RUN_EVALS.invoke_container(
+                    engine="podman",
+                    image="test-image",
+                    transport="opencode",
+                    model="openai/test",
+                    agent="general",
+                    prompt="test",
+                    system="",
+                    project=project,
+                    auth=None,
+                    config=None,
+                    models_catalog=None,
+                    database_seed=None,
+                    config_root=None,
+                    expected_plugin=None,
+                    timeout=30,
+                    container_timeout=60,
+                    mount_node_modules=False,
+                    extra_envs=[],
+                    network="host",
+                )
+
+        self.assertEqual(result["exit_code"], 0)
+        self.assertEqual(seen[0], "/usr/bin/opencode-eval-runner")
+        self.assertIn("--network", seen)
+        self.assertEqual(seen[seen.index("--network") + 1], "host")
 
     def test_prefers_normalized_transport_actions_over_raw_stdout(self):
         target = {
