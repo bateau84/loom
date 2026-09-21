@@ -2332,7 +2332,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             now: new Date().toISOString(),
           })
 
-          if (!result.allowed || !result.target) {
+          if (!result.allowed) {
             return {
               content: renderToolOutput({
                 error: result.reason,
