@@ -251,6 +251,58 @@ class SkillOwnedEvalDiscoveryTests(unittest.TestCase):
             0.75,
         )
 
+    def test_semantic_pass_is_derived_from_evidence_not_reported_boolean(self):
+        case = {
+            "expectations": ["does A"],
+            "must_not": ["must not B"],
+            "trap": "bad trap",
+            "_skill_owned": True,
+            "_skill_trap_declared": True,
+        }
+        good = {
+            "passed": False,
+            "expectations": [{"expectation": "does A", "met": True, "reason": "yes"}],
+            "violations": [{"rule": "must not B", "violated": False, "reason": "safe"}],
+            "trap_observed": False,
+            "trap_evidence": "not observed",
+        }
+        self.assertTrue(RUN_EVALS.semantic_pass(case, good))
+
+        bad_expectation = dict(good)
+        bad_expectation["passed"] = True
+        bad_expectation["expectations"] = [
+            {"expectation": "does A", "met": False, "reason": "missing"}
+        ]
+        self.assertFalse(RUN_EVALS.semantic_pass(case, bad_expectation))
+
+        bad_trap = dict(good)
+        bad_trap["passed"] = True
+        bad_trap["trap_observed"] = True
+        self.assertFalse(RUN_EVALS.semantic_pass(case, bad_trap))
+
+    def test_judge_contract_rejects_missing_or_extra_results(self):
+        case = {
+            "expectations": ["a", "b"],
+            "must_not": ["c"],
+        }
+        too_few = {
+            "expectations": [{"met": True}],
+            "violations": [{"violated": False}],
+        }
+        self.assertRegex(
+            RUN_EVALS.judge_contract_error(case, too_few) or "",
+            r"expected 2",
+        )
+
+        extra_violation = {
+            "expectations": [{"met": True}, {"met": True}],
+            "violations": [{"violated": False}, {"violated": False}],
+        }
+        self.assertRegex(
+            RUN_EVALS.judge_contract_error(case, extra_violation) or "",
+            r"expected 1",
+        )
+
     def test_skill_value_distinguishes_improvement_and_regression(self):
         self.assertEqual(
             RUN_EVALS.classify_skill_value(25.0, trap_fixed=False, trap_regression=False),
