@@ -21,7 +21,7 @@ jobs:
       - run: bun run typecheck
       - name: Install Playwright Chromium for dashboard Designer validation
         run: |
-          npm install --no-save --package-lock=false @playwright/test@1.55.0
+          npm install --no-save --package-lock=false --legacy-peer-deps @playwright/test@1.55.0
           npx playwright install --with-deps chromium
       - name: Run dashboard browser Designer validation
         run: npx playwright test dashboard/e2e.spec.mjs --browser=chromium --workers=1
