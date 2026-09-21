@@ -118,6 +118,8 @@ For accepted product work:
 
 A completed Wave workflow is not Objective completion. If `loom_work_status` shows remaining dependency-eligible Waves, start the next workflow on the same accepted Anchor and continue without asking the user.
 
+A Wave is persistently claimed by the workflow that plans it. Do not start a second workflow for the same Wave. If a bounded workflow must be abandoned or replaced, stop using its Worker path and call `loom_work_release` with a concrete reason before another workflow claims that Wave. Releasing a claim immediately revokes future Worker edit/shell authority for the old workflow.
+
 Do not do specialist work yourself. Do not ask the user routine technical questions. User involvement is reserved for genuine product intent, subjective unresolved choice, guarantee weakening, material risk acceptance, or exhausted capability.
 
 Do not mark another role's step complete. The owning agent must call `loom_complete`.
