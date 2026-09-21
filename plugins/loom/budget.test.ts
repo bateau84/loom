@@ -151,6 +151,7 @@ describe("Loom progress and dispatch budgets", () => {
     })
 
     expect(grant.allowed).toBe(true)
+    if (!grant.allowed) throw new Error(grant.reason)
     expect(grant.target).toEqual({
       kind: "step",
       id: "critic-solution",
@@ -225,6 +226,7 @@ describe("Loom progress and dispatch budgets", () => {
     })
 
     expect(grant.allowed).toBe(true)
+    if (!grant.allowed) throw new Error(grant.reason)
     expect(grant.target).toEqual({
       kind: "question",
       id: question.id,
@@ -286,6 +288,7 @@ describe("Loom progress and dispatch budgets", () => {
       })
 
       expect(grant.allowed).toBe(true)
+    if (!grant.allowed) throw new Error(grant.reason)
       expect(grant.previousLimit).toBe(item.base)
       expect(grant.newLimit).toBe(item.base + 1)
 
@@ -344,6 +347,7 @@ describe("Loom progress and dispatch budgets", () => {
     })
 
     expect(grant.allowed).toBe(true)
+    if (!grant.allowed) throw new Error(grant.reason)
     expect(grant.previousLimit).toBe(3)
     expect(grant.newLimit).toBe(4)
     expect(state.totalDispatches).toBe(3)
