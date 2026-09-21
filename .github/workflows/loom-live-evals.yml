@@ -111,7 +111,7 @@ jobs:
           fi
 
       - name: Run isolated live evals
-        uses: bateau84/opencode-eval-runner@01a4438241be40a307b725a9117c88c8771e2ffd
+        uses: bateau84/opencode-eval-runner@bd02908d134ccec81d4497604b7b115606cf9b45
         with:
           engine: docker
           prepare-opencode: ${{ inputs.target_transport == 'opencode' || inputs.judge_transport == 'opencode' }}
