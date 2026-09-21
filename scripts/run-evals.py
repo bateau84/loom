@@ -322,6 +322,7 @@ def invoke_container(
     container_timeout: int,
     mount_node_modules: bool,
     extra_envs: list[str],
+    network: str | None,
 ) -> dict[str, Any]:
     with tempfile.TemporaryDirectory(prefix="loom-eval-invoke-") as tmp:
         root = Path(tmp)
@@ -342,6 +343,8 @@ def invoke_container(
             "--security-opt",
             "no-new-privileges",
         ]
+        if network:
+            command += ["--network", network]
         if engine == "podman":
             # The eval-runner image uses dedicated UID/GID 1000. Map the
             # invoking host user onto that identity so private read-only seed
@@ -683,6 +686,7 @@ def run_case(
             container_timeout=args.container_timeout,
             mount_node_modules=case["execution"] == "runtime",
             extra_envs=args.env,
+            network=args.network,
         )
         target_error = transport_error(target)
         observed_actions = normalized_target_actions(target) if not target_error else []
@@ -716,6 +720,7 @@ def run_case(
                 container_timeout=args.container_timeout,
                 mount_node_modules=False,
                 extra_envs=args.env,
+                network=args.network,
             )
             judge_error = transport_error(judge_result)
             if not judge_error:
@@ -785,6 +790,11 @@ def main() -> int:
     parser.add_argument("--target-transport", choices=("opencode", "github-copilot-cli"), default="opencode")
     parser.add_argument("--judge-transport", choices=("opencode", "github-copilot-cli"), default="opencode")
     parser.add_argument("--engine", choices=("auto", "podman", "docker"), default="auto")
+    parser.add_argument(
+        "--network",
+        metavar="MODE",
+        help="Optional OCI network mode/name passed to every target and judge container. Default keeps the engine's normal network isolation.",
+    )
     parser.add_argument("--image", help="Override both transport images with one explicit image.")
     parser.add_argument("--opencode-image")
     parser.add_argument("--copilot-image")
