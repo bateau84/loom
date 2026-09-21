@@ -677,15 +677,26 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
     const ensureLegacySession = async (sessionID: string) => {
       if (legacyCheckedSessions.has(sessionID)) return
       const session = await ctx.session.get({ sessionID })
+      const sessionProjectId =
+        typeof session.projectID === "string" ? session.projectID : ""
+      const currentProjectId =
+        typeof ctx.location.project.id === "string" ? ctx.location.project.id : ""
+      const resumeProof =
+        typeof session.id === "string" &&
+        session.id === sessionID &&
+        sessionProjectId.length > 0 &&
+        currentProjectId.length > 0
+          ? {
+              kind: "opencode-host-session" as const,
+              sessionId: session.id,
+              projectId: sessionProjectId,
+            }
+          : undefined
       await migrateLegacySessionState(legacyStorage, scopedStorage, runtime, {
         sessionId: sessionID,
-        sessionProjectId: String(session.projectID),
-        currentProjectId: String(ctx.location.project.id),
-        resumeProof: {
-          kind: "opencode-host-session",
-          sessionId: String(session.id ?? sessionID),
-          projectId: String(session.projectID),
-        },
+        sessionProjectId,
+        currentProjectId,
+        ...(resumeProof ? { resumeProof } : {}),
       })
       legacyCheckedSessions.add(sessionID)
     }
