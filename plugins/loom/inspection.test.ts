@@ -3,6 +3,7 @@ import { mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import loomPlugin from "./index"
+import { observationsSupportKind } from "./evidence"
 import { findPaths, grepText, selectText, statPaths } from "./inspection"
 
 const roots: string[] = []
@@ -140,6 +141,23 @@ describe("Loom structured inspection", () => {
     expect(result.matches[0]?.text).toBe("(a+)+$")
   })
 
+  test("grep searches the full logical line beyond 16 KiB", async () => {
+    const root = await fixture()
+    await writeFile(
+      join(root, "src", "long-line.txt"),
+      "x".repeat(20_000) + "needle-after-16k" + "\n",
+    )
+
+    const result = await grepText(root, {
+      path: "src/long-line.txt",
+      pattern: "needle-after-16k",
+    })
+
+    expect(result.matched).toBe(1)
+    expect(result.matches).toHaveLength(1)
+    expect(result.matches[0]?.line).toBe(1)
+  })
+
   test("grep bounds retained results while still reporting total matches", async () => {
     const root = await fixture()
     const dense = Array.from({ length: 1_200 }, (_, index) => "needle " + (index + 1)).join("\n")
@@ -158,6 +176,46 @@ describe("Loom structured inspection", () => {
     expect(result.matches).toHaveLength(50)
     expect(result.matches[0]?.line).toBe(1_200)
     expect(result.matches[49]?.line).toBe(1_151)
+  })
+
+  test("select rejects an empty custom delimiter before field expansion", async () => {
+    const root = await fixture()
+
+    await expect(
+      selectText(root, {
+        path: "src/results.log",
+        delimiter: "",
+      }),
+    ).rejects.toThrow("must not be empty")
+  })
+
+  test("select rejects rows with more than 256 fields", async () => {
+    const root = await fixture()
+    await writeFile(
+      join(root, "src", "too-many-fields.csv"),
+      Array.from({ length: 257 }, (_, index) => String(index)).join(",") + "\n",
+    )
+
+    await expect(
+      selectText(root, {
+        path: "src/too-many-fields.csv",
+        delimiter: "comma",
+      }),
+    ).rejects.toThrow("too many fields")
+  })
+
+  test("select rejects excessive row work before building an unbounded row graph", async () => {
+    const root = await fixture()
+    await writeFile(
+      join(root, "src", "too-many-rows.log"),
+      Array.from({ length: 20_001 }, () => "x").join("\n"),
+    )
+
+    await expect(
+      selectText(root, {
+        path: "src/too-many-rows.log",
+      }),
+    ).rejects.toThrow("too many rows")
   })
 
   test("select filters, projects, sorts, and deduplicates fields", async () => {
@@ -272,6 +330,53 @@ describe("Loom structured inspection", () => {
 
     expect(result.content).toContain("docs/reports/a.md")
     expect(result.content).toContain("docs/reports/b.md")
+  })
+
+  test("failed inspection stays failed and cannot support a success claim", async () => {
+    const root = await fixture()
+    const { registered, toolHooks, storage } = await pluginHarness(root)
+    const before = toolHooks.get("execute.before")!
+    const after = toolHooks.get("execute.after")!
+    const input = { path: "../outside" }
+
+    await before({
+      tool: "loom_find",
+      callID: "call-failed-find",
+      sessionID: "session-failed-evidence",
+      input,
+    })
+
+    let failure: unknown
+    try {
+      await registered.get("find")!.execute(input, {
+        agent: "reviewer",
+        sessionID: "session-failed-evidence",
+      })
+    } catch (error) {
+      failure = error
+    }
+
+    expect(failure).toBeInstanceOf(Error)
+
+    await after({
+      tool: "loom_find",
+      callID: "call-failed-find",
+      sessionID: "session-failed-evidence",
+      agent: "reviewer",
+      status: "error",
+      error: failure,
+    })
+
+    const observations = [...storage.values()].filter(
+      (value: any) => value && typeof value === "object" && value.tool === "loom_find",
+    ) as any[]
+
+    expect(observations).toHaveLength(1)
+    expect(observations[0].status).toBe("error")
+    expect(observationsSupportKind("runtime", observations)).toBe(false)
+    expect(observationsSupportKind("integration", observations)).toBe(false)
+    expect(observationsSupportKind("product-acceptance", observations)).toBe(false)
+    expect(observationsSupportKind("other", observations)).toBe(false)
   })
 
   test("inspection tool calls are captured as Loom evidence while control tools stay excluded", async () => {
