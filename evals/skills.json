@@ -70,7 +70,7 @@
         "BR-005",
         "BR-006"
       ],
-      "prompt": "Review architecture.md against the accepted behavior written in the same file. Identify concrete architecture defects, missing boundaries, or policy that the architecture is not authorized to invent.",
+      "prompt": "The producer says they used the repository's multi-component architecture methodology to turn the accepted behavior in architecture.md into the proposed structure. Review that architecture against its accepted behavior and identify concrete defects, missing boundaries, or policy that the architecture is not authorized to invent.",
       "trap": "The proposal is structurally plausible but silently turns a weak retry allowance into exact retry, expiry, and user-visible failure policy.",
       "expectations": [
         "Separates accepted behavior from technical realization and flags the exact retry schedule as unowned product or behavioral policy.",
