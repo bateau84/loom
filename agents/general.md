@@ -180,7 +180,7 @@ For either target:
 - give a concrete reason;
 - record the exact progress dimensions that changed: new evidence, changed hypothesis, changed strategy, or reduced unresolved work.
 
-For **Critic** targets, a grant additionally requires **new material evidence**. A changed strategy, changed hypothesis, or reduced unresolved set alone does not justify another Critic dispatch.
+For **Critic** targets, a grant additionally requires **new material evidence**. A changed strategy, changed hypothesis, or reduced unresolved set alone does not justify another Critic dispatch. Pass concrete evidence references in `evidence` so the exceptional Critic retry records what justified it.
 
 This applies to work steps, gates, and agent-owned OQ authority dispatches, including Reviewer, Critic, Designer validation, Acceptance, and other agent-owned work.
 
