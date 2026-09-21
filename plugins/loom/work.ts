@@ -42,6 +42,8 @@ export type WorkNode = {
   objective?: string
   dependsOn?: string[]
   supersededByGeneration?: number
+  claimedByWorkflowId?: string
+  claimedAt?: string
   createdAt: string
   updatedAt: string
 }
@@ -335,6 +337,14 @@ export function materializeWorkPlan(
   return hierarchy
 }
 
+export function assertWorkGeneration(hierarchy: WorkHierarchy, generation: number) {
+  if (generation !== hierarchy.generation) {
+    throw new Error(
+      `Stale workflow generation: workflow=${generation}, current=${hierarchy.generation}. Reconcile/replan before mutating persistent work.`,
+    )
+  }
+}
+
 function activeNodes(hierarchy: WorkHierarchy) {
   return hierarchy.nodes.filter(
     (node) => node.generation === hierarchy.generation && node.status !== "superseded",
@@ -413,7 +423,9 @@ function recomputeRollup(hierarchy: WorkHierarchy, now: string) {
   for (const wave of waves) {
     const tasks = nodes.filter((node) => node.type === "task" && node.parentId === wave.id)
     const allTasksComplete = tasks.length > 0 && tasks.every((task) => task.status === "complete")
-    const started = tasks.some((task) => task.status === "complete" || task.status === "active")
+    const started =
+      Boolean(wave.claimedByWorkflowId) ||
+      tasks.some((task) => task.status === "complete" || task.status === "active")
 
     // Task completion makes a Wave reviewable, not complete. Wave completion is
     // an explicit transition after review-implementation passes.
@@ -449,15 +461,23 @@ function recomputeRollup(hierarchy: WorkHierarchy, now: string) {
 
 export function syncWorkTaskStatuses(
   hierarchy: WorkHierarchy,
+  workflowId: string,
+  generation: number,
   statuses: Array<{ taskId: string; complete: boolean }>,
   now: string,
 ) {
+  assertWorkGeneration(hierarchy, generation)
   const tasks = activeTaskMap(hierarchy)
   let changed = false
 
   for (const entry of statuses) {
     const task = tasks.get(entry.taskId)
     if (!task) continue
+    if (task.claimedByWorkflowId !== workflowId) {
+      throw new Error(
+        `Workflow ${workflowId} does not own Task ${entry.taskId}; claimed by ${task.claimedByWorkflowId ?? "nobody"}.`,
+      )
+    }
     const next: WorkNodeStatus = entry.complete ? "complete" : "pending"
     if (task.status !== next) {
       task.status = next
@@ -476,9 +496,12 @@ export function syncWorkTaskStatuses(
 
 export function completeWaveForTasks(
   hierarchy: WorkHierarchy,
+  workflowId: string,
+  generation: number,
   taskIds: string[],
   now: string,
 ) {
+  assertWorkGeneration(hierarchy, generation)
   const tasks = activeTaskMap(hierarchy)
   const selected = taskIds.map((id) => tasks.get(id))
   if (selected.some((task) => !task)) throw new Error("Wave completion references unknown Task.")
@@ -488,6 +511,11 @@ export function completeWaveForTasks(
   const waveId = [...parentIds][0]!
   const wave = activeNodes(hierarchy).find((node) => node.id === waveId && node.type === "wave")
   if (!wave) throw new Error("Wave not found.")
+  if (wave.claimedByWorkflowId !== workflowId) {
+    throw new Error(
+      `Workflow ${workflowId} does not own Wave ${wave.logicalId}; claimed by ${wave.claimedByWorkflowId ?? "nobody"}.`,
+    )
+  }
 
   const waveTasks = activeNodes(hierarchy).filter(
     (node) => node.type === "task" && node.parentId === wave.id,
@@ -495,8 +523,18 @@ export function completeWaveForTasks(
   if (waveTasks.some((task) => task.status !== "complete")) {
     throw new Error("Wave cannot complete before every Task is complete.")
   }
+  if (waveTasks.some((task) => task.claimedByWorkflowId !== workflowId)) {
+    throw new Error("Wave cannot complete because one or more Tasks are not claimed by this workflow.")
+  }
 
   wave.status = "complete"
+  delete wave.claimedByWorkflowId
+  delete wave.claimedAt
+  for (const task of waveTasks) {
+    delete task.claimedByWorkflowId
+    delete task.claimedAt
+    task.updatedAt = now
+  }
   wave.updatedAt = now
   recomputeRollup(hierarchy, now)
   hierarchy.version++
@@ -506,9 +544,12 @@ export function completeWaveForTasks(
 
 export function reopenWaveForTasks(
   hierarchy: WorkHierarchy,
+  workflowId: string,
+  generation: number,
   taskIds: string[],
   now: string,
 ) {
+  assertWorkGeneration(hierarchy, generation)
   const tasks = activeTaskMap(hierarchy)
   const selected = taskIds.map((id) => tasks.get(id))
   if (selected.some((task) => !task)) return hierarchy
@@ -519,6 +560,13 @@ export function reopenWaveForTasks(
   const wave = activeNodes(hierarchy).find((node) => node.id === waveId && node.type === "wave")
   if (!wave || wave.status !== "complete") return hierarchy
 
+  wave.claimedByWorkflowId = workflowId
+  wave.claimedAt = now
+  for (const task of selected) {
+    task!.claimedByWorkflowId = workflowId
+    task!.claimedAt = now
+    task!.updatedAt = now
+  }
   wave.status = "active"
   wave.updatedAt = now
   recomputeRollup(hierarchy, now)
@@ -527,7 +575,8 @@ export function reopenWaveForTasks(
   return hierarchy
 }
 
-export function completeObjective(hierarchy: WorkHierarchy, now: string) {
+export function completeObjective(hierarchy: WorkHierarchy, generation: number, now: string) {
+  assertWorkGeneration(hierarchy, generation)
   const phases = activeNodes(hierarchy).filter((node) => node.type === "phase")
   if (phases.length === 0) throw new Error("Objective has no active work plan.")
   if (phases.some((phase) => phase.status !== "complete")) {
@@ -539,6 +588,106 @@ export function completeObjective(hierarchy: WorkHierarchy, now: string) {
     hierarchy.version++
     hierarchy.updatedAt = now
   }
+  return hierarchy
+}
+
+export function assertWaveClaimForTasks(
+  hierarchy: WorkHierarchy,
+  workflowId: string,
+  generation: number,
+  taskIds: string[],
+) {
+  assertWorkGeneration(hierarchy, generation)
+  const tasks = activeTaskMap(hierarchy)
+  const selected = taskIds.map((id) => tasks.get(id))
+  if (selected.some((task) => !task)) {
+    throw new Error("Workflow references Tasks outside the current work generation.")
+  }
+
+  const parentIds = new Set(selected.map((task) => task!.parentId))
+  if (parentIds.size !== 1) throw new Error("Workflow Tasks must belong to exactly one Wave.")
+
+  const waveId = [...parentIds][0]!
+  const wave = activeNodes(hierarchy).find((node) => node.id === waveId && node.type === "wave")
+  if (!wave) throw new Error("Wave not found.")
+  if (wave.claimedByWorkflowId !== workflowId) {
+    throw new Error(
+      `Wave ${wave.logicalId} is claimed by ${wave.claimedByWorkflowId ?? "nobody"}, not ${workflowId}.`,
+    )
+  }
+  if (selected.some((task) => task!.claimedByWorkflowId !== workflowId)) {
+    throw new Error("One or more workflow Tasks are not claimed by this workflow.")
+  }
+  return wave
+}
+
+export function claimWorkflowWave(
+  hierarchy: WorkHierarchy,
+  workflowId: string,
+  generation: number,
+  tasks: TaskSpec[],
+  objectiveClosure: boolean,
+  now: string,
+) {
+  assertWorkGeneration(hierarchy, generation)
+  const wave = validateWorkflowWave(hierarchy, tasks, objectiveClosure)
+  const taskMap = activeTaskMap(hierarchy)
+  const selected = tasks.map((task) => taskMap.get(task.id)!)
+
+  if (wave.claimedByWorkflowId && wave.claimedByWorkflowId !== workflowId) {
+    throw new Error(
+      `Wave ${wave.logicalId} is already claimed by workflow ${wave.claimedByWorkflowId}.`,
+    )
+  }
+  const conflicting = selected.find(
+    (task) => task.claimedByWorkflowId && task.claimedByWorkflowId !== workflowId,
+  )
+  if (conflicting) {
+    throw new Error(
+      `Task ${conflicting.logicalId} is already claimed by workflow ${conflicting.claimedByWorkflowId}.`,
+    )
+  }
+
+  wave.claimedByWorkflowId = workflowId
+  wave.claimedAt = now
+  wave.status = "active"
+  wave.updatedAt = now
+  for (const task of selected) {
+    task.claimedByWorkflowId = workflowId
+    task.claimedAt = now
+    task.updatedAt = now
+  }
+
+  recomputeRollup(hierarchy, now)
+  hierarchy.version++
+  hierarchy.updatedAt = now
+  return wave
+}
+
+export function releaseWorkflowWave(
+  hierarchy: WorkHierarchy,
+  workflowId: string,
+  generation: number,
+  taskIds: string[],
+  now: string,
+) {
+  const wave = assertWaveClaimForTasks(hierarchy, workflowId, generation, taskIds)
+  const tasks = activeTaskMap(hierarchy)
+
+  delete wave.claimedByWorkflowId
+  delete wave.claimedAt
+  wave.updatedAt = now
+
+  for (const taskId of taskIds) {
+    const task = tasks.get(taskId)!
+    delete task.claimedByWorkflowId
+    delete task.claimedAt
+    task.updatedAt = now
+  }
+
+  recomputeRollup(hierarchy, now)
+  hierarchy.version++
+  hierarchy.updatedAt = now
   return hierarchy
 }
 
@@ -556,6 +705,11 @@ export function validateWorkflowWave(
     const workTask = taskMap.get(task.id)
     if (!workTask) throw new Error(`Workflow Task ${task.id} is not in the current work-plan generation.`)
     if (workTask.status === "complete") throw new Error(`Workflow Task ${task.id} is already complete.`)
+    if (workTask.claimedByWorkflowId && workTask.claimedByWorkflowId !== "") {
+      throw new Error(
+        `Workflow Task ${task.id} is already claimed by workflow ${workTask.claimedByWorkflowId}.`,
+      )
+    }
     if (task.title.trim() !== workTask.title) {
       throw new Error(`Workflow Task ${task.id} title differs from the persistent work plan.`)
     }
@@ -606,7 +760,11 @@ export function validateWorkflowWave(
   }
 
   const activeWaves = activeNodes(hierarchy).filter(
-    (node) => node.type === "wave" && node.status !== "complete" && node.status !== "cancelled",
+    (node) =>
+      node.type === "wave" &&
+      node.status !== "complete" &&
+      node.status !== "cancelled" &&
+      !node.claimedByWorkflowId,
   )
   if (objectiveClosure && activeWaves.length > 1) {
     throw new Error(
@@ -621,7 +779,13 @@ export function nextRunnableWaves(hierarchy: WorkHierarchy) {
   const nodes = activeNodes(hierarchy)
   const tasks = activeTaskMap(hierarchy)
   return nodes
-    .filter((node) => node.type === "wave" && node.status !== "complete" && node.status !== "cancelled")
+    .filter(
+      (node) =>
+        node.type === "wave" &&
+        node.status !== "complete" &&
+        node.status !== "cancelled" &&
+        !node.claimedByWorkflowId,
+    )
     .filter((wave) =>
       nodes.some(
         (node) => node.type === "task" && node.parentId === wave.id && node.status !== "complete",
