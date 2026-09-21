@@ -134,6 +134,8 @@ jobs:
             fi
             if [[ "$EVAL_ALL" == "true" ]]; then
               args+=(--all)
+            elif [[ -n "$EVAL_TARGET" || "$EVAL_TARGET_KIND" != "all" ]]; then
+              :
             elif [[ -n "$EVAL_CASES" ]]; then
               args+=(--cases "$EVAL_CASES")
             fi
