@@ -1,7 +1,12 @@
 import { describe, expect, test } from "bun:test"
 import { buildSidebarSnapshot, selectSidebarTasks } from "./sidebar"
 import type { Workflow } from "./workflow"
-import { createWorkHierarchy, materializeWorkPlan, syncWorkTaskStatuses } from "./work"
+import {
+  claimWorkflowWave,
+  createWorkHierarchy,
+  materializeWorkPlan,
+  syncWorkTaskStatuses,
+} from "./work"
 
 describe("Loom sidebar snapshot", () => {
   test("shows planned tasks and runnable state", () => {
@@ -212,7 +217,40 @@ describe("Loom sidebar snapshot", () => {
       ],
       "now",
     )
-    syncWorkTaskStatuses(work, [{ taskId: "a", complete: true }], "later")
+    claimWorkflowWave(
+      work,
+      workflow.id,
+      work.generation,
+      [
+        {
+          id: "a",
+          title: "Task A",
+          objective: "Build A",
+          dependsOn: [],
+          write: ["internal/a/**"],
+          skills: ["golang"],
+          verify: ["go test ./..."],
+        },
+        {
+          id: "b",
+          title: "Task B",
+          objective: "Build B",
+          dependsOn: ["a"],
+          write: ["internal/b/**"],
+          skills: ["golang"],
+          verify: ["go test ./..."],
+        },
+      ],
+      false,
+      "claim",
+    )
+    syncWorkTaskStatuses(
+      work,
+      workflow.id,
+      work.generation,
+      [{ taskId: "a", complete: true }],
+      "later",
+    )
 
     const snapshot = buildSidebarSnapshot(workflow, [], work)
     expect(snapshot.work?.objective.progress).toEqual({ finished: 1, total: 2 })
