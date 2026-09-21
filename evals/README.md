@@ -139,7 +139,7 @@ Skill evaluation has two complementary sources:
 
 Skill-owned cases run through an isolated synthetic target agent that explicitly loads the selected skill before answering. This evaluates the skill's own behavioral guidance without requiring the user to duplicate its cases into the central corpus. The harness still requires the runner's `skills_loaded` result to confirm the native `skill` call completed successfully.
 
-Because native skill loading is an OpenCode runtime feature, skill targets require `--target-transport opencode`. GitHub Copilot CLI can still be used independently as the judge.
+Central native skill-routing cases require `--target-transport opencode` because they assert real `skill` tool loading and companion-file behavior. Skill-owned suites under `skills/<skill>/evals/*.json` are provider-neutral: with OpenCode, Loom verifies a completed native skill load; with GitHub Copilot CLI, Loom injects the skill's `SKILL.md` methodology into the isolated system context, matching the repository's established bare skill-eval harness pattern. Copilot may be used for the target, judge, or both for skill-owned suites.
 
 The harness chooses Podman first, then Docker. Override it explicitly with `--engine podman` or `--engine docker`. For rootless Podman on SELinux hosts, Loom disables container SELinux labeling for the eval container rather than relabeling your repository or credential files.
 
@@ -204,7 +204,7 @@ Target and judge still run in different containers even when they use the same m
 
 The workflow grants `copilot-requests: write`. When either transport is `github-copilot-cli`, the action exposes the workflow's built-in `GITHUB_TOKEN` to the harness, and the runner passes it into the isolated Copilot invocation. No separate Copilot secret is required.
 
-Use `target_kind` and `target` to run all agent cases, all skill cases, or a specific agent/skill on demand. A skill target is valid when it has central cases and/or one or more `*.json` files under `skills/<skill>/evals/`. When `cases` is also supplied, it intersects with those target filters rather than being silently ignored. With `all=false`, at least one of `cases`, `target_kind != all`, or `target` must be explicit before inference starts.
+Use `target_kind` and `target` to run all agent cases, all skill cases, or a specific agent/skill on demand. A skill target is valid when it has central cases and/or one or more `*.json` files under `skills/<skill>/evals/`. For a selected skill, `cases` may use either the normalized global ID (for example `SKILL-web-ui-design-Web-01`) or the skill-local ID/name from its JSON file (for example `Web-01`). When `cases` is also supplied, it intersects with those target filters rather than being silently ignored. With `all=false`, at least one of `cases`, `target_kind != all`, or `target` must be explicit before inference starts.
 
 ### GitHub Copilot CLI transport
 
