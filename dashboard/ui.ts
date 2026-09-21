@@ -109,12 +109,18 @@ button:focus-visible, select:focus-visible, input:focus-visible, a:focus-visible
   const statusFilter = document.getElementById("status-filter");
   const projectFilter = document.getElementById("project-filter");
 
-  const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]));
+  const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) =>
+    c === "&" ? "&amp;" :
+    c === "<" ? "&lt;" :
+    c === ">" ? "&gt;" :
+    c === '"' ? "&quot;" : "&#39;"
+  );
   const enc = encodeURIComponent;
   const dec = decodeURIComponent;
 
   function route() {
-    const parts = location.hash.replace(/^#\/?/, "").split("/").filter(Boolean).map(dec);
+    const hash = location.hash.startsWith("#/") ? location.hash.slice(2) : location.hash.replace(/^#/, "");
+    const parts = hash.split("/").filter(Boolean).map(dec);
     if (parts[0] !== "project") return { kind: "fleet" };
     if (!parts[1]) return { kind: "fleet" };
     if (parts[2] !== "workflow") return { kind: "project", projectId: parts[1] };
