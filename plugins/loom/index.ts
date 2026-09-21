@@ -2138,9 +2138,173 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
 
       editor.add({
+        name: "work_plan",
+        description:
+          "Create or replace the persistent Objective/Phase/Wave/Task plan for the accepted product Objective. Planner only. Replacing an existing generation requires its exact current version and a reason.",
+        input: {
+          type: "object",
+          properties: {
+            workflowId: { type: "string" },
+            expectedVersion: { type: "number" },
+            replaceReason: { type: "string" },
+            phases: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  id: { type: "string" },
+                  title: { type: "string" },
+                  waves: {
+                    type: "array",
+                    items: {
+                      type: "object",
+                      properties: {
+                        id: { type: "string" },
+                        title: { type: "string" },
+                        tasks: {
+                          type: "array",
+                          items: {
+                            type: "object",
+                            properties: {
+                              id: { type: "string" },
+                              title: { type: "string" },
+                              objective: { type: "string" },
+                              dependsOn: { type: "array", items: { type: "string" } },
+                            },
+                            required: ["id", "title", "objective", "dependsOn"],
+                            additionalProperties: false,
+                          },
+                        },
+                      },
+                      required: ["id", "title", "tasks"],
+                      additionalProperties: false,
+                    },
+                  },
+                },
+                required: ["id", "title", "waves"],
+                additionalProperties: false,
+              },
+            },
+          },
+          required: ["workflowId", "phases"],
+          additionalProperties: false,
+        },
+        options: { namespace: "loom", codemode: false },
+        execute: async (input, tool) => {
+          if (tool.agent !== "planner") {
+            return { content: renderToolOutput({ error: "Only planner may define the persistent work plan." }) }
+          }
+
+          const value = input as {
+            workflowId: string
+            expectedVersion?: number
+            replaceReason?: string
+            phases: WorkPlanPhase[]
+          }
+          const workflow = await readWorkflow(ctx, value.workflowId)
+          if (!workflow) return { content: renderToolOutput({ error: "Workflow not found." }) }
+
+          const planStep = workflow.steps.find((step) => step.id === "plan")
+          if (!planStep) return { content: renderToolOutput({ error: "Workflow has no planning step." }) }
+          if (!runnable(workflow).some((step) => step.id === "plan")) {
+            return { content: renderToolOutput({ error: "Planning step is not currently runnable." }) }
+          }
+
+          if (!workflow.work) {
+            await ensureWorkForWorkflow(ctx, workflow)
+          }
+
+          try {
+            const result = await withWorkLock(workflow.work!.objectiveId, async () => {
+              const work = await readWork(ctx, workflow.work!.objectiveId)
+              if (!work) throw new Error("Persistent Objective was not initialized.")
+
+              if (work.generation > 0) {
+                if (value.expectedVersion === undefined) {
+                  throw new Error(
+                    "Replacing an existing work-plan generation requires expectedVersion from loom_work_status.",
+                  )
+                }
+                if (value.expectedVersion !== work.version) {
+                  throw new Error(
+                    `Stale work-plan version: expected ${value.expectedVersion}, current ${work.version}.`,
+                  )
+                }
+                if (!value.replaceReason?.trim()) {
+                  throw new Error("Replacing an existing work-plan generation requires replaceReason.")
+                }
+              }
+
+              materializeWorkPlan(work, workflow.id, value.phases, new Date().toISOString())
+              await ctx.storage.set(workKey(work.objectiveId), work)
+              workflow.work = { objectiveId: work.objectiveId, generation: work.generation }
+              await ctx.storage.set(workflowKey(workflow.id), workflow)
+              return work
+            })
+
+            return {
+              content: renderToolOutput({
+                objectiveId: result.objectiveId,
+                version: result.version,
+                generation: result.generation,
+                tree: workTree(result),
+                nextRunnableWaves: nextRunnableWaves(result),
+              }),
+            }
+          } catch (error) {
+            return { content: renderToolOutput({ error: error instanceof Error ? error.message : String(error) }) }
+          }
+        },
+      })
+
+      editor.add({
+        name: "work_status",
+        description:
+          "Inspect persistent Objective/Phase/Wave/Task progress and the next dependency-eligible Waves. Uses the current workflow when no id is supplied.",
+        input: {
+          type: "object",
+          properties: {
+            workflowId: { type: "string" },
+            objectiveId: { type: "string" },
+          },
+          additionalProperties: false,
+        },
+        options: { namespace: "loom", codemode: false },
+        execute: async (input, tool) => {
+          const value = input as { workflowId?: string; objectiveId?: string }
+          let objectiveId = value.objectiveId
+
+          if (!objectiveId) {
+            const workflow = value.workflowId
+              ? await readWorkflow(ctx, value.workflowId)
+              : await activeWorkflow(ctx, tool.sessionID)
+            objectiveId = workflow?.work?.objectiveId
+          }
+
+          if (!objectiveId) {
+            return { content: renderToolOutput({ error: "No persistent work Objective is attached." }) }
+          }
+
+          const work = await readWork(ctx, objectiveId)
+          if (!work) return { content: renderToolOutput({ error: "Persistent work Objective not found." }) }
+
+          return {
+            content: renderToolOutput({
+              objectiveId: work.objectiveId,
+              version: work.version,
+              generation: work.generation,
+              tree: workTree(work),
+              nextRunnableWaves: nextRunnableWaves(work),
+            }),
+          }
+        },
+      })
+
+
+      editor.add({
         name: "task_plan",
         description:
-          "Create or replace the bounded Worker task DAG for a product workflow. Planner only. Tasks become real workflow steps with immutable write scopes.",
+          "Create the bounded Worker DAG for exactly one remaining runnable Wave from the persistent work plan. Planner only. Tasks become real workflow steps with immutable write scopes.",
         input: {
           type: "object",
           properties: {
@@ -2184,7 +2348,19 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
           try {
             const tasks = validateTaskPlan(value.tasks)
+            if (!workflow.work) {
+              throw new Error("Persistent work plan is missing. Call loom_work_plan before loom_task_plan.")
+            }
+            const work = await readWork(ctx, workflow.work.objectiveId)
+            if (!work) throw new Error("Persistent work hierarchy not found.")
+
+            const wave = validateWorkflowWave(
+              work,
+              tasks,
+              (workflow.effects?.workLevel ?? "objective") === "objective",
+            )
             const steps = applyTaskPlan(workflow, tasks)
+            workflow.work = { objectiveId: work.objectiveId, generation: work.generation }
 
             for (const step of steps) {
               const scope: TaskScope = {
@@ -2198,6 +2374,8 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             await ctx.storage.set(workflowKey(workflow.id), workflow)
             return {
               content: renderToolOutput({
+                wave: { id: wave.logicalId, title: wave.title },
+                generation: work.generation,
                 tasks: steps.map((step) => ({
                   stepId: step.id,
                   task: step.task,
