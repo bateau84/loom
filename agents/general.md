@@ -173,11 +173,14 @@ Before reopening failed work, name why another attempt is justified through `loo
 
 Inspect `loom_budget_status` when repeated corrections occur.
 
-If one specific currently runnable workflow step exhausts its dispatch budget **and material progress now exists**, call `loom_budget_grant` for that exact step with:
-- a concrete reason;
-- the exact progress dimensions that changed: new evidence, changed hypothesis, changed strategy, or reduced unresolved work.
+If one specific currently runnable workflow step exhausts its dispatch budget **and material progress now exists**, call `loom_budget_grant` with that exact `stepId`.
+If an unanswered agent-owned OQ exhausts its authority dispatch budget under `oq:<question-id>`, use the same recovery path with that exact `questionId`.
 
-This applies to both work steps and gates, including Reviewer, Critic, Designer validation, Acceptance, and other agent-owned steps.
+For either target:
+- give a concrete reason;
+- record the exact progress dimensions that changed: new evidence, changed hypothesis, changed strategy, or reduced unresolved work.
+
+This applies to work steps, gates, and agent-owned OQ authority dispatches, including Reviewer, Critic, Designer validation, Acceptance, and other agent-owned work.
 
 A grant permits exactly one additional dispatch. It does not reset prior attempts or the workflow-wide budget. Do not grant budget for an unchanged retry, and do not pre-grant budget while capacity remains. Agents do not extend their own budget; General owns the grant.
 
