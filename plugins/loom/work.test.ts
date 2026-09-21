@@ -6,6 +6,7 @@ import {
   createWorkHierarchy,
   materializeWorkPlan,
   nextRunnableWaves,
+  reopenWaveForTasks,
   syncWorkTaskStatuses,
   validateWorkflowWave,
   workTree,
@@ -166,4 +167,24 @@ describe("Loom persistent work hierarchy", () => {
     ).toBe(true)
     expect(workTree(work).objective.progress).toEqual({ finished: 0, total: 3 })
   })
+
+  test("reopening implementation review invalidates Wave and Objective roll-up", () => {
+    const work = createWorkHierarchy("docs/anchors/product/anchor.md", "wf-1", now)
+    materializeWorkPlan(work, "wf-1", plan(), now)
+    syncWorkTaskStatuses(
+      work,
+      [
+        { taskId: "a", complete: true },
+        { taskId: "b", complete: true },
+      ],
+      now,
+    )
+    completeWaveForTasks(work, ["a", "b"], now)
+    expect(workTree(work).phases[0].waves[0].status).toBe("complete")
+
+    reopenWaveForTasks(work, ["a", "b"], "later")
+    expect(workTree(work).phases[0].waves[0].status).toBe("active")
+    expect(workTree(work).phases[0].status).toBe("active")
+  })
+
 })
