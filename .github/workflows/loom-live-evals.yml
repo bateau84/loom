@@ -42,9 +42,9 @@ on:
         default: ""
         type: string
       cases:
-        description: Optional comma-separated case IDs. Leave empty to select by target_kind/target.
+        description: Optional comma-separated case IDs. Combines with target_kind/target when supplied.
         required: false
-        default: INTENT-01,REVIEW-01,WORK-01,CRITIC-01
+        default: ""
         type: string
       all:
         description: Run the full behavioral corpus
