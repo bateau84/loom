@@ -61,10 +61,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 90
     env:
-      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
-      OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
       EVAL_MODEL: ${{ inputs.model }}
       JUDGE_MODEL: ${{ inputs.judge_model }}
       TARGET_TRANSPORT: ${{ inputs.target_transport }}
@@ -74,9 +70,9 @@ jobs:
       EVAL_CASES: ${{ inputs.cases }}
       EVAL_ALL: ${{ inputs.all }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
 
-      - uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
           bun-version: 1.4.2
 
@@ -112,6 +108,11 @@ jobs:
           fi
 
       - name: Run isolated live evals
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
         uses: bateau84/opencode-eval-runner@bd02908d134ccec81d4497604b7b115606cf9b45
         with:
           engine: docker
@@ -145,7 +146,7 @@ jobs:
             fi
             "${args[@]}"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
           name: loom-live-evals
