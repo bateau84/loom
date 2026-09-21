@@ -104,6 +104,8 @@ type MockProviderState = {
   workerCompleted: boolean
   reviewerAttached: boolean
   reviewerSawWorkerComplete: boolean
+  reviewerCompleted: boolean
+  generalSawPeerReviewComplete: boolean
   unrelatedRejected: boolean
   crossProjectRejected: boolean
   requests: string[]
@@ -311,11 +313,37 @@ function chooseMockAction(prompt: string, results: Map<string, unknown>, state: 
     if (status?.workflow?.steps?.some((step: any) => step.id === "worker" && step.status === "complete")) {
       state.reviewerSawWorkerComplete = true
     }
+    const complete = results.get("loom_complete") as any
+    if (complete && !complete.error) state.reviewerCompleted = true
     if (!results.has("loom_attach")) {
       return {
         name: "loom_attach",
         args: { grantId: state.reviewerGrantId, workflowId: state.workflowId, stepId: "review-implementation" },
       }
+    }
+    if (!results.has("loom_status")) {
+      return { name: "loom_status", args: { workflowId: state.workflowId, detail: true } }
+    }
+    if (!results.has("loom_complete")) {
+      return {
+        name: "loom_complete",
+        args: {
+          workflowId: state.workflowId,
+          stepId: "review-implementation",
+          outcome: "pass",
+          summary: "real-host peer-process review passed",
+        },
+      }
+    }
+    return null
+  }
+
+  if (prompt.includes("LOOM_INTEGRATION_VERIFY_PEER_REVIEW")) {
+    const status = results.get("loom_status") as any
+    if (status?.workflow?.steps?.some(
+      (step: any) => step.id === "review-implementation" && step.status === "passed",
+    )) {
+      state.generalSawPeerReviewComplete = true
     }
     if (!results.has("loom_status")) {
       return { name: "loom_status", args: { workflowId: state.workflowId, detail: true } }
@@ -355,6 +383,8 @@ async function startMockProvider() {
     workerCompleted: false,
     reviewerAttached: false,
     reviewerSawWorkerComplete: false,
+    reviewerCompleted: false,
+    generalSawPeerReviewComplete: false,
     unrelatedRejected: false,
     crossProjectRejected: false,
     requests: [],
@@ -582,6 +612,8 @@ try {
 
   const serverA = await startServer(base, projectA, sharedState, runtimeA, "server-a")
   servers.push(serverA)
+  const serverAPeer = await startServer(base, projectA, sharedState, runtimeB, "server-a-peer")
+  servers.push(serverAPeer)
   const serverB = await startServer(base, projectB, sharedState, runtimeB, "server-b")
   servers.push(serverB)
 
@@ -656,18 +688,28 @@ try {
   )
 
   const reviewerSession = await jsonRequestAny(
-    [`${serverA.baseUrl}/api/session`, `${serverA.baseUrl}/session`],
-    serverA.authorization,
+    [`${serverAPeer.baseUrl}/api/session`, `${serverAPeer.baseUrl}/session`],
+    serverAPeer.authorization,
     {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify(sessionCreateBody("Loom integration Reviewer", "reviewer", sessionA.id)),
+      body: JSON.stringify(sessionCreateBody("Loom integration Reviewer peer", "reviewer")),
     },
   )
-  await sendPrompt(serverA, reviewerSession.id, "LOOM_INTEGRATION_REVIEWER")
+  await sendPrompt(serverAPeer, reviewerSession.id, "LOOM_INTEGRATION_REVIEWER")
   await waitForCondition(
-    () => mock.state.reviewerAttached && mock.state.reviewerSawWorkerComplete,
-    "fresh real Reviewer attach and same-workflow read",
+    () =>
+      mock.state.reviewerAttached &&
+      mock.state.reviewerSawWorkerComplete &&
+      mock.state.reviewerCompleted,
+    "fresh peer-process Reviewer attach/read/complete sequence",
+    () => mock.state,
+  )
+
+  await sendPrompt(serverA, sessionA.id, "LOOM_INTEGRATION_VERIFY_PEER_REVIEW")
+  await waitForCondition(
+    () => mock.state.generalSawPeerReviewComplete,
+    "origin process observing peer-process Reviewer mutation",
     () => mock.state,
   )
 
@@ -695,8 +737,8 @@ try {
   )
 
   const reviewerSidebar = await jsonRequest(
-    `${serverA.baseUrl}/api/rpc/loom.control/sidebar`,
-    serverA.authorization,
+    `${serverAPeer.baseUrl}/api/rpc/loom.control/sidebar`,
+    serverAPeer.authorization,
     {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -718,12 +760,12 @@ try {
 
   const deadline = Date.now() + 15_000
   let records = await readPublisherRecords(runtimeRecord.runtimeRoot)
-  while (records.length < 2 && Date.now() < deadline) {
+  while (records.length < 3 && Date.now() < deadline) {
     await Bun.sleep(150)
     records = await readPublisherRecords(runtimeRecord.runtimeRoot)
   }
-  if (records.length < 2) {
-    throw new Error(`Expected two Loom publisher records from real OpenCode processes, observed ${records.length}`)
+  if (records.length < 3) {
+    throw new Error(`Expected three Loom publisher records from real OpenCode processes, observed ${records.length}`)
   }
 
   const fleet = await aggregateFleetFromDisk(runtimeRecord.runtimeRoot)
@@ -741,6 +783,7 @@ try {
   console.log("PASS OpenCode host integration")
   console.log(` - workflow: ${mock.state.workflowId}`)
   console.log(` - worker/reviewer attached: ${mock.state.workerAttached}/${mock.state.reviewerAttached}`)
+  console.log(` - peer-process review completed + observed by origin: ${mock.state.reviewerCompleted}/${mock.state.generalSawPeerReviewComplete}`)
   console.log(` - same-workflow read + unrelated/cross-project rejection: ${mock.state.reviewerSawWorkerComplete}/${mock.state.unrelatedRejected}/${mock.state.crossProjectRejected}`)
   console.log(` - sessions: ${sessionA.id}, ${sessionB.id}`)
   console.log(` - shared Loom runtime root: ${runtimeRecord.runtimeRoot}`)
