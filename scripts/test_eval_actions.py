@@ -26,6 +26,40 @@ class WorkflowCredentialTests(unittest.TestCase):
         self.assertIn("path: .loom-evals/", workflow)
         self.assertIn("include-hidden-files: true", workflow)
 
+    def test_live_workflow_scopes_provider_secrets_to_eval_step(self):
+        workflow = (
+            RUN_EVALS.ROOT / ".github" / "workflows" / "loom-live-evals.yml"
+        ).read_text(encoding="utf-8")
+
+        job_prefix = workflow.split("    steps:", 1)[0]
+        self.assertNotIn("OPENAI_API_KEY:", job_prefix)
+        self.assertNotIn("ANTHROPIC_API_KEY:", job_prefix)
+        self.assertNotIn("OPENROUTER_API_KEY:", job_prefix)
+        self.assertNotIn("OPENCODE_API_KEY:", job_prefix)
+
+        eval_block = workflow.split("- name: Run isolated live evals", 1)[1]
+        self.assertIn("OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}", eval_block)
+
+    def test_modified_workflows_pin_reusable_actions_by_commit(self):
+        checkout = "actions/checkout@11d5960a326750d5838078e36cf38b85af677262"
+        setup_bun = "oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6"
+        upload = "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
+
+        live = (
+            RUN_EVALS.ROOT / ".github" / "workflows" / "loom-live-evals.yml"
+        ).read_text(encoding="utf-8")
+        ci = (
+            RUN_EVALS.ROOT / ".github" / "workflows" / "loom-ci.yml"
+        ).read_text(encoding="utf-8")
+
+        for workflow in (live, ci):
+            self.assertIn(checkout, workflow)
+            self.assertIn(setup_bun, workflow)
+        self.assertIn(upload, live)
+        self.assertNotIn("actions/checkout@v4", live + ci)
+        self.assertNotIn("oven-sh/setup-bun@v2", live + ci)
+        self.assertNotIn("actions/upload-artifact@v4", live)
+
     def test_live_workflow_forwards_opencode_api_key_explicitly(self):
         workflow = (
             RUN_EVALS.ROOT / ".github" / "workflows" / "loom-live-evals.yml"
