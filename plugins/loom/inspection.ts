@@ -399,36 +399,33 @@ export async function grepText(root: string, options: GrepOptions) {
   const retained = new BoundedBest<TextMatch>(limit, compare)
 
   let bytesRead = 0
-  let skippedLarge = 0
   let skippedBinary = 0
   let matched = 0
-  let budgetExhausted = false
 
   for (const file of files) {
     if (file.size > MAX_FILE_BYTES) {
-      skippedLarge += 1
-      continue
+      throw new Error("grep file is too large; narrow the path or glob.")
     }
-    if (bytesRead + file.size > MAX_TOTAL_SEARCH_BYTES) {
-      budgetExhausted = true
-      break
+
+    const remainingBytes = MAX_TOTAL_SEARCH_BYTES - bytesRead
+    if (remainingBytes <= 0 || file.size > remainingBytes) {
+      throw new Error("grep search byte budget exceeded; narrow the path or glob.")
     }
 
     const absolute = resolve(projectRoot, file.path)
     const actual = await realpath(absolute)
     if (!inside(projectRoot, actual)) continue
 
-    const buffer = await readBounded(actual, MAX_FILE_BYTES)
+    const readLimit = Math.min(MAX_FILE_BYTES, remainingBytes)
+    const buffer = await readBounded(actual, readLimit)
     if (!buffer) {
-      skippedLarge += 1
-      continue
+      if (readLimit < MAX_FILE_BYTES) {
+        throw new Error("grep search byte budget exceeded; narrow the path or glob.")
+      }
+      throw new Error("grep file is too large; narrow the path or glob.")
     }
 
     bytesRead += buffer.byteLength
-    if (bytesRead > MAX_TOTAL_SEARCH_BYTES) {
-      budgetExhausted = true
-      break
-    }
     if (buffer.includes(0)) {
       skippedBinary += 1
       continue
@@ -477,10 +474,9 @@ export async function grepText(root: string, options: GrepOptions) {
     scanned,
     files: files.length,
     bytesRead,
-    skippedLarge,
     skippedBinary,
     matched,
-    truncated: matched > limit || budgetExhausted,
+    truncated: matched > limit,
     matches: retained.values(),
   }
 }
@@ -706,12 +702,15 @@ export async function statPaths(root: string, options: StatsOptions) {
           : "other"
     let lines: number | undefined
 
-    if (options.lineCount && info.isFile() && info.size <= MAX_FILE_BYTES) {
-      const buffer = await readBounded(target, MAX_FILE_BYTES)
-      if (buffer && !buffer.includes(0)) {
-        lines = countLogicalLines(buffer.toString("utf8"))
-        totalLines += lines
+    if (options.lineCount && info.isFile()) {
+      if (info.size > MAX_FILE_BYTES) {
+        throw new Error("File is too large for line counting: " + raw)
       }
+      const buffer = await readBounded(target, MAX_FILE_BYTES)
+      if (!buffer) throw new Error("File is too large for line counting: " + raw)
+      if (buffer.includes(0)) throw new Error("Cannot count text lines in binary file: " + raw)
+      lines = countLogicalLines(buffer.toString("utf8"))
+      totalLines += lines
     }
 
     totalBytes += info.size
