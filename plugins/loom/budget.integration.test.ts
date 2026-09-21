@@ -189,7 +189,7 @@ describe("Loom budget recovery plugin integration", () => {
         { workflowId, stepId },
         { agent: "general", sessionID },
       )
-      expect(dispatchGrant.content).toContain('"expectedAgent": "critic"')
+      expect(dispatchGrant.content).toContain("Expected Agent:** critic")
 
       const allowedEvent = {
         agent: "general",
