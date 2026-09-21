@@ -14,6 +14,39 @@ SPEC.loader.exec_module(RUN_EVALS)
 
 
 class ActionAssertionTests(unittest.TestCase):
+    def test_prefers_normalized_transport_actions_over_raw_stdout(self):
+        target = {
+            "actions": [
+                {"tool": "skill", "args": {"name": "golang-concurrency"}},
+                {
+                    "tool": "read",
+                    "args": {
+                        "filePath": "/workspace/.opencode/skills/golang-concurrency/ASSESSMENT.md"
+                    },
+                },
+            ],
+            "stdout": "",
+        }
+        self.assertEqual(
+            RUN_EVALS.normalized_target_actions(target),
+            target["actions"],
+        )
+
+    def test_falls_back_to_raw_stdout_for_older_runner_images(self):
+        event = {
+            "type": "tool_use",
+            "part": {
+                "type": "tool",
+                "tool": "skill",
+                "state": {"status": "completed", "input": {"name": "golang-cli"}},
+            },
+        }
+        target = {"stdout": json.dumps(event) + "\n"}
+        self.assertEqual(
+            RUN_EVALS.normalized_target_actions(target),
+            [{"tool": "skill", "args": {"name": "golang-cli"}}],
+        )
+
     def test_extracts_tool_inputs_from_opencode_json_events(self):
         lines = [
             {
