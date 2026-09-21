@@ -1,5 +1,5 @@
 import type * as OpenCodePlugin from "@opencode/plugin"
-import { consumeDispatchGrantLocked, createProjectStorage, createTransactionalStorage, findUsableDispatchGrant, importLegacyPluginStorage, issueDispatchGrantLocked, migrateLegacySessionState, resolveRuntimeIdentity, sessionBoundToOq, sessionBoundToStep, sessionBoundToWorkflow, withRuntimeLock, withRuntimeLocks, type LoomRuntimeIdentity } from "./runtime"
+import { consumeDispatchGrantLocked, createProjectStorage, createTransactionalStorage, ensureRuntimeStateVersion, findUsableDispatchGrant, importLegacyPluginStorage, issueDispatchGrantLocked, migrateLegacySessionState, resolveRuntimeIdentity, sessionBoundToOq, sessionBoundToStep, sessionBoundToWorkflow, withRuntimeLock, withRuntimeLocks, type LoomRuntimeIdentity } from "./runtime"
 import { LoomRpc } from "./rpc"
 import { buildSidebarSnapshot } from "./sidebar"
 import { renderToolOutput } from "./presentation"
@@ -650,6 +650,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
     const legacyStorage = ctx.storage as any
     const runtime = await resolveRuntimeIdentity(ctx.location.project.canonical, legacyStorage)
     const rawStorage = await createTransactionalStorage(runtime)
+    await ensureRuntimeStateVersion(rawStorage, runtime)
     await importLegacyPluginStorage(legacyStorage, rawStorage, runtime)
     await rawStorage.set("installation/id", runtime.installationId)
     await rawStorage.set(`installation/projects/${runtime.projectId}`, {
@@ -680,6 +681,11 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         sessionId: sessionID,
         sessionProjectId: String(session.projectID),
         currentProjectId: String(ctx.location.project.id),
+        resumeProof: {
+          kind: "opencode-host-session",
+          sessionId: String(session.id ?? sessionID),
+          projectId: String(session.projectID),
+        },
       })
       legacyCheckedSessions.add(sessionID)
     }
