@@ -9,6 +9,7 @@ import shutil
 import sqlite3
 import subprocess
 import tempfile
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
@@ -542,13 +543,14 @@ def invoke_container(
     mount_node_modules: bool,
     extra_envs: list[str],
     skill: str | None = None,
+    network: str | None = None,
 ) -> dict[str, Any]:
     node_modules = prepare_node_modules_mount(
         project,
         ROOT / "node_modules" if mount_node_modules else None,
     )
     runner_bin = os.environ.get("OPENCODE_EVAL_RUNNER_BIN") or shutil.which("opencode-eval-runner")
-    if runner_bin:
+    if runner_bin and network is None:
         with tempfile.TemporaryDirectory(prefix="loom-eval-runner-cli-") as tmp:
             root = Path(tmp)
             prompt_file = root / "prompt.txt"
@@ -655,6 +657,8 @@ def invoke_container(
             "--security-opt",
             "no-new-privileges",
         ]
+        if network:
+            command += ["--network", network]
         if engine == "podman":
             # The eval-runner image uses dedicated UID/GID 1000. Map the
             # invoking host user onto that identity so private read-only seed
@@ -881,7 +885,12 @@ def deterministic_failures(
     return failures
 
 
-def judge_prompt(case: dict[str, Any], text: str, tools: list[str]) -> str:
+def judge_prompt(
+    case: dict[str, Any],
+    text: str,
+    tools: list[str],
+    actions: list[dict[str, Any]] | None = None,
+) -> str:
     lines = [
         "Evaluate this Loom behavioral case.",
         "",
@@ -899,6 +908,9 @@ def judge_prompt(case: dict[str, Any], text: str, tools: list[str]) -> str:
         "",
         "OBSERVED TOOLS:",
         ", ".join(tools) if tools else "(none)",
+        "",
+        "OBSERVED TOOL ACTIONS:",
+        json.dumps(actions or [], sort_keys=True) if actions else "(none)",
         "",
         "OBSERVED ASSISTANT TEXT:",
         text[:30000] if text else "(no assistant text observed)",
@@ -1086,6 +1098,7 @@ def run_skill_ablation_case(
             mount_node_modules=False,
             extra_envs=args.env,
             skill=skill if with_skill and args.target_transport == "opencode" else None,
+            network=args.network,
         )
 
     def run_judge(target: dict[str, Any]) -> tuple[dict[str, Any] | None, dict[str, Any] | None, str | None]:
@@ -1095,7 +1108,7 @@ def run_skill_ablation_case(
             transport=args.judge_transport,
             model=judge_model,
             agent="eval-judge",
-            prompt=judge_prompt(case, str(target.get("text") or ""), []),
+            prompt=judge_prompt(case, str(target.get("text") or ""), [], []),
             system=strip_frontmatter(JUDGE_AGENT) if args.judge_transport == "github-copilot-cli" else "",
             project=judge_project,
             auth=auth,
@@ -1109,6 +1122,7 @@ def run_skill_ablation_case(
             mount_node_modules=False,
             extra_envs=args.env,
             skill=None,
+            network=args.network,
         )
         error = transport_error(result)
         if error:
@@ -1280,6 +1294,11 @@ def run_case(
     if args.judge_transport != args.target_transport and not args.judge_model:
         raise RuntimeError("--judge-model is required when target and judge transports differ")
 
+    case_label = case["id"] if args.iterations == 1 else f"{case['id']}#{iteration}"
+    case_started = time.perf_counter()
+    target_seconds = 0.0
+    judge_seconds = 0.0
+
     try:
         target_system = ""
         if args.target_transport == "github-copilot-cli":
@@ -1299,6 +1318,12 @@ def run_case(
         target_image = image_for_transport(args, args.target_transport)
         judge_image = image_for_transport(args, args.judge_transport)
 
+        print(
+            f"{case_label} [{case['agent']}/{case['execution']}] target "
+            f"({args.target_transport}, {args.model}) ...",
+            flush=True,
+        )
+        target_started = time.perf_counter()
         target = invoke_container(
             engine=engine,
             image=target_image,
@@ -1323,8 +1348,14 @@ def run_case(
                 if args.target_transport == "opencode"
                 else None
             ),
+            network=args.network,
         )
+        target_seconds = time.perf_counter() - target_started
         target_error = transport_error(target)
+        print(
+            f"{case_label} target {'ERROR' if target_error else 'done'} in {target_seconds:.1f}s",
+            flush=True,
+        )
         observed_actions = normalized_target_actions(target) if not target_error else []
         deterministic = (
             deterministic_failures(
@@ -1343,13 +1374,23 @@ def run_case(
         judge_error: str | None = None
 
         if not target_error:
+            print(
+                f"{case_label} judge ({args.judge_transport}, {judge_model}) ...",
+                flush=True,
+            )
+            judge_started = time.perf_counter()
             judge_result = invoke_container(
                 engine=engine,
                 image=judge_image,
                 transport=args.judge_transport,
                 model=judge_model,
                 agent="eval-judge",
-                prompt=judge_prompt(case, str(target.get("text") or ""), list(target.get("tools") or [])),
+                prompt=judge_prompt(
+                    case,
+                    str(target.get("text") or ""),
+                    list(target.get("tools") or []),
+                    observed_actions,
+                ),
                 system=strip_frontmatter(JUDGE_AGENT) if args.judge_transport == "github-copilot-cli" else "",
                 project=judge_project,
                 auth=auth,
@@ -1363,8 +1404,14 @@ def run_case(
                 mount_node_modules=False,
                 extra_envs=args.env,
                 skill=None,
+                network=args.network,
             )
+            judge_seconds = time.perf_counter() - judge_started
             judge_error = transport_error(judge_result)
+            print(
+                f"{case_label} judge {'ERROR' if judge_error else 'done'} in {judge_seconds:.1f}s",
+                flush=True,
+            )
             if not judge_error:
                 try:
                     judge = parse_judge(str(judge_result.get("text") or ""))
@@ -1379,6 +1426,7 @@ def run_case(
             and judge.get("passed") is True
         )
         classification = "pass" if passed else "non-evidence" if non_evidence else "behavioral-fail"
+        total_seconds = time.perf_counter() - case_started
 
         artifact = {
             "case": case["id"],
@@ -1394,6 +1442,11 @@ def run_case(
             "judge_transport": args.judge_transport,
             "model": args.model,
             "judge_model": judge_model,
+            "timing": {
+                "target_seconds": round(target_seconds, 3),
+                "judge_seconds": round(judge_seconds, 3),
+                "total_seconds": round(total_seconds, 3),
+            },
             "classification": classification,
             "passed": passed,
             "target": target,
@@ -1426,6 +1479,11 @@ def main() -> int:
     parser.add_argument("--target-transport", choices=("opencode", "github-copilot-cli"), default="opencode")
     parser.add_argument("--judge-transport", choices=("opencode", "github-copilot-cli"), default="opencode")
     parser.add_argument("--engine", choices=("auto", "podman", "docker"), default="auto")
+    parser.add_argument(
+        "--network",
+        metavar="MODE",
+        help="Optional OCI network mode/name passed to target and judge containers. When set, Loom uses the direct container path because the pinned eval-runner CLI does not expose network selection.",
+    )
     parser.add_argument("--image", help="Override both transport images with one explicit image.")
     parser.add_argument("--opencode-image")
     parser.add_argument("--copilot-image")
@@ -1586,6 +1644,10 @@ def main() -> int:
             print("  - " + error)
             return False
         assert result is not None
+        timing = result.get("timing") or {}
+        total = timing.get("total_seconds")
+        duration = f" ({float(total):.1f}s total)" if isinstance(total, (int, float)) else ""
+
         def report_ablation() -> None:
             if result.get("evaluation_mode") != "skill-ablation":
                 return
@@ -1608,11 +1670,11 @@ def main() -> int:
                 print("  - trap: regression with skill")
 
         if result["classification"] == "pass":
-            print(prefix + " ... PASS")
+            print(prefix + " ... PASS" + duration)
             report_ablation()
             return True
         if result["classification"] == "non-evidence":
-            print(prefix + " ... ERROR")
+            print(prefix + " ... ERROR" + duration)
             if result.get("evaluation_mode") == "skill-ablation":
                 for phase in ("baseline", "candidate"):
                     phase_result = result.get(phase)
@@ -1629,7 +1691,7 @@ def main() -> int:
                     print("  - judge: " + str(result["judge_error"]))
             return False
 
-        print(prefix + " ... FAIL")
+        print(prefix + " ... FAIL" + duration)
         report_ablation()
         for item in result["deterministic_failures"]:
             print("  - " + item)
