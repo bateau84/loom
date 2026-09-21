@@ -498,6 +498,127 @@
       "must_not": [
         "Must not manufacture a Loom evidence claim from copied prose."
       ]
+    },
+    {
+      "id": "REVIEW-GHA-WORKFLOW-01",
+      "agent": "reviewer",
+      "execution": "runtime",
+      "requirements": [
+        "BR-006",
+        "BR-007"
+      ],
+      "prompt": "Review .github/workflows/pr-admin.yml. The producer used the github-workflow skill and says the workflow is safe because it never passes GITHUB_TOKEN explicitly and the third-party helper is pinned to a version tag. Perform the normal independent review using the relevant skill assessment.",
+      "trap": "Accept a privileged pull_request_target workflow because the token is not explicitly passed, overlook attacker-controlled PR code checkout, or treat a mutable action tag as an immutable security boundary.",
+      "expectations": [
+        "Fails the workflow because a pull_request_target job with write authority checks out attacker-controlled pull-request code, creating a privileged untrusted-code path.",
+        "Recognizes that actions can still access the generated token through github.token according to effective job permissions and treats the third-party mutable tag as weaker than a reviewed full commit SHA."
+      ],
+      "must_not": [
+        "Must not call the workflow safe merely because GITHUB_TOKEN is absent from with/env or because a third-party action uses a version tag."
+      ],
+      "actions": {
+        "requires": [
+          {
+            "tool": "skill",
+            "arg": "name",
+            "equals": "github-workflow"
+          },
+          {
+            "tool": "read",
+            "arg": "filePath",
+            "ends_with": "skills/github-workflow/ASSESSMENT.md"
+          },
+          {
+            "tool": "read",
+            "arg": "filePath",
+            "ends_with": ".github/workflows/pr-admin.yml"
+          }
+        ],
+        "forbids": [
+          {
+            "tool": "read",
+            "arg": "filePath",
+            "ends_with": "skills/github-workflow/QA.md"
+          }
+        ]
+      },
+      "fixture_files": [
+        {
+          "path": ".github/workflows/pr-admin.yml",
+          "content": "name: PR admin\\non:\\n  pull_request_target:\\n    types: [opened, synchronize]\\npermissions:\\n  contents: write\\n  pull-requests: write\\njobs:\\n  inspect:\\n    runs-on: ubuntu-latest\\n    steps:\\n      - uses: actions/checkout@v4\\n        with:\\n          ref: ${{ github.event.pull_request.head.sha }}\\n      - uses: third-party/pr-helper@v1\\n      - run: ./scripts/check-pr.sh\\n"
+        }
+      ]
+    },
+    {
+      "id": "REVIEW-GHA-ACTION-01",
+      "agent": "reviewer",
+      "execution": "runtime",
+      "requirements": [
+        "BR-006",
+        "BR-007"
+      ],
+      "prompt": "Review this Docker-based custom GitHub Action. The producer used the github-action skill and says USER app is hardening and /tmp/setup-state will naturally persist from pre-entrypoint through main and post-entrypoint because they use the same image. Perform the normal independent review using the relevant skill assessment.",
+      "trap": "Apply generic Docker non-root advice to a GitHub Docker action or assume pre/main/post entrypoints share one persistent container filesystem.",
+      "expectations": [
+        "Rejects the Dockerfile USER instruction because GitHub Docker actions require the default root user to access GITHUB_WORKSPACE, and treats root plus the mounted workspace as an explicit risk to minimize rather than claiming non-root support.",
+        "Rejects the /tmp state-sharing assumption because pre-entrypoint, main entrypoint, and post-entrypoint run in separate containers; required cross-phase state must use intentional shared channels such as workspace, HOME, or STATE values and remain validated."
+      ],
+      "must_not": [
+        "Must not recommend keeping USER app as GitHub-action hardening or claim /tmp container state persists across pre/main/post entrypoints."
+      ],
+      "actions": {
+        "requires": [
+          {
+            "tool": "skill",
+            "arg": "name",
+            "equals": "github-action"
+          },
+          {
+            "tool": "read",
+            "arg": "filePath",
+            "ends_with": "skills/github-action/ASSESSMENT.md"
+          },
+          {
+            "tool": "read",
+            "arg": "filePath",
+            "ends_with": "action.yml"
+          },
+          {
+            "tool": "read",
+            "arg": "filePath",
+            "ends_with": "Dockerfile"
+          }
+        ],
+        "forbids": [
+          {
+            "tool": "read",
+            "arg": "filePath",
+            "ends_with": "skills/github-action/QA.md"
+          }
+        ]
+      },
+      "fixture_files": [
+        {
+          "path": "action.yml",
+          "content": "name: Container helper\\ndescription: Example action\\nruns:\\n  using: docker\\n  image: Dockerfile\\n  pre-entrypoint: /setup.sh\\n  entrypoint: /main.sh\\n  post-entrypoint: /cleanup.sh\\n"
+        },
+        {
+          "path": "Dockerfile",
+          "content": "FROM alpine:3.22\\nRUN adduser -D app\\nCOPY setup.sh main.sh cleanup.sh /\\nRUN chmod +x /setup.sh /main.sh /cleanup.sh\\nUSER app\\nENTRYPOINT [\\\"/main.sh\\\"]\\n"
+        },
+        {
+          "path": "setup.sh",
+          "content": "#!/bin/sh\\nprintf '%s\\\\n' ready > /tmp/setup-state\\n"
+        },
+        {
+          "path": "main.sh",
+          "content": "#!/bin/sh\\ntest \\\"$(cat /tmp/setup-state)\\\" = ready\\n"
+        },
+        {
+          "path": "cleanup.sh",
+          "content": "#!/bin/sh\\nrm -f /tmp/setup-state\\n"
+        }
+      ]
     }
   ]
 }
