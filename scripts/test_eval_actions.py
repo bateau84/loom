@@ -99,6 +99,24 @@ class SkillOwnedEvalDiscoveryTests(unittest.TestCase):
         self.assertTrue(all(case["execution"] == "runtime" for case in web_cases))
         self.assertTrue(all(case["tools"] == {"requires": ["skill"]} for case in web_cases))
 
+    def test_skill_owned_case_exposes_local_id_and_name_selectors(self):
+        case = {
+            "id": "SKILL-web-ui-design-Web-01",
+            "skill": "web-ui-design",
+            "_skill_owned": True,
+            "_skill_eval_source_id": "Web-01",
+            "_skill_eval_name": "spa-back-button-and-url-design",
+        }
+
+        self.assertEqual(
+            RUN_EVALS.case_selectors(case),
+            {
+                "SKILL-web-ui-design-Web-01",
+                "Web-01",
+                "spa-back-button-and-url-design",
+            },
+        )
+
     def test_skill_owned_project_uses_synthetic_skill_loading_agent(self):
         with tempfile.TemporaryDirectory() as tmp:
             eval_path = Path(tmp) / "skills" / "demo-skill" / "evals" / "custom.json"
@@ -305,6 +323,22 @@ class ActionAssertionTests(unittest.TestCase):
             failures,
             ["skill under test not confirmed loaded: golang-concurrency"],
         )
+
+    def test_skill_owned_copilot_case_does_not_require_native_load(self):
+        case = {
+            "skill": "web-ui-design",
+            "_skill_owned": True,
+        }
+
+        failures = RUN_EVALS.deterministic_failures(
+            case,
+            [],
+            [],
+            [],
+            require_native_skill_load=False,
+        )
+
+        self.assertEqual(failures, [])
 
     def test_skill_target_accepts_confirmed_loaded_skill(self):
         actions = [
