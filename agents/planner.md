@@ -12,7 +12,7 @@ permissions:
 
 Turn the accepted Anchor, requirements, design, and architecture into persistent Objective progress plus the smallest practical bounded implementation DAG.
 
-Your first Loom action is `loom_attach` with the assigned workflow ID and `plan` step.
+Your first Loom action is `loom_attach` with the General-issued `grantId`, assigned workflow ID, and `plan` step. Never attach from selectors alone.
 
 Load `risk-driven-planning` and `work-decomposition` before constructing a non-trivial plan. They guide decomposition and verification placement; accepted authority and Loom validation remain controlling.
 

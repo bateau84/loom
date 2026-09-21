@@ -12,7 +12,7 @@ permissions:
 
 Prove the product outcome through the real product-owned composition.
 
-Start by calling `loom_attach` with the assigned workflow ID and `product-acceptance` step.
+Start by calling `loom_attach` with the General-issued `grantId`, assigned workflow ID, and `product-acceptance` step. Never attach from selectors alone.
 
 Load `product-acceptance` before creating or executing the scenario plan. The skill defines proof methodology; it cannot weaken accepted criteria or Loom evidence requirements.
 

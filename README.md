@@ -55,3 +55,14 @@ When `--iterations` is greater than one, artifacts are written separately as:
 ```
 
 Runtime cases use isolated OpenCode target containers with Loom's plugin injected into the standalone runtime. Target and judge run in separate containers.
+
+
+## Operational dashboard
+
+Start the external read-only dashboard:
+
+```bash
+bun run dashboard
+```
+
+It listens on `127.0.0.1:4318` by default and aggregates the bounded Loom snapshots published by active OpenCode+Loom processes. See `docs/user/dashboard.md` for status and safety semantics.

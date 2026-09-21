@@ -3,6 +3,7 @@ import { mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import loomPlugin from "./index"
+import { createProjectStorage, createTransactionalStorage, resolveRuntimeIdentity } from "./runtime"
 import { observationsSupportKind } from "./evidence"
 import { findPaths, grepText, selectText, statPaths } from "./inspection"
 
@@ -74,12 +75,23 @@ async function pluginHarness(root: string) {
       set: async (key: string, value: unknown) => {
         storage.set(key, value)
       },
-      scan: async () => [],
+      scan: async ({ prefix }: { prefix: string }) => ({
+        entries: [...storage.entries()]
+          .filter(([key]) => key.startsWith(prefix))
+          .map(([key, value]) => ({ key, value })),
+        next: undefined,
+      }),
     },
   }
 
+  const runtime = await resolveRuntimeIdentity(root, ctx.storage)
+  const durableStorage = createProjectStorage(
+    await createTransactionalStorage(runtime),
+    runtime.projectId,
+  )
+
   await (loomPlugin as any).setup(ctx)
-  return { registered, toolHooks, storage }
+  return { registered, toolHooks, storage, durableStorage }
 }
 
 afterEach(async () => {
@@ -396,7 +408,7 @@ describe("Loom structured inspection", () => {
 
   test("failed inspection stays failed and cannot support a success claim", async () => {
     const root = await fixture()
-    const { registered, toolHooks, storage } = await pluginHarness(root)
+    const { registered, toolHooks, durableStorage } = await pluginHarness(root)
     const before = toolHooks.get("execute.before")!
     const after = toolHooks.get("execute.after")!
     const input = { path: "../outside" }
@@ -429,9 +441,9 @@ describe("Loom structured inspection", () => {
       error: failure,
     })
 
-    const observations = [...storage.values()].filter(
-      (value: any) => value && typeof value === "object" && value.tool === "loom_find",
-    ) as any[]
+    const observations = (await durableStorage.scan({ prefix: "evidence/", limit: 100 })).entries
+      .map((entry: any) => entry.value)
+      .filter((value: any) => value && typeof value === "object" && value.tool === "loom_find") as any[]
 
     expect(observations).toHaveLength(1)
     expect(observations[0].status).toBe("error")
@@ -443,7 +455,7 @@ describe("Loom structured inspection", () => {
 
   test("inspection tool calls are captured as Loom evidence while control tools stay excluded", async () => {
     const root = await fixture()
-    const { registered, toolHooks, storage } = await pluginHarness(root)
+    const { registered, toolHooks, durableStorage } = await pluginHarness(root)
     const before = toolHooks.get("execute.before")!
     const after = toolHooks.get("execute.after")!
 
@@ -467,9 +479,9 @@ describe("Loom structured inspection", () => {
       result: result.content,
     })
 
-    const observations = [...storage.values()].filter(
-      (value: any) => value && typeof value === "object" && value.tool === "loom_find",
-    ) as any[]
+    const observations = (await durableStorage.scan({ prefix: "evidence/", limit: 100 })).entries
+      .map((entry: any) => entry.value)
+      .filter((value: any) => value && typeof value === "object" && value.tool === "loom_find") as any[]
     expect(observations).toHaveLength(1)
     expect(observations[0]).toMatchObject({
       sessionID: "session-evidence",
@@ -479,9 +491,9 @@ describe("Loom structured inspection", () => {
       path: "docs/reports",
     })
 
-    const beforeControlCount = [...storage.values()].filter(
-      (value: any) => value && typeof value === "object" && value.tool === "loom_status",
-    ).length
+    const beforeControlCount = (await durableStorage.scan({ prefix: "evidence/", limit: 100 })).entries
+      .map((entry: any) => entry.value)
+      .filter((value: any) => value && typeof value === "object" && value.tool === "loom_status").length
 
     await after({
       tool: "loom_status",
@@ -492,9 +504,9 @@ describe("Loom structured inspection", () => {
       result: "status",
     })
 
-    const afterControlCount = [...storage.values()].filter(
-      (value: any) => value && typeof value === "object" && value.tool === "loom_status",
-    ).length
+    const afterControlCount = (await durableStorage.scan({ prefix: "evidence/", limit: 100 })).entries
+      .map((entry: any) => entry.value)
+      .filter((value: any) => value && typeof value === "object" && value.tool === "loom_status").length
     expect(afterControlCount).toBe(beforeControlCount)
   })
 })

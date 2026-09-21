@@ -48,6 +48,8 @@ export type VerificationRequirement = {
 
 export type Workflow = {
   id: string
+  projectId: string
+  revision: number
   anchor: string
   createdBySession: string
   createdAt: string
