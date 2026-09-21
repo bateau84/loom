@@ -82,6 +82,72 @@ describe("Loom progress and dispatch budgets", () => {
     ).toBe(false)
   })
 
+  test("bounded grants apply to gate-owning agents as well as workers", () => {
+    const cases = [
+      { agent: "reviewer", base: DEFAULT_LIMITS.maxReviewerDispatchesPerStep },
+      { agent: "critic", base: DEFAULT_LIMITS.maxCriticDispatchesPerStep },
+      { agent: "designer", base: DEFAULT_LIMITS.maxDispatchesPerStep },
+      { agent: "acceptance", base: DEFAULT_LIMITS.maxDispatchesPerStep },
+    ]
+
+    for (const item of cases) {
+      const state = newBudgetState()
+      const key = `step:${item.agent}-gate`
+
+      for (let attempt = 1; attempt <= item.base; attempt++) {
+        expect(
+          recordDispatch({
+            state,
+            limits: DEFAULT_LIMITS,
+            dispatchID: `${item.agent}-${attempt}`,
+            key,
+            agent: item.agent,
+          }).allowed,
+        ).toBe(true)
+      }
+
+      expect(
+        recordDispatch({
+          state,
+          limits: DEFAULT_LIMITS,
+          dispatchID: `${item.agent}-blocked`,
+          key,
+          agent: item.agent,
+        }).allowed,
+      ).toBe(false)
+
+      const grant = grantExtraDispatch({
+        state,
+        limits: DEFAULT_LIMITS,
+        key,
+        agent: item.agent,
+        grantedBy: "general",
+        reason: "Material progress justifies one more independent pass.",
+        progress: {
+          newEvidence: true,
+          changedHypothesis: false,
+          changedStrategy: false,
+          reducedUnresolved: true,
+        },
+        now: "2026-09-21T17:45:00Z",
+      })
+
+      expect(grant.allowed).toBe(true)
+      expect(grant.previousLimit).toBe(item.base)
+      expect(grant.newLimit).toBe(item.base + 1)
+
+      expect(
+        recordDispatch({
+          state,
+          limits: DEFAULT_LIMITS,
+          dispatchID: `${item.agent}-extra`,
+          key,
+          agent: item.agent,
+        }).allowed,
+      ).toBe(true)
+    }
+  })
+
   test("one material-progress grant allows exactly one extra dispatch without resetting history", () => {
     const state = newBudgetState()
     const key = "step:task:cli-agent-dry-run"
