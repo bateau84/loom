@@ -7,6 +7,8 @@ const MAX_SCANNED_ENTRIES = 20_000
 const MAX_FILE_BYTES = 2 * 1024 * 1024
 const MAX_TOTAL_SEARCH_BYTES = 8 * 1024 * 1024
 const MAX_PATTERN_LENGTH = 256
+const MAX_GLOB_WORK = 10_000_000
+const MAX_GREP_LINES = 200_000
 const MAX_SELECT_ROWS = 20_000
 const MAX_FIELDS = 256
 const MAX_FIELD_CHARS = 16_384
@@ -131,8 +133,17 @@ function validateGlob(pattern: string) {
   if (pattern.length > MAX_PATTERN_LENGTH) throw new Error("Glob is too long.")
 }
 
-function globMatch(pattern: string, value: string) {
-  validateGlob(pattern)
+type WorkBudget = { used: number; limit: number; label: string }
+
+function chargeWork(budget: WorkBudget, amount: number) {
+  budget.used += amount
+  if (budget.used > budget.limit) {
+    throw new Error(budget.label + " work budget exceeded; narrow the path or pattern.")
+  }
+}
+
+function globMatch(pattern: string, value: string, budget: WorkBudget) {
+  chargeWork(budget, Math.max(1, pattern.length) * Math.max(1, value.length))
 
   let previous = new Uint8Array(value.length + 1)
   previous[0] = 1
@@ -315,6 +326,7 @@ export async function findPaths(root: string, options: FindOptions = {}) {
   const minDepth = clampInteger(options.minDepth, 0, 0, maxDepth)
   const limit = clampInteger(options.limit, 100, 1, MAX_RESULTS)
   if (options.name) validateGlob(options.name)
+  const globBudget: WorkBudget = { used: 0, limit: MAX_GLOB_WORK, label: "glob" }
 
   const { entries, scanned } = await collectEntries(projectRoot, target, {
     maxDepth,
@@ -341,7 +353,7 @@ export async function findPaths(root: string, options: FindOptions = {}) {
     const depth = entry.path === startRel ? 0 : Math.max(0, entry.path.split("/").length - baseDepth)
     if (depth < minDepth) continue
     if (options.type && entry.type !== options.type) continue
-    if (options.name && !globMatch(options.name, entry.name)) continue
+    if (options.name && !globMatch(options.name, entry.name, globBudget)) continue
 
     matched += 1
     retained.add(entry)
@@ -356,9 +368,9 @@ export async function findPaths(root: string, options: FindOptions = {}) {
   }
 }
 
-function literalLineMatches(line: string, pattern: string, caseSensitive: boolean) {
-  if (caseSensitive) return line.includes(pattern)
-  return line.toLowerCase().includes(pattern.toLowerCase())
+function literalLineMatches(line: string, normalizedPattern: string, caseSensitive: boolean) {
+  if (caseSensitive) return line.includes(normalizedPattern)
+  return line.toLowerCase().includes(normalizedPattern)
 }
 
 function compareTextMatches(sort: "path" | "line", order: "asc" | "desc") {
@@ -377,12 +389,14 @@ export async function grepText(root: string, options: GrepOptions) {
   if (!options.pattern) throw new Error("Search pattern must not be empty.")
   if (options.pattern.length > MAX_PATTERN_LENGTH) throw new Error("Search pattern is too long.")
   if (options.glob) validateGlob(options.glob)
+  const globBudget: WorkBudget = { used: 0, limit: MAX_GLOB_WORK, label: "glob" }
 
   const { projectRoot, target } = await resolveInside(root, options.path)
   const maxDepth = clampInteger(options.maxDepth, 8, 0, MAX_DEPTH)
   const context = clampInteger(options.context, 0, 0, 5)
   const limit = clampInteger(options.limit, 100, 1, MAX_RESULTS)
   const caseSensitive = options.caseSensitive === true
+  const normalizedPattern = caseSensitive ? options.pattern : options.pattern.toLowerCase()
 
   const { entries, scanned } = await collectEntries(projectRoot, target, {
     maxDepth,
@@ -392,7 +406,7 @@ export async function grepText(root: string, options: GrepOptions) {
   const files = entries.filter((entry) => {
     if (entry.type !== "file") return false
     if (!options.glob) return true
-    return globMatch(options.glob, entry.path) || globMatch(options.glob, entry.name)
+    return globMatch(options.glob, entry.path, globBudget) || globMatch(options.glob, entry.name, globBudget)
   })
 
   const compare = compareTextMatches(options.sort ?? "path", options.order ?? "asc")
@@ -401,6 +415,7 @@ export async function grepText(root: string, options: GrepOptions) {
   let bytesRead = 0
   let skippedBinary = 0
   let matched = 0
+  let processedLines = 0
 
   for (const file of files) {
     if (file.size > MAX_FILE_BYTES) {
@@ -435,6 +450,10 @@ export async function grepText(root: string, options: GrepOptions) {
     const pending: Array<{ match: TextMatch; remaining: number }> = []
 
     for (const current of logicalLines(buffer.toString("utf8"))) {
+      processedLines += 1
+      if (processedLines > MAX_GREP_LINES) {
+        throw new Error("grep line work budget exceeded; narrow the path or glob.")
+      }
       const clipped = current.text.slice(0, MAX_OUTPUT_TEXT_CHARS)
 
       for (let index = pending.length - 1; index >= 0; index -= 1) {
@@ -447,7 +466,7 @@ export async function grepText(root: string, options: GrepOptions) {
         }
       }
 
-      if (literalLineMatches(current.text, options.pattern, caseSensitive)) {
+      if (literalLineMatches(current.text, normalizedPattern, caseSensitive)) {
         matched += 1
         const match: TextMatch = {
           path: file.path,
@@ -674,9 +693,14 @@ export async function selectText(root: string, options: SelectOptions) {
 }
 
 function countLogicalLines(text: string) {
-  let count = 0
-  for (const _line of logicalLines(text)) count += 1
-  return count
+  if (text.length === 0) return 0
+
+  let newlines = 0
+  for (let index = 0; index < text.length; index += 1) {
+    if (text[index] === "\n") newlines += 1
+  }
+
+  return text.endsWith("\n") ? newlines : newlines + 1
 }
 
 export async function statPaths(root: string, options: StatsOptions) {
