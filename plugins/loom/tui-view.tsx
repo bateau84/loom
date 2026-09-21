@@ -2,7 +2,12 @@
 
 import { Plugin, usePlugin } from "@opencode/plugin/tui"
 import { For, Show, createEffect, createSignal, onCleanup } from "solid-js"
-import { LoomRpc, type LoomSidebarSnapshot, type LoomSidebarTaskStatus } from "./rpc"
+import {
+  LoomRpc,
+  type LoomSidebarSnapshot,
+  type LoomSidebarTaskStatus,
+  type LoomSidebarWorkStatus,
+} from "./rpc"
 import { selectSidebarTasks } from "./sidebar"
 
 const MAX_PLAN_ROWS = 12
@@ -12,6 +17,18 @@ function taskGlyph(status: LoomSidebarTaskStatus) {
   if (status === "failed") return "!"
   if (status === "runnable") return "→"
   return "○"
+}
+
+function workGlyph(status: LoomSidebarWorkStatus) {
+  if (status === "complete") return "✓"
+  if (status === "blocked") return "!"
+  if (status === "cancelled" || status === "superseded") return "×"
+  if (status === "active") return "→"
+  return "○"
+}
+
+function progressText(progress: { finished: number; total: number }) {
+  return `${progress.finished}/${progress.total}`
 }
 
 function LoomSidebar(props: { sessionID?: string }) {
@@ -63,7 +80,58 @@ function LoomSidebar(props: { sessionID?: string }) {
           {snapshot()!.state} · {snapshot()!.progress.finished}/{snapshot()!.progress.total}
         </text>
 
-        <Show when={snapshot()!.tasks.length > 0}>
+        <Show when={snapshot()!.work}>
+          <box flexDirection="column" gap={0} paddingTop={1}>
+            <text fg={context.theme.text.base}>Objective</text>
+            <text>
+              {workGlyph(snapshot()!.work!.objective.status)} {snapshot()!.work!.objective.title} ·{" "}
+              {progressText(snapshot()!.work!.objective.progress)}
+            </text>
+
+            {(() => {
+              const allTasks = snapshot()!.work!.phases.flatMap((phase) =>
+                phase.waves.flatMap((wave) => wave.tasks),
+              )
+              const visibleTasks = selectSidebarTasks(allTasks, MAX_PLAN_ROWS)
+              const visibleIDs = new Set(visibleTasks.map((task) => task.id))
+
+              return (
+                <>
+                  <For each={snapshot()!.work!.phases}>
+                    {(phase) => (
+                      <box flexDirection="column" gap={0}>
+                        <text>
+                          {"  "}{workGlyph(phase.status)} {phase.title} · {progressText(phase.progress)}
+                        </text>
+                        <For each={phase.waves}>
+                          {(wave) => (
+                            <box flexDirection="column" gap={0}>
+                              <text>
+                                {"    "}{workGlyph(wave.status)} {wave.title} · {progressText(wave.progress)}
+                              </text>
+                              <For each={wave.tasks.filter((task) => visibleIDs.has(task.id))}>
+                                {(task) => (
+                                  <text>
+                                    {"      "}{taskGlyph(task.status)} {task.title}
+                                  </text>
+                                )}
+                              </For>
+                            </box>
+                          )}
+                        </For>
+                      </box>
+                    )}
+                  </For>
+                  <Show when={allTasks.length > visibleTasks.length}>
+                    <text>… +{allTasks.length - visibleTasks.length} tasks</text>
+                  </Show>
+                </>
+              )
+            })()}
+          </box>
+        </Show>
+
+        <Show when={!snapshot()!.work && snapshot()!.tasks.length > 0}>
           <box flexDirection="column" gap={0} paddingTop={1}>
             <text fg={context.theme.text.base}>Plan</text>
             <For each={selectSidebarTasks(snapshot()!.tasks, MAX_PLAN_ROWS)}>
