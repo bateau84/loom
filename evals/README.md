@@ -149,11 +149,13 @@ Both responses are judged independently against the same positive expectations, 
 - candidate absolute PASS/FAIL;
 - score delta in percentage points;
 - whether the skill fixed or introduced the named trap;
-- a skill-value classification: `material-improvement`, `improvement`, `neutral`, or `regression`.
+- a per-iteration skill-value classification: `material-improvement`, `improvement`, `neutral`, or `regression`.
 
 A skill-owned case still returns PASS only when the **candidate** satisfies the full benchmark. A candidate that improves substantially but misses one requirement remains an absolute FAIL, while the artifact preserves the improvement instead of collapsing the result to one boolean.
 
-With OpenCode, the baseline project contains no target skill and the candidate project contains only that skill; candidate evidence must confirm a completed native `skill` load. With GitHub Copilot CLI, Loom supplies no skill methodology to the baseline and injects the target `SKILL.md` only into the candidate system context. This preserves the same causal comparison across transports.
+A single baseline/candidate pair is one stochastic observation, not proof of stable skill value. Use multiple iterations (and preferably an independent judge model) when the delta itself is load-bearing. The classification describes the observed iteration; it is not a cross-model or statistical claim.
+
+With OpenCode, the baseline project contains no target skill and the candidate project contains only that skill; candidate evidence must confirm a completed native `skill` load. With GitHub Copilot CLI, Loom supplies no skill methodology to the baseline and injects the target `SKILL.md` only into the candidate system context. This preserves the same controlled baseline/candidate contrast across transports.
 
 Central native skill-routing cases still require `--target-transport opencode` because they assert real production-role `skill` loading and companion-file behavior. Skill-owned ablation suites are provider-neutral and may use OpenCode or GitHub Copilot CLI for target and judge.
 
@@ -228,6 +230,8 @@ Go:  opencode-go/<model-id>
 ```
 
 For example: `opencode/gpt-5.4` or `opencode-go/kimi-k3`. The existing `OPENCODE_AUTH_JSON` secret path remains available for credentials that must be represented through OpenCode's auth file rather than a provider environment variable.
+
+Before result JSON is persisted under `.loom-evals/` or uploaded as an artifact, Loom redacts known provider/token environment values plus credential material discovered in auth/config JSON and the sanitized credential database. Raw model/tool evidence remains useful for diagnosis without intentionally preserving those credential values.
 
 For GitHub Copilot CLI, the workflow grants `copilot-requests: write`. When either transport is `github-copilot-cli`, the action exposes the workflow's built-in `GITHUB_TOKEN` to the harness, and the runner passes it into the isolated Copilot invocation. No separate Copilot secret is required.
 
