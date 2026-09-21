@@ -4,7 +4,9 @@ from __future__ import annotations
 import importlib.util
 import json
 from pathlib import Path
+import tempfile
 import unittest
+from unittest.mock import patch
 
 MODULE_PATH = Path(__file__).resolve().parent / "run-evals.py"
 SPEC = importlib.util.spec_from_file_location("loom_run_evals", MODULE_PATH)
@@ -14,6 +16,75 @@ SPEC.loader.exec_module(RUN_EVALS)
 
 
 class ActionAssertionTests(unittest.TestCase):
+    def test_invoke_container_forwards_explicit_network_mode(self):
+        class Result:
+            returncode = 0
+            stdout = '{"exit_code":0,"text":"ok","tools":[],"actions":[]}'
+            stderr = ""
+
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            with patch.object(RUN_EVALS.subprocess, "run", return_value=Result()) as run:
+                result = RUN_EVALS.invoke_container(
+                    engine="podman",
+                    image="test-image",
+                    transport="opencode",
+                    model="openai/test",
+                    agent="general",
+                    prompt="test",
+                    system="",
+                    project=project,
+                    auth=None,
+                    config=None,
+                    models_catalog=None,
+                    database_seed=None,
+                    config_root=None,
+                    expected_plugin=None,
+                    timeout=30,
+                    container_timeout=60,
+                    mount_node_modules=False,
+                    extra_envs=[],
+                    network="host",
+                )
+
+        self.assertEqual(result["exit_code"], 0)
+        command = run.call_args.args[0]
+        self.assertIn("--network", command)
+        self.assertEqual(command[command.index("--network") + 1], "host")
+
+    def test_invoke_container_leaves_network_default_when_unset(self):
+        class Result:
+            returncode = 0
+            stdout = '{"exit_code":0,"text":"ok","tools":[],"actions":[]}'
+            stderr = ""
+
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            with patch.object(RUN_EVALS.subprocess, "run", return_value=Result()) as run:
+                RUN_EVALS.invoke_container(
+                    engine="podman",
+                    image="test-image",
+                    transport="opencode",
+                    model="openai/test",
+                    agent="general",
+                    prompt="test",
+                    system="",
+                    project=project,
+                    auth=None,
+                    config=None,
+                    models_catalog=None,
+                    database_seed=None,
+                    config_root=None,
+                    expected_plugin=None,
+                    timeout=30,
+                    container_timeout=60,
+                    mount_node_modules=False,
+                    extra_envs=[],
+                    network=None,
+                )
+
+        self.assertNotIn("--network", run.call_args.args[0])
+
     def test_prefers_normalized_transport_actions_over_raw_stdout(self):
         target = {
             "actions": [
