@@ -229,9 +229,7 @@ Go:  opencode-go/<model-id>
 
 For example: `opencode/gpt-5.4` or `opencode-go/kimi-k3`. The existing `OPENCODE_AUTH_JSON` secret path remains available for credentials that must be represented through OpenCode's auth file rather than a provider environment variable.
 
-For GitHub Copilot CLI, the workflow grants `copilot-requests: write` and the runner exposes the workflow's built-in `GITHUB_TOKEN`; no separate Copilot secret is required.
-
-The workflow grants `copilot-requests: write`. When either transport is `github-copilot-cli`, the action exposes the workflow's built-in `GITHUB_TOKEN` to the harness, and the runner passes it into the isolated Copilot invocation. No separate Copilot secret is required.
+For GitHub Copilot CLI, the workflow grants `copilot-requests: write`. When either transport is `github-copilot-cli`, the action exposes the workflow's built-in `GITHUB_TOKEN` to the harness, and the runner passes it into the isolated Copilot invocation. No separate Copilot secret is required.
 
 Use `target_kind` and `target` to run all agent cases, all skill cases, or a specific agent/skill on demand. A skill target is valid when it has central cases and/or one or more `*.json` files under `skills/<skill>/evals/`. For a selected skill, `cases` may use either the normalized global ID (for example `SKILL-web-ui-design-Web-01`) or the skill-local ID/name from its JSON file (for example `Web-01`). When `cases` is also supplied, it intersects with those target filters rather than being silently ignored. With `all=false`, at least one of `cases`, `target_kind != all`, or `target` must be explicit before inference starts.
 
