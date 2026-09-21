@@ -62,13 +62,10 @@ type EnvironmentAssignment = {
   value: string
 }
 
-const simpleGoProxy = /^(?:off|direct|(?:https?|file):\/\/[^\s,|]+)(?:[,|](?:off|direct|(?:https?|file):\/\/[^\s,|]+))*$/
-const simpleGoVcs = /^[A-Za-z0-9*:_.,|+-]+$/
 const safeGoFlags = new Set([
   "-mod=readonly",
   "-mod=vendor",
   "-buildvcs=false",
-  "-buildvcs=true",
   "-trimpath",
 ])
 
@@ -87,9 +84,9 @@ const safeEnvironmentVariables: Record<string, (value: string) => boolean> = {
   GOTOOLCHAIN: (value) => value === "local",
   GOENV: (value) => value === "off",
   GOWORK: (value) => value === "off",
-  CGO_ENABLED: (value) => value === "0" || value === "1",
-  GOPROXY: (value) => simpleGoProxy.test(value),
-  GOVCS: (value) => simpleGoVcs.test(value),
+  CGO_ENABLED: (value) => value === "0",
+  GOPROXY: (value) => value === "off",
+  GOVCS: (value) => value === "*:off",
   GOFLAGS: safeGoFlagsValue,
 
   PYTHONDONTWRITEBYTECODE: (value) => value === "1",

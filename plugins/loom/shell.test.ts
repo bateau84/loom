@@ -63,6 +63,11 @@ describe("Loom Worker shell policy", () => {
       "XDG_CONFIG_HOME=/tmp/config go list ./...",
       "GOENV=/tmp/goenv go list ./...",
       "GOFLAGS=-toolexec=./evil go list ./...",
+      "GOFLAGS=-buildvcs=true go list ./...",
+      "CGO_ENABLED=1 go list ./...",
+      "GOPROXY=https://proxy.example go list ./...",
+      "GOPROXY=direct go list ./...",
+      "GOVCS='*:all' go list ./...",
       "XDG_CACHE_HOME=../cache pytest -q",
       "XDG_CACHE_HOME='/tmp/cache;touch /tmp/pwn' pytest -q",
     ]) {
