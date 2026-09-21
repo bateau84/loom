@@ -558,13 +558,9 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           additionalProperties: false,
         },
         options: { namespace: "loom", codemode: false },
-        execute: async (input) => {
-          try {
-            return { content: renderToolOutput(await findPaths(ctx.location.directory, input as FindOptions)) }
-          } catch (error) {
-            return { content: renderToolOutput({ error: error instanceof Error ? error.message : String(error) }) }
-          }
-        },
+        execute: async (input) => ({
+          content: renderToolOutput(await findPaths(ctx.location.directory, input as FindOptions)),
+        }),
       })
 
       editor.add({
@@ -589,13 +585,9 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           additionalProperties: false,
         },
         options: { namespace: "loom", codemode: false },
-        execute: async (input) => {
-          try {
-            return { content: renderToolOutput(await grepText(ctx.location.directory, input as GrepOptions)) }
-          } catch (error) {
-            return { content: renderToolOutput({ error: error instanceof Error ? error.message : String(error) }) }
-          }
-        },
+        execute: async (input) => ({
+          content: renderToolOutput(await grepText(ctx.location.directory, input as GrepOptions)),
+        }),
       })
 
       editor.add({
@@ -647,13 +639,9 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           additionalProperties: false,
         },
         options: { namespace: "loom", codemode: false },
-        execute: async (input) => {
-          try {
-            return { content: renderToolOutput(await selectText(ctx.location.directory, input as SelectOptions)) }
-          } catch (error) {
-            return { content: renderToolOutput({ error: error instanceof Error ? error.message : String(error) }) }
-          }
-        },
+        execute: async (input) => ({
+          content: renderToolOutput(await selectText(ctx.location.directory, input as SelectOptions)),
+        }),
       })
 
       editor.add({
@@ -674,13 +662,9 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           additionalProperties: false,
         },
         options: { namespace: "loom", codemode: false },
-        execute: async (input) => {
-          try {
-            return { content: renderToolOutput(await statPaths(ctx.location.directory, input as StatsOptions)) }
-          } catch (error) {
-            return { content: renderToolOutput({ error: error instanceof Error ? error.message : String(error) }) }
-          }
-        },
+        execute: async (input) => ({
+          content: renderToolOutput(await statPaths(ctx.location.directory, input as StatsOptions)),
+        }),
       })
 
       editor.add({
