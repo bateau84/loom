@@ -224,6 +224,53 @@ class ActionAssertionTests(unittest.TestCase):
         self.assertEqual(len(failures), 1)
         self.assertTrue(failures[0].startswith("forbidden action observed:"))
 
+    def test_skill_target_requires_confirmed_loaded_skill(self):
+        actions = [
+            {"tool": "skill", "args": {"id": "golang-concurrency"}},
+        ]
+        case = {
+            "skill": "golang-concurrency",
+            "actions": {
+                "requires": [
+                    {"tool": "skill", "arg": "name", "equals": "golang-concurrency"}
+                ]
+            },
+        }
+
+        failures = RUN_EVALS.deterministic_failures(
+            case,
+            ["skill"],
+            actions,
+            [],
+        )
+
+        self.assertEqual(
+            failures,
+            ["skill under test not confirmed loaded: golang-concurrency"],
+        )
+
+    def test_skill_target_accepts_confirmed_loaded_skill(self):
+        actions = [
+            {"tool": "skill", "args": {"id": "golang-concurrency"}},
+        ]
+        case = {
+            "skill": "golang-concurrency",
+            "actions": {
+                "requires": [
+                    {"tool": "skill", "arg": "name", "equals": "golang-concurrency"}
+                ]
+            },
+        }
+
+        failures = RUN_EVALS.deterministic_failures(
+            case,
+            ["skill"],
+            actions,
+            ["golang-concurrency"],
+        )
+
+        self.assertEqual(failures, [])
+
     def test_reports_missing_required_and_observed_forbidden_action(self):
         actions = [
             {
