@@ -717,21 +717,27 @@ export function createProjectStorage(
     }
   }
 
+  const fencedTransaction = <T>(fn: () => Promise<T>) =>
+    expectedVersion !== undefined && raw.transaction ? raw.transaction(fn) : fn()
+
   const scoped: RawStorage = {
     async get(key) {
-      await assertVersion()
-      return raw.get(scopedKey(projectId, key))
+      return fencedTransaction(async () => {
+        await assertVersion()
+        return raw.get(scopedKey(projectId, key))
+      })
     },
     async set(key, value) {
-      const write = async () => {
+      return fencedTransaction(async () => {
         await assertVersion()
         return raw.set(scopedKey(projectId, key), value)
-      }
-      return raw.transaction ? raw.transaction(write) : write()
+      })
     },
     async scan(input) {
-      await assertVersion()
-      return raw.scan({ ...input, prefix: scopedKey(projectId, input.prefix) })
+      return fencedTransaction(async () => {
+        await assertVersion()
+        return raw.scan({ ...input, prefix: scopedKey(projectId, input.prefix) })
+      })
     },
   }
   if (raw.transaction) {

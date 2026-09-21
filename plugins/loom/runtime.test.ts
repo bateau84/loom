@@ -1312,6 +1312,150 @@ describe("Loom runtime identity and scoped storage", () => {
     })
   })
 
+  test("version-fenced project reads cannot cross a concurrent schema upgrade", async () => {
+    const values = new Map<string, unknown>([
+      ["installation/runtime-schema", {
+        schemaVersion: 1,
+        currentVersion: 1,
+        initializedAt: "now",
+        updatedAt: "now",
+      }],
+      ["project/project-a/format", { version: 1 }],
+    ])
+
+    let releaseSchemaRead!: () => void
+    const schemaRead = new Promise<void>((resolve) => { releaseSchemaRead = resolve })
+    let tail = Promise.resolve()
+
+    const raw = {
+      async get(key: string) {
+        if (key === "installation/runtime-schema") {
+          releaseSchemaRead()
+          await Bun.sleep(30)
+        }
+        return values.get(key)
+      },
+      async set(key: string, value: unknown) {
+        values.set(key, value)
+        return value
+      },
+      async scan({ prefix }: { prefix: string }) {
+        return {
+          entries: [...values.entries()]
+            .filter(([key]) => key.startsWith(prefix))
+            .map(([key, value]) => ({ key, value })),
+          next: undefined,
+        }
+      },
+      async transaction<T>(fn: () => Promise<T>): Promise<T> {
+        const previous = tail
+        let release!: () => void
+        const next = new Promise<void>((resolve) => { release = resolve })
+        tail = previous.then(() => next)
+        await previous
+        try {
+          return await fn()
+        } finally {
+          release()
+        }
+      },
+    }
+
+    const scoped = createProjectStorage(raw as any, "project-a", {
+      expectedRuntimeVersion: 1,
+    })
+    const read = scoped.get("format")
+    await schemaRead
+
+    const upgrade = raw.transaction(async () => {
+      await raw.set("project/project-a/format", { version: 2 })
+      await raw.set("installation/runtime-schema", {
+        schemaVersion: 1,
+        currentVersion: 2,
+        initializedAt: "now",
+        updatedAt: "later",
+      })
+    })
+
+    expect(await read).toEqual({ version: 1 })
+    await upgrade
+    await expect(scoped.get("format")).rejects.toThrow(
+      "does not match this running build (1)",
+    )
+  })
+
+  test("version-fenced project scans cannot cross a concurrent schema upgrade", async () => {
+    const values = new Map<string, unknown>([
+      ["installation/runtime-schema", {
+        schemaVersion: 1,
+        currentVersion: 1,
+        initializedAt: "now",
+        updatedAt: "now",
+      }],
+      ["project/project-a/workflow/a", { format: 1 }],
+    ])
+
+    let releaseSchemaRead!: () => void
+    const schemaRead = new Promise<void>((resolve) => { releaseSchemaRead = resolve })
+    let tail = Promise.resolve()
+
+    const raw = {
+      async get(key: string) {
+        if (key === "installation/runtime-schema") {
+          releaseSchemaRead()
+          await Bun.sleep(30)
+        }
+        return values.get(key)
+      },
+      async set(key: string, value: unknown) {
+        values.set(key, value)
+        return value
+      },
+      async scan({ prefix }: { prefix: string }) {
+        return {
+          entries: [...values.entries()]
+            .filter(([key]) => key.startsWith(prefix))
+            .map(([key, value]) => ({ key, value })),
+          next: undefined,
+        }
+      },
+      async transaction<T>(fn: () => Promise<T>): Promise<T> {
+        const previous = tail
+        let release!: () => void
+        const next = new Promise<void>((resolve) => { release = resolve })
+        tail = previous.then(() => next)
+        await previous
+        try {
+          return await fn()
+        } finally {
+          release()
+        }
+      },
+    }
+
+    const scoped = createProjectStorage(raw as any, "project-a", {
+      expectedRuntimeVersion: 1,
+    })
+    const scan = scoped.scan({ prefix: "workflow/" })
+    await schemaRead
+
+    const upgrade = raw.transaction(async () => {
+      await raw.set("project/project-a/workflow/a", { format: 2 })
+      await raw.set("installation/runtime-schema", {
+        schemaVersion: 1,
+        currentVersion: 2,
+        initializedAt: "now",
+        updatedAt: "later",
+      })
+    })
+
+    expect((await scan).entries[0].value).toEqual({ format: 1 })
+    await upgrade
+    await expect(scoped.scan({ prefix: "workflow/" })).rejects.toThrow(
+      "does not match this running build (1)",
+    )
+  })
+
   test("already-running old process cannot mutate after another process upgrades the runtime schema", async () => {
     await withRoots(async (root) => {
       const project = join(root, "version-skew-project")
