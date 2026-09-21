@@ -49,6 +49,13 @@ button:focus-visible, select:focus-visible, input:focus-visible, a:focus-visible
 .badge[data-tone="warn"] { color: var(--warn); }
 .badge[data-tone="ok"] { color: var(--ok); }
 .badge[data-tone="stale"] { color: var(--stale); }
+.badge[data-state]::before { display: inline-block; margin-right: 0.28rem; font-weight: 800; }
+.badge[data-state="consistency conflict"]::before { content: "⚠"; }
+.badge[data-state="failed"]::before { content: "×"; }
+.badge[data-state="blocked"]::before { content: "!"; }
+.badge[data-state="stale/offline"]::before { content: "◷"; }
+.badge[data-state="active"]::before { content: "▶"; }
+.badge[data-state="complete"]::before { content: "✓"; }
 .stats { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.45rem; }
 .stat { padding: 0.45rem 0.55rem; border-radius: 0.5rem; background: var(--surface-2); }
 .stat strong { display: block; font-size: 1rem; }
@@ -169,8 +176,9 @@ button:focus-visible, select:focus-visible, input:focus-visible, a:focus-visible
 
   function badges(w) {
     const p = resolved(w);
+    const stateLabel = displayState(w);
     return [
-      '<span class="badge" data-tone="' + tone(w) + '">' + esc(displayState(w)) + '</span>',
+      '<span class="badge" data-state="' + esc(stateLabel) + '" data-tone="' + tone(w) + '">' + esc(stateLabel) + '</span>',
       '<span class="badge">rev ' + esc(w.workflowRevision) + '</span>',
       p?.activeAgent ? '<span class="badge">agent ' + esc(p.activeAgent) + '</span>' : "",
     ].join("");
