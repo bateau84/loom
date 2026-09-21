@@ -216,6 +216,21 @@ describe("Loom structured inspection", () => {
     ).rejects.toThrow("byte budget exceeded")
   })
 
+  test("grep rejects excessive line work before tiny-line amplification", async () => {
+    const root = await fixture()
+    await writeFile(
+      join(root, "src", "too-many-grep-lines.log"),
+      Array.from({ length: 200_001 }, () => "x").join("\n"),
+    )
+
+    await expect(
+      grepText(root, {
+        path: "src/too-many-grep-lines.log",
+        pattern: "needle",
+      }),
+    ).rejects.toThrow("line work budget exceeded")
+  })
+
   test("select rejects an empty custom delimiter before field expansion", async () => {
     const root = await fixture()
 
