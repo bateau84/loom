@@ -434,6 +434,17 @@ export async function grepText(root: string, options: GrepOptions) {
   }
 }
 
+function countLogicalLines(text: string) {
+  if (text.length === 0) return 0
+
+  let lines = 0
+  for (const character of text) {
+    if (character === "\n") lines += 1
+  }
+
+  return text.endsWith("\n") ? lines : lines + 1
+}
+
 function splitFields(line: string, delimiter: string | undefined) {
   if (!delimiter || delimiter === "whitespace") return line.trim().split(/\s+/)
   if (delimiter === "tab") return line.split("\t")
@@ -551,7 +562,7 @@ export async function statPaths(root: string, options: StatsOptions) {
       const buffer = await readFile(target)
       if (buffer.byteLength <= MAX_FILE_BYTES && !buffer.includes(0)) {
         const text = buffer.toString("utf8")
-        lines = text.length === 0 ? 0 : text.split(/\r?\n/).length
+        lines = countLogicalLines(text)
         totalLines += lines
       }
     }
