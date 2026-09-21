@@ -196,6 +196,40 @@ describe("Loom runtime upgrade ledger", () => {
       ).rejects.toThrow("newer than this build supports")
     })
   })
+
+  test("installation-wide upgrade lock prevents two projects from running one upgrade twice", async () => {
+    await withRoots(async (root) => {
+      const raw = new MemoryStorage()
+      const a = join(root, "a")
+      const b = join(root, "b")
+      await mkdir(a, { recursive: true })
+      await mkdir(b, { recursive: true })
+      const runtimeA = await resolveRuntimeIdentity(a, raw as any)
+      const runtimeB = await resolveRuntimeIdentity(b, raw as any)
+      expect(runtimeA.installationId).toBe(runtimeB.installationId)
+      expect(runtimeA.projectId).not.toBe(runtimeB.projectId)
+
+      let runs = 0
+      const steps = [{
+        id: "test-v1-to-v2-global",
+        fromVersion: 1,
+        toVersion: 2,
+        apply: async (storage: any) => {
+          runs++
+          await Bun.sleep(30)
+          await storage.set("installation/global-upgrade-test", { complete: true })
+        },
+      }]
+
+      await Promise.all([
+        ensureRuntimeStateVersion(raw as any, runtimeA, { targetVersion: 2, steps }),
+        ensureRuntimeStateVersion(raw as any, runtimeB, { targetVersion: 2, steps }),
+      ])
+
+      expect(runs).toBe(1)
+      expect(await raw.get("installation/runtime-schema")).toMatchObject({ currentVersion: 2 })
+    })
+  })
 })
 
 describe("Loom crash-safe durable storage", () => {
@@ -812,6 +846,62 @@ describe("Loom runtime identity and scoped storage", () => {
       expect(result.provenance).toBe("opencode-session-continuity")
       expect(await scoped.get("session-intent/resumed-session")).toBe("intent-a")
       expect(await scoped.get("intent/intent-a")).toEqual({ id: "intent-a", state: "interviewing" })
+    })
+  })
+
+  test("legacy reconciliation resumes after workflow copy but before work-hierarchy copy", async () => {
+    await withRoots(async (root) => {
+      const legacy = new MemoryStorage()
+      const canonical = new MemoryStorage()
+      const project = join(root, "project")
+      await mkdir(project, { recursive: true })
+      const runtime = await resolveRuntimeIdentity(project, canonical as any)
+      const scoped = createProjectStorage(canonical as any, runtime.projectId)
+      const objectiveId = "objective:docs/anchors/example.md"
+
+      await legacy.set("session/resumed-session", "workflow-a")
+      await legacy.set("workflow/workflow-a", {
+        id: "workflow-a",
+        anchor: "docs/anchors/example.md",
+        createdBySession: "resumed-session",
+        createdAt: "before-project-scoping",
+        work: { objectiveId, generation: 1 },
+        steps: [],
+      })
+      await legacy.set(`work/${encodeURIComponent(objectiveId)}`, {
+        objectiveId,
+        generation: 1,
+        version: 4,
+      })
+
+      await scoped.set("session/resumed-session", "workflow-a")
+      await scoped.set("workflow/workflow-a", {
+        id: "workflow-a",
+        projectId: runtime.projectId,
+        revision: 0,
+        anchor: "docs/anchors/example.md",
+        createdBySession: "resumed-session",
+        createdAt: "before-project-scoping",
+        work: { objectiveId, generation: 1 },
+        steps: [],
+      })
+
+      const result = await migrateLegacySessionState(legacy as any, scoped, runtime, {
+        sessionId: "resumed-session",
+        sessionProjectId: "opencode-project-a",
+        currentProjectId: "opencode-project-a",
+        resumeProof: {
+          kind: "opencode-host-session",
+          sessionId: "resumed-session",
+          projectId: "opencode-project-a",
+        },
+      })
+
+      expect(result.status).toBe("migrated")
+      expect(await scoped.get(`work/${encodeURIComponent(objectiveId)}`)).toMatchObject({
+        objectiveId,
+        version: 4,
+      })
     })
   })
 
