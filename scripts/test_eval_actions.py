@@ -55,10 +55,13 @@ class WorkflowCredentialTests(unittest.TestCase):
         for workflow in (live, ci):
             self.assertIn(checkout, workflow)
             self.assertIn(setup_bun, workflow)
+            self.assertIn("persist-credentials: false", workflow)
+            self.assertIn("bun install --frozen-lockfile", workflow)
         self.assertIn(upload, live)
         self.assertNotIn("actions/checkout@v4", live + ci)
         self.assertNotIn("oven-sh/setup-bun@v2", live + ci)
         self.assertNotIn("actions/upload-artifact@v4", live)
+        self.assertNotIn("- run: bun install\n", live + ci)
 
     def test_live_workflow_forwards_opencode_api_key_explicitly(self):
         workflow = (
