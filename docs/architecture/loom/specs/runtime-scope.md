@@ -188,7 +188,9 @@ Pre-project-epoch OpenCode plugin state has one additional in-place-upgrade cont
 
 This is **session continuity provenance**, not path inference and not user/model confirmation. Loom records a durable upgrade-reconciliation receipt containing the target project epoch and hashed session identity. A supplied workflow ID, canonical path, or free-form confirmation string can never create this provenance.
 
-If durable legacy state already names a different Loom project epoch, session continuity MUST NOT override it. If the exact host-session proof is absent or mismatched, ambiguous records remain unmigrated and are reported.
+Once that exact legacy workflow has been reconciled and exists canonically in the current project-scoped store with `projectId == currentProjectEpoch`, its canonical workflow record becomes durable provenance for **additional legacy sessions whose stored legacy session binding names that exact workflow**. This secondary reconciliation does not require the older host session to still expose project metadata, but an explicit OpenCode project mismatch still fails closed. It cannot authorize another legacy workflow, a caller-supplied workflow selector, or a conflicting stored Loom project epoch.
+
+If durable legacy state already names a different Loom project epoch, neither session continuity nor canonical-workflow provenance may override it. If neither exact host-session proof nor exact admitted-workflow provenance exists, ambiguous records remain unmigrated and are reported.
 
 ## Conformance evidence
 
