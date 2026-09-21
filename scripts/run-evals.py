@@ -98,11 +98,130 @@ This is a fresh-context decision test, not an active Loom workflow. Apply your p
 """ % (agent, strip_frontmatter(text))
 
 
+SKILL_EVAL_AGENT = "skill-eval"
+
+
+def skill_eval_agent(skill: str) -> str:
+    return """---
+description: Isolated behavioral target for one Loom skill.
+mode: primary
+permissions:
+  - action: edit
+    resource: "*"
+    effect: deny
+  - action: subagent
+    resource: "*"
+    effect: deny
+---
+
+Load the native skill `%s` before answering the user prompt. Apply that skill's practitioner guidance faithfully. Do not discuss the evaluation harness, grading criteria, or the fact that this is an evaluation. Do not load Reviewer/Critic companion methodology unless the user prompt itself calls for that role.
+""" % skill
+
+
 def load_cases(suite_paths: list[Path]) -> list[dict[str, Any]]:
     cases: list[dict[str, Any]] = []
     for path in suite_paths:
         data = json.loads(path.read_text(encoding="utf-8"))
         cases.extend(data["cases"])
+    return cases
+
+
+def skill_eval_files(skills_root: Path) -> list[Path]:
+    files: list[Path] = []
+    if not skills_root.is_dir():
+        return files
+    for skill_dir in sorted(path for path in skills_root.iterdir() if path.is_dir()):
+        eval_dir = skill_dir / "evals"
+        if not eval_dir.is_dir():
+            continue
+        files.extend(sorted(path for path in eval_dir.iterdir() if path.is_file() and path.suffix == ".json"))
+    return files
+
+
+def skill_eval_raw_cases(path: Path) -> tuple[str, list[dict[str, Any]]]:
+    data = json.loads(path.read_text(encoding="utf-8"))
+    folder_skill = path.parent.parent.name
+    if isinstance(data, list):
+        declared_skill = folder_skill
+        raw_cases = data
+    elif isinstance(data, dict):
+        declared_skill = str(data.get("skill") or data.get("skill_name") or folder_skill)
+        raw_cases = data.get("cases") if isinstance(data.get("cases"), list) else data.get("evals")
+    else:
+        raise RuntimeError(f"{path}: skill eval JSON must be an object or array")
+
+    if declared_skill != folder_skill:
+        raise RuntimeError(
+            f"{path}: declared skill {declared_skill!r} does not match folder {folder_skill!r}"
+        )
+    if not isinstance(raw_cases, list) or not raw_cases:
+        raise RuntimeError(f"{path}: skill eval JSON contains no cases/evals")
+    if not all(isinstance(item, dict) for item in raw_cases):
+        raise RuntimeError(f"{path}: every skill eval case must be an object")
+    return folder_skill, raw_cases
+
+
+def normalize_skill_eval_case(
+    skill: str,
+    raw: dict[str, Any],
+    path: Path,
+    index: int,
+) -> dict[str, Any]:
+    source_id = raw.get("id", index + 1)
+    prompt = raw.get("prompt")
+    expectations = raw.get("expectations")
+    if not isinstance(prompt, str) or not prompt.strip():
+        raise RuntimeError(f"{path}: case {source_id!r} has no prompt")
+    if not isinstance(expectations, list) or not expectations or not all(
+        isinstance(value, str) and value.strip() for value in expectations
+    ):
+        raise RuntimeError(f"{path}: case {source_id!r} needs non-empty string expectations")
+
+    negative = raw.get("negative_expectations", raw.get("must_not", []))
+    if negative is None:
+        negative = []
+    if not isinstance(negative, list) or not all(
+        isinstance(value, str) and value.strip() for value in negative
+    ):
+        raise RuntimeError(f"{path}: case {source_id!r} has invalid negative expectations")
+
+    trap = raw.get("trap") or raw.get("description") or "The skill's defining guidance is ignored."
+    if not isinstance(trap, str) or not trap.strip():
+        trap = "The skill's defining guidance is ignored."
+
+    case_id = f"SKILL-{skill}-{source_id}"
+    return {
+        "id": case_id,
+        "agent": SKILL_EVAL_AGENT,
+        "skill": skill,
+        "execution": "runtime",
+        "requirements": [],
+        "prompt": prompt,
+        "trap": trap,
+        "expectations": list(expectations),
+        "must_not": list(negative),
+        "tools": {"requires": ["skill"]},
+        "_skill_owned": True,
+        "_skill_eval_source": str(path),
+        "_skill_eval_source_id": source_id,
+        "_skill_eval_name": raw.get("name"),
+    }
+
+
+def load_skill_owned_cases(skills_root: Path) -> list[dict[str, Any]]:
+    cases: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
+    for path in skill_eval_files(skills_root):
+        skill, raw_cases = skill_eval_raw_cases(path)
+        for index, raw in enumerate(raw_cases):
+            case = normalize_skill_eval_case(skill, raw, path, index)
+            if case["id"] in seen_ids:
+                raise RuntimeError(
+                    f"duplicate normalized skill eval id {case['id']!r}; "
+                    f"skill-owned case IDs must be unique within {skill!r}"
+                )
+            seen_ids.add(case["id"])
+            cases.append(case)
     return cases
 
 
@@ -142,12 +261,15 @@ def setup_projects(case: dict[str, Any]) -> tuple[Path, Path, Path]:
 
     shutil.copytree(ROOT / "skills", target_oc / "skills", dirs_exist_ok=True)
 
-    source_agent = (ROOT / "agents" / (case["agent"] + ".md")).read_text(encoding="utf-8")
-    target_agent = (
-        promote_agent(source_agent)
-        if case["execution"] == "runtime"
-        else decision_agent(source_agent, case["agent"])
-    )
+    if case.get("_skill_owned"):
+        target_agent = skill_eval_agent(str(case["skill"]))
+    else:
+        source_agent = (ROOT / "agents" / (case["agent"] + ".md")).read_text(encoding="utf-8")
+        target_agent = (
+            promote_agent(source_agent)
+            if case["execution"] == "runtime"
+            else decision_agent(source_agent, case["agent"])
+        )
     (target_oc / "agents" / (case["agent"] + ".md")).write_text(target_agent, encoding="utf-8")
     (judge_oc / "agents" / "eval-judge.md").write_text(JUDGE_AGENT, encoding="utf-8")
 
@@ -945,6 +1067,12 @@ def main() -> int:
 
     suite_paths = [Path(value).resolve() for value in args.suite] if args.suite else DEFAULT_SUITES
     cases = load_cases(suite_paths)
+    cases.extend(load_skill_owned_cases(ROOT / "skills"))
+
+    all_ids = [str(case["id"]) for case in cases]
+    duplicate_ids = sorted({case_id for case_id in all_ids if all_ids.count(case_id) > 1})
+    if duplicate_ids:
+        parser.error("duplicate behavioral eval case id(s): " + ", ".join(duplicate_ids))
 
     if args.list:
         for case in cases:
@@ -992,6 +1120,12 @@ def main() -> int:
     ]
     if not selected:
         parser.error("selection matched no behavioral eval cases")
+
+    if args.target_transport != "opencode" and any(case_target_kind(case) == "skill" for case in selected):
+        parser.error(
+            "skill eval targets require --target-transport opencode so the native skill tool can load the skill; "
+            "GitHub Copilot CLI may still be used as --judge-transport"
+        )
 
     engine = resolve_engine(args.engine)
     jobs = [
