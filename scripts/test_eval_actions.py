@@ -219,6 +219,9 @@ class SkillOwnedEvalDiscoveryTests(unittest.TestCase):
 
             self.assertFalse(baseline_skill.exists())
             self.assertTrue((candidate_skill / "SKILL.md").is_file())
+            self.assertFalse((candidate_skill / "evals").exists())
+            self.assertFalse((candidate_skill / "ASSESSMENT.md").exists())
+            self.assertFalse((candidate_skill / "QA.md").exists())
             self.assertEqual(
                 [path.name for path in (candidate_project / ".opencode" / "skills").iterdir()],
                 ["web-ui-design"],
