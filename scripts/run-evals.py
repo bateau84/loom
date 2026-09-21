@@ -731,7 +731,7 @@ def invoke_container(
             )
             if not result_file.is_file():
                 detail = " | ".join(part.strip() for part in (proc.stderr, proc.stdout) if part.strip())
-                return {
+                return redact_sensitive_values({
                     "exit_code": proc.returncode,
                     "text": "",
                     "tools": [],
@@ -740,11 +740,11 @@ def invoke_container(
                     + (": " + detail[:4000] if detail else ""),
                     "stdout": proc.stdout[:100000],
                     "infrastructure_error": True,
-                }
+                }, secrets)
             try:
                 result = json.loads(result_file.read_text(encoding="utf-8"))
             except json.JSONDecodeError as exc:
-                return {
+                return redact_sensitive_values({
                     "exit_code": proc.returncode,
                     "text": "",
                     "tools": [],
@@ -752,9 +752,9 @@ def invoke_container(
                     "stderr": "opencode-eval-runner result was invalid JSON: " + str(exc),
                     "stdout": proc.stdout[:100000],
                     "infrastructure_error": True,
-                }
+                }, secrets)
             if not isinstance(result, dict):
-                return {
+                return redact_sensitive_values({
                     "exit_code": proc.returncode,
                     "text": "",
                     "tools": [],
@@ -762,7 +762,7 @@ def invoke_container(
                     "stderr": "opencode-eval-runner result was not an object",
                     "stdout": proc.stdout[:100000],
                     "infrastructure_error": True,
-                }
+                }, secrets)
             return redact_sensitive_values(result, secrets)
 
     with tempfile.TemporaryDirectory(prefix="loom-eval-invoke-") as tmp:
@@ -857,7 +857,7 @@ def invoke_container(
             result = json.loads(proc.stdout)
         except json.JSONDecodeError as exc:
             detail = " | ".join(part.strip() for part in (proc.stderr, proc.stdout) if part.strip())
-            return {
+            return redact_sensitive_values({
                 "exit_code": proc.returncode,
                 "text": "",
                 "tools": [],
@@ -867,16 +867,16 @@ def invoke_container(
                 ),
                 "stdout": proc.stdout[:100000],
                 "infrastructure_error": True,
-            }
+            }, secrets)
         if not isinstance(result, dict):
-            return {
+            return redact_sensitive_values({
                 "exit_code": proc.returncode,
                 "text": "",
                 "tools": [],
                 "stderr": "container result was not an object",
                 "stdout": "",
                 "infrastructure_error": True,
-            }
+            }, secrets)
         return redact_sensitive_values(result, secrets)
 
 
