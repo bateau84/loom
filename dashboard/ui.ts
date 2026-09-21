@@ -71,6 +71,8 @@ button:focus-visible, select:focus-visible, input:focus-visible, a:focus-visible
 .hierarchy ul { margin: 0.35rem 0 0 1rem; padding: 0; }
 .empty { padding: 2rem; color: var(--muted); text-align: center; }
 .notice { padding: 0.7rem; border: 1px solid var(--border); border-radius: 0.55rem; color: var(--muted); }
+.projection-status { margin: 0 0 0.75rem; }
+[hidden] { display: none !important; }
 .sr-live { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0,0,0,0); }
 @media (min-width: 52rem) {
   .topbar { grid-template-columns: 1fr auto; }
@@ -101,20 +103,26 @@ button:focus-visible, select:focus-visible, input:focus-visible, a:focus-visible
       <label class="field">Project
         <input id="project-filter" type="search" autocomplete="off" placeholder="Filter project">
       </label>
+      <label class="field">Agent
+        <input id="agent-filter" type="search" autocomplete="off" placeholder="Filter current agent">
+      </label>
     </div>
   </header>
   <nav id="breadcrumbs" class="breadcrumbs" aria-label="Location"></nav>
+  <div id="projection-status" class="notice projection-status" role="status" hidden></div>
   <main id="main" tabindex="-1"></main>
   <div id="live" class="sr-live" aria-live="polite" aria-atomic="true"></div>
 </div>
 <script>
 (() => {
-  const state = { fleet: { projects: [] }, status: "all", project: "", lastKeys: new Set() };
+  const state = { fleet: { projects: [] }, status: "all", project: "", agent: "", lastKeys: new Set() };
   const main = document.getElementById("main");
   const crumbs = document.getElementById("breadcrumbs");
   const live = document.getElementById("live");
   const statusFilter = document.getElementById("status-filter");
   const projectFilter = document.getElementById("project-filter");
+  const agentFilter = document.getElementById("agent-filter");
+  const projectionStatus = document.getElementById("projection-status");
 
   const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) =>
     c === "&" ? "&amp;" :
@@ -160,10 +168,12 @@ button:focus-visible, select:focus-visible, input:focus-visible, a:focus-visible
   }
   function filteredWorkflows() {
     const needle = state.project.trim().toLowerCase();
+    const agentNeedle = state.agent.trim().toLowerCase();
     return state.fleet.projects.flatMap((project) =>
       project.workflows
         .filter((w) => {
           if (needle && !((project.displayName || project.canonicalLocation || project.projectId).toLowerCase().includes(needle))) return false;
+          if (agentNeedle && !(resolved(w)?.activeAgent || "").toLowerCase().includes(agentNeedle)) return false;
           if (state.status === "attention") return needsAttention(w);
           if (state.status === "stale") return w.sourceFreshness === "stale-source";
           if (state.status === "active") return resolved(w)?.status === "active" && w.sourceFreshness === "live";
@@ -181,6 +191,7 @@ button:focus-visible, select:focus-visible, input:focus-visible, a:focus-visible
       '<span class="badge" data-state="' + esc(stateLabel) + '" data-tone="' + tone(w) + '">' + esc(stateLabel) + '</span>',
       '<span class="badge">rev ' + esc(w.workflowRevision) + '</span>',
       p?.activeAgent ? '<span class="badge">agent ' + esc(p.activeAgent) + '</span>' : "",
+      p?.budget?.exhausted ? '<span class="badge" data-tone="warn">budget exhausted</span>' : "",
     ].join("");
   }
 
@@ -192,12 +203,17 @@ button:focus-visible, select:focus-visible, input:focus-visible, a:focus-visible
     const conflictMeta = w.consistency === "conflict"
       ? 'Conflicting highest-revision snapshots: ' + esc(w.conflictCandidates?.length ?? 0)
       : 'Last meaningful activity: ' + esc(p?.recentActivityAt || "unknown");
+    const taskProgress = p?.hierarchyProgress?.tasks;
+    const budgetValue = p?.budget
+      ? (p.budget.used ?? "—") + "/" + (p.budget.limit ?? "—")
+      : "—";
     return '<a class="workflow panel" data-key="' + esc(key) + '" href="' + href + '">' +
       '<div class="workflow-head"><div class="identity"><div class="name">' + esc(project.displayName || project.projectId) + ' · ' + esc(identity) + '</div><div class="path">' + esc(project.canonicalLocation) + '</div></div><div class="badges">' + badges(w) + '</div></div>' +
       '<div class="stats">' +
         '<div class="stat"><strong>' + esc(p?.openOqCount ?? "—") + '</strong><span>Open OQs</span></div>' +
         '<div class="stat"><strong>' + esc(p?.openVerificationCount ?? "—") + '</strong><span>Verification</span></div>' +
-        '<div class="stat"><strong>' + esc(p?.budget?.used ?? "—") + '</strong><span>Dispatches</span></div>' +
+        '<div class="stat"><strong>' + esc(budgetValue) + '</strong><span>Budget used/limit</span></div>' +
+        '<div class="stat"><strong>' + esc(taskProgress ? taskProgress.complete + "/" + taskProgress.total : "—") + '</strong><span>Tasks complete</span></div>' +
         '<div class="stat"><strong>' + esc(p?.runnableSteps?.length ?? "—") + '</strong><span>Runnable</span></div>' +
         '<div class="stat"><strong>' + esc(w.participants?.filter((participant) => participant.live).length ?? 0) + '/' + esc(w.participants?.length ?? 0) + '</strong><span>Live publishers</span></div>' +
       '</div>' +
@@ -209,7 +225,17 @@ button:focus-visible, select:focus-visible, input:focus-visible, a:focus-visible
     crumbs.innerHTML = '<span>Fleet</span>';
     const items = filteredWorkflows();
     if (!items.length) {
-      main.innerHTML = '<section class="panel empty"><strong>No matching Loom work.</strong><div>Either no instances are publishing, or the current filters hide all workflows.</div></section>';
+      const workflowCount = state.fleet.projects.reduce((total, project) => total + project.workflows.length, 0);
+      const hasFilters = state.status !== "all" || state.project.trim() || state.agent.trim();
+      if (!state.fleet.projects.length) {
+        main.innerHTML = '<section class="panel empty"><strong>No Loom instances discovered.</strong><div>Start an OpenCode + Loom process to populate Fleet.</div></section>';
+      } else if (workflowCount === 0) {
+        main.innerHTML = '<section class="panel empty"><strong>No active or recent workflows.</strong><div>Loom instances are publishing, but no workflows are currently inside the dashboard projection window.</div></section>';
+      } else if (hasFilters) {
+        main.innerHTML = '<section class="panel empty"><strong>No workflows match the current filters.</strong><div>Change or clear a Fleet filter to show other projected work.</div></section>';
+      } else {
+        main.innerHTML = '<section class="panel empty"><strong>No projected workflows.</strong></section>';
+      }
       return;
     }
     main.innerHTML = '<section class="grid" aria-label="Fleet workflows">' + items.map(({project, workflow}) => workflowCard(project, workflow)).join("") + '</section>';
@@ -228,7 +254,7 @@ button:focus-visible, select:focus-visible, input:focus-visible, a:focus-visible
           '<li>' + esc(phase.title || phase.phaseId) + ' — ' + esc(phase.status) +
           '<ul>' + (phase.waves || []).map((wave) =>
             '<li>' + esc(wave.title || wave.waveId) + ' — ' + esc(wave.status) +
-            '<ul>' + (wave.tasks || []).map((task) => '<li>' + esc(task.title || task.taskId) + ' — ' + esc(task.status) + '</li>').join("") + '</ul></li>'
+            '<ul>' + (wave.tasks || []).map((task) => '<li>' + esc(task.title || task.taskId) + ' — ' + esc(task.status) + (task.claimedByWorkflowId ? ' · claimed by ' + esc(task.claimedByWorkflowId) : '') + '</li>').join("") + '</ul></li>'
           ).join("") + '</ul></li>'
         ).join("") + '</ul></div>';
     }).join("") + '</div>';
@@ -269,7 +295,7 @@ button:focus-visible, select:focus-visible, input:focus-visible, a:focus-visible
 
     main.innerHTML = '<section class="panel detail">' +
       '<div class="workflow-head"><div><h2 class="name">' + esc(p?.anchor || w.workflowId) + '</h2><div class="meta">Workflow ' + esc(w.workflowId) + '</div></div><div class="badges">' + badges(w) + '</div></div>' +
-      '<div class="stats section"><div class="stat"><strong>' + esc(p?.openOqCount ?? 0) + '</strong><span>Open OQs</span></div><div class="stat"><strong>' + esc(p?.openVerificationCount ?? 0) + '</strong><span>Verification</span></div><div class="stat"><strong>' + esc(p?.budget?.used ?? "—") + '</strong><span>Dispatches</span></div><div class="stat"><strong>' + esc(p?.productAcceptance?.status ?? "not started") + '</strong><span>Product Acceptance</span></div><div class="stat"><strong>' + esc(p?.knowledgeSync?.valid === true ? "valid" : p?.knowledgeSync ? "stale" : "not available") + '</strong><span>Knowledge</span></div></div>' +
+      '<div class="stats section"><div class="stat"><strong>' + esc(p?.openOqCount ?? "—") + '</strong><span>Open OQs</span></div><div class="stat"><strong>' + esc(p?.openVerificationCount ?? "—") + '</strong><span>Verification</span></div><div class="stat"><strong>' + esc(p?.budget ? (p.budget.used ?? "—") + "/" + (p.budget.limit ?? "—") : "—") + '</strong><span>Budget used/limit</span></div><div class="stat"><strong>' + esc(p?.productAcceptance?.status ?? "not started") + '</strong><span>Product Acceptance</span></div><div class="stat"><strong>' + esc(p?.knowledgeSync?.valid === true ? "valid" : p?.knowledgeSync ? "stale" : "not available") + '</strong><span>Knowledge</span></div></div>' +
       '<div class="section"><h2>Current / runnable steps</h2><div class="list">' + current + '</div></div>' +
       '<div class="section"><h2>OpenCode sessions</h2><div class="list">' + sessions + '</div></div>' +
       '<div class="section"><h2>Participating publishers</h2><div class="list">' + publisherRows + '</div></div>' +
@@ -309,7 +335,7 @@ button:focus-visible, select:focus-visible, input:focus-visible, a:focus-visible
       const next = keyed.find((node) => node.dataset.key === focused);
       if (next) next.focus();
       else {
-        const fallback = keyed[0] || statusFilter || projectFilter;
+        const fallback = keyed[0] || statusFilter || projectFilter || agentFilter;
         fallback?.focus();
         live.textContent = "The previously focused item is no longer available. Focus moved to the nearest available dashboard control.";
       }
@@ -321,15 +347,22 @@ button:focus-visible, select:focus-visible, input:focus-visible, a:focus-visible
       const response = await fetch("/api/fleet", { cache: "no-store" });
       if (!response.ok) throw new Error("fleet request failed");
       state.fleet = await response.json();
+      projectionStatus.hidden = true;
+      projectionStatus.textContent = "";
       render();
     } catch {
       live.textContent = "Dashboard projection is currently unavailable.";
+      projectionStatus.hidden = false;
+      projectionStatus.textContent = state.fleet.projects.length
+        ? "Dashboard refresh failed. Showing the last known Loom projection."
+        : "Dashboard projection is currently unavailable. Loom execution is independent of the dashboard.";
       if (!state.fleet.projects.length) main.innerHTML = '<section class="panel empty"><strong>Projection unavailable.</strong><div>Loom execution is independent of the dashboard.</div></section>';
     }
   }
 
   statusFilter.addEventListener("change", () => { state.status = statusFilter.value; render(); });
   projectFilter.addEventListener("input", () => { state.project = projectFilter.value; render(); });
+  agentFilter.addEventListener("input", () => { state.agent = agentFilter.value; render(); });
   addEventListener("hashchange", render);
   refresh();
   setInterval(refresh, 3000);
