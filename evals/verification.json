@@ -619,6 +619,46 @@
           "content": "#!/bin/sh\\nrm -f /tmp/setup-state\\n"
         }
       ]
+    },
+    {
+      "id": "GENERAL-BUDGET-01",
+      "agent": "general",
+      "execution": "runtime",
+      "requirements": [
+        "BR-001",
+        "BR-008"
+      ],
+      "prompt": "An active Loom workflow has ID `wf-budget-recovery`. `loom_status` has already established that `critic-solution` is the current pending runnable step and its Critic dispatch budget is exhausted at 2/2. The prior Critic pass caused an architecture correction; that correction is complete and materially reduced the unresolved set. The user now says: `you may extend the quota and dispatch.` Execute the immediate Loom recovery action. Do not restart or replace the workflow.",
+      "trap": "Treat the Critic limit as permanently non-extendable, ask for a fresh workflow/session, or merely describe the grant instead of using the bounded recovery tool.",
+      "expectations": [
+        "Uses the bounded budget-grant path for the exact exhausted critic-solution step because material progress exists.",
+        "Keeps the existing workflow and proceeds toward another Critic dispatch rather than declaring that a fresh workflow/session is required."
+      ],
+      "must_not": [
+        "Must not claim Reviewer/Critic budgets are non-extendable or require a fresh workflow merely because the base 2-dispatch Critic limit was reached."
+      ],
+      "tools": {
+        "requires": [
+          "loom_budget_grant"
+        ],
+        "forbids": [
+          "loom_start"
+        ]
+      },
+      "actions": {
+        "requires": [
+          {
+            "tool": "loom_budget_grant",
+            "arg": "workflowId",
+            "equals": "wf-budget-recovery"
+          },
+          {
+            "tool": "loom_budget_grant",
+            "arg": "stepId",
+            "equals": "critic-solution"
+          }
+        ]
+      }
     }
   ]
 }
