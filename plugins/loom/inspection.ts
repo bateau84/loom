@@ -1,4 +1,4 @@
-import { lstat, readFile, readdir, realpath } from "node:fs/promises"
+import { lstat, open, opendir, realpath } from "node:fs/promises"
 import { basename, isAbsolute, relative, resolve, sep } from "node:path"
 
 const MAX_DEPTH = 12
@@ -7,7 +7,10 @@ const MAX_SCANNED_ENTRIES = 20_000
 const MAX_FILE_BYTES = 2 * 1024 * 1024
 const MAX_TOTAL_SEARCH_BYTES = 8 * 1024 * 1024
 const MAX_PATTERN_LENGTH = 256
-const MAX_LINE_LENGTH = 16_384
+const MAX_SELECT_ROWS = 20_000
+const MAX_FIELDS = 256
+const MAX_FIELD_CHARS = 16_384
+const MAX_OUTPUT_TEXT_CHARS = 2_000
 
 export type FindOptions = {
   path?: string
@@ -73,6 +76,12 @@ type TextMatch = {
   text: string
   before?: string[]
   after?: string[]
+}
+
+type SelectRow = {
+  line: number
+  fields: string[]
+  sortValue?: string
 }
 
 function clampInteger(value: number | undefined, fallback: number, min: number, max: number) {
@@ -162,10 +171,6 @@ class BoundedBest<T> {
     private readonly compare: (a: T, b: T) => number,
   ) {}
 
-  get size() {
-    return this.items.length
-  }
-
   add(item: T) {
     if (this.items.length < this.limit) {
       this.items.push(item)
@@ -216,6 +221,25 @@ class BoundedBest<T> {
   }
 }
 
+async function readBounded(path: string, maxBytes: number) {
+  const handle = await open(path, "r")
+  const buffer = Buffer.allocUnsafe(maxBytes + 1)
+  let offset = 0
+
+  try {
+    while (offset < buffer.byteLength) {
+      const result = await handle.read(buffer, offset, buffer.byteLength - offset, offset)
+      if (result.bytesRead === 0) break
+      offset += result.bytesRead
+    }
+  } finally {
+    await handle.close()
+  }
+
+  if (offset > maxBytes) return undefined
+  return buffer.subarray(0, offset)
+}
+
 async function collectEntries(
   root: string,
   start: string,
@@ -224,11 +248,15 @@ async function collectEntries(
   const entries: Entry[] = []
   let scanned = 0
 
-  const visit = async (path: string, depth: number): Promise<void> => {
+  const account = () => {
     scanned += 1
     if (scanned > MAX_SCANNED_ENTRIES) {
       throw new Error("Inspection scanned too many entries; narrow the path or depth.")
     }
+  }
+
+  const visit = async (path: string, depth: number, accounted = false): Promise<void> => {
+    if (!accounted) account()
 
     const info = await lstat(path)
     const rel = displayPath(root, path)
@@ -250,18 +278,35 @@ async function collectEntries(
 
     if (depth >= options.maxDepth || type !== "directory") return
 
-    const children = await readdir(path, { withFileTypes: true })
-    children.sort((a, b) => a.name.localeCompare(b.name))
-
-    for (const child of children) {
+    const directory = await opendir(path)
+    for await (const child of directory) {
+      account()
       const childRel = rel === "." ? child.name : rel + "/" + child.name
       if (!options.includeHidden && hiddenRelative(childRel)) continue
-      await visit(resolve(path, child.name), depth + 1)
+      await visit(resolve(path, child.name), depth + 1, true)
     }
   }
 
   await visit(start, 0)
   return { entries, scanned }
+}
+
+function* logicalLines(text: string): Generator<{ line: number; text: string }> {
+  let start = 0
+  let number = 1
+
+  for (let index = 0; index < text.length; index += 1) {
+    if (text[index] !== "\n") continue
+    const end = index > start && text[index - 1] === "\r" ? index - 1 : index
+    yield { line: number, text: text.slice(start, end) }
+    start = index + 1
+    number += 1
+  }
+
+  if (start < text.length) {
+    const end = text.endsWith("\r") ? text.length - 1 : text.length
+    yield { line: number, text: text.slice(start, end) }
+  }
 }
 
 export async function findPaths(root: string, options: FindOptions = {}) {
@@ -312,27 +357,18 @@ export async function findPaths(root: string, options: FindOptions = {}) {
 }
 
 function literalLineMatches(line: string, pattern: string, caseSensitive: boolean) {
-  const candidate = line.slice(0, MAX_LINE_LENGTH)
-  if (caseSensitive) return candidate.includes(pattern)
-  return candidate.toLowerCase().includes(pattern.toLowerCase())
+  if (caseSensitive) return line.includes(pattern)
+  return line.toLowerCase().includes(pattern.toLowerCase())
 }
 
 function compareTextMatches(sort: "path" | "line", order: "asc" | "desc") {
   const direction = order === "desc" ? -1 : 1
 
   return (a: TextMatch, b: TextMatch) => {
-    const primary =
-      sort === "line"
-        ? a.line - b.line
-        : a.path.localeCompare(b.path)
-
+    const primary = sort === "line" ? a.line - b.line : a.path.localeCompare(b.path)
     if (primary !== 0) return primary * direction
 
-    const secondary =
-      sort === "line"
-        ? a.path.localeCompare(b.path)
-        : a.line - b.line
-
+    const secondary = sort === "line" ? a.path.localeCompare(b.path) : a.line - b.line
     return secondary * direction
   }
 }
@@ -382,43 +418,58 @@ export async function grepText(root: string, options: GrepOptions) {
     const actual = await realpath(absolute)
     if (!inside(projectRoot, actual)) continue
 
-    const buffer = await readFile(actual)
-    bytesRead += buffer.byteLength
-
-    if (buffer.byteLength > MAX_FILE_BYTES) {
+    const buffer = await readBounded(actual, MAX_FILE_BYTES)
+    if (!buffer) {
       skippedLarge += 1
       continue
+    }
+
+    bytesRead += buffer.byteLength
+    if (bytesRead > MAX_TOTAL_SEARCH_BYTES) {
+      budgetExhausted = true
+      break
     }
     if (buffer.includes(0)) {
       skippedBinary += 1
       continue
     }
 
-    const lines = buffer.toString("utf8").split(/\r?\n/)
-    for (let index = 0; index < lines.length; index += 1) {
-      if (!literalLineMatches(lines[index], options.pattern, caseSensitive)) continue
+    const before: string[] = []
+    const pending: Array<{ match: TextMatch; remaining: number }> = []
 
-      matched += 1
-      retained.add({
-        path: file.path,
-        line: index + 1,
-        text: lines[index].slice(0, 2000),
-        ...(context > 0
-          ? {
-              before: lines
-                .slice(Math.max(0, index - context), index)
-                .map((line) => line.slice(0, 2000)),
-            }
-          : {}),
-        ...(context > 0
-          ? {
-              after: lines
-                .slice(index + 1, index + 1 + context)
-                .map((line) => line.slice(0, 2000)),
-            }
-          : {}),
-      })
+    for (const current of logicalLines(buffer.toString("utf8"))) {
+      const clipped = current.text.slice(0, MAX_OUTPUT_TEXT_CHARS)
+
+      for (let index = pending.length - 1; index >= 0; index -= 1) {
+        const item = pending[index]
+        item.match.after!.push(clipped)
+        item.remaining -= 1
+        if (item.remaining === 0) {
+          retained.add(item.match)
+          pending.splice(index, 1)
+        }
+      }
+
+      if (literalLineMatches(current.text, options.pattern, caseSensitive)) {
+        matched += 1
+        const match: TextMatch = {
+          path: file.path,
+          line: current.line,
+          text: clipped,
+          ...(context > 0 ? { before: [...before], after: [] } : {}),
+        }
+
+        if (context === 0) retained.add(match)
+        else pending.push({ match, remaining: context })
+      }
+
+      if (context > 0) {
+        before.push(clipped)
+        if (before.length > context) before.shift()
+      }
     }
+
+    for (const item of pending) retained.add(item.match)
   }
 
   return {
@@ -434,28 +485,75 @@ export async function grepText(root: string, options: GrepOptions) {
   }
 }
 
-function countLogicalLines(text: string) {
-  if (text.length === 0) return 0
+function isWhitespace(character: string) {
+  return /\s/u.test(character)
+}
 
-  let lines = 0
-  for (const character of text) {
-    if (character === "\n") lines += 1
+function checkedField(value: string) {
+  if (value.length > MAX_FIELD_CHARS) {
+    throw new Error("text_select field is too large; narrow the input or choose another delimiter.")
+  }
+  return value
+}
+
+function splitWhitespaceFields(line: string) {
+  const fields: string[] = []
+  let index = 0
+
+  while (index < line.length) {
+    while (index < line.length && isWhitespace(line[index])) index += 1
+    if (index >= line.length) break
+
+    const start = index
+    while (index < line.length && !isWhitespace(line[index])) index += 1
+
+    if (fields.length >= MAX_FIELDS) {
+      throw new Error("text_select row has too many fields.")
+    }
+    fields.push(checkedField(line.slice(start, index)))
   }
 
-  return text.endsWith("\n") ? lines : lines + 1
+  return fields
+}
+
+function splitLiteralFields(line: string, delimiter: string) {
+  if (delimiter.length === 0) throw new Error("Custom delimiter must not be empty.")
+  if (delimiter.length > 8) throw new Error("Custom delimiter must be at most 8 characters.")
+
+  const fields: string[] = []
+  let start = 0
+
+  while (true) {
+    if (fields.length >= MAX_FIELDS) {
+      throw new Error("text_select row has too many fields.")
+    }
+
+    const index = line.indexOf(delimiter, start)
+    if (index < 0) {
+      fields.push(checkedField(line.slice(start)))
+      break
+    }
+
+    fields.push(checkedField(line.slice(start, index)))
+    start = index + delimiter.length
+  }
+
+  return fields
 }
 
 function splitFields(line: string, delimiter: string | undefined) {
-  if (!delimiter || delimiter === "whitespace") return line.trim().split(/\s+/)
-  if (delimiter === "tab") return line.split("\t")
-  if (delimiter === "comma") return line.split(",")
-  if (delimiter.length > 8) throw new Error("Custom delimiter must be at most 8 characters.")
-  return line.split(delimiter)
+  if (!delimiter || delimiter === "whitespace") {
+    if (delimiter === "") throw new Error("Custom delimiter must not be empty.")
+    return splitWhitespaceFields(line)
+  }
+  if (delimiter === "tab") return splitLiteralFields(line, "\t")
+  if (delimiter === "comma") return splitLiteralFields(line, ",")
+  return splitLiteralFields(line, delimiter)
 }
 
 function requireField(fields: string[], field: number) {
-  if (!Number.isInteger(field) || field < 1 || field > 256) {
-    throw new Error("Field indexes are 1-based integers from 1 to 256.")
+  if (!Number.isInteger(field) || field < 1 || field > MAX_FIELDS) {
+    throw new Error("Field indexes are 1-based integers from 1 to " + MAX_FIELDS + ".")
   }
   return fields[field - 1] ?? ""
 }
@@ -485,54 +583,104 @@ function passesWhere(fields: string[], where: NonNullable<SelectOptions["where"]
   }
 }
 
+function compareSelectRows(options: SelectOptions) {
+  if (!options.sort) {
+    const direction = options.from === "end" ? -1 : 1
+    return (a: SelectRow, b: SelectRow) => (a.line - b.line) * direction
+  }
+
+  const direction = options.sort.order === "desc" ? -1 : 1
+  return (a: SelectRow, b: SelectRow) => {
+    const left = a.sortValue ?? ""
+    const right = b.sortValue ?? ""
+
+    let primary: number
+    if (options.sort?.numeric) {
+      const leftNumber = Number(left)
+      const rightNumber = Number(right)
+      primary =
+        Number.isFinite(leftNumber) && Number.isFinite(rightNumber)
+          ? leftNumber - rightNumber
+          : left.localeCompare(right)
+    } else {
+      primary = left.localeCompare(right)
+    }
+
+    if (primary !== 0) return primary * direction
+    return (a.line - b.line) * direction
+  }
+}
+
 export async function selectText(root: string, options: SelectOptions) {
   const { projectRoot, target } = await resolveInside(root, options.path)
   const info = await lstat(target)
   if (!info.isFile()) throw new Error("text_select requires a file.")
   if (info.size > MAX_FILE_BYTES) throw new Error("File is too large for text_select.")
+  if (options.delimiter === "") throw new Error("Custom delimiter must not be empty.")
+  if (options.delimiter && options.delimiter.length > 8 && options.delimiter !== "whitespace") {
+    throw new Error("Custom delimiter must be at most 8 characters.")
+  }
 
-  const buffer = await readFile(target)
-  if (buffer.byteLength > MAX_FILE_BYTES) throw new Error("File is too large for text_select.")
+  const buffer = await readBounded(target, MAX_FILE_BYTES)
+  if (!buffer) throw new Error("File is too large for text_select.")
   if (buffer.includes(0)) throw new Error("text_select does not read binary files.")
 
   const limit = clampInteger(options.limit, 100, 1, MAX_RESULTS)
   const skipBlank = options.skipBlank !== false
-  const rows = buffer
-    .toString("utf8")
-    .split(/\r?\n/)
-    .map((text, index) => ({ line: index + 1, text, fields: splitFields(text, options.delimiter) }))
-    .filter((row) => !skipBlank || row.text.trim().length > 0)
-    .filter((row) => !options.where || passesWhere(row.fields, options.where))
+  const compare = compareSelectRows(options)
+  const retained = new BoundedBest<SelectRow>(limit, compare)
+  const uniqueRows = options.unique ? new Map<string, SelectRow>() : undefined
 
-  if (options.sort) {
-    const { field, numeric, order = "asc" } = options.sort
-    rows.sort((a, b) => {
-      const av = requireField(a.fields, field)
-      const bv = requireField(b.fields, field)
-      const compared = numeric ? Number(av) - Number(bv) : av.localeCompare(bv)
-      return compared * (order === "desc" ? -1 : 1)
-    })
+  let processedRows = 0
+  let qualifyingRows = 0
+
+  for (const current of logicalLines(buffer.toString("utf8"))) {
+    processedRows += 1
+    if (processedRows > MAX_SELECT_ROWS) {
+      throw new Error("text_select input has too many rows; narrow the input.")
+    }
+    if (skipBlank && current.text.trim().length === 0) continue
+
+    const fields = splitFields(current.text, options.delimiter)
+    if (options.where && !passesWhere(fields, options.where)) continue
+
+    const projected = options.fields?.length
+      ? options.fields.map((field) => checkedField(requireField(fields, field)))
+      : fields
+    const row: SelectRow = {
+      line: current.line,
+      fields: projected,
+      ...(options.sort ? { sortValue: requireField(fields, options.sort.field) } : {}),
+    }
+
+    if (uniqueRows) {
+      const key = JSON.stringify(row.fields)
+      const previous = uniqueRows.get(key)
+      if (!previous || compare(row, previous) < 0) uniqueRows.set(key, row)
+      continue
+    }
+
+    qualifyingRows += 1
+    retained.add(row)
   }
 
-  const projected = rows.map((row) => {
-    const fields = options.fields?.length
-      ? options.fields.map((field) => requireField(row.fields, field))
-      : row.fields
-    return { line: row.line, fields }
-  })
-
-  const unique = options.unique
-    ? [...new Map(projected.map((row) => [JSON.stringify(row.fields), row])).values()]
-    : projected
-
-  const selected = options.from === "end" ? unique.slice(-limit) : unique.slice(0, limit)
+  if (uniqueRows) {
+    qualifyingRows = uniqueRows.size
+    for (const row of uniqueRows.values()) retained.add(row)
+  }
 
   return {
     path: displayPath(projectRoot, target),
-    matched: unique.length,
-    truncated: unique.length > limit,
-    rows: selected,
+    matched: qualifyingRows,
+    truncated: qualifyingRows > limit,
+    rows: retained.values().map(({ line, fields }) => ({ line, fields })),
   }
+}
+
+function countLogicalLines(text: string) {
+  let count = 0
+  for (const _line of logicalLines(text)) count += 1
+  return count
 }
 
 export async function statPaths(root: string, options: StatsOptions) {
@@ -559,10 +707,9 @@ export async function statPaths(root: string, options: StatsOptions) {
     let lines: number | undefined
 
     if (options.lineCount && info.isFile() && info.size <= MAX_FILE_BYTES) {
-      const buffer = await readFile(target)
-      if (buffer.byteLength <= MAX_FILE_BYTES && !buffer.includes(0)) {
-        const text = buffer.toString("utf8")
-        lines = countLogicalLines(text)
+      const buffer = await readBounded(target, MAX_FILE_BYTES)
+      if (buffer && !buffer.includes(0)) {
+        lines = countLogicalLines(buffer.toString("utf8"))
         totalLines += lines
       }
     }
