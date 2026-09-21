@@ -1086,6 +1086,25 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             }
           }
 
+          if (workflow.work) {
+            const work = await readWork(ctx, workflow.work.objectiveId)
+            if (!work) return { content: renderToolOutput({ error: "Persistent work hierarchy not found." }) }
+            try {
+              assertWorkGeneration(work, workflow.work.generation)
+              const taskIds = plannedTaskSteps(workflow).map((taskStep) => taskStep.task!.id)
+              if (taskIds.length > 0) {
+                assertWaveClaimForTasks(
+                  work,
+                  workflow.id,
+                  workflow.work.generation,
+                  taskIds,
+                )
+              }
+            } catch (error) {
+              return { content: renderToolOutput({ error: error instanceof Error ? error.message : String(error) }) }
+            }
+          }
+
           try {
             finishStep(workflow, stepId, tool.agent, resolvedOutcome, summary)
           } catch (error) {
@@ -1101,6 +1120,8 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
               syncWorkTaskStatuses(
                 work,
+                workflow.id,
+                workflow.work!.generation,
                 plannedTaskSteps(workflow).map((taskStep) => ({
                   taskId: taskStep.task!.id,
                   complete: taskStep.status === "complete",
@@ -1115,6 +1136,8 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               ) {
                 completeWaveForTasks(
                   work,
+                  workflow.id,
+                  workflow.work!.generation,
                   plannedTaskSteps(workflow).map((taskStep) => taskStep.task!.id),
                   new Date().toISOString(),
                 )
@@ -1125,11 +1148,10 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 resolvedOutcome === "pass" &&
                 (workflow.effects?.workLevel ?? "objective") === "objective"
               ) {
-                completeObjective(work, new Date().toISOString())
+                completeObjective(work, workflow.work!.generation, new Date().toISOString())
               }
 
               await ctx.storage.set(workKey(work.objectiveId), work)
-              workflow.work = { objectiveId: work.objectiveId, generation: work.generation }
             })
           }
 
@@ -1206,6 +1228,25 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           const workflow = await readWorkflow(ctx, workflowId)
           if (!workflow) return { content: renderToolOutput({ error: "Workflow not found." }) }
 
+          if (workflow.work) {
+            const work = await readWork(ctx, workflow.work.objectiveId)
+            if (!work) return { content: renderToolOutput({ error: "Persistent work hierarchy not found." }) }
+            try {
+              assertWorkGeneration(work, workflow.work.generation)
+              const taskIds = plannedTaskSteps(workflow).map((taskStep) => taskStep.task!.id)
+              if (taskIds.length > 0) {
+                assertWaveClaimForTasks(
+                  work,
+                  workflow.id,
+                  workflow.work.generation,
+                  taskIds,
+                )
+              }
+            } catch (error) {
+              return { content: renderToolOutput({ error: error instanceof Error ? error.message : String(error) }) }
+            }
+          }
+
           try {
             const reset = reopenFrom(workflow, stepId)
             resetVerificationAfterReopen(workflow, reset)
@@ -1238,6 +1279,8 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 const taskIds = plannedTaskSteps(workflow).map((taskStep) => taskStep.task!.id)
                 syncWorkTaskStatuses(
                   work,
+                  workflow.id,
+                  workflow.work!.generation,
                   plannedTaskSteps(workflow).map((taskStep) => ({
                     taskId: taskStep.task!.id,
                     complete: taskStep.status === "complete",
@@ -1245,7 +1288,13 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                   now,
                 )
                 if (reset.includes("review-implementation") && taskIds.length > 0) {
-                  reopenWaveForTasks(work, taskIds, now)
+                  reopenWaveForTasks(
+                    work,
+                    workflow.id,
+                    workflow.work!.generation,
+                    taskIds,
+                    now,
+                  )
                 }
                 await ctx.storage.set(workKey(work.objectiveId), work)
               })
