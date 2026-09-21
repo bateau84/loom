@@ -320,16 +320,15 @@ function runtimeLockPath(runtime: LoomRuntimeIdentity, resource: RuntimeLockReso
   )
 }
 
-export async function withRuntimeLocks<T>(
+async function withRuntimeLockPaths<T>(
   runtime: LoomRuntimeIdentity,
-  resources: RuntimeLockResource[],
+  lockPaths: string[],
   fn: () => Promise<T>,
 ): Promise<T> {
-  const lockPaths = [...new Set(resources.map((resource) => runtimeLockPath(runtime, resource)))].sort()
   const releases: Array<() => Promise<void>> = []
 
   try {
-    for (const lockPath of lockPaths) {
+    for (const lockPath of [...new Set(lockPaths)].sort()) {
       releases.push(await acquireFlock(lockPath))
     }
     const store = transactionalStores.get(runtime.stateRoot)
@@ -345,6 +344,35 @@ export async function withRuntimeLocks<T>(
     }
     if (releaseError) throw releaseError
   }
+}
+
+export async function withRuntimeLocks<T>(
+  runtime: LoomRuntimeIdentity,
+  resources: RuntimeLockResource[],
+  fn: () => Promise<T>,
+): Promise<T> {
+  return withRuntimeLockPaths(
+    runtime,
+    resources.map((resource) => runtimeLockPath(runtime, resource)),
+    fn,
+  )
+}
+
+export async function withInstallationRuntimeLock<T>(
+  runtime: LoomRuntimeIdentity,
+  aggregate: string,
+  resourceIdentity: string,
+  fn: () => Promise<T>,
+): Promise<T> {
+  const lockPath = join(
+    runtime.runtimeRoot,
+    "locks",
+    runtime.installationId,
+    "installation",
+    aggregate,
+    `${sha256(resourceIdentity)}.lock`,
+  )
+  return withRuntimeLockPaths(runtime, [lockPath], fn)
 }
 
 export async function withRuntimeLock<T>(
@@ -386,7 +414,7 @@ export async function ensureRuntimeStateVersion(
     throw new Error(`Invalid Loom runtime target version: ${targetVersion}`)
   }
 
-  return withRuntimeLock(runtime, "migration", "runtime-state-version", async () => {
+  return withInstallationRuntimeLock(runtime, "migration", "runtime-state-version", async () => {
     const key = "installation/runtime-schema"
     const existing = await storage.get(key)
     let record: RuntimeSchemaRecordV1
@@ -1221,6 +1249,15 @@ export async function migrateLegacySessionState(
     migratedWorkflowId = result.workflowId
     migratedKeys += result.copied
     objectiveId = result.objectiveId
+  }
+
+  if (!objectiveId && migratedWorkflowId) {
+    const scopedWorkflow = await scoped.get(`workflow/${migratedWorkflowId}`)
+    const resumedWorkId =
+      scopedWorkflow && typeof scopedWorkflow === "object"
+        ? (scopedWorkflow as any).work?.objectiveId
+        : undefined
+    if (typeof resumedWorkId === "string") objectiveId = resumedWorkId
   }
 
   if (objectiveId) {
