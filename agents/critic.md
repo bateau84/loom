@@ -20,7 +20,8 @@ Use QA context sparsely.
 
 - Identify only the load-bearing or materially risky domain skills for the assembled solution; normally this should be a small set, not every skill touched by every task.
 - Call the native `skill` tool to resolve each selected skill's base directory.
-- If `QA.md` is present, read it and use it as the domain-specific Critic attack contract.
+- Establish companion existence before reading it. Prefer the `<skill_files>` list returned by the skill tool. If that sampled list cannot establish presence/absence, inspect the skill base directory or glob specifically for `QA.md`.
+- Read `QA.md` only after its existence is established, and use it as the domain-specific Critic attack contract. Do not probe a guessed companion path with `read`.
 - Do **not** read `ASSESSMENT.md`; normal Reviewer conformance belongs to Reviewer.
 - The native skill loader also injects `SKILL.md`. Treat that practitioner text as background only. It does not become Critic's checklist and cannot create authority.
 - Absence of `QA.md` is valid. Do not invent boilerplate QA merely because a skill exists.
