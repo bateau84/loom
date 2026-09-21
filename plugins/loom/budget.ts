@@ -1,3 +1,6 @@
+import type { OpenQuestion } from "./oq"
+import { runnable, type Workflow } from "./workflow"
+
 export type ExecutionLimits = {
   maxTotalDispatches: number
   maxDispatchesPerStep: number
@@ -20,6 +23,7 @@ export type BudgetGrant = {
   grantedBy: string
   reason: string
   progress: ProgressSignal
+  evidence: string[]
   grantedAt: string
 }
 
@@ -102,6 +106,20 @@ export function recordDispatch(input: {
   return { allowed: true, duplicate: false, state }
 }
 
+export type ExtraDispatchGrantResult =
+  | {
+      allowed: true
+      grant: BudgetGrant
+      previousLimit: number
+      newLimit: number
+      state: BudgetState
+    }
+  | {
+      allowed: false
+      reason: string
+      state: BudgetState
+    }
+
 export function grantExtraDispatch(input: {
   state: BudgetState
   limits: ExecutionLimits
@@ -110,9 +128,10 @@ export function grantExtraDispatch(input: {
   grantedBy: string
   reason: string
   progress: ProgressSignal
+  evidence?: string[]
   now: string
-}) {
-  const { state, limits, key, agent, grantedBy, reason, progress, now } = input
+}): ExtraDispatchGrantResult {
+  const { state, limits, key, agent, grantedBy, reason, progress, evidence = [], now } = input
   const used = state.byKey[key] ?? 0
   const currentLimit = effectiveStepLimit(state, key, agent, limits)
   const grants = grantsForKey(state, key)
@@ -138,7 +157,7 @@ export function grantExtraDispatch(input: {
   if (used < currentLimit) {
     return {
       allowed: false,
-      reason: `Step still has dispatch capacity: ${used}/${currentLimit} used.`,
+      reason: `Target still has dispatch capacity: ${used}/${currentLimit} used.`,
       state,
     }
   }
@@ -154,6 +173,7 @@ export function grantExtraDispatch(input: {
     grantedBy,
     reason: reason.trim(),
     progress,
+    evidence: evidence.map((item) => item.trim()).filter(Boolean),
     grantedAt: now,
   }
   if (!state.grants) state.grants = []
@@ -165,6 +185,171 @@ export function grantExtraDispatch(input: {
     grant,
     previousLimit: currentLimit,
     newLimit: currentLimit + 1,
+    state,
+  }
+}
+
+export type BudgetGrantTarget =
+  | {
+      kind: "step"
+      id: string
+      key: string
+      agent: string
+      stepKind: "work" | "gate"
+    }
+  | {
+      kind: "question"
+      id: string
+      key: string
+      agent: string
+    }
+
+export type ResolveBudgetGrantTargetResult =
+  | { target: BudgetGrantTarget; reason?: undefined }
+  | { target?: undefined; reason: string }
+
+export type WorkflowDispatchGrantResult =
+  | {
+      allowed: true
+      target: BudgetGrantTarget
+      grant: BudgetGrant
+      previousLimit: number
+      newLimit: number
+      state: BudgetState
+    }
+  | {
+      allowed: false
+      reason: string
+      state: BudgetState
+    }
+
+export function resolveBudgetGrantTarget(input: {
+  workflow: Workflow
+  questions: OpenQuestion[]
+  stepId?: string
+  questionId?: string
+}): ResolveBudgetGrantTargetResult {
+  const { workflow, questions, stepId, questionId } = input
+  const targetCount = Number(Boolean(stepId)) + Number(Boolean(questionId))
+
+  if (targetCount !== 1) {
+    return {
+      target: undefined,
+      reason: "Budget grant requires exactly one target: stepId or questionId.",
+    }
+  }
+
+  if (stepId) {
+    const step = workflow.steps.find((candidate) => candidate.id === stepId)
+    if (!step) return { target: undefined, reason: "Step not found." }
+    if (step.status !== "pending") {
+      return {
+        target: undefined,
+        reason: "Budget grants apply only to pending steps. Reopen failed work or gates before granting another dispatch.",
+      }
+    }
+    if (!runnable(workflow).some((candidate) => candidate.id === step.id)) {
+      return {
+        target: undefined,
+        reason: "Budget grants apply only when the exhausted step is currently runnable.",
+      }
+    }
+
+    const target: BudgetGrantTarget = {
+      kind: "step",
+      id: step.id,
+      key: `step:${step.id}`,
+      agent: step.agent,
+      stepKind: step.kind,
+    }
+    return { target }
+  }
+
+  const question = questions.find((candidate) => candidate.id === questionId)
+  if (!question) return { target: undefined, reason: "Question not found." }
+  if (question.workflowId !== workflow.id) {
+    return { target: undefined, reason: "Question does not belong to this workflow." }
+  }
+  if (question.requiredAuthority === "user") {
+    return { target: undefined, reason: "User-owned questions do not have agent dispatch budgets." }
+  }
+  if (question.status === "closed" || question.answer) {
+    return { target: undefined, reason: "Budget grants apply only to unanswered agent-owned questions." }
+  }
+
+  const target: BudgetGrantTarget = {
+    kind: "question",
+    id: question.id,
+    key: `oq:${question.id}`,
+    agent: question.requiredAuthority,
+  }
+  return { target }
+}
+
+export function grantWorkflowDispatchBudget(input: {
+  state: BudgetState
+  limits: ExecutionLimits
+  workflow: Workflow
+  questions: OpenQuestion[]
+  stepId?: string
+  questionId?: string
+  grantedBy: string
+  reason: string
+  progress: ProgressSignal
+  evidence?: string[]
+  now: string
+}): WorkflowDispatchGrantResult {
+  const { state, limits, workflow, questions, stepId, questionId, grantedBy, reason, progress, evidence = [], now } = input
+
+  if (grantedBy !== "general") {
+    return {
+      allowed: false,
+      reason: "Only general may grant extra Loom dispatch budget.",
+      state,
+    }
+  }
+
+  const resolved = resolveBudgetGrantTarget({ workflow, questions, stepId, questionId })
+  if (!resolved.target) {
+    return { allowed: false, reason: resolved.reason, state }
+  }
+
+  if (resolved.target.agent === "critic" && !progress.newEvidence) {
+    return {
+      allowed: false,
+      reason: "Critic budget grants require new material evidence; changed strategy or reduced unresolved work alone is insufficient.",
+      state,
+    }
+  }
+
+  if (resolved.target.agent === "critic" && evidence.map((item) => item.trim()).filter(Boolean).length === 0) {
+    return {
+      allowed: false,
+      reason: "Critic budget grants must record the new material evidence that justifies another Critic dispatch.",
+      state,
+    }
+  }
+
+  const result = grantExtraDispatch({
+    state,
+    limits,
+    key: resolved.target.key,
+    agent: resolved.target.agent,
+    grantedBy,
+    reason,
+    progress,
+    evidence,
+    now,
+  })
+
+  if (!result.allowed) return result
+
+  return {
+    allowed: true,
+    target: resolved.target,
+    grant: result.grant,
+    previousLimit: result.previousLimit,
+    newLimit: result.newLimit,
     state,
   }
 }

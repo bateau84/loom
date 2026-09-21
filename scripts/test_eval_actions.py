@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import argparse
 import importlib.util
 import json
+from io import StringIO
 from pathlib import Path
+import tempfile
 import unittest
+from unittest.mock import patch
 
 MODULE_PATH = Path(__file__).resolve().parent / "run-evals.py"
 SPEC = importlib.util.spec_from_file_location("loom_run_evals", MODULE_PATH)
@@ -14,6 +18,75 @@ SPEC.loader.exec_module(RUN_EVALS)
 
 
 class ActionAssertionTests(unittest.TestCase):
+    def test_invoke_container_forwards_explicit_network_mode(self):
+        class Result:
+            returncode = 0
+            stdout = '{"exit_code":0,"text":"ok","tools":[],"actions":[]}'
+            stderr = ""
+
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            with patch.object(RUN_EVALS.subprocess, "run", return_value=Result()) as run:
+                result = RUN_EVALS.invoke_container(
+                    engine="podman",
+                    image="test-image",
+                    transport="opencode",
+                    model="openai/test",
+                    agent="general",
+                    prompt="test",
+                    system="",
+                    project=project,
+                    auth=None,
+                    config=None,
+                    models_catalog=None,
+                    database_seed=None,
+                    config_root=None,
+                    expected_plugin=None,
+                    timeout=30,
+                    container_timeout=60,
+                    mount_node_modules=False,
+                    extra_envs=[],
+                    network="host",
+                )
+
+        self.assertEqual(result["exit_code"], 0)
+        command = run.call_args.args[0]
+        self.assertIn("--network", command)
+        self.assertEqual(command[command.index("--network") + 1], "host")
+
+    def test_invoke_container_leaves_network_default_when_unset(self):
+        class Result:
+            returncode = 0
+            stdout = '{"exit_code":0,"text":"ok","tools":[],"actions":[]}'
+            stderr = ""
+
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            with patch.object(RUN_EVALS.subprocess, "run", return_value=Result()) as run:
+                RUN_EVALS.invoke_container(
+                    engine="podman",
+                    image="test-image",
+                    transport="opencode",
+                    model="openai/test",
+                    agent="general",
+                    prompt="test",
+                    system="",
+                    project=project,
+                    auth=None,
+                    config=None,
+                    models_catalog=None,
+                    database_seed=None,
+                    config_root=None,
+                    expected_plugin=None,
+                    timeout=30,
+                    container_timeout=60,
+                    mount_node_modules=False,
+                    extra_envs=[],
+                    network=None,
+                )
+
+        self.assertNotIn("--network", run.call_args.args[0])
+
     def test_prefers_normalized_transport_actions_over_raw_stdout(self):
         target = {
             "actions": [
@@ -223,6 +296,115 @@ class ActionAssertionTests(unittest.TestCase):
         failures = RUN_EVALS.deterministic_failures(case, ["read"], actions)
         self.assertEqual(len(failures), 1)
         self.assertTrue(failures[0].startswith("forbidden action observed:"))
+
+    def test_run_case_reports_phase_progress_and_records_timings(self):
+        case = {
+            "id": "TIMING-01",
+            "agent": "general",
+            "execution": "role-decision",
+            "requirements": ["BR-001"],
+            "prompt": "Act.",
+            "trap": "none",
+            "expectations": ["Acts."],
+            "must_not": ["Must not stall."],
+        }
+        args = argparse.Namespace(
+            iterations=1,
+            target_transport="opencode",
+            judge_transport="opencode",
+            judge_model=None,
+            model="openai/test",
+            auth=None,
+            provider_config=None,
+            models_catalog=None,
+            database=None,
+            timeout_seconds=30,
+            container_timeout=60,
+            env=[],
+            network=None,
+            image=None,
+            opencode_image=None,
+            copilot_image=None,
+            artifact_dir="unused",
+            keep_temp=False,
+        )
+
+        target = {
+            "exit_code": 0,
+            "text": "Act now.",
+            "tools": [],
+            "actions": [],
+            "stdout": "",
+        }
+        judge = {
+            "exit_code": 0,
+            "text": json.dumps(
+                {
+                    "passed": True,
+                    "expectations": [{"expectation": "Acts.", "met": True, "reason": "done"}],
+                    "violations": [{"rule": "Must not stall.", "violated": False, "reason": "not stalled"}],
+                    "summary": "pass",
+                }
+            ),
+            "tools": [],
+            "actions": [],
+            "stdout": "",
+        }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            target_project = Path(tmp) / "target"
+            judge_project = Path(tmp) / "judge"
+            target_project.mkdir()
+            judge_project.mkdir()
+            artifact_dir = Path(tmp) / "artifacts"
+            args.artifact_dir = str(artifact_dir)
+
+            with patch.object(RUN_EVALS, "setup_projects", return_value=(Path(tmp), target_project, judge_project)), \
+                 patch.object(RUN_EVALS, "resolve_optional_file", return_value=None), \
+                 patch.object(RUN_EVALS, "image_for_transport", return_value="test-image"), \
+                 patch.object(RUN_EVALS, "invoke_container", side_effect=[target, judge]), \
+                 patch.object(RUN_EVALS.time, "perf_counter", side_effect=[0.0, 1.0, 3.5, 4.0, 7.25, 8.0]), \
+                 patch("sys.stdout", new_callable=StringIO) as stdout:
+                result = RUN_EVALS.run_case(case, args, "podman")
+
+            output = stdout.getvalue()
+            self.assertIn("TIMING-01 [general/role-decision] target (opencode, openai/test) ...", output)
+            self.assertIn("TIMING-01 target done in 2.5s", output)
+            self.assertIn("TIMING-01 judge (opencode, openai/test) ...", output)
+            self.assertIn("TIMING-01 judge done in 3.2s", output)
+            self.assertEqual(result["timing"]["target_seconds"], 2.5)
+            self.assertEqual(result["timing"]["judge_seconds"], 3.25)
+            self.assertEqual(result["timing"]["total_seconds"], 8.0)
+
+    def test_semantic_judge_receives_observed_action_arguments(self):
+        case = {
+            "id": "GENERAL-BUDGET-01",
+            "execution": "runtime",
+            "trap": "miss the evidence reference",
+            "expectations": ["Records the supplied evidence reference."],
+            "must_not": ["Must not omit the evidence reference."],
+        }
+        actions = [
+            {
+                "tool": "loom_budget_grant",
+                "args": {
+                    "workflowId": "wf-budget-recovery",
+                    "stepId": "critic-solution",
+                    "evidence": ["docs/architecture/solution.md#dependency-registration"],
+                },
+            }
+        ]
+
+        prompt = RUN_EVALS.judge_prompt(
+            case,
+            "Grant attempted.",
+            ["loom_budget_grant"],
+            actions,
+        )
+
+        self.assertIn("OBSERVED TOOL ACTIONS:", prompt)
+        self.assertIn("docs/architecture/solution.md#dependency-registration", prompt)
+        self.assertIn('"stepId": "critic-solution"', prompt)
 
     def test_reports_missing_required_and_observed_forbidden_action(self):
         actions = [
