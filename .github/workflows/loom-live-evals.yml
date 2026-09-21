@@ -151,3 +151,4 @@ jobs:
           name: loom-live-evals
           path: .loom-evals/
           if-no-files-found: warn
+          include-hidden-files: true
