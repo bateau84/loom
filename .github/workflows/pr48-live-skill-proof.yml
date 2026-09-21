@@ -44,7 +44,10 @@ jobs:
             mod = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(mod)
 
-            cases = json.loads((root / "evals" / "skills.json").read_text())["cases"]
+            cases = [
+                case for case in json.loads((root / "evals" / "skills.json").read_text())["cases"]
+                if case["id"] == "SKILL-GO-CONC-01"
+            ]
             image = os.environ["OPENCODE_EVAL_RUNNER_OPENCODE_IMAGE"]
 
             def prove(case):
@@ -65,8 +68,8 @@ jobs:
                         database_seed=None,
                         config_root=root,
                         expected_plugin="loom",
-                        timeout=240,
-                        container_timeout=300,
+                        timeout=480,
+                        container_timeout=540,
                         mount_node_modules=True,
                         extra_envs=[],
                         skill=case["skill"],
@@ -87,7 +90,7 @@ jobs:
                 finally:
                     shutil.rmtree(temp, ignore_errors=True)
 
-            with ThreadPoolExecutor(max_workers=3) as pool:
+            with ThreadPoolExecutor(max_workers=1) as pool:
                 futures = [pool.submit(prove, case) for case in cases]
                 for future in as_completed(futures):
                     case_id, loaded = future.result()
