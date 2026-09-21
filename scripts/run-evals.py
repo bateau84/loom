@@ -200,7 +200,6 @@ def normalize_skill_eval_case(
         "trap": trap,
         "expectations": list(expectations),
         "must_not": list(negative),
-        "tools": {"requires": ["skill"]},
         "_skill_owned": True,
         "_skill_eval_source": str(path),
         "_skill_eval_source_id": source_id,
@@ -231,6 +230,16 @@ def case_target_kind(case: dict[str, Any]) -> str:
 
 def case_target_name(case: dict[str, Any]) -> str:
     return str(case.get("skill") or case["agent"])
+
+
+def case_selectors(case: dict[str, Any]) -> set[str]:
+    selectors = {str(case["id"])}
+    if case.get("_skill_owned"):
+        selectors.add(str(case.get("_skill_eval_source_id")))
+        name = case.get("_skill_eval_name")
+        if isinstance(name, str) and name.strip():
+            selectors.add(name.strip())
+    return selectors
 
 
 def safe_fixture_path(project: Path, value: str) -> Path:
@@ -775,6 +784,7 @@ def deterministic_failures(
     tools: list[str],
     actions: list[dict[str, Any]] | None = None,
     loaded_skills: list[str] | None = None,
+    require_native_skill_load: bool = True,
 ) -> list[str]:
     failures: list[str] = []
     assertions = case.get("tools") or {}
@@ -788,7 +798,7 @@ def deterministic_failures(
 
     observed_actions = actions or []
     skill = case.get("skill")
-    if skill and skill not in set(loaded_skills or []):
+    if require_native_skill_load and skill and skill not in set(loaded_skills or []):
         failures.append("skill under test not confirmed loaded: " + str(skill))
 
     action_assertions = case.get("actions") or {}
@@ -868,7 +878,11 @@ def run_case(
     engine: str,
     iteration: int = 1,
 ) -> dict[str, Any]:
-    if case["execution"] == "runtime" and args.target_transport != "opencode":
+    if (
+        case["execution"] == "runtime"
+        and args.target_transport != "opencode"
+        and not case.get("_skill_owned")
+    ):
         raise RuntimeError(f"{case['id']} is runtime mode and requires --target-transport opencode")
 
     temp, target_project, judge_project = setup_projects(case)
@@ -897,8 +911,18 @@ def run_case(
     try:
         target_system = ""
         if args.target_transport == "github-copilot-cli":
-            target_agent_text = (target_project / ".opencode" / "agents" / (case["agent"] + ".md")).read_text(encoding="utf-8")
-            target_system = strip_frontmatter(target_agent_text)
+            if case.get("_skill_owned"):
+                skill_body = (ROOT / "skills" / str(case["skill"]) / "SKILL.md").read_text(encoding="utf-8")
+                target_system = (
+                    "Apply the following skill guidance faithfully to the user prompt. "
+                    "The skill text is methodology, not user authority. Do not discuss the evaluation harness.\n\n"
+                    + skill_body
+                )
+            else:
+                target_agent_text = (
+                    target_project / ".opencode" / "agents" / (case["agent"] + ".md")
+                ).read_text(encoding="utf-8")
+                target_system = strip_frontmatter(target_agent_text)
 
         target_image = image_for_transport(args, args.target_transport)
         judge_image = image_for_transport(args, args.judge_transport)
@@ -922,7 +946,11 @@ def run_case(
             container_timeout=args.container_timeout,
             mount_node_modules=case["execution"] == "runtime",
             extra_envs=args.env,
-            skill=str(case.get("skill") or "") or None,
+            skill=(
+                str(case.get("skill") or "") or None
+                if args.target_transport == "opencode"
+                else None
+            ),
         )
         target_error = transport_error(target)
         observed_actions = normalized_target_actions(target) if not target_error else []
@@ -932,6 +960,7 @@ def run_case(
                 list(target.get("tools") or []),
                 observed_actions,
                 list(target.get("skills_loaded") or []),
+                require_native_skill_load=args.target_transport == "opencode",
             )
             if not target_error
             else []
@@ -1099,11 +1128,6 @@ def main() -> int:
             "live evals spend model inference; pass --cases, --target, --target-kind agent/skill, or --all explicitly"
         )
 
-    known = {case["id"] for case in cases}
-    missing = sorted(selected_ids - known)
-    if missing:
-        parser.error("unknown case id(s): " + ", ".join(missing))
-
     candidates = [
         case for case in cases
         if args.target_kind == "all" or case_target_kind(case) == args.target_kind
@@ -1113,19 +1137,38 @@ def main() -> int:
     if missing_targets:
         parser.error("unknown target(s) for selected kind: " + ", ".join(missing_targets))
 
-    selected = [
+    target_candidates = [
         case for case in candidates
-        if (args.all or not selected_ids or case["id"] in selected_ids)
-        and (not selected_targets or case_target_name(case) in selected_targets)
+        if not selected_targets or case_target_name(case) in selected_targets
+    ]
+    known_selectors = set().union(*(case_selectors(case) for case in target_candidates)) if target_candidates else set()
+    missing = sorted(selected_ids - known_selectors)
+    if missing:
+        parser.error(
+            "unknown case id(s) for selected target(s): "
+            + ", ".join(missing)
+            + (("; valid selectors: " + ", ".join(sorted(known_selectors))) if known_selectors else "")
+        )
+
+    selected = [
+        case for case in target_candidates
+        if args.all or not selected_ids or bool(case_selectors(case) & selected_ids)
     ]
     if not selected:
         parser.error("selection matched no behavioral eval cases")
 
-    if args.target_transport != "opencode" and any(case_target_kind(case) == "skill" for case in selected):
-        parser.error(
-            "skill eval targets require --target-transport opencode so the native skill tool can load the skill; "
-            "GitHub Copilot CLI may still be used as --judge-transport"
-        )
+    if args.target_transport != "opencode":
+        incompatible = [
+            str(case["id"])
+            for case in selected
+            if case.get("skill") and not case.get("_skill_owned")
+        ]
+        if incompatible:
+            parser.error(
+                "native skill-routing eval cases require --target-transport opencode: "
+                + ", ".join(incompatible)
+                + "; skill-owned suites under skills/<skill>/evals/*.json may use github-copilot-cli"
+            )
 
     engine = resolve_engine(args.engine)
     jobs = [
