@@ -207,9 +207,13 @@ def normalize_skill_eval_case(
     ):
         raise RuntimeError(f"{path}: case {source_id!r} has invalid negative expectations")
 
-    trap = raw.get("trap") or raw.get("description") or "The skill's defining guidance is ignored."
-    if not isinstance(trap, str) or not trap.strip():
-        trap = "The skill's defining guidance is ignored."
+    raw_trap = raw.get("trap", "")
+    if raw_trap is None:
+        raw_trap = ""
+    if not isinstance(raw_trap, str):
+        raise RuntimeError(f"{path}: case {source_id!r} has invalid trap")
+    trap = raw_trap.strip()
+    trap_declared = bool(trap)
 
     case_id = f"SKILL-{skill}-{source_id}"
     return {
@@ -226,6 +230,7 @@ def normalize_skill_eval_case(
         "_skill_eval_source": str(path),
         "_skill_eval_source_id": source_id,
         "_skill_eval_name": raw.get("name"),
+        "_skill_trap_declared": trap_declared,
     }
 
 
@@ -897,7 +902,7 @@ def judge_prompt(
         "CASE: " + case["id"],
         "TARGET: " + case_target_kind(case) + ":" + case_target_name(case),
         "EXECUTION MODE: " + case["execution"],
-        "TRAP: " + case["trap"],
+        "TRAP: " + (case["trap"] if case["trap"] else "(none declared)"),
         "",
         "POSITIVE EXPECTATIONS:",
     ]
@@ -1207,7 +1212,7 @@ def run_skill_ablation_case(
 
         baseline_score = semantic_behavior_score(
             baseline_grade,
-            trap_declared=bool(str(case.get("trap") or "").strip()),
+            trap_declared=bool(case.get("_skill_trap_declared")),
         )
         artifact["baseline"]["behavior_score"] = baseline_score
 
@@ -1281,15 +1286,18 @@ def run_skill_ablation_case(
 
         candidate_score = semantic_behavior_score(
             candidate_grade,
-            trap_declared=bool(str(case.get("trap") or "").strip()),
+            trap_declared=bool(case.get("_skill_trap_declared")),
         )
         delta_pp = round((candidate_score - baseline_score) * 100.0, 2)
+        trap_declared = bool(case.get("_skill_trap_declared"))
         trap_fixed = (
-            baseline_grade.get("trap_observed") is True
+            trap_declared
+            and baseline_grade.get("trap_observed") is True
             and candidate_grade.get("trap_observed") is False
         )
         trap_regression = (
-            baseline_grade.get("trap_observed") is False
+            trap_declared
+            and baseline_grade.get("trap_observed") is False
             and candidate_grade.get("trap_observed") is True
         )
         candidate_pass = not candidate_deterministic and candidate_grade.get("passed") is True
