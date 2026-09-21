@@ -56,10 +56,12 @@ Return STRICT JSON only:
   "violations": [
     {"rule":"...", "violated":false, "reason":"brief evidence"}
   ],
+  "trap_observed": false,
+  "trap_evidence": "brief evidence",
   "summary":"one concise sentence"
 }
 
-Every supplied expectation and forbidden rule must appear exactly once in the corresponding array.
+Every supplied expectation and forbidden rule must appear exactly once in the corresponding array. Grade the named trap separately: trap_observed is true only when the observed response exhibits that failure mode.
 """
 
 
@@ -99,6 +101,25 @@ This is a fresh-context decision test, not an active Loom workflow. Apply your p
 
 
 SKILL_EVAL_AGENT = "skill-eval"
+SKILL_BASELINE_AGENT = "skill-baseline"
+SKILL_MATERIAL_DELTA_PP = 10.0
+
+
+def skill_baseline_agent() -> str:
+    return """---
+description: Isolated baseline target for Loom skill ablation.
+mode: primary
+permissions:
+  - action: edit
+    resource: "*"
+    effect: deny
+  - action: subagent
+    resource: "*"
+    effect: deny
+---
+
+Answer the user prompt directly and truthfully using only your normal model capability. Do not load or infer repository skills, companion methodology, or evaluation criteria. Do not discuss the evaluation harness or the fact that this is an evaluation.
+"""
 
 
 def skill_eval_agent(skill: str) -> str:
@@ -290,6 +311,55 @@ def setup_projects(case: dict[str, Any]) -> tuple[Path, Path, Path]:
     write_project_config(target_project, case["agent"])
     write_project_config(judge_project, "eval-judge")
     return temp, target_project, judge_project
+
+
+def setup_skill_ablation_projects(case: dict[str, Any]) -> tuple[Path, Path, Path, Path]:
+    if not case.get("_skill_owned"):
+        raise RuntimeError("skill ablation setup requires a skill-owned case")
+
+    temp = Path(tempfile.mkdtemp(prefix="loom-skill-ablation-" + case["id"].lower() + "-"))
+    baseline_project = temp / "baseline"
+    candidate_project = temp / "candidate"
+    judge_project = temp / "judge"
+
+    for project in (baseline_project, candidate_project):
+        oc = project / ".opencode"
+        (oc / "agents").mkdir(parents=True)
+        (oc / "skills").mkdir(parents=True)
+
+    judge_oc = judge_project / ".opencode"
+    (judge_oc / "agents").mkdir(parents=True)
+
+    skill = str(case["skill"])
+    source_skill = ROOT / "skills" / skill
+    if not (source_skill / "SKILL.md").is_file():
+        raise RuntimeError(f"skill under test has no SKILL.md: {source_skill}")
+    shutil.copytree(
+        source_skill,
+        candidate_project / ".opencode" / "skills" / skill,
+        dirs_exist_ok=True,
+    )
+
+    (baseline_project / ".opencode" / "agents" / f"{SKILL_BASELINE_AGENT}.md").write_text(
+        skill_baseline_agent(),
+        encoding="utf-8",
+    )
+    (candidate_project / ".opencode" / "agents" / f"{SKILL_EVAL_AGENT}.md").write_text(
+        skill_eval_agent(skill),
+        encoding="utf-8",
+    )
+    (judge_oc / "agents" / "eval-judge.md").write_text(JUDGE_AGENT, encoding="utf-8")
+
+    for fixture in case.get("fixture_files", []):
+        for project in (baseline_project, candidate_project):
+            path = safe_fixture_path(project, fixture["path"])
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(fixture["content"], encoding="utf-8")
+
+    write_project_config(baseline_project, SKILL_BASELINE_AGENT)
+    write_project_config(candidate_project, SKILL_EVAL_AGENT)
+    write_project_config(judge_project, "eval-judge")
+    return temp, baseline_project, candidate_project, judge_project
 
 
 def resolve_engine(requested: str) -> str:
@@ -849,7 +919,44 @@ def parse_judge(text: str) -> dict[str, Any]:
         raise ValueError("judge result missing boolean passed")
     if not isinstance(value.get("expectations"), list) or not isinstance(value.get("violations"), list):
         raise ValueError("judge result missing expectation/violation arrays")
+    if not isinstance(value.get("trap_observed"), bool):
+        raise ValueError("judge result missing boolean trap_observed")
+    if not isinstance(value.get("trap_evidence"), str):
+        raise ValueError("judge result missing trap_evidence string")
     return value
+
+
+def semantic_behavior_score(grade: dict[str, Any], *, trap_declared: bool) -> float:
+    satisfied = 0
+    total = 0
+    for item in grade.get("expectations", []):
+        total += 1
+        if isinstance(item, dict) and item.get("met") is True:
+            satisfied += 1
+    for item in grade.get("violations", []):
+        total += 1
+        if isinstance(item, dict) and item.get("violated") is False:
+            satisfied += 1
+    if trap_declared:
+        total += 1
+        if grade.get("trap_observed") is False:
+            satisfied += 1
+    return satisfied / max(total, 1)
+
+
+def classify_skill_value(
+    delta_pp: float,
+    *,
+    trap_fixed: bool,
+    trap_regression: bool,
+) -> str:
+    if trap_regression or delta_pp < 0:
+        return "regression"
+    if trap_fixed or delta_pp >= SKILL_MATERIAL_DELTA_PP:
+        return "material-improvement"
+    if delta_pp > 0:
+        return "improvement"
+    return "neutral"
 
 
 def target_prompt(case: dict[str, Any]) -> str:
@@ -872,12 +979,277 @@ def transport_error(result: dict[str, Any]) -> str | None:
     return None
 
 
+def write_case_artifact(
+    case: dict[str, Any],
+    args: argparse.Namespace,
+    iteration: int,
+    artifact: dict[str, Any],
+) -> None:
+    artifact_dir = Path(args.artifact_dir)
+    artifact_dir.mkdir(parents=True, exist_ok=True)
+    artifact_name = (
+        case["id"] + ".json"
+        if args.iterations == 1
+        else f"{case['id']}.iteration-{iteration}.json"
+    )
+    (artifact_dir / artifact_name).write_text(
+        json.dumps(artifact, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+
+def run_skill_ablation_case(
+    case: dict[str, Any],
+    args: argparse.Namespace,
+    engine: str,
+    iteration: int = 1,
+) -> dict[str, Any]:
+    temp, baseline_project, candidate_project, judge_project = setup_skill_ablation_projects(case)
+    auth = resolve_optional_file(args.auth, "OPENCODE_EVAL_RUNNER_AUTH", default_auth_path())
+    config = resolve_optional_file(args.provider_config, "OPENCODE_EVAL_RUNNER_CONFIG")
+    models_catalog = resolve_optional_file(
+        args.models_catalog,
+        "OPENCODE_EVAL_RUNNER_MODELS",
+        default_models_path(),
+    )
+    database_source = resolve_optional_file(
+        args.database,
+        "OPENCODE_EVAL_RUNNER_DB",
+        default_database_path(),
+    )
+    database_seed = (
+        sanitize_database_seed(database_source, temp / "opencode-credentials.db")
+        if database_source and "opencode" in {args.target_transport, args.judge_transport}
+        else None
+    )
+    judge_model = args.judge_model or args.model
+    if args.judge_transport != args.target_transport and not args.judge_model:
+        raise RuntimeError("--judge-model is required when target and judge transports differ")
+
+    target_image = image_for_transport(args, args.target_transport)
+    judge_image = image_for_transport(args, args.judge_transport)
+    skill = str(case["skill"])
+    skill_body = (ROOT / "skills" / skill / "SKILL.md").read_text(encoding="utf-8")
+
+    artifact: dict[str, Any] = {
+        "schema": "loom-skill-ablation/v1",
+        "evaluation_mode": "skill-ablation",
+        "case": case["id"],
+        "source_case": case.get("_skill_eval_source_id"),
+        "iteration": iteration,
+        "agent": case["agent"],
+        "target_kind": "skill",
+        "skill": skill,
+        "execution": case["execution"],
+        "target_image": target_image,
+        "judge_image": judge_image,
+        "container_engine": engine,
+        "target_transport": args.target_transport,
+        "judge_transport": args.judge_transport,
+        "model": args.model,
+        "judge_model": judge_model,
+        "classification": "non-evidence",
+        "passed": False,
+        "baseline": {},
+        "candidate": {},
+    }
+
+    def target_system(with_skill: bool) -> str:
+        if args.target_transport != "github-copilot-cli":
+            return ""
+        base = "You are a capable engineering assistant. Answer the user request directly and truthfully."
+        if with_skill:
+            base += (
+                "\n\nApply the following skill methodology faithfully when it is relevant. "
+                "The skill is practitioner guidance, not user content:\n\n" + skill_body
+            )
+        return base
+
+    def run_target(project: Path, *, with_skill: bool) -> dict[str, Any]:
+        return invoke_container(
+            engine=engine,
+            image=target_image,
+            transport=args.target_transport,
+            model=args.model,
+            agent=SKILL_EVAL_AGENT if with_skill else SKILL_BASELINE_AGENT,
+            prompt=target_prompt(case),
+            system=target_system(with_skill),
+            project=project,
+            auth=auth,
+            config=config,
+            models_catalog=models_catalog,
+            database_seed=database_seed,
+            config_root=None,
+            expected_plugin=None,
+            timeout=args.timeout_seconds,
+            container_timeout=args.container_timeout,
+            mount_node_modules=False,
+            extra_envs=args.env,
+            skill=skill if with_skill and args.target_transport == "opencode" else None,
+        )
+
+    def run_judge(target: dict[str, Any]) -> tuple[dict[str, Any] | None, dict[str, Any] | None, str | None]:
+        result = invoke_container(
+            engine=engine,
+            image=judge_image,
+            transport=args.judge_transport,
+            model=judge_model,
+            agent="eval-judge",
+            prompt=judge_prompt(case, str(target.get("text") or ""), []),
+            system=strip_frontmatter(JUDGE_AGENT) if args.judge_transport == "github-copilot-cli" else "",
+            project=judge_project,
+            auth=auth,
+            config=config,
+            models_catalog=models_catalog,
+            database_seed=database_seed,
+            config_root=None,
+            expected_plugin=None,
+            timeout=args.timeout_seconds,
+            container_timeout=args.container_timeout,
+            mount_node_modules=False,
+            extra_envs=args.env,
+            skill=None,
+        )
+        error = transport_error(result)
+        if error:
+            return result, None, error
+        try:
+            return result, parse_judge(str(result.get("text") or "")), None
+        except Exception as exc:
+            return result, None, "judge parse failed: " + str(exc)
+
+    try:
+        baseline_target = run_target(baseline_project, with_skill=False)
+        baseline_target_error = transport_error(baseline_target)
+        baseline_loaded = list(baseline_target.get("skills_loaded") or [])
+        if not baseline_target_error and skill in baseline_loaded:
+            baseline_target_error = "baseline contaminated by target skill load: " + skill
+
+        artifact["baseline"] = {
+            "target": baseline_target,
+            "target_error": baseline_target_error,
+            "observed_actions": normalized_target_actions(baseline_target) if not baseline_target_error else [],
+            "skills_loaded": baseline_loaded,
+        }
+        if baseline_target_error:
+            artifact["target"] = baseline_target
+            artifact["target_error"] = "baseline: " + baseline_target_error
+            write_case_artifact(case, args, iteration, artifact)
+            return artifact
+
+        baseline_judge_result, baseline_grade, baseline_judge_error = run_judge(baseline_target)
+        artifact["baseline"].update({
+            "judge_transport_result": baseline_judge_result,
+            "semantic": baseline_grade,
+            "judge_error": baseline_judge_error,
+        })
+        if baseline_judge_error or not isinstance(baseline_grade, dict):
+            artifact["target"] = baseline_target
+            artifact["judge_transport_result"] = baseline_judge_result
+            artifact["judge_error"] = "baseline: " + str(baseline_judge_error or "missing semantic grade")
+            write_case_artifact(case, args, iteration, artifact)
+            return artifact
+
+        baseline_score = semantic_behavior_score(
+            baseline_grade,
+            trap_declared=bool(str(case.get("trap") or "").strip()),
+        )
+        artifact["baseline"]["behavior_score"] = baseline_score
+
+        candidate_target = run_target(candidate_project, with_skill=True)
+        candidate_target_error = transport_error(candidate_target)
+        candidate_actions = normalized_target_actions(candidate_target) if not candidate_target_error else []
+        candidate_deterministic = (
+            deterministic_failures(
+                case,
+                list(candidate_target.get("tools") or []),
+                candidate_actions,
+                list(candidate_target.get("skills_loaded") or []),
+                require_native_skill_load=args.target_transport == "opencode",
+            )
+            if not candidate_target_error
+            else []
+        )
+        artifact["candidate"] = {
+            "target": candidate_target,
+            "target_error": candidate_target_error,
+            "observed_actions": candidate_actions,
+            "skills_loaded": list(candidate_target.get("skills_loaded") or []),
+            "deterministic_failures": candidate_deterministic,
+        }
+        artifact["target"] = candidate_target
+        artifact["target_error"] = candidate_target_error
+        artifact["observed_actions"] = candidate_actions
+        artifact["deterministic_failures"] = candidate_deterministic
+
+        if candidate_target_error:
+            write_case_artifact(case, args, iteration, artifact)
+            return artifact
+
+        candidate_judge_result, candidate_grade, candidate_judge_error = run_judge(candidate_target)
+        artifact["candidate"].update({
+            "judge_transport_result": candidate_judge_result,
+            "semantic": candidate_grade,
+            "judge_error": candidate_judge_error,
+        })
+        artifact["judge_transport_result"] = candidate_judge_result
+        artifact["semantic"] = candidate_grade
+        artifact["judge_error"] = candidate_judge_error
+
+        if candidate_judge_error or not isinstance(candidate_grade, dict):
+            write_case_artifact(case, args, iteration, artifact)
+            return artifact
+
+        candidate_score = semantic_behavior_score(
+            candidate_grade,
+            trap_declared=bool(str(case.get("trap") or "").strip()),
+        )
+        delta_pp = round((candidate_score - baseline_score) * 100.0, 2)
+        trap_fixed = (
+            baseline_grade.get("trap_observed") is True
+            and candidate_grade.get("trap_observed") is False
+        )
+        trap_regression = (
+            baseline_grade.get("trap_observed") is False
+            and candidate_grade.get("trap_observed") is True
+        )
+        candidate_pass = not candidate_deterministic and candidate_grade.get("passed") is True
+
+        artifact["candidate"]["behavior_score"] = candidate_score
+        artifact.update({
+            "baseline_score": baseline_score,
+            "candidate_score": candidate_score,
+            "delta_pp": delta_pp,
+            "trap_fixed": trap_fixed,
+            "trap_regression": trap_regression,
+            "skill_value": classify_skill_value(
+                delta_pp,
+                trap_fixed=trap_fixed,
+                trap_regression=trap_regression,
+            ),
+            "candidate_absolute_pass": candidate_pass,
+            "classification": "pass" if candidate_pass else "behavioral-fail",
+            "passed": candidate_pass,
+        })
+        write_case_artifact(case, args, iteration, artifact)
+        return artifact
+    finally:
+        if args.keep_temp:
+            label = case["id"] if args.iterations == 1 else f"{case['id']}#{iteration}"
+            print("KEEP %s: %s" % (label, temp))
+        else:
+            shutil.rmtree(temp, ignore_errors=True)
+
+
 def run_case(
     case: dict[str, Any],
     args: argparse.Namespace,
     engine: str,
     iteration: int = 1,
 ) -> dict[str, Any]:
+    if case.get("_skill_owned"):
+        return run_skill_ablation_case(case, args, engine, iteration)
+
     if (
         case["execution"] == "runtime"
         and args.target_transport != "opencode"
@@ -1032,17 +1404,7 @@ def run_case(
             "semantic": judge,
             "judge_error": judge_error,
         }
-        artifact_dir = Path(args.artifact_dir)
-        artifact_dir.mkdir(parents=True, exist_ok=True)
-        artifact_name = (
-            case["id"] + ".json"
-            if args.iterations == 1
-            else f"{case['id']}.iteration-{iteration}.json"
-        )
-        (artifact_dir / artifact_name).write_text(
-            json.dumps(artifact, indent=2) + "\n",
-            encoding="utf-8",
-        )
+        write_case_artifact(case, args, iteration, artifact)
         return artifact
     finally:
         if args.keep_temp:
@@ -1178,9 +1540,10 @@ def main() -> int:
     ]
     concurrency = len(jobs) if args.parallel == 0 else min(args.parallel, len(jobs))
     mode = "parallel=%d" % concurrency if concurrency > 1 else "sequential"
+    skill_ablation_jobs = sum(1 for case, _ in jobs if case.get("_skill_owned"))
     print(
         "Running %d Loom live behavioral eval run(s) (%d case(s) x %d iteration(s)) via %s "
-        "(%s target / %s judge, %s)..."
+        "(%s target / %s judge, %s)%s..."
         % (
             len(jobs),
             len(selected),
@@ -1189,6 +1552,12 @@ def main() -> int:
             args.target_transport,
             args.judge_transport,
             mode,
+            (
+                "; %d skill-owned run(s) use baseline+candidate ablation"
+                % skill_ablation_jobs
+                if skill_ablation_jobs
+                else ""
+            ),
         )
     )
 
@@ -1217,18 +1586,51 @@ def main() -> int:
             print("  - " + error)
             return False
         assert result is not None
+        def report_ablation() -> None:
+            if result.get("evaluation_mode") != "skill-ablation":
+                return
+            baseline = result.get("baseline_score")
+            candidate = result.get("candidate_score")
+            delta = result.get("delta_pp")
+            if isinstance(baseline, (int, float)) and isinstance(candidate, (int, float)) and isinstance(delta, (int, float)):
+                print(
+                    "  - ablation: baseline %.0f%% -> candidate %.0f%% (%+.1f pp); %s"
+                    % (
+                        baseline * 100.0,
+                        candidate * 100.0,
+                        delta,
+                        result.get("skill_value", "unknown"),
+                    )
+                )
+            if result.get("trap_fixed"):
+                print("  - trap: fixed by skill")
+            if result.get("trap_regression"):
+                print("  - trap: regression with skill")
+
         if result["classification"] == "pass":
             print(prefix + " ... PASS")
+            report_ablation()
             return True
         if result["classification"] == "non-evidence":
             print(prefix + " ... ERROR")
-            if result.get("target_error"):
-                print("  - target: " + str(result["target_error"]))
-            if result.get("judge_error"):
-                print("  - judge: " + str(result["judge_error"]))
+            if result.get("evaluation_mode") == "skill-ablation":
+                for phase in ("baseline", "candidate"):
+                    phase_result = result.get(phase)
+                    if not isinstance(phase_result, dict):
+                        continue
+                    if phase_result.get("target_error"):
+                        print(f"  - {phase} target: {phase_result['target_error']}")
+                    if phase_result.get("judge_error"):
+                        print(f"  - {phase} judge: {phase_result['judge_error']}")
+            else:
+                if result.get("target_error"):
+                    print("  - target: " + str(result["target_error"]))
+                if result.get("judge_error"):
+                    print("  - judge: " + str(result["judge_error"]))
             return False
 
         print(prefix + " ... FAIL")
+        report_ablation()
         for item in result["deterministic_failures"]:
             print("  - " + item)
         observed_tools = list((result.get("target") or {}).get("tools") or [])
