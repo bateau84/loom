@@ -463,6 +463,52 @@ class EvidenceRedactionTests(unittest.TestCase):
         self.assertIn("***REDACTED***", encoded)
 
 
+    def test_invoke_container_redacts_secret_on_runner_failure_path(self):
+        secret = "sk-failure-secret-abcdef123456"
+
+        class Result:
+            returncode = 2
+            stdout = "runner leaked " + secret
+            stderr = "failure " + secret
+
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(
+            os.environ,
+            {"OPENAI_API_KEY": secret},
+            clear=False,
+        ):
+            project = Path(tmp)
+            with patch.object(
+                RUN_EVALS.shutil,
+                "which",
+                side_effect=lambda name: "/usr/bin/opencode-eval-runner" if name == "opencode-eval-runner" else None,
+            ), patch.object(RUN_EVALS.subprocess, "run", return_value=Result()):
+                result = RUN_EVALS.invoke_container(
+                    engine="podman",
+                    image="test-image",
+                    transport="opencode",
+                    model="openai/test",
+                    agent="general",
+                    prompt="test",
+                    system="",
+                    project=project,
+                    auth=None,
+                    config=None,
+                    models_catalog=None,
+                    database_seed=None,
+                    config_root=None,
+                    expected_plugin=None,
+                    timeout=30,
+                    container_timeout=60,
+                    mount_node_modules=False,
+                    extra_envs=[],
+                )
+
+        encoded = json.dumps(result)
+        self.assertNotIn(secret, encoded)
+        self.assertIn("***REDACTED***", encoded)
+        self.assertTrue(result["infrastructure_error"])
+
+
 class TransportDiagnosticTests(unittest.TestCase):
     def test_transport_error_prefers_terminal_json_error_event(self):
         stdout = "\n".join([
