@@ -23,6 +23,7 @@ function workflow({
   status,
   sessionId,
   activeAgent = "worker",
+  budgetExhausted = false,
 }) {
   return {
     workflowId: id,
@@ -45,7 +46,7 @@ function workflow({
     },
     openOqCount: 1,
     openVerificationCount: 1,
-    budget: { used: 2, limit: 40, exhausted: false },
+    budget: { used: 2, limit: 40, exhausted: budgetExhausted },
     productAcceptance: { status: "unproven", passed: 0, failed: 0, unproven: 1 },
     knowledgeSync: { valid: true, updatedAt: iso(-1_000) },
     recentActivityAt: iso(-1_000),
@@ -55,7 +56,7 @@ function workflow({
   }
 }
 
-function objective(id) {
+function objective(id, claimedByWorkflowId) {
   return {
     objectiveId: id,
     anchor: `docs/anchors/${id}/anchor.md`,
@@ -76,6 +77,7 @@ function objective(id) {
           taskId: "task-build",
           title: "Shared task name",
           status: "active",
+          claimedByWorkflowId,
         }],
       }],
     }],
@@ -137,7 +139,7 @@ async function writePublisher({
         workflowsTruncated: false,
         completedObjectivesTruncated: false,
       },
-      workObjectives: [objective(`objective-${projectId}`)],
+      workObjectives: [objective(`objective-${projectId}`, workflows[0]?.workflowId)],
       workflows,
     }, null, 2),
   )
@@ -201,6 +203,7 @@ async function seed() {
       digest: "digest-c",
       status: "active",
       sessionId: "session-c",
+      budgetExhausted: true,
     })],
     leaseExpiresAt: iso(-60_000),
   })
@@ -254,11 +257,17 @@ test("keyboard drill-down and browser back preserve Fleet filters", async ({ pag
   await page.goto(`http://127.0.0.1:${port}/`)
   await expect(page.getByText("consistency conflict", { exact: true })).toBeVisible()
   await expect(page.getByText("stale/offline", { exact: true })).toBeVisible()
+  await expect(page.getByText("budget exhausted", { exact: true })).toBeVisible()
+
+  const card = page.locator('a[data-key="project-a:workflow-a"]')
+  await expect(card).toContainText("Tasks complete")
+  await expect(card).toContainText("0/1")
+  await expect(card).toContainText("2/40")
 
   await page.locator("#status-filter").selectOption("active")
   await page.locator("#project-filter").fill("Project A")
+  await page.locator("#agent-filter").fill("worker")
 
-  const card = page.locator('a[data-key="project-a:workflow-a"]')
   await expect(card).toBeVisible()
   await card.focus()
   await page.keyboard.press("Enter")
@@ -277,6 +286,10 @@ test("keyboard drill-down and browser back preserve Fleet filters", async ({ pag
   await expect(page).toHaveURL(new RegExp("^http://127\\.0\\.0\\.1:" + port + "/(?:#/)?$"))
   await expect(page.locator("#status-filter")).toHaveValue("active")
   await expect(page.locator("#project-filter")).toHaveValue("Project A")
+  await expect(page.locator("#agent-filter")).toHaveValue("worker")
+
+  await page.locator("#project-filter").fill("No such project")
+  await expect(page.getByText("No workflows match the current filters.", { exact: true })).toBeVisible()
 })
 
 test("background refresh preserves focus and disappearance has predictable fallback", async ({ page }) => {
@@ -308,8 +321,29 @@ test("background refresh preserves focus and disappearance has predictable fallb
   }))
   expect(
     focus.key === "project-b:workflow-b" ||
-    ["status-filter", "project-filter"].includes(focus.id),
+    ["status-filter", "project-filter", "agent-filter"].includes(focus.id),
   ).toBe(true)
+})
+
+test("project hierarchy exposes active workflow claims", async ({ page }) => {
+  await page.goto(`http://127.0.0.1:${port}/#/project/project-a`)
+  await expect(page.getByText("Objective → Phase → Wave → Task", { exact: true })).toBeVisible()
+  await expect(page.getByText(/claimed by workflow-a/)).toBeVisible()
+})
+
+test("refresh failure keeps last known Fleet visible and marks projection degradation", async ({ page }) => {
+  await page.goto(`http://127.0.0.1:${port}/`)
+  const card = page.locator('a[data-key="project-a:workflow-a"]')
+  await expect(card).toBeVisible()
+
+  await page.route("**/api/fleet", async (route) => {
+    await route.fulfill({ status: 503, body: "projection unavailable" })
+  })
+  await page.waitForTimeout(3_400)
+
+  await expect(page.locator("#projection-status")).toBeVisible()
+  await expect(page.locator("#projection-status")).toContainText("Showing the last known Loom projection")
+  await expect(card).toBeVisible()
 })
 
 test("narrow layout keeps identity and status usable without horizontal overflow", async ({ page }) => {
