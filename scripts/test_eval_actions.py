@@ -295,6 +295,36 @@ class ActionAssertionTests(unittest.TestCase):
         self.assertEqual(len(failures), 1)
         self.assertTrue(failures[0].startswith("forbidden action observed:"))
 
+    def test_semantic_judge_receives_observed_action_arguments(self):
+        case = {
+            "id": "GENERAL-BUDGET-01",
+            "execution": "runtime",
+            "trap": "miss the evidence reference",
+            "expectations": ["Records the supplied evidence reference."],
+            "must_not": ["Must not omit the evidence reference."],
+        }
+        actions = [
+            {
+                "tool": "loom_budget_grant",
+                "args": {
+                    "workflowId": "wf-budget-recovery",
+                    "stepId": "critic-solution",
+                    "evidence": ["docs/architecture/solution.md#dependency-registration"],
+                },
+            }
+        ]
+
+        prompt = RUN_EVALS.judge_prompt(
+            case,
+            "Grant attempted.",
+            ["loom_budget_grant"],
+            actions,
+        )
+
+        self.assertIn("OBSERVED TOOL ACTIONS:", prompt)
+        self.assertIn("docs/architecture/solution.md#dependency-registration", prompt)
+        self.assertIn('"stepId": "critic-solution"', prompt)
+
     def test_reports_missing_required_and_observed_forbidden_action(self):
         actions = [
             {
