@@ -75,6 +75,7 @@ import { taskStepId, validateTaskPlan, type TaskSpec } from "./tasks"
 import {
   attachWorkflowToWork,
   completeObjective,
+  completeWaveForTasks,
   createWorkHierarchy,
   materializeWorkPlan,
   nextRunnableWaves,
@@ -792,6 +793,21 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             steps: [],
           }
 
+          const existingObjectiveId = objectiveIdForAnchor(anchor)
+          const existingWork = await readWork(ctx, existingObjectiveId)
+          if (existingWork) {
+            await withWorkLock(existingObjectiveId, async () => {
+              const current = await readWork(ctx, existingObjectiveId)
+              if (!current) return
+              attachWorkflowToWork(current, workflow.id, new Date().toISOString())
+              await ctx.storage.set(workKey(current.objectiveId), current)
+              workflow.work = {
+                objectiveId: current.objectiveId,
+                generation: current.generation,
+              }
+            })
+          }
+
           await ctx.storage.set(workflowKey(id), workflow)
           await ctx.storage.set(sessionKey(tool.sessionID), id)
           if (intent?.acceptedAnchor?.path === anchor) {
@@ -1087,6 +1103,18 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 })),
                 new Date().toISOString(),
               )
+
+              if (
+                stepId === "review-implementation" &&
+                resolvedOutcome === "pass" &&
+                plannedTaskSteps(workflow).length > 0
+              ) {
+                completeWaveForTasks(
+                  work,
+                  plannedTaskSteps(workflow).map((taskStep) => taskStep.task!.id),
+                  new Date().toISOString(),
+                )
+              }
 
               if (
                 stepId === "critic-final" &&
