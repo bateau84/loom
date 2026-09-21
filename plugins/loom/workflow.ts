@@ -14,6 +14,8 @@ export type Step = {
   task?: TaskSpec
 }
 
+export type WorkLevel = "objective" | "wave"
+
 export type Effects = {
   humanFacing: boolean
   behavioral: boolean
@@ -21,6 +23,7 @@ export type Effects = {
   externalUnknown: boolean
   diagnostic: boolean
   productOutcome: boolean
+  workLevel?: WorkLevel
 }
 
 export type VerificationRequirementStatus = "open" | "satisfied" | "superseded"
@@ -49,6 +52,10 @@ export type Workflow = {
   createdBySession: string
   createdAt: string
   effects?: Effects
+  work?: {
+    objectiveId: string
+    generation: number
+  }
   steps: Step[]
   verification?: VerificationRequirement[]
 }
@@ -193,6 +200,8 @@ function gate(id: string, agent: string, dependsOn: string[] = []): Step {
 export function buildSteps(effects: Effects): Step[] {
   const steps: Step[] = []
   const think: string[] = []
+  const workLevel: WorkLevel = effects.workLevel ?? "objective"
+  const objectiveClosure = effects.productOutcome && workLevel === "objective"
 
   if (effects.diagnostic) {
     steps.push(work("diagnostic", "diagnostic"))
@@ -241,7 +250,7 @@ export function buildSteps(effects: Effects): Step[] {
     steps.push(work("knowledge-sync", "documenter", ["review-implementation"]))
   }
 
-  if (effects.productOutcome) {
+  if (objectiveClosure) {
     steps.push(gate("product-acceptance", "acceptance", ["review-implementation"]))
     const productReviewDeps = ["product-acceptance", "knowledge-sync"]
 
