@@ -1,40 +1,59 @@
 {
+  "version": 2,
   "profiles": {
-    "free": {
-      "config": "profiles/free.jsonc",
-      "cli": "cli/free.json"
+    "openai": {
+      "config": "profiles/openai.jsonc",
+      "cli": "cli/openai.json",
+      "tui_compat": "tui/openai.json",
+      "theme": "loom-openai"
     },
     "github": {
       "config": "profiles/github.jsonc",
-      "cli": "cli/github.json"
+      "cli": "cli/github.json",
+      "tui_compat": "tui/github.json",
+      "theme": "loom-github"
     },
-    "hybrid": {
-      "config": "profiles/hybrid.jsonc",
-      "cli": "cli/hybrid.json"
+    "litellm": {
+      "config": "profiles/litellm.jsonc",
+      "cli": "cli/litellm.json",
+      "tui_compat": "tui/litellm.json",
+      "theme": "loom-litellm"
     },
     "modellbanken": {
       "config": "profiles/modellbanken.jsonc",
-      "cli": "cli/modellbanken.json"
+      "cli": "cli/modellbanken.json",
+      "tui_compat": "tui/modellbanken.json",
+      "theme": "loom-modellbanken"
+    },
+    "opencode": {
+      "config": "profiles/opencode.jsonc",
+      "cli": "cli/opencode.json",
+      "tui_compat": "tui/opencode.json",
+      "theme": "loom-opencode"
+    },
+    "free": {
+      "config": "profiles/free.jsonc",
+      "cli": "cli/free.json",
+      "tui_compat": "tui/free.json",
+      "theme": "loom-free"
     },
     "none": {
       "config": "profiles/none.jsonc",
-      "cli": "cli/none.json"
-    },
-    "nrk": {
-      "config": "profiles/nrk.jsonc",
-      "cli": "cli/nrk.json"
-    },
-    "openai": {
-      "config": "profiles/openai.jsonc",
-      "cli": "cli/openai.json"
+      "cli": "cli/none.json",
+      "tui_compat": "tui/none.json",
+      "theme": "loom-none"
     },
     "paid": {
       "config": "profiles/paid.jsonc",
-      "cli": "cli/paid.json"
+      "cli": "cli/paid.json",
+      "tui_compat": "tui/paid.json",
+      "theme": "loom-paid"
     },
-    "surplus": {
-      "config": "profiles/surplus.jsonc",
-      "cli": "cli/surplus.json"
+    "hybrid": {
+      "config": "profiles/hybrid.jsonc",
+      "cli": "cli/hybrid.json",
+      "tui_compat": "tui/hybrid.json",
+      "theme": "loom-hybrid"
     }
   }
 }
