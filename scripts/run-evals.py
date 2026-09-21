@@ -566,7 +566,12 @@ def deterministic_failures(
     return failures
 
 
-def judge_prompt(case: dict[str, Any], text: str, tools: list[str]) -> str:
+def judge_prompt(
+    case: dict[str, Any],
+    text: str,
+    tools: list[str],
+    actions: list[dict[str, Any]],
+) -> str:
     lines = [
         "Evaluate this Loom behavioral case.",
         "",
@@ -583,6 +588,9 @@ def judge_prompt(case: dict[str, Any], text: str, tools: list[str]) -> str:
         "",
         "OBSERVED TOOLS:",
         ", ".join(tools) if tools else "(none)",
+        "",
+        "OBSERVED TOOL ACTIONS:",
+        json.dumps(actions, sort_keys=True) if actions else "(none)",
         "",
         "OBSERVED ASSISTANT TEXT:",
         text[:30000] if text else "(no assistant text observed)",
@@ -707,7 +715,12 @@ def run_case(
                 transport=args.judge_transport,
                 model=judge_model,
                 agent="eval-judge",
-                prompt=judge_prompt(case, str(target.get("text") or ""), list(target.get("tools") or [])),
+                prompt=judge_prompt(
+                    case,
+                    str(target.get("text") or ""),
+                    list(target.get("tools") or []),
+                    observed_actions,
+                ),
                 system=strip_frontmatter(JUDGE_AGENT) if args.judge_transport == "github-copilot-cli" else "",
                 project=judge_project,
                 auth=auth,
