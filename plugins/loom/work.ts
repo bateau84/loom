@@ -600,6 +600,11 @@ export function nextRunnableWaves(hierarchy: WorkHierarchy) {
   return nodes
     .filter((node) => node.type === "wave" && node.status !== "complete" && node.status !== "cancelled")
     .filter((wave) =>
+      nodes.some(
+        (node) => node.type === "task" && node.parentId === wave.id && node.status !== "complete",
+      ),
+    )
+    .filter((wave) =>
       nodes
         .filter((node) => node.type === "task" && node.parentId === wave.id && node.status !== "complete")
         .every((task) =>
