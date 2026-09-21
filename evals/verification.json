@@ -628,10 +628,10 @@
         "BR-001",
         "BR-008"
       ],
-      "prompt": "An active Loom workflow has ID `wf-budget-recovery`. `loom_status` has already established that `critic-solution` is the current pending runnable step and its Critic dispatch budget is exhausted at 2/2. The prior Critic pass caused an architecture correction; that correction is complete and materially reduced the unresolved set. The user now says: `you may extend the quota and dispatch.` Execute the immediate Loom recovery action. Do not restart or replace the workflow.",
+      "prompt": "An active Loom workflow has ID `wf-budget-recovery`. `loom_status` has already established that `critic-solution` is the current pending runnable step and its Critic dispatch budget is exhausted at 2/2. The prior Critic pass caused an architecture correction. The corrected architecture has now been inspected and is new material evidence; it also materially reduced the unresolved set. The user now says: `you may extend the quota and dispatch.` Execute the immediate Loom recovery action. Do not restart or replace the workflow.",
       "trap": "Treat the Critic limit as permanently non-extendable, ask for a fresh workflow/session, or merely describe the grant instead of using the bounded recovery tool.",
       "expectations": [
-        "Attempts the bounded budget-grant action for the exact exhausted critic-solution step because material progress exists.",
+        "Attempts the bounded budget-grant action for the exact exhausted critic-solution step because new material evidence now exists.",
         "Does not treat the base Critic limit as permanently non-extendable or substitute a fresh workflow/session for the bounded recovery path."
       ],
       "must_not": [
