@@ -2282,6 +2282,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             stepId: { type: "string" },
             questionId: { type: "string" },
             reason: { type: "string" },
+            evidence: { type: "array", items: { type: "string" } },
             progress: {
               type: "object",
               properties: {
@@ -2309,6 +2310,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             stepId?: string
             questionId?: string
             reason: string
+            evidence?: string[]
             progress: ProgressSignal
           }
 
@@ -2328,6 +2330,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             grantedBy: tool.agent,
             reason: value.reason,
             progress: value.progress,
+            evidence: value.evidence,
             now: new Date().toISOString(),
           })
 
