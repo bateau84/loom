@@ -1,3 +1,6 @@
+import type { OpenQuestion } from "./oq"
+import { runnable, type Workflow } from "./workflow"
+
 export type ExecutionLimits = {
   maxTotalDispatches: number
   maxDispatchesPerStep: number
@@ -167,6 +170,125 @@ export function grantExtraDispatch(input: {
     newLimit: currentLimit + 1,
     state,
   }
+}
+
+export type BudgetGrantTarget =
+  | {
+      kind: "step"
+      id: string
+      key: string
+      agent: string
+      stepKind: "work" | "gate"
+    }
+  | {
+      kind: "question"
+      id: string
+      key: string
+      agent: string
+    }
+
+export function resolveBudgetGrantTarget(input: {
+  workflow: Workflow
+  questions: OpenQuestion[]
+  stepId?: string
+  questionId?: string
+}) {
+  const { workflow, questions, stepId, questionId } = input
+  const targetCount = Number(Boolean(stepId)) + Number(Boolean(questionId))
+
+  if (targetCount !== 1) {
+    return {
+      target: undefined,
+      reason: "Budget grant requires exactly one target: stepId or questionId.",
+    }
+  }
+
+  if (stepId) {
+    const step = workflow.steps.find((candidate) => candidate.id === stepId)
+    if (!step) return { target: undefined, reason: "Step not found." }
+    if (step.status !== "pending") {
+      return {
+        target: undefined,
+        reason: "Budget grants apply only to pending steps. Reopen failed work or gates before granting another dispatch.",
+      }
+    }
+    if (!runnable(workflow).some((candidate) => candidate.id === step.id)) {
+      return {
+        target: undefined,
+        reason: "Budget grants apply only when the exhausted step is currently runnable.",
+      }
+    }
+
+    const target: BudgetGrantTarget = {
+      kind: "step",
+      id: step.id,
+      key: `step:${step.id}`,
+      agent: step.agent,
+      stepKind: step.kind,
+    }
+    return { target }
+  }
+
+  const question = questions.find((candidate) => candidate.id === questionId)
+  if (!question) return { target: undefined, reason: "Question not found." }
+  if (question.workflowId !== workflow.id) {
+    return { target: undefined, reason: "Question does not belong to this workflow." }
+  }
+  if (question.requiredAuthority === "user") {
+    return { target: undefined, reason: "User-owned questions do not have agent dispatch budgets." }
+  }
+  if (question.status === "closed" || question.answer) {
+    return { target: undefined, reason: "Budget grants apply only to unanswered agent-owned questions." }
+  }
+
+  const target: BudgetGrantTarget = {
+    kind: "question",
+    id: question.id,
+    key: `oq:${question.id}`,
+    agent: question.requiredAuthority,
+  }
+  return { target }
+}
+
+export function grantWorkflowDispatchBudget(input: {
+  state: BudgetState
+  limits: ExecutionLimits
+  workflow: Workflow
+  questions: OpenQuestion[]
+  stepId?: string
+  questionId?: string
+  grantedBy: string
+  reason: string
+  progress: ProgressSignal
+  now: string
+}) {
+  const { state, limits, workflow, questions, stepId, questionId, grantedBy, reason, progress, now } = input
+
+  if (grantedBy !== "general") {
+    return {
+      allowed: false,
+      reason: "Only general may grant extra Loom dispatch budget.",
+      state,
+    }
+  }
+
+  const resolved = resolveBudgetGrantTarget({ workflow, questions, stepId, questionId })
+  if (!resolved.target) {
+    return { allowed: false, reason: resolved.reason, state }
+  }
+
+  const result = grantExtraDispatch({
+    state,
+    limits,
+    key: resolved.target.key,
+    agent: resolved.target.agent,
+    grantedBy,
+    reason,
+    progress,
+    now,
+  })
+
+  return { ...result, target: resolved.target }
 }
 
 export function hasMaterialProgress(signal: ProgressSignal) {
