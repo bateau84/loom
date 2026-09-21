@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
+import os
 from io import StringIO
 from pathlib import Path
 import tempfile
