@@ -10,6 +10,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Smoke test eval-runner action
+        uses: bateau84/opencode-eval-runner@01a4438241be40a307b725a9117c88c8771e2ffd
+        with:
+          prepare-opencode: false
+          prepare-copilot: false
+          command: opencode-eval-runner --help
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.2
