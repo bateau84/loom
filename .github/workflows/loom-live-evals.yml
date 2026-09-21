@@ -114,6 +114,8 @@ jobs:
         uses: bateau84/opencode-eval-runner@bd02908d134ccec81d4497604b7b115606cf9b45
         with:
           engine: docker
+          opencode-image: ghcr.io/bateau84/opencode-eval-runner@sha256:279af644d0d05a17fecc0a277dc9648e0d03fb7d3c74a1f0fa05303c8c552f83
+          copilot-image: ghcr.io/bateau84/opencode-eval-runner@sha256:fbc8f007ff339c6a6d47d4b1113874084cbf0eb7e62c7bb69bf9ccd70cdae799
           prepare-opencode: ${{ inputs.target_transport == 'opencode' || inputs.judge_transport == 'opencode' }}
           prepare-copilot: ${{ inputs.target_transport == 'github-copilot-cli' || inputs.judge_transport == 'github-copilot-cli' }}
           artifact-dir: .loom-evals
@@ -134,8 +136,6 @@ jobs:
             fi
             if [[ "$EVAL_ALL" == "true" ]]; then
               args+=(--all)
-            elif [[ -n "$EVAL_TARGET" || "$EVAL_TARGET_KIND" != "all" ]]; then
-              :
             elif [[ -n "$EVAL_CASES" ]]; then
               args+=(--cases "$EVAL_CASES")
             fi
