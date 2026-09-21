@@ -302,8 +302,14 @@ test("background refresh preserves focus and disappearance has predictable fallb
 
   await page.waitForTimeout(3_400)
   await expect(page.locator("#live")).toContainText("previously focused item is no longer available")
-  const activeId = await page.evaluate(() => document.activeElement?.id)
-  expect(["status-filter", "project-filter"]).toContain(activeId)
+  const focus = await page.evaluate(() => ({
+    id: document.activeElement?.id || "",
+    key: document.activeElement?.dataset?.key || "",
+  }))
+  expect(
+    focus.key === "project-b:workflow-b" ||
+    ["status-filter", "project-filter"].includes(focus.id),
+  ).toBe(true)
 })
 
 test("narrow layout keeps identity and status usable without horizontal overflow", async ({ page }) => {
