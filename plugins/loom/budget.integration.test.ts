@@ -32,9 +32,12 @@ describe("Loom budget recovery plugin integration", () => {
     const ctx = {
       location: { directory: "/tmp/loom-budget-integration" },
       storage: {
-        get: async (key: string) => values.get(key),
+        get: async (key: string) => {
+          const value = values.get(key)
+          return value === undefined ? undefined : structuredClone(value)
+        },
         set: async (key: string, value: unknown) => {
-          values.set(key, value)
+          values.set(key, structuredClone(value))
         },
         scan: async () => ({ entries: [], next: undefined }),
       },
@@ -124,6 +127,7 @@ describe("Loom budget recovery plugin integration", () => {
         workflowId,
         stepId,
         reason: "The corrected architecture is new material evidence for another Critic pass.",
+        evidence: ["docs/architecture/example.md#corrected-dependency-registration"],
         progress: {
           newEvidence: true,
           changedHypothesis: false,
