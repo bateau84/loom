@@ -161,6 +161,24 @@ describe("Loom progress and dispatch budgets", () => {
     })
     expect(grant.previousLimit).toBe(DEFAULT_LIMITS.maxCriticDispatchesPerStep)
     expect(grant.newLimit).toBe(DEFAULT_LIMITS.maxCriticDispatchesPerStep + 1)
+    expect(
+      recordDispatch({
+        state,
+        limits: DEFAULT_LIMITS,
+        dispatchID: "c3",
+        key,
+        agent: "critic",
+      }).allowed,
+    ).toBe(true)
+    expect(
+      recordDispatch({
+        state,
+        limits: DEFAULT_LIMITS,
+        dispatchID: "c4",
+        key,
+        agent: "critic",
+      }).allowed,
+    ).toBe(false)
   })
 
   test("workflow grant policy recovers exhausted agent-owned OQ dispatches", () => {
@@ -235,6 +253,24 @@ describe("Loom progress and dispatch budgets", () => {
     })
     expect(grant.previousLimit).toBe(DEFAULT_LIMITS.maxCriticDispatchesPerStep)
     expect(grant.newLimit).toBe(DEFAULT_LIMITS.maxCriticDispatchesPerStep + 1)
+    expect(
+      recordDispatch({
+        state,
+        limits: DEFAULT_LIMITS,
+        dispatchID: "oq-c3",
+        key,
+        agent: "critic",
+      }).allowed,
+    ).toBe(true)
+    expect(
+      recordDispatch({
+        state,
+        limits: DEFAULT_LIMITS,
+        dispatchID: "oq-c4",
+        key,
+        agent: "critic",
+      }).allowed,
+    ).toBe(false)
   })
 
   test("bounded grants apply to gate-owning agents as well as workers", () => {
@@ -288,7 +324,7 @@ describe("Loom progress and dispatch budgets", () => {
       })
 
       expect(grant.allowed).toBe(true)
-    if (!grant.allowed) throw new Error(grant.reason)
+      if (!grant.allowed) throw new Error(grant.reason)
       expect(grant.previousLimit).toBe(item.base)
       expect(grant.newLimit).toBe(item.base + 1)
 
