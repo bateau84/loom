@@ -49,6 +49,16 @@ import {
 import { resourcesWithinScope, validateWriteScope, type TaskScope } from "./scope"
 import { shellResourcesAllowed } from "./shell"
 import {
+  findPaths,
+  grepText,
+  selectText,
+  statPaths,
+  type FindOptions,
+  type GrepOptions,
+  type SelectOptions,
+  type StatsOptions,
+} from "./inspection"
+import {
   heuristicsForEpisodes,
   proposeHeuristic,
   rankEpisodes,
@@ -488,6 +498,22 @@ function toolEventKey(raw: any) {
 
 const pendingToolInputs = new Map<string, unknown>()
 
+const inspectionToolNames = new Set(["find", "grep", "select", "stats"])
+
+function isLoomToolName(tool: string) {
+  return tool.startsWith("loom_") || tool.startsWith("loom.")
+}
+
+function isLoomInspectionToolName(tool: string) {
+  if (!isLoomToolName(tool)) return false
+  const leaf = tool.replace(/^loom[._]/, "")
+  return inspectionToolNames.has(leaf)
+}
+
+function skipLoomEvidence(tool: string) {
+  return isLoomToolName(tool) && !isLoomInspectionToolName(tool)
+}
+
 const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
   id: "loom",
 
@@ -509,9 +535,137 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
     await ctx.tool.transform((editor) => {
       editor.namespace({
         name: "loom",
-        description: "Loom workflow control, shared questions, routing, and step state.",
+        description: "Loom workflow control, shared questions, routing, step state, and bounded project inspection.",
       })
 
+      editor.add({
+        name: "find",
+        description:
+          "Read-only project file discovery. Structured replacement for find/sort/head-style shell pipelines; paths cannot escape the project.",
+        input: {
+          type: "object",
+          properties: {
+            path: { type: "string", description: "Project-relative starting path. Defaults to the project root." },
+            minDepth: { type: "number", description: "Minimum depth to return, 0-12." },
+            maxDepth: { type: "number", description: "Maximum traversal depth, 0-12." },
+            type: { type: "string", enum: ["file", "directory", "symlink"] },
+            name: { type: "string", description: "Simple * and ? basename glob." },
+            sort: { type: "string", enum: ["path", "name", "size", "mtime"] },
+            order: { type: "string", enum: ["asc", "desc"] },
+            limit: { type: "number", description: "Maximum returned entries; hard-capped at 500." },
+            includeHidden: { type: "boolean" },
+          },
+          additionalProperties: false,
+        },
+        options: { namespace: "loom", codemode: false },
+        execute: async (input) => ({
+          content: renderToolOutput(await findPaths(ctx.location.directory, input as FindOptions)),
+        }),
+      })
+
+      editor.add({
+        name: "grep",
+        description:
+          "Read-only bounded literal text search across project files. Structured replacement for grep -F / rg -F plus sort/head; supports context lines without arbitrary regex execution.",
+        input: {
+          type: "object",
+          properties: {
+            path: { type: "string", description: "Project-relative file or directory. Defaults to the project root." },
+            pattern: { type: "string" },
+            caseSensitive: { type: "boolean" },
+            glob: { type: "string", description: "Simple * and ? file/path glob." },
+            context: { type: "number", description: "Context lines before and after each match, 0-5." },
+            maxDepth: { type: "number", description: "Maximum directory traversal depth, 0-12." },
+            includeHidden: { type: "boolean" },
+            sort: { type: "string", enum: ["path", "line"] },
+            order: { type: "string", enum: ["asc", "desc"] },
+            limit: { type: "number", description: "Maximum returned matches; hard-capped at 500." },
+          },
+          required: ["pattern"],
+          additionalProperties: false,
+        },
+        options: { namespace: "loom", codemode: false },
+        execute: async (input) => ({
+          content: renderToolOutput(await grepText(ctx.location.directory, input as GrepOptions)),
+        }),
+      })
+
+      editor.add({
+        name: "select",
+        description:
+          "Read-only field filtering/projection for line-oriented text. Structured replacement for common awk/cut/sort/uniq/head/tail jobs without executing a programming language.",
+        input: {
+          type: "object",
+          properties: {
+            path: { type: "string", description: "Project-relative text file." },
+            delimiter: {
+              type: "string",
+              description: "whitespace (default), tab, comma, or a literal delimiter up to 8 characters.",
+            },
+            where: {
+              type: "object",
+              properties: {
+                field: { type: "number", description: "1-based field index." },
+                op: {
+                  type: "string",
+                  enum: ["eq", "neq", "contains", "startsWith", "endsWith", "gt", "gte", "lt", "lte"],
+                },
+                value: { type: "string" },
+              },
+              required: ["field", "op", "value"],
+              additionalProperties: false,
+            },
+            fields: {
+              type: "array",
+              items: { type: "number" },
+              description: "1-based fields to return. Omit to return all fields.",
+            },
+            sort: {
+              type: "object",
+              properties: {
+                field: { type: "number", description: "1-based field index." },
+                order: { type: "string", enum: ["asc", "desc"] },
+                numeric: { type: "boolean" },
+              },
+              required: ["field"],
+              additionalProperties: false,
+            },
+            unique: { type: "boolean" },
+            from: { type: "string", enum: ["start", "end"], description: "Use end for tail-style output." },
+            limit: { type: "number", description: "Maximum returned rows; hard-capped at 500." },
+            skipBlank: { type: "boolean" },
+          },
+          required: ["path"],
+          additionalProperties: false,
+        },
+        options: { namespace: "loom", codemode: false },
+        execute: async (input) => ({
+          content: renderToolOutput(await selectText(ctx.location.directory, input as SelectOptions)),
+        }),
+      })
+
+      editor.add({
+        name: "stats",
+        description:
+          "Read-only project file metadata and optional line counts. Structured replacement for common stat/wc inspection.",
+        input: {
+          type: "object",
+          properties: {
+            paths: {
+              type: "array",
+              items: { type: "string" },
+              description: "Project-relative paths; at most 100 per call.",
+            },
+            lineCount: { type: "boolean" },
+          },
+          required: ["paths"],
+          additionalProperties: false,
+        },
+        options: { namespace: "loom", codemode: false },
+        execute: async (input) => ({
+          content: renderToolOutput(await statPaths(ctx.location.directory, input as StatsOptions)),
+        }),
+      })
 
       editor.add({
         name: "intent_start",
@@ -3200,14 +3354,14 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
     await ctx.tool.hook("execute.before", (event) => {
       const raw = event as any
       const tool = String(raw.tool ?? "")
-      if (tool.startsWith("loom_") || tool.startsWith("loom.")) return
+      if (skipLoomEvidence(tool)) return
       pendingToolInputs.set(toolEventKey(raw), raw.input)
     })
 
     await ctx.tool.hook("execute.after", async (event) => {
       const raw = event as any
       const tool = String(raw.tool ?? "")
-      if (!tool || tool.startsWith("loom_") || tool.startsWith("loom.")) return
+      if (!tool || skipLoomEvidence(tool)) return
       if (!raw.sessionID) return
 
       const key = toolEventKey(raw)
