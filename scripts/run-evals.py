@@ -983,14 +983,50 @@ def target_prompt(case: dict[str, Any]) -> str:
     return case["prompt"] + "\n\nRespond with the production decision/action for this scenario. Do not claim to have executed unavailable tools."
 
 
+def transport_error_detail(result: dict[str, Any]) -> str:
+    stderr = str(result.get("stderr") or "").strip()
+    stdout = str(result.get("stdout") or "").strip()
+
+    if stdout:
+        error_events: list[str] = []
+        for raw in stdout.splitlines():
+            try:
+                event = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(event, dict) or event.get("type") != "error":
+                continue
+            error = event.get("error")
+            if isinstance(error, dict):
+                message = str(error.get("message") or "").strip()
+                error_type = str(error.get("type") or "").strip()
+                status = error.get("status")
+                parts = [part for part in (error_type, message) if part]
+                if status is not None:
+                    parts.append("status=" + str(status))
+                if parts:
+                    error_events.append(": ".join(parts[:2]) + ((" (" + parts[2] + ")") if len(parts) > 2 else ""))
+            elif error:
+                error_events.append(str(error).strip())
+
+        if error_events:
+            return error_events[-1][:2000]
+
+    if stderr:
+        return stderr[-2000:].replace("\n", " | ")
+    if stdout:
+        return stdout[-2000:].replace("\n", " | ")
+    return ""
+
+
 def transport_error(result: dict[str, Any]) -> str | None:
     if result.get("infrastructure_error") is True:
         return str(result.get("stderr") or "container infrastructure failure")
     if result.get("exit_code") != 0:
-        detail = str(result.get("stderr") or result.get("stdout") or "").strip()
+        detail = transport_error_detail(result)
         return "transport exited %s%s" % (
             result.get("exit_code"),
-            (": " + detail[:2000].replace("\n", " | ")) if detail else "",
+            (": " + detail) if detail else "",
         )
     if not str(result.get("text") or "").strip():
         return "transport produced no usable assistant text"
