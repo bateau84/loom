@@ -253,10 +253,12 @@ Each container emits one JSON result on stdout. The Loom host harness writes `.l
 
 ## Cost control
 
-`eval:live` refuses to run unless either:
+`eval:live` refuses to run unless selection is explicit through at least one of:
 
-- `--cases ID1,ID2` is supplied, or
-- `--all` is supplied explicitly.
+- `--cases ID1,ID2`;
+- `--target name1,name2`;
+- `--target-kind agent` or `--target-kind skill`;
+- `--all`.
 
 There is no inference-bearing eval in normal PR CI.
 
