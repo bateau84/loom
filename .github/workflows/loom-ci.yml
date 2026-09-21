@@ -10,12 +10,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Smoke test eval-runner action
+      - name: Smoke test pinned eval-runner action/runtime pair
         uses: bateau84/opencode-eval-runner@bd02908d134ccec81d4497604b7b115606cf9b45
         with:
-          prepare-opencode: false
-          prepare-copilot: false
-          command: opencode-eval-runner --help
+          opencode-image: ghcr.io/bateau84/opencode-eval-runner@sha256:279af644d0d05a17fecc0a277dc9648e0d03fb7d3c74a1f0fa05303c8c552f83
+          copilot-image: ghcr.io/bateau84/opencode-eval-runner@sha256:fbc8f007ff339c6a6d47d4b1113874084cbf0eb7e62c7bb69bf9ccd70cdae799
+          prepare-opencode: true
+          prepare-copilot: true
+          command: |
+            opencode-eval-runner --help
+            docker image inspect "$OPENCODE_EVAL_RUNNER_OPENCODE_IMAGE" >/dev/null
+            docker image inspect "$OPENCODE_EVAL_RUNNER_COPILOT_IMAGE" >/dev/null
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.2
