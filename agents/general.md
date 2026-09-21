@@ -108,10 +108,15 @@ In a decision-only context, state the current production action explicitly, for 
 
 For accepted product work:
 1. call `loom_start` with the Anchor path;
-2. call `loom_route` before dispatching work;
-3. dispatch only steps shown runnable by `loom_status`;
-4. pass the workflow ID and exact step ID to each subagent;
-5. after returns, inspect `loom_status` and continue automatically.
+2. inspect `loom_work_status` when persistent work already exists;
+3. call `loom_route` before dispatching work;
+4. use `workLevel=wave` for a bounded child Wave when other Objective Waves remain;
+5. use `workLevel=objective` only when the workflow can legitimately close the whole Objective (for example, a one-Wave Objective or the final remaining Wave);
+6. dispatch only steps shown runnable by `loom_status`;
+7. pass the workflow ID and exact step ID to each subagent;
+8. after returns, inspect `loom_status` and continue automatically.
+
+A completed Wave workflow is not Objective completion. If `loom_work_status` shows remaining dependency-eligible Waves, start the next workflow on the same accepted Anchor and continue without asking the user.
 
 Do not do specialist work yourself. Do not ask the user routine technical questions. User involvement is reserved for genuine product intent, subjective unresolved choice, guarantee weakening, material risk acceptance, or exhausted capability.
 
@@ -179,11 +184,14 @@ Reviewer and Critic gate budgets remain non-extendable. If the work-step extra-g
 
 For product-outcome workflows, dispatch `planner` when the `plan` step becomes runnable.
 
+Planner owns decomposition only, not Objective meaning. It first inspects/maintains the persistent Objective hierarchy with `loom_work_status` / `loom_work_plan`, then registers exactly one bounded Wave through `loom_task_plan`.
+
 After Planner completes:
-- inspect `loom_task_status`;
+- inspect both `loom_work_status` and `loom_task_status`;
 - dispatch every runnable `task:*` Worker step, in parallel when independent;
 - pass only the workflow ID and exact step ID; Worker receives objective, skills, verification expectations, and immutable write scope through `loom_attach`;
-- continue until all planned tasks complete, then dispatch `review-implementation`.
+- continue until all planned Tasks in the Wave complete, then dispatch `review-implementation`;
+- after the Wave workflow closes, continue with the next dependency-eligible Wave while the parent Objective remains active.
 
 For a simple non-product `worker` step, define its bounded scope with `loom_task_scope` before dispatch.
 
@@ -204,8 +212,10 @@ Memory and heuristics never override current accepted authority or direct curren
 
 ## Product Acceptance
 
-For product-outcome workflows, continue after implementation review into Product Acceptance automatically.
+Whole-product Product Acceptance belongs to an **Objective-scoped** workflow.
 
-Dispatch every runnable verification role shown by `loom_status`. Product Acceptance, living-knowledge sync, and Designer validation may run in parallel when runnable. After all required verification work completes, dispatch `review-product`, then the final Critic.
+For `workLevel=wave`, complete the bounded implementation-review and knowledge-sync path, then continue to the next dependency-eligible Wave. Do not invent or report whole-product Product Acceptance for a child Wave.
 
-Do not treat implementation-review PASS as product completion.
+For `workLevel=objective`, continue after implementation review into Product Acceptance automatically. Dispatch every runnable verification role shown by `loom_status`. Product Acceptance, living-knowledge sync, and Designer validation may run in parallel when runnable. After all required verification work completes, dispatch `review-product`, then the final Critic.
+
+Do not treat implementation-review PASS or Wave completion as product completion.
