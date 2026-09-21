@@ -66,7 +66,7 @@ jobs:
           command: |
             python3 scripts/run-evals.py \
               --cases SKILL-GO-CONC-01,SKILL-ARCH-DESIGN-01,SKILL-AUTHORING-01 \
-              --model openai/gpt-5.5 \
+              --model opencode/gpt-5.5 \
               --target-transport opencode \
               --judge-transport github-copilot-cli \
               --judge-model gpt-5.4 \
