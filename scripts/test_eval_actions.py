@@ -13,6 +13,23 @@ RUN_EVALS = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(RUN_EVALS)
 
 
+class MountPreparationTests(unittest.TestCase):
+    def test_runtime_mountpoint_exists_before_read_only_workspace_mount(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            project = root / "project"
+            source = root / "node_modules"
+            project.mkdir()
+            source.mkdir()
+
+            resolved = RUN_EVALS.prepare_node_modules_mount(project, source)
+
+            self.assertEqual(resolved, source)
+            self.assertTrue((project / "node_modules").is_dir())
+
+
 class ActionAssertionTests(unittest.TestCase):
     def test_prefers_normalized_transport_actions_over_raw_stdout(self):
         target = {
