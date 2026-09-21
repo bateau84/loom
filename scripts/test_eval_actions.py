@@ -339,6 +339,69 @@ class SkillOwnedEvalDiscoveryTests(unittest.TestCase):
 
 
 
+class EvidenceRedactionTests(unittest.TestCase):
+    def test_redacts_environment_auth_and_database_credentials(self):
+        env_secret = "sk-env-secret-123456"
+        auth_secret = "auth-access-secret-234567"
+        db_secret = "db-refresh-secret-345678"
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            auth = root / "auth.json"
+            auth.write_text(
+                json.dumps({"openai": {"type": "oauth", "access": auth_secret}}),
+                encoding="utf-8",
+            )
+            database = root / "opencode.db"
+            import sqlite3
+            with sqlite3.connect(database) as db:
+                db.execute("CREATE TABLE credential (provider TEXT, data TEXT)")
+                db.execute(
+                    "INSERT INTO credential(provider, data) VALUES (?, ?)",
+                    ("openai", json.dumps({"refresh": db_secret})),
+                )
+                db.commit()
+
+            secrets = RUN_EVALS.collect_sensitive_values(
+                {"OPENAI_API_KEY": env_secret},
+                [],
+                auth,
+                None,
+                None,
+                database,
+            )
+
+        self.assertIn(env_secret, secrets)
+        self.assertIn(auth_secret, secrets)
+        self.assertIn(db_secret, secrets)
+
+        result = {
+            "text": f"{env_secret} {auth_secret}",
+            "actions": [{"tool": "bash", "args": {"value": db_secret}}],
+            "stdout": f"raw {env_secret} {db_secret}",
+        }
+        redacted = RUN_EVALS.redact_sensitive_values(result, secrets)
+        encoded = json.dumps(redacted)
+        self.assertNotIn(env_secret, encoded)
+        self.assertNotIn(auth_secret, encoded)
+        self.assertNotIn(db_secret, encoded)
+        self.assertIn("***REDACTED***", encoded)
+
+    def test_does_not_treat_short_or_non_secret_metadata_as_credentials(self):
+        secrets = RUN_EVALS.collect_sensitive_values(
+            {
+                "OPENAI_API_KEY": "short",
+                "MODEL_NAME": "openai/gpt-5.5",
+            },
+            [],
+            None,
+            None,
+            None,
+            None,
+        )
+        self.assertEqual(secrets, [])
+
+
 class TransportDiagnosticTests(unittest.TestCase):
     def test_transport_error_prefers_terminal_json_error_event(self):
         stdout = "\n".join([
