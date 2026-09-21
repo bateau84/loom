@@ -32,6 +32,16 @@ describe("Loom external dashboard", () => {
     }
   })
 
+  test("generated browser script is syntactically valid JavaScript", () => {
+    const html = dashboardHtml()
+    const start = html.indexOf("<script>")
+    const end = html.lastIndexOf("</script>")
+    expect(start).toBeGreaterThanOrEqual(0)
+    expect(end).toBeGreaterThan(start)
+    const script = html.slice(start + "<script>".length, end)
+    expect(() => new Function(script)).not.toThrow()
+  })
+
   test("UI contains accessible Fleet to Project to Workflow to Session semantics and explicit provenance", () => {
     const html = dashboardHtml()
     expect(html).toContain("Loom Operations")
