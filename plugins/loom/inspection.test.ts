@@ -178,6 +178,44 @@ describe("Loom structured inspection", () => {
     expect(result.matches[49]?.line).toBe(1_151)
   })
 
+  test("grep fails closed on oversized files instead of returning incomplete absence", async () => {
+    const root = await fixture()
+    const path = join(root, "src", "oversized.txt")
+    await writeFile(path, Buffer.alloc(2 * 1024 * 1024 + 1, 120))
+
+    await expect(
+      grepText(root, {
+        path: "src/oversized.txt",
+        pattern: "needle",
+      }),
+    ).rejects.toThrow("too large")
+
+    await expect(
+      statPaths(root, {
+        paths: ["src/oversized.txt"],
+        lineCount: true,
+      }),
+    ).rejects.toThrow("too large")
+  })
+
+  test("grep fails closed when the total search byte budget would be exceeded", async () => {
+    const root = await fixture()
+    const budgetDir = join(root, "budget")
+    await mkdir(budgetDir)
+    const block = Buffer.alloc(2 * 1024 * 1024, 120)
+
+    for (let index = 0; index < 5; index += 1) {
+      await writeFile(join(budgetDir, "part-" + index + ".txt"), block)
+    }
+
+    await expect(
+      grepText(root, {
+        path: "budget",
+        pattern: "needle",
+      }),
+    ).rejects.toThrow("byte budget exceeded")
+  })
+
   test("select rejects an empty custom delimiter before field expansion", async () => {
     const root = await fixture()
 
