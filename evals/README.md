@@ -47,7 +47,9 @@ Each case includes:
 - optional deterministic tool assertions
 - optional runtime action assertions that match a tool plus one concrete argument with `equals` or `ends_with`
 
-Action assertions are runtime-only. They are evaluated against observed OpenCode `tool_use` events, including the tool input captured in `part.state.input`. Use them when tool identity alone is insufficient—for example, to prove that Reviewer read a specific `ASSESSMENT.md` or Critic read a specific `QA.md`.
+Action assertions are runtime-only. They are evaluated against observed OpenCode tool actions and their captured input arguments. Use them when tool identity alone is insufficient—for example, to prove that Reviewer read a specific `ASSESSMENT.md` or Critic read a specific `QA.md`.
+
+Assertions use stable semantic argument names. The harness currently normalizes OpenCode V2 aliases such as `skill.id` ↔ `skill.name` and `read.path` ↔ `read.filePath`, so behavioral cases do not become coupled to a transport-only parameter rename.
 
 Example:
 

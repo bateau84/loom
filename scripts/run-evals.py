@@ -480,19 +480,46 @@ def normalized_target_actions(target: dict[str, Any]) -> list[dict[str, Any]]:
     return extract_observed_actions(str(target.get("stdout") or ""))
 
 
-def resolve_action_arg(args: dict[str, Any], dotted: str) -> Any:
+ACTION_ARG_ALIASES: dict[str, dict[str, tuple[str, ...]]] = {
+    "skill": {
+        "name": ("name", "id"),
+        "id": ("id", "name"),
+    },
+    "read": {
+        "filePath": ("filePath", "path"),
+        "path": ("path", "filePath"),
+    },
+}
+
+
+def resolve_action_arg(tool: str, args: dict[str, Any], dotted: str) -> Any:
+    segments = dotted.split(".")
     value: Any = args
-    for segment in dotted.split("."):
-        if not isinstance(value, dict) or segment not in value:
+    for index, segment in enumerate(segments):
+        if not isinstance(value, dict):
             return None
-        value = value[segment]
+        candidates = (segment,)
+        if index == 0:
+            candidates = ACTION_ARG_ALIASES.get(normalize_tool(tool), {}).get(segment, candidates)
+        found = False
+        for candidate in candidates:
+            if candidate in value:
+                value = value[candidate]
+                found = True
+                break
+        if not found:
+            return None
     return value
 
 
 def action_matches(action: dict[str, Any], assertion: dict[str, Any]) -> bool:
     if normalize_tool(str(action.get("tool") or "")) != normalize_tool(str(assertion.get("tool") or "")):
         return False
-    value = resolve_action_arg(action.get("args") if isinstance(action.get("args"), dict) else {}, str(assertion.get("arg") or ""))
+    value = resolve_action_arg(
+        str(action.get("tool") or ""),
+        action.get("args") if isinstance(action.get("args"), dict) else {},
+        str(assertion.get("arg") or ""),
+    )
     if "equals" in assertion:
         return value == assertion["equals"]
     if "ends_with" in assertion:
