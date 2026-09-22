@@ -329,7 +329,10 @@ async function withRuntimeLockPaths<T>(
   runtime: LoomRuntimeIdentity,
   lockPaths: string[],
   fn: () => Promise<T>,
-  options: { enforceRuntimeVersion?: boolean } = {},
+  options: {
+    enforceRuntimeVersion?: boolean
+    expectedRuntimeVersion?: number
+  } = {},
 ): Promise<T> {
   const releases: Array<() => Promise<void>> = []
 
@@ -340,7 +343,10 @@ async function withRuntimeLockPaths<T>(
     const store = transactionalStores.get(runtime.stateRoot)
     const execute = async () => {
       if (options.enforceRuntimeVersion !== false && store) {
-        await assertRuntimeStateVersion(store, RUNTIME_STATE_VERSION)
+        await assertRuntimeStateVersion(
+          store,
+          options.expectedRuntimeVersion ?? RUNTIME_STATE_VERSION,
+        )
       }
       return fn()
     }
@@ -1486,6 +1492,7 @@ export async function migrateLegacySessionState(
     throw new Error(`Legacy Loom migration refused: ${reason}`)
   }
 
+  const targetVersion = options.targetVersion ?? RUNTIME_STATE_VERSION
   const migrationWorkflowRecord =
     canonicalWorkflowForProvenance && typeof canonicalWorkflowForProvenance === "object"
       ? canonicalWorkflowForProvenance
@@ -1508,7 +1515,10 @@ export async function migrateLegacySessionState(
     })
   }
 
-  return withRuntimeLocks(runtime, migrationResources, async () => {
+  return withRuntimeLockPaths(
+    runtime,
+    migrationResources.map((resource) => runtimeLockPath(runtime, resource)),
+    async () => {
     const currentCanonicalBinding = await scoped.get(sessionKey)
     if (
       typeof currentCanonicalBinding === "string" &&
@@ -1670,7 +1680,6 @@ export async function migrateLegacySessionState(
       if (work.copied) migratedKeys++
     }
     
-    const targetVersion = options.targetVersion ?? RUNTIME_STATE_VERSION
     let appliedUpgradeIds: string[] = []
     if (migratedKeys > 0 && targetVersion > RUNTIME_BASELINE_VERSION) {
       const schema = await assertRuntimeStateVersion(scoped, targetVersion)
@@ -1703,7 +1712,9 @@ export async function migrateLegacySessionState(
       provenance,
       ...(appliedUpgradeIds.length ? { appliedUpgradeIds } : {}),
     }
-  })
+    },
+    { expectedRuntimeVersion: targetVersion },
+  )
 }
 
 
