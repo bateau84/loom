@@ -9,7 +9,7 @@ permissions:
     resource: "docs/design/**"
     effect: allow
   - action: edit
-    resource: "ephemeral-reports/**"
+    resource: "ephemeral-reports/designer/**"
     effect: allow
   - action: subagent
     resource: "*"
