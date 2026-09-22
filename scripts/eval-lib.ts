@@ -6,7 +6,7 @@ export type EvalExecution = "runtime" | "role-decision"
 export type ActionAssertion = {
   tool: string
   arg: string
-  equals?: string
+  equals?: string | number | boolean | null
   ends_with?: string
 }
 
@@ -133,9 +133,18 @@ export function validateSuite(suite: EvalSuite, repoRoot: string) {
           if (typeof assertion.arg !== "string" || !assertion.arg.trim()) {
             errors.push(`${prefix}.arg is required`)
           }
-          const comparators = [assertion.equals, assertion.ends_with].filter((value) => value !== undefined)
-          if (comparators.length !== 1 || comparators.some((value) => typeof value !== "string")) {
-            errors.push(`${prefix} requires exactly one string comparator: equals or ends_with`)
+          const hasEquals = Object.prototype.hasOwnProperty.call(assertion, "equals")
+          const hasEndsWith = Object.prototype.hasOwnProperty.call(assertion, "ends_with")
+          if (Number(hasEquals) + Number(hasEndsWith) !== 1) {
+            errors.push(`${prefix} requires exactly one comparator: equals or ends_with`)
+          } else if (
+            hasEquals &&
+            assertion.equals !== null &&
+            !["string", "number", "boolean"].includes(typeof assertion.equals)
+          ) {
+            errors.push(`${prefix}.equals must be a JSON scalar`)
+          } else if (hasEndsWith && typeof assertion.ends_with !== "string") {
+            errors.push(`${prefix}.ends_with must be a string`)
           }
         }
       }
