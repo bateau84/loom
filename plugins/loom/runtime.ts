@@ -1486,7 +1486,45 @@ export async function migrateLegacySessionState(
     throw new Error(`Legacy Loom migration refused: ${reason}`)
   }
 
-  return storageTransaction(scoped, async () => {
+  const migrationWorkflowRecord =
+    canonicalWorkflowForProvenance && typeof canonicalWorkflowForProvenance === "object"
+      ? canonicalWorkflowForProvenance
+      : legacyWorkflowForProvenance
+  const migrationObjectiveId =
+    migrationWorkflowRecord && typeof migrationWorkflowRecord === "object"
+      ? (migrationWorkflowRecord as any).work?.objectiveId
+      : undefined
+  const migrationResources: RuntimeLockResource[] = []
+  if (hasLegacyWorkflow) {
+    migrationResources.push({
+      aggregate: "workflow",
+      resourceIdentity: String(legacyWorkflowId),
+    })
+  }
+  if (typeof migrationObjectiveId === "string") {
+    migrationResources.push({
+      aggregate: "work",
+      resourceIdentity: migrationObjectiveId,
+    })
+  }
+
+  return withRuntimeLocks(runtime, migrationResources, async () => {
+    const currentCanonicalBinding = await scoped.get(sessionKey)
+    if (
+      typeof currentCanonicalBinding === "string" &&
+      (!hasLegacyWorkflow || currentCanonicalBinding !== legacyWorkflowId)
+    ) {
+      const currentIntent = await scoped.get(sessionIntentKey)
+      return {
+        status: "already-scoped" as const,
+        workflowId: currentCanonicalBinding,
+        ...(typeof currentIntent === "string" && currentIntent.length > 0
+          ? { intentId: currentIntent }
+          : {}),
+        migratedKeys: 0,
+      }
+    }
+
     let migratedKeys = 0
     let migratedIntentId = typeof scopedIntentId === "string" ? scopedIntentId : undefined
     
@@ -1507,7 +1545,7 @@ export async function migrateLegacySessionState(
     let objectiveId: string | undefined
     
     if (scopedWorkflowId === undefined && hasLegacyWorkflow) {
-      const result = await withRuntimeLock(runtime, "workflow", legacyWorkflowId, async () => {
+      const result = await (async () => {
         const currentScopedSession = await scoped.get(sessionKey)
         if (typeof currentScopedSession === "string") {
           return { workflowId: currentScopedSession, copied: 0, objectiveId: undefined as string | undefined }
@@ -1611,7 +1649,7 @@ export async function migrateLegacySessionState(
           copied,
           objectiveId: typeof workId === "string" ? workId : undefined,
         }
-      })
+      })()
     
       migratedWorkflowId = result.workflowId
       migratedKeys += result.copied
@@ -1628,10 +1666,8 @@ export async function migrateLegacySessionState(
     }
     
     if (objectiveId) {
-      await withRuntimeLock(runtime, "work", objectiveId, async () => {
-        const work = await copyLegacyKey(raw, scoped, `work/${encodeURIComponent(objectiveId)}`)
-        if (work.copied) migratedKeys++
-      })
+      const work = await copyLegacyKey(raw, scoped, `work/${encodeURIComponent(objectiveId)}`)
+      if (work.copied) migratedKeys++
     }
     
     const targetVersion = options.targetVersion ?? RUNTIME_STATE_VERSION
@@ -1653,6 +1689,9 @@ export async function migrateLegacySessionState(
         provenance,
         ...(migratedWorkflowId ? { workflowId: migratedWorkflowId } : {}),
         ...(migratedIntentId ? { intentId: migratedIntentId } : {}),
+        sourceRuntimeVersion: RUNTIME_BASELINE_VERSION,
+        targetRuntimeVersion: targetVersion,
+        appliedUpgradeIds,
       })
     }
     
