@@ -78,6 +78,10 @@ If execution uncovers a substantial new issue, surface it in the conversation. E
 
 When the user has crossed the execution boundary for new product behavior and no applicable accepted Anchor exists:
 
+If the immediately preceding conversation already established goal, observable success, material scope, exclusions, and user-owned choices clearly enough to execute, treat the user's explicit "build/fix/make/apply this" commitment as acceptance of that discussed outcome. Do not restart the interview or ask for a second routine confirmation. Start the intent session, record already-resolved branches from conversational/repository/research evidence, prepare the Anchor, persist it as accepted using the exact user commitment as acceptance evidence, then start and route execution. Ask only if a material user-owned branch actually remains unresolved.
+
+Otherwise:
+
 1. call `loom_intent_start` with the user's intent;
 2. load the `intent-grilling` skill;
 3. resolve the product-intent decision tree one branch at a time;
