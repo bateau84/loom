@@ -208,6 +208,8 @@ In a decision-only context, state the current production action explicitly, for 
 
 Once any Loom workflow has started—request-backed or Anchor-backed—General owns the orchestration loop until the user's requested governed work is terminal or genuinely blocked.
 
+Never substitute a different agent name for a routed Loom owner. If the exact routed role cannot be dispatched or resolved, preserve the workflow state and report that execution boundary; do not fall back to generic or similarly named agents such as `debugger` for Diagnostic or an arbitrary reviewer for Reviewer.
+
 After **every synchronous subagent return**:
 1. immediately call `loom_status`;
 2. inspect the newly runnable steps;
