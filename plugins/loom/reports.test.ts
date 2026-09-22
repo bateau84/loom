@@ -159,6 +159,36 @@ describe("Loom report promotion", () => {
     ).rejects.toThrow("not a symlink")
   })
 
+  test("rejects a report type that impersonates another producer namespace", async () => {
+    const root = await fixture()
+    await mkdir(join(root, "ephemeral-reports", "reviewer"), { recursive: true })
+    await writeFile(
+      join(root, "ephemeral-reports", "reviewer", "impersonated.md"),
+      report,
+    )
+
+    await expect(
+      promoteReport(root, {
+        source: "ephemeral-reports/reviewer/impersonated.md",
+        destination: "docs/reports/reviewer/impersonated.md",
+        reason: "Keep it.",
+      }),
+    ).rejects.toThrow("does not match source namespace")
+  })
+
+  test("rejects promotion that relabels the producer namespace", async () => {
+    const root = await fixture()
+    await writeFile(join(root, "ephemeral-reports", "critic", "readiness.md"), report)
+
+    await expect(
+      promoteReport(root, {
+        source: "ephemeral-reports/critic/readiness.md",
+        destination: "docs/reports/reviewer/readiness.md",
+        reason: "Keep it.",
+      }),
+    ).rejects.toThrow("must preserve producer namespace")
+  })
+
   test("rejects durable destinations outside docs/reports", async () => {
     const root = await fixture()
     await writeFile(join(root, "ephemeral-reports", "critic", "readiness.md"), report)
