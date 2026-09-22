@@ -85,7 +85,7 @@ class EvalSuiteCostBoundaryTests(unittest.TestCase):
         routing = next(case for case in default_cases if case["id"] == "CONVERSATION-02")
         synthesis = next(case for case in default_cases if case["id"] == "CONVERSATION-02-SYNTH")
         self.assertEqual(routing["execution"], "role-decision")
-        self.assertEqual(synthesis["execution"], "role-decision")
+        self.assertEqual(synthesis["execution"], "conversation-response")
         self.assertIn("MOCK RESEARCH DECISION BRIEF", synthesis["prompt"])
 
     def test_live_integration_suite_keeps_real_nested_research_opt_in(self):
@@ -120,41 +120,57 @@ class RuntimeEvalProjectTests(unittest.TestCase):
         runtime_case = next(
             case
             for case in RUN_EVALS.load_cases()
-            if case["id"] == "CONVERSATION-02"
+            if case["id"] == "CONVERSATION-01"
         )
         decision_case = next(
             case
             for case in RUN_EVALS.load_cases()
             if case["id"] == "CONVERSATION-03"
         )
+        response_case = next(
+            case
+            for case in RUN_EVALS.load_cases()
+            if case["id"] == "CONVERSATION-02-SYNTH"
+        )
 
         runtime_temp, runtime_target, _ = RUN_EVALS.setup_projects(runtime_case)
         decision_temp, decision_target, _ = RUN_EVALS.setup_projects(decision_case)
+        response_temp, response_target, _ = RUN_EVALS.setup_projects(response_case)
         try:
             runtime_agents = runtime_target / ".opencode" / "agents"
             decision_agents = decision_target / ".opencode" / "agents"
+            response_agents = response_target / ".opencode" / "agents"
 
             self.assertTrue((runtime_agents / "research.md").is_file())
             self.assertTrue((runtime_agents / "diagnostic.md").is_file())
             self.assertTrue((runtime_agents / "brainstorm.md").is_file())
             self.assertTrue((runtime_agents / "general.md").is_file())
 
-            # Role-decision tests remain isolated from actual subagent execution.
+            # Decision and conversational-response tests remain isolated from
+            # actual subagent execution.
             self.assertEqual(
                 sorted(path.name for path in decision_agents.iterdir()),
                 ["general.md"],
             )
+            self.assertEqual(
+                sorted(path.name for path in response_agents.iterdir()),
+                ["general.md"],
+            )
+
+            response_agent = (response_agents / "general.md").read_text(encoding="utf-8")
+            self.assertIn("Isolated conversational-response evaluation boundary", response_agent)
+            self.assertIn('action: "*"', response_agent)
+            self.assertIn("effect: deny", response_agent)
         finally:
             import shutil
             shutil.rmtree(runtime_temp, ignore_errors=True)
             shutil.rmtree(decision_temp, ignore_errors=True)
+            shutil.rmtree(response_temp, ignore_errors=True)
 
     def test_case_specific_target_timeout_keeps_global_defaults_for_other_cases(self):
-        deep_research = next(
-            case
-            for case in RUN_EVALS.load_cases()
-            if case["id"] == "CONVERSATION-02"
-        )
+        deep_research = RUN_EVALS.load_cases(
+            [RUN_EVALS.ROOT / "evals" / "live-integration.json"]
+        )[0]
         ordinary = next(
             case
             for case in RUN_EVALS.load_cases()
