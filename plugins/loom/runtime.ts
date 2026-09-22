@@ -415,6 +415,22 @@ export async function withRuntimeLock<T>(
   return withRuntimeLocks(runtime, [{ aggregate, resourceIdentity }], fn)
 }
 
+export async function withRuntimeAdvisoryLock<T>(
+  runtime: LoomRuntimeIdentity,
+  aggregate: string,
+  resourceIdentity: string,
+  fn: () => Promise<T>,
+): Promise<T> {
+  const release = await acquireFlock(
+    runtimeLockPath(runtime, { aggregate, resourceIdentity }),
+  )
+  try {
+    return await fn()
+  } finally {
+    await release()
+  }
+}
+
 function validateRuntimeSchemaRecord(value: unknown): RuntimeSchemaRecordV1 {
   if (
     !value ||
