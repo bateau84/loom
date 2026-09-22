@@ -185,6 +185,58 @@ class MountPreparationTests(unittest.TestCase):
 
 
 
+class EvalConcurrencyTests(unittest.TestCase):
+    def test_parallel_does_not_parallelize_runtime_cases_by_default(self):
+        jobs = [
+            ({"id": "R1", "execution": "runtime"}, 1),
+            ({"id": "R1", "execution": "runtime"}, 2),
+            ({"id": "R1", "execution": "runtime"}, 3),
+        ]
+
+        non_runtime, non_runtime_limit, runtime, runtime_limit, mode = (
+            RUN_EVALS.eval_job_concurrency(jobs, parallel=3, runtime_parallel=1)
+        )
+
+        self.assertEqual(non_runtime, [])
+        self.assertEqual(non_runtime_limit, 0)
+        self.assertEqual(len(runtime), 3)
+        self.assertEqual(runtime_limit, 1)
+        self.assertEqual(mode, "runtime=sequential")
+
+    def test_runtime_parallel_explicitly_enables_stress_mode(self):
+        jobs = [
+            ({"id": "R1", "execution": "runtime"}, 1),
+            ({"id": "R1", "execution": "runtime"}, 2),
+            ({"id": "R1", "execution": "runtime"}, 3),
+        ]
+
+        _, _, _, runtime_limit, mode = RUN_EVALS.eval_job_concurrency(
+            jobs,
+            parallel=3,
+            runtime_parallel=3,
+        )
+
+        self.assertEqual(runtime_limit, 3)
+        self.assertEqual(mode, "runtime=parallel:3 (stress)")
+
+    def test_non_runtime_jobs_still_use_parallel_limit(self):
+        jobs = [
+            ({"id": "A", "execution": "role-decision"}, 1),
+            ({"id": "B", "execution": "role-decision"}, 1),
+            ({"id": "R", "execution": "runtime"}, 1),
+        ]
+
+        non_runtime, non_runtime_limit, runtime, runtime_limit, mode = (
+            RUN_EVALS.eval_job_concurrency(jobs, parallel=2, runtime_parallel=1)
+        )
+
+        self.assertEqual(len(non_runtime), 2)
+        self.assertEqual(non_runtime_limit, 2)
+        self.assertEqual(len(runtime), 1)
+        self.assertEqual(runtime_limit, 1)
+        self.assertEqual(mode, "non-runtime=parallel:2, runtime=sequential")
+
+
 class CentralEvalDiscoveryTests(unittest.TestCase):
     def test_discovers_every_json_suite_in_eval_directory(self):
         with tempfile.TemporaryDirectory() as tmp:
