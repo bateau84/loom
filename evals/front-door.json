@@ -226,6 +226,26 @@
       ]
     },
     {
+      "id": "EXECUTION-TRANSITION-02",
+      "agent": "general",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-005",
+        "BR-019"
+      ],
+      "prompt": "We discussed a retry feature and I said \"yes, let's build it\". During Anchor formalization, Loom notices we never decided whether retry-attempt exhaustion resets after an application restart, and that choice changes observable behavior. Decide the immediate action.",
+      "trap": "Treat the earlier build commitment as blanket authority to invent a newly discovered product semantic while synthesizing the Anchor.",
+      "expectations": [
+        "Treats the earlier commitment as acceptance only of the product meaning that was actually established in conversation.",
+        "Keeps the newly discovered restart/exhaustion behavior unresolved and routes or asks only for the authority needed to resolve that material user-owned behavior before accepting the affected Anchor meaning.",
+        "Preserves already-resolved conversational intent instead of restarting the whole interview."
+      ],
+      "must_not": [
+        "Must not silently choose reset or preserve semantics and label that choice user-accepted.",
+        "Must not use the earlier \"let's build it\" as blanket acceptance of newly invented product meaning."
+      ]
+    },
+    {
       "id": "AUTO-ORCHESTRATION-01",
       "agent": "general",
       "execution": "role-decision",
