@@ -8,6 +8,7 @@ import {
   addVerificationRequirement,
   applyTaskPlan,
   buildSteps,
+  resolveExecutionDepth,
   plannedTaskSteps,
   preserveSatisfied,
   finishStep,
@@ -1112,13 +1113,17 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
       editor.add({
         name: "start",
-        description: "Start a Loom workflow for an accepted Anchor. General only.",
+        description: "Start a Loom workflow for an accepted Anchor or a bounded clear task. General only.",
         input: {
           type: "object",
           properties: {
             anchor: { type: "string", description: "Repository path to the accepted Anchor." },
+            request: {
+              type: "string",
+              description:
+                "Bounded task request when no new product intent or Anchor is needed. Provide exactly one of anchor or request.",
+            },
           },
-          required: ["anchor"],
           additionalProperties: false,
         },
         options: { namespace: "loom", codemode: false },
@@ -1127,7 +1132,15 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             return { content: renderToolOutput({ error: "Only general may start a Loom workflow." }) }
           }
 
-          const { anchor } = input as { anchor: string }
+          const { anchor, request } = input as { anchor?: string; request?: string }
+          if (Boolean(anchor) === Boolean(request)) {
+            return {
+              content: renderToolOutput({
+                error: "Provide exactly one of anchor or request.",
+              }),
+            }
+          }
+
           const intent = await activeIntent(ctx, tool.sessionID, ensureLegacySession)
           if (intent && intent.state !== "accepted") {
             return {
@@ -1137,7 +1150,10 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               }),
             }
           }
-          if (intent?.acceptedAnchor && intent.acceptedAnchor.path !== anchor) {
+          if (
+            intent?.acceptedAnchor &&
+            (!anchor || intent.acceptedAnchor.path !== anchor)
+          ) {
             return {
               content: renderToolOutput({
                 error: "Workflow Anchor does not match the accepted intent Anchor.",
@@ -1147,17 +1163,19 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           }
 
           const id = crypto.randomUUID()
+          const workflowAnchor = anchor ?? `task:${id}`
           const workflow: Workflow = {
             id,
             projectId: runtime.projectId,
             revision: 0,
-            anchor,
+            anchor: workflowAnchor,
+            ...(request ? { request } : {}),
             createdBySession: tool.sessionID,
             createdAt: new Date().toISOString(),
             steps: [],
           }
 
-          const existingObjectiveId = objectiveIdForAnchor(anchor)
+          const existingObjectiveId = objectiveIdForAnchor(workflowAnchor)
           const observedBinding = (await ctx.storage.get(sessionKey(tool.sessionID))) as string | undefined
           const resources = [
             { aggregate: "workflow", resourceIdentity: id },
@@ -1176,7 +1194,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 id,
               )
 
-              const current = await readWork(ctx, existingObjectiveId)
+              const current = request ? undefined : await readWork(ctx, existingObjectiveId)
               if (current) {
                 attachWorkflowToWork(current, workflow.id, new Date().toISOString())
                 await ctx.storage.set(workKey(current.objectiveId), current)
@@ -1204,7 +1222,14 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             return { content: renderToolOutput({ error: error instanceof Error ? error.message : String(error) }) }
           }
 
-          return { content: renderToolOutput({ workflowId: id, anchor, status: "started" }) }
+          return {
+            content: renderToolOutput({
+              workflowId: id,
+              anchor: workflowAnchor,
+              ...(request ? { request } : {}),
+              status: "started",
+            }),
+          }
         },
       })
 
@@ -1238,13 +1263,20 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             },
             productOutcome: {
               type: "boolean",
-              description: "True for product work that requires Planner decomposition.",
+              description:
+                "True when the request delivers a product outcome. Planner/Product Acceptance are selected by executionDepth, not by this flag alone.",
+            },
+            executionDepth: {
+              type: "string",
+              enum: ["task", "change", "objective"],
+              description:
+                "Proportional workflow depth. task = smallest bounded path; change = earned specialist/architecture authority plus direct implementation/review; objective = full product lifecycle. Start shallow and escalate only on material evidence.",
             },
             workLevel: {
               type: "string",
               enum: ["objective", "wave"],
               description:
-                "Objective runs may close whole-product Product Acceptance. Wave runs execute one bounded Wave and leave the parent Objective active. Defaults to objective.",
+                "Only meaningful for executionDepth=objective. Objective runs may close whole-product Product Acceptance; wave runs execute one bounded Wave.",
             },
           },
           required: [
@@ -1254,6 +1286,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             "externalUnknown",
             "diagnostic",
             "productOutcome",
+            "executionDepth",
           ],
           additionalProperties: false,
         },
@@ -1266,6 +1299,18 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           const workflow = await activeWorkflow(ctx, tool.sessionID, ensureLegacySession)
           if (!workflow) {
             return { content: renderToolOutput({ error: "No active Loom workflow. Call loom_start first." }) }
+          }
+
+          const rawEffects = input as Effects
+          const resolvedDepth = resolveExecutionDepth(rawEffects)
+
+          if (workflow.request && resolvedDepth === "objective") {
+            return {
+              content: renderToolOutput({
+                error:
+                  "Objective-depth execution requires an accepted Anchor. Complete the bounded task or shape/accept product intent, then start an Anchor-backed objective workflow.",
+              }),
+            }
           }
 
           const implementationStarted = workflow.steps.some(
@@ -1285,12 +1330,12 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             }
           }
 
-          const rawEffects = input as Effects
           const effects: Effects = {
             ...rawEffects,
-            ...(rawEffects.productOutcome
+            executionDepth: resolvedDepth,
+            ...(resolvedDepth === "objective" && rawEffects.productOutcome
               ? { workLevel: rawEffects.workLevel ?? "objective" }
-              : {}),
+              : { workLevel: undefined }),
           }
 
           const applyRouteMutation = () => {
@@ -1301,7 +1346,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             reconcileVerificationAfterRoute(workflow)
           }
 
-          if (effects.productOutcome) {
+          if (effects.productOutcome && effects.executionDepth === "objective") {
             const objectiveId = objectiveIdForAnchor(workflow.anchor)
             await withWorkflowWorkLocks(runtime, workflow.id, objectiveId, async () => {
               await validateWorkflowMutationLocked(ctx, runtime, workflow)
