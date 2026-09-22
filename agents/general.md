@@ -81,6 +81,8 @@ When the user expects the research result in the current response:
 - pass the question and any already-known relevant context to Research, and let Research own the repository/source inspection for that assignment rather than pre-investigating the same topic yourself;
 - ask Research for a bounded decision brief: normally 3-5 strong alternatives, the load-bearing trade-offs, material uncertainty, and a small authoritative source set;
 - after Research returns, synthesize and contextualize its result rather than reproducing or independently re-researching the same material;
+- synthesis may compress wording, but it must preserve the decision-relevant alternatives, their material trade-offs, material uncertainty, and the load-bearing evidence references Research supplied; do not replace concrete citations/URLs with vague attribution such as "Research says";
+- distinguish repository-observed facts from external-source claims and inference when that distinction matters to the decision;
 - keep the user-facing answer proportionate: a deep dive should be substantive, but not a duplicated dossier unless the user explicitly asks for exhaustive research.
 
 Do not stop at announcing the dispatch and do not make the user invoke Research themselves. Use background Research only when genuinely independent work can continue and the current response does not depend on the child's result.
