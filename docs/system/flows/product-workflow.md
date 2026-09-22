@@ -7,12 +7,48 @@ tags: [flow, loom, product, autonomy]
 
 # Autonomous Product Workflow
 
-## Path
+## Proportional paths
+
+Loom starts with the smallest workflow that can safely finish the current request. Complexity discovered later may deepen the path; possible future complexity does not.
+
+### Task
+
+For bounded testing, debugging, inspection, focused review, mechanical edits, and small fixes:
 
 ```text
-fuzzy product intent
-  -> focused grilling (one question at a time)
-     + repository/research resolution where possible
+clear bounded request
+  -> Diagnostic and/or Research only when actually needed
+  -> Worker
+  -> Reviewer implementation/verification
+  -> done
+```
+
+A Task does not require a new Anchor. It may use an existing accepted Anchor when relevant, otherwise it starts as a bounded request workflow.
+
+### Change
+
+When Task evidence shows new UX semantics, behavioral guarantees, or structural authority is actually needed:
+
+```text
+material bounded change
+  -> required Research / Designer / Specifier only as earned
+  -> Reviewer over changed meaning
+  -> Architect + Reviewer only when structural authority is required
+  -> Worker
+  -> Reviewer implementation review
+  -> knowledge-sync only for structural changes
+  -> done
+```
+
+Change depth deliberately skips Planner, Critic, whole-product Product Acceptance, and final product gates.
+
+### Objective
+
+For broad product work, multi-part feature delivery, or work that benefits from decomposition and whole-product acceptance:
+
+```text
+fuzzy/new product intent when needed
+  -> focused grilling
   -> proposed Anchor
   -> explicit user acceptance
   -> accepted Anchor
@@ -22,7 +58,7 @@ fuzzy product intent
   -> Reviewer
   -> Critic solution attack
   -> Planner
-  -> bounded task:* Workers (parallel/sequential by DAG)
+  -> bounded task:* Workers
   -> Reviewer implementation review
   -> Product Acceptance
      + Designer validation when human-facing
@@ -31,6 +67,12 @@ fuzzy product intent
   -> Critic final attack
   -> done
 ```
+
+### Escalation rule
+
+> The workflow must be cheaper and simpler than the work it coordinates.
+
+Start shallow. Stay shallow for obvious bounded findings. Escalate Task -> Change or Change -> Objective only when current evidence demonstrates the need. A request is never promoted merely because it *might* uncover something substantial.
 
 ## Recovery
 
