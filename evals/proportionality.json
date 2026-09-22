@@ -113,7 +113,8 @@
         "Still avoids full Objective ceremony unless later evidence shows the work is broad enough to need decomposition and whole-product acceptance."
       ],
       "must_not": [
-        "Must not send the request directly to Worker to choose confirmation versus undo versus trash."
+        "Must not send the request directly to Worker to choose confirmation versus undo versus trash.",
+        "Must not start intent-grilling merely because the bounded change needs Designer/Specifier authority; specialist-owned realization is resolved inside Change depth."
       ]
     },
     {
@@ -281,6 +282,7 @@
       "expectations": [
         "Starts a bounded request workflow without creating a new Anchor.",
         "Routes it at Task depth with diagnosis enabled and implementation disabled.",
+        "After Diagnostic returns, continues the governed workflow through the read-only Reviewer verification gate rather than stopping at findings.",
         "Preserves the findings through the read-only Reviewer verification path."
       ],
       "must_not": [
@@ -303,6 +305,11 @@
             "tool": "loom_route",
             "arg": "executionDepth",
             "equals": "task"
+          },
+          {
+            "tool": "subagent",
+            "arg": "agent",
+            "equals": "reviewer"
           }
         ]
       }
@@ -319,12 +326,14 @@
       "prompt": "We need to change accidental-delete recovery in one screen. The current docs do not define undo versus confirmation versus trash, so the missing UX/behavior meaning must be resolved before code. Set up this bounded change but do not implement it yet.",
       "trap": "Either send unresolved semantics directly to Worker or inflate one bounded behavior change into a full Objective.",
       "expectations": [
-        "Starts a bounded request workflow and routes it at Change depth.",
+        "Starts a bounded request workflow directly and routes it at Change depth.",
+        "Treats the unresolved recovery UX/behavior as specialist-owned Designer/Specifier authority rather than user-owned intent ambiguity.",
         "Routes new user-facing/behavioral authority while keeping implementation disabled for this setup-only request.",
         "Keeps Objective ceremony out."
       ],
       "must_not": [
-        "Must not use Objective depth or let Worker invent the recovery semantics."
+        "Must not use Objective depth or let Worker invent the recovery semantics.",
+        "Must not call loom_intent_start merely because Designer/Specifier must resolve the bounded recovery semantics."
       ],
       "tools": {
         "requires": [
