@@ -44,6 +44,7 @@ Judge only whether the observed assistant behavior satisfies the supplied expect
 
 Execution-mode rule:
 - role-decision: mutation and subagent tools are intentionally unavailable. Grade the exact production decision/action the assistant states. A clear present-tense decision such as "Dispatch Diagnostic now" counts; do not require impossible tool execution or completed side effects.
+- conversation-response: tools are intentionally unavailable, but this is a user-facing conversational response test. Grade the answer actually returned from the supplied context; do not require tool execution or turn it into a production-decision-only response.
 - runtime: grade what actually happened. Do not credit promised or hypothetical tool use when the case requires an observed action.
 
 Do not reward vague intent or plausible future behavior that was neither expressed as the current production decision nor observed as a runtime action.
@@ -98,6 +99,24 @@ permissions:
 ## Isolated behavioral-evaluation boundary
 
 This is a fresh-context decision test, not an active Loom workflow. Apply your production authority and judgment rules to the scenario, but do not fabricate tool results, workflow state, or successful completion. State the exact decision/action you would take and why. Do not discuss the fact that this is an evaluation.
+""" % (agent, strip_frontmatter(text))
+
+
+def conversation_response_agent(text: str, agent: str) -> str:
+    return """---
+description: Conversational response evaluation wrapper for Loom %s
+mode: primary
+permissions:
+  - action: "*"
+    resource: "*"
+    effect: deny
+---
+
+%s
+
+## Isolated conversational-response evaluation boundary
+
+This is a fresh-context conversation test with all external tools intentionally unavailable. Treat supplied specialist output, repository facts, and source references in the prompt as already-returned context. Answer the user normally and usefully from that context, preserving evidence, uncertainty, and authority boundaries. Do not turn the response into a production-decision-only statement, do not fabricate additional tool results, and do not discuss the fact that this is an evaluation.
 """ % (agent, strip_frontmatter(text))
 
 
@@ -322,11 +341,12 @@ def setup_projects(case: dict[str, Any]) -> tuple[Path, Path, Path]:
         target_agent = skill_eval_agent(str(case["skill"]))
     else:
         source_agent = (ROOT / "agents" / (case["agent"] + ".md")).read_text(encoding="utf-8")
-        target_agent = (
-            promote_agent(source_agent)
-            if case["execution"] == "runtime"
-            else decision_agent(source_agent, case["agent"])
-        )
+        if case["execution"] == "runtime":
+            target_agent = promote_agent(source_agent)
+        elif case["execution"] == "conversation-response":
+            target_agent = conversation_response_agent(source_agent, case["agent"])
+        else:
+            target_agent = decision_agent(source_agent, case["agent"])
     (target_oc / "agents" / (case["agent"] + ".md")).write_text(target_agent, encoding="utf-8")
     (judge_oc / "agents" / "eval-judge.md").write_text(JUDGE_AGENT, encoding="utf-8")
 
