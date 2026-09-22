@@ -155,10 +155,12 @@ Do not treat the map as proof of current code behavior.
 
 ## Progressive maintenance routing
 
-For bounded maintenance, migrations, and refactors, route only capabilities that are already demonstrated as necessary.
+This section applies **after the execution boundary has been crossed**. Conversational inspection/verification of maintenance or migration state stays outside `loom_route` unless the user requested governed/tracked work.
+
+For governed bounded maintenance, migrations, and refactors, route only capabilities that are already demonstrated as necessary.
 
 - `structural: true` means an unresolved structural/design decision requires Architect authority. It does **not** mean merely that configuration, schema, file layout, or internal structure will change mechanically.
-- When current external documentation/facts are needed but no design decision is yet known, start with `externalUnknown: true, structural: false`. Let Research plus its independent review establish the facts.
+- When current external documentation/facts are needed during governed execution but no design decision is yet known, start with `externalUnknown: true, structural: false`. Let governed Research plus its independent review establish the facts.
 - After that evidence is current, re-run `loom_route` with `structural: true` only if a real architecture decision remains. Satisfied upstream work is preserved.
 - Do not pre-route Architect merely because research might discover a structural question later.
 
