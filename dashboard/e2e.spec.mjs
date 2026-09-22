@@ -275,6 +275,12 @@ test("workflow deep link survives projection lag and opens when the project/work
   await expect(page.getByText("Waiting for Loom projection…", { exact: true })).toBeVisible()
   await expect(page).toHaveURL(/#\/project\/project-a\/workflow\/workflow-a$/)
 
+  // Multiple successful reads of the same lagging projection must not be
+  // interpreted as proof that the requested authoritative workflow vanished.
+  await page.waitForTimeout(6_400)
+  await expect(page.getByText("Waiting for Loom projection…", { exact: true })).toBeVisible()
+  await expect(page).toHaveURL(/#\/project\/project-a\/workflow\/workflow-a$/)
+
   await writePublisher({
     instanceId: "instance-a",
     projectId: "project-a",
