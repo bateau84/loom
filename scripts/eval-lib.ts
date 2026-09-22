@@ -5,9 +5,10 @@ export type EvalExecution = "runtime" | "role-decision"
 
 export type ActionAssertion = {
   tool: string
-  arg: string
+  arg?: string
   equals?: string
   ends_with?: string
+  contains?: string
 }
 
 export type EvalCase = {
@@ -27,6 +28,11 @@ export type EvalCase = {
   actions?: {
     requires?: ActionAssertion[]
     forbids?: ActionAssertion[]
+    any_of?: ActionAssertion[][]
+  }
+  output?: {
+    contains?: string[]
+    forbids?: string[]
   }
   fixture_files?: Array<{ path: string; content: string }>
 }
@@ -110,10 +116,40 @@ export function validateSuite(suite: EvalSuite, repoRoot: string) {
         }
       }
     }
+    if (item.output) {
+      for (const key of ["contains", "forbids"] as const) {
+        const values = item.output[key]
+        if (values !== undefined && (!Array.isArray(values) || values.some((value) => typeof value !== "string" || !value))) {
+          errors.push(`${label}: output.${key} must be a non-empty string array when present`)
+        }
+      }
+    }
     if (item.actions) {
       if (item.execution !== "runtime") {
         errors.push(`${label}: action assertions require runtime execution`)
       }
+      const validateActionAssertion = (assertion: ActionAssertion, prefix: string) => {
+        if (!assertion || typeof assertion !== "object") {
+          errors.push(`${prefix} must be an object`)
+          return
+        }
+        if (typeof assertion.tool !== "string" || !assertion.tool.trim()) {
+          errors.push(`${prefix}.tool is required`)
+        }
+        const hasArg = assertion.arg !== undefined
+        if (hasArg && (typeof assertion.arg !== "string" || !assertion.arg.trim())) {
+          errors.push(`${prefix}.arg must be a non-empty string when present`)
+        }
+        const comparators = [assertion.equals, assertion.ends_with, assertion.contains].filter((value) => value !== undefined)
+        if (hasArg) {
+          if (comparators.length !== 1 || comparators.some((value) => typeof value !== "string")) {
+            errors.push(`${prefix} with arg requires exactly one string comparator: equals, ends_with, or contains`)
+          }
+        } else if (comparators.length !== 0) {
+          errors.push(`${prefix} comparators require arg`)
+        }
+      }
+
       for (const key of ["requires", "forbids"] as const) {
         const values = item.actions[key]
         if (values === undefined) continue
@@ -122,20 +158,24 @@ export function validateSuite(suite: EvalSuite, repoRoot: string) {
           continue
         }
         for (const [actionIndex, assertion] of values.entries()) {
-          const prefix = `${label}: actions.${key}[${actionIndex}]`
-          if (!assertion || typeof assertion !== "object") {
-            errors.push(`${prefix} must be an object`)
-            continue
-          }
-          if (typeof assertion.tool !== "string" || !assertion.tool.trim()) {
-            errors.push(`${prefix}.tool is required`)
-          }
-          if (typeof assertion.arg !== "string" || !assertion.arg.trim()) {
-            errors.push(`${prefix}.arg is required`)
-          }
-          const comparators = [assertion.equals, assertion.ends_with].filter((value) => value !== undefined)
-          if (comparators.length !== 1 || comparators.some((value) => typeof value !== "string")) {
-            errors.push(`${prefix} requires exactly one string comparator: equals or ends_with`)
+          validateActionAssertion(assertion, `${label}: actions.${key}[${actionIndex}]`)
+        }
+      }
+
+      const anyOf = item.actions.any_of
+      if (anyOf !== undefined) {
+        if (!Array.isArray(anyOf)) {
+          errors.push(`${label}: actions.any_of must be an array of non-empty assertion groups when present`)
+        } else {
+          for (const [groupIndex, group] of anyOf.entries()) {
+            const prefix = `${label}: actions.any_of[${groupIndex}]`
+            if (!Array.isArray(group) || group.length === 0) {
+              errors.push(`${prefix} must be a non-empty array`)
+              continue
+            }
+            for (const [actionIndex, assertion] of group.entries()) {
+              validateActionAssertion(assertion, `${prefix}[${actionIndex}]`)
+            }
           }
         }
       }

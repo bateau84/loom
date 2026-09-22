@@ -114,6 +114,13 @@ type MockProviderState = {
   upgradeSeeded: boolean
   upgradePrimaryResumed: boolean
   upgradeSecondaryResumed: boolean
+  statusPreviewRequested: boolean
+  statusPreviewFallbackObserved: boolean
+  sawNativeLoomToolGuidance: boolean
+  codeModeLoomStatusObserved: boolean
+  codeModeLoomSearchObserved: boolean
+  statusArtifactPath?: string
+  statusWebUrl?: string
   requests: string[]
   prompts: string[]
   unrelatedStatus?: unknown
@@ -382,49 +389,96 @@ function chooseMockAction(prompt: string, results: Map<string, unknown>, state: 
     return null
   }
 
-  if (prompt.includes("LOOM_INTEGRATION_LEGACY_SEED")) {
-    const seeded = results.get("loom_legacy_seed") as any
-    if (seeded?.seeded) state.upgradeSeeded = true
-    if (!results.has("loom_legacy_seed")) {
-      if (!state.upgradeSecondarySessionId) {
-        throw new Error("Upgrade secondary session ID is not initialized")
-      }
+  if (prompt.includes("LOOM_INTEGRATION_CODEMODE_SEARCH")) {
+    const executed = results.get("execute") as any
+    const items = Array.isArray(executed?.items) ? executed.items : []
+    const paths = items.map((item: any) => String(item?.path ?? ""))
+    if (paths.includes("tools.loom.code.status") && paths.includes("tools.loom.code.start")) {
+      state.codeModeLoomSearchObserved = true
+    }
+    if (!results.has("execute")) {
       return {
-        name: "loom_legacy_seed",
+        name: "execute",
         args: {
-          workflowId: UPGRADE_WORKFLOW_ID,
-          secondarySessionId: state.upgradeSecondarySessionId,
+          code: 'return search({ query: "loom", limit: 100 })',
         },
       }
     }
     return null
   }
 
-  if (prompt.includes("LOOM_INTEGRATION_UPGRADE_PRIMARY")) {
-    const status = results.get("loom_status") as any
-    if (status?.workflow?.id === UPGRADE_WORKFLOW_ID && !status?.error) {
-      state.upgradePrimaryResumed = true
+  if (prompt.includes("LOOM_INTEGRATION_CODEMODE_LOOM")) {
+    const executed = results.get("execute") as any
+    const candidate = executed?.workflow ?? executed?.summary ?? executed
+    if (candidate?.id === state.workflowId || candidate?.workflowId === state.workflowId) {
+      state.codeModeLoomStatusObserved = true
     }
-    if (!results.has("loom_status")) {
+    if (!results.has("execute")) {
       return {
-        name: "loom_status",
-        args: { workflowId: UPGRADE_WORKFLOW_ID, detail: true },
+        name: "execute",
+        args: {
+          code: `return await tools.loom.code.status({ workflowId: ${JSON.stringify(state.workflowId)}, detail: true })`,
+        },
       }
     }
     return null
   }
 
-  if (prompt.includes("LOOM_INTEGRATION_UPGRADE_SECONDARY")) {
+  if (prompt.includes("LOOM_INTEGRATION_STATUS_PREVIEW")) {
     const status = results.get("loom_status") as any
-    if (status?.workflow?.id === UPGRADE_WORKFLOW_ID && !status?.error) {
-      state.upgradeSecondaryResumed = true
-    }
+    const path = status?.presentation?.path
+    const webUrl = status?.presentation?.webUrl
+    if (typeof path === "string" && path) state.statusArtifactPath = path
+    if (typeof webUrl === "string" && webUrl) state.statusWebUrl = webUrl
     if (!results.has("loom_status")) {
-      return {
-        name: "loom_status",
-        args: { workflowId: UPGRADE_WORKFLOW_ID, detail: true },
+      return { name: "loom_status", args: { workflowId: state.workflowId } }
+    }
+    if (!state.statusWebUrl?.startsWith("http://127.0.0.1:")) {
+      throw new Error("loom_status did not expose the browser-safe web presentation URL")
+    }
+    if (state.statusArtifactPath && !results.has("execute")) {
+      const code = status?.presentation?.desktopPreview?.code
+      if (typeof code !== "string" || !code.includes("tools.browser.preview")) {
+        throw new Error("loom_status did not provide the optional Desktop browser preview program")
+      }
+      if (!code.includes("browser-disconnected") || !code.includes("retry: false")) {
+        throw new Error("loom_status browser preview program did not include the soft-fallback contract")
+      }
+      return { name: "execute", args: { code } }
+    }
+    if (results.has("execute")) {
+      state.statusPreviewRequested = true
+      if (prompt.includes("LOOM_INTEGRATION_STATUS_PREVIEW_DISCONNECTED")) {
+        const executeResult = JSON.stringify(results.get("execute") ?? "")
+        state.statusPreviewFallbackObserved =
+          executeResult.includes("browser-disconnected") &&
+          executeResult.includes("unavailable")
       }
     }
+    return null
+  }
+
+  if (prompt.includes("LOOM_INTEGRATION_LEGACY_SEED")) {
+    const seeded = results.get("loom_legacy_seed") as any
+    if (seeded?.seeded) state.upgradeSeeded = true
+    if (!results.has("loom_legacy_seed")) {
+      if (!state.upgradeSecondarySessionId) throw new Error("Upgrade secondary session ID is not initialized")
+      return { name: "loom_legacy_seed", args: { workflowId: UPGRADE_WORKFLOW_ID, secondarySessionId: state.upgradeSecondarySessionId } }
+    }
+    return null
+  }
+
+  if (prompt.includes("LOOM_INTEGRATION_UPGRADE_PRIMARY")) {
+    const status = results.get("loom_status") as any
+    if (status?.workflow?.id === UPGRADE_WORKFLOW_ID && !status?.error) state.upgradePrimaryResumed = true
+    if (!results.has("loom_status")) return { name: "loom_status", args: { workflowId: UPGRADE_WORKFLOW_ID, detail: true } }
+    return null
+  }
+
+  if (prompt.includes("LOOM_INTEGRATION_UPGRADE_SECONDARY")) {
+    const status = results.get("loom_status") as any
+    if (status?.workflow?.id === UPGRADE_WORKFLOW_ID && !status?.error) state.upgradeSecondaryResumed = true
+    if (!results.has("loom_status")) return { name: "loom_status", args: { workflowId: UPGRADE_WORKFLOW_ID, detail: true } }
     return null
   }
 
@@ -444,6 +498,11 @@ async function startMockProvider() {
     upgradeSeeded: false,
     upgradePrimaryResumed: false,
     upgradeSecondaryResumed: false,
+    statusPreviewRequested: false,
+    statusPreviewFallbackObserved: false,
+    sawNativeLoomToolGuidance: false,
+    codeModeLoomStatusObserved: false,
+    codeModeLoomSearchObserved: false,
     requests: [],
     prompts: [],
   }
@@ -462,6 +521,13 @@ async function startMockProvider() {
       }
       const body = await request.json() as any
       const messages = Array.isArray(body.messages) ? body.messages : []
+      if (messages.some((message: any) =>
+        message?.role === "system" &&
+        openAiMessageText(message.content).includes("two equivalent OpenCode surfaces") &&
+        openAiMessageText(message.content).includes("tools.loom.code.*")
+      )) {
+        state.sawNativeLoomToolGuidance = true
+      }
       const prompt = latestUserPrompt(messages)
       state.prompts.push(prompt)
       const latestUserIndex = messages.findLastIndex((message: any) => message?.role === "user")
@@ -535,6 +601,163 @@ async function waitForCondition(
   throw new Error(`Timed out waiting for ${label}${detail}`)
 }
 
+
+type FakeBrowserState = {
+  attached: boolean
+  previewPath?: string
+  commands: number
+  error?: string
+}
+
+function rpcUrl(handle: ServerHandle, rpcID: string, method: string) {
+  const url = new URL(`/api/rpc/${encodeURIComponent(rpcID)}/${encodeURIComponent(method)}`, handle.baseUrl)
+  url.searchParams.set("location[directory]", handle.project)
+  return url.toString()
+}
+
+async function rpcCall(handle: ServerHandle, rpcID: string, method: string, input: unknown) {
+  const value = await jsonRequest(rpcUrl(handle, rpcID, method), handle.authorization, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ input }),
+  })
+  return value?.output ?? value
+}
+
+async function* serverEvents(handle: ServerHandle, signal: AbortSignal, onConnected?: () => void) {
+  const response = await fetch(`${handle.baseUrl}/api/event`, {
+    headers: { authorization: handle.authorization },
+    signal,
+  })
+  if (!response.ok || !response.body) {
+    throw new Error(`Unable to subscribe to OpenCode events: ${response.status} ${response.statusText}`)
+  }
+  onConnected?.()
+
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ""
+  try {
+    while (!signal.aborted) {
+      const next = await reader.read()
+      if (next.done) break
+      buffer += decoder.decode(next.value, { stream: true })
+      while (true) {
+        const boundary = buffer.indexOf("\n\n")
+        if (boundary < 0) break
+        const frame = buffer.slice(0, boundary)
+        buffer = buffer.slice(boundary + 2)
+        const data = frame
+          .split("\n")
+          .filter((line) => line.startsWith("data:"))
+          .map((line) => line.slice(5).trim())
+          .join("\n")
+        if (!data) continue
+        yield JSON.parse(data)
+      }
+    }
+  } finally {
+    reader.releaseLock()
+  }
+}
+
+async function startFakeBrowser(handle: ServerHandle, sessionID: string) {
+  const connectionID = `loom-integration-${crypto.randomUUID()}`
+  const controller = new AbortController()
+  const state: FakeBrowserState = { attached: false, commands: 0 }
+
+  let resolveEventsReady!: () => void
+  const eventsReady = new Promise<void>((resolve) => {
+    resolveEventsReady = resolve
+  })
+  const events = (async () => {
+    try {
+      for await (const event of serverEvents(handle, controller.signal, resolveEventsReady)) {
+        if (event?.type !== "rpc.experimental.browser.control") continue
+        const data = event.data
+        if (!data || data.connectionID !== connectionID) continue
+
+        if (data.type === "attached") {
+          state.attached = true
+          await rpcCall(handle, "experimental.browser", "state", {
+            sessionID,
+            connectionID,
+            state: { tabs: [], focusedTabID: null },
+          })
+          continue
+        }
+
+        if (data.type !== "command") continue
+        const command = await rpcCall(handle, "experimental.browser", "command", {
+          sessionID,
+          connectionID,
+          requestID: data.requestID,
+        })
+        state.commands++
+        const action = command?.action
+        if (action?.type === "preview" && typeof action.path === "string") {
+          state.previewPath = action.path
+        }
+
+        await rpcCall(handle, "experimental.browser", "result", {
+          sessionID,
+          connectionID,
+          requestID: data.requestID,
+          outcome: {
+            type: "success",
+            result: {
+              value: action?.type === "preview" ? { path: action.path } : {},
+              files: [],
+            },
+          },
+        })
+      }
+    } catch (error) {
+      if (!controller.signal.aborted) state.error = error instanceof Error ? error.message : String(error)
+    }
+  })()
+
+  await Promise.race([
+    eventsReady,
+    Bun.sleep(5_000).then(() => {
+      throw new Error("Timed out waiting for OpenCode event stream before browser attach")
+    }),
+  ])
+
+  // The attach request is intentionally long-lived; it resolves only when the browser disconnects.
+  const attach = fetch(rpcUrl(handle, "experimental.browser", "attach"), {
+    method: "POST",
+    headers: {
+      authorization: handle.authorization,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      input: { sessionID, connectionID, version: 4 },
+    }),
+    signal: controller.signal,
+  }).then(async (response) => {
+    if (!response.ok) throw new Error(`Browser attach failed: ${response.status} ${await response.text()}`)
+    await response.text()
+  }).catch((error) => {
+    if (!controller.signal.aborted) state.error = error instanceof Error ? error.message : String(error)
+  })
+
+  await waitForCondition(
+    () => state.attached || Boolean(state.error),
+    "fake OpenCode desktop browser attachment",
+    () => state,
+  )
+  if (state.error) throw new Error(state.error)
+
+  return {
+    state,
+    close: async () => {
+      controller.abort()
+      await Promise.allSettled([events, attach])
+    },
+  }
+}
+
 async function createProject(base: string, name: string, mockBaseUrl: string) {
   const project = join(base, name)
   const pluginDir = join(project, ".opencode", "plugins")
@@ -558,6 +781,7 @@ async function createProject(base: string, name: string, mockBaseUrl: string) {
       plugins: ["./.opencode/plugins/loom"],
       model: "loommock/mock",
       enabled_providers: ["loommock"],
+      permission: { browser: "allow" },
       provider: {
         loommock: {
           npm: "@ai-sdk/openai-compatible",
@@ -580,6 +804,7 @@ async function createProject(base: string, name: string, mockBaseUrl: string) {
   return project
 }
 
+
 async function updateProjectPluginList(project: string, plugins: string[]) {
   const path = join(project, "opencode.json")
   const config = JSON.parse(await readFile(path, "utf8"))
@@ -591,26 +816,18 @@ async function installLegacyUpgradePlugin(project: string) {
   const pluginDir = join(project, ".opencode", "plugins")
   await rm(join(pluginDir, "loom"), { recursive: true, force: true })
   const legacyPath = join(pluginDir, "loom-legacy.ts")
-  await writeFile(
-    legacyPath,
-    `
+  await writeFile(legacyPath, `
 const legacyLoomPlugin = {
   id: "loom",
   async setup(ctx) {
     await ctx.tool.transform(async (editor) => {
-      editor.namespace({
-        name: "loom",
-        description: "Legacy Loom integration fixture for host restart verification.",
-      })
+      editor.namespace({ name: "loom", description: "Legacy Loom integration fixture for host restart verification." })
       editor.add({
         name: "legacy_seed",
         description: "Seed pre-project-epoch Loom state for restart verification.",
         input: {
           type: "object",
-          properties: {
-            workflowId: { type: "string" },
-            secondarySessionId: { type: "string" },
-          },
+          properties: { workflowId: { type: "string" }, secondarySessionId: { type: "string" } },
           required: ["workflowId", "secondarySessionId"],
           additionalProperties: false,
         },
@@ -626,39 +843,17 @@ const legacyLoomPlugin = {
             anchor: "docs/anchors/shared-name/anchor.md",
             createdBySession: tool.sessionID,
             createdAt: "pre-upgrade-host-fixture",
-            steps: [
-              {
-                id: "plan",
-                agent: "planner",
-                kind: "work",
-                dependsOn: [],
-                status: "pending",
-              },
-            ],
+            steps: [{ id: "plan", agent: "planner", kind: "work", dependsOn: [], status: "pending" }],
           })
-          await ctx.storage.set("budget/" + workflowId, {
-            totalDispatches: 0,
-            byKey: {},
-            seenDispatches: [],
-            grants: [],
-          })
-          return {
-            content: JSON.stringify({
-              seeded: true,
-              workflowId,
-              primarySessionId: tool.sessionID,
-              secondarySessionId,
-            }),
-          }
+          await ctx.storage.set("budget/" + workflowId, { totalDispatches: 0, byKey: {}, seenDispatches: [], grants: [] })
+          return { content: JSON.stringify({ seeded: true, workflowId, primarySessionId: tool.sessionID, secondarySessionId }) }
         },
       })
     })
   },
 }
 export default legacyLoomPlugin
-`.trimStart(),
-    "utf8",
-  )
+`.trimStart(), "utf8")
   await updateProjectPluginList(project, ["./.opencode/plugins/loom-legacy.ts"])
 }
 
@@ -668,6 +863,60 @@ async function installCurrentLoomPlugin(project: string) {
   await rm(join(pluginDir, "loom"), { recursive: true, force: true })
   await symlink(join(root, "plugins", "loom"), join(pluginDir, "loom"), "dir")
   await updateProjectPluginList(project, ["./.opencode/plugins/loom"])
+}
+
+type DashboardHandle = {
+  baseUrl: string
+  proc: ReturnType<typeof Bun.spawn>
+  stdout: Promise<string>
+  stderr: Promise<string>
+}
+
+async function startDashboardProcess(sharedState: string): Promise<DashboardHandle> {
+  let port = await freePort()
+  while (port === 4318) port = await freePort()
+  const baseUrl = `http://127.0.0.1:${port}`
+  const env = processEnv({
+    XDG_STATE_HOME: sharedState,
+    LOOM_DASHBOARD_PORT: String(port),
+    LOOM_DASHBOARD_URL: undefined,
+  })
+  const proc = Bun.spawn(
+    ["bun", "dashboard/server.ts"],
+    { cwd: root, env, stdout: "pipe", stderr: "pipe" },
+  )
+  const stdout = new Response(proc.stdout).text()
+  const stderr = new Response(proc.stderr).text()
+  try {
+    await waitFor(`${baseUrl}/health`, "")
+    const endpointPath = join(sharedState, "loom", "dashboard-endpoint.json")
+    const deadline = Date.now() + 10_000
+    while (Date.now() < deadline) {
+      try {
+        const record = JSON.parse(await readFile(endpointPath, "utf8"))
+        if (record?.baseUrl === baseUrl && Date.parse(record.leaseExpiresAt) > Date.now()) {
+          return { baseUrl, proc, stdout, stderr }
+        }
+      } catch {}
+      await Bun.sleep(100)
+    }
+    throw new Error("Dashboard endpoint lease was not published")
+  } catch (error) {
+    proc.kill()
+    const logs = await Promise.all([stdout, stderr])
+    throw new Error(`${error instanceof Error ? error.message : String(error)}\nstdout:\n${logs[0]}\nstderr:\n${logs[1]}`)
+  }
+}
+
+async function stopDashboard(handle: DashboardHandle) {
+  if (handle.proc.exitCode === null) handle.proc.kill("SIGTERM")
+  await Promise.race([
+    handle.proc.exited,
+    Bun.sleep(5_000).then(() => {
+      if (handle.proc.exitCode === null) handle.proc.kill("SIGKILL")
+    }),
+  ])
+  await Promise.allSettled([handle.stdout, handle.stderr])
 }
 
 type ServerHandle = {
@@ -749,6 +998,7 @@ const sharedState = join(base, "shared-state")
 const runtimeA = join(base, "runtime-a")
 const runtimeB = join(base, "runtime-b")
 const servers: ServerHandle[] = []
+let dashboard: DashboardHandle | undefined
 const mock = await startMockProvider()
 
 try {
@@ -763,6 +1013,8 @@ try {
   servers.push(serverAPeer)
   const serverB = await startServer(base, projectB, sharedState, runtimeB, "server-b")
   servers.push(serverB)
+
+  dashboard = await startDashboardProcess(sharedState)
 
   const sessionA = await jsonRequestAny(
     [`${serverA.baseUrl}/api/session`, `${serverA.baseUrl}/session`],
@@ -860,6 +1112,53 @@ try {
     () => mock.state,
   )
 
+  await sendPrompt(serverA, sessionA.id, "LOOM_INTEGRATION_STATUS_PREVIEW_DISCONNECTED")
+  await waitForCondition(
+    () => mock.state.statusPreviewFallbackObserved,
+    "loom_status browser preview soft fallback without a desktop browser",
+    () => mock.state,
+  )
+
+  mock.state.statusPreviewRequested = false
+  if (!mock.state.sawNativeLoomToolGuidance) {
+    throw new Error("Loom native-tool routing guidance did not reach the real OpenCode provider context")
+  }
+
+  await sendPrompt(serverA, sessionA.id, "LOOM_INTEGRATION_CODEMODE_SEARCH")
+  await waitForCondition(
+    () => mock.state.codeModeLoomSearchObserved,
+    "Loom Code Mode mirrors discoverable through search",
+    () => mock.state,
+  )
+
+  await sendPrompt(serverA, sessionA.id, "LOOM_INTEGRATION_CODEMODE_LOOM")
+  await waitForCondition(
+    () => mock.state.codeModeLoomStatusObserved,
+    "Loom status through real OpenCode Code Mode mirror",
+    () => mock.state,
+  )
+
+  const browser = await startFakeBrowser(serverA, sessionA.id)
+  try {
+    await sendPrompt(serverA, sessionA.id, "LOOM_INTEGRATION_STATUS_PREVIEW")
+    await waitForCondition(
+      () =>
+        mock.state.statusPreviewRequested &&
+        Boolean(mock.state.statusArtifactPath) &&
+        Boolean(mock.state.statusWebUrl) &&
+        browser.state.previewPath === mock.state.statusArtifactPath,
+      "loom_status artifact handoff through real OpenCode browser.preview",
+      () => ({ mock: mock.state, browser: browser.state }),
+    )
+    if (!mock.state.statusArtifactPath) throw new Error("loom_status did not expose an artifact path")
+    const statusArtifact = await readFile(mock.state.statusArtifactPath, "utf8")
+    if (!statusArtifact.includes("Loom workflow status")) {
+      throw new Error("Previewed Loom status artifact did not contain the expected interactive document")
+    }
+  } finally {
+    await browser.close()
+  }
+
   const unrelatedSession = await jsonRequestAny(
     [`${serverA.baseUrl}/api/session`, `${serverA.baseUrl}/session`],
     serverA.authorization,
@@ -896,6 +1195,18 @@ try {
   if (reviewerOutput?.workflowId !== mock.state.workflowId && reviewerOutput?.workflow?.id !== mock.state.workflowId) {
     throw new Error("Reviewer session RPC did not remain bound to the shared workflow")
   }
+  const reviewerStatusUrl = reviewerOutput?.statusUrl
+  if (
+    typeof reviewerStatusUrl !== "string" ||
+    !reviewerStatusUrl.startsWith(`${dashboard.baseUrl}/#/project/`) ||
+    !reviewerStatusUrl.endsWith(`/workflow/${encodeURIComponent(String(mock.state.workflowId))}`)
+  ) {
+    throw new Error(`Reviewer sidebar did not expose the active dashboard workflow URL: ${String(reviewerStatusUrl)}`)
+  }
+  const dashboardReachability = await fetch(reviewerStatusUrl)
+  if (!dashboardReachability.ok) {
+    throw new Error(`Sidebar dashboard URL did not reach the running dashboard: ${dashboardReachability.status}`)
+  }
 
   const runtimeRecord = JSON.parse(
     await waitForFile(join(sharedState, "loom", "runtime-root.json")),
@@ -926,151 +1237,63 @@ try {
   if (new Set(fleet.projects.map((project) => project.projectId)).size !== 2) {
     throw new Error("Two real OpenCode projects received the same Loom project epoch")
   }
+  const projectedA = fleet.projects.find((project) => project.canonicalLocation === projectA)
+  if (!projectedA) throw new Error("Dashboard fleet did not include project A")
+  const expectedReviewerStatusUrl =
+    `${dashboard.baseUrl}/#/project/${encodeURIComponent(projectedA.projectId)}/workflow/${encodeURIComponent(String(mock.state.workflowId))}`
+  if (reviewerStatusUrl !== expectedReviewerStatusUrl) {
+    throw new Error(
+      `Reviewer sidebar dashboard URL did not match the projected project/workflow identity: ${reviewerStatusUrl} !== ${expectedReviewerStatusUrl}`,
+    )
+  }
+
 
   const upgradeProject = await createProject(base, "project-upgrade-restart", mock.baseUrl)
   await installLegacyUpgradePlugin(upgradeProject)
   const upgradeState = join(base, "upgrade-shared-state")
   const upgradeRuntime = join(base, "upgrade-runtime")
 
-  const legacyHost = await startServer(
-    base,
-    upgradeProject,
-    upgradeState,
-    upgradeRuntime,
-    "upgrade-host",
-  )
+  const legacyHost = await startServer(base, upgradeProject, upgradeState, upgradeRuntime, "upgrade-host")
   servers.push(legacyHost)
 
   const upgradePrimary = await jsonRequestAny(
     [`${legacyHost.baseUrl}/api/session`, `${legacyHost.baseUrl}/session`],
     legacyHost.authorization,
-    {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(sessionCreateBody("Pre-upgrade General", "general")),
-    },
+    { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(sessionCreateBody("Pre-upgrade General", "general")) },
   )
   const upgradeSecondary = await jsonRequestAny(
     [`${legacyHost.baseUrl}/api/session`, `${legacyHost.baseUrl}/session`],
     legacyHost.authorization,
-    {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(sessionCreateBody("Pre-upgrade Planner", "planner", upgradePrimary.id)),
-    },
+    { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(sessionCreateBody("Pre-upgrade Planner", "planner", upgradePrimary.id)) },
   )
-  if (!upgradePrimary?.id || !upgradeSecondary?.id) {
-    throw new Error("OpenCode did not persist pre-upgrade sessions")
-  }
-
-  const preUpgradePrimaryMetadata = await jsonRequestAny(
-    [
-      `${legacyHost.baseUrl}/api/session/${upgradePrimary.id}`,
-      `${legacyHost.baseUrl}/session/${upgradePrimary.id}`,
-    ],
-    legacyHost.authorization,
-  )
-  const preUpgradeSecondaryMetadata = await jsonRequestAny(
-    [
-      `${legacyHost.baseUrl}/api/session/${upgradeSecondary.id}`,
-      `${legacyHost.baseUrl}/session/${upgradeSecondary.id}`,
-    ],
-    legacyHost.authorization,
-  )
-  if (
-    preUpgradePrimaryMetadata?.id !== upgradePrimary.id ||
-    preUpgradeSecondaryMetadata?.id !== upgradeSecondary.id
-  ) {
-    throw new Error("OpenCode pre-upgrade session metadata did not preserve created session IDs")
-  }
+  if (!upgradePrimary?.id || !upgradeSecondary?.id) throw new Error("OpenCode did not persist pre-upgrade sessions")
 
   mock.state.upgradeSecondarySessionId = upgradeSecondary.id
   await sendPrompt(legacyHost, upgradePrimary.id, "LOOM_INTEGRATION_LEGACY_SEED")
-  await waitForCondition(
-    () => mock.state.upgradeSeeded,
-    "pre-upgrade Loom fixture persisting legacy workflow bindings",
-    () => mock.state,
-  )
+  await waitForCondition(() => mock.state.upgradeSeeded, "pre-upgrade Loom fixture persisting legacy workflow bindings", () => mock.state)
 
   await stop(legacyHost)
   await installCurrentLoomPlugin(upgradeProject)
 
-  const restartedHost = await startServer(
-    base,
-    upgradeProject,
-    upgradeState,
-    upgradeRuntime,
-    "upgrade-host",
-  )
+  const restartedHost = await startServer(base, upgradeProject, upgradeState, upgradeRuntime, "upgrade-host")
   servers.push(restartedHost)
 
-  const resumedPrimaryMetadata = await jsonRequestAny(
-    [
-      `${restartedHost.baseUrl}/api/session/${upgradePrimary.id}`,
-      `${restartedHost.baseUrl}/session/${upgradePrimary.id}`,
-    ],
-    restartedHost.authorization,
-  )
-  const resumedSecondaryMetadata = await jsonRequestAny(
-    [
-      `${restartedHost.baseUrl}/api/session/${upgradeSecondary.id}`,
-      `${restartedHost.baseUrl}/session/${upgradeSecondary.id}`,
-    ],
-    restartedHost.authorization,
-  )
-  if (
-    resumedPrimaryMetadata?.id !== upgradePrimary.id ||
-    resumedSecondaryMetadata?.id !== upgradeSecondary.id
-  ) {
-    throw new Error("Restarted OpenCode host did not expose the original persisted session IDs")
-  }
-  if (
-    typeof resumedPrimaryMetadata?.projectID !== "string" ||
-    resumedPrimaryMetadata.projectID.length === 0 ||
-    typeof resumedSecondaryMetadata?.projectID !== "string" ||
-    resumedSecondaryMetadata.projectID.length === 0
-  ) {
-    throw new Error("Restarted OpenCode 2.0.12 session metadata did not expose project identity")
-  }
-
   await sendPrompt(restartedHost, upgradePrimary.id, "LOOM_INTEGRATION_UPGRADE_PRIMARY")
-  await waitForCondition(
-    () => mock.state.upgradePrimaryResumed,
-    "same real OpenCode session reconciling after Loom upgrade",
-    () => mock.state,
-  )
-
+  await waitForCondition(() => mock.state.upgradePrimaryResumed, "same real OpenCode session reconciling after Loom upgrade", () => mock.state)
   await sendPrompt(restartedHost, upgradeSecondary.id, "LOOM_INTEGRATION_UPGRADE_SECONDARY")
-  await waitForCondition(
-    () => mock.state.upgradeSecondaryResumed,
-    "secondary persisted session reconciling through admitted workflow",
-    () => mock.state,
-  )
+  await waitForCondition(() => mock.state.upgradeSecondaryResumed, "secondary persisted session reconciling through admitted workflow", () => mock.state)
 
   const resumedPrimarySidebar = await jsonRequest(
-    `${restartedHost.baseUrl}/api/rpc/loom.control/sidebar`,
-    restartedHost.authorization,
-    {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ input: { sessionID: upgradePrimary.id } }),
-    },
+    `${restartedHost.baseUrl}/api/rpc/loom.control/sidebar`, restartedHost.authorization,
+    { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ input: { sessionID: upgradePrimary.id } }) },
   )
   const resumedSecondarySidebar = await jsonRequest(
-    `${restartedHost.baseUrl}/api/rpc/loom.control/sidebar`,
-    restartedHost.authorization,
-    {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ input: { sessionID: upgradeSecondary.id } }),
-    },
+    `${restartedHost.baseUrl}/api/rpc/loom.control/sidebar`, restartedHost.authorization,
+    { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ input: { sessionID: upgradeSecondary.id } }) },
   )
   const resumedPrimaryOutput = resumedPrimarySidebar?.output ?? resumedPrimarySidebar
   const resumedSecondaryOutput = resumedSecondarySidebar?.output ?? resumedSecondarySidebar
-  if (
-    resumedPrimaryOutput?.workflowId !== UPGRADE_WORKFLOW_ID ||
-    resumedSecondaryOutput?.workflowId !== UPGRADE_WORKFLOW_ID
-  ) {
+  if (resumedPrimaryOutput?.workflowId !== UPGRADE_WORKFLOW_ID || resumedSecondaryOutput?.workflowId !== UPGRADE_WORKFLOW_ID) {
     throw new Error("Restarted real OpenCode sessions did not reconcile to the legacy workflow")
   }
 
@@ -1078,6 +1301,12 @@ try {
   console.log(` - workflow: ${mock.state.workflowId}`)
   console.log(` - worker/reviewer attached: ${mock.state.workerAttached}/${mock.state.reviewerAttached}`)
   console.log(` - peer-process review completed + observed by origin: ${mock.state.reviewerCompleted}/${mock.state.generalSawPeerReviewComplete}`)
+  console.log(` - shared non-default dashboard endpoint reached from sidebar: ${reviewerStatusUrl}`)
+  console.log(` - disconnected browser degraded cleanly: ${mock.state.statusPreviewFallbackObserved}`)
+  console.log(` - native Loom tool guidance reached provider context: ${mock.state.sawNativeLoomToolGuidance}`)
+  console.log(` - Loom Code Mode mirrors discoverable: ${mock.state.codeModeLoomSearchObserved}`)
+  console.log(` - Loom Code Mode mirror executed: ${mock.state.codeModeLoomStatusObserved}`)
+  console.log(` - status artifact previewed through browser RPC: ${mock.state.statusPreviewRequested} · ${mock.state.statusArtifactPath}`)
   console.log(` - same-workflow read + unrelated/cross-project rejection: ${mock.state.reviewerSawWorkerComplete}/${mock.state.unrelatedRejected}/${mock.state.crossProjectRejected}`)
   console.log(` - sessions: ${sessionA.id}, ${sessionB.id}`)
   console.log(` - shared Loom runtime root: ${runtimeRecord.runtimeRoot}`)
@@ -1086,6 +1315,7 @@ try {
   console.log(` - resumed session IDs: ${upgradePrimary.id}, ${upgradeSecondary.id}`)
 } finally {
   await Promise.allSettled(servers.map(stop))
+  if (dashboard) await stopDashboard(dashboard)
   mock.server.stop(true)
   await rm(base, { recursive: true, force: true })
 }

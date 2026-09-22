@@ -46,9 +46,9 @@ Each case includes:
 - positive `expectations`
 - forbidden `must_not` behavior
 - optional deterministic tool assertions
-- optional runtime action assertions that match a tool plus one concrete argument with `equals` or `ends_with`
+- optional runtime action assertions that match a tool alone or a tool argument with `equals`, `ends_with`, or `contains`; `actions.any_of` groups accept any one equivalent action
 
-Action assertions are runtime-only. They are evaluated against observed OpenCode tool actions and their captured input arguments. Use them when tool identity alone is insufficient—for example, to prove that Reviewer read a specific `ASSESSMENT.md` or Critic read a specific `QA.md`.
+Action assertions are runtime-only. They are evaluated against observed OpenCode tool actions and their captured input arguments. Use them when tool identity alone is insufficient—for example, to prove that Reviewer read a specific `ASSESSMENT.md` or Critic read a specific `QA.md`. `output.contains` and `output.forbids` assert literal text in the target model's final user-facing output.
 
 Assertions use stable semantic argument names. The harness currently normalizes OpenCode V2 aliases such as `skill.id` ↔ `skill.name` and `read.path` ↔ `read.filePath`, so behavioral cases do not become coupled to a transport-only parameter rename.
 
@@ -59,7 +59,14 @@ Example:
   "actions": {
     "requires": [
       {"tool": "skill", "arg": "name", "equals": "golang-concurrency"},
-      {"tool": "read", "arg": "filePath", "ends_with": "skills/golang-concurrency/ASSESSMENT.md"}
+      {"tool": "read", "arg": "filePath", "ends_with": "skills/golang-concurrency/ASSESSMENT.md"},
+      {"tool": "execute", "arg": "code", "contains": "tools.browser.preview"}
+    ],
+    "any_of": [
+      [
+        {"tool": "loom_status"},
+        {"tool": "execute", "arg": "code", "contains": "tools.loom.code.status"}
+      ]
     ],
     "forbids": [
       {"tool": "read", "arg": "filePath", "ends_with": "skills/golang-concurrency/QA.md"}

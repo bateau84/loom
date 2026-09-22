@@ -69,8 +69,8 @@ jobs:
         run: |
           npm install --no-save --package-lock=false --legacy-peer-deps @playwright/test@1.55.0
           npx playwright install --with-deps chromium
-      - name: Run dashboard browser Designer validation
-        run: npx playwright test dashboard/e2e.spec.mjs --browser=chromium --workers=1
+      - name: Run browser Designer validation
+        run: npx playwright test dashboard/e2e.spec.mjs dashboard/status-view.e2e.spec.ts --browser=chromium --workers=1
       - run: bun run eval:validate
       - run: bun run eval:harness-test
       - run: bun run skills:validate

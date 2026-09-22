@@ -64,6 +64,20 @@ class WorkflowCredentialTests(unittest.TestCase):
         self.assertNotIn("actions/upload-artifact@v4", live)
         self.assertNotIn("- run: bun install\n", live + ci)
 
+    def test_live_workflow_and_harness_pin_opencode_2_0_12_runner(self):
+        workflow = (
+            RUN_EVALS.ROOT / ".github" / "workflows" / "loom-live-evals.yml"
+        ).read_text(encoding="utf-8")
+        expected_action = "bateau84/opencode-eval-runner@8e1a8439fd8b15343abcf69c50203c96847f1c2e"
+        expected_image = (
+            "ghcr.io/bateau84/opencode-eval-runner@"
+            "sha256:eece79be0987d41c96cfbc43a4a0792987af383f2edec4e6651f43a954f1874f"
+        )
+
+        self.assertIn(expected_action, workflow)
+        self.assertIn(expected_image, workflow)
+        self.assertEqual(RUN_EVALS.DEFAULT_IMAGES["opencode"], expected_image)
+
     def test_live_workflow_forwards_opencode_api_key_explicitly(self):
         workflow = (
             RUN_EVALS.ROOT / ".github" / "workflows" / "loom-live-evals.yml"
@@ -683,6 +697,64 @@ class ActionAssertionTests(unittest.TestCase):
 
         self.assertNotIn("--network", run.call_args.args[0])
 
+    def test_eval_runner_cli_forwards_expected_plugin_preflight(self):
+        class Result:
+            returncode = 0
+            stdout = ""
+            stderr = ""
+
+        seen: list[str] = []
+
+        def fake_run(command, **kwargs):
+            seen.extend(command)
+            output = Path(command[command.index("--output") + 1])
+            output.write_text(
+                json.dumps({
+                    "exit_code": 0,
+                    "text": "ok",
+                    "tools": ["loom_status"],
+                    "actions": [],
+                    "skills_loaded": [],
+                }),
+                encoding="utf-8",
+            )
+            return Result()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            config_root = project / "config-root"
+            config_root.mkdir()
+            with patch.object(
+                RUN_EVALS.shutil,
+                "which",
+                side_effect=lambda name: "/usr/bin/opencode-eval-runner" if name == "opencode-eval-runner" else None,
+            ), patch.object(RUN_EVALS.subprocess, "run", side_effect=fake_run):
+                result = RUN_EVALS.invoke_container(
+                    engine="podman",
+                    image="test-image",
+                    transport="opencode",
+                    model="openai/test",
+                    agent="general",
+                    prompt="test",
+                    system="",
+                    project=project,
+                    auth=None,
+                    config=None,
+                    models_catalog=None,
+                    database_seed=None,
+                    config_root=config_root,
+                    expected_plugin="loom",
+                    timeout=30,
+                    container_timeout=60,
+                    mount_node_modules=False,
+                    extra_envs=[],
+                    network="host",
+                )
+
+        self.assertEqual(result["exit_code"], 0)
+        self.assertIn("--expected-plugin", seen)
+        self.assertEqual(seen[seen.index("--expected-plugin") + 1], "loom")
+
     def test_eval_runner_cli_receives_explicit_network_mode(self):
         class Result:
             returncode = 0
@@ -839,6 +911,92 @@ class ActionAssertionTests(unittest.TestCase):
             }
         }
         self.assertEqual(RUN_EVALS.deterministic_failures(case, ["skill", "read"], actions), [])
+
+    def test_matches_contains_action_arguments(self):
+        actions = [
+            {
+                "tool": "execute",
+                "args": {
+                    "code": 'return await tools.browser.preview({ path: "/tmp/status.html" })'
+                },
+            },
+        ]
+        case = {
+            "actions": {
+                "requires": [
+                    {
+                        "tool": "execute",
+                        "arg": "code",
+                        "contains": "tools.browser.preview",
+                    }
+                ]
+            }
+        }
+        self.assertEqual(
+            RUN_EVALS.deterministic_failures(case, ["execute"], actions),
+            [],
+        )
+
+    def test_grades_required_and_forbidden_output_text(self):
+        case = {
+            "output": {
+                "contains": ["http://127.0.0.1:4318/status/"],
+                "forbids": ["OpenCode Desktop is required"],
+            }
+        }
+        self.assertEqual(
+            RUN_EVALS.deterministic_failures(
+                case,
+                [],
+                text="Open: http://127.0.0.1:4318/status/install/project/workflow.html",
+            ),
+            [],
+        )
+        self.assertEqual(
+            RUN_EVALS.deterministic_failures(case, [], text="No link"),
+            ["required output text not observed: 'http://127.0.0.1:4318/status/'"],
+        )
+
+    def test_accepts_tool_only_and_any_of_action_assertions(self):
+        native_actions = [
+            {"tool": "loom_start", "args": {"anchor": "docs/anchors/status-preview/anchor.md"}},
+            {"tool": "loom_status", "args": {"workflowId": "wf-1"}},
+        ]
+        code_actions = [
+            {
+                "tool": "execute",
+                "args": {"code": "return await tools.loom.code.start({ anchor: 'docs/anchors/status-preview/anchor.md' })"},
+            },
+            {
+                "tool": "execute",
+                "args": {"code": "return await tools.loom.code.status({ workflowId: 'wf-1' })"},
+            },
+        ]
+        case = {
+            "actions": {
+                "any_of": [
+                    [
+                        {"tool": "loom_start"},
+                        {"tool": "execute", "arg": "code", "contains": "tools.loom.code.start"},
+                    ],
+                    [
+                        {"tool": "loom_status"},
+                        {"tool": "execute", "arg": "code", "contains": "tools.loom.code.status"},
+                    ],
+                ],
+                "forbids": [
+                    {"tool": "execute", "arg": "code", "contains": "tools.browser.preview"},
+                ],
+            }
+        }
+        self.assertEqual(
+            RUN_EVALS.deterministic_failures(case, ["loom_start", "loom_status"], native_actions),
+            [],
+        )
+        self.assertEqual(
+            RUN_EVALS.deterministic_failures(case, ["execute"], code_actions),
+            [],
+        )
 
     def test_matches_current_opencode_v2_argument_names(self):
         actions = [
