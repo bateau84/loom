@@ -9,6 +9,7 @@ import {
   applyTaskPlan,
   buildSteps,
   resolveExecutionDepth,
+  executionDepthRank,
   plannedTaskSteps,
   preserveSatisfied,
   finishStep,
@@ -1264,7 +1265,12 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             productOutcome: {
               type: "boolean",
               description:
-                "True when the request delivers a product outcome. Planner/Product Acceptance are selected by executionDepth, not by this flag alone.",
+                "True when the request delivers a product outcome. Objective depth requires this to be true.",
+            },
+            implementationRequested: {
+              type: "boolean",
+              description:
+                "True when this request is authorized to mutate/implement. False for inspect, test, diagnose, verify, or review-only work.",
             },
             executionDepth: {
               type: "string",
@@ -1286,6 +1292,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             "externalUnknown",
             "diagnostic",
             "productOutcome",
+            "implementationRequested",
             "executionDepth",
           ],
           additionalProperties: false,
@@ -1302,7 +1309,16 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           }
 
           const rawEffects = input as Effects
-          const resolvedDepth = resolveExecutionDepth(rawEffects)
+          let resolvedDepth
+          try {
+            resolvedDepth = resolveExecutionDepth(rawEffects)
+          } catch (error) {
+            return {
+              content: renderToolOutput({
+                error: error instanceof Error ? error.message : String(error),
+              }),
+            }
+          }
 
           if (workflow.request && resolvedDepth === "objective") {
             return {
@@ -1316,16 +1332,23 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           const implementationStarted = workflow.steps.some(
             (step) =>
               (
-                ["worker", "plan", "review-implementation", "critic-final"].includes(step.id) ||
+                ["worker", "plan", "review-implementation", "review-task", "critic-final"].includes(step.id) ||
                 step.id.startsWith("task:")
               ) &&
               ["complete", "passed"].includes(step.status),
           )
-          if (implementationStarted) {
+          const currentDepth = workflow.effects
+            ? resolveExecutionDepth(workflow.effects)
+            : undefined
+          const deeper =
+            currentDepth !== undefined &&
+            executionDepthRank(resolvedDepth) > executionDepthRank(currentDepth)
+
+          if (implementationStarted && !deeper) {
             return {
               content: renderToolOutput({
                 error:
-                  "V0 route reclassification is only supported before implementation completion. Start a correction workflow for later reclassification.",
+                  "Route reclassification after completed execution is only allowed when escalating to a deeper execution depth.",
               }),
             }
           }
@@ -1341,6 +1364,25 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           const applyRouteMutation = () => {
             const next = buildSteps(effects)
             preserveSatisfied(workflow.steps, next)
+
+            // Escalation preserves discovery/authority evidence but never treats
+            // previously completed implementation as satisfying newly widened work.
+            if (deeper) {
+              for (const step of next) {
+                if (
+                  step.id === "worker" ||
+                  step.id === "review-implementation" ||
+                  step.id === "review-task" ||
+                  step.id === "plan" ||
+                  step.id.startsWith("task:") ||
+                  ["knowledge-sync", "product-acceptance", "designer-validation", "review-product", "critic-final"].includes(step.id)
+                ) {
+                  step.status = "pending"
+                  delete step.summary
+                }
+              }
+            }
+
             workflow.effects = effects
             workflow.steps = next
             reconcileVerificationAfterRoute(workflow)
