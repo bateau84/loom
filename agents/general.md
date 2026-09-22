@@ -58,7 +58,7 @@ The governing rule is:
 
 Classify every new request by **execution depth** before deciding whether intent shaping or a full product workflow is needed:
 
-- **task** — bounded inspection, test, debug, focused review, small fix, mechanical edit, or similarly clear work. Use the direct specialist/Worker path plus independent verification. A task may use Diagnostic or Research when needed without becoming a product lifecycle.
+- **task** — bounded inspection, test, debug, focused review, small fix, mechanical edit, or similarly clear work. Read-only Tasks use the relevant Diagnostic/Research/Reviewer path; mutation Tasks use Worker plus independent verification. A task may use Diagnostic or Research without becoming a product lifecycle.
 - **change** — a substantial but bounded change that now requires new Designer, Specifier, or Architect authority. Use only the authority demonstrated as necessary, then implement and review directly. Do not add Planner, Critic, Product Acceptance, or final product gates merely because the change touches product code.
 - **objective** — broad product work, multi-part feature delivery, architecture/product redesign, or work large enough to benefit from decomposition and whole-product acceptance. This is the full Loom lifecycle.
 
@@ -77,14 +77,14 @@ For a bounded, already-clear task:
 - do **not** start intent-grilling or create a new Anchor;
 - if an existing accepted Anchor is directly relevant, start against it;
 - otherwise call `loom_start` with `request` set to the bounded task instead of `anchor`;
-- call `loom_route` with `executionDepth=task`;
+- call `loom_route` with `executionDepth=task` and set `implementationRequested=false` for inspect/test/debug/verify/review-only work, or `true` only when mutation/repair was actually requested;
 - set `humanFacing`, `behavioral`, or `structural` only when **new unresolved authority** is actually required, not merely because UI, behavior, or structure is mechanically touched;
 - define the narrow Worker scope and verification expected.
 
 If a Task uncovers a material issue:
 - stay at `task` when the finding has an obvious bounded fix and no new authority is required;
 - re-run `loom_route` with `executionDepth=change` when evidence shows new UX semantics, behavioral guarantees, architecture, or a meaningfully wider bounded change;
-- use `executionDepth=objective` only for genuinely broad product work. An Objective requires an accepted Anchor; if the original workflow was request-backed, finish/preserve the diagnostic evidence, shape the newly discovered product intent, and start a new Anchor-backed Objective workflow.
+- use `executionDepth=objective` only for genuinely broad product work. Objective depth requires `productOutcome=true`, `implementationRequested=true`, and an accepted Anchor; if the original workflow was request-backed, preserve the prior findings/evidence, shape the newly discovered product intent, and start a new Anchor-backed Objective workflow.
 
 User confirmation can itself change the requested scope. For example, after a focused review surfaces broad findings, "yes, these findings are substantial; fix them properly" may justify `change` or `objective` depending on the demonstrated breadth. Do not jump to Objective solely because the user approved fixing something.
 
@@ -142,7 +142,7 @@ When the user reports a bug or regression and the causal mechanism is not alread
 - route with `diagnostic: true`;
 - dispatch Diagnostic as the current first technical action;
 - let Diagnostic identify or confirm the cause before Worker implements the repair;
-- continue automatically into a bounded repair only when the user's request includes repair/fix work; for diagnose/debug/test-only requests, preserve the findings and perform only the verification/reporting needed by that Task.
+- continue automatically into a bounded repair only when the user's request includes repair/fix work; for diagnose/debug/test-only requests route with `implementationRequested=false`, preserve the findings, and end through read-only Reviewer verification rather than Worker.
 
 Logs, a stack trace, or a deterministic reproduction do not by themselves justify skipping Diagnostic. Skip Diagnostic only when current evidence already identifies the cause well enough that no causal investigation remains.
 
