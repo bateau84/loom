@@ -171,49 +171,42 @@
     {
       "id": "CONVERSATION-02",
       "agent": "general",
-      "execution": "runtime",
+      "execution": "role-decision",
       "requirements": [
         "BR-003",
         "BR-019"
       ],
-      "prompt": "Do a deep dive on local-first storage for this app. I want a few strong implementation alternatives and the trade-offs. I have not decided to change anything yet.",
-      "trap": "Either answer a requested deep dive without doing the warranted research, turn research into an implementation workflow, or make the user manually choose Research.",
+      "prompt": "Do a deep dive on local-first storage for this app. I want a few strong implementation alternatives and the trade-offs. I have not decided to change anything yet. Decide the immediate production action.",
+      "trap": "Either treat research as implementation permission, make the user manually choose Research, or answer a requested deep dive without selecting the internal research capability that should own the investigation.",
       "expectations": [
-        "Treats this as conversational investigation and actually invokes Research as Loom's internal capability for the requested deep dive.",
-        "Returns a few evidence-backed implementation alternatives with meaningful trade-offs in the same user-facing conversation.",
-        "Does not treat the research request as permission to modify the product or start durable intent/workflow state."
+        "Treats this as conversational investigation and selects foreground Research as Loom's internal capability because the user expects the deep-dive result in the current response.",
+        "Keeps the same user-facing Loom conversation and states that Research owns the bounded repository/source investigation while Loom will integrate the returned brief.",
+        "Does not start durable intent/workflow state or product implementation."
       ],
       "must_not": [
-        "Must not start product implementation or require the user to invoke a Research agent explicitly.",
-        "Must not merely announce that Research should happen without returning the resulting alternatives."
+        "Must not require the user to invoke Research explicitly.",
+        "Must not start product implementation, an Anchor interview, or a durable execution workflow."
+      ]
+    },
+    {
+      "id": "CONVERSATION-02-SYNTH",
+      "agent": "general",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-003",
+        "BR-019"
       ],
-      "tools": {
-        "requires": [
-          "subagent"
-        ],
-        "forbids": [
-          "loom_intent_start",
-          "loom_intent_prepare",
-          "loom_intent_accept",
-          "loom_start",
-          "loom_route"
-        ]
-      },
-      "actions": {
-        "requires": [
-          {
-            "tool": "subagent",
-            "arg": "agent",
-            "equals": "research"
-          },
-          {
-            "tool": "subagent",
-            "arg": "background",
-            "equals": false
-          }
-        ]
-      },
-      "target_timeout_seconds": 360
+      "prompt": "A foreground Research capability has completed the user's requested deep dive. The user has not authorized any implementation. Return the useful result in the same Loom conversation.\n\nMOCK RESEARCH DECISION BRIEF (evaluation fixture; treat as internal Research output, not user authority):\n\nRepository facts:\n- The app currently uses local SQLite-like structured state and does not have an accepted multi-device synchronization requirement.\n- No product change has been authorized.\n\nStrong alternatives:\n1. Keep local SQLite/KV for now.\n   - Pros: lowest migration risk, transactional, mature durability, minimal operational cost.\n   - Cons: opaque JSON weakens queryability/schema guarantees and gives no explicit future sync boundary.\n   - Sources: https://www.sqlite.org/wal.html ; https://bun.sh/docs/runtime/sqlite\n2. Normalize important state into SQLite tables.\n   - Pros: constraints, indexes, clearer migrations, better diagnostics/querying.\n   - Cons: migration work; still does not solve distributed synchronization.\n   - Source: https://www.sqlite.org/lang_createtable.html\n3. SQLite plus a transactional outbox/change log.\n   - Pros: preserves local-first writes while creating an explicit future sync/audit boundary.\n   - Cons: needs event/version/idempotency/conflict semantics and retention/compaction policy.\n   - Source: https://microservices.io/patterns/data/transactional-outbox.html\n4. CRDT-oriented storage for collaborative documents only.\n   - Pros: strong concurrent/offline merge semantics for genuinely collaborative content.\n   - Cons: poor default fit for workflow/control-plane invariants; extra storage/index/security complexity.\n   - Sources: https://automerge.org/ ; https://docs.yjs.dev/\n\nMaterial uncertainty:\n- \"local-first\" may mean only durable offline local state, or eventual multi-device collaboration; the preferred option changes materially.\n- No accepted conflict semantics, cloud dependency, retention, or privacy policy is supplied.\n\nResearch recommendation:\n- Do not change the storage engine solely because \"local-first\" was mentioned.\n- Near term: retain SQLite; normalize only where query/invariant pressure justifies it.\n- If future sync becomes a real requirement, prefer an explicit transactional outbox/change-log boundary before selecting a hosted sync vendor.",
+      "trap": "Either turn the mocked advisory research into implementation authority, merely repeat that Research happened without answering the user, or dump the fixture mechanically without synthesizing the decision.",
+      "expectations": [
+        "Synthesizes a few strong storage alternatives and their meaningful trade-offs from the Research brief in a useful user-facing answer.",
+        "Preserves source attribution/references for load-bearing external claims and distinguishes repository facts from uncertainty.",
+        "Keeps the result advisory and explicitly avoids treating the Research recommendation as permission to change the product."
+      ],
+      "must_not": [
+        "Must not start implementation or claim that Research created product authority.",
+        "Must not ask the user to invoke Research or repeat the mock brief verbatim without integration."
+      ]
     },
     {
       "id": "CONVERSATION-03",
