@@ -1382,6 +1382,249 @@ Verdict: FAIL
     }
   })
 
+  test("conversational observations cannot be laundered into governed evidence", async () => {
+    const { call, toolHooks, durableStorage, restore } = await harness()
+    try {
+      const diagnosticSession = "evidence-laundering-diagnostic"
+      const generalSession = "evidence-laundering-general"
+
+      const observeShell = async (callID: string, command: string) => {
+        await toolHooks.get("execute.before")?.({
+          tool: "shell",
+          callID,
+          sessionID: diagnosticSession,
+          agent: "diagnostic",
+          input: { command },
+        })
+        await toolHooks.get("execute.after")?.({
+          tool: "shell",
+          callID,
+          sessionID: diagnosticSession,
+          agent: "diagnostic",
+          input: { command },
+          status: "completed",
+          result: "ok",
+        })
+        const records = (await durableStorage.scan({ prefix: "evidence/", limit: 1000 })).entries
+          .map((entry: any) => entry.value)
+          .filter((value: any) =>
+            value?.sessionID === diagnosticSession &&
+            value?.command === command
+          )
+        expect(records).toHaveLength(1)
+        return records[0]
+      }
+
+      const conversational = await observeShell("pre-workflow", "git status")
+      expect(conversational.workflowId).toBeUndefined()
+      expect(conversational.stepId).toBeUndefined()
+
+      const started = await call(
+        "start",
+        { request: "Track a governed diagnosis and independently review it." },
+        "general",
+        generalSession,
+      )
+      expect(started.error).toBeUndefined()
+      const workflowId = String(started.workflowId)
+
+      const routed = await call(
+        "route",
+        {
+          humanFacing: false,
+          behavioral: false,
+          structural: false,
+          externalUnknown: false,
+          diagnostic: true,
+          productOutcome: false,
+          implementationRequested: false,
+          executionDepth: "task",
+        },
+        "general",
+        generalSession,
+      )
+      expect(routed.now).toContainEqual({ step: "diagnostic", agent: "diagnostic" })
+
+      const grant = await call(
+        "dispatch_grant",
+        { workflowId, stepId: "diagnostic" },
+        "general",
+        generalSession,
+      )
+      await call(
+        "attach",
+        { grantId: grant.grantId, workflowId, stepId: "diagnostic" },
+        "diagnostic",
+        diagnosticSession,
+      )
+
+      const governed = await observeShell("post-attach", "rg failure src")
+      expect(governed).toMatchObject({
+        workflowId,
+        stepId: "diagnostic",
+      })
+
+      const rejectedClaim = await call(
+        "evidence_claim",
+        {
+          workflowId,
+          stepId: "diagnostic",
+          kind: "other",
+          statement: "Conversational observation must not become governed proof.",
+          observationIds: [conversational.id],
+        },
+        "diagnostic",
+        diagnosticSession,
+      )
+      expect(rejectedClaim.error).toContain("captured while this session was attached")
+
+      const acceptedClaim = await call(
+        "evidence_claim",
+        {
+          workflowId,
+          stepId: "diagnostic",
+          kind: "other",
+          statement: "Governed diagnostic observation.",
+          observationIds: [governed.id],
+        },
+        "diagnostic",
+        diagnosticSession,
+      )
+      expect(acceptedClaim.error).toBeUndefined()
+      expect(acceptedClaim.claim.observationIds).toEqual([governed.id])
+
+      const required = await call(
+        "verification",
+        {
+          action: "require",
+          workflowId,
+          beforeStepId: "review-task",
+          kind: "other",
+          statement: "Reviewer must see governed diagnostic proof.",
+        },
+        "diagnostic",
+        diagnosticSession,
+      )
+      expect(required.error).toBeUndefined()
+      const requirementId = String(required.requirement.id)
+
+      const rejectedProof = await call(
+        "verification",
+        {
+          action: "prove",
+          workflowId,
+          requirementId,
+          statement: "Old conversational result.",
+          observationIds: [conversational.id],
+        },
+        "diagnostic",
+        diagnosticSession,
+      )
+      expect(rejectedProof.error).toContain("captured while this session was attached")
+
+      const acceptedProof = await call(
+        "verification",
+        {
+          action: "prove",
+          workflowId,
+          requirementId,
+          statement: "Governed diagnostic result.",
+          observationIds: [governed.id],
+        },
+        "diagnostic",
+        diagnosticSession,
+      )
+      expect(acceptedProof.error).toBeUndefined()
+      expect(acceptedProof.proven).toBe(requirementId)
+    } finally {
+      restore()
+    }
+  })
+
+  test("failed terminal workflow bindings also return General to conversation", async () => {
+    const { call, permissionHooks, restore } = await harness()
+    try {
+      const evaluate = permissionHooks.get("evaluate")
+      expect(evaluate).toBeDefined()
+      const generalSession = "failed-terminal-general"
+
+      const started = await call(
+        "start",
+        { request: "Perform tracked verification that may fail." },
+        "general",
+        generalSession,
+      )
+      expect(started.error).toBeUndefined()
+      const workflowId = String(started.workflowId)
+      await call(
+        "route",
+        {
+          humanFacing: false,
+          behavioral: false,
+          structural: false,
+          externalUnknown: false,
+          diagnostic: false,
+          productOutcome: false,
+          implementationRequested: false,
+          executionDepth: "task",
+        },
+        "general",
+        generalSession,
+      )
+
+      const grant = await call(
+        "dispatch_grant",
+        { workflowId, stepId: "review-task" },
+        "general",
+        generalSession,
+      )
+      await call(
+        "attach",
+        { grantId: grant.grantId, workflowId, stepId: "review-task" },
+        "reviewer",
+        "failed-terminal-reviewer",
+      )
+      const failed = await call(
+        "complete",
+        {
+          workflowId,
+          stepId: "review-task",
+          outcome: "fail",
+          summary: "Verification failed.",
+        },
+        "reviewer",
+        "failed-terminal-reviewer",
+      )
+      expect(failed.error).toBeUndefined()
+
+      for (const target of ["research", "diagnostic"] as const) {
+        const event: any = {
+          agent: "general",
+          action: "subagent",
+          resources: [target],
+          sessionID: generalSession,
+          effect: "allow",
+          source: { messageID: "later-message", id: `failed-later-${target}` },
+        }
+        await evaluate!(event)
+        expect(event.effect).toBe("allow")
+      }
+
+      const worker: any = {
+        agent: "general",
+        action: "subagent",
+        resources: ["worker"],
+        sessionID: generalSession,
+        effect: "allow",
+        source: { messageID: "later-message", id: "failed-later-worker" },
+      }
+      await evaluate!(worker)
+      expect(worker.effect).toBe("deny")
+    } finally {
+      restore()
+    }
+  })
+
   test("conversation may dispatch Research or Diagnostic without a workflow", async () => {
     const { permissionHooks, restore } = await harness()
     try {
