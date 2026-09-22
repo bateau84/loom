@@ -1820,6 +1820,50 @@ def run_case(
             shutil.rmtree(temp, ignore_errors=True)
 
 
+def eval_job_concurrency(
+    jobs: list[tuple[dict[str, Any], int]],
+    parallel: int,
+    runtime_parallel: int,
+) -> tuple[
+    list[tuple[dict[str, Any], int]],
+    int,
+    list[tuple[dict[str, Any], int]],
+    int,
+    str,
+]:
+    non_runtime_jobs = [job for job in jobs if job[0]["execution"] != "runtime"]
+    runtime_jobs = [job for job in jobs if job[0]["execution"] == "runtime"]
+    concurrency = (
+        len(non_runtime_jobs)
+        if parallel == 0
+        else min(parallel, len(non_runtime_jobs))
+    ) if non_runtime_jobs else 0
+    runtime_concurrency = min(runtime_parallel, len(runtime_jobs)) if runtime_jobs else 0
+
+    mode_parts: list[str] = []
+    if non_runtime_jobs:
+        mode_parts.append(
+            "non-runtime=" + (
+                "parallel:%d" % concurrency if concurrency > 1 else "sequential"
+            )
+        )
+    if runtime_jobs:
+        mode_parts.append(
+            "runtime=" + (
+                "parallel:%d (stress)" % runtime_concurrency
+                if runtime_concurrency > 1
+                else "sequential"
+            )
+        )
+    return (
+        non_runtime_jobs,
+        concurrency,
+        runtime_jobs,
+        runtime_concurrency,
+        ", ".join(mode_parts) or "sequential",
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run Loom behavioral evals in isolated OCI model invocations.")
     parser.add_argument("--all", action="store_true")
@@ -1966,31 +2010,13 @@ def main() -> int:
         for case in selected
         for iteration in range(1, args.iterations + 1)
     ]
-    non_runtime_jobs = [job for job in jobs if job[0]["execution"] != "runtime"]
-    runtime_jobs = [job for job in jobs if job[0]["execution"] == "runtime"]
-    concurrency = (
-        len(non_runtime_jobs)
-        if args.parallel == 0
-        else min(args.parallel, len(non_runtime_jobs))
-    ) if non_runtime_jobs else 0
-    runtime_concurrency = min(args.runtime_parallel, len(runtime_jobs)) if runtime_jobs else 0
-
-    mode_parts: list[str] = []
-    if non_runtime_jobs:
-        mode_parts.append(
-            "non-runtime=" + (
-                "parallel:%d" % concurrency if concurrency > 1 else "sequential"
-            )
-        )
-    if runtime_jobs:
-        mode_parts.append(
-            "runtime=" + (
-                "parallel:%d (stress)" % runtime_concurrency
-                if runtime_concurrency > 1
-                else "sequential"
-            )
-        )
-    mode = ", ".join(mode_parts) or "sequential"
+    (
+        non_runtime_jobs,
+        concurrency,
+        runtime_jobs,
+        runtime_concurrency,
+        mode,
+    ) = eval_job_concurrency(jobs, args.parallel, args.runtime_parallel)
     skill_ablation_jobs = sum(1 for case, _ in jobs if case.get("_skill_owned"))
     print(
         "Running %d Loom live behavioral eval run(s) (%d case(s) x %d iteration(s)) via %s "
