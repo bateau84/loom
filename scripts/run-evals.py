@@ -1638,7 +1638,7 @@ def run_case(
             # the later tool-registry preflight here; the runtime case's required
             # loom_* actions are the authoritative registration evidence.
             config_root=ROOT if case["execution"] == "runtime" and args.target_transport == "opencode" else None,
-            expected_plugin=None,
+            expected_plugin="loom" if case["execution"] == "runtime" and args.target_transport == "opencode" else None,
             timeout=args.timeout_seconds,
             container_timeout=args.container_timeout,
             mount_node_modules=case["execution"] == "runtime",
