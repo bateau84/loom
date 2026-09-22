@@ -1,12 +1,13 @@
 import { YAML } from "bun"
 import { createHash } from "node:crypto"
-import { lstat, mkdir, readFile, realpath, writeFile } from "node:fs/promises"
+import { link, lstat, mkdir, readFile, realpath, unlink, writeFile } from "node:fs/promises"
 import { dirname, extname, isAbsolute, relative, resolve } from "node:path"
 
 export const EPHEMERAL_REPORT_ROOT = "ephemeral-reports"
 export const DURABLE_REPORT_ROOT = "docs/reports"
 
 const MAX_REPORT_BYTES = 2 * 1024 * 1024
+
 export type ReportPromotionInput = {
   source: string
   destination: string
@@ -27,6 +28,17 @@ export type ReportPromotionRecord = {
   bytes?: number
   authority: "unchanged"
   error?: string
+  recovered?: boolean
+}
+
+export type PreparedReportPromotion = {
+  source: string
+  destination: string
+  reason: string
+  bytes: Buffer
+  sha256: string
+  destinationPath: string
+  temporaryPath: string
 }
 
 function normalizeProjectPath(raw: string, label: string) {
@@ -118,7 +130,71 @@ async function ensureSafeDirectory(root: string, relativePath: string) {
   return current
 }
 
-export async function promoteReport(projectDirectory: string, input: ReportPromotionInput) {
+async function resolveDestination(projectRoot: string, destination: string, create: boolean) {
+  if (!pathUnder(destination, DURABLE_REPORT_ROOT)) {
+    throw new Error(`Report destination must be under ${DURABLE_REPORT_ROOT}/.`)
+  }
+
+  if (create) await ensureSafeDirectory(projectRoot, DURABLE_REPORT_ROOT)
+
+  let durableRoot: string
+  try {
+    durableRoot = await existingDirectory(projectRoot, DURABLE_REPORT_ROOT, "Durable report root")
+  } catch (error: any) {
+    if (!create && error?.code === "ENOENT") {
+      return {
+        durableRoot: resolve(projectRoot, DURABLE_REPORT_ROOT),
+        destinationPath: resolve(projectRoot, destination),
+      }
+    }
+    throw error
+  }
+
+  const destinationRelative = destination.slice(DURABLE_REPORT_ROOT.length).replace(/^\//, "")
+  const destinationParentRelative = dirname(destinationRelative) === "." ? "" : dirname(destinationRelative)
+  const destinationParent = destinationParentRelative
+    ? create
+      ? await ensureSafeDirectory(durableRoot, destinationParentRelative)
+      : resolve(durableRoot, destinationParentRelative)
+    : durableRoot
+  const destinationPath = resolve(destinationParent, destination.split("/").at(-1)!)
+
+  if (!pathInside(durableRoot, destinationPath)) {
+    throw new Error("Report destination resolves outside the durable report root.")
+  }
+
+  if (!create && destinationParentRelative) {
+    try {
+      const actualParent = await realpath(destinationParent)
+      if (!pathInside(durableRoot, actualParent)) {
+        throw new Error("Report destination resolves outside the durable report root.")
+      }
+    } catch (error: any) {
+      if (error?.code !== "ENOENT") throw error
+    }
+  }
+
+  return { durableRoot, destinationPath }
+}
+
+async function exists(path: string) {
+  try {
+    return await lstat(path)
+  } catch (error: any) {
+    if (error?.code === "ENOENT") return undefined
+    throw error
+  }
+}
+
+function temporaryPathFor(destinationPath: string, promotionId: string) {
+  return `${destinationPath}.loom-promote-${promotionId}.tmp`
+}
+
+export async function prepareReportPromotion(
+  projectDirectory: string,
+  input: ReportPromotionInput,
+  promotionId: string,
+): Promise<PreparedReportPromotion> {
   const projectRoot = await realpath(projectDirectory)
   const source = normalizeProjectPath(input.source, "Report source")
   const destination = normalizeProjectPath(input.destination, "Report destination")
@@ -154,36 +230,124 @@ export async function promoteReport(projectDirectory: string, input: ReportPromo
   if (bytes.includes(0)) throw new Error("Report must be text Markdown.")
   reportFrontmatter(bytes.toString("utf8"))
 
-  await ensureSafeDirectory(projectRoot, DURABLE_REPORT_ROOT)
-  const destinationRelative = destination.slice(DURABLE_REPORT_ROOT.length).replace(/^\//, "")
-  const destinationParentRelative = dirname(destinationRelative) === "." ? "" : dirname(destinationRelative)
-  const durableRoot = await existingDirectory(projectRoot, DURABLE_REPORT_ROOT, "Durable report root")
-  const destinationParent = destinationParentRelative
-    ? await ensureSafeDirectory(durableRoot, destinationParentRelative)
-    : durableRoot
-  const destinationPath = resolve(destinationParent, destination.split("/").at(-1)!)
-
-  if (!pathInside(durableRoot, destinationPath)) {
-    throw new Error("Report destination resolves outside the durable report root.")
+  const { destinationPath } = await resolveDestination(projectRoot, destination, true)
+  if (await exists(destinationPath)) {
+    throw new Error("Report destination already exists; promotion never overwrites durable reports.")
   }
 
+  return {
+    source,
+    destination,
+    reason,
+    bytes,
+    sha256: createHash("sha256").update(bytes).digest("hex"),
+    destinationPath,
+    temporaryPath: temporaryPathFor(destinationPath, promotionId),
+  }
+}
+
+export async function publishPreparedReport(prepared: PreparedReportPromotion) {
+  await writeFile(prepared.temporaryPath, prepared.bytes, { flag: "wx" })
+
   try {
-    await writeFile(destinationPath, bytes, { flag: "wx" })
+    await link(prepared.temporaryPath, prepared.destinationPath)
   } catch (error: any) {
+    await unlink(prepared.temporaryPath).catch(() => {})
     if (error?.code === "EEXIST") {
       throw new Error("Report destination already exists; promotion never overwrites durable reports.")
     }
     throw error
   }
 
+  await unlink(prepared.temporaryPath).catch(() => {})
+
   return {
     promoted: true,
-    source,
-    destination,
+    source: prepared.source,
+    destination: prepared.destination,
     sourceRetained: true,
-    bytes: bytes.byteLength,
-    sha256: createHash("sha256").update(bytes).digest("hex"),
-    reason,
-    authority: "unchanged",
+    bytes: prepared.bytes.byteLength,
+    sha256: prepared.sha256,
+    reason: prepared.reason,
+    authority: "unchanged" as const,
+  }
+}
+
+export async function reconcilePendingReportPromotion(
+  projectDirectory: string,
+  record: ReportPromotionRecord,
+) {
+  if (record.status !== "pending") return record
+  if (!record.sha256 || typeof record.bytes !== "number") {
+    return {
+      ...record,
+      status: "failed" as const,
+      failedAt: new Date().toISOString(),
+      error: "Pending promotion lacks expected content hash/size and cannot be recovered safely.",
+    }
+  }
+
+  const projectRoot = await realpath(projectDirectory)
+  const destination = normalizeProjectPath(record.destination, "Report destination")
+  const { durableRoot, destinationPath } = await resolveDestination(projectRoot, destination, false)
+  const temporaryPath = temporaryPathFor(destinationPath, record.id)
+  const info = await exists(destinationPath)
+
+  if (!info) {
+    await unlink(temporaryPath).catch(() => {})
+    return {
+      ...record,
+      status: "failed" as const,
+      failedAt: new Date().toISOString(),
+      error: "Interrupted before atomic report publication; safe to retry promotion.",
+    }
+  }
+
+  if (info.isSymbolicLink() || !info.isFile()) {
+    return {
+      ...record,
+      status: "failed" as const,
+      failedAt: new Date().toISOString(),
+      error: "Published report path is not a regular file; manual reconciliation required.",
+    }
+  }
+
+  const actual = await realpath(destinationPath)
+  if (!pathInside(durableRoot, actual)) {
+    return {
+      ...record,
+      status: "failed" as const,
+      failedAt: new Date().toISOString(),
+      error: "Published report resolves outside durable report storage; manual reconciliation required.",
+    }
+  }
+
+  if (info.size > MAX_REPORT_BYTES) {
+    return {
+      ...record,
+      status: "failed" as const,
+      failedAt: new Date().toISOString(),
+      error: "Published report size differs from pending audit record; manual reconciliation required.",
+    }
+  }
+
+  const bytes = await readFile(actual)
+  const sha256 = createHash("sha256").update(bytes).digest("hex")
+  if (bytes.byteLength !== record.bytes || sha256 !== record.sha256) {
+    return {
+      ...record,
+      status: "failed" as const,
+      failedAt: new Date().toISOString(),
+      error: "Published report content differs from pending audit record; manual reconciliation required.",
+    }
+  }
+
+  await unlink(temporaryPath).catch(() => {})
+  return {
+    ...record,
+    status: "completed" as const,
+    promotedAt: new Date().toISOString(),
+    recovered: true,
+    error: undefined,
   }
 }
