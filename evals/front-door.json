@@ -379,6 +379,74 @@
       "must_not": [
         "Must not skip the accepted Anchor required for Objective or claim the commitment accepts unspecified scope."
       ]
+    },
+    {
+      "id": "STATUS-PREVIEW-01",
+      "agent": "general",
+      "execution": "runtime",
+      "requirements": [
+        "BR-001",
+        "BR-018"
+      ],
+      "prompt": "The Anchor at docs/anchors/status-preview/anchor.md is already accepted. Start and route that Loom workflow, then show me its current Loom status now.",
+      "trap": "Make interactive status depend on OpenCode Desktop, browser.preview, or model-written presentation prose instead of Loom's deterministic dashboard path.",
+      "expectations": [
+        "Starts and routes the accepted Anchor through the real Loom runtime using either native loom_* calls or the equivalent Code Mode tools.loom.code.* surface, then inspects the resulting workflow status.",
+        "Treats interactive presentation as dashboard-owned and independent of whether the model repeats a presentation URL in prose.",
+        "Does not require OpenCode Desktop or tools.browser.preview for normal workflow-status viewing."
+      ],
+      "must_not": [
+        "Must not search the shell or filesystem for a Loom executable after the OpenCode Loom tool surfaces are available.",
+        "Must not invoke tools.browser.preview merely because optional Desktop preview metadata exists.",
+        "Must not claim the interactive view requires OpenCode Desktop or a model-generated link."
+      ],
+      "actions": {
+        "any_of": [
+          [
+            {
+              "tool": "loom_start"
+            },
+            {
+              "tool": "execute",
+              "arg": "code",
+              "contains": "tools.loom.code.start"
+            }
+          ],
+          [
+            {
+              "tool": "loom_status"
+            },
+            {
+              "tool": "execute",
+              "arg": "code",
+              "contains": "tools.loom.code.status"
+            }
+          ]
+        ],
+        "forbids": [
+          {
+            "tool": "shell",
+            "arg": "command",
+            "contains": "command -v loom"
+          },
+          {
+            "tool": "shell",
+            "arg": "command",
+            "contains": "which loom"
+          },
+          {
+            "tool": "execute",
+            "arg": "code",
+            "contains": "tools.browser.preview"
+          }
+        ]
+      },
+      "fixture_files": [
+        {
+          "path": "docs/anchors/status-preview/anchor.md",
+          "content": "---\ntype: anchor\ntitle: Status Preview Eval\ndescription: Minimal accepted Anchor for proving Loom status presentation behavior.\ntags: [anchor, eval]\n---\n\n**Status:** accepted\n\n## Goal\n\nExercise Loom's normal workflow-status presentation path without changing product semantics.\n\n## Acceptance Criteria\n\n1. The workflow can start and route normally.\n2. The user can inspect the current Loom workflow status.\n"
+        }
+      ]
     }
   ]
 }

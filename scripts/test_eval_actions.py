@@ -1383,6 +1383,18 @@ class ActionAssertionTests(unittest.TestCase):
 
 
 class ConversationCompositionTests(unittest.TestCase):
+    def test_newer_main_status_case_and_conversation_navigation_survive(self):
+        suite = json.loads((RUN_EVALS.ROOT / "evals" / "front-door.json").read_text())
+        cases = {case["id"]: case for case in suite["cases"]}
+        self.assertTrue({"INTENT-01", "INTENT-02", "INTENT-03", "AUTONOMY-01", "AUTONOMY-02", "ROUTING-01", "OQ-ROUTE-01", "STATUS-PREVIEW-01"}.issubset(cases))
+        status = cases["STATUS-PREVIEW-01"]
+        self.assertEqual(status["execution"], "runtime")
+        self.assertEqual(len(status["actions"]["any_of"]), 2)
+        self.assertEqual(status["fixture_files"][0]["path"], "docs/anchors/status-preview/anchor.md")
+        self.assertTrue(any(item.get("contains") == "tools.browser.preview" for item in status["actions"]["forbids"]))
+        index = (RUN_EVALS.ROOT / "docs" / "architecture" / "loom" / "index.md").read_text()
+        self.assertIn("decisions/conversation-primary-agent.md", index)
+
     def test_default_excludes_expensive_suite_but_explicit_selection_includes_it(self):
         cases = RUN_EVALS.load_cases()
         ids = {case["id"] for case in cases}
