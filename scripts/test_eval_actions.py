@@ -89,6 +89,39 @@ class RuntimeEvalProjectTests(unittest.TestCase):
             import shutil
             shutil.rmtree(temp, ignore_errors=True)
 
+    def test_runtime_agent_eval_installs_production_subagents(self):
+        runtime_case = next(
+            case
+            for case in RUN_EVALS.load_cases()
+            if case["id"] == "CONVERSATION-02"
+        )
+        decision_case = next(
+            case
+            for case in RUN_EVALS.load_cases()
+            if case["id"] == "CONVERSATION-03"
+        )
+
+        runtime_temp, runtime_target, _ = RUN_EVALS.setup_projects(runtime_case)
+        decision_temp, decision_target, _ = RUN_EVALS.setup_projects(decision_case)
+        try:
+            runtime_agents = runtime_target / ".opencode" / "agents"
+            decision_agents = decision_target / ".opencode" / "agents"
+
+            self.assertTrue((runtime_agents / "research.md").is_file())
+            self.assertTrue((runtime_agents / "diagnostic.md").is_file())
+            self.assertTrue((runtime_agents / "brainstorm.md").is_file())
+            self.assertTrue((runtime_agents / "general.md").is_file())
+
+            # Role-decision tests remain isolated from actual subagent execution.
+            self.assertEqual(
+                sorted(path.name for path in decision_agents.iterdir()),
+                ["general.md"],
+            )
+        finally:
+            import shutil
+            shutil.rmtree(runtime_temp, ignore_errors=True)
+            shutil.rmtree(decision_temp, ignore_errors=True)
+
     def test_mutating_report_eval_is_rw_but_normal_runtime_eval_stays_ro(self):
         promoting = next(
             case
