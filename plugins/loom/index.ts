@@ -718,7 +718,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           workflow,
           questions,
           work,
-          workflow ? dashboardWorkflowUrl(runtime, workflow.id) : undefined,
+          workflow ? await dashboardWorkflowUrl(runtime, workflow.id) : undefined,
         )
       },
     })
