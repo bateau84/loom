@@ -7,22 +7,39 @@ tags: [flow, loom, product, autonomy]
 
 # Autonomous Product Workflow
 
+## Conversation before execution
+
+Conversation is the outer loop. Explanation, sparring, deep dives, research, diagnosis, inspection, focused review, and bounded problem-solving may complete without any durable workflow state.
+
+The transition is:
+
+```text
+conversation
+  -> optional Research / Diagnostic investigation
+  -> execution commitment
+  -> Task / Change / Objective
+```
+
+Execution commitment means the user asks Loom to carry out tracked/governed work: mutate/fix/apply/build/ship an outcome, or explicitly requests governed verification/investigation whose findings must be tracked, preserved, or independently verified.
+
 ## Proportional paths
 
-Loom starts with the smallest workflow that can safely finish the current request. Complexity discovered later may deepen the path; possible future complexity does not.
+After that boundary, Loom starts with the smallest workflow that can safely finish the committed work. Complexity discovered later may deepen the path; possible future complexity does not.
 
 ### Task
 
-For bounded testing, debugging, inspection, focused review, mechanical edits, and small fixes:
+For bounded committed execution such as small fixes, mechanical edits, or explicitly governed/tracked verification and investigation:
 
 ```text
-clear bounded request
+clear bounded execution commitment
   -> Diagnostic and/or Research only when actually needed
-  -> if read-only: Reviewer task verification -> done
+  -> if governed read-only: Reviewer task verification -> done
   -> if mutation requested: Worker -> Reviewer implementation/verification -> done
 ```
 
-A Task does not require a new Anchor. It may use an existing accepted Anchor when relevant, otherwise it starts as a bounded request workflow. Read-only work uses `implementationRequested=false` and does not create a Worker/write-scope obligation.
+A conversational debug/research/review request does not become a Task merely because it is bounded. A Task exists only after the execution boundary is crossed.
+
+A Task does not require a new Anchor. It may use an existing accepted Anchor when relevant, otherwise it starts as a bounded request workflow. Governed read-only work uses `implementationRequested=false` and does not create a Worker/write-scope obligation.
 
 ### Change
 
@@ -89,6 +106,8 @@ Start shallow. Stay shallow for obvious bounded findings. A completed Task may e
 
 ## Intent boundary
 
-Before the Anchor is accepted, the user is in the loop because Loom is discovering what product they want.
+Conversation precedes execution. Mentioning an idea, asking for alternatives, requesting a deep dive, asking for diagnosis, or requesting findings does not by itself create a workflow or Anchor.
 
-After acceptance, ordinary expertise-solvable work proceeds autonomously. Product intent is not repeatedly reopened without new material evidence.
+When the user clearly asks Loom to carry out the outcome, Loom crosses into governed execution. Bounded work may start as request-backed Task/Change without a new Anchor when no new product authority is required. Broad/new product work still requires accepted product authority before Objective execution.
+
+After execution authority is established, ordinary expertise-solvable work proceeds autonomously. Product intent is not repeatedly reopened without new material evidence.
