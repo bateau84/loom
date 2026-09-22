@@ -486,6 +486,51 @@ describe("Loom registered plugin boundary", () => {
     }
   })
 
+  test("concurrent promotions to one destination serialize to one durable winner", async () => {
+    const sourceBody = `---
+type: report critic
+title: Concurrent Promotion
+description: Report used to verify one-winner promotion serialization.
+tags: [report, critic, concurrency]
+---
+
+# Concurrent Promotion
+
+Verdict: retained
+`
+
+    const { root, callObserved, durableStorage, restore } = await harness(async (_storage, root) => {
+      await mkdir(join(root, "ephemeral-reports", "critic"), { recursive: true })
+      await writeFile(join(root, "ephemeral-reports", "critic", "concurrent.md"), sourceBody)
+    })
+
+    try {
+      const input = {
+        source: "ephemeral-reports/critic/concurrent.md",
+        destination: "docs/reports/critic/concurrent.md",
+        reason: "Retain concurrency evidence.",
+      }
+      const results = await Promise.allSettled([
+        callObserved("report_promote", input, "general", "general-a", "promotion-a"),
+        callObserved("report_promote", input, "general", "general-b", "promotion-b"),
+      ])
+
+      expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1)
+      expect(results.filter((result) => result.status === "rejected")).toHaveLength(1)
+      expect(
+        await readFile(join(root, "docs", "reports", "critic", "concurrent.md"), "utf8"),
+      ).toBe(sourceBody)
+
+      const promotions = (await durableStorage.scan({ prefix: "report-promotion/", limit: 100 })).entries
+        .map((entry: any) => entry.value)
+        .filter((value: any) => value?.destination === "docs/reports/critic/concurrent.md")
+      expect(promotions.filter((value: any) => value.status === "completed")).toHaveLength(1)
+      expect(promotions.filter((value: any) => value.status === "failed")).toHaveLength(1)
+    } finally {
+      restore()
+    }
+  })
+
   test("startup reconciles a report published before its pending audit could finalize", async () => {
     const sourceBody = `---
 type: report critic
