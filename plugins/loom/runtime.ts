@@ -49,13 +49,31 @@ const GLOBAL_PREFIXES = ["installation/", "episode/", "heuristic/"]
 export const RUNTIME_BASELINE_VERSION = 1
 export const RUNTIME_STATE_VERSION = 1
 
+export type RuntimeUpgradePhase =
+  | "canonical-upgrade"
+  | "late-plugin-import"
+  | "legacy-session-import"
+
+export type RuntimeUpgradeContext = {
+  readonly fromVersion: number
+  readonly toVersion: number
+  readonly phase: RuntimeUpgradePhase
+}
+
 export type RuntimeUpgradeStep = {
   id: string
   fromVersion: number
   toVersion: number
-  apply: (
+  applyInstallation?: (
     storage: RawStorage,
     runtime: LoomRuntimeIdentity,
+    context: RuntimeUpgradeContext,
+  ) => Promise<Record<string, unknown> | void>
+  applyProject?: (
+    storage: RawStorage,
+    projectId: string,
+    runtime: LoomRuntimeIdentity,
+    context: RuntimeUpgradeContext,
   ) => Promise<Record<string, unknown> | void>
 }
 
@@ -324,6 +342,10 @@ async function withRuntimeLockPaths<T>(
   runtime: LoomRuntimeIdentity,
   lockPaths: string[],
   fn: () => Promise<T>,
+  options: {
+    enforceRuntimeVersion?: boolean
+    expectedRuntimeVersion?: number
+  } = {},
 ): Promise<T> {
   const releases: Array<() => Promise<void>> = []
 
@@ -332,7 +354,16 @@ async function withRuntimeLockPaths<T>(
       releases.push(await acquireFlock(lockPath))
     }
     const store = transactionalStores.get(runtime.stateRoot)
-    return store?.transaction ? await store.transaction(fn) : await fn()
+    const execute = async () => {
+      if (options.enforceRuntimeVersion !== false && store) {
+        await assertRuntimeStateVersion(
+          store,
+          options.expectedRuntimeVersion ?? RUNTIME_STATE_VERSION,
+        )
+      }
+      return fn()
+    }
+    return store?.transaction ? await store.transaction(execute) : await execute()
   } finally {
     let releaseError: unknown
     for (const release of releases.reverse()) {
@@ -372,7 +403,7 @@ export async function withInstallationRuntimeLock<T>(
     aggregate,
     `${sha256(resourceIdentity)}.lock`,
   )
-  return withRuntimeLockPaths(runtime, [lockPath], fn)
+  return withRuntimeLockPaths(runtime, [lockPath], fn, { enforceRuntimeVersion: false })
 }
 
 export async function withRuntimeLock<T>(
@@ -397,6 +428,155 @@ function validateRuntimeSchemaRecord(value: unknown): RuntimeSchemaRecordV1 {
   return value as RuntimeSchemaRecordV1
 }
 
+export async function assertRuntimeStateVersion(
+  storage: RawStorage,
+  expectedVersion = RUNTIME_STATE_VERSION,
+): Promise<RuntimeSchemaRecordV1> {
+  const value = await storage.get("installation/runtime-schema")
+  if (value === undefined) throw new Error("Loom runtime schema is not initialized.")
+  const record = validateRuntimeSchemaRecord(value)
+  if (record.currentVersion !== expectedVersion) {
+    throw new Error(
+      `Loom runtime state version ${record.currentVersion} does not match this running build (${expectedVersion}). Restart OpenCode with the current Loom version before accessing mutable runtime state.`,
+    )
+  }
+  return record
+}
+
+async function scanAllKeys(storage: RawStorage, prefix: string) {
+  const keys: string[] = []
+  let after: string | undefined
+  do {
+    const page = await storage.scan({ prefix, limit: 1000, ...(after ? { after } : {}) })
+    for (const entry of page.entries ?? []) {
+      if (typeof entry?.key === "string") keys.push(entry.key)
+    }
+    after = page.next
+  } while (after)
+  return keys
+}
+
+async function runtimeProjectIds(storage: RawStorage, runtime: LoomRuntimeIdentity) {
+  const ids = new Set<string>([runtime.projectId])
+  for (const key of await scanAllKeys(storage, "installation/projects/")) {
+    const projectId = key.slice("installation/projects/".length).split("/")[0]
+    if (projectId) ids.add(projectId)
+  }
+  for (const key of await scanAllKeys(storage, PROJECT_PREFIX)) {
+    const projectId = key.slice(PROJECT_PREFIX.length).split("/")[0]
+    if (projectId) ids.add(projectId)
+  }
+  return [...ids].sort()
+}
+
+async function storageTransaction<T>(storage: RawStorage, fn: () => Promise<T>): Promise<T> {
+  return storage.transaction ? storage.transaction(fn) : fn()
+}
+
+function isInstallationUpgradeKey(key: string) {
+  return GLOBAL_PREFIXES.some((prefix) => key.startsWith(prefix))
+}
+
+function isRuntimeUpgradeControlKey(key: string) {
+  return (
+    key === "installation/runtime-schema" ||
+    key.startsWith("installation/runtime-schema/") ||
+    key === "installation/runtime-upgrades" ||
+    key.startsWith("installation/runtime-upgrades/")
+  )
+}
+
+function createInstallationUpgradeStorage(raw: RawStorage): RawStorage {
+  const requireGlobal = (key: string) => {
+    if (!isInstallationUpgradeKey(key)) {
+      throw new Error(
+        `Installation runtime upgrade may not access project-scoped key: ${key}`,
+      )
+    }
+    if (isRuntimeUpgradeControlKey(key)) {
+      throw new Error(
+        `Installation runtime upgrade may not access framework-owned runtime upgrade metadata: ${key}`,
+      )
+    }
+    return key
+  }
+
+  const scanVisible = async (input: { prefix: string; limit?: number; after?: string }) => {
+    const prefix = requireGlobal(input.prefix)
+    const limit = Math.max(1, Math.min(input.limit ?? 100, 1000))
+    const visible: Array<{ key: string; value: unknown }> = []
+    let after = input.after
+
+    do {
+      const page = await raw.scan({
+        prefix,
+        limit: 1000,
+        ...(after ? { after } : {}),
+      })
+      for (const entry of page.entries ?? []) {
+        if (
+          !entry ||
+          typeof entry.key !== "string" ||
+          isRuntimeUpgradeControlKey(entry.key)
+        ) {
+          continue
+        }
+        visible.push(entry)
+        if (visible.length > limit) {
+          return {
+            entries: visible.slice(0, limit),
+            next: visible[limit - 1]?.key,
+          }
+        }
+      }
+      after = page.next
+    } while (after)
+
+    return { entries: visible, next: undefined }
+  }
+
+  const storage: RawStorage = {
+    get(key) {
+      return raw.get(requireGlobal(key))
+    },
+    set(key, value) {
+      return raw.set(requireGlobal(key), value)
+    },
+    scan(input) {
+      return scanVisible(input)
+    },
+  }
+  if (raw.transaction) storage.transaction = (fn) => raw.transaction!(fn)
+  return storage
+}
+
+function createProjectUpgradeStorage(raw: RawStorage, projectId: string): RawStorage {
+  const qualify = (key: string) => {
+    if (
+      key.startsWith(PROJECT_PREFIX) ||
+      GLOBAL_PREFIXES.some((prefix) => key.startsWith(prefix))
+    ) {
+      throw new Error(
+        `Project runtime upgrade for ${projectId} may not escape its project namespace: ${key}`,
+      )
+    }
+    return `${PROJECT_PREFIX}${projectId}/${key}`
+  }
+  const storage: RawStorage = {
+    get(key) {
+      return raw.get(qualify(key))
+    },
+    set(key, value) {
+      return raw.set(qualify(key), value)
+    },
+    scan(input) {
+      return raw.scan({ ...input, prefix: qualify(input.prefix) })
+    },
+  }
+  if (raw.transaction) storage.transaction = (fn) => raw.transaction!(fn)
+  return storage
+}
+
 export async function ensureRuntimeStateVersion(
   storage: RawStorage,
   runtime: LoomRuntimeIdentity,
@@ -416,20 +596,18 @@ export async function ensureRuntimeStateVersion(
 
   return withInstallationRuntimeLock(runtime, "migration", "runtime-state-version", async () => {
     const key = "installation/runtime-schema"
-    const existing = await storage.get(key)
-    let record: RuntimeSchemaRecordV1
-
-    if (existing === undefined) {
-      record = {
+    let record = await storageTransaction(storage, async () => {
+      const existing = await storage.get(key)
+      if (existing !== undefined) return validateRuntimeSchemaRecord(existing)
+      const initialized: RuntimeSchemaRecordV1 = {
         schemaVersion: 1,
         currentVersion: RUNTIME_BASELINE_VERSION,
         initializedAt: now.toISOString(),
         updatedAt: now.toISOString(),
       }
-      await storage.set(key, record)
-    } else {
-      record = validateRuntimeSchemaRecord(existing)
-    }
+      await storage.set(key, initialized)
+      return initialized
+    })
 
     if (record.currentVersion > targetVersion) {
       throw new Error(
@@ -443,7 +621,8 @@ export async function ensureRuntimeStateVersion(
         !step.id ||
         !Number.isSafeInteger(step.fromVersion) ||
         !Number.isSafeInteger(step.toVersion) ||
-        step.toVersion <= step.fromVersion
+        step.toVersion <= step.fromVersion ||
+        (typeof step.applyInstallation !== "function" && typeof step.applyProject !== "function")
       ) {
         throw new Error(`Invalid Loom runtime upgrade step: ${step.id || "<unnamed>"}`)
       }
@@ -461,39 +640,77 @@ export async function ensureRuntimeStateVersion(
         )
       }
 
-      const receiptKey =
-        `installation/runtime-upgrades/${step.fromVersion}-${step.toVersion}/${sha256(step.id)}`
-      const priorReceipt = (await storage.get(receiptKey)) as RuntimeUpgradeReceiptV1 | undefined
-      let details: Record<string, unknown> | undefined
+      record = await storageTransaction(storage, async () => {
+        const current = validateRuntimeSchemaRecord(await storage.get(key))
+        if (current.currentVersion !== step.fromVersion) {
+          throw new Error(
+            `Loom runtime upgrade ${step.id} expected version ${step.fromVersion}, found ${current.currentVersion}.`,
+          )
+        }
 
-      if (
-        priorReceipt?.schemaVersion === 1 &&
-        priorReceipt.upgradeId === step.id &&
-        priorReceipt.fromVersion === step.fromVersion &&
-        priorReceipt.toVersion === step.toVersion
-      ) {
-        details = priorReceipt.details
-      } else {
-        details = (await step.apply(storage, runtime)) ?? undefined
+        const receiptKey =
+          `installation/runtime-upgrades/${step.fromVersion}-${step.toVersion}/${sha256(step.id)}`
+        const priorReceipt = (await storage.get(receiptKey)) as RuntimeUpgradeReceiptV1 | undefined
+        if (
+          priorReceipt?.schemaVersion === 1 &&
+          priorReceipt.upgradeId === step.id &&
+          priorReceipt.fromVersion === step.fromVersion &&
+          priorReceipt.toVersion === step.toVersion
+        ) {
+          throw new Error(
+            `Loom runtime upgrade receipt ${step.id} exists without its schema-version advance; refusing potentially partial migration state.`,
+          )
+        }
+
+        const context: RuntimeUpgradeContext = Object.freeze({
+          fromVersion: step.fromVersion,
+          toVersion: step.toVersion,
+          phase: "canonical-upgrade",
+        })
+        const details: Record<string, unknown> = {}
+        if (step.applyInstallation) {
+          const installationDetails = await step.applyInstallation(
+            createInstallationUpgradeStorage(storage),
+            runtime,
+            context,
+          )
+          if (installationDetails) details.installation = installationDetails
+        }
+        if (step.applyProject) {
+          const projectIds = await runtimeProjectIds(storage, runtime)
+          const projectDetails: Record<string, unknown> = {}
+          for (const projectId of projectIds) {
+            const result = await step.applyProject(
+              createProjectUpgradeStorage(storage, projectId),
+              projectId,
+              runtime,
+              context,
+            )
+            if (result) projectDetails[projectId] = result
+          }
+          details.projectIds = projectIds
+          if (Object.keys(projectDetails).length > 0) details.projects = projectDetails
+        }
+
         await storage.set(receiptKey, {
           schemaVersion: 1,
           upgradeId: step.id,
           fromVersion: step.fromVersion,
           toVersion: step.toVersion,
           completedAt: now.toISOString(),
-          ...(details ? { details } : {}),
+          ...(Object.keys(details).length > 0 ? { details } : {}),
         } satisfies RuntimeUpgradeReceiptV1)
-      }
 
-      record = {
-        ...record,
-        currentVersion: step.toVersion,
-        updatedAt: now.toISOString(),
-        lastUpgradeId: step.id,
-      }
-      await storage.set(key, record)
+        const next: RuntimeSchemaRecordV1 = {
+          ...current,
+          currentVersion: step.toVersion,
+          updatedAt: now.toISOString(),
+          lastUpgradeId: step.id,
+        }
+        await storage.set(key, next)
+        return next
+      })
     }
-
     return record
   })
 }
@@ -621,20 +838,47 @@ function scopedKey(projectId: string, key: string) {
   return `project/${projectId}/${key}`
 }
 
-export function createProjectStorage(raw: RawStorage, projectId: string): RawStorage {
+export function createProjectStorage(
+  raw: RawStorage,
+  projectId: string,
+  options: { expectedRuntimeVersion?: number } = {},
+): RawStorage {
+  const expectedVersion = options.expectedRuntimeVersion
+  const assertVersion = async () => {
+    if (expectedVersion !== undefined) {
+      await assertRuntimeStateVersion(raw, expectedVersion)
+    }
+  }
+
+  const fencedTransaction = <T>(fn: () => Promise<T>) =>
+    expectedVersion !== undefined && raw.transaction ? raw.transaction(fn) : fn()
+
   const scoped: RawStorage = {
-    get(key) {
-      return raw.get(scopedKey(projectId, key))
+    async get(key) {
+      return fencedTransaction(async () => {
+        await assertVersion()
+        return raw.get(scopedKey(projectId, key))
+      })
     },
-    set(key, value) {
-      return raw.set(scopedKey(projectId, key), value)
+    async set(key, value) {
+      return fencedTransaction(async () => {
+        await assertVersion()
+        return raw.set(scopedKey(projectId, key), value)
+      })
     },
-    scan(input) {
-      return raw.scan({ ...input, prefix: scopedKey(projectId, input.prefix) })
+    async scan(input) {
+      return fencedTransaction(async () => {
+        await assertVersion()
+        return raw.scan({ ...input, prefix: scopedKey(projectId, input.prefix) })
+      })
     },
   }
   if (raw.transaction) {
-    scoped.transaction = (fn) => raw.transaction!(fn)
+    scoped.transaction = (fn) =>
+      raw.transaction!(async () => {
+        await assertVersion()
+        return fn()
+      })
   }
   return scoped
 }
@@ -895,33 +1139,183 @@ async function copyStoragePrefix(
   return copied
 }
 
+function runtimeUpgradePath(
+  steps: RuntimeUpgradeStep[],
+  fromVersion: number,
+  targetVersion: number,
+): RuntimeUpgradeStep[] {
+  const byFrom = new Map<number, RuntimeUpgradeStep>()
+  for (const step of steps) {
+    if (
+      !step.id ||
+      !Number.isSafeInteger(step.fromVersion) ||
+      !Number.isSafeInteger(step.toVersion) ||
+      step.toVersion <= step.fromVersion ||
+      (typeof step.applyInstallation !== "function" && typeof step.applyProject !== "function")
+    ) {
+      throw new Error(`Invalid Loom runtime upgrade step: ${step.id || "<unnamed>"}`)
+    }
+    if (byFrom.has(step.fromVersion)) {
+      throw new Error(`Multiple Loom runtime upgrades start at version ${step.fromVersion}.`)
+    }
+    byFrom.set(step.fromVersion, step)
+  }
+
+  const path: RuntimeUpgradeStep[] = []
+  let version = fromVersion
+  while (version < targetVersion) {
+    const step = byFrom.get(version)
+    if (!step || step.toVersion > targetVersion) {
+      throw new Error(
+        `No Loom runtime upgrade path from version ${version} to ${targetVersion}.`,
+      )
+    }
+    path.push(step)
+    version = step.toVersion
+  }
+  return path
+}
+
+async function upgradeLateLegacyImport(
+  target: RawStorage,
+  runtime: LoomRuntimeIdentity,
+  targetVersion: number,
+  steps: RuntimeUpgradeStep[],
+) {
+  if (targetVersion <= RUNTIME_BASELINE_VERSION) return [] as string[]
+
+  const applied: string[] = []
+  for (const step of runtimeUpgradePath(steps, RUNTIME_BASELINE_VERSION, targetVersion)) {
+    const context: RuntimeUpgradeContext = Object.freeze({
+      fromVersion: step.fromVersion,
+      toVersion: step.toVersion,
+      phase: "late-plugin-import",
+    })
+    if (step.applyInstallation) {
+      await step.applyInstallation(
+        createInstallationUpgradeStorage(target),
+        runtime,
+        context,
+      )
+    }
+    if (step.applyProject) {
+      await step.applyProject(
+        createProjectUpgradeStorage(target, runtime.projectId),
+        runtime.projectId,
+        runtime,
+        context,
+      )
+    }
+    applied.push(step.id)
+  }
+  return applied
+}
+
+function createScopedProjectUpgradeStorage(scoped: RawStorage, projectId: string): RawStorage {
+  const requireLocal = (key: string) => {
+    if (
+      key.startsWith(PROJECT_PREFIX) ||
+      GLOBAL_PREFIXES.some((prefix) => key.startsWith(prefix))
+    ) {
+      throw new Error(
+        `Project runtime upgrade for ${projectId} may not escape its project namespace: ${key}`,
+      )
+    }
+    return key
+  }
+  const storage: RawStorage = {
+    get(key) {
+      return scoped.get(requireLocal(key))
+    },
+    set(key, value) {
+      return scoped.set(requireLocal(key), value)
+    },
+    scan(input) {
+      return scoped.scan({ ...input, prefix: requireLocal(input.prefix) })
+    },
+  }
+  if (scoped.transaction) storage.transaction = (fn) => scoped.transaction!(fn)
+  return storage
+}
+
+async function upgradeLegacySessionImport(
+  scoped: RawStorage,
+  runtime: LoomRuntimeIdentity,
+  targetVersion: number,
+  steps: RuntimeUpgradeStep[],
+) {
+  if (targetVersion <= RUNTIME_BASELINE_VERSION) return [] as string[]
+
+  const applied: string[] = []
+  const projectStorage = createScopedProjectUpgradeStorage(scoped, runtime.projectId)
+  for (const step of runtimeUpgradePath(steps, RUNTIME_BASELINE_VERSION, targetVersion)) {
+    const context: RuntimeUpgradeContext = Object.freeze({
+      fromVersion: step.fromVersion,
+      toVersion: step.toVersion,
+      phase: "legacy-session-import",
+    })
+    if (step.applyProject) {
+      await step.applyProject(projectStorage, runtime.projectId, runtime, context)
+    }
+    applied.push(step.id)
+  }
+  return applied
+}
+
 export async function importLegacyPluginStorage(
   source: RawStorage,
   target: RawStorage,
   runtime: LoomRuntimeIdentity,
+  options: {
+    targetVersion?: number
+    steps?: RuntimeUpgradeStep[]
+  } = {},
 ): Promise<number> {
   const markerKey = `installation/plugin-storage-import-v1/${runtime.projectId}`
   if (await target.get(markerKey)) return 0
 
-  return withRuntimeLock(runtime, "migration", "plugin-storage-import-v1", async () => {
-    if (await target.get(markerKey)) return 0
-    let copied = 0
-    copied += await copyStoragePrefix(source, target, `project/${runtime.projectId}/`)
-    copied += await copyStoragePrefix(source, target, "episode/")
-    copied += await copyStoragePrefix(source, target, "heuristic/")
-    await target.set(markerKey, {
-      schemaVersion: 1,
-      projectId: runtime.projectId,
-      importedAt: new Date().toISOString(),
-      copied,
-    })
-    return copied
-  })
+  return withInstallationRuntimeLock(
+    runtime,
+    "migration",
+    "plugin-storage-import-v1",
+    async () => {
+      const targetVersion = options.targetVersion ?? RUNTIME_STATE_VERSION
+      const schema = await assertRuntimeStateVersion(target, targetVersion)
+      if (await target.get(markerKey)) return 0
+
+      let copied = 0
+      copied += await copyStoragePrefix(source, target, `project/${runtime.projectId}/`)
+      copied += await copyStoragePrefix(source, target, "episode/")
+      copied += await copyStoragePrefix(source, target, "heuristic/")
+
+      const appliedUpgradeIds =
+        copied > 0
+          ? await upgradeLateLegacyImport(
+              target,
+              runtime,
+              schema.currentVersion,
+              options.steps ?? RUNTIME_UPGRADE_STEPS,
+            )
+          : []
+
+      await target.set(markerKey, {
+        schemaVersion: 1,
+        projectId: runtime.projectId,
+        importedAt: new Date().toISOString(),
+        copied,
+        sourceRuntimeVersion: RUNTIME_BASELINE_VERSION,
+        targetRuntimeVersion: schema.currentVersion,
+        appliedUpgradeIds,
+      })
+      return copied
+    },
+  )
 }
 
 export type LegacyMigrationProvenance =
   | "project-epoch"
   | "opencode-session-continuity"
+  | "canonical-workflow"
 
 export type LegacySessionResumeProof = {
   kind: "opencode-host-session"
@@ -935,6 +1329,7 @@ export type LegacyMigrationResult = {
   intentId?: string
   migratedKeys: number
   provenance?: LegacyMigrationProvenance
+  appliedUpgradeIds?: string[]
 }
 
 async function copyLegacyKey(
@@ -1024,8 +1419,12 @@ async function recordLegacySessionReconciliation(
   input: {
     sessionId: string
     sessionProjectId: string
+    provenance: Extract<LegacyMigrationProvenance, "opencode-session-continuity" | "canonical-workflow">
     workflowId?: string
     intentId?: string
+    sourceRuntimeVersion?: number
+    targetRuntimeVersion?: number
+    appliedUpgradeIds?: string[]
   },
 ) {
   const now = new Date().toISOString()
@@ -1036,10 +1435,19 @@ async function recordLegacySessionReconciliation(
       upgradeId: "legacy-session-v0-to-runtime-v1",
       projectId: runtime.projectId,
       sessionIdHash: sha256(input.sessionId),
-      openCodeProjectId: input.sessionProjectId,
+      ...(input.sessionProjectId ? { openCodeProjectId: input.sessionProjectId } : {}),
       ...(input.workflowId ? { workflowId: input.workflowId } : {}),
       ...(input.intentId ? { intentId: input.intentId } : {}),
-      provenance: "opencode-session-continuity",
+      provenance: input.provenance,
+      ...(input.sourceRuntimeVersion !== undefined
+        ? { sourceRuntimeVersion: input.sourceRuntimeVersion }
+        : {}),
+      ...(input.targetRuntimeVersion !== undefined
+        ? { targetRuntimeVersion: input.targetRuntimeVersion }
+        : {}),
+      ...(input.appliedUpgradeIds?.length
+        ? { appliedUpgradeIds: input.appliedUpgradeIds }
+        : {}),
       reconciledAt: now,
     },
   )
@@ -1050,7 +1458,7 @@ async function recordLegacySessionReconciliation(
     await legacy.set(refusalKey, {
       ...(priorRefusal as Record<string, unknown>),
       resolvedAt: now,
-      resolution: "opencode-session-continuity",
+      resolution: input.provenance,
     })
   }
 }
@@ -1065,6 +1473,10 @@ export async function migrateLegacySessionState(
     currentProjectId: string
     resumeProof?: LegacySessionResumeProof
   },
+  options: {
+    targetVersion?: number
+    steps?: RuntimeUpgradeStep[]
+  } = {},
 ): Promise<LegacyMigrationResult> {
   const sessionKey = `session/${input.sessionId}`
   const sessionIntentKey = `session-intent/${input.sessionId}`
@@ -1084,16 +1496,47 @@ export async function migrateLegacySessionState(
     }
   }
 
-  if (input.sessionProjectId !== input.currentProjectId) {
+  if (
+    input.sessionProjectId.length > 0 &&
+    input.currentProjectId.length > 0 &&
+    input.sessionProjectId !== input.currentProjectId
+  ) {
     const reason =
       "OpenCode session project does not match the current plugin location; legacy ownership is ambiguous."
     await recordMigrationRefusal(raw, runtime, input.sessionId, reason)
     throw new Error(`Legacy Loom migration refused: ${reason}`)
   }
 
-  const legacyWorkflowForProvenance = hasLegacyWorkflow
-    ? await raw.get(`workflow/${legacyWorkflowId}`)
-    : undefined
+  const canonicalWorkflowId =
+    typeof scopedWorkflowId === "string" && scopedWorkflowId.length > 0
+      ? scopedWorkflowId
+      : undefined
+  const canonicalIntentId =
+    typeof scopedIntentId === "string" && scopedIntentId.length > 0
+      ? scopedIntentId
+      : undefined
+
+  // Canonical Loom state outranks compatibility storage after a controlled rebind.
+  // Legacy data may only complete missing pieces when it still names the same
+  // canonical workflow. A stale different workflow/intent is historical only.
+  if (
+    canonicalWorkflowId &&
+    (!hasLegacyWorkflow || legacyWorkflowId !== canonicalWorkflowId)
+  ) {
+    return {
+      status: "already-scoped",
+      workflowId: canonicalWorkflowId,
+      ...(canonicalIntentId ? { intentId: canonicalIntentId } : {}),
+      migratedKeys: 0,
+    }
+  }
+
+  const [legacyWorkflowForProvenance, canonicalWorkflowForProvenance] = hasLegacyWorkflow
+    ? await Promise.all([
+        raw.get(`workflow/${legacyWorkflowId}`),
+        scoped.get(`workflow/${legacyWorkflowId}`),
+      ])
+    : [undefined, undefined]
   if (hasLegacyWorkflow && (!legacyWorkflowForProvenance || typeof legacyWorkflowForProvenance !== "object")) {
     const reason = "legacy session is bound to a missing workflow record."
     await recordMigrationRefusal(raw, runtime, input.sessionId, reason)
@@ -1105,6 +1548,11 @@ export async function migrateLegacySessionState(
       ? (legacyWorkflowForProvenance as any).projectId
       : undefined
 
+  const canonicalProjectId =
+    canonicalWorkflowForProvenance && typeof canonicalWorkflowForProvenance === "object"
+      ? (canonicalWorkflowForProvenance as any).projectId
+      : undefined
+
   let provenance: LegacyMigrationProvenance
   if (explicitLegacyProjectId === runtime.projectId) {
     provenance = "project-epoch"
@@ -1112,179 +1560,245 @@ export async function migrateLegacySessionState(
     const reason = "legacy workflow explicitly belongs to another project epoch."
     await recordMigrationRefusal(raw, runtime, input.sessionId, reason)
     throw new Error(`Legacy Loom migration refused: ${reason}`)
+  } else if (canonicalProjectId === runtime.projectId) {
+    provenance = "canonical-workflow"
+  } else if (canonicalProjectId !== undefined) {
+    const reason = "canonical workflow belongs to another project epoch."
+    await recordMigrationRefusal(raw, runtime, input.sessionId, reason)
+    throw new Error(`Legacy Loom migration refused: ${reason}`)
   } else if (validHostSessionResumeProof(input)) {
     provenance = "opencode-session-continuity"
   } else {
     const reason = hasLegacyWorkflow
-      ? "legacy workflow predates durable project epochs and has no unambiguous project provenance or exact resumed-session continuity proof."
+      ? "legacy workflow predates durable project epochs and has no unambiguous project provenance, admitted canonical workflow, or exact resumed-session continuity proof."
       : "legacy intent predates durable project epochs and has no exact resumed-session continuity proof."
     await recordMigrationRefusal(raw, runtime, input.sessionId, reason)
     throw new Error(`Legacy Loom migration refused: ${reason}`)
   }
 
-  let migratedKeys = 0
-  let migratedIntentId = typeof scopedIntentId === "string" ? scopedIntentId : undefined
-
-  if (scopedIntentId === undefined && hasLegacyIntent) {
-    const intent = await raw.get(`intent/${legacyIntentId}`)
-    if (intent !== undefined) {
-      if ((await scoped.get(`intent/${legacyIntentId}`)) === undefined) {
-        await scoped.set(`intent/${legacyIntentId}`, intent)
-        migratedKeys++
-      }
-      await scoped.set(sessionIntentKey, legacyIntentId)
-      migratedKeys++
-      migratedIntentId = legacyIntentId
-    }
-  }
-
-  let migratedWorkflowId = typeof scopedWorkflowId === "string" ? scopedWorkflowId : undefined
-  let objectiveId: string | undefined
-
-  if (scopedWorkflowId === undefined && hasLegacyWorkflow) {
-    const result = await withRuntimeLock(runtime, "workflow", legacyWorkflowId, async () => {
-      const currentScopedSession = await scoped.get(sessionKey)
-      if (typeof currentScopedSession === "string") {
-        return { workflowId: currentScopedSession, copied: 0, objectiveId: undefined as string | undefined }
-      }
-
-      const currentLegacyWorkflowId = await raw.get(sessionKey)
-      if (currentLegacyWorkflowId !== legacyWorkflowId) {
-        throw new Error("Legacy Loom migration refused: session workflow binding changed during migration.")
-      }
-
-      const legacyWorkflow = await raw.get(`workflow/${legacyWorkflowId}`)
-      if (!legacyWorkflow || typeof legacyWorkflow !== "object") {
-        throw new Error("Legacy Loom migration refused: bound workflow record is missing.")
-      }
-
-      const legacyProjectId = (legacyWorkflow as any).projectId
-      if (legacyProjectId !== undefined && legacyProjectId !== runtime.projectId) {
-        const reason = "legacy workflow explicitly belongs to another project epoch."
-        await recordMigrationRefusal(raw, runtime, input.sessionId, reason)
-        throw new Error(`Legacy Loom migration refused: ${reason}`)
-      }
-
-      let copied = 0
-      let workflow = await scoped.get(`workflow/${legacyWorkflowId}`)
-      if (workflow === undefined) {
-        const legacyRevision = (legacyWorkflow as any).revision
-        workflow = {
-          ...(legacyWorkflow as Record<string, unknown>),
-          projectId: runtime.projectId,
-          revision:
-            Number.isSafeInteger(legacyRevision) && legacyRevision >= 0
-              ? legacyRevision
-              : 0,
-        }
-        await scoped.set(`workflow/${legacyWorkflowId}`, workflow)
-        copied++
-      }
-
-      await scoped.set(sessionKey, legacyWorkflowId)
-      copied++
-
-      for (const key of [
-        `budget/${legacyWorkflowId}`,
-        `limits/${legacyWorkflowId}`,
-        `acceptance/${legacyWorkflowId}`,
-        `knowledge/${legacyWorkflowId}`,
-        `oq-index/${legacyWorkflowId}`,
-        `session-step/${input.sessionId}`,
-      ]) {
-        const result = await copyLegacyKey(raw, scoped, key)
-        if (result.copied) copied++
-      }
-
-      const questionEntries = await copyLegacyPrefix(raw, scoped, `oq/${legacyWorkflowId}/`)
-      const scopeEntries = await copyLegacyPrefix(raw, scoped, `scope/${legacyWorkflowId}/`)
-      const stepEvidenceEntries = await copyLegacyPrefix(
-        raw,
-        scoped,
-        `evidence-step/${legacyWorkflowId}/`,
-      )
-      const sessionEvidenceEntries = await copyLegacyPrefix(
-        raw,
-        scoped,
-        `evidence-session/${input.sessionId}/`,
-      )
-      const claimEntries = await copyLegacyPrefix(
-        raw,
-        scoped,
-        `evidence-claim/${legacyWorkflowId}/`,
-      )
-
-      copied += [...questionEntries, ...scopeEntries, ...stepEvidenceEntries, ...sessionEvidenceEntries, ...claimEntries]
-        .filter((entry) => entry.copied).length
-
-      const evidenceIds = new Set<string>()
-      for (const entry of [...stepEvidenceEntries, ...sessionEvidenceEntries]) {
-        if (typeof entry.value === "string") evidenceIds.add(entry.value)
-      }
-      for (const evidenceId of evidenceIds) {
-        const evidence = await copyLegacyKey(raw, scoped, `evidence/${evidenceId}`)
-        if (evidence.copied) copied++
-      }
-
-      for (const entry of claimEntries) {
-        const claimId =
-          entry.value && typeof entry.value === "object"
-            ? (entry.value as any).id
-            : undefined
-        if (typeof claimId !== "string") continue
-        const claimIndex = await copyLegacyKey(raw, scoped, `evidence-claim-id/${claimId}`)
-        if (claimIndex.copied) copied++
-      }
-
-      const workId =
-        workflow && typeof workflow === "object"
-          ? (workflow as any).work?.objectiveId
-          : undefined
-
-      return {
-        workflowId: legacyWorkflowId,
-        copied,
-        objectiveId: typeof workId === "string" ? workId : undefined,
-      }
+  const targetVersion = options.targetVersion ?? RUNTIME_STATE_VERSION
+  const migrationWorkflowRecord =
+    canonicalWorkflowForProvenance && typeof canonicalWorkflowForProvenance === "object"
+      ? canonicalWorkflowForProvenance
+      : legacyWorkflowForProvenance
+  const migrationObjectiveId =
+    migrationWorkflowRecord && typeof migrationWorkflowRecord === "object"
+      ? (migrationWorkflowRecord as any).work?.objectiveId
+      : undefined
+  const migrationResources: RuntimeLockResource[] = []
+  if (hasLegacyWorkflow) {
+    migrationResources.push({
+      aggregate: "workflow",
+      resourceIdentity: String(legacyWorkflowId),
     })
-
-    migratedWorkflowId = result.workflowId
-    migratedKeys += result.copied
-    objectiveId = result.objectiveId
+  }
+  if (typeof migrationObjectiveId === "string") {
+    migrationResources.push({
+      aggregate: "work",
+      resourceIdentity: migrationObjectiveId,
+    })
   }
 
-  if (!objectiveId && migratedWorkflowId) {
-    const scopedWorkflow = await scoped.get(`workflow/${migratedWorkflowId}`)
-    const resumedWorkId =
-      scopedWorkflow && typeof scopedWorkflow === "object"
-        ? (scopedWorkflow as any).work?.objectiveId
-        : undefined
-    if (typeof resumedWorkId === "string") objectiveId = resumedWorkId
-  }
+  return withRuntimeLockPaths(
+    runtime,
+    migrationResources.map((resource) => runtimeLockPath(runtime, resource)),
+    async () => {
+    const currentCanonicalBinding = await scoped.get(sessionKey)
+    if (
+      typeof currentCanonicalBinding === "string" &&
+      (!hasLegacyWorkflow || currentCanonicalBinding !== legacyWorkflowId)
+    ) {
+      const currentIntent = await scoped.get(sessionIntentKey)
+      return {
+        status: "already-scoped" as const,
+        workflowId: currentCanonicalBinding,
+        ...(typeof currentIntent === "string" && currentIntent.length > 0
+          ? { intentId: currentIntent }
+          : {}),
+        migratedKeys: 0,
+      }
+    }
 
-  if (objectiveId) {
-    await withRuntimeLock(runtime, "work", objectiveId, async () => {
+    let migratedKeys = 0
+    let migratedIntentId = typeof scopedIntentId === "string" ? scopedIntentId : undefined
+    
+    if (scopedIntentId === undefined && hasLegacyIntent) {
+      const intent = await raw.get(`intent/${legacyIntentId}`)
+      if (intent !== undefined) {
+        if ((await scoped.get(`intent/${legacyIntentId}`)) === undefined) {
+          await scoped.set(`intent/${legacyIntentId}`, intent)
+          migratedKeys++
+        }
+        await scoped.set(sessionIntentKey, legacyIntentId)
+        migratedKeys++
+        migratedIntentId = legacyIntentId
+      }
+    }
+    
+    let migratedWorkflowId = typeof scopedWorkflowId === "string" ? scopedWorkflowId : undefined
+    let objectiveId: string | undefined
+    
+    if (scopedWorkflowId === undefined && hasLegacyWorkflow) {
+      const result = await (async () => {
+        const currentScopedSession = await scoped.get(sessionKey)
+        if (typeof currentScopedSession === "string") {
+          return { workflowId: currentScopedSession, copied: 0, objectiveId: undefined as string | undefined }
+        }
+    
+        const currentLegacyWorkflowId = await raw.get(sessionKey)
+        if (currentLegacyWorkflowId !== legacyWorkflowId) {
+          throw new Error("Legacy Loom migration refused: session workflow binding changed during migration.")
+        }
+    
+        const legacyWorkflow = await raw.get(`workflow/${legacyWorkflowId}`)
+        if (!legacyWorkflow || typeof legacyWorkflow !== "object") {
+          throw new Error("Legacy Loom migration refused: bound workflow record is missing.")
+        }
+    
+        const legacyProjectId = (legacyWorkflow as any).projectId
+        if (legacyProjectId !== undefined && legacyProjectId !== runtime.projectId) {
+          const reason = "legacy workflow explicitly belongs to another project epoch."
+          await recordMigrationRefusal(raw, runtime, input.sessionId, reason)
+          throw new Error(`Legacy Loom migration refused: ${reason}`)
+        }
+    
+        let copied = 0
+        let workflow = await scoped.get(`workflow/${legacyWorkflowId}`)
+        if (workflow === undefined) {
+          const legacyRevision = (legacyWorkflow as any).revision
+          workflow = {
+            ...(legacyWorkflow as Record<string, unknown>),
+            projectId: runtime.projectId,
+            revision:
+              Number.isSafeInteger(legacyRevision) && legacyRevision >= 0
+                ? legacyRevision
+                : 0,
+          }
+          await scoped.set(`workflow/${legacyWorkflowId}`, workflow)
+          copied++
+        }
+    
+        await scoped.set(sessionKey, legacyWorkflowId)
+        copied++
+    
+        for (const key of [
+          `budget/${legacyWorkflowId}`,
+          `limits/${legacyWorkflowId}`,
+          `acceptance/${legacyWorkflowId}`,
+          `knowledge/${legacyWorkflowId}`,
+          `oq-index/${legacyWorkflowId}`,
+          `session-step/${input.sessionId}`,
+        ]) {
+          const result = await copyLegacyKey(raw, scoped, key)
+          if (result.copied) copied++
+        }
+    
+        const questionEntries = await copyLegacyPrefix(raw, scoped, `oq/${legacyWorkflowId}/`)
+        const scopeEntries = await copyLegacyPrefix(raw, scoped, `scope/${legacyWorkflowId}/`)
+        const stepEvidenceEntries = await copyLegacyPrefix(
+          raw,
+          scoped,
+          `evidence-step/${legacyWorkflowId}/`,
+        )
+        const sessionEvidenceEntries = await copyLegacyPrefix(
+          raw,
+          scoped,
+          `evidence-session/${input.sessionId}/`,
+        )
+        const claimEntries = await copyLegacyPrefix(
+          raw,
+          scoped,
+          `evidence-claim/${legacyWorkflowId}/`,
+        )
+    
+        copied += [...questionEntries, ...scopeEntries, ...stepEvidenceEntries, ...sessionEvidenceEntries, ...claimEntries]
+          .filter((entry) => entry.copied).length
+    
+        const evidenceIds = new Set<string>()
+        for (const entry of [...stepEvidenceEntries, ...sessionEvidenceEntries]) {
+          if (typeof entry.value === "string") evidenceIds.add(entry.value)
+        }
+        for (const evidenceId of evidenceIds) {
+          const evidence = await copyLegacyKey(raw, scoped, `evidence/${evidenceId}`)
+          if (evidence.copied) copied++
+        }
+    
+        for (const entry of claimEntries) {
+          const claimId =
+            entry.value && typeof entry.value === "object"
+              ? (entry.value as any).id
+              : undefined
+          if (typeof claimId !== "string") continue
+          const claimIndex = await copyLegacyKey(raw, scoped, `evidence-claim-id/${claimId}`)
+          if (claimIndex.copied) copied++
+        }
+    
+        const workId =
+          workflow && typeof workflow === "object"
+            ? (workflow as any).work?.objectiveId
+            : undefined
+    
+        return {
+          workflowId: legacyWorkflowId,
+          copied,
+          objectiveId: typeof workId === "string" ? workId : undefined,
+        }
+      })()
+    
+      migratedWorkflowId = result.workflowId
+      migratedKeys += result.copied
+      objectiveId = result.objectiveId
+    }
+    
+    if (!objectiveId && migratedWorkflowId) {
+      const scopedWorkflow = await scoped.get(`workflow/${migratedWorkflowId}`)
+      const resumedWorkId =
+        scopedWorkflow && typeof scopedWorkflow === "object"
+          ? (scopedWorkflow as any).work?.objectiveId
+          : undefined
+      if (typeof resumedWorkId === "string") objectiveId = resumedWorkId
+    }
+    
+    if (objectiveId) {
       const work = await copyLegacyKey(raw, scoped, `work/${encodeURIComponent(objectiveId)}`)
       if (work.copied) migratedKeys++
-    })
-  }
-
-  if (provenance === "opencode-session-continuity") {
-    await recordLegacySessionReconciliation(raw, scoped, runtime, {
-      sessionId: input.sessionId,
-      sessionProjectId: input.sessionProjectId,
+    }
+    
+    let appliedUpgradeIds: string[] = []
+    if (migratedKeys > 0 && targetVersion > RUNTIME_BASELINE_VERSION) {
+      const schema = await assertRuntimeStateVersion(scoped, targetVersion)
+      appliedUpgradeIds = await upgradeLegacySessionImport(
+        scoped,
+        runtime,
+        schema.currentVersion,
+        options.steps ?? RUNTIME_UPGRADE_STEPS,
+      )
+    }
+    
+    if (provenance === "opencode-session-continuity" || provenance === "canonical-workflow") {
+      await recordLegacySessionReconciliation(raw, scoped, runtime, {
+        sessionId: input.sessionId,
+        sessionProjectId: input.sessionProjectId,
+        provenance,
+        ...(migratedWorkflowId ? { workflowId: migratedWorkflowId } : {}),
+        ...(migratedIntentId ? { intentId: migratedIntentId } : {}),
+        sourceRuntimeVersion: RUNTIME_BASELINE_VERSION,
+        targetRuntimeVersion: targetVersion,
+        appliedUpgradeIds,
+      })
+    }
+    
+    return {
+      status: migratedKeys > 0 ? "migrated" : "already-scoped",
       ...(migratedWorkflowId ? { workflowId: migratedWorkflowId } : {}),
       ...(migratedIntentId ? { intentId: migratedIntentId } : {}),
-    })
-  }
-
-  return {
-    status: migratedKeys > 0 ? "migrated" : "already-scoped",
-    ...(migratedWorkflowId ? { workflowId: migratedWorkflowId } : {}),
-    ...(migratedIntentId ? { intentId: migratedIntentId } : {}),
-    migratedKeys,
-    provenance,
-  }
+      migratedKeys,
+      provenance,
+      ...(appliedUpgradeIds.length ? { appliedUpgradeIds } : {}),
+    }
+    },
+    { expectedRuntimeVersion: targetVersion },
+  )
 }
 
 

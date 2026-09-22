@@ -1,5 +1,5 @@
 import { readFile, writeFile } from "node:fs/promises"
-import { createTransactionalStorage, resolveRuntimeIdentity, withRuntimeLock, withRuntimeLocks, type RawStorage } from "./runtime"
+import { createProjectStorage, createTransactionalStorage, ensureRuntimeStateVersion, resolveRuntimeIdentity, withRuntimeLock, withRuntimeLocks, type RawStorage } from "./runtime"
 
 class ProcessStorage implements RawStorage {
   async get(_key: string) { return undefined }
@@ -42,12 +42,76 @@ if (mode === "transaction-crash") {
     throw new Error("transaction-crash mode requires workflowKey and budgetKey")
   }
   const storage = await createTransactionalStorage(runtime)
+  await ensureRuntimeStateVersion(storage, runtime)
   await withRuntimeLock(runtime, "workflow", "crash-test", async () => {
     await storage.set(workflowKey, { revision: 2, state: "after" })
     await storage.set(budgetKey, { dispatches: 2 })
     process.exit(97)
   })
   throw new Error("transaction-crash fault injection did not terminate the process")
+}
+
+if (mode === "upgrade-crash") {
+  const storage = await createTransactionalStorage(runtime)
+  await ensureRuntimeStateVersion(storage, runtime, {
+    targetVersion: 2,
+    steps: [{
+      id: "fixture-crash-v1-to-v2",
+      fromVersion: 1,
+      toVersion: 2,
+      applyProject: async (projectStorage) => {
+        await projectStorage.set("format", { version: 2 })
+        process.exit(98)
+      },
+    }],
+  })
+  throw new Error("upgrade-crash fault injection did not terminate the process")
+}
+
+if (mode === "version-skew-old") {
+  const [readyPath, upgradedPath] = args
+  if (!readyPath || !upgradedPath) throw new Error("version-skew-old requires readyPath and upgradedPath")
+  const storage = await createTransactionalStorage(runtime)
+  await ensureRuntimeStateVersion(storage, runtime, { targetVersion: 1 })
+  const scoped = createProjectStorage(storage, runtime.projectId, { expectedRuntimeVersion: 1 })
+  await writeFile(readyPath, "ready", "utf8")
+  while (true) {
+    try {
+      await readFile(upgradedPath, "utf8")
+      break
+    } catch {
+      await Bun.sleep(50)
+    }
+  }
+  try {
+    await scoped.set("workflow/version-skew", { revision: 1 })
+    throw new Error("old runtime mutation unexpectedly succeeded after upgrade")
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    if (!message.includes("does not match this running build (1)")) throw error
+    process.stdout.write(`rejected: ${message}\n`)
+    process.exit(0)
+  }
+}
+
+if (mode === "version-skew-upgrade") {
+  const [upgradedPath] = args
+  if (!upgradedPath) throw new Error("version-skew-upgrade requires upgradedPath")
+  const storage = await createTransactionalStorage(runtime)
+  await ensureRuntimeStateVersion(storage, runtime, {
+    targetVersion: 2,
+    steps: [{
+      id: "fixture-v1-to-v2",
+      fromVersion: 1,
+      toVersion: 2,
+      applyProject: async (projectStorage) => {
+        await projectStorage.set("upgrade-v2-marker", { version: 2 })
+      },
+    }],
+  })
+  await writeFile(upgradedPath, "upgraded", "utf8")
+  process.stdout.write("upgraded\n")
+  process.exit(0)
 }
 
 if (mode === "multi-lock") {

@@ -30,9 +30,9 @@ Allow several OpenCode+Loom processes and sessions to work concurrently without 
 
 Execution keys are project-scoped by default. Installation identity and cross-project learning are explicit global exceptions.
 
-Canonical execution state carries a versioned runtime-schema ledger. Future schema upgrades are ordered, idempotent and receipt-backed under the migration lock.
+Canonical execution state carries a versioned runtime-schema ledger. Future schema upgrades are ordered, idempotent and receipt-backed under the migration lock. Project-format upgrades enumerate every canonical project namespace and commit all project/installation mutations, the receipt and version advance atomically. Normal project mutations are version-fenced, so an already-running older Loom process fails closed after another process advances the shared schema and must be restarted. Late legacy plugin-state imports are treated as baseline-version input and replay the registered idempotent upgrade callbacks transactionally before becoming canonical.
 
-Legacy OpenCode plugin records are imported/migrated only when provenance is unambiguous. In-place upgrades may reconcile the exact state of a resumed OpenCode session when the host proves the same session ID and OpenCode project identity and no conflicting Loom project epoch exists. This continuity migration writes an audit receipt; path guesses and free-form confirmation never count as provenance. Other ambiguous pre-project-epoch state remains unmigrated and is reported.
+Legacy OpenCode plugin records are imported/migrated only when provenance is unambiguous. In-place upgrades may reconcile the exact state of a resumed OpenCode session when the host proves the same session ID and OpenCode project identity and no conflicting Loom project epoch exists. After that workflow is canonical in the current project epoch, additional pre-upgrade sessions with durable legacy bindings to that exact workflow may inherit the canonical workflow's project provenance even when old host project metadata is absent. Baseline-format unscoped records are upgraded through the registered project schema path before becoming canonical in a newer runtime. Each reconciliation writes an audit receipt; a different workflow, explicit project mismatch, path guess, or free-form confirmation never counts as provenance. A later canonical session rebind outranks stale compatibility bindings permanently. Other ambiguous pre-project-epoch state remains unmigrated and is reported.
 
 ## Cross-process correctness
 
@@ -57,7 +57,7 @@ The workflow is the execution-sharing compartment.
 
 Current tests cover project/path/copy/worktree identity, first-open races, crash rollback, mixed-runtime-root processes, lock ordering, wrong-project grants, legacy refusal/migration and fresh Worker/Reviewer attachment through the registered plugin tool boundary.
 
-Normal CI also starts two real headless OpenCode servers with Loom loaded and verifies independent projects/sessions sharing one Loom installation.
+Normal CI starts real headless OpenCode 2.0.12 servers with Loom loaded and verifies independent projects/sessions sharing one installation. It also persists pre-upgrade OpenCode sessions through a real host shutdown/restart, swaps the legacy Loom fixture for the current plugin, and proves the same primary and secondary session IDs reconcile their ongoing workflow after restart.
 
 ## Source
 

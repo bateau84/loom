@@ -1,5 +1,5 @@
 import type * as OpenCodePlugin from "@opencode/plugin"
-import { consumeDispatchGrantLocked, createProjectStorage, createTransactionalStorage, ensureRuntimeStateVersion, findUsableDispatchGrant, importLegacyPluginStorage, issueDispatchGrantLocked, migrateLegacySessionState, resolveRuntimeIdentity, sessionBoundToOq, sessionBoundToStep, sessionBoundToWorkflow, withRuntimeLock, withRuntimeLocks, type LoomRuntimeIdentity } from "./runtime"
+import { RUNTIME_STATE_VERSION, consumeDispatchGrantLocked, createProjectStorage, createTransactionalStorage, ensureRuntimeStateVersion, findUsableDispatchGrant, importLegacyPluginStorage, issueDispatchGrantLocked, migrateLegacySessionState, resolveRuntimeIdentity, sessionBoundToOq, sessionBoundToStep, sessionBoundToWorkflow, withRuntimeLock, withRuntimeLocks, type LoomRuntimeIdentity } from "./runtime"
 import { LoomRpc } from "./rpc"
 import { buildSidebarSnapshot } from "./sidebar"
 import { renderToolOutput } from "./presentation"
@@ -661,7 +661,9 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       lastSeenAt: new Date().toISOString(),
     })
 
-    const scopedStorage = createProjectStorage(rawStorage, runtime.projectId)
+    const scopedStorage = createProjectStorage(rawStorage, runtime.projectId, {
+      expectedRuntimeVersion: RUNTIME_STATE_VERSION,
+    })
     ctx = new Proxy(ctx, {
       get(target, property, receiver) {
         if (property === "storage") return scopedStorage

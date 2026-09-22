@@ -301,19 +301,28 @@ Migration and upgrade strategy:
 
 1. establish the current project epoch identity before any legacy lookup;
 2. initialize/validate the installation's versioned runtime-schema ledger before normal mutable execution;
-3. future canonical-store schema changes run as ordered, idempotent, transactionally recorded upgrade steps with durable receipts;
+3. future canonical-store schema changes run as ordered, idempotent upgrade steps under the installation migration guard; project-format steps are invoked by the framework for every canonical project namespace before the installation version advances; all project mutations, installation mutations, the durable receipt, and version advance share one transactional commit boundary;
 4. new writes use the scoped namespace only;
 5. reads may perform a bounded legacy lookup when the scoped record is absent;
-6. a legacy record is migrated when its project can be established unambiguously from stored workflow metadata **or** from exact resumed-session continuity supplied by the OpenCode host; canonical path alone is never sufficient proof after path reuse;
+6. a legacy record is migrated when its project can be established unambiguously from stored workflow metadata, from exact resumed-session continuity supplied by the OpenCode host, **or from an already-canonical scoped workflow for that exact legacy workflow binding**; canonical path alone is never sufficient proof after path reuse;
 7. resumed-session continuity requires the exact legacy session binding, exact resumed OpenCode session ID, matching OpenCode project identity, and no conflicting stored Loom project epoch;
-8. free-form user/model confirmation is not provenance and cannot authorize migration;
-9. migration runs under the same cross-process mutation guard as the destination aggregate;
-10. ambiguous or conflicting legacy records are reported, not merged;
-11. successful continuity reconciliation writes a durable receipt identifying the target project epoch and hashed source session;
-12. once migrated, the scoped record becomes canonical and future mutations never update the legacy execution key;
-13. migration tests include identical Anchor paths, stale/path-reuse, resumed pre-upgrade sessions, mismatched sessions, and conflicting project provenance.
+8. after one pre-epoch workflow is safely canonicalized, its scoped `projectId` is durable provenance for additional legacy sessions whose stored `session/<sessionId>` binding names that exact workflow. Missing host project metadata may then be tolerated, but an explicit host-project mismatch, a different workflow, or conflicting legacy project epoch is still refused;
+9. free-form user/model confirmation is not provenance and cannot authorize migration;
+10. pre-project-epoch unscoped records copied after the installation has advanced beyond baseline are transformed through the registered idempotent baseline→current **project** upgrade path before they become readable as canonical current-version state; copy + transform + reconciliation receipt share one canonical transaction;
+11. if a canonical scoped session binding already exists, it outranks compatibility state. Legacy data may complete missing pieces only when the legacy binding still names that same workflow; a stale legacy A binding after a controlled canonical rebind to B cannot provide provenance or import intent/work into B;
+12. migration runs under the same cross-process mutation guard as the destination aggregate;
+13. ambiguous or conflicting legacy records are reported, not merged;
+14. successful continuity/canonical-workflow reconciliation writes a durable receipt identifying the target project epoch, hashed source session, provenance kind, and any baseline→current upgrade steps applied;
+15. once migrated, the scoped record becomes canonical and future mutations never update the legacy execution key;
+16. migration tests include transactional rollback of a failed schema upgrade, all-project project-format migration, pre-project-epoch continuity into a synthetic newer schema with failed-transform rollback, a controlled A→B rebind restarted while stale legacy A remains, a live old/new process version-skew case where the old writer is fenced after upgrade, identical Anchor paths, stale/path-reuse, resumed pre-upgrade sessions, secondary legacy sessions bound to an admitted canonical workflow, unrelated workflows, mismatched sessions, conflicting project provenance, and real OpenCode stop/restart of persisted pre-upgrade sessions.
 
 Migration is a compatibility mechanism, not a permanent dual-authority mode. The runtime-schema ledger is the mechanism for future upgrades; per-session legacy reconciliation exists only where an older schema did not record enough project identity for an eager installation-wide migration.
+
+Runtime upgrade callbacks operate on migration payload, never on the framework's own control ledger. The bounded installation capability hides `installation/runtime-schema` and `installation/runtime-upgrades/*` from direct access and broad scans. The framework passes each callback explicit source/target versions and whether it is running as the canonical upgrade, a late plugin-storage import, or a legacy-session import. Canonical callbacks run before their version advance; late-import callbacks may run after the installation ledger has already advanced, so their explicit context—not the hidden ledger—defines the transformation being replayed.
+
+The installation-wide schema version is authoritative across all canonical project namespaces. A project-format step cannot advance that version after migrating only the project that happened to start Loom first: the framework enumerates persisted project registries and project namespaces and invokes the step for every one before commit. Normal project-scoped mutations are runtime-version fenced. If another process upgrades the shared store, an already-running older Loom process fails closed on its next canonical project-state access/mutation and must restart with the current build. A mutation already in flight serializes through the SQLite transaction boundary before the upgrade, so the upgrade transforms its committed old-version result rather than racing an incompatible write.
+
+Legacy OpenCode plugin storage is treated as baseline-version input even when it is discovered **after** the canonical installation has already advanced. A late legacy import copies and transforms its current project's records plus imported global learning state through the registered idempotent baseline→current callbacks inside one installation migration transaction before the import marker commits. Pre-project-epoch unscoped session continuity follows the same schema rule for project records inside its canonical migration transaction. Late-returning projects and resumed old sessions therefore cannot inject old-format records into a newer canonical store.
 
 ## Runtime failure semantics
 
