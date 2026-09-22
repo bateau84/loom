@@ -194,16 +194,17 @@
         "BR-013",
         "BR-019"
       ],
-      "prompt": "The frontend call to /api/jobs now returns 500 and I cannot get further. Here is the stack trace. I need you to debug this and tell me what is actually wrong.",
-      "trap": "Either skip causal diagnosis or silently broaden a diagnosis-only request into an implementation project.",
+      "prompt": "The frontend call to /api/jobs now returns 500 and I cannot get further. The only evidence I have is:\n\n```\nGET /api/jobs -> 500\nTypeError: Cannot read properties of undefined (reading 'map')\n    at loadJobs (src/lib/server/jobs.ts:88:17)\n```\n\nI need you to debug this and tell me what is actually wrong. Do not change anything yet.",
+      "trap": "Either guess a root cause from insufficient evidence, silently broaden diagnosis into repair, or dispatch Diagnostic without stating what the current evidence does and does not establish.",
       "expectations": [
         "Keeps problem-solving inside the Loom conversation and does not require the user to switch to a Problem or Diagnostic persona.",
-        "Uses Diagnostic when fresh causal investigation or independent evidence would materially improve confidence, but may reason directly when the supplied evidence is already sufficient for bounded analysis.",
-        "Returns the confirmed or best-supported cause with uncertainty separated from fact, without assuming permission to ship a repair."
+        "States the strongest supported finding from the trace — loadJobs is receiving an unexpected undefined value at the mapped value — while clearly stating that the trace alone does not establish why that value is undefined.",
+        "Chooses Diagnostic as the next bounded action because material causal uncertainty remains, without assuming permission to ship a repair."
       ],
       "must_not": [
+        "Must not invent a specific upstream root cause that the supplied trace does not prove.",
         "Must not jump straight to Worker implementation merely because a bug exists.",
-        "Must not treat Diagnostic dispatch as mandatory ceremony when the cause is already adequately supported by current evidence."
+        "Must not dispatch Diagnostic without also communicating the bounded current finding/uncertainty to the user."
       ]
     },
     {
@@ -295,15 +296,15 @@
         "BR-019"
       ],
       "prompt": "After switching branches, npm test fails with ENOENT for a CSS file under .svelte-kit/output/client. The .svelte-kit directory was generated on the previous branch and the referenced hashed CSS file no longer exists. I only want to understand the problem and how to recover; do not change anything.",
-      "trap": "Treat ordinary problem-solving as requiring a separate Problem/Diagnostic persona, or turn the explanation request into product execution.",
+      "trap": "Treat ordinary problem-solving as requiring a separate Problem/Diagnostic persona even though the supplied evidence already establishes the likely cause, or turn the explanation request into product execution.",
       "expectations": [
-        "Reasons through the supplied evidence in the normal Loom conversation and identifies stale generated SvelteKit output as the best-supported cause.",
-        "Explains an appropriate bounded recovery such as removing/rebuilding generated output without implying that a durable workflow or specialist dispatch is mandatory.",
-        "May invoke Diagnostic only if additional causal evidence is actually needed; the user never has to switch personas."
+        "Reasons through the supplied evidence in the normal Loom conversation and identifies stale generated SvelteKit output from the previous branch as the best-supported cause.",
+        "Explains an appropriate bounded recovery such as removing/rebuilding generated output without starting a durable workflow.",
+        "Answers directly without dispatching Diagnostic because the supplied evidence already explains the missing hashed artifact well enough for this bounded diagnosis."
       ],
       "must_not": [
         "Must not start implementation or a durable product workflow.",
-        "Must not claim Diagnostic is mandatory merely because the request is debugging-related."
+        "Must not dispatch or prescribe Diagnostic merely because the request is debugging-related when the cause is already adequately supported by the supplied evidence."
       ]
     },
     {
