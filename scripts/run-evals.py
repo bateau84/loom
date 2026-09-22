@@ -19,13 +19,6 @@ DEFAULT_IMAGES = {
     "opencode": "ghcr.io/bateau84/opencode-eval-runner@sha256:5cc9571629bfba84636d5205e04ed6a0b6cbd77369061a25ccee5377631570ae",
     "github-copilot-cli": "ghcr.io/bateau84/opencode-eval-runner@sha256:ada713db25e57a76d1e35a9bbd2c507bb2f3300c128ea44efc8b3d74d80dcdc9",
 }
-DEFAULT_SUITES = [
-    ROOT / "evals" / "authority.json",
-    ROOT / "evals" / "everyday.json",
-    ROOT / "evals" / "front-door.json",
-    ROOT / "evals" / "verification.json",
-    ROOT / "evals" / "skills.json",
-]
 PROVIDER_ENVS = ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "OPENROUTER_API_KEY")
 COPILOT_ENVS = ("COPILOT_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN")
 
@@ -138,6 +131,16 @@ permissions:
 
 Load the native skill `%s` before answering the user prompt. Apply that skill's practitioner guidance faithfully. Do not discuss the evaluation harness, grading criteria, or the fact that this is an evaluation. Do not load Reviewer/Critic companion methodology unless the user prompt itself calls for that role.
 """ % skill
+
+
+def behavioral_eval_files(evals_root: Path) -> list[Path]:
+    if not evals_root.is_dir():
+        return []
+    return sorted(
+        path
+        for path in evals_root.iterdir()
+        if path.is_file() and path.suffix == ".json"
+    )
 
 
 def load_cases(suite_paths: list[Path]) -> list[dict[str, Any]]:
@@ -1801,7 +1804,11 @@ def main() -> int:
     parser.add_argument("--list", action="store_true")
     args = parser.parse_args()
 
-    suite_paths = [Path(value).resolve() for value in args.suite] if args.suite else DEFAULT_SUITES
+    suite_paths = (
+        [Path(value).resolve() for value in args.suite]
+        if args.suite
+        else behavioral_eval_files(ROOT / "evals")
+    )
     cases = load_cases(suite_paths)
     cases.extend(load_skill_owned_cases(ROOT / "skills"))
 
