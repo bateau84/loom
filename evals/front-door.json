@@ -180,12 +180,13 @@
       "trap": "Either treat research as implementation permission, make the user manually choose Research, or answer a requested deep dive without selecting the internal research capability that should own the investigation.",
       "expectations": [
         "Treats this as conversational investigation and selects foreground Research as Loom's internal capability because the user expects the deep-dive result in the current response.",
-        "Keeps the same user-facing Loom conversation and states that Research owns the bounded repository/source investigation while Loom will integrate the returned brief.",
+        "Defines a bounded Research assignment appropriate to the request, including a few strong alternatives, meaningful trade-offs, and authoritative sourcing.",
         "Does not start durable intent/workflow state or product implementation."
       ],
       "must_not": [
         "Must not require the user to invoke Research explicitly.",
-        "Must not start product implementation, an Anchor interview, or a durable execution workflow."
+        "Must not start product implementation, an Anchor interview, or a durable execution workflow.",
+        "Must not make actual synthesis of the Research result a requirement of this routing-only case; that behavior is covered by CONVERSATION-02-SYNTH."
       ]
     },
     {
