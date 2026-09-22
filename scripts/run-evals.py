@@ -310,14 +310,21 @@ def setup_projects(case: dict[str, Any]) -> tuple[Path, Path, Path]:
 
     if case.get("_skill_owned"):
         target_agent = skill_eval_agent(str(case["skill"]))
+        (target_oc / "agents" / (case["agent"] + ".md")).write_text(target_agent, encoding="utf-8")
+    elif case["execution"] == "runtime":
+        # Runtime evals exercise the real Loom workflow, including governed
+        # subagent dispatch. Materialize the complete Loom agent set so roles
+        # such as Diagnostic and Reviewer resolve exactly as they do in normal
+        # operation; promote only the selected target agent to primary.
+        for source in sorted((ROOT / "agents").glob("*.md")):
+            agent_text = source.read_text(encoding="utf-8")
+            if source.stem == case["agent"]:
+                agent_text = promote_agent(agent_text)
+            (target_oc / "agents" / source.name).write_text(agent_text, encoding="utf-8")
     else:
         source_agent = (ROOT / "agents" / (case["agent"] + ".md")).read_text(encoding="utf-8")
-        target_agent = (
-            promote_agent(source_agent)
-            if case["execution"] == "runtime"
-            else decision_agent(source_agent, case["agent"])
-        )
-    (target_oc / "agents" / (case["agent"] + ".md")).write_text(target_agent, encoding="utf-8")
+        target_agent = decision_agent(source_agent, case["agent"])
+        (target_oc / "agents" / (case["agent"] + ".md")).write_text(target_agent, encoding="utf-8")
     (judge_oc / "agents" / "eval-judge.md").write_text(JUDGE_AGENT, encoding="utf-8")
 
     for fixture in case.get("fixture_files", []):
