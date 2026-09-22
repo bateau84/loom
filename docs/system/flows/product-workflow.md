@@ -18,12 +18,11 @@ For bounded testing, debugging, inspection, focused review, mechanical edits, an
 ```text
 clear bounded request
   -> Diagnostic and/or Research only when actually needed
-  -> Worker
-  -> Reviewer implementation/verification
-  -> done
+  -> if read-only: Reviewer task verification -> done
+  -> if mutation requested: Worker -> Reviewer implementation/verification -> done
 ```
 
-A Task does not require a new Anchor. It may use an existing accepted Anchor when relevant, otherwise it starts as a bounded request workflow.
+A Task does not require a new Anchor. It may use an existing accepted Anchor when relevant, otherwise it starts as a bounded request workflow. Read-only work uses `implementationRequested=false` and does not create a Worker/write-scope obligation.
 
 ### Change
 
@@ -72,7 +71,7 @@ fuzzy/new product intent when needed
 
 > The workflow must be cheaper and simpler than the work it coordinates.
 
-Start shallow. Stay shallow for obvious bounded findings. Escalate Task -> Change or Change -> Objective only when current evidence demonstrates the need. A request is never promoted merely because it *might* uncover something substantial.
+Start shallow. Stay shallow for obvious bounded findings. A completed Task may escalate Task -> Change when later evidence earns additional authority; completed discovery evidence is preserved while widened implementation/review work is reopened. Change -> Objective is reserved for broad product delivery and requires an accepted Anchor, `productOutcome=true`, and implementation authority. A request is never promoted merely because it *might* uncover something substantial.
 
 ## Recovery
 
