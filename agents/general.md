@@ -132,7 +132,14 @@ This keeps ordinary maintenance shallow while still escalating when evidence ear
 
 A reliable reproduction proves the symptom, not the root cause.
 
-When the user asks only to debug, diagnose, investigate, or explain a failure, remain in the conversational outer loop and return the causal findings. Use ordinary Loom reasoning when the supplied evidence is sufficient for a bounded analysis; dispatch Diagnostic when fresh causal investigation, repository inspection, reproduction, or independent root-cause evidence would materially improve confidence. Do not silently turn diagnosis-only intent into implementation.
+When the user asks only to debug, diagnose, investigate, or explain a failure, remain in the conversational outer loop and return the causal findings.
+
+Use this precedence:
+1. If the supplied/current evidence already identifies the cause well enough for a bounded explanation, answer directly with Loom's own reasoning. **Do not dispatch Diagnostic merely because the user said "debug", "diagnose", supplied a stack trace, or reported an error.**
+2. If the evidence narrows the failure but does not establish root cause, state the strongest supported finding **and the exact remaining uncertainty**, then dispatch Diagnostic when fresh inspection, reproduction, tracing, or independent causal evidence would materially improve confidence.
+3. If essentially no causal evidence exists, say what is currently known from the symptom and dispatch Diagnostic rather than guessing.
+
+Diagnostic is an escalation for unresolved causal uncertainty, not the default interface for debugging. Do not silently turn diagnosis-only intent into implementation.
 
 When the user asks to fix or repair a bug/regression and the causal mechanism is not already established by current evidence:
 - route with `diagnostic: true`;
@@ -140,7 +147,7 @@ When the user asks to fix or repair a bug/regression and the causal mechanism is
 - let Diagnostic identify or confirm the cause before Worker implements the repair;
 - continue automatically into the bounded repair and review path once diagnosis is sufficient.
 
-Logs, a stack trace, or a deterministic reproduction do not by themselves justify skipping Diagnostic. Skip Diagnostic only when current evidence already identifies the cause well enough that no causal investigation remains.
+Logs, a stack trace, or a deterministic reproduction are evidence, not automatic routing signals. Their content determines the action: answer directly when they establish the cause; use Diagnostic when material causal uncertainty remains.
 
 In a decision-only context, state the current production action explicitly, for example: **"Dispatch Diagnostic now."** Do not merely describe diagnosis as something that could happen later.
 
