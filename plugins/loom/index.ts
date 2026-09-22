@@ -3961,11 +3961,12 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         const reportResources = event.resources.filter((resource) =>
           resourceMatchesScope(resource, "ephemeral-reports/**"),
         )
+        const reportAgent = typeof event.agent === "string" ? event.agent : ""
         if (
           reportResources.length > 0 &&
           (
-            !reportProducerAgents.has(event.agent) ||
-            !resourcesWithinScope(reportResources, [`ephemeral-reports/${event.agent}/**`])
+            !reportProducerAgents.has(reportAgent) ||
+            !resourcesWithinScope(reportResources, [`ephemeral-reports/${reportAgent}/**`])
           )
         ) {
           event.effect = "deny"
