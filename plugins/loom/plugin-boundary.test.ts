@@ -603,4 +603,91 @@ describe("Loom registered plugin boundary", () => {
     }
   })
 
+
+  test("completed read-only Task may promote to an implementation Change", async () => {
+    const { call, restore } = await harness()
+    try {
+      const started = await call(
+        "start",
+        { request: "Function-test the overlay and report findings only." },
+        "general",
+        "readonly-escalation-general",
+      )
+      expect(started.error).toBeUndefined()
+      const workflowId = String(started.workflowId)
+
+      const initial = await call(
+        "route",
+        {
+          humanFacing: false,
+          behavioral: false,
+          structural: false,
+          externalUnknown: false,
+          diagnostic: false,
+          productOutcome: false,
+          implementationRequested: false,
+          executionDepth: "task",
+        },
+        "general",
+        "readonly-escalation-general",
+      )
+      expect(initial.path.map((step: { step: string }) => step.step)).toEqual(["review-task"])
+
+      const reviewGrant = await call(
+        "dispatch_grant",
+        { workflowId, stepId: "review-task" },
+        "general",
+        "readonly-escalation-general",
+      )
+      await call(
+        "attach",
+        { grantId: reviewGrant.grantId, workflowId, stepId: "review-task" },
+        "reviewer",
+        "readonly-escalation-reviewer",
+      )
+      const reviewed = await call(
+        "complete",
+        {
+          workflowId,
+          stepId: "review-task",
+          outcome: "pass",
+          summary: "Finding: shared overlay focus semantics are undefined.",
+        },
+        "reviewer",
+        "readonly-escalation-reviewer",
+      )
+      expect(reviewed.error).toBeUndefined()
+
+      const escalated = await call(
+        "route",
+        {
+          humanFacing: true,
+          behavioral: true,
+          structural: false,
+          externalUnknown: false,
+          diagnostic: false,
+          productOutcome: true,
+          implementationRequested: true,
+          executionDepth: "change",
+        },
+        "general",
+        "readonly-escalation-general",
+      )
+      expect(escalated.error).toBeUndefined()
+      expect(escalated.path.map((step: { step: string }) => step.step)).toEqual([
+        "designer",
+        "specifier",
+        "review-think",
+        "worker",
+        "review-implementation",
+      ])
+      expect(escalated.now.map((step: { step: string }) => step.step).sort()).toEqual([
+        "designer",
+        "specifier",
+      ])
+    } finally {
+      restore()
+    }
+  })
+
 })
