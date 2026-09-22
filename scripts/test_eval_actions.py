@@ -405,6 +405,27 @@ class SkillOwnedEvalDiscoveryTests(unittest.TestCase):
 
 
 
+class ActionAssertionTests(unittest.TestCase):
+    def test_boolean_action_equality_matches_exactly(self):
+        action = {
+            "tool": "subagent",
+            "args": {"agent": "research", "background": False},
+        }
+
+        self.assertTrue(
+            RUN_EVALS.action_matches(
+                action,
+                {"tool": "subagent", "arg": "background", "equals": False},
+            )
+        )
+        self.assertFalse(
+            RUN_EVALS.action_matches(
+                action,
+                {"tool": "subagent", "arg": "background", "equals": True},
+            )
+        )
+
+
 class EvidenceRedactionTests(unittest.TestCase):
     def test_redacts_environment_auth_and_database_credentials(self):
         env_secret = "sk-env-secret-123456"
