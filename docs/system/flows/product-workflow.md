@@ -10,9 +10,10 @@ tags: [flow, loom, product, autonomy]
 ## Path
 
 ```text
-fuzzy product intent
-  -> focused grilling (one question at a time)
-     + repository/research resolution where possible
+conversation
+  -> optional sparring / repository inspection / research / diagnosis
+  -> explicit execution intent
+  -> focused intent resolution only where user-owned product meaning remains
   -> proposed Anchor
   -> explicit user acceptance
   -> accepted Anchor
@@ -46,8 +47,10 @@ fuzzy product intent
 - [Knowledge and Memory](../components/knowledge-memory.md)
 
 
-## Intent boundary
+## Conversation and execution boundary
 
-Before the Anchor is accepted, the user is in the loop because Loom is discovering what product they want.
+Conversation is the outer loop. Mentioning an idea, asking for alternatives, requesting a deep dive, or asking for diagnosis does not by itself create a product workflow.
 
-After acceptance, ordinary expertise-solvable work proceeds autonomously. Product intent is not repeatedly reopened without new material evidence.
+When the user clearly asks Loom to build, implement, change, fix, ship, or otherwise carry out the discussed outcome, Loom crosses into execution. It resolves only the remaining user-owned product meaning, captures durable authority proportionately, and proceeds autonomously.
+
+After accepted execution intent exists, ordinary expertise-solvable work proceeds without user herding. The conversation remains available for interruption and refinement; affected authority and downstream work are reconciled rather than restarting the whole process.
