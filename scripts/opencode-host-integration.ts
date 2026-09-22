@@ -863,6 +863,60 @@ async function installCurrentLoomPlugin(project: string) {
   await updateProjectPluginList(project, ["./.opencode/plugins/loom"])
 }
 
+type DashboardHandle = {
+  baseUrl: string
+  proc: ReturnType<typeof Bun.spawn>
+  stdout: Promise<string>
+  stderr: Promise<string>
+}
+
+async function startDashboardProcess(sharedState: string): Promise<DashboardHandle> {
+  let port = await freePort()
+  while (port === 4318) port = await freePort()
+  const baseUrl = `http://127.0.0.1:${port}`
+  const env = processEnv({
+    XDG_STATE_HOME: sharedState,
+    LOOM_DASHBOARD_PORT: String(port),
+    LOOM_DASHBOARD_URL: undefined,
+  })
+  const proc = Bun.spawn(
+    ["bun", "dashboard/server.ts"],
+    { cwd: root, env, stdout: "pipe", stderr: "pipe" },
+  )
+  const stdout = new Response(proc.stdout).text()
+  const stderr = new Response(proc.stderr).text()
+  try {
+    await waitFor(`${baseUrl}/health`, "")
+    const endpointPath = join(sharedState, "loom", "dashboard-endpoint.json")
+    const deadline = Date.now() + 10_000
+    while (Date.now() < deadline) {
+      try {
+        const record = JSON.parse(await readFile(endpointPath, "utf8"))
+        if (record?.baseUrl === baseUrl && Date.parse(record.leaseExpiresAt) > Date.now()) {
+          return { baseUrl, proc, stdout, stderr }
+        }
+      } catch {}
+      await Bun.sleep(100)
+    }
+    throw new Error("Dashboard endpoint lease was not published")
+  } catch (error) {
+    proc.kill()
+    const logs = await Promise.all([stdout, stderr])
+    throw new Error(`${error instanceof Error ? error.message : String(error)}\nstdout:\n${logs[0]}\nstderr:\n${logs[1]}`)
+  }
+}
+
+async function stopDashboard(handle: DashboardHandle) {
+  if (handle.proc.exitCode === null) handle.proc.kill("SIGTERM")
+  await Promise.race([
+    handle.proc.exited,
+    Bun.sleep(5_000).then(() => {
+      if (handle.proc.exitCode === null) handle.proc.kill("SIGKILL")
+    }),
+  ])
+  await Promise.allSettled([handle.stdout, handle.stderr])
+}
+
 type ServerHandle = {
   project: string
   baseUrl: string
@@ -942,6 +996,7 @@ const sharedState = join(base, "shared-state")
 const runtimeA = join(base, "runtime-a")
 const runtimeB = join(base, "runtime-b")
 const servers: ServerHandle[] = []
+let dashboard: DashboardHandle | undefined
 const mock = await startMockProvider()
 
 try {
@@ -956,6 +1011,8 @@ try {
   servers.push(serverAPeer)
   const serverB = await startServer(base, projectB, sharedState, runtimeB, "server-b")
   servers.push(serverB)
+
+  dashboard = await startDashboardProcess(sharedState)
 
   const sessionA = await jsonRequestAny(
     [`${serverA.baseUrl}/api/session`, `${serverA.baseUrl}/session`],
@@ -1139,10 +1196,14 @@ try {
   const reviewerStatusUrl = reviewerOutput?.statusUrl
   if (
     typeof reviewerStatusUrl !== "string" ||
-    !reviewerStatusUrl.startsWith("http://127.0.0.1:4318/#/project/") ||
+    !reviewerStatusUrl.startsWith(`${dashboard.baseUrl}/#/project/`) ||
     !reviewerStatusUrl.endsWith(`/workflow/${encodeURIComponent(String(mock.state.workflowId))}`)
   ) {
-    throw new Error(`Reviewer sidebar did not expose the stable dashboard workflow URL: ${String(reviewerStatusUrl)}`)
+    throw new Error(`Reviewer sidebar did not expose the active dashboard workflow URL: ${String(reviewerStatusUrl)}`)
+  }
+  const dashboardReachability = await fetch(reviewerStatusUrl)
+  if (!dashboardReachability.ok) {
+    throw new Error(`Sidebar dashboard URL did not reach the running dashboard: ${dashboardReachability.status}`)
   }
 
   const runtimeRecord = JSON.parse(
@@ -1177,7 +1238,7 @@ try {
   const projectedA = fleet.projects.find((project) => project.canonicalLocation === projectA)
   if (!projectedA) throw new Error("Dashboard fleet did not include project A")
   const expectedReviewerStatusUrl =
-    `http://127.0.0.1:4318/#/project/${encodeURIComponent(projectedA.projectId)}/workflow/${encodeURIComponent(String(mock.state.workflowId))}`
+    `${dashboard.baseUrl}/#/project/${encodeURIComponent(projectedA.projectId)}/workflow/${encodeURIComponent(String(mock.state.workflowId))}`
   if (reviewerStatusUrl !== expectedReviewerStatusUrl) {
     throw new Error(
       `Reviewer sidebar dashboard URL did not match the projected project/workflow identity: ${reviewerStatusUrl} !== ${expectedReviewerStatusUrl}`,
@@ -1238,7 +1299,7 @@ try {
   console.log(` - workflow: ${mock.state.workflowId}`)
   console.log(` - worker/reviewer attached: ${mock.state.workerAttached}/${mock.state.reviewerAttached}`)
   console.log(` - peer-process review completed + observed by origin: ${mock.state.reviewerCompleted}/${mock.state.generalSawPeerReviewComplete}`)
-  console.log(` - stable dashboard workflow URL from sidebar: ${reviewerStatusUrl}`)
+  console.log(` - shared non-default dashboard endpoint reached from sidebar: ${reviewerStatusUrl}`)
   console.log(` - disconnected browser degraded cleanly: ${mock.state.statusPreviewFallbackObserved}`)
   console.log(` - native Loom tool guidance reached provider context: ${mock.state.sawNativeLoomToolGuidance}`)
   console.log(` - Loom Code Mode mirrors discoverable: ${mock.state.codeModeLoomSearchObserved}`)
@@ -1252,6 +1313,7 @@ try {
   console.log(` - resumed session IDs: ${upgradePrimary.id}, ${upgradeSecondary.id}`)
 } finally {
   await Promise.allSettled(servers.map(stop))
+  if (dashboard) await stopDashboard(dashboard)
   mock.server.stop(true)
   await rm(base, { recursive: true, force: true })
 }
