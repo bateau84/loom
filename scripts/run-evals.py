@@ -656,6 +656,16 @@ def case_workspace_mode(case: dict[str, Any]) -> str:
     return "rw" if "loom_report_promote" in required_tools else "ro"
 
 
+def case_target_timeout_seconds(case: dict[str, Any], default: int) -> int:
+    value = case.get("target_timeout_seconds")
+    return int(value) if value is not None else default
+
+
+def case_target_container_timeout(case: dict[str, Any], default: int, target_timeout: int) -> int:
+    # The outer runner/container envelope must outlive the target command.
+    return max(default, target_timeout + 60)
+
+
 def image_for_transport(args: argparse.Namespace, transport: str) -> str:
     if args.image:
         return args.image
@@ -1640,6 +1650,12 @@ def run_case(
             f"({args.target_transport}, {args.model}) ...",
             flush=True,
         )
+        target_timeout = case_target_timeout_seconds(case, args.timeout_seconds)
+        target_container_timeout = case_target_container_timeout(
+            case,
+            args.container_timeout,
+            target_timeout,
+        )
         target_started = time.perf_counter()
         target = invoke_container(
             engine=engine,
@@ -1656,8 +1672,8 @@ def run_case(
             database_seed=database_seed,
             config_root=ROOT if case["execution"] == "runtime" and args.target_transport == "opencode" else None,
             expected_plugin="loom" if case["execution"] == "runtime" and args.target_transport == "opencode" else None,
-            timeout=args.timeout_seconds,
-            container_timeout=args.container_timeout,
+            timeout=target_timeout,
+            container_timeout=target_container_timeout,
             mount_node_modules=case["execution"] == "runtime",
             workspace_mode=case_workspace_mode(case),
             extra_envs=args.env,
