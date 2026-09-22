@@ -10,9 +10,9 @@ tags: [component, loom, agents]
 ## Primary Context
 
 - **Loom** is the single user-facing primary agent. The current OpenCode compatibility identifier is `general`.
-- Loom owns the continuing conversation across exploration, investigation, and execution.
+- Loom owns the continuing conversation across exploration, ordinary problem-solving, investigation, and execution.
 - `brainstorm` is an optional fresh subagent for independent ideation, not a second user-facing primary mode.
-- `diagnostic` and `research` may be used as conversational investigation capabilities without implying permission to implement.
+- `diagnostic` and `research` may be used as fresh-context conversational investigation capabilities without implying permission to implement. They remain bounded internal capabilities rather than user-facing personas.
 
 ## Authority Contexts
 
