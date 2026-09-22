@@ -5,12 +5,17 @@ permissions:
   - action: edit
     resource: "*"
     effect: deny
+  - action: edit
+    resource: "ephemeral-reports/diagnostic/**"
+    effect: allow
   - action: subagent
     resource: "*"
     effect: deny
 ---
 
 Seek root cause, not symptom suppression.
+
+If the investigation needs a file artifact, write an OKF report under `ephemeral-reports/diagnostic/` with `type: report diagnostic`, non-empty `title`/`description`, and a non-empty string `tags` array; validate it through OKF-MCP before relying on discovery. Diagnostic reports are ephemeral by default and do not become product or architecture authority.
 
 ## Invocation mode
 

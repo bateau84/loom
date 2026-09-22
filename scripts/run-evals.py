@@ -140,9 +140,9 @@ Load the native skill `%s` before answering the user prompt. Apply that skill's 
 """ % skill
 
 
-def load_cases(suite_paths: list[Path]) -> list[dict[str, Any]]:
+def load_cases(suite_paths: list[Path] | None = None) -> list[dict[str, Any]]:
     cases: list[dict[str, Any]] = []
-    for path in suite_paths:
+    for path in suite_paths or DEFAULT_SUITES:
         data = json.loads(path.read_text(encoding="utf-8"))
         cases.extend(data["cases"])
     return cases
@@ -277,9 +277,15 @@ def safe_fixture_path(project: Path, value: str) -> Path:
     return target
 
 
-def write_project_config(project: Path, agent: str) -> None:
+def write_project_config(project: Path, agent: str, *, loom_plugin: bool = False) -> None:
+    config: dict[str, Any] = {
+        "$schema": "https://opencode.ai/config.json",
+        "default_agent": agent,
+    }
+    if loom_plugin:
+        config["plugins"] = ["./.opencode/plugins/loom"]
     (project / "opencode.json").write_text(
-        json.dumps({"$schema": "https://opencode.ai/config.json", "default_agent": agent}, indent=2) + "\n",
+        json.dumps(config, indent=2) + "\n",
         encoding="utf-8",
     )
 
@@ -296,6 +302,12 @@ def setup_projects(case: dict[str, Any]) -> tuple[Path, Path, Path]:
     (judge_oc / "agents").mkdir(parents=True)
 
     shutil.copytree(ROOT / "skills", target_oc / "skills", dirs_exist_ok=True)
+    if case["execution"] == "runtime":
+        shutil.copytree(
+            ROOT / "plugins" / "loom",
+            target_oc / "plugins" / "loom",
+            dirs_exist_ok=True,
+        )
 
     if case.get("_skill_owned"):
         target_agent = skill_eval_agent(str(case["skill"]))
@@ -314,7 +326,11 @@ def setup_projects(case: dict[str, Any]) -> tuple[Path, Path, Path]:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(fixture["content"], encoding="utf-8")
 
-    write_project_config(target_project, case["agent"])
+    write_project_config(
+        target_project,
+        case["agent"],
+        loom_plugin=case["execution"] == "runtime",
+    )
     write_project_config(judge_project, "eval-judge")
     return temp, target_project, judge_project
 
@@ -626,6 +642,11 @@ def prepare_node_modules_mount(project: Path, source: Path | None) -> Path | Non
     return source
 
 
+def case_workspace_mode(case: dict[str, Any]) -> str:
+    required_tools = set((case.get("tools") or {}).get("requires") or [])
+    return "rw" if "loom_report_promote" in required_tools else "ro"
+
+
 def image_for_transport(args: argparse.Namespace, transport: str) -> str:
     if args.image:
         return args.image
@@ -661,6 +682,7 @@ def invoke_container(
     timeout: int,
     container_timeout: int,
     mount_node_modules: bool,
+    workspace_mode: str = "ro",
     extra_envs: list[str],
     skill: str | None = None,
     network: str | None = None,
@@ -695,7 +717,7 @@ def invoke_container(
                 "--image", image,
                 "--transport", transport,
                 "--workspace", str(project),
-                "--workspace-mode", "ro",
+                "--workspace-mode", workspace_mode,
                 "--model", model,
                 "--prompt-file", str(prompt_file),
                 "--system-file", str(system_file),
@@ -807,7 +829,7 @@ def invoke_container(
             "--workdir",
             "/workspace",
         ]
-        command += volume(project, "/workspace", True)
+        command += volume(project, "/workspace", workspace_mode != "rw")
         command += volume(input_dir, "/input", True)
 
         if node_modules:
@@ -1319,6 +1341,7 @@ def run_skill_ablation_case(
             timeout=args.timeout_seconds,
             container_timeout=args.container_timeout,
             mount_node_modules=False,
+            workspace_mode="ro",
             extra_envs=args.env,
             skill=skill if with_skill and args.target_transport == "opencode" else None,
             network=args.network,
@@ -1343,6 +1366,7 @@ def run_skill_ablation_case(
             timeout=args.timeout_seconds,
             container_timeout=args.container_timeout,
             mount_node_modules=False,
+            workspace_mode="ro",
             extra_envs=args.env,
             skill=None,
             network=args.network,
@@ -1626,6 +1650,7 @@ def run_case(
             timeout=args.timeout_seconds,
             container_timeout=args.container_timeout,
             mount_node_modules=case["execution"] == "runtime",
+            workspace_mode=case_workspace_mode(case),
             extra_envs=args.env,
             skill=(
                 str(case.get("skill") or "") or None
@@ -1686,6 +1711,7 @@ def run_case(
                 timeout=args.timeout_seconds,
                 container_timeout=args.container_timeout,
                 mount_node_modules=False,
+                workspace_mode="ro",
                 extra_envs=args.env,
                 skill=None,
                 network=args.network,
