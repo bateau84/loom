@@ -264,14 +264,11 @@ test("dashboard child process publishes its effective endpoint lease", async () 
   expect(Date.parse(record.leaseExpiresAt)).toBeGreaterThan(Date.now())
 })
 
-test("workflow deep link survives projection lag and opens when the workflow appears", async ({ page }) => {
-  await writePublisher({
-    instanceId: "instance-a",
-    projectId: "project-a",
-    displayName: "Project A",
-    canonicalLocation: "/work/project-a",
-    workflows: [],
-  })
+test("workflow deep link survives projection lag and opens when the project/workflow appears", async ({ page }) => {
+  await rm(
+    join(runtimeRoot, "instances", "installation-e2e", "instance-a"),
+    { recursive: true, force: true },
+  )
 
   const url = `http://127.0.0.1:${port}/#/project/project-a/workflow/workflow-a`
   await page.goto(url)
