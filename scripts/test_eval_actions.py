@@ -89,6 +89,29 @@ class MountPreparationTests(unittest.TestCase):
 
 
 
+
+
+class CentralEvalDiscoveryTests(unittest.TestCase):
+    def test_discovers_every_json_suite_in_eval_directory(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            evals = Path(tmp) / "evals"
+            evals.mkdir()
+            (evals / "z-new-suite.json").write_text('{"version":1,"name":"z","cases":[]}', encoding="utf-8")
+            (evals / "a-existing-suite.json").write_text('{"version":1,"name":"a","cases":[]}', encoding="utf-8")
+            (evals / "README.md").write_text("not a suite", encoding="utf-8")
+            (evals / "ignored.txt").write_text("{}", encoding="utf-8")
+
+            discovered = RUN_EVALS.behavioral_eval_files(evals)
+
+            self.assertEqual(
+                [path.name for path in discovered],
+                ["a-existing-suite.json", "z-new-suite.json"],
+            )
+
+    def test_repository_default_discovery_includes_proportionality_suite(self):
+        discovered = RUN_EVALS.behavioral_eval_files(RUN_EVALS.ROOT / "evals")
+        self.assertIn("proportionality.json", [path.name for path in discovered])
+
 class SkillOwnedEvalDiscoveryTests(unittest.TestCase):
     def test_discovers_every_json_filename_inside_skill_evals_folder(self):
         with tempfile.TemporaryDirectory() as tmp:
