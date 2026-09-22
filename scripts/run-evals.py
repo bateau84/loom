@@ -140,9 +140,9 @@ Load the native skill `%s` before answering the user prompt. Apply that skill's 
 """ % skill
 
 
-def load_cases(suite_paths: list[Path]) -> list[dict[str, Any]]:
+def load_cases(suite_paths: list[Path] | None = None) -> list[dict[str, Any]]:
     cases: list[dict[str, Any]] = []
-    for path in suite_paths:
+    for path in suite_paths or DEFAULT_SUITES:
         data = json.loads(path.read_text(encoding="utf-8"))
         cases.extend(data["cases"])
     return cases
@@ -682,7 +682,7 @@ def invoke_container(
     timeout: int,
     container_timeout: int,
     mount_node_modules: bool,
-    workspace_mode: str,
+    workspace_mode: str = "ro",
     extra_envs: list[str],
     skill: str | None = None,
     network: str | None = None,
