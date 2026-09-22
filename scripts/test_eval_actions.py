@@ -132,6 +132,23 @@ class RuntimeEvalProjectTests(unittest.TestCase):
             import shutil
             shutil.rmtree(temp, ignore_errors=True)
 
+    def test_tracked_401_runtime_materializes_diagnostic_fixture(self):
+        case = next(
+            case
+            for case in RUN_EVALS.load_cases()
+            if case["id"] == "PROP-RUNTIME-01"
+        )
+        temp, target, _ = RUN_EVALS.setup_projects(case)
+        try:
+            frontend = (target / "frontend" / "src" / "api" / "client.ts").read_text(encoding="utf-8")
+            backend = (target / "backend" / "src" / "auth.ts").read_text(encoding="utf-8")
+            self.assertIn('"X-Access-Token": token', frontend)
+            self.assertIn('headers["authorization"]', backend)
+            self.assertIn('startsWith("Bearer ")', backend)
+        finally:
+            import shutil
+            shutil.rmtree(temp, ignore_errors=True)
+
     def test_role_decision_project_keeps_unrelated_agents_out(self):
         case = next(
             case
