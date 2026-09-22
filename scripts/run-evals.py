@@ -308,6 +308,15 @@ def setup_projects(case: dict[str, Any]) -> tuple[Path, Path, Path]:
             target_oc / "plugins" / "loom",
             dirs_exist_ok=True,
         )
+        # Runtime agent evals exercise the real Loom orchestration surface.
+        # Install production subagents so General can actually dispatch the
+        # capabilities its prompt selects. Skill-owned ablations stay isolated.
+        if not case.get("_skill_owned"):
+            shutil.copytree(
+                ROOT / "agents",
+                target_oc / "agents",
+                dirs_exist_ok=True,
+            )
 
     if case.get("_skill_owned"):
         target_agent = skill_eval_agent(str(case["skill"]))
