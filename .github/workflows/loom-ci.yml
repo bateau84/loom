@@ -35,9 +35,16 @@ jobs:
         run: |
           set -euo pipefail
           image="ghcr.io/bateau84/opencode-eval-runner@sha256:9dad96313bb15efaa4164a976bfd244ad804cac851b33543b44dcfb4e1cafc22"
+          workspace="$RUNNER_TEMP/loom-runtime-workspace"
+          rm -rf "$workspace"
+          mkdir -p "$workspace/.opencode/agents"
+          cp agents/general.md "$workspace/.opencode/agents/general.md"
+          printf '%s\n' '{"$schema":"https://opencode.ai/config.json","default_agent":"general"}' > "$workspace/opencode.json"
+
           docker run --rm \
             --workdir /workspace \
-            --volume "$PWD:/workspace:ro" \
+            --volume "$workspace:/workspace:rw" \
+            --volume "$PWD/node_modules:/workspace/node_modules:ro" \
             --volume "$PWD:/seed/opencode-config:ro" \
             --entrypoint python3 \
             "$image" - <<'PY'
