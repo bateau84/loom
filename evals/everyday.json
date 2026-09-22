@@ -28,13 +28,15 @@
       "requirements": [
         "BR-001",
         "BR-008",
-        "BR-002"
+        "BR-002",
+        "BR-019"
       ],
       "prompt": "Fix the typo in the export command's --help text: it says \"recieve\" instead of \"receive\". No behavior or interface semantics change.",
       "trap": "Run a full product-governance pipeline for a tiny bounded maintenance change.",
       "expectations": [
-        "Treats this as a small bounded maintenance task and routes it directly to the appropriate implementation path with a narrow scope.",
-        "Avoids pulling in Specifier, Designer, or Architect when the supplied facts show that no product meaning, UX behavior, or structure is changing."
+        "Treats this as Task-depth bounded maintenance and routes it directly to the implementation/verification path with a narrow scope.",
+        "Does not start intent-grilling or create a new Anchor for the typo.",
+        "Avoids Specifier, Designer, Architect, Planner, Critic, and Product Acceptance because the supplied facts show no new product meaning, UX behavior, structure, or broad objective."
       ],
       "must_not": [
         "Must not reopen product intent or require the full product workflow merely because a repository file changes."

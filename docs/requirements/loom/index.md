@@ -25,5 +25,6 @@ tags: [requirements, loom, index]
 - [BR-016 — OpenCode Is the Required Initial Host](br-016-opencode-required-initial-host.md)
 - [BR-017 — Concurrent Sessions and Projects Are Compartmentalized](br-017-concurrent-sessions-projects-compartmentalized.md)
 - [BR-018 — External Operational Dashboard](br-018-external-operational-dashboard.md)
+- [BR-019 — Keep Workflow Ceremony Proportional](br-019-keep-workflow-ceremony-proportional.md)
 
 Each requirement is its own OKF document so relationships, dependencies, retrieval, and future supersession remain explicit and machine-discoverable.
