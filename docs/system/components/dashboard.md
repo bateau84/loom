@@ -48,11 +48,14 @@ bun run dashboard
 The server binds only to `127.0.0.1` by default and exposes:
 - `GET /` — dashboard UI;
 - `GET /api/fleet` — aggregated read-only projection;
-- `GET /health` — dashboard health.
+- `GET /health` — dashboard health;
+- `GET /status/<installationId>/<projectId>/workflow-<digest>.html` — one generated read-only workflow-status artifact.
 
-Non-GET methods are rejected.
+The status route accepts only Loom UUID installation/project identities and generated `workflow-<20 hex>.html` names; it is not a general filesystem endpoint. Non-GET methods are rejected.
 
-The UI implements Fleet → Project → Workflow → Session context, Objective → Phase → Wave → Task hierarchy, attention-first state labels, filters, keyboard-native navigation, focus preservation across refresh, explicit stale/conflict treatment and Loom-authoritative vs optional-telemetry provenance.
+The UI implements Fleet → Project → Workflow → Session context, expandable Objective → Phase → Wave → Task hierarchy, attention-first state labels, filters, keyboard-native navigation, focus preservation across refresh, explicit stale/conflict treatment and Loom-authoritative vs optional-telemetry provenance.
+
+Workflow routes are stable deep links of the form `/#/project/<projectId>/workflow/<workflowId>`. Loom's sidebar RPC derives that URL from the same runtime project/workflow identity, so interactive status reachability does not depend on a model copying tool output into its reply.
 
 ## Source
 

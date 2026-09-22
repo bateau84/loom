@@ -16,8 +16,8 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_IMAGES = {
-    "opencode": "ghcr.io/bateau84/opencode-eval-runner@sha256:5cc9571629bfba84636d5205e04ed6a0b6cbd77369061a25ccee5377631570ae",
-    "github-copilot-cli": "ghcr.io/bateau84/opencode-eval-runner@sha256:ada713db25e57a76d1e35a9bbd2c507bb2f3300c128ea44efc8b3d74d80dcdc9",
+    "opencode": "ghcr.io/bateau84/opencode-eval-runner@sha256:fcc083d3185635e6d199cbcb108c958ba8e79e07fd19d54a27073f71cead2355",
+    "github-copilot-cli": "ghcr.io/bateau84/opencode-eval-runner@sha256:51d484e8b12541eeceef11c0818e26c97d77cc7d81a29b0c720b840d0226968b",
 }
 DEFAULT_SUITES = [
     ROOT / "evals" / "authority.json",
@@ -140,9 +140,9 @@ Load the native skill `%s` before answering the user prompt. Apply that skill's 
 """ % skill
 
 
-def load_cases(suite_paths: list[Path] | None = None) -> list[dict[str, Any]]:
+def load_cases(suite_paths: list[Path]) -> list[dict[str, Any]]:
     cases: list[dict[str, Any]] = []
-    for path in suite_paths or DEFAULT_SUITES:
+    for path in suite_paths:
         data = json.loads(path.read_text(encoding="utf-8"))
         cases.extend(data["cases"])
     return cases
@@ -277,15 +277,9 @@ def safe_fixture_path(project: Path, value: str) -> Path:
     return target
 
 
-def write_project_config(project: Path, agent: str, *, loom_plugin: bool = False) -> None:
-    config: dict[str, Any] = {
-        "$schema": "https://opencode.ai/config.json",
-        "default_agent": agent,
-    }
-    if loom_plugin:
-        config["plugins"] = ["./.opencode/plugins/loom"]
+def write_project_config(project: Path, agent: str) -> None:
     (project / "opencode.json").write_text(
-        json.dumps(config, indent=2) + "\n",
+        json.dumps({"$schema": "https://opencode.ai/config.json", "default_agent": agent}, indent=2) + "\n",
         encoding="utf-8",
     )
 
@@ -302,12 +296,6 @@ def setup_projects(case: dict[str, Any]) -> tuple[Path, Path, Path]:
     (judge_oc / "agents").mkdir(parents=True)
 
     shutil.copytree(ROOT / "skills", target_oc / "skills", dirs_exist_ok=True)
-    if case["execution"] == "runtime":
-        shutil.copytree(
-            ROOT / "plugins" / "loom",
-            target_oc / "plugins" / "loom",
-            dirs_exist_ok=True,
-        )
 
     if case.get("_skill_owned"):
         target_agent = skill_eval_agent(str(case["skill"]))
@@ -326,11 +314,7 @@ def setup_projects(case: dict[str, Any]) -> tuple[Path, Path, Path]:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(fixture["content"], encoding="utf-8")
 
-    write_project_config(
-        target_project,
-        case["agent"],
-        loom_plugin=case["execution"] == "runtime",
-    )
+    write_project_config(target_project, case["agent"])
     write_project_config(judge_project, "eval-judge")
     return temp, target_project, judge_project
 
@@ -642,11 +626,6 @@ def prepare_node_modules_mount(project: Path, source: Path | None) -> Path | Non
     return source
 
 
-def case_workspace_mode(case: dict[str, Any]) -> str:
-    required_tools = set((case.get("tools") or {}).get("requires") or [])
-    return "rw" if "loom_report_promote" in required_tools else "ro"
-
-
 def image_for_transport(args: argparse.Namespace, transport: str) -> str:
     if args.image:
         return args.image
@@ -682,7 +661,6 @@ def invoke_container(
     timeout: int,
     container_timeout: int,
     mount_node_modules: bool,
-    workspace_mode: str = "ro",
     extra_envs: list[str],
     skill: str | None = None,
     network: str | None = None,
@@ -717,7 +695,7 @@ def invoke_container(
                 "--image", image,
                 "--transport", transport,
                 "--workspace", str(project),
-                "--workspace-mode", workspace_mode,
+                "--workspace-mode", "ro",
                 "--model", model,
                 "--prompt-file", str(prompt_file),
                 "--system-file", str(system_file),
@@ -741,6 +719,8 @@ def invoke_container(
                 command += ["--database", str(database_seed)]
             if config_root:
                 command += ["--config-root", str(config_root)]
+            if expected_plugin:
+                command += ["--expected-plugin", expected_plugin]
             if node_modules:
                 command += ["--mount", f"{node_modules}:/workspace/node_modules:ro"]
             for name in extra_envs:
@@ -829,7 +809,7 @@ def invoke_container(
             "--workdir",
             "/workspace",
         ]
-        command += volume(project, "/workspace", workspace_mode != "rw")
+        command += volume(project, "/workspace", True)
         command += volume(input_dir, "/input", True)
 
         if node_modules:
@@ -983,6 +963,8 @@ def resolve_action_arg(tool: str, args: dict[str, Any], dotted: str) -> Any:
 def action_matches(action: dict[str, Any], assertion: dict[str, Any]) -> bool:
     if normalize_tool(str(action.get("tool") or "")) != normalize_tool(str(assertion.get("tool") or "")):
         return False
+    if "arg" not in assertion:
+        return True
     value = resolve_action_arg(
         str(action.get("tool") or ""),
         action.get("args") if isinstance(action.get("args"), dict) else {},
@@ -992,11 +974,21 @@ def action_matches(action: dict[str, Any], assertion: dict[str, Any]) -> bool:
         return value == assertion["equals"]
     if "ends_with" in assertion:
         return isinstance(value, str) and value.endswith(str(assertion["ends_with"]))
+    if "contains" in assertion:
+        return isinstance(value, str) and str(assertion["contains"]) in value
     return False
 
 
 def describe_action(assertion: dict[str, Any]) -> str:
-    comparator = "equals" if "equals" in assertion else "ends_with"
+    if "arg" not in assertion:
+        return str(assertion.get("tool"))
+    comparator = (
+        "equals"
+        if "equals" in assertion
+        else "ends_with"
+        if "ends_with" in assertion
+        else "contains"
+    )
     return "%s %s %s %r" % (
         assertion.get("tool"),
         assertion.get("arg"),
@@ -1011,6 +1003,7 @@ def deterministic_failures(
     actions: list[dict[str, Any]] | None = None,
     loaded_skills: list[str] | None = None,
     require_native_skill_load: bool = True,
+    text: str = "",
 ) -> list[str]:
     failures: list[str] = []
     assertions = case.get("tools") or {}
@@ -1022,6 +1015,14 @@ def deterministic_failures(
         if normalize_tool(forbidden) in normalized:
             failures.append("forbidden tool observed: " + forbidden)
 
+    output_assertions = case.get("output") or {}
+    for required_text in output_assertions.get("contains", []):
+        if str(required_text) not in text:
+            failures.append("required output text not observed: " + repr(required_text))
+    for forbidden_text in output_assertions.get("forbids", []):
+        if str(forbidden_text) in text:
+            failures.append("forbidden output text observed: " + repr(forbidden_text))
+
     observed_actions = actions or []
     skill = case.get("skill")
     if require_native_skill_load and skill and skill not in set(loaded_skills or []):
@@ -1031,6 +1032,16 @@ def deterministic_failures(
     for required in action_assertions.get("requires", []):
         if not any(action_matches(action, required) for action in observed_actions):
             failures.append("required action not observed: " + describe_action(required))
+    for group in action_assertions.get("any_of", []):
+        if not any(
+            action_matches(action, alternative)
+            for alternative in group
+            for action in observed_actions
+        ):
+            failures.append(
+                "none of required alternative actions observed: "
+                + " OR ".join(describe_action(alternative) for alternative in group)
+            )
     for forbidden in action_assertions.get("forbids", []):
         if any(action_matches(action, forbidden) for action in observed_actions):
             failures.append("forbidden action observed: " + describe_action(forbidden))
@@ -1341,7 +1352,6 @@ def run_skill_ablation_case(
             timeout=args.timeout_seconds,
             container_timeout=args.container_timeout,
             mount_node_modules=False,
-            workspace_mode="ro",
             extra_envs=args.env,
             skill=skill if with_skill and args.target_transport == "opencode" else None,
             network=args.network,
@@ -1366,7 +1376,6 @@ def run_skill_ablation_case(
             timeout=args.timeout_seconds,
             container_timeout=args.container_timeout,
             mount_node_modules=False,
-            workspace_mode="ro",
             extra_envs=args.env,
             skill=None,
             network=args.network,
@@ -1467,6 +1476,7 @@ def run_skill_ablation_case(
                 candidate_actions,
                 list(candidate_target.get("skills_loaded") or []),
                 require_native_skill_load=args.target_transport == "opencode",
+                text=str(candidate_target.get("text") or ""),
             )
             if not candidate_target_error
             else []
@@ -1650,7 +1660,6 @@ def run_case(
             timeout=args.timeout_seconds,
             container_timeout=args.container_timeout,
             mount_node_modules=case["execution"] == "runtime",
-            workspace_mode=case_workspace_mode(case),
             extra_envs=args.env,
             skill=(
                 str(case.get("skill") or "") or None
@@ -1673,6 +1682,7 @@ def run_case(
                 observed_actions,
                 list(target.get("skills_loaded") or []),
                 require_native_skill_load=args.target_transport == "opencode",
+                text=str(target.get("text") or ""),
             )
             if not target_error
             else []
@@ -1711,7 +1721,6 @@ def run_case(
                 timeout=args.timeout_seconds,
                 container_timeout=args.container_timeout,
                 mount_node_modules=False,
-                workspace_mode="ro",
                 extra_envs=args.env,
                 skill=None,
                 network=args.network,

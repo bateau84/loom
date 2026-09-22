@@ -30,6 +30,7 @@ class MemoryStorage {
 
 type RegisteredTool = {
   name: string
+  options?: { namespace?: string; codemode?: boolean; permission?: string }
   execute: (input: unknown, tool: { agent: string; sessionID: string }) => Promise<{ content: string }>
 }
 
@@ -50,6 +51,8 @@ async function harness(
   process.env.LOOM_TOOL_OUTPUT = "json"
 
   const registered = new Map<string, RegisteredTool>()
+  const namespaces = new Map<string, string>()
+  const sessionHooks = new Map<string, (event: any) => void | Promise<void>>()
   const permissionHooks = new Map<string, (event: any) => void | Promise<void>>()
   const toolHooks = new Map<string, (event: any) => void | Promise<void>>()
   const storage = existing?.storage ?? new MemoryStorage()
@@ -70,8 +73,15 @@ async function harness(
     tool: {
       transform: async (fn: (editor: any) => unknown) =>
         fn({
-          namespace: () => {},
-          add: (definition: RegisteredTool) => registered.set(definition.name, definition),
+          namespace: (definition: { name: string; description: string }) =>
+            namespaces.set(definition.name, definition.description),
+          list: () =>
+            [...registered.entries()].map(([id, definition]) => ({ ...definition, id })),
+          add: (definition: RegisteredTool) => {
+            const namespace = definition.options?.namespace
+            const id = namespace ? `${namespace.replaceAll(".", "_")}_${definition.name}` : definition.name
+            registered.set(id, definition)
+          },
         }),
       hook: async (name: string, fn: (event: any) => void | Promise<void>) => {
         toolHooks.set(name, fn)
@@ -88,7 +98,10 @@ async function harness(
           id: sessionID,
           projectID,
         },
-      hook: async () => {},
+      hook: async (name: string, callback: (event: any) => void | Promise<void>) => {
+        sessionHooks.set(name, callback)
+        return { dispose: async () => {} }
+      },
     },
   }
 
@@ -106,7 +119,7 @@ async function harness(
     agent: string,
     sessionID: string,
   ) => {
-    const tool = registered.get(name)
+    const tool = registered.get(name) ?? registered.get(`loom_${name}`)
     if (!tool) throw new Error(`Tool not registered: ${name}`)
     const result = await tool.execute(input, { agent, sessionID })
     return JSON.parse(result.content)
@@ -165,7 +178,7 @@ async function harness(
     else process.env.LOOM_TOOL_OUTPUT = previousOutput
   }
 
-  return { root, storage, projectID, registered, permissionHooks, toolHooks, durableStorage, call, callObserved, restore }
+  return { root, storage, projectID, registered, namespaces, sessionHooks, permissionHooks, toolHooks, durableStorage, call, callObserved, restore }
 }
 
 afterEach(async () => {
@@ -173,6 +186,56 @@ afterEach(async () => {
 })
 
 describe("Loom registered plugin boundary", () => {
+  test("registers equivalent Code Mode mirrors without removing native Loom tools", async () => {
+    const { registered, namespaces, restore } = await harness()
+    try {
+      expect(namespaces.get("loom.code")).toContain("Code Mode mirrors")
+
+      const native = registered.get("loom_start")
+      const mirror = registered.get("loom_code_start")
+      expect(native).toBeDefined()
+      expect(mirror).toBeDefined()
+      expect(native?.options).toMatchObject({ namespace: "loom", codemode: false })
+      expect(mirror?.options).toMatchObject({
+        namespace: "loom.code",
+        codemode: true,
+        permission: "loom_start",
+      })
+      expect(mirror?.execute).toBe(native?.execute)
+
+      const nativeStatus = registered.get("loom_status")
+      const mirrorStatus = registered.get("loom_code_status")
+      expect(nativeStatus).toBeDefined()
+      expect(mirrorStatus).toBeDefined()
+      expect(mirrorStatus?.execute).toBe(nativeStatus?.execute)
+      expect(mirrorStatus?.options?.permission).toBe("loom_status")
+    } finally {
+      restore()
+    }
+  })
+
+  test("session context tells Code Mode models to call native Loom tools directly", async () => {
+    const { sessionHooks, restore } = await harness()
+    try {
+      const hook = sessionHooks.get("context")
+      expect(hook).toBeDefined()
+      const event = { system: [] as Array<{ type: string; text: string }> }
+      await hook!(event)
+      expect(event.system).toHaveLength(1)
+      expect(event.system[0]?.text).toContain("loom_*")
+      expect(event.system[0]?.text).toContain("two equivalent OpenCode surfaces")
+      expect(event.system[0]?.text).toContain("tools.loom.code.*")
+      expect(event.system[0]?.text).toContain("do not fall back to shell/filesystem discovery")
+      expect(event.system[0]?.text).toContain("dashboard-first")
+      expect(event.system[0]?.text).toContain("does not depend on model prose")
+      expect(event.system[0]?.text).toContain("stable workflow dashboard URL")
+      expect(event.system[0]?.text).toContain("Desktop browser preview is optional")
+      expect(event.system[0]?.text).toContain("do not invoke tools.browser.preview")
+    } finally {
+      restore()
+    }
+  })
+
   test("resumed pre-upgrade OpenCode session automatically reconciles its ongoing workflow", async () => {
     const sessionID = "resumed-general-session"
     const workflowId = "legacy-workflow"

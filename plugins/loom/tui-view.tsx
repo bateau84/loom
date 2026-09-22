@@ -79,6 +79,9 @@ function LoomSidebar(props: { sessionID?: string }) {
         <text>
           {snapshot()!.state} · {snapshot()!.progress.finished}/{snapshot()!.progress.total}
         </text>
+        <Show when={snapshot()!.statusUrl}>
+          <text>Dashboard: {snapshot()!.statusUrl}</text>
+        </Show>
 
         <Show when={snapshot()!.work}>
           <box flexDirection="column" gap={0} paddingTop={1}>

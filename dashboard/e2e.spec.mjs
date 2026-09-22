@@ -292,6 +292,13 @@ test("keyboard drill-down and browser back preserve Fleet filters", async ({ pag
   await expect(page.getByText("No workflows match the current filters.", { exact: true })).toBeVisible()
 })
 
+test("stable workflow dashboard deep link opens the requested workflow directly", async ({ page }) => {
+  await page.goto(`http://127.0.0.1:${port}/#/project/project-a/workflow/workflow-a`)
+  await expect(page).toHaveURL(/#\/project\/project-a\/workflow\/workflow-a$/)
+  await expect(page.getByText("Workflow workflow-a", { exact: false })).toBeVisible()
+  await expect(page.getByText("OpenCode sessions", { exact: true })).toBeVisible()
+})
+
 test("background refresh preserves focus and disappearance has predictable fallback", async ({ page }) => {
   await page.goto(`http://127.0.0.1:${port}/`)
   const card = page.locator('a[data-key="project-a:workflow-a"]')
@@ -329,6 +336,22 @@ test("project hierarchy exposes active workflow claims", async ({ page }) => {
   await page.goto(`http://127.0.0.1:${port}/#/project/project-a`)
   await expect(page.getByText("Objective → Phase → Wave → Task", { exact: true })).toBeVisible()
   await expect(page.getByText(/claimed by workflow-a/)).toBeVisible()
+})
+
+test("project hierarchy preserves manual expansion state across background refresh", async ({ page }) => {
+  await page.goto(`http://127.0.0.1:${port}/#/project/project-a`)
+  const wave = page.locator('details[data-hierarchy-key="project:project-a:objective:objective-project-a:phase:phase-build:wave:wave-runtime"]')
+  await expect(wave).toHaveAttribute("open", "")
+
+  const summary = wave.locator("summary")
+  await summary.click()
+  await expect(wave).not.toHaveAttribute("open", "")
+  await summary.focus()
+  await expect(summary).toBeFocused()
+
+  await page.waitForTimeout(3_400)
+  await expect(wave).not.toHaveAttribute("open", "")
+  await expect(summary).toBeFocused()
 })
 
 test("refresh failure keeps last known Fleet visible and marks projection degradation", async ({ page }) => {

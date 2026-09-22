@@ -66,3 +66,33 @@ bun run dashboard
 ```
 
 It listens on `127.0.0.1:4318` by default and aggregates the bounded Loom snapshots published by active OpenCode+Loom processes. See `docs/user/dashboard.md` for status and safety semantics.
+
+### Interactive workflow status
+
+The normal interactive status path is Loom's read-only dashboard. It does **not** depend on OpenCode Desktop or on the model copying a link into its reply.
+
+1. Start the dashboard:
+
+   ```bash
+   bun run dashboard
+   ```
+
+2. Open:
+
+   ```text
+   http://127.0.0.1:4318
+   ```
+
+   Active/recent Loom workflows appear automatically and can be opened from Fleet.
+
+3. In the OpenCode terminal client, Loom's sidebar also shows the active workflow's stable dashboard deep link:
+
+   ```text
+   http://127.0.0.1:4318/#/project/<project>/workflow/<workflow>
+   ```
+
+`loom_status` may additionally generate a per-status artifact URL under `/status/...`, but that is a convenience rather than the only route to interactive status.
+
+Set `LOOM_DASHBOARD_PORT` if the dashboard listens on another local port. Set `LOOM_DASHBOARD_URL` when the browser reaches it through a tunnel or reverse proxy.
+
+OpenCode Desktop browser preview remains optional. TUI, web, CLI, SSH, container and CI workflows do not require it.

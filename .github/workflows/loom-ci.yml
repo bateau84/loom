@@ -16,10 +16,10 @@ jobs:
         with:
           persist-credentials: false
       - name: Smoke test pinned eval-runner action/runtime pair
-        uses: bateau84/opencode-eval-runner@a22f09a0494014a87abf3292e4815fe42b85f035
+        uses: bateau84/opencode-eval-runner@8e1a8439fd8b15343abcf69c50203c96847f1c2e
         with:
-          opencode-image: ghcr.io/bateau84/opencode-eval-runner@sha256:5cc9571629bfba84636d5205e04ed6a0b6cbd77369061a25ccee5377631570ae
-          copilot-image: ghcr.io/bateau84/opencode-eval-runner@sha256:ada713db25e57a76d1e35a9bbd2c507bb2f3300c128ea44efc8b3d74d80dcdc9
+          opencode-image: ghcr.io/bateau84/opencode-eval-runner@sha256:fcc083d3185635e6d199cbcb108c958ba8e79e07fd19d54a27073f71cead2355
+          copilot-image: ghcr.io/bateau84/opencode-eval-runner@sha256:51d484e8b12541eeceef11c0818e26c97d77cc7d81a29b0c720b840d0226968b
           prepare-opencode: true
           prepare-copilot: true
           command: |
@@ -39,8 +39,8 @@ jobs:
         run: |
           npm install --no-save --package-lock=false --legacy-peer-deps @playwright/test@1.55.0
           npx playwright install --with-deps chromium
-      - name: Run dashboard browser Designer validation
-        run: npx playwright test dashboard/e2e.spec.mjs --browser=chromium --workers=1
+      - name: Run browser Designer validation
+        run: npx playwright test dashboard/e2e.spec.mjs dashboard/status-view.e2e.spec.ts --browser=chromium --workers=1
       - run: bun run eval:validate
       - run: bun run eval:harness-test
       - run: bun run skills:validate

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test"
-import { mkdtemp, rm } from "node:fs/promises"
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
 import { createDashboardHandler } from "./server"
@@ -32,6 +32,31 @@ describe("Loom external dashboard", () => {
     }
   })
 
+  test("serves only generated workflow-status artifacts through the browser-safe route", async () => {
+    const root = await mkdtemp(join(tmpdir(), "loom-dashboard-status-"))
+    roots.push(root)
+    const installationId = "11111111-1111-4111-8111-111111111111"
+    const projectId = "22222222-2222-4222-8222-222222222222"
+    const file = "workflow-0123456789abcdefabcd.html"
+    const directory = join(root, "artifacts", installationId, projectId, "workflow-status")
+    await mkdir(directory, { recursive: true })
+    await writeFile(join(directory, file), "<!doctype html><title>Loom workflow status</title>")
+
+    const handler = createDashboardHandler(root)
+    const response = await handler(new Request(`http://localhost/status/${installationId}/${projectId}/${file}`))
+    expect(response.status).toBe(200)
+    expect(response.headers.get("Content-Type")).toBe("text/html; charset=utf-8")
+    expect(response.headers.get("Cache-Control")).toBe("no-store")
+    expect(await response.text()).toContain("Loom workflow status")
+
+    const malformed = await handler(new Request(`http://localhost/status/not-a-uuid/${projectId}/${file}`))
+    expect(malformed.status).toBe(404)
+
+    await writeFile(join(directory, "other.html"), "secret")
+    const arbitrary = await handler(new Request(`http://localhost/status/${installationId}/${projectId}/other.html`))
+    expect(arbitrary.status).toBe(404)
+  })
+
   test("generated browser script is syntactically valid JavaScript", () => {
     const html = dashboardHtml()
     const start = html.indexOf("<script>")
@@ -50,6 +75,9 @@ describe("Loom external dashboard", () => {
     expect(html).toContain('aria-label="Location"')
     expect(html).toContain('id="projection-status"')
     expect(html).toContain("Objective → Phase → Wave → Task")
+    expect(html).toContain("<details")
+    expect(html).toContain("<summary data-key=")
+    expect(html).toContain("hierarchyOpen")
     expect(html).toContain("Budget used/limit")
     expect(html).toContain("Tasks complete")
     expect(html).toContain("claimed by")

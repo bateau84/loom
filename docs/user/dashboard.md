@@ -32,7 +32,41 @@ Set `LOOM_DASHBOARD_PORT` to choose another local port.
 - **Workflow** — runnable/current steps, OQs, verification, budget, Product Acceptance, knowledge status and participating publishers.
 - **Session context** — publisher/session freshness plus optional OpenCode telemetry when enabled.
 
-Use the Status and Project filters to narrow Fleet. Browser Back or the breadcrumb links return through Workflow → Project → Fleet without changing Loom state.
+Use the Status and Project filters to narrow Fleet. Objective, Phase and Wave rows are expandable so large work plans do not need to stay fully open. Browser Back or the breadcrumb links return through Workflow → Project → Fleet without changing Loom state.
+
+## In-session workflow status
+
+`loom_status` stays compact in the OpenCode timeline. Interactive status itself is dashboard-owned and does not depend on the model repeating a presentation URL.
+
+Start the read-only dashboard:
+
+```bash
+bun run dashboard
+```
+
+Then open:
+
+```text
+http://127.0.0.1:4318
+```
+
+Fleet automatically lists active/recent Loom workflows. A workflow can also be opened directly through the stable dashboard route:
+
+```text
+http://127.0.0.1:4318/#/project/<projectId>/workflow/<workflowId>
+```
+
+The OpenCode terminal client's Loom sidebar exposes that stable deep link for the active workflow. In OpenCode web, the dashboard root remains a fixed browser entry point, so interactive status is still reachable even if plugin-tool output is not rendered by the host UI.
+
+`loom_status` may additionally generate a user-private interactive HTML artifact under Loom's runtime root and return a `/status/...` URL. That artifact provides expandable hierarchy, search/filtering, current/upcoming work, OQs, verification, budget, Product Acceptance, and knowledge state. Artifact generation is a convenience path; dashboard reachability does not depend on it.
+
+The `/status/...` endpoint serves only generated workflow-status artifacts and remains GET-only. It does not expose a general runtime filesystem route.
+
+Use `LOOM_DASHBOARD_PORT` for a different local port. Use `LOOM_DASHBOARD_URL` when the browser reaches the dashboard through a tunnel, reverse proxy, or another explicitly configured base URL.
+
+### Optional OpenCode Desktop preview
+
+If OpenCode Desktop is installed and its experimental browser integration is connected, Loom metadata may contain a one-shot Desktop preview program. It is optional and is not part of the normal status flow. TUI/CLI/web/SSH/container/CI usage does not require it.
 
 ## Status meaning
 
