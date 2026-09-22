@@ -166,8 +166,8 @@ The harness chooses Podman first, then Docker. Override it explicitly with `--en
 The harness pins the runner images by digest so the Action source and container runtime cannot drift independently:
 
 ```text
-OpenCode: ghcr.io/bateau84/opencode-eval-runner@sha256:6a0e00024f409a4ea01b5fa8dcaf586e78006f918d2de515f04f070072c1a063
-Copilot:  ghcr.io/bateau84/opencode-eval-runner@sha256:588038d95a79a809af4e9862fcce037859fe89b019e6b23f1b5322955893db69
+OpenCode: ghcr.io/bateau84/opencode-eval-runner@sha256:d5ece4ea1baa4c47732b9f280dee5df04692a5f149fa739ec82537bad2c45d86
+Copilot:  ghcr.io/bateau84/opencode-eval-runner@sha256:d1a78c03279a08a7fc9b7a31cfd7eb532d2178bac189d5baed22e492006bf5ad
 ```
 
 Override them independently with `--opencode-image` / `--copilot-image`, or use `--image` to force one explicit image for both transports. Changing the pinned runner revision and image digests is one compatibility update.
