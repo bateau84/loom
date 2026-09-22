@@ -94,9 +94,10 @@ describe("Loom sidebar snapshot", () => {
         reconciliations: {},
         createdAt: "now",
       },
-    ])
+    ], undefined, "http://127.0.0.1:4318/#/project/project-a/workflow/wf-1")
 
     expect(snapshot.state).toBe("active")
+    expect(snapshot.statusUrl).toBe("http://127.0.0.1:4318/#/project/project-a/workflow/wf-1")
     expect(snapshot.progress).toEqual({ finished: 2, total: 4, failed: 0 })
     expect(snapshot.tasks).toEqual([
       { id: "cli-genesis", title: "CLI genesis", status: "complete" },

@@ -26,8 +26,8 @@ html, body { margin: 0; min-height: 100%; background: var(--bg); color: var(--te
 body { padding: max(1rem, env(safe-area-inset-top)) max(1rem, env(safe-area-inset-right)) max(1rem, env(safe-area-inset-bottom)) max(1rem, env(safe-area-inset-left)); }
 a { color: inherit; }
 button, select, input { font: inherit; }
-button, select, input, a { outline: none; }
-button:focus-visible, select:focus-visible, input:focus-visible, a:focus-visible { box-shadow: 0 0 0 3px var(--focus); }
+button, select, input, a, summary { outline: none; }
+button:focus-visible, select:focus-visible, input:focus-visible, a:focus-visible, summary:focus-visible { box-shadow: 0 0 0 3px var(--focus); }
 .shell { width: min(118rem, 100%); margin: 0 auto; }
 .topbar { display: grid; gap: 0.75rem; grid-template-columns: 1fr; align-items: end; margin-bottom: 1rem; }
 .title { margin: 0; font-size: clamp(1.4rem, 3vw, 2.2rem); }
@@ -68,7 +68,12 @@ button:focus-visible, select:focus-visible, input:focus-visible, a:focus-visible
 .list { display: grid; gap: 0.45rem; }
 .row { padding: 0.55rem 0.65rem; border: 1px solid var(--border); border-radius: 0.55rem; background: var(--surface-2); }
 .hierarchy { display: grid; gap: 0.6rem; }
-.hierarchy ul { margin: 0.35rem 0 0 1rem; padding: 0; }
+.hierarchy details { border: 1px solid var(--border); border-radius: 0.55rem; background: var(--surface-2); }
+.hierarchy details details { margin: 0.45rem 0 0.45rem 0.8rem; background: var(--surface); }
+.hierarchy summary { cursor: pointer; min-height: 2.5rem; padding: 0.55rem 0.65rem; display: flex; gap: 0.6rem; justify-content: space-between; align-items: center; }
+.hierarchy summary .meta { margin-left: auto; }
+.hierarchy ul { margin: 0 0 0.55rem 2rem; padding: 0 0.7rem 0 0; }
+.hierarchy li { margin: 0.35rem 0; }
 .empty { padding: 2rem; color: var(--muted); text-align: center; }
 .notice { padding: 0.7rem; border: 1px solid var(--border); border-radius: 0.55rem; color: var(--muted); }
 .projection-status { margin: 0 0 0.75rem; }
@@ -115,7 +120,14 @@ button:focus-visible, select:focus-visible, input:focus-visible, a:focus-visible
 </div>
 <script>
 (() => {
-  const state = { fleet: { projects: [] }, status: "all", project: "", agent: "", lastKeys: new Set() };
+  const state = {
+    fleet: { projects: [] },
+    status: "all",
+    project: "",
+    agent: "",
+    lastKeys: new Set(),
+    hierarchyOpen: new Map(),
+  };
   const main = document.getElementById("main");
   const crumbs = document.getElementById("breadcrumbs");
   const live = document.getElementById("live");
@@ -241,6 +253,10 @@ button:focus-visible, select:focus-visible, input:focus-visible, a:focus-visible
     main.innerHTML = '<section class="grid" aria-label="Fleet workflows">' + items.map(({project, workflow}) => workflowCard(project, workflow)).join("") + '</section>';
   }
 
+  function hierarchyOpen(status) {
+    return status === "active" || status === "blocked";
+  }
+
   function renderHierarchy(project) {
     if (!project.workObjectives?.length) return '<div class="notice">No current work hierarchy is projected.</div>';
     return '<div class="hierarchy">' + project.workObjectives.map((objective) => {
@@ -248,15 +264,22 @@ button:focus-visible, select:focus-visible, input:focus-visible, a:focus-visible
         return '<div class="row"><div class="name">' + esc(objective.objectiveId) + '</div><div class="meta">Consistency conflict at work version ' + esc(objective.workVersion) + '. No hierarchy winner is selected.</div></div>';
       }
       const p = objective.projection;
-      return '<div class="row"><div class="name">' + esc(p?.title || objective.objectiveId) + '</div>' +
-        '<div class="meta">Objective: ' + esc(p?.status || "unknown") + ' · version ' + esc(objective.workVersion) + '</div>' +
-        '<ul>' + (p?.phases || []).map((phase) =>
-          '<li>' + esc(phase.title || phase.phaseId) + ' — ' + esc(phase.status) +
-          '<ul>' + (phase.waves || []).map((wave) =>
-            '<li>' + esc(wave.title || wave.waveId) + ' — ' + esc(wave.status) +
-            '<ul>' + (wave.tasks || []).map((task) => '<li>' + esc(task.title || task.taskId) + ' — ' + esc(task.status) + (task.claimedByWorkflowId ? ' · claimed by ' + esc(task.claimedByWorkflowId) : '') + '</li>').join("") + '</ul></li>'
-          ).join("") + '</ul></li>'
-        ).join("") + '</ul></div>';
+      const phases = (p?.phases || []).map((phase) => {
+        const waves = (phase.waves || []).map((wave) =>
+          '<details ' + (hierarchyOpen(wave.status) ? 'open ' : '') + 'data-hierarchy-key="' + esc('project:' + project.projectId + ':objective:' + objective.objectiveId + ':phase:' + phase.phaseId + ':wave:' + wave.waveId) + '" data-status="' + esc(wave.status) + '">' +
+            '<summary data-key="' + esc('hierarchy:project:' + project.projectId + ':objective:' + objective.objectiveId + ':phase:' + phase.phaseId + ':wave:' + wave.waveId) + '"><span>' + esc(wave.title || wave.waveId) + ' — ' + esc(wave.status) + '</span></summary>' +
+            '<ul>' + (wave.tasks || []).map((task) => '<li>' + esc(task.title || task.taskId) + ' — ' + esc(task.status) + (task.claimedByWorkflowId ? ' · claimed by ' + esc(task.claimedByWorkflowId) : '') + '</li>').join("") + '</ul>' +
+          '</details>'
+        ).join("");
+        return '<details ' + (hierarchyOpen(phase.status) ? 'open ' : '') + 'data-hierarchy-key="' + esc('project:' + project.projectId + ':objective:' + objective.objectiveId + ':phase:' + phase.phaseId) + '" data-status="' + esc(phase.status) + '">' +
+          '<summary data-key="' + esc('hierarchy:project:' + project.projectId + ':objective:' + objective.objectiveId + ':phase:' + phase.phaseId) + '"><span>' + esc(phase.title || phase.phaseId) + ' — ' + esc(phase.status) + '</span></summary>' +
+          waves +
+        '</details>';
+      }).join("");
+      return '<details open data-hierarchy-key="' + esc('project:' + project.projectId + ':objective:' + objective.objectiveId) + '" data-status="' + esc(p?.status || "unknown") + '">' +
+        '<summary data-key="' + esc('hierarchy:project:' + project.projectId + ':objective:' + objective.objectiveId) + '"><span class="name">' + esc(p?.title || objective.objectiveId) + '</span><span class="meta">Objective: ' + esc(p?.status || "unknown") + ' · version ' + esc(objective.workVersion) + '</span></summary>' +
+        phases +
+      '</details>';
     }).join("") + '</div>';
   }
 
@@ -312,23 +335,67 @@ button:focus-visible, select:focus-visible, input:focus-visible, a:focus-visible
       '<div class="section"><h2>OpenCode telemetry</h2><div class="notice">Not enabled / unavailable. Missing telemetry is not treated as zero or success.</div></div></section>';
   }
 
+  function captureHierarchyOpen() {
+    for (const node of main.querySelectorAll("details[data-hierarchy-key]")) {
+      state.hierarchyOpen.set(node.dataset.hierarchyKey, node.open);
+    }
+  }
+
+  function restoreHierarchyOpen() {
+    for (const node of main.querySelectorAll("details[data-hierarchy-key]")) {
+      const open = state.hierarchyOpen.get(node.dataset.hierarchyKey);
+      if (open !== undefined) node.open = open;
+    }
+  }
+
+  function renderProjectionWait(r, detail) {
+    crumbs.innerHTML =
+      '<a href="#/">Fleet</a>' +
+      (r.projectId ? ' / <span>' + esc(r.projectId) + '</span>' : '') +
+      (r.workflowId ? ' / <span>' + esc(r.workflowId) + '</span>' : '');
+    const fallbackHref = r.workflowId && r.projectId
+      ? '#/project/' + enc(r.projectId)
+      : '#/';
+    const fallbackLabel = r.workflowId ? 'Return to Project' : 'Return to Fleet';
+    main.innerHTML =
+      '<section class="panel empty">' +
+        '<strong>Waiting for Loom projection…</strong>' +
+        '<div>' + esc(detail) + '</div>' +
+        '<div class="meta">The requested dashboard URL is preserved. The dashboard does not treat repeated reads of the same projection as proof that the target disappeared.</div>' +
+        '<div><a href="' + esc(fallbackHref) + '">' + fallbackLabel + '</a></div>' +
+      '</section>';
+    live.textContent = "The requested Loom state is not currently projected; the deep link remains unchanged.";
+  }
+
   function render() {
+    captureHierarchyOpen();
     const focused = document.activeElement?.dataset?.key || "";
     const r = route();
     const project = r.projectId ? projectById(r.projectId) : undefined;
     const workflow = project && r.workflowId ? workflowById(project, r.workflowId) : undefined;
-    if (r.kind === "fleet") renderFleet();
-    else if (!project) {
-      live.textContent = "The selected project is no longer available. Returned to Fleet.";
-      location.hash = "#/";
+    if (r.kind === "fleet") {
       renderFleet();
-    } else if (r.kind === "project") renderProject(project);
-    else if (!workflow) {
-      live.textContent = "The selected workflow is no longer available. Returned to Project.";
-      location.hash = "#/project/" + enc(project.projectId);
+    } else if (!project) {
+      renderProjectionWait(
+        r,
+        "The requested project is not currently present in the read-only projection. It may still be propagating, stale, or no longer projected.",
+      );
+    } else if (r.kind === "project") {
       renderProject(project);
-    } else if (r.kind === "workflow") renderWorkflow(project, workflow);
-    else renderSession(project, workflow, r.instanceId);
+    } else if (!workflow) {
+      renderProjectionWait(
+        r,
+        project.projectionWindow?.workflowsTruncated === true
+          ? "The requested workflow is outside the current bounded projection window. Its deep link is retained because absence is not proven."
+          : "The requested workflow is not currently present in the read-only projection. It may still be propagating or may no longer be projected.",
+      );
+    } else if (r.kind === "workflow") {
+      renderWorkflow(project, workflow);
+    } else {
+      renderSession(project, workflow, r.instanceId);
+    }
+
+    restoreHierarchyOpen();
 
     if (focused) {
       const keyed = [...document.querySelectorAll("[data-key]")];

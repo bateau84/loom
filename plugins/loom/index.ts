@@ -3,7 +3,20 @@ import { RUNTIME_STATE_VERSION, consumeDispatchGrantLocked, createProjectStorage
 import { LoomRpc } from "./rpc"
 import { buildSidebarSnapshot } from "./sidebar"
 import { renderToolOutput } from "./presentation"
+import {
+  buildStatusView,
+  clippedSummary,
+  dashboardWorkflowUrl,
+  compactQuestions,
+  compactVerification,
+  renderStatusMarkdown,
+  statusPresentation,
+  writeStatusArtifact,
+} from "./status-view"
 import { createDashboardPublisher } from "./dashboard"
+
+export const LOOM_NATIVE_TOOL_GUIDANCE =
+  "Loom control-plane tools are available through two equivalent OpenCode surfaces: native loom_* tools and Code Mode mirrors under tools.loom.code.*. Use either surface directly according to the active tool paradigm. If using Code Mode, search for Loom tools and invoke the returned tools.loom.code.* signatures; do not fall back to shell/filesystem discovery for Loom commands. Interactive status is dashboard-first and does not depend on model prose: the Loom sidebar exposes a stable workflow dashboard URL, while loom_status may also return presentation metadata. Desktop browser preview is optional metadata only; do not invoke tools.browser.preview merely because presentation metadata exists."
 import {
   addVerificationRequirement,
   applyTaskPlan,
@@ -541,96 +554,6 @@ function questionState(questions: OpenQuestion[], workflow: Workflow) {
 }
 
 
-function clippedSummary(value?: string, max = 180) {
-  if (!value) return undefined
-  const normalized = value.replace(/\s+/g, " ").trim()
-  return normalized.length <= max ? normalized : normalized.slice(0, max - 1) + "…"
-}
-
-function compactQuestions(questions: OpenQuestion[], workflow: Workflow) {
-  const state = questionState(questions, workflow)
-  return {
-    open: state.unresolved.length,
-    routes: state.routes,
-    reconcile: state.reconcile,
-  }
-}
-
-function compactVerification(workflow: Workflow) {
-  const requirements = workflow.verification ?? []
-  return {
-    open: requirements
-      .filter((requirement) => requirement.status === "open")
-      .map((requirement) => ({
-        id: requirement.id,
-        before: requirement.beforeStepId,
-        kind: requirement.kind,
-        statement: clippedSummary(requirement.statement, 140),
-      })),
-    satisfied: requirements.filter((requirement) => requirement.status === "satisfied").length,
-  }
-}
-
-function compactWorkflowState(
-  workflow: Workflow,
-  questions: OpenQuestion[],
-  budget: BudgetState,
-  limits: ExecutionLimits,
-  acceptance?: AcceptancePlan,
-  knowledge?: KnowledgeReport,
-) {
-  const ready = runnable(workflow)
-  const finished = workflow.steps.filter((step) => ["complete", "passed", "failed"].includes(step.status))
-  const failed = workflow.steps.filter((step) => step.status === "failed")
-  const pending = workflow.steps.filter((step) => step.status === "pending")
-  const readyIds = new Set(ready.map((step) => step.id))
-  const blockedPending = pending.filter((step) => !readyIds.has(step.id))
-
-  const state =
-    failed.length > 0 && ready.length === 0
-      ? "blocked"
-      : pending.length === 0
-        ? "complete"
-        : "active"
-
-  return {
-    workflowId: workflow.id,
-    state,
-    progress: {
-      finished: finished.length,
-      total: workflow.steps.length,
-      failed: failed.length,
-    },
-    now: ready.map((step) => ({ step: step.id, agent: step.agent, kind: step.kind })),
-    recent: finished.slice(-5).map((step) => ({
-      step: step.id,
-      agent: step.agent,
-      status: step.status,
-      ...(step.summary ? { summary: clippedSummary(step.summary) } : {}),
-    })),
-    upcoming: blockedPending.slice(0, 6).map((step) => ({
-      step: step.id,
-      agent: step.agent,
-      waitsFor: step.dependsOn.filter(
-        (dependency) =>
-          !workflow.steps.some(
-            (candidate) =>
-              candidate.id === dependency && ["complete", "passed"].includes(candidate.status),
-          ),
-      ),
-    })),
-    questions: compactQuestions(questions, workflow),
-    verification: compactVerification(workflow),
-    budget: {
-      dispatches: budget.totalDispatches,
-      maxDispatches: limits.maxTotalDispatches,
-      ...(budget.exhausted ? { exhausted: budget.exhausted } : {}),
-    },
-    acceptance: acceptance ? acceptanceReadiness(acceptance) : null,
-    knowledge: knowledge ? { valid: knowledge.valid } : null,
-  }
-}
-
 function evidenceKey(id: string) {
   return `evidence/${id}`
 }
@@ -791,7 +714,12 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         const workflow = await activeWorkflow(ctx, sessionID, ensureLegacySession)
         const questions = workflow ? await readQuestions(ctx, workflow.id) : []
         const work = workflow?.work ? await readWork(ctx, workflow.work.objectiveId) : undefined
-        return buildSidebarSnapshot(workflow, questions, work)
+        return buildSidebarSnapshot(
+          workflow,
+          questions,
+          work,
+          workflow ? await dashboardWorkflowUrl(runtime, workflow.id) : undefined,
+        )
       },
     })
 
@@ -1530,7 +1458,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
       editor.add({
         name: "status",
-        description: "Inspect Loom progress, current/next work, blockers, OQs, verification, and budget. Compact by default; detail=true returns internals.",
+        description: "Inspect Loom progress, current/next work, blockers, OQs, verification, and budget. Compact by default; detail=true returns internals. Interactive status is available independently through Loom's stable dashboard workflow URL exposed in the sidebar; the tool also returns browser-safe presentation metadata as a convenience. OpenCode Desktop browser preview is optional metadata only and must not be invoked merely because presentation metadata exists. Presentation availability never blocks or alters Loom workflow state.",
         input: {
           type: "object",
           properties: {
@@ -1558,25 +1486,46 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           const knowledge = (await ctx.storage.get(knowledgeKey(workflow.id))) as KnowledgeReport | undefined
           const work = workflow.work ? await readWork(ctx, workflow.work.objectiveId) : undefined
           const detail = Boolean((input as { detail?: boolean }).detail)
-          const workSummary = work
-            ? { tree: workTree(work), nextRunnableWaves: nextRunnableWaves(work), version: work.version }
-            : null
+          const view = buildStatusView(
+            workflow,
+            questions,
+            budget,
+            limits,
+            acceptance,
+            knowledge,
+            work,
+          )
+          const artifact = await writeStatusArtifact(runtime, view).catch(() => undefined)
+          const presentation = statusPresentation(artifact)
+          const compact = renderStatusMarkdown(view, artifact)
+          const metadata = {
+            loom: {
+              kind: "workflow-status",
+              workflowId: workflow.id,
+              state: view.state,
+              ...(presentation ? { presentation } : {}),
+            },
+          }
 
           if (!detail) {
-            return {
-              content: renderToolOutput({
-                ...compactWorkflowState(workflow, questions, budget, limits, acceptance, knowledge),
-                work: workSummary,
-              }),
+            if (process.env.LOOM_TOOL_OUTPUT === "json") {
+              return {
+                content: renderToolOutput(
+                  {
+                    ...view,
+                    ...(presentation ? { presentation } : {}),
+                  },
+                  "json",
+                ),
+                metadata,
+              }
             }
+            return { content: compact, metadata }
           }
 
           return {
             content: renderToolOutput({
-              summary: {
-                ...compactWorkflowState(workflow, questions, budget, limits, acceptance, knowledge),
-                work: workSummary,
-              },
+              summary: view,
               workflow,
               runnable: runnable(workflow).map((step) => ({ id: step.id, agent: step.agent })),
               questions: questionState(questions, workflow),
@@ -1587,6 +1536,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 : null,
               knowledge: knowledge ?? null,
             }),
+            metadata,
           }
         },
       })
@@ -3954,6 +3904,25 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         },
       })
 
+      editor.namespace({
+        name: "loom.code",
+        description: "Code Mode mirrors of Loom control-plane tools. Same schemas, executors, authority, and workflow semantics as native loom_* tools.",
+      })
+      const nativeLoomTools = editor
+        .list()
+        .filter((tool) => tool.options?.namespace === "loom" && tool.options?.codemode === false)
+      for (const tool of nativeLoomTools) {
+        const { id: nativeId, ...definition } = tool
+        editor.add({
+          ...definition,
+          options: {
+            namespace: "loom.code",
+            codemode: true,
+            permission: tool.options?.permission ?? nativeId,
+          },
+        })
+      }
+
     })
 
     await ctx.permission.hook("evaluate", async (event) => {
@@ -4137,6 +4106,10 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         event.effect = "deny"
         event.message = `Loom execution budget exhausted: ${recorded.reason}`
       }
+    })
+
+    await ctx.session.hook("context", (event) => {
+      event.system.push({ type: "text", text: LOOM_NATIVE_TOOL_GUIDANCE })
     })
 
     await ctx.session.hook("retry", (event) => {

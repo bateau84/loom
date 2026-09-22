@@ -18,6 +18,7 @@ import type { Workflow } from "./workflow"
 
 type RegisteredTool = {
   name: string
+  options?: { namespace?: string; codemode?: boolean; permission?: string }
   execute: (input: unknown, tool: { agent: string; sessionID: string }) => Promise<any>
 }
 
@@ -82,12 +83,25 @@ describe("Loom budget recovery plugin integration", () => {
           transform: async (
             apply: (editor: {
               namespace: (input: unknown) => void
+              list: () => Array<RegisteredTool & { id: string }>
               add: (tool: RegisteredTool) => void
             }) => void,
           ) => {
             await apply({
               namespace: () => {},
-              add: (tool) => registeredTools.set(tool.name, tool),
+              list: () =>
+                [...registeredTools.entries()].map(([key, tool]) => ({
+                  ...tool,
+                  id: tool.options?.namespace
+                    ? `${tool.options.namespace.replaceAll(".", "_")}_${tool.name}`
+                    : key,
+                })),
+              add: (tool) => {
+                const key = tool.options?.namespace === "loom.code"
+                  ? `loom_code_${tool.name}`
+                  : tool.name
+                registeredTools.set(key, tool)
+              },
             })
           },
           hook: async () => {},

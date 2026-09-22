@@ -29,6 +29,7 @@ async function fixture() {
 type RegisteredTool = {
   name: string
   input: any
+  options?: { namespace?: string; codemode?: boolean; permission?: string }
   execute: (input: any, tool?: any) => Promise<{ content: string }>
 }
 
@@ -57,7 +58,19 @@ async function pluginHarness(root: string) {
       transform: async (fn: (editor: any) => any) => {
         await fn({
           namespace: () => {},
-          add: (definition: RegisteredTool) => registered.set(definition.name, definition),
+          list: () =>
+            [...registered.entries()].map(([key, definition]) => ({
+              ...definition,
+              id: definition.options?.namespace
+                ? `${definition.options.namespace.replaceAll(".", "_")}_${definition.name}`
+                : key,
+            })),
+          add: (definition: RegisteredTool) => {
+            const key = definition.options?.namespace === "loom.code"
+              ? `loom_code_${definition.name}`
+              : definition.name
+            registered.set(key, definition)
+          },
         })
       },
       hook: async (name: string, fn: (event: any) => any) => {

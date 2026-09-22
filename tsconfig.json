@@ -14,7 +14,11 @@
   },
   "include": [
     "plugins/loom/**/*.ts",
+    "plugins/loom/**/*.tsx",
     "scripts/**/*.ts",
     "dashboard/**/*.ts"
+  ],
+  "exclude": [
+    "dashboard/**/*.e2e.spec.ts"
   ]
 }

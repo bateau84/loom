@@ -47,6 +47,7 @@ export type LoomSidebarSnapshot = {
     failed: number
   }
   work?: LoomSidebarWork
+  statusUrl?: string
   tasks: Array<{
     id: string
     title: string
@@ -170,6 +171,7 @@ export const LoomRpc = {
             required: ["objective", "generation", "phases"],
             additionalProperties: false,
           },
+          statusUrl: { type: "string" },
           tasks: {
             type: "array",
             items: {

@@ -46,9 +46,9 @@ Each case includes:
 - positive `expectations`
 - forbidden `must_not` behavior
 - optional deterministic tool assertions
-- optional runtime action assertions that match a tool plus one concrete argument with `equals` or `ends_with`
+- optional runtime action assertions that match a tool alone or a tool argument with `equals`, `ends_with`, or `contains`; `actions.any_of` groups accept any one equivalent action
 
-Action assertions are runtime-only. They are evaluated against observed OpenCode tool actions and their captured input arguments. Use them when tool identity alone is insufficient—for example, to prove that Reviewer read a specific `ASSESSMENT.md` or Critic read a specific `QA.md`.
+Action assertions are runtime-only. They are evaluated against observed OpenCode tool actions and their captured input arguments. Use them when tool identity alone is insufficient—for example, to prove that Reviewer read a specific `ASSESSMENT.md` or Critic read a specific `QA.md`. `output.contains` and `output.forbids` assert literal text in the target model's final user-facing output.
 
 Assertions use stable semantic argument names. The harness currently normalizes OpenCode V2 aliases such as `skill.id` ↔ `skill.name` and `read.path` ↔ `read.filePath`, so behavioral cases do not become coupled to a transport-only parameter rename.
 
@@ -59,7 +59,14 @@ Example:
   "actions": {
     "requires": [
       {"tool": "skill", "arg": "name", "equals": "golang-concurrency"},
-      {"tool": "read", "arg": "filePath", "ends_with": "skills/golang-concurrency/ASSESSMENT.md"}
+      {"tool": "read", "arg": "filePath", "ends_with": "skills/golang-concurrency/ASSESSMENT.md"},
+      {"tool": "execute", "arg": "code", "contains": "tools.browser.preview"}
+    ],
+    "any_of": [
+      [
+        {"tool": "loom_status"},
+        {"tool": "execute", "arg": "code", "contains": "tools.loom.code.status"}
+      ]
     ],
     "forbids": [
       {"tool": "read", "arg": "filePath", "ends_with": "skills/golang-concurrency/QA.md"}
@@ -166,8 +173,8 @@ The harness chooses Podman first, then Docker. Override it explicitly with `--en
 The harness pins the runner images by digest so the Action source and container runtime cannot drift independently:
 
 ```text
-OpenCode: ghcr.io/bateau84/opencode-eval-runner@sha256:5cc9571629bfba84636d5205e04ed6a0b6cbd77369061a25ccee5377631570ae
-Copilot:  ghcr.io/bateau84/opencode-eval-runner@sha256:ada713db25e57a76d1e35a9bbd2c507bb2f3300c128ea44efc8b3d74d80dcdc9
+OpenCode: ghcr.io/bateau84/opencode-eval-runner@sha256:eece79be0987d41c96cfbc43a4a0792987af383f2edec4e6651f43a954f1874f
+Copilot:  ghcr.io/bateau84/opencode-eval-runner@sha256:51d484e8b12541eeceef11c0818e26c97d77cc7d81a29b0c720b840d0226968b
 ```
 
 Override them independently with `--opencode-image` / `--copilot-image`, or use `--image` to force one explicit image for both transports. Changing the pinned runner revision and image digests is one compatibility update.
