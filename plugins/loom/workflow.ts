@@ -347,7 +347,16 @@ export function preserveSatisfied(previous: Step[], next: Step[]) {
 
   for (const step of next) {
     const old = byID.get(step.id)
-    if (old?.agent === step.agent && old.kind === step.kind && satisfied(old)) {
+    const sameDependencies =
+      old?.dependsOn.length === step.dependsOn.length &&
+      old.dependsOn.every((dependency, index) => dependency === step.dependsOn[index])
+
+    if (
+      old?.agent === step.agent &&
+      old.kind === step.kind &&
+      sameDependencies &&
+      satisfied(old)
+    ) {
       step.status = old.status
       step.summary = old.summary
     }
