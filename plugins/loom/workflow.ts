@@ -53,6 +53,7 @@ export type Workflow = {
   projectId: string
   revision: number
   anchor: string
+  request?: string
   createdBySession: string
   createdAt: string
   effects?: Effects
