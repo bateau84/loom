@@ -156,6 +156,38 @@ describe("Loom registered plugin boundary", () => {
     }
   })
 
+  test("allows conversational investigation after a terminal workflow remains bound", async () => {
+    const sessionID = "terminal-conversation"
+    const workflowId = "terminal-workflow"
+    const { evaluatePermission, restore } = await harness(async (storage) => {
+      await storage.set(`session/${sessionID}`, workflowId)
+      await storage.set(`workflow/${workflowId}`, {
+        id: workflowId,
+        anchor: "docs/anchors/test/anchor.md",
+        createdBySession: sessionID,
+        createdAt: "before-project-scoping",
+        steps: [
+          { id: "worker", agent: "worker", kind: "work", dependsOn: [], status: "complete" },
+          { id: "review-implementation", agent: "reviewer", kind: "gate", dependsOn: ["worker"], status: "passed" },
+        ],
+      })
+    })
+    try {
+      const event = await evaluatePermission({
+        agent: "general",
+        action: "subagent",
+        resources: ["research"],
+        sessionID,
+        effect: "allow",
+        source: { messageID: "message", id: "post-workflow-research" },
+      })
+      expect(event.effect).toBe("allow")
+      expect(event.message).toBeUndefined()
+    } finally {
+      restore()
+    }
+  })
+
   test("restricts conversational Research and Diagnostic to safe inspection shell", async () => {
     const { evaluatePermission, restore } = await harness()
     try {
