@@ -122,6 +122,35 @@ class RuntimeEvalProjectTests(unittest.TestCase):
             shutil.rmtree(runtime_temp, ignore_errors=True)
             shutil.rmtree(decision_temp, ignore_errors=True)
 
+    def test_case_specific_target_timeout_keeps_global_defaults_for_other_cases(self):
+        deep_research = next(
+            case
+            for case in RUN_EVALS.load_cases()
+            if case["id"] == "CONVERSATION-02"
+        )
+        ordinary = next(
+            case
+            for case in RUN_EVALS.load_cases()
+            if case["id"] == "CONVERSATION-01"
+        )
+
+        self.assertEqual(
+            RUN_EVALS.case_target_timeout_seconds(deep_research, 240),
+            360,
+        )
+        self.assertEqual(
+            RUN_EVALS.case_target_container_timeout(deep_research, 300, 360),
+            420,
+        )
+        self.assertEqual(
+            RUN_EVALS.case_target_timeout_seconds(ordinary, 240),
+            240,
+        )
+        self.assertEqual(
+            RUN_EVALS.case_target_container_timeout(ordinary, 300, 240),
+            300,
+        )
+
     def test_mutating_report_eval_is_rw_but_normal_runtime_eval_stays_ro(self):
         promoting = next(
             case
