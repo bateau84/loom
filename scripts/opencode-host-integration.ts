@@ -720,7 +720,7 @@ async function startServer(
 
 function sessionCreateBody(
   title: string,
-  agent: "general" | "worker" | "reviewer",
+  agent: "general" | "worker" | "reviewer" | "planner",
   parentID?: string,
 ) {
   return {
@@ -925,6 +925,153 @@ try {
     throw new Error("Two real OpenCode projects received the same Loom project epoch")
   }
 
+  const upgradeProject = await createProject(base, "project-upgrade-restart", mock.baseUrl)
+  await installLegacyUpgradePlugin(upgradeProject)
+  const upgradeState = join(base, "upgrade-shared-state")
+  const upgradeRuntime = join(base, "upgrade-runtime")
+
+  const legacyHost = await startServer(
+    base,
+    upgradeProject,
+    upgradeState,
+    upgradeRuntime,
+    "upgrade-host",
+  )
+  servers.push(legacyHost)
+
+  const upgradePrimary = await jsonRequestAny(
+    [`${legacyHost.baseUrl}/api/session`, `${legacyHost.baseUrl}/session`],
+    legacyHost.authorization,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(sessionCreateBody("Pre-upgrade General", "general")),
+    },
+  )
+  const upgradeSecondary = await jsonRequestAny(
+    [`${legacyHost.baseUrl}/api/session`, `${legacyHost.baseUrl}/session`],
+    legacyHost.authorization,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(sessionCreateBody("Pre-upgrade Planner", "planner", upgradePrimary.id)),
+    },
+  )
+  if (!upgradePrimary?.id || !upgradeSecondary?.id) {
+    throw new Error("OpenCode did not persist pre-upgrade sessions")
+  }
+
+  const preUpgradePrimaryMetadata = await jsonRequestAny(
+    [
+      `${legacyHost.baseUrl}/api/session/${upgradePrimary.id}`,
+      `${legacyHost.baseUrl}/session/${upgradePrimary.id}`,
+    ],
+    legacyHost.authorization,
+  )
+  const preUpgradeSecondaryMetadata = await jsonRequestAny(
+    [
+      `${legacyHost.baseUrl}/api/session/${upgradeSecondary.id}`,
+      `${legacyHost.baseUrl}/session/${upgradeSecondary.id}`,
+    ],
+    legacyHost.authorization,
+  )
+  if (
+    preUpgradePrimaryMetadata?.id !== upgradePrimary.id ||
+    preUpgradeSecondaryMetadata?.id !== upgradeSecondary.id
+  ) {
+    throw new Error("OpenCode pre-upgrade session metadata did not preserve created session IDs")
+  }
+
+  mock.state.upgradeSecondarySessionId = upgradeSecondary.id
+  await sendPrompt(legacyHost, upgradePrimary.id, "LOOM_INTEGRATION_LEGACY_SEED")
+  await waitForCondition(
+    () => mock.state.upgradeSeeded,
+    "pre-upgrade Loom fixture persisting legacy workflow bindings",
+    () => mock.state,
+  )
+
+  await stop(legacyHost)
+  await installCurrentLoomPlugin(upgradeProject)
+
+  const restartedHost = await startServer(
+    base,
+    upgradeProject,
+    upgradeState,
+    upgradeRuntime,
+    "upgrade-host",
+  )
+  servers.push(restartedHost)
+
+  const resumedPrimaryMetadata = await jsonRequestAny(
+    [
+      `${restartedHost.baseUrl}/api/session/${upgradePrimary.id}`,
+      `${restartedHost.baseUrl}/session/${upgradePrimary.id}`,
+    ],
+    restartedHost.authorization,
+  )
+  const resumedSecondaryMetadata = await jsonRequestAny(
+    [
+      `${restartedHost.baseUrl}/api/session/${upgradeSecondary.id}`,
+      `${restartedHost.baseUrl}/session/${upgradeSecondary.id}`,
+    ],
+    restartedHost.authorization,
+  )
+  if (
+    resumedPrimaryMetadata?.id !== upgradePrimary.id ||
+    resumedSecondaryMetadata?.id !== upgradeSecondary.id
+  ) {
+    throw new Error("Restarted OpenCode host did not expose the original persisted session IDs")
+  }
+  if (
+    typeof resumedPrimaryMetadata?.projectID !== "string" ||
+    resumedPrimaryMetadata.projectID.length === 0 ||
+    typeof resumedSecondaryMetadata?.projectID !== "string" ||
+    resumedSecondaryMetadata.projectID.length === 0
+  ) {
+    throw new Error("Restarted OpenCode 2.0.12 session metadata did not expose project identity")
+  }
+
+  await sendPrompt(restartedHost, upgradePrimary.id, "LOOM_INTEGRATION_UPGRADE_PRIMARY")
+  await waitForCondition(
+    () => mock.state.upgradePrimaryResumed,
+    "same real OpenCode session reconciling after Loom upgrade",
+    () => mock.state,
+  )
+
+  await sendPrompt(restartedHost, upgradeSecondary.id, "LOOM_INTEGRATION_UPGRADE_SECONDARY")
+  await waitForCondition(
+    () => mock.state.upgradeSecondaryResumed,
+    "secondary persisted session reconciling through admitted workflow",
+    () => mock.state,
+  )
+
+  const resumedPrimarySidebar = await jsonRequest(
+    `${restartedHost.baseUrl}/api/rpc/loom.control/sidebar`,
+    restartedHost.authorization,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ input: { sessionID: upgradePrimary.id } }),
+    },
+  )
+  const resumedSecondarySidebar = await jsonRequest(
+    `${restartedHost.baseUrl}/api/rpc/loom.control/sidebar`,
+    restartedHost.authorization,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ input: { sessionID: upgradeSecondary.id } }),
+    },
+  )
+  const resumedPrimaryOutput = resumedPrimarySidebar?.output ?? resumedPrimarySidebar
+  const resumedSecondaryOutput = resumedSecondarySidebar?.output ?? resumedSecondarySidebar
+  if (
+    resumedPrimaryOutput?.workflowId !== UPGRADE_WORKFLOW_ID ||
+    resumedSecondaryOutput?.workflowId !== UPGRADE_WORKFLOW_ID
+  ) {
+    throw new Error("Restarted real OpenCode sessions did not reconcile to the legacy workflow")
+  }
+
   console.log("PASS OpenCode host integration")
   console.log(` - workflow: ${mock.state.workflowId}`)
   console.log(` - worker/reviewer attached: ${mock.state.workerAttached}/${mock.state.reviewerAttached}`)
@@ -933,6 +1080,8 @@ try {
   console.log(` - sessions: ${sessionA.id}, ${sessionB.id}`)
   console.log(` - shared Loom runtime root: ${runtimeRecord.runtimeRoot}`)
   console.log(` - projected projects: ${fleet.projects.map((project) => project.projectId).join(", ")}`)
+  console.log(` - restart reconciliation: ${mock.state.upgradePrimaryResumed}/${mock.state.upgradeSecondaryResumed}`)
+  console.log(` - resumed session IDs: ${upgradePrimary.id}, ${upgradeSecondary.id}`)
 } finally {
   await Promise.allSettled(servers.map(stop))
   mock.server.stop(true)
