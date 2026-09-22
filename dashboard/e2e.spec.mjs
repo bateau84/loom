@@ -1,6 +1,6 @@
 import { test, expect } from "@playwright/test"
 import { spawn } from "node:child_process"
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { createServer } from "node:net"
 import { join, resolve } from "node:path"
 import { tmpdir } from "node:os"
@@ -251,6 +251,50 @@ test.beforeEach(async () => {
 test.afterAll(async () => {
   if (server && !server.killed) server.kill("SIGTERM")
   await rm(root, { recursive: true, force: true })
+})
+
+test("dashboard child process publishes its effective endpoint lease", async () => {
+  const record = JSON.parse(
+    await readFile(join(stateRoot, "loom", "dashboard-endpoint.json"), "utf8"),
+  )
+  expect(record).toMatchObject({
+    schemaVersion: 1,
+    baseUrl: `http://127.0.0.1:${port}`,
+  })
+  expect(Date.parse(record.leaseExpiresAt)).toBeGreaterThan(Date.now())
+})
+
+test("workflow deep link survives projection lag and opens when the workflow appears", async ({ page }) => {
+  await writePublisher({
+    instanceId: "instance-a",
+    projectId: "project-a",
+    displayName: "Project A",
+    canonicalLocation: "/work/project-a",
+    workflows: [],
+  })
+
+  const url = `http://127.0.0.1:${port}/#/project/project-a/workflow/workflow-a`
+  await page.goto(url)
+  await expect(page.getByText("Waiting for Loom projection…", { exact: true })).toBeVisible()
+  await expect(page).toHaveURL(/#\/project\/project-a\/workflow\/workflow-a$/)
+
+  await writePublisher({
+    instanceId: "instance-a",
+    projectId: "project-a",
+    displayName: "Project A",
+    canonicalLocation: "/work/project-a",
+    workflows: [workflow({
+      id: "workflow-a",
+      revision: 4,
+      digest: "digest-a",
+      status: "active",
+      sessionId: "session-a",
+    })],
+  })
+
+  await page.waitForTimeout(3_400)
+  await expect(page).toHaveURL(/#\/project\/project-a\/workflow\/workflow-a$/)
+  await expect(page.getByText("Workflow workflow-a", { exact: false })).toBeVisible()
 })
 
 test("keyboard drill-down and browser back preserve Fleet filters", async ({ page }) => {
