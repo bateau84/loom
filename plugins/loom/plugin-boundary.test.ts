@@ -1066,4 +1066,50 @@ Verdict: FAIL
     }
   })
 
+
+  test("conversation may dispatch Research or Diagnostic without a workflow", async () => {
+    const { permissionHooks, restore } = await harness()
+    try {
+      const evaluate = permissionHooks.get("evaluate")
+      expect(evaluate).toBeDefined()
+
+      for (const target of ["research", "diagnostic"]) {
+        const event: any = {
+          agent: "general",
+          action: "subagent",
+          resources: [target],
+          sessionID: `conversation-${target}`,
+          source: { messageID: "message", id: `call-${target}` },
+        }
+        await evaluate!(event)
+        expect(event.effect).toBeUndefined()
+      }
+    } finally {
+      restore()
+    }
+  })
+
+  test("conversation still blocks governed Loom agents without a workflow", async () => {
+    const { permissionHooks, restore } = await harness()
+    try {
+      const evaluate = permissionHooks.get("evaluate")
+      expect(evaluate).toBeDefined()
+
+      for (const target of ["worker", "designer", "specifier", "architect", "reviewer", "critic", "acceptance", "planner", "documenter"]) {
+        const event: any = {
+          agent: "general",
+          action: "subagent",
+          resources: [target],
+          sessionID: `conversation-${target}`,
+          source: { messageID: "message", id: `call-${target}` },
+        }
+        await evaluate!(event)
+        expect(event.effect).toBe("deny")
+        expect(event.message).toContain("Only conversational Research or Diagnostic")
+      }
+    } finally {
+      restore()
+    }
+  })
+
 })
