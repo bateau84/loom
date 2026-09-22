@@ -9,7 +9,7 @@ permissions:
     resource: "docs/anchors/**"
     effect: allow
   - action: edit
-    resource: "ephemeral-reports/**"
+    resource: "ephemeral-reports/general/**"
     effect: allow
   - action: subagent
     resource: "*"
