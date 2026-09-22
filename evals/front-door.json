@@ -10,10 +10,10 @@
         "BR-001",
         "BR-014"
       ],
-      "prompt": "I want a YouTube app that finds music for me.",
-      "trap": "Jump straight into technical design, dump many questions, or start autonomous execution before the product intent is accepted.",
+      "prompt": "Build me a YouTube app that finds music for me.",
+      "trap": "Jump straight into technical design or implementation before unresolved user-owned product intent is resolved and accepted.",
       "expectations": [
-        "Begins Loom intent shaping rather than implementation.",
+        "Treats the explicit build request as execution intent, but resolves the still-fuzzy user-owned product outcome before implementation.",
         "Asks exactly one focused user-owned product question and includes a recommended answer with a short rationale.",
         "The question is about desired product outcome, scope, or subjective behavior rather than programming language, database, framework, or API mechanics."
       ],
@@ -264,6 +264,46 @@
       ],
       "must_not": [
         "Must not restart the objective from scratch or require the user to re-approve unchanged parts."
+      ]
+    },
+    {
+      "id": "CONVERSATION-04",
+      "agent": "general",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-013",
+        "BR-019"
+      ],
+      "prompt": "After switching branches, npm test fails with ENOENT for a CSS file under .svelte-kit/output/client. The .svelte-kit directory was generated on the previous branch and the referenced hashed CSS file no longer exists. I only want to understand the problem and how to recover; do not change anything.",
+      "trap": "Treat ordinary problem-solving as requiring a separate Problem/Diagnostic persona, or turn the explanation request into product execution.",
+      "expectations": [
+        "Reasons through the supplied evidence in the normal Loom conversation and identifies stale generated SvelteKit output as the best-supported cause.",
+        "Explains an appropriate bounded recovery such as removing/rebuilding generated output without implying that a durable workflow or specialist dispatch is mandatory.",
+        "May invoke Diagnostic only if additional causal evidence is actually needed; the user never has to switch personas."
+      ],
+      "must_not": [
+        "Must not start implementation or a durable product workflow.",
+        "Must not claim Diagnostic is mandatory merely because the request is debugging-related."
+      ]
+    },
+    {
+      "id": "AUTO-ORCHESTRATION-02",
+      "agent": "general",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-001",
+        "BR-019"
+      ],
+      "prompt": "Change the existing button label from \"Retry Step\" to \"Retry\". The accepted behavior is unchanged; this is only a mechanical copy edit. Make the change and verify it.",
+      "trap": "Turn a tiny mechanically specified edit into a heavyweight requirements/design/architecture exercise simply because those capabilities exist.",
+      "expectations": [
+        "Treats the message as clear bounded execution and chooses the smallest safe implementation-and-verification path.",
+        "Does not manufacture new requirements, design, architecture, ADRs, or broad specialist ceremony when repository evidence confirms the change is purely mechanical.",
+        "Still verifies the actual change and escalates only if inspection reveals hidden behavior or authority impact."
+      ],
+      "must_not": [
+        "Must not ask the user which agents or documents to invoke.",
+        "Must not create durable authority artifacts solely to demonstrate process."
       ]
     }
   ]
