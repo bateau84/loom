@@ -27,11 +27,13 @@ A restarted **same OpenCode session** is reconciled automatically when Loom can 
 - the host session belongs to the current OpenCode project;
 - the legacy record does not name a conflicting Loom project epoch.
 
-The migrated workflow is assigned the current durable project epoch and a reconciliation receipt is stored. Existing workflow progress, budget, OQs, evidence and session attachment are migrated where present.
+The migrated workflow is assigned the current durable project epoch and a reconciliation receipt is stored. Existing workflow progress, budget, OQs, evidence and session attachment are migrated where present. If the installation has already advanced to a newer runtime schema, those older baseline-format project records are upgraded inside the same canonical transaction before the resumed session can read them as current state.
 
 After that workflow has been safely admitted to the current project epoch, other pre-upgrade sessions that already have a durable legacy binding to **that exact same workflow** can also be reconciled. This covers older Planner/Worker/Reviewer/etc. sessions whose OpenCode host metadata may no longer expose the original project field after an upgrade. Loom uses the already-canonical workflow as provenance; it does not infer ownership from a path or a caller-supplied workflow ID.
 
 This is why restarting an old session after upgrading Loom is supported without asking the model to create a new workflow or abandon the ongoing Objective.
+
+If Loom later performs a controlled rebind of that session to another canonical workflow, the newer canonical binding wins permanently. Historical compatibility storage is not rewritten and may still mention the old workflow, but Loom will no longer use that stale binding, intent, or work data as migration authority after restart.
 
 ## When Loom still refuses
 
@@ -59,7 +61,7 @@ The runtime upgrade ledger provides a single mechanism for later state-format ch
 
 Upgrade steps must be idempotent. A failed transactional step leaves the prior complete version/data generation intact. Loom refuses runtime state created by a newer build or a missing upgrade path instead of guessing.
 
-A project that has not been opened for a long time may still have records only in OpenCode's older plugin storage. If that project returns after the canonical Loom installation has already advanced to a newer runtime schema, Loom treats those records as baseline-version input and runs the registered idempotent upgrade callbacks over the imported project/global records before committing them. The old-format records are never exposed as canonical newer-version state.
+A project that has not been opened for a long time may still have records only in OpenCode's older plugin storage. If that project returns after the canonical Loom installation has already advanced to a newer runtime schema, Loom treats those records as baseline-version input and runs the registered idempotent upgrade callbacks over the imported project/global records before committing them. The same baseline→current transformation rule applies when an old **unscoped** session/workflow is reconciled lazily after the installation has advanced. The old-format records are never exposed as canonical newer-version state.
 
 ### Already-running OpenCode processes
 
