@@ -1,5 +1,5 @@
 import type * as OpenCodePlugin from "@opencode/plugin"
-import { RUNTIME_STATE_VERSION, consumeDispatchGrantLocked, createProjectStorage, createTransactionalStorage, ensureRuntimeStateVersion, findUsableDispatchGrant, importLegacyPluginStorage, issueDispatchGrantLocked, migrateLegacySessionState, resolveRuntimeIdentity, sessionBoundToOq, sessionBoundToStep, sessionBoundToWorkflow, withRuntimeLock, withRuntimeLocks, type LoomRuntimeIdentity } from "./runtime"
+import { RUNTIME_STATE_VERSION, consumeDispatchGrantLocked, createProjectStorage, createTransactionalStorage, ensureRuntimeStateVersion, findUsableDispatchGrant, importLegacyPluginStorage, issueDispatchGrantLocked, migrateLegacySessionState, resolveRuntimeIdentity, sessionBoundToOq, sessionBoundToStep, sessionBoundToWorkflow, withRuntimeAdvisoryLock, withRuntimeLock, withRuntimeLocks, type LoomRuntimeIdentity } from "./runtime"
 import { LoomRpc } from "./rpc"
 import { buildSidebarSnapshot } from "./sidebar"
 import { renderToolOutput } from "./presentation"
@@ -204,7 +204,7 @@ async function recoverPendingReportPromotions(
       const observed = entry.value as ReportPromotionRecord
       if (!observed || observed.status !== "pending") continue
 
-      await withRuntimeLock(
+      await withRuntimeAdvisoryLock(
         runtime,
         "report-promotion",
         reportPromotionDestinationKey(observed.destination),
@@ -955,7 +955,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           }
 
           const value = input as ReportPromotionInput
-          return withRuntimeLock(
+          return withRuntimeAdvisoryLock(
             runtime,
             "report-promotion",
             reportPromotionDestinationKey(value.destination),
