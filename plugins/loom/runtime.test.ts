@@ -525,6 +525,177 @@ describe("Loom late legacy import upgrades", () => {
   })
 })
 
+describe("Loom pre-project-epoch continuity schema upgrades", () => {
+  test("resumed unscoped legacy records are upgraded to the current schema before canonical exposure", async () => {
+    await withRoots(async (root) => {
+      const legacy = new MemoryStorage()
+      const project = join(root, "continuity-v2-project")
+      await mkdir(project, { recursive: true })
+      const runtime = await resolveRuntimeIdentity(project, legacy as any)
+      const raw = await createTransactionalStorage(runtime)
+
+      const steps = [{
+        id: "test-continuity-v1-to-v2",
+        fromVersion: 1,
+        toVersion: 2,
+        applyProject: async (storage: any) => {
+          const workflow = await storage.get("workflow/legacy-v2")
+          if (workflow) {
+            await storage.set("workflow/legacy-v2", {
+              ...(workflow as any),
+              format: 2,
+            })
+          }
+          const budget = await storage.get("budget/legacy-v2")
+          if (budget) {
+            await storage.set("budget/legacy-v2", {
+              ...(budget as any),
+              format: 2,
+            })
+          }
+        },
+      }]
+
+      await ensureRuntimeStateVersion(raw, runtime, { targetVersion: 2, steps })
+      const scoped = createProjectStorage(raw, runtime.projectId, {
+        expectedRuntimeVersion: 2,
+      })
+
+      await legacy.set("session/resumed-v2", "legacy-v2")
+      await legacy.set("workflow/legacy-v2", {
+        id: "legacy-v2",
+        anchor: "docs/anchors/example.md",
+        createdBySession: "resumed-v2",
+        createdAt: "before-project-scoping",
+        format: 1,
+        steps: [],
+      })
+      await legacy.set("budget/legacy-v2", {
+        totalDispatches: 0,
+        byKey: {},
+        seenDispatches: [],
+        grants: [],
+        format: 1,
+      })
+
+      const result = await migrateLegacySessionState(
+        legacy as any,
+        scoped,
+        runtime,
+        {
+          sessionId: "resumed-v2",
+          sessionProjectId: "opencode-project-a",
+          currentProjectId: "opencode-project-a",
+          resumeProof: {
+            kind: "opencode-host-session",
+            sessionId: "resumed-v2",
+            projectId: "opencode-project-a",
+          },
+        },
+        { targetVersion: 2, steps },
+      )
+
+      expect(result.status).toBe("migrated")
+      expect(result.appliedUpgradeIds).toEqual(["test-continuity-v1-to-v2"])
+      expect(await scoped.get("workflow/legacy-v2")).toMatchObject({
+        id: "legacy-v2",
+        projectId: runtime.projectId,
+        format: 2,
+      })
+      expect(await scoped.get("budget/legacy-v2")).toMatchObject({
+        format: 2,
+      })
+      const receipts = await scoped.scan({
+        prefix: "installation/upgrade-reconciliation/legacy-session-v0-to-runtime-v1/",
+      })
+      expect(receipts.entries).toHaveLength(1)
+      expect(receipts.entries[0].value).toMatchObject({
+        sourceRuntimeVersion: 1,
+        targetRuntimeVersion: 2,
+        appliedUpgradeIds: ["test-continuity-v1-to-v2"],
+      })
+    })
+  })
+
+  test("failed continuity transformation rolls back every copied canonical record", async () => {
+    await withRoots(async (root) => {
+      const legacy = new MemoryStorage()
+      const project = join(root, "continuity-v2-failure-project")
+      await mkdir(project, { recursive: true })
+      const runtime = await resolveRuntimeIdentity(project, legacy as any)
+      const raw = await createTransactionalStorage(runtime)
+
+      let failTransform = false
+      const steps = [{
+        id: "test-continuity-failure-v1-to-v2",
+        fromVersion: 1,
+        toVersion: 2,
+        applyProject: async (storage: any) => {
+          const workflow = await storage.get("workflow/legacy-v2-fail")
+          if (!workflow) return
+          await storage.set("workflow/legacy-v2-fail", {
+            ...(workflow as any),
+            format: 2,
+          })
+          if (failTransform) throw new Error("continuity transform failure")
+        },
+      }]
+
+      await ensureRuntimeStateVersion(raw, runtime, { targetVersion: 2, steps })
+      failTransform = true
+      const scoped = createProjectStorage(raw, runtime.projectId, {
+        expectedRuntimeVersion: 2,
+      })
+
+      await legacy.set("session/resumed-v2-fail", "legacy-v2-fail")
+      await legacy.set("workflow/legacy-v2-fail", {
+        id: "legacy-v2-fail",
+        anchor: "docs/anchors/example.md",
+        createdBySession: "resumed-v2-fail",
+        createdAt: "before-project-scoping",
+        format: 1,
+        steps: [],
+      })
+      await legacy.set("budget/legacy-v2-fail", {
+        totalDispatches: 0,
+        byKey: {},
+        seenDispatches: [],
+        grants: [],
+      })
+
+      await expect(
+        migrateLegacySessionState(
+          legacy as any,
+          scoped,
+          runtime,
+          {
+            sessionId: "resumed-v2-fail",
+            sessionProjectId: "opencode-project-a",
+            currentProjectId: "opencode-project-a",
+            resumeProof: {
+              kind: "opencode-host-session",
+              sessionId: "resumed-v2-fail",
+              projectId: "opencode-project-a",
+            },
+          },
+          { targetVersion: 2, steps },
+        ),
+      ).rejects.toThrow("continuity transform failure")
+
+      expect(await scoped.get("session/resumed-v2-fail")).toBeUndefined()
+      expect(await scoped.get("workflow/legacy-v2-fail")).toBeUndefined()
+      expect(await scoped.get("budget/legacy-v2-fail")).toBeUndefined()
+      const receipts = await scoped.scan({
+        prefix: "installation/upgrade-reconciliation/legacy-session-v0-to-runtime-v1/",
+      })
+      expect(receipts.entries).toHaveLength(0)
+      expect(await raw.get("installation/runtime-schema")).toMatchObject({
+        currentVersion: 2,
+      })
+    })
+  })
+})
+
 describe("Loom crash-safe durable storage", () => {
   test("crash inside a workflow transaction rolls back every aggregate key", async () => {
     await withRoots(async (root) => {
@@ -1118,6 +1289,92 @@ describe("Loom runtime identity and scoped storage", () => {
         resolution: "canonical-workflow",
       })
       expect(typeof (refusalAfterAdmission.entries[0].value as any).resolvedAt).toBe("string")
+    })
+  })
+
+  test("canonical rebind outranks stale legacy workflow and compatibility data", async () => {
+    await withRoots(async (root) => {
+      const legacy = new MemoryStorage()
+      const canonical = new MemoryStorage()
+      const project = join(root, "rebound-project")
+      await mkdir(project, { recursive: true })
+      const runtime = await resolveRuntimeIdentity(project, canonical as any)
+      const scoped = createProjectStorage(canonical as any, runtime.projectId)
+      const sessionId = "rebound-session"
+
+      await legacy.set(`session/${sessionId}`, "workflow-a")
+      await legacy.set("workflow/workflow-a", {
+        id: "workflow-a",
+        anchor: "docs/anchors/a.md",
+        createdBySession: sessionId,
+        createdAt: "before-project-scoping",
+        steps: [],
+      })
+
+      const primary = await migrateLegacySessionState(legacy as any, scoped, runtime, {
+        sessionId,
+        sessionProjectId: "opencode-project-a",
+        currentProjectId: "opencode-project-a",
+        resumeProof: {
+          kind: "opencode-host-session",
+          sessionId,
+          projectId: "opencode-project-a",
+        },
+      })
+      expect(primary.workflowId).toBe("workflow-a")
+
+      await scoped.set("workflow/workflow-b", {
+        id: "workflow-b",
+        projectId: runtime.projectId,
+        revision: 0,
+        anchor: "docs/anchors/b.md",
+        createdBySession: sessionId,
+        createdAt: "after-rebind",
+        work: { objectiveId: "objective-b", generation: 1 },
+        steps: [],
+      })
+      await scoped.set(`session/${sessionId}`, "workflow-b")
+      await scoped.set(`session-step/${sessionId}`, "")
+
+      // Historical compatibility storage still names A. Extra stale records must
+      // not be allowed to influence the canonical B binding after restart.
+      await legacy.set(`session-intent/${sessionId}`, "intent-a")
+      await legacy.set("intent/intent-a", { id: "intent-a", state: "legacy" })
+      await legacy.set(`work/${encodeURIComponent("objective-b")}`, {
+        objectiveId: "objective-b",
+        title: "stale legacy work",
+      })
+
+      const resumed = await migrateLegacySessionState(legacy as any, scoped, runtime, {
+        sessionId,
+        sessionProjectId: "opencode-project-a",
+        currentProjectId: "opencode-project-a",
+        resumeProof: {
+          kind: "opencode-host-session",
+          sessionId,
+          projectId: "opencode-project-a",
+        },
+      })
+
+      expect(resumed).toMatchObject({
+        status: "already-scoped",
+        workflowId: "workflow-b",
+        migratedKeys: 0,
+      })
+      expect(resumed.provenance).toBeUndefined()
+      expect(await scoped.get(`session/${sessionId}`)).toBe("workflow-b")
+      expect(await scoped.get(`session-intent/${sessionId}`)).toBeUndefined()
+      expect(await scoped.get("intent/intent-a")).toBeUndefined()
+      expect(await scoped.get(`work/${encodeURIComponent("objective-b")}`)).toBeUndefined()
+
+      const receipts = await scoped.scan({
+        prefix: "installation/upgrade-reconciliation/legacy-session-v0-to-runtime-v1/",
+      })
+      expect(receipts.entries).toHaveLength(1)
+      expect(receipts.entries[0].value).toMatchObject({
+        workflowId: "workflow-a",
+        provenance: "opencode-session-continuity",
+      })
     })
   })
 
