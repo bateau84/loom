@@ -1114,7 +1114,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
       editor.add({
         name: "start",
-        description: "Start a Loom workflow for an accepted Anchor or a bounded clear task. General only.",
+        description: "Start governed Loom execution for an accepted Anchor or a bounded committed task. Ordinary conversation/investigation does not require this tool. General only.",
         input: {
           type: "object",
           properties: {
@@ -1122,7 +1122,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             request: {
               type: "string",
               description:
-                "Bounded task request when no new product intent or Anchor is needed. Provide exactly one of anchor or request.",
+                "Bounded committed execution request when no new product intent or Anchor is needed. Do not use for ordinary conversational research/diagnosis/review. Provide exactly one of anchor or request.",
             },
           },
           additionalProperties: false,
