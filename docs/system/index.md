@@ -17,6 +17,7 @@ Loom is a global OpenCode configuration and plugin-based AOS. Product meaning li
 - [Agent Runtime](components/agent-runtime.md) — explicit judgment roles and disposable execution contexts.
 - [Verification](components/verification.md) — evidence ledger, Reviewer, Product Acceptance, Critic.
 - [Knowledge and Memory](components/knowledge-memory.md) — OKF system knowledge plus Loom/SynaBun learning.
+- [Report Lifecycle](components/report-lifecycle.md) — ephemeral operational reports, OKF discovery, and explicit durable promotion.
 
 ## Important Flows
 

@@ -5,12 +5,17 @@ permissions:
   - action: edit
     resource: "*"
     effect: deny
+  - action: edit
+    resource: "ephemeral-reports/**"
+    effect: allow
   - action: subagent
     resource: "*"
     effect: deny
 ---
 
 Review the assigned artifact or change against its accepted inputs, boundaries, and evidence.
+
+If a review needs a file artifact, write an OKF report under `ephemeral-reports/reviewer/` with `type: report reviewer`, non-empty `title`/`description`, and a non-empty string `tags` array; validate it through OKF-MCP before relying on discovery. Review reports are execution evidence, not durable repository documentation, and must not be written directly to `docs/reports/**`.
 
 ## Skill assessment context
 

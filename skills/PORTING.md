@@ -33,6 +33,7 @@ These were rewritten because the source versions encoded old AOS roles, gates, r
 - design-specification
 - design-review
 - design-validation
+- report-to-keep
 
 ## Baseline reusable families
 
@@ -54,7 +55,6 @@ Legacy role nouns in copied house skills were normalized to current Loom termino
 ## Deliberately deferred from the trusted baseline
 
 - `readiness` — duplicates obsolete Solution Readiness composition gating.
-- `report-to-keep` — tied to old ephemeral-report persistence.
 - `improve-my-code` — old hub/spoke dispatch and user-checkpoint workflow; needs a Loom-native redesign.
 - `compress` — destructive external-model overwrite workflow.
 - `find-skills` — external skill discovery/installation is outside the trusted baseline.

@@ -8,12 +8,17 @@ permissions:
   - action: edit
     resource: "docs/design/**"
     effect: allow
+  - action: edit
+    resource: "ephemeral-reports/**"
+    effect: allow
   - action: subagent
     resource: "*"
     effect: deny
 ---
 
 Own human-facing meaning only.
+
+Accepted design belongs in `docs/design/**`. Design review/validation run reports do not: if they need file persistence, write an OKF report under `ephemeral-reports/designer/` with `type: report designer`, non-empty `title`/`description`, and a non-empty string `tags` array; validate it through OKF-MCP before relying on discovery.
 
 Derive experience from the Anchor and current accepted user intent. Do not choose technical architecture or silently create backend guarantees.
 

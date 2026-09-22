@@ -17,6 +17,8 @@ Current implemented system knowledge lives under:
 
 The Documenter updates only represented reality and verifies discovery through OKF before `knowledge-sync` can complete.
 
+Operational reports use a separate lifecycle: OKF-compliant files under `ephemeral-reports/**` stay gitignored by default and remain discoverable through OKF-MCP. Only explicit `loom_report_promote` retention copies a raw report unchanged into `docs/reports/**`; promotion does not increase its authority. See [Report Lifecycle](report-lifecycle.md).
+
 ## Learning
 
 Loom plugin storage is canonical for episode/heuristic identity, evidence, lifecycle, and validation state.

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test"
-import { mkdir, mkdtemp, rm } from "node:fs/promises"
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
 import loomPlugin from "./index"
@@ -49,6 +49,8 @@ async function harness(
   process.env.LOOM_TOOL_OUTPUT = "json"
 
   const registered = new Map<string, RegisteredTool>()
+  const permissionHooks = new Map<string, (event: any) => void | Promise<void>>()
+  const toolHooks = new Map<string, (event: any) => void | Promise<void>>()
   const storage = existing?.storage ?? new MemoryStorage()
   const projectID = "opencode-project-a"
   await seed?.(storage, root, projectID)
@@ -70,9 +72,15 @@ async function harness(
           namespace: () => {},
           add: (definition: RegisteredTool) => registered.set(definition.name, definition),
         }),
-      hook: async () => {},
+      hook: async (name: string, fn: (event: any) => void | Promise<void>) => {
+        toolHooks.set(name, fn)
+      },
     },
-    permission: { hook: async () => {} },
+    permission: {
+      hook: async (name: string, fn: (event: any) => void | Promise<void>) => {
+        permissionHooks.set(name, fn)
+      },
+    },
     session: {
       get: async ({ sessionID }: { sessionID: string }) =>
         sessionInfo?.(sessionID, projectID) ?? {
@@ -82,6 +90,12 @@ async function harness(
       hook: async () => {},
     },
   }
+
+  const runtime = await resolveRuntimeIdentity(root, ctx.storage)
+  const durableStorage = createProjectStorage(
+    await createTransactionalStorage(runtime),
+    runtime.projectId,
+  )
 
   await (loomPlugin as any).setup(ctx)
 
@@ -97,6 +111,50 @@ async function harness(
     return JSON.parse(result.content)
   }
 
+  const callObserved = async (
+    name: string,
+    input: unknown,
+    agent: string,
+    sessionID: string,
+    callID: string,
+  ) => {
+    const tool = registered.get(name)
+    if (!tool) throw new Error(`Tool not registered: ${name}`)
+    const toolName = `loom_${name}`
+    await toolHooks.get("execute.before")?.({
+      tool: toolName,
+      callID,
+      sessionID,
+      agent,
+      input,
+    })
+
+    try {
+      const result = await tool.execute(input, { agent, sessionID })
+      await toolHooks.get("execute.after")?.({
+        tool: toolName,
+        callID,
+        sessionID,
+        agent,
+        input,
+        status: "completed",
+        result: result.content,
+      })
+      return JSON.parse(result.content)
+    } catch (error) {
+      await toolHooks.get("execute.after")?.({
+        tool: toolName,
+        callID,
+        sessionID,
+        agent,
+        input,
+        status: "error",
+        error,
+      })
+      throw error
+    }
+  }
+
   const restore = () => {
     if (previousState === undefined) delete process.env.XDG_STATE_HOME
     else process.env.XDG_STATE_HOME = previousState
@@ -106,7 +164,7 @@ async function harness(
     else process.env.LOOM_TOOL_OUTPUT = previousOutput
   }
 
-  return { root, storage, projectID, registered, call, restore }
+  return { root, storage, projectID, registered, permissionHooks, toolHooks, durableStorage, call, callObserved, restore }
 }
 
 afterEach(async () => {
@@ -426,4 +484,167 @@ describe("Loom registered plugin boundary", () => {
       restore()
     }
   })
+
+  test("durable report promotion is General-only and direct durable report edits are denied", async () => {
+    const sourceBody = `---
+type: report critic
+title: Readiness Gate
+description: Failed gate retained for audit.
+tags: [report, critic, readiness]
+---
+
+# Readiness Gate
+
+Verdict: FAIL
+`
+
+    const { root, call, callObserved, permissionHooks, durableStorage, restore } = await harness(async (_storage, root) => {
+      await mkdir(join(root, "ephemeral-reports", "critic"), { recursive: true })
+      await writeFile(join(root, "ephemeral-reports", "critic", "readiness.md"), sourceBody)
+    })
+
+    try {
+      await expect(
+        callObserved(
+          "report_promote",
+          {
+            source: "ephemeral-reports/critic/readiness.md",
+            destination: "docs/reports/critic/denied.md",
+            reason: "Retain explicit audit evidence.",
+          },
+          "critic",
+          "critic-session",
+          "call-report-denied",
+        ),
+      ).rejects.toThrow("Only General")
+
+      const deniedEvidence = (await durableStorage.scan({ prefix: "evidence/", limit: 100 })).entries
+        .map((entry: any) => entry.value)
+        .find((value: any) => value?.tool === "loom_report_promote" && value?.sessionID === "critic-session")
+      expect(deniedEvidence).toMatchObject({
+        tool: "loom_report_promote",
+        status: "error",
+        path: "ephemeral-reports/critic/readiness.md",
+        destination: "docs/reports/critic/denied.md",
+      })
+
+      await expect(
+        callObserved(
+          "report_promote",
+          {
+            source: "ephemeral-reports/critic/missing.md",
+            destination: "docs/reports/critic/missing.md",
+            reason: "Retain missing audit evidence.",
+          },
+          "general",
+          "failed-general-session",
+          "call-report-failed",
+        ),
+      ).rejects.toThrow()
+
+      const failedPromotion = (await durableStorage.scan({ prefix: "report-promotion/", limit: 100 })).entries
+        .map((entry: any) => entry.value)
+        .find((value: any) => value?.source === "ephemeral-reports/critic/missing.md")
+      expect(failedPromotion).toMatchObject({
+        status: "failed",
+        destination: "docs/reports/critic/missing.md",
+        reason: "Retain missing audit evidence.",
+        actor: "general",
+        authority: "unchanged",
+      })
+      expect(typeof failedPromotion.error).toBe("string")
+
+      const failedEvidence = (await durableStorage.scan({ prefix: "evidence/", limit: 100 })).entries
+        .map((entry: any) => entry.value)
+        .find((value: any) => value?.tool === "loom_report_promote" && value?.sessionID === "failed-general-session")
+      expect(failedEvidence).toMatchObject({
+        status: "error",
+        path: "ephemeral-reports/critic/missing.md",
+        destination: "docs/reports/critic/missing.md",
+        reason: "Retain missing audit evidence.",
+      })
+
+      const promoted = await callObserved(
+        "report_promote",
+        {
+          source: "ephemeral-reports/critic/readiness.md",
+          destination: "docs/reports/critic/readiness.md",
+          reason: "Retain explicit audit evidence.",
+        },
+        "general",
+        "general-session",
+        "call-report-success",
+      )
+      expect(promoted).toMatchObject({
+        promoted: true,
+        sourceRetained: true,
+        authority: "unchanged",
+        actor: "general",
+      })
+      expect(typeof promoted.promotionId).toBe("string")
+      expect(typeof promoted.promotedAt).toBe("string")
+
+      const promotionRecord = await durableStorage.get(`report-promotion/${promoted.promotionId}`) as any
+      expect(promotionRecord).toMatchObject({
+        id: promoted.promotionId,
+        status: "completed",
+        source: "ephemeral-reports/critic/readiness.md",
+        destination: "docs/reports/critic/readiness.md",
+        reason: "Retain explicit audit evidence.",
+        actor: "general",
+        sha256: promoted.sha256,
+        authority: "unchanged",
+      })
+
+      const successEvidence = (await durableStorage.scan({ prefix: "evidence/", limit: 100 })).entries
+        .map((entry: any) => entry.value)
+        .find((value: any) => value?.tool === "loom_report_promote" && value?.sessionID === "general-session")
+      expect(successEvidence).toMatchObject({
+        status: "completed",
+        reportPromotion: {
+          id: promoted.promotionId,
+          source: "ephemeral-reports/critic/readiness.md",
+          destination: "docs/reports/critic/readiness.md",
+          reason: "Retain explicit audit evidence.",
+          sha256: promoted.sha256,
+          actor: "general",
+          authority: "unchanged",
+        },
+      })
+      expect(
+        await readFile(join(root, "docs", "reports", "critic", "readiness.md"), "utf8"),
+      ).toBe(sourceBody)
+      expect(
+        await readFile(join(root, "ephemeral-reports", "critic", "readiness.md"), "utf8"),
+      ).toBe(sourceBody)
+
+      const evaluate = permissionHooks.get("evaluate")
+      expect(evaluate).toBeDefined()
+      const directEdit: any = {
+        agent: "designer",
+        action: "edit",
+        resources: ["docs/reports/designer/validation.md"],
+        sessionID: "designer-session",
+      }
+      await evaluate!(directEdit)
+      expect(directEdit.effect).toBe("deny")
+      expect(directEdit.message).toContain("promotion-only")
+
+
+      const directShell: any = {
+        agent: "critic",
+        action: "shell",
+        resources: [
+          "cp ephemeral-reports/critic/readiness.md docs/reports/critic/readiness-copy.md",
+        ],
+        sessionID: "critic-session",
+      }
+      await evaluate!(directShell)
+      expect(directShell.effect).toBe("deny")
+      expect(directShell.message).toContain("Shell access to durable report storage is blocked")
+    } finally {
+      restore()
+    }
+  })
+
 })
