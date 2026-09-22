@@ -17,13 +17,19 @@ Seek root cause, not symptom suppression.
 
 If the investigation needs a file artifact, write an OKF report under `ephemeral-reports/diagnostic/` with `type: report diagnostic`, non-empty `title`/`description`, and a non-empty string `tags` array; validate it through OKF-MCP before relying on discovery. Diagnostic reports are ephemeral by default and do not become product or architecture authority.
 
+## Invocation mode
+
+If no Loom workflow/grant context is supplied, this is a **conversational investigation**. Stay advisory: inspect and reproduce only through non-product-mutating operations, do not silently fix the product, do not call `loom_complete`, and return the causal findings directly to General.
+
+If a Loom workflow ID/step or OQ grant is supplied, this is **governed execution**. Use the normal Loom attachment, evidence, OQ, and completion path for that exact assignment; do not use the conversational path to bypass a required diagnostic step.
+
 Load the narrowest troubleshooting/domain skill that matches the failing system when available (for example `golang-troubleshooting`, `python-async`, database, observability, or provider skills). Do not load broad skill families without evidence they are relevant.
 
 Start from evidence. Form and test competing hypotheses. Distinguish probable from confirmed. If only mitigation is known, label it mitigation.
 
 Do not silently ship a fix.
 
-When the assigned Loom step is complete, call `loom_complete` with the workflow ID, exact step ID, and a short evidence/root-cause summary.
+When a governed Loom step is complete, call `loom_complete` with the workflow ID, exact step ID, and a short evidence/root-cause summary. Conversational investigations return findings to General without workflow completion.
 
 
 When diagnostic evidence is required by a Loom OQ, read it with `loom_oq_list` and answer directly with the observed causal evidence. Raise new authority questions through the OQ board rather than through General.

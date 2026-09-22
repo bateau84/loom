@@ -16,16 +16,9 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_IMAGES = {
-    "opencode": "ghcr.io/bateau84/opencode-eval-runner@sha256:eece79be0987d41c96cfbc43a4a0792987af383f2edec4e6651f43a954f1874f",
-    "github-copilot-cli": "ghcr.io/bateau84/opencode-eval-runner@sha256:51d484e8b12541eeceef11c0818e26c97d77cc7d81a29b0c720b840d0226968b",
+    "opencode": "ghcr.io/bateau84/opencode-eval-runner@sha256:3e5f95ce54fee127230c5bf84a7f09124a2236dfca544269e6547c8f79e8ad5d",
+    "github-copilot-cli": "ghcr.io/bateau84/opencode-eval-runner@sha256:8def0aa1885b0e60b36a1434c2725667b1b9555def31426f08dd7e2a87dc02c5",
 }
-DEFAULT_SUITES = [
-    ROOT / "evals" / "authority.json",
-    ROOT / "evals" / "everyday.json",
-    ROOT / "evals" / "front-door.json",
-    ROOT / "evals" / "verification.json",
-    ROOT / "evals" / "skills.json",
-]
 PROVIDER_ENVS = ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "OPENROUTER_API_KEY")
 COPILOT_ENVS = ("COPILOT_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN")
 
@@ -140,9 +133,19 @@ Load the native skill `%s` before answering the user prompt. Apply that skill's 
 """ % skill
 
 
-def load_cases(suite_paths: list[Path]) -> list[dict[str, Any]]:
+def behavioral_eval_files(evals_root: Path) -> list[Path]:
+    if not evals_root.is_dir():
+        return []
+    return sorted(
+        path
+        for path in evals_root.iterdir()
+        if path.is_file() and path.suffix == ".json"
+    )
+
+
+def load_cases(suite_paths: list[Path] | None = None) -> list[dict[str, Any]]:
     cases: list[dict[str, Any]] = []
-    for path in suite_paths:
+    for path in suite_paths or behavioral_eval_files(ROOT / "evals"):
         data = json.loads(path.read_text(encoding="utf-8"))
         cases.extend(data["cases"])
     return cases
@@ -251,6 +254,14 @@ def load_skill_owned_cases(skills_root: Path) -> list[dict[str, Any]]:
     return cases
 
 
+def case_workspace_mode(case: dict[str, Any]) -> str:
+    # Runtime targets execute the real Loom plugin, whose project identity and
+    # transactional state live under .loom. setup_projects() creates an isolated
+    # disposable target, so runtime writes are contained there rather than in the
+    # checked-out Loom repository.
+    return "rw" if case.get("execution") == "runtime" else "ro"
+
+
 def case_target_kind(case: dict[str, Any]) -> str:
     return "skill" if case.get("skill") else "agent"
 
@@ -299,14 +310,21 @@ def setup_projects(case: dict[str, Any]) -> tuple[Path, Path, Path]:
 
     if case.get("_skill_owned"):
         target_agent = skill_eval_agent(str(case["skill"]))
+        (target_oc / "agents" / (case["agent"] + ".md")).write_text(target_agent, encoding="utf-8")
+    elif case["execution"] == "runtime":
+        # Runtime evals exercise the real Loom workflow, including governed
+        # subagent dispatch. Materialize the complete Loom agent set so roles
+        # such as Diagnostic and Reviewer resolve exactly as they do in normal
+        # operation; promote only the selected target agent to primary.
+        for source in sorted((ROOT / "agents").glob("*.md")):
+            agent_text = source.read_text(encoding="utf-8")
+            if source.stem == case["agent"]:
+                agent_text = promote_agent(agent_text)
+            (target_oc / "agents" / source.name).write_text(agent_text, encoding="utf-8")
     else:
         source_agent = (ROOT / "agents" / (case["agent"] + ".md")).read_text(encoding="utf-8")
-        target_agent = (
-            promote_agent(source_agent)
-            if case["execution"] == "runtime"
-            else decision_agent(source_agent, case["agent"])
-        )
-    (target_oc / "agents" / (case["agent"] + ".md")).write_text(target_agent, encoding="utf-8")
+        target_agent = decision_agent(source_agent, case["agent"])
+        (target_oc / "agents" / (case["agent"] + ".md")).write_text(target_agent, encoding="utf-8")
     (judge_oc / "agents" / "eval-judge.md").write_text(JUDGE_AGENT, encoding="utf-8")
 
     for fixture in case.get("fixture_files", []):
@@ -661,6 +679,7 @@ def invoke_container(
     timeout: int,
     container_timeout: int,
     mount_node_modules: bool,
+    workspace_mode: str,
     extra_envs: list[str],
     skill: str | None = None,
     network: str | None = None,
@@ -695,7 +714,7 @@ def invoke_container(
                 "--image", image,
                 "--transport", transport,
                 "--workspace", str(project),
-                "--workspace-mode", "ro",
+                "--workspace-mode", workspace_mode,
                 "--model", model,
                 "--prompt-file", str(prompt_file),
                 "--system-file", str(system_file),
@@ -809,7 +828,7 @@ def invoke_container(
             "--workdir",
             "/workspace",
         ]
-        command += volume(project, "/workspace", True)
+        command += volume(project, "/workspace", workspace_mode == "ro")
         command += volume(input_dir, "/input", True)
 
         if node_modules:
@@ -1352,6 +1371,7 @@ def run_skill_ablation_case(
             timeout=args.timeout_seconds,
             container_timeout=args.container_timeout,
             mount_node_modules=False,
+            workspace_mode="ro",
             extra_envs=args.env,
             skill=skill if with_skill and args.target_transport == "opencode" else None,
             network=args.network,
@@ -1376,6 +1396,7 @@ def run_skill_ablation_case(
             timeout=args.timeout_seconds,
             container_timeout=args.container_timeout,
             mount_node_modules=False,
+            workspace_mode="ro",
             extra_envs=args.env,
             skill=None,
             network=args.network,
@@ -1655,11 +1676,20 @@ def run_case(
             config=config,
             models_catalog=models_catalog,
             database_seed=database_seed,
+            # Proven OpenCode 2.0.x runtime topology: seed Loom as the global
+            # config root so the runner materializes a flat plugins/loom.ts
+            # entrypoint that re-exports the copied Loom module tree. Do not run
+            # the later tool-registry preflight here; the runtime case's required
+            # loom_* actions are the authoritative registration evidence.
             config_root=ROOT if case["execution"] == "runtime" and args.target_transport == "opencode" else None,
             expected_plugin="loom" if case["execution"] == "runtime" and args.target_transport == "opencode" else None,
             timeout=args.timeout_seconds,
             container_timeout=args.container_timeout,
             mount_node_modules=case["execution"] == "runtime",
+            # Runtime cases exercise the real Loom plugin, which owns project-local
+            # state under .loom. The target project is an isolated disposable copy,
+            # so it must be writable even for read-only product investigations.
+            workspace_mode=case_workspace_mode(case),
             extra_envs=args.env,
             skill=(
                 str(case.get("skill") or "") or None
@@ -1721,6 +1751,7 @@ def run_case(
                 timeout=args.timeout_seconds,
                 container_timeout=args.container_timeout,
                 mount_node_modules=False,
+                workspace_mode="ro",
                 extra_envs=args.env,
                 skill=None,
                 network=args.network,
@@ -1789,6 +1820,50 @@ def run_case(
             shutil.rmtree(temp, ignore_errors=True)
 
 
+def eval_job_concurrency(
+    jobs: list[tuple[dict[str, Any], int]],
+    parallel: int,
+    runtime_parallel: int,
+) -> tuple[
+    list[tuple[dict[str, Any], int]],
+    int,
+    list[tuple[dict[str, Any], int]],
+    int,
+    str,
+]:
+    non_runtime_jobs = [job for job in jobs if job[0]["execution"] != "runtime"]
+    runtime_jobs = [job for job in jobs if job[0]["execution"] == "runtime"]
+    concurrency = (
+        len(non_runtime_jobs)
+        if parallel == 0
+        else min(parallel, len(non_runtime_jobs))
+    ) if non_runtime_jobs else 0
+    runtime_concurrency = min(runtime_parallel, len(runtime_jobs)) if runtime_jobs else 0
+
+    mode_parts: list[str] = []
+    if non_runtime_jobs:
+        mode_parts.append(
+            "non-runtime=" + (
+                "parallel:%d" % concurrency if concurrency > 1 else "sequential"
+            )
+        )
+    if runtime_jobs:
+        mode_parts.append(
+            "runtime=" + (
+                "parallel:%d (stress)" % runtime_concurrency
+                if runtime_concurrency > 1
+                else "sequential"
+            )
+        )
+    return (
+        non_runtime_jobs,
+        concurrency,
+        runtime_jobs,
+        runtime_concurrency,
+        ", ".join(mode_parts) or "sequential",
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run Loom behavioral evals in isolated OCI model invocations.")
     parser.add_argument("--all", action="store_true")
@@ -1832,11 +1907,26 @@ def main() -> int:
         metavar="N",
         help="Run cases concurrently. Without N, run the full case×iteration matrix in parallel; with N, cap concurrency.",
     )
+    parser.add_argument(
+        "--runtime-parallel",
+        type=int,
+        default=1,
+        metavar="N",
+        help=(
+            "Maximum concurrent runtime evals. Defaults to 1 because one runtime "
+            "case may already dispatch multiple model-backed subagents. Values >1 "
+            "are an explicit load/stress test."
+        ),
+    )
     parser.add_argument("--keep-temp", action="store_true")
     parser.add_argument("--list", action="store_true")
     args = parser.parse_args()
 
-    suite_paths = [Path(value).resolve() for value in args.suite] if args.suite else DEFAULT_SUITES
+    suite_paths = (
+        [Path(value).resolve() for value in args.suite]
+        if args.suite
+        else behavioral_eval_files(ROOT / "evals")
+    )
     cases = load_cases(suite_paths)
     cases.extend(load_skill_owned_cases(ROOT / "skills"))
 
@@ -1862,6 +1952,8 @@ def main() -> int:
         parser.error("--iterations must be >= 1")
     if args.parallel < 0:
         parser.error("--parallel must be >= 1 when a limit is supplied")
+    if args.runtime_parallel < 1:
+        parser.error("--runtime-parallel must be >= 1")
 
     selected_ids = {value.strip() for value in args.cases.split(",") if value.strip()}
     selected_targets = {value.strip() for value in args.target.split(",") if value.strip()}
@@ -1918,8 +2010,13 @@ def main() -> int:
         for case in selected
         for iteration in range(1, args.iterations + 1)
     ]
-    concurrency = len(jobs) if args.parallel == 0 else min(args.parallel, len(jobs))
-    mode = "parallel=%d" % concurrency if concurrency > 1 else "sequential"
+    (
+        non_runtime_jobs,
+        concurrency,
+        runtime_jobs,
+        runtime_concurrency,
+        mode,
+    ) = eval_job_concurrency(jobs, args.parallel, args.runtime_parallel)
     skill_ablation_jobs = sum(1 for case, _ in jobs if case.get("_skill_owned"))
     print(
         "Running %d Loom live behavioral eval run(s) (%d case(s) x %d iteration(s)) via %s "
@@ -2035,19 +2132,30 @@ def main() -> int:
             print("  - " + str(semantic.get("summary", "semantic judge failed")))
         return False
 
-    passed = 0
-    if concurrency == 1:
-        for job in jobs:
-            case, iteration, result, error = execute(job)
-            if report(case, iteration, result, error):
-                passed += 1
-    else:
-        with ThreadPoolExecutor(max_workers=concurrency) as pool:
-            futures = [pool.submit(execute, job) for job in jobs]
+    def execute_group(group: list[tuple[dict[str, Any], int]], limit: int) -> int:
+        if not group:
+            return 0
+        group_passed = 0
+        if limit <= 1:
+            for job in group:
+                case, iteration, result, error = execute(job)
+                if report(case, iteration, result, error):
+                    group_passed += 1
+            return group_passed
+
+        with ThreadPoolExecutor(max_workers=limit) as pool:
+            futures = [pool.submit(execute, job) for job in group]
             for future in as_completed(futures):
                 case, iteration, result, error = future.result()
                 if report(case, iteration, result, error):
-                    passed += 1
+                    group_passed += 1
+        return group_passed
+
+    # Behavioral repeatability and runtime load are intentionally separate.
+    # Runtime cases may dispatch multiple model-backed subagents internally, so
+    # they are serialized unless --runtime-parallel explicitly opts into stress.
+    passed = execute_group(non_runtime_jobs, concurrency)
+    passed += execute_group(runtime_jobs, runtime_concurrency)
 
     print("%d/%d passed" % (passed, len(jobs)))
     return 0 if passed == len(jobs) else 1

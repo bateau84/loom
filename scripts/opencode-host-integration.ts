@@ -268,6 +268,8 @@ function chooseMockAction(prompt: string, results: Map<string, unknown>, state: 
           externalUnknown: false,
           diagnostic: false,
           productOutcome: false,
+          implementationRequested: true,
+          executionDepth: "task",
         },
       }
     }

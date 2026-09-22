@@ -15,6 +15,7 @@ export type Step = {
 }
 
 export type WorkLevel = "objective" | "wave"
+export type ExecutionDepth = "task" | "change" | "objective"
 
 export type Effects = {
   humanFacing: boolean
@@ -23,7 +24,9 @@ export type Effects = {
   externalUnknown: boolean
   diagnostic: boolean
   productOutcome: boolean
+  implementationRequested?: boolean
   workLevel?: WorkLevel
+  executionDepth?: ExecutionDepth
 }
 
 export type VerificationRequirementStatus = "open" | "satisfied" | "superseded"
@@ -51,6 +54,7 @@ export type Workflow = {
   projectId: string
   revision: number
   anchor: string
+  request?: string
   createdBySession: string
   createdAt: string
   effects?: Effects
@@ -199,11 +203,68 @@ function gate(id: string, agent: string, dependsOn: string[] = []): Step {
   return { id, agent, kind: "gate", dependsOn, status: "pending" }
 }
 
+export function resolveExecutionDepth(effects: Effects): ExecutionDepth {
+  const requested = effects.executionDepth ?? (effects.productOutcome ? "objective" : "change")
+  const implementationRequested = effects.implementationRequested ?? true
+
+  if (requested === "objective" && !effects.productOutcome) {
+    throw new Error("Objective execution depth requires productOutcome=true.")
+  }
+  if (requested === "objective" && !implementationRequested) {
+    throw new Error("Objective execution depth requires implementationRequested=true.")
+  }
+
+  // Task depth is intentionally shallow. If the route says new user-facing,
+  // behavioral, or structural authority is actually unresolved, the work has
+  // already earned Change depth and must not bypass that authority.
+  if (
+    requested === "task" &&
+    (effects.humanFacing || effects.behavioral || effects.structural)
+  ) {
+    return "change"
+  }
+
+  return requested
+}
+
+export function executionDepthRank(depth: ExecutionDepth) {
+  return depth === "task" ? 0 : depth === "change" ? 1 : 2
+}
+
 export function buildSteps(effects: Effects): Step[] {
   const steps: Step[] = []
   const think: string[] = []
+  const executionDepth = resolveExecutionDepth(effects)
+  const implementationRequested = effects.implementationRequested ?? true
   const workLevel: WorkLevel = effects.workLevel ?? "objective"
-  const objectiveClosure = effects.productOutcome && workLevel === "objective"
+  const objectiveClosure =
+    executionDepth === "objective" &&
+    effects.productOutcome &&
+    workLevel === "objective"
+
+  // Small, already-bounded work gets the shortest safe path. Diagnosis and
+  // bounded research are allowed without turning the request into a product
+  // lifecycle. Read-only Tasks end at Reviewer; mutation Tasks use Worker
+  // followed by independent implementation review.
+  if (executionDepth === "task") {
+    if (effects.diagnostic) {
+      steps.push(work("diagnostic", "diagnostic"))
+      think.push("diagnostic")
+    }
+    if (effects.externalUnknown) {
+      steps.push(work("research", "research"))
+      think.push("research")
+    }
+
+    if (!implementationRequested) {
+      steps.push(gate("review-task", "reviewer", think))
+      return steps
+    }
+
+    steps.push(work("worker", "worker", think))
+    steps.push(gate("review-implementation", "reviewer", ["worker"]))
+    return steps
+  }
 
   if (effects.diagnostic) {
     steps.push(work("diagnostic", "diagnostic"))
@@ -235,18 +296,31 @@ export function buildSteps(effects: Effects): Step[] {
     lastThink = ["review-architecture"]
   }
 
-  if (effects.productOutcome) {
-    steps.push(gate("critic-solution", "critic", lastThink))
-    lastThink = ["critic-solution"]
-  }
+  // Change depth is for substantial but still bounded work. It uses only the
+  // authority earned by the evidence. Read-only Change work stops after the
+  // relevant independent authority review; mutation work then implements.
+  if (executionDepth === "change") {
+    if (!implementationRequested) {
+      if (steps.length === 0) {
+        steps.push(gate("review-task", "reviewer"))
+      }
+      return steps
+    }
 
-  if (effects.productOutcome) {
-    steps.push(work("plan", "planner", lastThink))
-    steps.push(gate("review-implementation", "reviewer", ["plan"]))
-  } else {
     steps.push(work("worker", "worker", lastThink))
     steps.push(gate("review-implementation", "reviewer", ["worker"]))
+
+    if (effects.structural) {
+      steps.push(work("knowledge-sync", "documenter", ["review-implementation"]))
+    }
+    return steps
   }
+
+  // Objective depth preserves the full product lifecycle.
+  steps.push(gate("critic-solution", "critic", lastThink))
+  lastThink = ["critic-solution"]
+  steps.push(work("plan", "planner", lastThink))
+  steps.push(gate("review-implementation", "reviewer", ["plan"]))
 
   if (effects.productOutcome || effects.structural) {
     steps.push(work("knowledge-sync", "documenter", ["review-implementation"]))
@@ -273,7 +347,16 @@ export function preserveSatisfied(previous: Step[], next: Step[]) {
 
   for (const step of next) {
     const old = byID.get(step.id)
-    if (old?.agent === step.agent && old.kind === step.kind && satisfied(old)) {
+    const sameDependencies =
+      old?.dependsOn.length === step.dependsOn.length &&
+      old.dependsOn.every((dependency, index) => dependency === step.dependsOn[index])
+
+    if (
+      old?.agent === step.agent &&
+      old.kind === step.kind &&
+      sameDependencies &&
+      satisfied(old)
+    ) {
       step.status = old.status
       step.summary = old.summary
     }

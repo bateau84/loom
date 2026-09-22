@@ -68,10 +68,10 @@ class WorkflowCredentialTests(unittest.TestCase):
         workflow = (
             RUN_EVALS.ROOT / ".github" / "workflows" / "loom-live-evals.yml"
         ).read_text(encoding="utf-8")
-        expected_action = "bateau84/opencode-eval-runner@8e1a8439fd8b15343abcf69c50203c96847f1c2e"
+        expected_action = "bateau84/opencode-eval-runner@e2022f1075e34fe7be2a33eae3c9460f3f5c7263"
         expected_image = (
             "ghcr.io/bateau84/opencode-eval-runner@"
-            "sha256:eece79be0987d41c96cfbc43a4a0792987af383f2edec4e6651f43a954f1874f"
+            "sha256:3e5f95ce54fee127230c5bf84a7f09124a2236dfca544269e6547c8f79e8ad5d"
         )
 
         self.assertIn(expected_action, workflow)
@@ -87,8 +87,107 @@ class WorkflowCredentialTests(unittest.TestCase):
         self.assertIn('args+=(--env OPENCODE_API_KEY)', workflow)
 
 
+class RuntimeEvalProjectTests(unittest.TestCase):
+    def test_runtime_project_keeps_loom_out_of_project_plugin_config(self):
+        case = next(
+            case
+            for case in RUN_EVALS.load_cases()
+            if case["id"] == "SKILL-REPORT-KEEP-02"
+        )
+        temp, target, _ = RUN_EVALS.setup_projects(case)
+        try:
+            config = json.loads((target / "opencode.json").read_text(encoding="utf-8"))
+            self.assertNotIn("plugins", config)
+            self.assertFalse((target / ".opencode" / "plugins" / "loom").exists())
+            self.assertFalse((target / ".opencode" / "plugins" / "loom.ts").exists())
+        finally:
+            import shutil
+            shutil.rmtree(temp, ignore_errors=True)
+
+    def test_runtime_project_materializes_real_loom_subagents(self):
+        case = next(
+            case
+            for case in RUN_EVALS.load_cases()
+            if case["id"] == "PROP-RUNTIME-01"
+        )
+        temp, target, _ = RUN_EVALS.setup_projects(case)
+        try:
+            agent_root = target / ".opencode" / "agents"
+            expected = {
+                path.name
+                for path in (RUN_EVALS.ROOT / "agents").glob("*.md")
+            }
+            observed = {
+                path.name
+                for path in agent_root.glob("*.md")
+            }
+            self.assertEqual(observed, expected)
+            self.assertTrue((agent_root / "diagnostic.md").is_file())
+            self.assertTrue((agent_root / "reviewer.md").is_file())
+            diagnostic = (agent_root / "diagnostic.md").read_text(encoding="utf-8")
+            reviewer = (agent_root / "reviewer.md").read_text(encoding="utf-8")
+            self.assertIn("mode: subagent", diagnostic)
+            self.assertIn("mode: subagent", reviewer)
+        finally:
+            import shutil
+            shutil.rmtree(temp, ignore_errors=True)
+
+    def test_tracked_401_runtime_materializes_diagnostic_fixture(self):
+        case = next(
+            case
+            for case in RUN_EVALS.load_cases()
+            if case["id"] == "PROP-RUNTIME-01"
+        )
+        temp, target, _ = RUN_EVALS.setup_projects(case)
+        try:
+            frontend = (target / "frontend" / "src" / "api" / "client.ts").read_text(encoding="utf-8")
+            backend = (target / "backend" / "src" / "auth.ts").read_text(encoding="utf-8")
+            self.assertIn('"X-Access-Token": token', frontend)
+            self.assertIn('headers["authorization"]', backend)
+            self.assertIn('startsWith("Bearer ")', backend)
+        finally:
+            import shutil
+            shutil.rmtree(temp, ignore_errors=True)
+
+    def test_role_decision_project_keeps_unrelated_agents_out(self):
+        case = next(
+            case
+            for case in RUN_EVALS.load_cases()
+            if case["id"] == "PROP-02"
+        )
+        temp, target, _ = RUN_EVALS.setup_projects(case)
+        try:
+            observed = sorted(
+                path.name
+                for path in (target / ".opencode" / "agents").glob("*.md")
+            )
+            self.assertEqual(observed, ["general.md"])
+        finally:
+            import shutil
+            shutil.rmtree(temp, ignore_errors=True)
+
+    def test_all_runtime_eval_targets_are_rw(self):
+        promoting = next(
+            case
+            for case in RUN_EVALS.load_cases()
+            if case["id"] == "SKILL-REPORT-KEEP-02"
+        )
+        ordinary = next(
+            case
+            for case in RUN_EVALS.load_cases()
+            if case["id"] == "SKILL-REPORT-KEEP-01"
+        )
+
+        self.assertEqual(RUN_EVALS.case_workspace_mode(promoting), "rw")
+        self.assertEqual(RUN_EVALS.case_workspace_mode(ordinary), "rw")
+        self.assertEqual(
+            RUN_EVALS.case_workspace_mode({"execution": "role-decision"}),
+            "ro",
+        )
+
+
 class MountPreparationTests(unittest.TestCase):
-    def test_runtime_mountpoint_exists_before_read_only_workspace_mount(self):
+    def test_runtime_mountpoint_exists_before_workspace_mount(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             project = root / "project"
@@ -102,6 +201,79 @@ class MountPreparationTests(unittest.TestCase):
             self.assertTrue((project / "node_modules").is_dir())
 
 
+
+class EvalConcurrencyTests(unittest.TestCase):
+    def test_parallel_does_not_parallelize_runtime_cases_by_default(self):
+        jobs = [
+            ({"id": "R1", "execution": "runtime"}, 1),
+            ({"id": "R1", "execution": "runtime"}, 2),
+            ({"id": "R1", "execution": "runtime"}, 3),
+        ]
+
+        non_runtime, non_runtime_limit, runtime, runtime_limit, mode = (
+            RUN_EVALS.eval_job_concurrency(jobs, parallel=3, runtime_parallel=1)
+        )
+
+        self.assertEqual(non_runtime, [])
+        self.assertEqual(non_runtime_limit, 0)
+        self.assertEqual(len(runtime), 3)
+        self.assertEqual(runtime_limit, 1)
+        self.assertEqual(mode, "runtime=sequential")
+
+    def test_runtime_parallel_explicitly_enables_stress_mode(self):
+        jobs = [
+            ({"id": "R1", "execution": "runtime"}, 1),
+            ({"id": "R1", "execution": "runtime"}, 2),
+            ({"id": "R1", "execution": "runtime"}, 3),
+        ]
+
+        _, _, _, runtime_limit, mode = RUN_EVALS.eval_job_concurrency(
+            jobs,
+            parallel=3,
+            runtime_parallel=3,
+        )
+
+        self.assertEqual(runtime_limit, 3)
+        self.assertEqual(mode, "runtime=parallel:3 (stress)")
+
+    def test_non_runtime_jobs_still_use_parallel_limit(self):
+        jobs = [
+            ({"id": "A", "execution": "role-decision"}, 1),
+            ({"id": "B", "execution": "role-decision"}, 1),
+            ({"id": "R", "execution": "runtime"}, 1),
+        ]
+
+        non_runtime, non_runtime_limit, runtime, runtime_limit, mode = (
+            RUN_EVALS.eval_job_concurrency(jobs, parallel=2, runtime_parallel=1)
+        )
+
+        self.assertEqual(len(non_runtime), 2)
+        self.assertEqual(non_runtime_limit, 2)
+        self.assertEqual(len(runtime), 1)
+        self.assertEqual(runtime_limit, 1)
+        self.assertEqual(mode, "non-runtime=parallel:2, runtime=sequential")
+
+
+class CentralEvalDiscoveryTests(unittest.TestCase):
+    def test_discovers_every_json_suite_in_eval_directory(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            evals = Path(tmp) / "evals"
+            evals.mkdir()
+            (evals / "z-new-suite.json").write_text('{"version":1,"name":"z","cases":[]}', encoding="utf-8")
+            (evals / "a-existing-suite.json").write_text('{"version":1,"name":"a","cases":[]}', encoding="utf-8")
+            (evals / "README.md").write_text("not a suite", encoding="utf-8")
+            (evals / "ignored.txt").write_text("{}", encoding="utf-8")
+
+            discovered = RUN_EVALS.behavioral_eval_files(evals)
+
+            self.assertEqual(
+                [path.name for path in discovered],
+                ["a-existing-suite.json", "z-new-suite.json"],
+            )
+
+    def test_repository_default_discovery_includes_proportionality_suite(self):
+        discovered = RUN_EVALS.behavioral_eval_files(RUN_EVALS.ROOT / "evals")
+        self.assertIn("proportionality.json", [path.name for path in discovered])
 
 class SkillOwnedEvalDiscoveryTests(unittest.TestCase):
     def test_discovers_every_json_filename_inside_skill_evals_folder(self):
@@ -479,6 +651,7 @@ class EvidenceRedactionTests(unittest.TestCase):
                     timeout=30,
                     container_timeout=60,
                     mount_node_modules=False,
+                    workspace_mode="ro",
                     extra_envs=[],
                 )
 
@@ -524,6 +697,7 @@ class EvidenceRedactionTests(unittest.TestCase):
                     timeout=30,
                     container_timeout=60,
                     mount_node_modules=False,
+                    workspace_mode="ro",
                     extra_envs=[],
                 )
 
@@ -600,6 +774,7 @@ class ActionAssertionTests(unittest.TestCase):
                     timeout=30,
                     container_timeout=60,
                     mount_node_modules=False,
+                    workspace_mode="ro",
                     extra_envs=[],
                     network="host",
                 )
@@ -637,6 +812,7 @@ class ActionAssertionTests(unittest.TestCase):
                     timeout=30,
                     container_timeout=60,
                     mount_node_modules=False,
+                    workspace_mode="ro",
                     extra_envs=[],
                     network=None,
                 )
@@ -693,6 +869,7 @@ class ActionAssertionTests(unittest.TestCase):
                     timeout=30,
                     container_timeout=60,
                     mount_node_modules=False,
+                    workspace_mode="ro",
                     extra_envs=[],
                     network="host",
                 )
@@ -749,6 +926,7 @@ class ActionAssertionTests(unittest.TestCase):
                     timeout=30,
                     container_timeout=60,
                     mount_node_modules=False,
+                    workspace_mode="ro",
                     extra_envs=[],
                     network="host",
                 )

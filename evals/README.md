@@ -139,6 +139,37 @@ bun run eval:live -- --target-kind skill --model openai/gpt-5.5
 bun run eval:live -- --target-kind skill --target web-ui-design --model openai/gpt-5.5
 ```
 
+### Parallelism and runtime evidence
+
+`--parallel N` parallelizes non-runtime eval work. Runtime cases are serialized by default even when `--parallel` is larger than one.
+
+That distinction is deliberate: one runtime case can already dispatch multiple model-backed Loom subagents internally. Running several runtime cases concurrently changes a behavioral repeatability run into a provider/OpenCode load test and can create wall-clock timeout noise unrelated to the behavioral contract.
+
+Use repeated runtime cases for behavioral stability like this:
+
+```bash
+bun run eval:live -- \
+  --cases PROP-RUNTIME-01 \
+  --iterations 3 \
+  --parallel 3 \
+  --model openai/gpt-5.6-luna
+```
+
+The runtime iterations still execute sequentially; unrelated role-decision/skill cases may use the ordinary parallel budget.
+
+To intentionally stress concurrent runtime execution, opt in explicitly:
+
+```bash
+bun run eval:live -- \
+  --cases PROP-RUNTIME-01 \
+  --iterations 3 \
+  --parallel 3 \
+  --runtime-parallel 3 \
+  --model openai/gpt-5.6-luna
+```
+
+Results from `--runtime-parallel >1` are load/stress evidence as well as behavioral evidence. Provider or wall-clock timeout failures from that mode should not be interpreted as a semantic regression without reproducing them under normal serialized runtime execution.
+
 Skill evaluation has two complementary sources:
 
 - central runtime cases in `evals/skills.json` test production-role skill discovery and companion-methodology behavior with one normal runtime execution;
@@ -173,8 +204,8 @@ The harness chooses Podman first, then Docker. Override it explicitly with `--en
 The harness pins the runner images by digest so the Action source and container runtime cannot drift independently:
 
 ```text
-OpenCode: ghcr.io/bateau84/opencode-eval-runner@sha256:eece79be0987d41c96cfbc43a4a0792987af383f2edec4e6651f43a954f1874f
-Copilot:  ghcr.io/bateau84/opencode-eval-runner@sha256:51d484e8b12541eeceef11c0818e26c97d77cc7d81a29b0c720b840d0226968b
+OpenCode: ghcr.io/bateau84/opencode-eval-runner@sha256:3e5f95ce54fee127230c5bf84a7f09124a2236dfca544269e6547c8f79e8ad5d
+Copilot:  ghcr.io/bateau84/opencode-eval-runner@sha256:8def0aa1885b0e60b36a1434c2725667b1b9555def31426f08dd7e2a87dc02c5
 ```
 
 Override them independently with `--opencode-image` / `--copilot-image`, or use `--image` to force one explicit image for both transports. Changing the pinned runner revision and image digests is one compatibility update.
