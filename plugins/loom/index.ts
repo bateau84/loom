@@ -3764,6 +3764,25 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
     })
 
     await ctx.permission.hook("evaluate", async (event) => {
+      if (conversationalInvestigationAgents.has(event.agent)) {
+        const workflowId = (await ctx.storage.get(sessionKey(event.sessionID))) as string | undefined
+        if (!workflowId) {
+          if (event.action === "edit") {
+            event.effect = "deny"
+            event.message = "Conversational Research/Diagnostic is advisory and cannot edit product files."
+            return
+          }
+          if (event.action === "shell") {
+            if (!shellResourcesAllowed(event.resources)) {
+              event.effect = "deny"
+              event.message =
+                "Conversational Research/Diagnostic shell is limited to Loom's non-mutating inspection and verification commands."
+            }
+            return
+          }
+        }
+      }
+
       if (event.agent === "worker" && event.action === "shell") {
         const workflowId = (await ctx.storage.get(sessionKey(event.sessionID))) as string | undefined
         const stepId = (await ctx.storage.get(sessionStepKey(event.sessionID))) as string | undefined
