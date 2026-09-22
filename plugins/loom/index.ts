@@ -1388,6 +1388,14 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             reconcileVerificationAfterRoute(workflow)
           }
 
+          const invalidateEscalatedWorkerScope = async () => {
+            if (deeper && workflow.steps.some((step) => step.id === "worker")) {
+              // null is an intentional durable tombstone: Worker dispatch treats
+              // it as no declared scope and General must issue a fresh bounded scope.
+              await ctx.storage.set(scopeKey(workflow.id, "worker"), null)
+            }
+          }
+
           if (effects.productOutcome && effects.executionDepth === "objective") {
             const objectiveId = objectiveIdForAnchor(workflow.anchor)
             await withWorkflowWorkLocks(runtime, workflow.id, objectiveId, async () => {
@@ -1399,10 +1407,12 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               await ctx.storage.set(workKey(objectiveId), work)
               workflow.work = { objectiveId, generation: work.generation }
               applyRouteMutation()
+              await invalidateEscalatedWorkerScope()
               await persistWorkflowMutationLocked(ctx, runtime, workflow)
             })
           } else {
             applyRouteMutation()
+            await invalidateEscalatedWorkerScope()
             await persistWorkflowMutation(ctx, runtime, workflow)
           }
 
