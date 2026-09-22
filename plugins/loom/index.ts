@@ -4082,6 +4082,37 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         return
       }
 
+      if (
+        (event.agent === "research" || event.agent === "diagnostic") &&
+        (event.action === "shell" || event.action === "edit")
+      ) {
+        const workflow = await activeWorkflow(ctx, event.sessionID, ensureLegacySession)
+        const conversational = !workflow || workflowBindingTerminal(workflow)
+
+        if (conversational && event.action === "shell") {
+          if (!shellResourcesAllowed(event.resources)) {
+            event.effect = "deny"
+            event.message =
+              "Conversational Research/Diagnostic shell access is read-only: use Loom's safe inspection/verification commands and do not mutate product state."
+          }
+          return
+        }
+
+        if (conversational && event.action === "edit") {
+          const reportScope = `ephemeral-reports/${event.agent}/**`
+          if (
+            event.resources.length > 0 &&
+            event.resources.every((resource) => resourceMatchesScope(resource, reportScope))
+          ) {
+            return
+          }
+          event.effect = "deny"
+          event.message =
+            `Conversational ${event.agent} may only edit its own ${reportScope} report namespace; product/repository edits require governed execution.`
+          return
+        }
+      }
+
       if (event.agent === "worker" && event.action === "shell") {
         const workflowId = (await ctx.storage.get(sessionKey(event.sessionID))) as string | undefined
         const stepId = (await ctx.storage.get(sessionStepKey(event.sessionID))) as string | undefined
@@ -4148,17 +4179,16 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       if (!target) return
 
       const workflow = await activeWorkflow(ctx, event.sessionID, ensureLegacySession)
-      if (!workflow || workflow.steps.length === 0) {
+      if (!workflow || workflowBindingTerminal(workflow)) {
         if (target === "research" || target === "diagnostic") {
-          // Conversation-first boundary: Research and Diagnostic may be used as
-          // advisory, non-product-mutating capabilities before durable execution.
-          // Their agent contracts prohibit loom_complete without workflow/grant
-          // context. All authority, mutation, and gate agents remain governed.
+          // Conversation-first boundary: a fresh session, or a session whose
+          // previous workflow is terminal, may use Research/Diagnostic as
+          // advisory non-mutating capabilities without reviving governed state.
           return
         }
         event.effect = "deny"
         event.message =
-          "Only conversational Research or Diagnostic may run before a Loom workflow. Start and route governed execution before dispatching other Loom subagents."
+          "Only conversational Research or Diagnostic may run without an active Loom workflow. Start and route governed execution before dispatching other Loom subagents."
         return
       }
 
