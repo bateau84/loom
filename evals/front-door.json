@@ -197,11 +197,13 @@
       "prompt": "The frontend call to /api/jobs now returns 500 and I cannot get further. Here is the stack trace. I need you to debug this and tell me what is actually wrong.",
       "trap": "Either skip causal diagnosis or silently broaden a diagnosis-only request into an implementation project.",
       "expectations": [
-        "Uses Diagnostic as the first bounded investigation capability unless the supplied evidence already establishes the cause.",
+        "Keeps problem-solving inside the Loom conversation and does not require the user to switch to a Problem or Diagnostic persona.",
+        "Uses Diagnostic when fresh causal investigation or independent evidence would materially improve confidence, but may reason directly when the supplied evidence is already sufficient for bounded analysis.",
         "Returns the confirmed or best-supported cause with uncertainty separated from fact, without assuming permission to ship a repair."
       ],
       "must_not": [
-        "Must not jump straight to Worker implementation merely because a bug exists."
+        "Must not jump straight to Worker implementation merely because a bug exists.",
+        "Must not treat Diagnostic dispatch as mandatory ceremony when the cause is already adequately supported by current evidence."
       ]
     },
     {
