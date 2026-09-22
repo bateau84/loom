@@ -93,6 +93,10 @@ The normal interactive status path is Loom's read-only dashboard. It does **not*
 
 `loom_status` may additionally generate a per-status artifact URL under `/status/...`, but that is a convenience rather than the only route to interactive status.
 
-Set `LOOM_DASHBOARD_PORT` if the dashboard listens on another local port. Set `LOOM_DASHBOARD_URL` when the browser reaches it through a tunnel or reverse proxy.
+The running dashboard publishes its effective endpoint into Loom's installation state. OpenCode/Loom processes read that shared endpoint when generating sidebar and status links, so a dashboard started with a non-default `LOOM_DASHBOARD_PORT` does not require restarting OpenCode.
+
+Set `LOOM_DASHBOARD_URL` on the dashboard process when the browser reaches it through a tunnel or reverse proxy; that advertised URL is published through the same endpoint lease.
+
+**Do not expose the dashboard directly to the public internet.** The dashboard is intentionally host-local and has no built-in authentication. For remote access, use a private tunnel or an authenticated/authorized reverse proxy.
 
 OpenCode Desktop browser preview remains optional. TUI, web, CLI, SSH, container and CI workflows do not require it.
