@@ -38,7 +38,7 @@ tags: [report, <producer>, <other-string-tags>]
 ---
 ```
 
-`type: report` without a producer suffix is also accepted. Frontmatter must be valid YAML; `title` and `description` must be non-empty strings; `tags` must be a non-empty array of non-empty strings. Report-producing roles validate persisted reports through OKF-MCP before relying on discovery. `loom_report_promote` independently parses the YAML and enforces this minimum profile before copying.
+`type: report` without a producer suffix is also accepted. Frontmatter must be valid YAML; `title` and `description` must be non-empty strings; `tags` must be a non-empty array of non-empty strings. Report-producing roles validate persisted reports through OKF-MCP before relying on discovery. Each producing role has write access only to its own `ephemeral-reports/<role>/**` namespace; General cannot rewrite another role's report before promotion. `loom_report_promote` independently parses the YAML and enforces this minimum profile before copying.
 
 A report is evidence or analysis. Its location never upgrades its semantic authority.
 
@@ -58,10 +58,13 @@ Promotion:
 3. accepts one destination under `docs/reports/`;
 4. copies bytes unchanged;
 5. retains the ephemeral source;
-6. rejects overwrite and path/symlink escape;
-7. persists a Loom audit record containing source, destination, reason, SHA-256, actor, timestamp, status, and unchanged authority;
-8. exposes successful promotion metadata through Loom evidence;
-9. leaves report authority unchanged.
+6. serializes promotion/recovery per destination with Loom's cross-process runtime lock;
+7. hashes and validates the source before persisting a `pending` audit record with expected size/hash;
+8. writes a same-directory temporary file and atomically hard-links it into the final destination without overwrite;
+9. reconciles stale `pending` records on Loom startup by comparing the durable destination with the expected size/hash, completing matching publishes or failing safely when publication never happened or content differs;
+10. persists source, destination, reason, SHA-256, actor, timestamp, status, recovery state, and unchanged authority;
+11. exposes successful promotion metadata through Loom evidence;
+12. leaves report authority unchanged.
 
 If only a conclusion inside a report is durable, the owning role updates the correct requirements, design, architecture, system, or user document instead. The raw report stays ephemeral.
 
