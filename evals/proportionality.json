@@ -281,9 +281,9 @@
       "trap": "Treat an explicitly tracked/governed read-only investigation as casual conversation, or route it through mutation/product ceremony.",
       "expectations": [
         "Starts a bounded request workflow before broad investigation and routes it at Task depth with diagnosis enabled and implementation disabled.",
-        "Dispatches Diagnostic to establish the concrete 401 root cause from the fixture evidence.",
+        "Dispatches Diagnostic to establish that the frontend sends X-Access-Token while the backend requires an Authorization: Bearer token, causing the 401.",
         "After Diagnostic returns, immediately continues the governed workflow through the read-only Reviewer verification gate rather than stopping at findings.",
-        "Preserves the findings through the read-only Reviewer verification path."
+        "Preserves the root-cause findings through the read-only Reviewer verification path."
       ],
       "must_not": [
         "Must not route the tracked diagnosis through Worker implementation or Objective ceremony."
@@ -305,6 +305,11 @@
             "tool": "loom_route",
             "arg": "executionDepth",
             "equals": "task"
+          },
+          {
+            "tool": "subagent",
+            "arg": "agent",
+            "equals": "diagnostic"
           },
           {
             "tool": "subagent",
