@@ -50,7 +50,7 @@ import {
 } from "./budget"
 import { resourceMatchesScope, resourcesWithinScope, validateWriteScope, type TaskScope } from "./scope"
 import { shellResourcesAllowed } from "./shell"
-import { promoteReport, type ReportPromotionInput, type ReportPromotionRecord } from "./reports"
+import { prepareReportPromotion, publishPreparedReport, reconcilePendingReportPromotion, type ReportPromotionInput, type ReportPromotionRecord } from "./reports"
 import {
   findPaths,
   grepText,
@@ -182,6 +182,51 @@ function reportPromotionKey(id: string) {
 function reportPromotionDestinationKey(destination: string) {
   const normalized = destination.trim().replaceAll("\\", "/").replace(/^\.\//, "")
   return `report-promotion-destination/${encodeURIComponent(normalized)}`
+}
+
+async function recoverPendingReportPromotions(ctx: any, projectDirectory: string) {
+  let after: string | undefined
+  let recovered = 0
+  let failed = 0
+
+  do {
+    const page = await ctx.storage.scan({
+      prefix: "report-promotion/",
+      limit: 100,
+      ...(after ? { after } : {}),
+    })
+
+    for (const entry of page.entries) {
+      const record = entry.value as ReportPromotionRecord
+      if (!record || record.status !== "pending") continue
+
+      let next: ReportPromotionRecord
+      try {
+        next = await reconcilePendingReportPromotion(projectDirectory, record)
+      } catch (error) {
+        next = {
+          ...record,
+          status: "failed",
+          failedAt: new Date().toISOString(),
+          error: `Recovery failed: ${error instanceof Error ? error.message : String(error)}`.slice(0, 1000),
+        }
+      }
+
+      if (next.status === "pending") continue
+      await ctx.storage.set(reportPromotionKey(record.id), next)
+
+      if (next.status === "completed") {
+        await ctx.storage.set(reportPromotionDestinationKey(next.destination), next.id)
+        recovered += 1
+      } else {
+        failed += 1
+      }
+    }
+
+    after = page.next
+  } while (after)
+
+  return { recovered, failed }
 }
 
 function scopeKey(workflowId: string, stepId: string) {
@@ -681,6 +726,8 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       },
     }) as typeof ctx
 
+    await recoverPendingReportPromotions(ctx, ctx.location.directory)
+
     const dashboardPublisher = createDashboardPublisher(scopedStorage, runtime)
     dashboardPublisher.trigger()
     dashboardPublisher.startHeartbeat()
@@ -892,33 +939,53 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             throw new Error("Only General may promote durable reports.")
           }
 
+          await recoverPendingReportPromotions(ctx, ctx.location.directory)
+
           const value = input as ReportPromotionInput
           const promotionId = crypto.randomUUID()
           const startedAt = new Date().toISOString()
+
+          let prepared
+          try {
+            prepared = await prepareReportPromotion(ctx.location.directory, value, promotionId)
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error)
+            await ctx.storage.set(reportPromotionKey(promotionId), {
+              id: promotionId,
+              status: "failed",
+              source: value.source,
+              destination: value.destination,
+              reason: value.reason,
+              actor: tool.agent,
+              startedAt,
+              failedAt: new Date().toISOString(),
+              authority: "unchanged",
+              error: message.slice(0, 1000),
+            } satisfies ReportPromotionRecord)
+            throw error
+          }
+
           const pending: ReportPromotionRecord = {
             id: promotionId,
             status: "pending",
-            source: value.source,
-            destination: value.destination,
-            reason: value.reason,
+            source: prepared.source,
+            destination: prepared.destination,
+            reason: prepared.reason,
             actor: tool.agent,
             startedAt,
+            sha256: prepared.sha256,
+            bytes: prepared.bytes.byteLength,
             authority: "unchanged",
           }
           await ctx.storage.set(reportPromotionKey(promotionId), pending)
 
           try {
-            const promoted = await promoteReport(ctx.location.directory, value)
+            const promoted = await publishPreparedReport(prepared)
             const promotedAt = new Date().toISOString()
             const record: ReportPromotionRecord = {
               ...pending,
               status: "completed",
-              source: promoted.source,
-              destination: promoted.destination,
-              reason: promoted.reason,
               promotedAt,
-              sha256: promoted.sha256,
-              bytes: promoted.bytes,
             }
             await ctx.storage.set(reportPromotionKey(promotionId), record)
             await ctx.storage.set(reportPromotionDestinationKey(promoted.destination), promotionId)
@@ -932,13 +999,14 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               }),
             }
           } catch (error) {
-            const message = error instanceof Error ? error.message : String(error)
-            await ctx.storage.set(reportPromotionKey(promotionId), {
-              ...pending,
-              status: "failed",
-              failedAt: new Date().toISOString(),
-              error: message.slice(0, 1000),
-            } satisfies ReportPromotionRecord)
+            const reconciled = await reconcilePendingReportPromotion(
+              ctx.location.directory,
+              pending,
+            )
+            await ctx.storage.set(reportPromotionKey(promotionId), reconciled)
+            if (reconciled.status === "completed") {
+              await ctx.storage.set(reportPromotionDestinationKey(reconciled.destination), promotionId)
+            }
             throw error
           }
         },
