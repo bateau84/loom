@@ -746,6 +746,36 @@ Verdict: FAIL
 
       const evaluate = permissionHooks.get("evaluate")
       expect(evaluate).toBeDefined()
+
+      const crossRoleEdit: any = {
+        agent: "reviewer",
+        action: "edit",
+        resources: ["ephemeral-reports/critic/readiness.md"],
+        sessionID: "reviewer-session",
+      }
+      await evaluate!(crossRoleEdit)
+      expect(crossRoleEdit.effect).toBe("deny")
+      expect(crossRoleEdit.message).toContain("producer-scoped")
+
+      const ownRoleEdit: any = {
+        agent: "reviewer",
+        action: "edit",
+        resources: ["ephemeral-reports/reviewer/review.md"],
+        sessionID: "reviewer-session",
+      }
+      await evaluate!(ownRoleEdit)
+      expect(ownRoleEdit.effect).toBeUndefined()
+
+      const ephemeralShell: any = {
+        agent: "general",
+        action: "shell",
+        resources: ["sed -i s/FAIL/PASS/ ephemeral-reports/critic/readiness.md"],
+        sessionID: "general-session",
+      }
+      await evaluate!(ephemeralShell)
+      expect(ephemeralShell.effect).toBe("deny")
+      expect(ephemeralShell.message).toContain("Shell access to ephemeral report storage is blocked")
+
       const directEdit: any = {
         agent: "designer",
         action: "edit",
