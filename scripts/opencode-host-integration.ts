@@ -96,6 +96,8 @@ async function waitForFile(path: string, timeoutMs = 15_000) {
 }
 
 
+const UPGRADE_WORKFLOW_ID = "legacy-upgrade-workflow"
+
 type MockProviderState = {
   workflowId?: string
   workerGrantId?: string
@@ -108,6 +110,10 @@ type MockProviderState = {
   generalSawPeerReviewComplete: boolean
   unrelatedRejected: boolean
   crossProjectRejected: boolean
+  upgradeSecondarySessionId?: string
+  upgradeSeeded: boolean
+  upgradePrimaryResumed: boolean
+  upgradeSecondaryResumed: boolean
   requests: string[]
   prompts: string[]
   unrelatedStatus?: unknown
@@ -374,6 +380,52 @@ function chooseMockAction(prompt: string, results: Map<string, unknown>, state: 
     return null
   }
 
+  if (prompt.includes("LOOM_INTEGRATION_LEGACY_SEED")) {
+    const seeded = results.get("loom_legacy_seed") as any
+    if (seeded?.seeded) state.upgradeSeeded = true
+    if (!results.has("loom_legacy_seed")) {
+      if (!state.upgradeSecondarySessionId) {
+        throw new Error("Upgrade secondary session ID is not initialized")
+      }
+      return {
+        name: "loom_legacy_seed",
+        args: {
+          workflowId: UPGRADE_WORKFLOW_ID,
+          secondarySessionId: state.upgradeSecondarySessionId,
+        },
+      }
+    }
+    return null
+  }
+
+  if (prompt.includes("LOOM_INTEGRATION_UPGRADE_PRIMARY")) {
+    const status = results.get("loom_status") as any
+    if (status?.workflow?.id === UPGRADE_WORKFLOW_ID && !status?.error) {
+      state.upgradePrimaryResumed = true
+    }
+    if (!results.has("loom_status")) {
+      return {
+        name: "loom_status",
+        args: { workflowId: UPGRADE_WORKFLOW_ID, detail: true },
+      }
+    }
+    return null
+  }
+
+  if (prompt.includes("LOOM_INTEGRATION_UPGRADE_SECONDARY")) {
+    const status = results.get("loom_status") as any
+    if (status?.workflow?.id === UPGRADE_WORKFLOW_ID && !status?.error) {
+      state.upgradeSecondaryResumed = true
+    }
+    if (!results.has("loom_status")) {
+      return {
+        name: "loom_status",
+        args: { workflowId: UPGRADE_WORKFLOW_ID, detail: true },
+      }
+    }
+    return null
+  }
+
   return null
 }
 
@@ -387,6 +439,9 @@ async function startMockProvider() {
     generalSawPeerReviewComplete: false,
     unrelatedRejected: false,
     crossProjectRejected: false,
+    upgradeSeeded: false,
+    upgradePrimaryResumed: false,
+    upgradeSecondaryResumed: false,
     requests: [],
     prompts: [],
   }
