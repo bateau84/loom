@@ -14,7 +14,7 @@ Bounded testing, debugging, inspection, focused review, mechanical edits, and sm
 
 Workflow depth is evidence-driven:
 
-- **Task** — direct bounded work, optionally preceded by Diagnostic or Research, followed by independent verification.
+- **Task** — direct bounded work. Read-only tasks use the relevant Diagnostic/Research/Reviewer path; mutation tasks use Worker plus independent verification.
 - **Change** — substantial but bounded work that has demonstrably earned new Designer, Specifier, or Architect authority.
 - **Objective** — broad product work that warrants decomposition, holistic Critic gates, whole-product Product Acceptance, and final product review.
 
@@ -23,15 +23,17 @@ Potential future complexity MUST NOT be treated as present complexity.
 ## Acceptance Criteria
 
 1. A clear bounded request can start without creating a new Anchor.
-2. Task-depth work does not invoke Planner, Critic, Product Acceptance, knowledge sync, or final product gates unless another independent requirement specifically makes one necessary.
-3. Diagnostic and bounded Research work can occur inside Task depth without automatically promoting the workflow.
-4. A Task stays shallow when it uncovers an obvious bounded fix with no new product/design/architecture authority.
-5. A Task promotes to Change when current evidence reveals unresolved UX semantics, behavioral guarantees, structural authority, or materially wider bounded scope.
-6. Objective depth is selected only for broad product work that benefits from decomposition and whole-product acceptance.
-7. Request-backed work cannot silently become an Objective; Objective-depth execution requires accepted product authority.
-8. Existing completed evidence is preserved when a workflow is re-routed deeper.
-9. User approval to fix findings does not by itself force Objective depth; demonstrated breadth and authority needs control the depth.
-10. Diagnosis-only or test-only requests do not silently expand into implementation unless repair was requested or subsequently authorized.
+2. A read-only Task does not invoke Worker or require a Worker write scope; it ends through Reviewer verification after any required Diagnostic/Research work.
+3. Task-depth work does not invoke Planner, Critic, Product Acceptance, knowledge sync, or final product gates unless another independent requirement specifically makes one necessary.
+4. Diagnostic and bounded Research work can occur inside Task depth without automatically promoting the workflow.
+5. A Task stays shallow when it uncovers an obvious bounded fix with no new product/design/architecture authority.
+6. A completed Task may promote to Change when current evidence reveals unresolved UX semantics, behavioral guarantees, structural authority, or materially wider bounded scope; completed discovery evidence is preserved while widened implementation/review work is reopened.
+7. Objective depth is selected only for broad product work that benefits from decomposition and whole-product acceptance.
+8. `executionDepth=objective` is valid only with `productOutcome=true`, `implementationRequested=true`, and accepted product authority.
+9. Request-backed work cannot silently become an Objective; Objective-depth execution requires accepted product authority.
+10. Existing completed evidence is preserved when a workflow is re-routed deeper, but a gate is not preserved when its dependency set changes.
+11. User approval to fix findings does not by itself force Objective depth; demonstrated breadth and authority needs control the depth.
+12. Diagnosis-only or test-only requests do not silently expand into implementation unless repair was requested or subsequently authorized.
 
 ## Verification Semantics
 
