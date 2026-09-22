@@ -254,6 +254,14 @@ def load_skill_owned_cases(skills_root: Path) -> list[dict[str, Any]]:
     return cases
 
 
+def case_workspace_mode(case: dict[str, Any]) -> str:
+    # Runtime targets execute the real Loom plugin, whose project identity and
+    # transactional state live under .loom. setup_projects() creates an isolated
+    # disposable target, so runtime writes are contained there rather than in the
+    # checked-out Loom repository.
+    return "rw" if case.get("execution") == "runtime" else "ro"
+
+
 def case_target_kind(case: dict[str, Any]) -> str:
     return "skill" if case.get("skill") else "agent"
 
@@ -1674,7 +1682,7 @@ def run_case(
             # Runtime cases exercise the real Loom plugin, which owns project-local
             # state under .loom. The target project is an isolated disposable copy,
             # so it must be writable even for read-only product investigations.
-            workspace_mode="rw" if case["execution"] == "runtime" else "ro",
+            workspace_mode=case_workspace_mode(case),
             extra_envs=args.env,
             skill=(
                 str(case.get("skill") or "") or None
