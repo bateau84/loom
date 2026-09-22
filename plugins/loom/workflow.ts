@@ -24,6 +24,7 @@ export type Effects = {
   externalUnknown: boolean
   diagnostic: boolean
   productOutcome: boolean
+  implementationRequested?: boolean
   workLevel?: WorkLevel
   executionDepth?: ExecutionDepth
 }
@@ -204,6 +205,14 @@ function gate(id: string, agent: string, dependsOn: string[] = []): Step {
 
 export function resolveExecutionDepth(effects: Effects): ExecutionDepth {
   const requested = effects.executionDepth ?? (effects.productOutcome ? "objective" : "change")
+  const implementationRequested = effects.implementationRequested ?? true
+
+  if (requested === "objective" && !effects.productOutcome) {
+    throw new Error("Objective execution depth requires productOutcome=true.")
+  }
+  if (requested === "objective" && !implementationRequested) {
+    throw new Error("Objective execution depth requires implementationRequested=true.")
+  }
 
   // Task depth is intentionally shallow. If the route says new user-facing,
   // behavioral, or structural authority is actually unresolved, the work has
@@ -218,10 +227,15 @@ export function resolveExecutionDepth(effects: Effects): ExecutionDepth {
   return requested
 }
 
+export function executionDepthRank(depth: ExecutionDepth) {
+  return depth === "task" ? 0 : depth === "change" ? 1 : 2
+}
+
 export function buildSteps(effects: Effects): Step[] {
   const steps: Step[] = []
   const think: string[] = []
   const executionDepth = resolveExecutionDepth(effects)
+  const implementationRequested = effects.implementationRequested ?? true
   const workLevel: WorkLevel = effects.workLevel ?? "objective"
   const objectiveClosure =
     executionDepth === "objective" &&
@@ -230,7 +244,8 @@ export function buildSteps(effects: Effects): Step[] {
 
   // Small, already-bounded work gets the shortest safe path. Diagnosis and
   // bounded research are allowed without turning the request into a product
-  // lifecycle. Independent implementation review remains the default check.
+  // lifecycle. Read-only Tasks end at Reviewer; mutation Tasks use Worker
+  // followed by independent implementation review.
   if (executionDepth === "task") {
     if (effects.diagnostic) {
       steps.push(work("diagnostic", "diagnostic"))
@@ -239,6 +254,11 @@ export function buildSteps(effects: Effects): Step[] {
     if (effects.externalUnknown) {
       steps.push(work("research", "research"))
       think.push("research")
+    }
+
+    if (!implementationRequested) {
+      steps.push(gate("review-task", "reviewer", think))
+      return steps
     }
 
     steps.push(work("worker", "worker", think))
@@ -277,8 +297,16 @@ export function buildSteps(effects: Effects): Step[] {
   }
 
   // Change depth is for substantial but still bounded work. It uses only the
-  // authority earned by the evidence, then implements and verifies directly.
+  // authority earned by the evidence. Read-only Change work stops after the
+  // relevant independent authority review; mutation work then implements.
   if (executionDepth === "change") {
+    if (!implementationRequested) {
+      if (steps.length === 0) {
+        steps.push(gate("review-task", "reviewer"))
+      }
+      return steps
+    }
+
     steps.push(work("worker", "worker", lastThink))
     steps.push(gate("review-implementation", "reviewer", ["worker"]))
 
@@ -289,15 +317,10 @@ export function buildSteps(effects: Effects): Step[] {
   }
 
   // Objective depth preserves the full product lifecycle.
-  if (effects.productOutcome) {
-    steps.push(gate("critic-solution", "critic", lastThink))
-    lastThink = ["critic-solution"]
-    steps.push(work("plan", "planner", lastThink))
-    steps.push(gate("review-implementation", "reviewer", ["plan"]))
-  } else {
-    steps.push(work("worker", "worker", lastThink))
-    steps.push(gate("review-implementation", "reviewer", ["worker"]))
-  }
+  steps.push(gate("critic-solution", "critic", lastThink))
+  lastThink = ["critic-solution"]
+  steps.push(work("plan", "planner", lastThink))
+  steps.push(gate("review-implementation", "reviewer", ["plan"]))
 
   if (effects.productOutcome || effects.structural) {
     steps.push(work("knowledge-sync", "documenter", ["review-implementation"]))
