@@ -1736,6 +1736,7 @@ def run_case(
                 timeout=args.timeout_seconds,
                 container_timeout=args.container_timeout,
                 mount_node_modules=False,
+                workspace_mode="ro",
                 extra_envs=args.env,
                 skill=None,
                 network=args.network,
