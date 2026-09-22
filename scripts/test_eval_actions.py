@@ -74,7 +74,7 @@ class WorkflowCredentialTests(unittest.TestCase):
 
 
 class RuntimeEvalProjectTests(unittest.TestCase):
-    def test_runtime_project_installs_loom_plugin_and_lists_it_in_config(self):
+    def test_runtime_project_keeps_loom_out_of_project_plugin_config(self):
         case = next(
             case
             for case in RUN_EVALS.load_cases()
@@ -83,12 +83,9 @@ class RuntimeEvalProjectTests(unittest.TestCase):
         temp, target, _ = RUN_EVALS.setup_projects(case)
         try:
             config = json.loads((target / "opencode.json").read_text(encoding="utf-8"))
-            self.assertEqual(config.get("plugins"), ["./.opencode/plugins/loom.ts"])
-            self.assertTrue((target / ".opencode" / "plugins" / "loom" / "index.ts").is_file())
-            self.assertEqual(
-                (target / ".opencode" / "plugins" / "loom.ts").read_text(encoding="utf-8"),
-                'export { default } from "./loom/index.ts"\n',
-            )
+            self.assertNotIn("plugins", config)
+            self.assertFalse((target / ".opencode" / "plugins" / "loom").exists())
+            self.assertFalse((target / ".opencode" / "plugins" / "loom.ts").exists())
         finally:
             import shutil
             shutil.rmtree(temp, ignore_errors=True)
