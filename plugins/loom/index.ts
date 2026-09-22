@@ -1537,6 +1537,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           }
 
           const questions = await readQuestions(ctx, workflow.id)
+          const now = runnable(workflow).map((step) => ({ step: step.id, agent: step.agent }))
           return {
             content: renderToolOutput({
               workflowId: workflow.id,
@@ -1546,7 +1547,16 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 kind: step.kind,
                 waitsFor: step.dependsOn,
               })),
-              now: runnable(workflow).map((step) => ({ step: step.id, agent: step.agent })),
+              now,
+              continuation: {
+                next: now,
+                implementationRequested: effects.implementationRequested ?? true,
+                workerPresent: workflow.steps.some((step) => step.agent === "worker"),
+                instruction:
+                  now.length > 0
+                    ? "Issue loom_dispatch_grant for the exact runnable step, dispatch that owner, then call loom_status immediately after the child returns."
+                    : "No workflow step is currently runnable; inspect questions/blockers before taking any other action.",
+              },
               questions: compactQuestions(questions, workflow),
             }),
           }
