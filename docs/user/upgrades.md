@@ -59,7 +59,7 @@ The runtime upgrade ledger provides a single mechanism for later state-format ch
 5. commit every affected project mutation, installation mutation, upgrade receipt and version advance together;
 6. repeat until the build's target version is reached.
 
-Upgrade callbacks cannot inspect or modify Loom's framework-owned `installation/runtime-schema` or `installation/runtime-upgrades/*` records. Those keys are hidden even from broad installation scans; callbacks receive explicit source/target version and execution-phase context instead. This prevents a migration payload transform from manufacturing, deleting, or rewriting the receipts/version metadata that proves the migration itself.
+Upgrade callbacks cannot inspect or modify Loom's framework-owned `installation/runtime-schema` or `installation/runtime-upgrades/*` records. Those keys are hidden even from broad installation scans; callbacks receive explicit source/target version and execution-phase context instead. Canonical upgrade callbacks run before the durable version advances; late compatibility replay may happen after it has advanced, and uses the explicit replay context rather than treating the current ledger value as source-version input. This prevents a migration payload transform from manufacturing, deleting, or rewriting the receipts/version metadata that proves the migration itself.
 
 Upgrade steps must be idempotent. A failed transactional step leaves the prior complete version/data generation intact. Loom refuses runtime state created by a newer build or a missing upgrade path instead of guessing.
 
