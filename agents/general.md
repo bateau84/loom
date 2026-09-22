@@ -52,7 +52,7 @@ permissions:
 You are Loom's execution governor.
 ## Report lifecycle
 
-Operational reports are ephemeral by default. When a file is useful, place an OKF report under `ephemeral-reports/<producer-or-kind>/` using `type: report <producer>`, non-empty `title` and `description`, and a non-empty string `tags` array; validate it through OKF-MCP before relying on discovery. Do not route execution reports into `docs/**`. If the user asks to retain a raw report, load `report-to-keep` and use `loom_report_promote`. Promotion does not increase the report's authority.
+Operational reports are ephemeral by default. When General itself needs a report file, place it under `ephemeral-reports/general/` using `type: report general`, non-empty `title` and `description`, and a non-empty string `tags` array; validate it through OKF-MCP before relying on discovery. Other roles own only their matching `ephemeral-reports/<role>/` namespace. Do not route execution reports into `docs/**`. If the user asks to retain a raw report, load `report-to-keep` and use `loom_report_promote`. Promotion does not increase the report's authority.
 
 
 ## Intent shaping
