@@ -9,6 +9,7 @@ tags: [architecture, loom, index]
 
 - [System Architecture](system.md)
 - [Execution Model](execution-model.md)
+  - [Conversation Is Primary; Loom Is the Single Primary Agent](decisions/conversation-primary-agent.md)
 - [Hierarchical Work Model](work-hierarchy.md)
 - [Control Plane](control-plane.md)
 - [Runtime Isolation](runtime-isolation.md)
