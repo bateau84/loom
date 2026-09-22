@@ -2,6 +2,7 @@ import { createHash } from "node:crypto"
 import { chmod, mkdir, open, rename, unlink } from "node:fs/promises"
 import { basename, dirname, join } from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
+import { resolveDashboardBaseUrl } from "./dashboard-endpoint"
 import {
   acceptanceReadiness,
   type AcceptancePlan,
@@ -191,28 +192,23 @@ export type StatusArtifact = {
   webUrl: string
 }
 
-export function dashboardBaseUrl() {
-  const configured = process.env.LOOM_DASHBOARD_URL?.trim()
-  if (configured) return configured.replace(/\/+$/, "")
-  const requestedPort = Number(process.env.LOOM_DASHBOARD_PORT || "4318")
-  const port = Number.isInteger(requestedPort) && requestedPort > 0 && requestedPort <= 65535
-    ? requestedPort
-    : 4318
-  return `http://127.0.0.1:${port}`
+export async function dashboardBaseUrl(runtime: LoomRuntimeIdentity) {
+  return resolveDashboardBaseUrl(runtime.stateRoot)
 }
 
-export function dashboardWorkflowUrl(runtime: LoomRuntimeIdentity, workflowId: string) {
-  return `${dashboardBaseUrl()}/#/project/${encodeURIComponent(runtime.projectId)}/workflow/${encodeURIComponent(workflowId)}`
+export async function dashboardWorkflowUrl(runtime: LoomRuntimeIdentity, workflowId: string) {
+  const baseUrl = await dashboardBaseUrl(runtime)
+  return `${baseUrl}/#/project/${encodeURIComponent(runtime.projectId)}/workflow/${encodeURIComponent(workflowId)}`
 }
 
-function statusWebUrl(runtime: LoomRuntimeIdentity, path: string) {
+async function statusWebUrl(runtime: LoomRuntimeIdentity, path: string) {
   const route = [
     "status",
     runtime.installationId,
     runtime.projectId,
     basename(path),
   ].map((part) => encodeURIComponent(part)).join("/")
-  return `${dashboardBaseUrl()}/${route}`
+  return `${await dashboardBaseUrl(runtime)}/${route}`
 }
 
 export function statusPreviewCode(artifact: Pick<StatusArtifact, "path" | "uri">) {
@@ -636,6 +632,6 @@ export async function writeStatusArtifact(
   return {
     path,
     uri: pathToFileURL(path).href,
-    webUrl: statusWebUrl(runtime, path),
+    webUrl: await statusWebUrl(runtime, path),
   }
 }
