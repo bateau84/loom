@@ -144,4 +144,6 @@ The interview follows four runtime-enforced rules:
 
 The interview is ready to draft an Anchor when Goal, observable success, scope, exclusions, user-owned decisions, and important context are clear enough that no unresolved user-owned branch would materially change them.
 
-The user explicitly accepts the complete Anchor before autonomous execution begins.
+For a newly grilled or still-materially-ambiguous outcome, the user explicitly accepts the complete Anchor before autonomous execution begins.
+
+When the preceding conversation has already resolved the material product outcome and the user clearly commits to build/fix/apply that exact outcome, the commitment itself is acceptance evidence. Loom synthesizes the durable Anchor from the resolved conversation and does not add a second routine confirmation gate.
