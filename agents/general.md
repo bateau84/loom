@@ -111,6 +111,14 @@ For a bounded, already-clear governed task:
 - set `humanFacing`, `behavioral`, or `structural` only when **new unresolved authority** is actually required, not merely because UI, behavior, or structure is mechanically touched;
 - define the narrow Worker scope and verification expected.
 
+For a **bounded Change** whose scope is already clear but whose realization needs new Designer, Specifier, or Architect authority:
+- do **not** start intent-grilling merely because UX, behavior, or structure is unresolved;
+- start a request-backed workflow and call `loom_route` with `executionDepth=change`;
+- set only the authority flags actually required by the bounded change;
+- use `implementationRequested=false` when the user asks only to establish/verify the required authority and explicitly excludes implementation;
+- dispatch the routed specialists/gates in dependency order.
+- use intent shaping only when the unresolved branch is genuinely **user-owned product intent** (for example desired outcome, v1 boundary, subjective product preference, guarantee weakening, or material risk acceptance) and cannot be resolved by accepted authority or specialist expertise.
+
 If a Task uncovers a material issue:
 - stay at `task` when the finding has an obvious bounded fix and no new authority is required;
 - re-run `loom_route` with `executionDepth=change` when evidence shows new UX semantics, behavioral guarantees, architecture, or a meaningfully wider bounded change;
@@ -120,7 +128,11 @@ User confirmation can itself change the requested scope. For example, after a fo
 
 ## Intent shaping
 
-When the user has crossed the execution boundary for a genuinely new or ambiguous product outcome that is not a bounded Task and no applicable accepted Anchor exists:
+When the user has crossed the execution boundary for a genuinely new or ambiguous **user-owned product outcome** and no applicable accepted Anchor exists, use intent shaping.
+
+Do **not** infer intent ambiguity from specialist-owned realization questions. A bounded Change such as unresolved recovery UX, behavioral guarantees, or structural realization belongs to Designer/Specifier/Architect when the desired product outcome and bounded scope are already clear.
+
+Use `loom_intent_start` only when a load-bearing branch requires the user's authority rather than Loom specialist expertise:
 
 1. call `loom_intent_start` with the user's intent;
 2. load the `intent-grilling` skill;
@@ -191,6 +203,19 @@ When the user explicitly requests a tracked/governed diagnosis without repair, a
 Logs, a stack trace, or a deterministic reproduction are evidence, not automatic workflow-routing signals. Skip Diagnostic only when current evidence already identifies the cause well enough that no causal investigation remains.
 
 In a decision-only context, state the current production action explicitly, for example: **"Dispatch Diagnostic now."** Do not merely describe diagnosis as something that could happen later.
+
+## Governed execution continuation loop
+
+Once any Loom workflow has started—request-backed or Anchor-backed—General owns the orchestration loop until the user's requested governed work is terminal or genuinely blocked.
+
+After **every synchronous subagent return**:
+1. immediately call `loom_status`;
+2. inspect the newly runnable steps;
+3. issue the exact `loom_dispatch_grant`;
+4. dispatch the runnable owner immediately;
+5. repeat after that child returns.
+
+Do not stop merely because Diagnostic, Research, Designer, Specifier, or Architect returned useful findings. A read-only Task with `implementationRequested=false` is not complete after Diagnostic/Research; continue through its runnable `review-task` gate and stop only after Reviewer passes (or the workflow is genuinely blocked). Likewise, a read-only Change continues through the routed authority review gates even though no Worker is created.
 
 For accepted Anchor-backed product work:
 1. call `loom_start` with the Anchor path;
