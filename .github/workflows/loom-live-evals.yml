@@ -115,11 +115,11 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
-        uses: bateau84/opencode-eval-runner@80682d7a65d08978793f790e505040eb7cc9411b
+        uses: bateau84/opencode-eval-runner@9f75749d7190f1c5093e155783bb5ddaada895d4
         with:
           engine: docker
-          opencode-image: ghcr.io/bateau84/opencode-eval-runner@sha256:023bfb2803dcb37d414f34fa82433641813c721efae53ada88bfbf57825091dc
-          copilot-image: ghcr.io/bateau84/opencode-eval-runner@sha256:8a546e7a857ce185cb0598212935064fefa49345fb357333860a823e70639db1
+          opencode-image: ghcr.io/bateau84/opencode-eval-runner@sha256:6df8911ec7ed1d18a711c2be99a91d57cd0c2c0a9865e7ad8d1471509dd75e29
+          copilot-image: ghcr.io/bateau84/opencode-eval-runner@sha256:96894d90bbba57c2079daa120ae88fdf706382673cb08941b3dfca06d953ca8c
           prepare-opencode: ${{ inputs.target_transport == 'opencode' || inputs.judge_transport == 'opencode' }}
           prepare-copilot: ${{ inputs.target_transport == 'github-copilot-cli' || inputs.judge_transport == 'github-copilot-cli' }}
           artifact-dir: .loom-evals
