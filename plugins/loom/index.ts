@@ -613,12 +613,10 @@ async function bindSessionEvidence(ctx: any, sessionID: string, workflowId: stri
   let bound = 0
 
   for (const observation of observations) {
-    if (observation.workflowId && (observation.workflowId !== workflowId || observation.stepId !== stepId)) {
-      continue
-    }
+    // Evidence is bound at observation time. Never retroactively upgrade
+    // conversational/pre-attachment observations into governed workflow proof.
+    if (observation.workflowId !== workflowId || observation.stepId !== stepId) continue
 
-    const next = { ...observation, workflowId, stepId }
-    await ctx.storage.set(evidenceKey(observation.id), next)
     await ctx.storage.set(`${stepEvidencePrefix(workflowId, stepId)}${observation.id}`, observation.id)
     bound++
   }
@@ -2367,8 +2365,13 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           }
 
           const attachedWorkflow = (await ctx.storage.get(sessionKey(tool.sessionID))) as string | undefined
-          if (attachedWorkflow !== value.workflowId) {
-            return { content: renderToolOutput({ error: "Current session is not attached to this workflow." }) }
+          const attachedStep = (await ctx.storage.get(sessionStepKey(tool.sessionID))) as string | undefined
+          if (attachedWorkflow !== value.workflowId || !attachedStep) {
+            return {
+              content: renderToolOutput({
+                error: "Verification proof requires a session attached to an exact workflow step.",
+              }),
+            }
           }
 
           const requirement = (workflow.verification ?? []).find(
@@ -2385,6 +2388,20 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           if (observations.length !== value.observationIds.length) {
             return { content: renderToolOutput({ error: "Every proof id must be an observed event from the current session." }) }
           }
+          if (
+            observations.some(
+              (observation) =>
+                observation.workflowId !== value.workflowId ||
+                observation.stepId !== attachedStep,
+            )
+          ) {
+            return {
+              content: renderToolOutput({
+                error:
+                  "Verification proof may only use observations captured while this session was attached to the current workflow step.",
+              }),
+            }
+          }
           if (!observationsSupportKind(requirement.kind, observations)) {
             return {
               content: renderToolOutput({
@@ -2393,7 +2410,6 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             }
           }
 
-          const attachedStep = (await ctx.storage.get(sessionStepKey(tool.sessionID))) as string | undefined
           try {
             const proven = proveVerificationRequirement(workflow, requirement.id, {
               byAgent: tool.agent,
@@ -2508,6 +2524,20 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           if (observations.length !== value.observationIds.length) {
             return { content: renderToolOutput({ error: "Every evidence id must be an observed event from the current session." }) }
           }
+          if (
+            observations.some(
+              (observation) =>
+                observation.workflowId !== value.workflowId ||
+                observation.stepId !== value.stepId,
+            )
+          ) {
+            return {
+              content: renderToolOutput({
+                error:
+                  "Evidence claims may only use observations captured while this session was attached to the claimed workflow step.",
+              }),
+            }
+          }
 
           try {
             const claim = createClaim({
@@ -2523,8 +2553,6 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
             await withRuntimeLock(runtime, "workflow", value.workflowId, async () => {
               for (const observation of observations) {
-                const next = { ...observation, workflowId: value.workflowId, stepId: value.stepId }
-                await ctx.storage.set(evidenceKey(observation.id), next)
                 await ctx.storage.set(
                   `${stepEvidencePrefix(value.workflowId, value.stepId)}${observation.id}`,
                   observation.id,
@@ -4343,6 +4371,26 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         }
       }
 
+      const observedWorkflow = await activeWorkflow(
+        ctx,
+        String(raw.sessionID),
+        ensureLegacySession,
+      )
+      const observedStepId =
+        observedWorkflow && !workflowBindingTerminal(observedWorkflow)
+          ? ((await ctx.storage.get(sessionStepKey(String(raw.sessionID)))) as string | undefined)
+          : undefined
+      const observedStep = observedStepId
+        ? observedWorkflow?.steps.find((step) => step.id === observedStepId)
+        : undefined
+      const governedEvidenceBinding =
+        observedWorkflow &&
+        observedStepId &&
+        observedStep &&
+        (!raw.agent || observedStep.agent === String(raw.agent))
+          ? { workflowId: observedWorkflow.id, stepId: observedStepId }
+          : {}
+
       const observation: EvidenceObservation = {
         id: crypto.randomUUID(),
         sessionID: String(raw.sessionID),
@@ -4355,6 +4403,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         ...(raw.status === "error" ? { error: String(raw.error?.message ?? raw.error ?? "tool error").slice(0, 1000) } : {}),
         ...summary,
         ...(reportPromotion ? { reportPromotion } : {}),
+        ...governedEvidenceBinding,
       }
 
       await ctx.storage.set(evidenceKey(observation.id), observation)
