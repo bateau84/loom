@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test"
-import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises"
+import { lstat, mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { promoteReport } from "./reports"
+import { prepareReportPromotion, publishPreparedReport, reconcilePendingReportPromotion, type ReportPromotionInput, type ReportPromotionRecord } from "./reports"
 
 const roots: string[] = []
 
@@ -25,6 +25,21 @@ tags: [report, critic, readiness]
 
 Verdict: FAIL
 `
+
+async function promoteReport(root: string, input: ReportPromotionInput, id = crypto.randomUUID()) {
+  const prepared = await prepareReportPromotion(root, input, id)
+  return publishPreparedReport(prepared)
+}
+
+async function missing(path: string) {
+  try {
+    await lstat(path)
+    return false
+  } catch (error: any) {
+    if (error?.code === "ENOENT") return true
+    throw error
+  }
+}
 
 afterEach(async () => {
   while (roots.length) await rm(roots.pop()!, { recursive: true, force: true })
@@ -155,5 +170,132 @@ describe("Loom report promotion", () => {
         reason: "Keep it.",
       }),
     ).rejects.toThrow("must be under docs/reports")
+  })
+
+
+  test("interruption before atomic publish leaves no durable partial file and is retryable", async () => {
+    const root = await fixture()
+    await writeFile(join(root, "ephemeral-reports", "critic", "readiness.md"), report)
+
+    const id = "before-publish"
+    const prepared = await prepareReportPromotion(
+      root,
+      {
+        source: "ephemeral-reports/critic/readiness.md",
+        destination: "docs/reports/critic/readiness.md",
+        reason: "Keep it.",
+      },
+      id,
+    )
+    const pending: ReportPromotionRecord = {
+      id,
+      status: "pending",
+      source: prepared.source,
+      destination: prepared.destination,
+      reason: prepared.reason,
+      actor: "general",
+      startedAt: new Date().toISOString(),
+      sha256: prepared.sha256,
+      bytes: prepared.bytes.byteLength,
+      authority: "unchanged",
+    }
+
+    await writeFile(prepared.temporaryPath, prepared.bytes.subarray(0, 8), { flag: "wx" })
+    const reconciled = await reconcilePendingReportPromotion(root, pending)
+
+    expect(reconciled).toMatchObject({
+      id,
+      status: "failed",
+      authority: "unchanged",
+    })
+    expect(reconciled.error).toContain("safe to retry")
+    expect(await missing(prepared.destinationPath)).toBe(true)
+    expect(await missing(prepared.temporaryPath)).toBe(true)
+
+    const retry = await promoteReport(
+      root,
+      {
+        source: pending.source,
+        destination: pending.destination,
+        reason: pending.reason,
+      },
+      "retry-after-interruption",
+    )
+    expect(retry.promoted).toBe(true)
+  })
+
+  test("interruption after atomic publish is recovered from destination hash", async () => {
+    const root = await fixture()
+    await writeFile(join(root, "ephemeral-reports", "critic", "readiness.md"), report)
+
+    const id = "after-publish"
+    const prepared = await prepareReportPromotion(
+      root,
+      {
+        source: "ephemeral-reports/critic/readiness.md",
+        destination: "docs/reports/critic/readiness.md",
+        reason: "Keep it.",
+      },
+      id,
+    )
+    const pending: ReportPromotionRecord = {
+      id,
+      status: "pending",
+      source: prepared.source,
+      destination: prepared.destination,
+      reason: prepared.reason,
+      actor: "general",
+      startedAt: new Date().toISOString(),
+      sha256: prepared.sha256,
+      bytes: prepared.bytes.byteLength,
+      authority: "unchanged",
+    }
+
+    await publishPreparedReport(prepared)
+    const reconciled = await reconcilePendingReportPromotion(root, pending)
+
+    expect(reconciled).toMatchObject({
+      id,
+      status: "completed",
+      recovered: true,
+      sha256: prepared.sha256,
+      bytes: prepared.bytes.byteLength,
+      authority: "unchanged",
+    })
+    expect(await readFile(prepared.destinationPath, "utf8")).toBe(report)
+  })
+
+  test("recovery refuses a durable file whose bytes do not match the pending audit", async () => {
+    const root = await fixture()
+    await writeFile(join(root, "ephemeral-reports", "critic", "readiness.md"), report)
+
+    const id = "mismatched-publish"
+    const prepared = await prepareReportPromotion(
+      root,
+      {
+        source: "ephemeral-reports/critic/readiness.md",
+        destination: "docs/reports/critic/readiness.md",
+        reason: "Keep it.",
+      },
+      id,
+    )
+    const pending: ReportPromotionRecord = {
+      id,
+      status: "pending",
+      source: prepared.source,
+      destination: prepared.destination,
+      reason: prepared.reason,
+      actor: "general",
+      startedAt: new Date().toISOString(),
+      sha256: prepared.sha256,
+      bytes: prepared.bytes.byteLength,
+      authority: "unchanged",
+    }
+
+    await writeFile(prepared.destinationPath, "different\n", { flag: "wx" })
+    const reconciled = await reconcilePendingReportPromotion(root, pending)
+
+    expect(reconciled.status).toBe("failed")
+    expect(reconciled.error).toContain("differs from pending audit")
   })
 })
