@@ -64,6 +64,7 @@ Because projection publication is asynchronous, a deep link whose project/workfl
 ## Source
 
 - `plugins/loom/dashboard.ts`
+- `plugins/loom/dashboard-endpoint.ts`
 - `dashboard/server.ts`
 - `dashboard/ui.ts`
 - `plugins/loom/dashboard.test.ts`
