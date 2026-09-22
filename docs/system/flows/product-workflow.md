@@ -20,7 +20,9 @@ conversation
   -> Task / Change / Objective
 ```
 
-Execution commitment means the user asks Loom to carry out tracked/governed work: mutate/fix/apply/build/ship an outcome, or explicitly requests governed verification/investigation whose findings must be tracked, preserved, or independently verified.
+Read-only imperative requests such as "perform a test", "verify this mapping", "check this policy", "review this helper", or "debug this failure" remain conversation when the requested outcome is findings rather than mutation or durable workflow treatment.
+
+Execution commitment means the user asks Loom to mutate/fix/apply/build/ship an outcome, or explicitly requests governed verification/investigation whose findings must be tracked, preserved, independently reviewed/gated, or continued through workflow state. Finding a defect during conversation does not itself cross this boundary.
 
 Execution depth classifies that governed execution; it does not classify ordinary conversation.
 
