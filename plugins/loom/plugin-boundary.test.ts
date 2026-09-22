@@ -451,7 +451,7 @@ describe("Loom registered plugin boundary", () => {
           externalUnknown: false,
           diagnostic: true,
           productOutcome: false,
-          implementationRequested: true,
+          implementationRequested: false,
           executionDepth: "task",
         },
         "general",
@@ -460,11 +460,136 @@ describe("Loom registered plugin boundary", () => {
       expect(routed.error).toBeUndefined()
       expect(routed.path.map((step: { step: string }) => step.step)).toEqual([
         "diagnostic",
-        "worker",
-        "review-implementation",
+        "review-task",
       ])
+      expect(routed.path.some((step: { agent: string }) => step.agent === "worker")).toBe(false)
       expect(routed.path.some((step: { agent: string }) => step.agent === "planner")).toBe(false)
       expect(routed.path.some((step: { agent: string }) => step.agent === "critic")).toBe(false)
+    } finally {
+      restore()
+    }
+  })
+
+
+  test("completed task implementation may escalate to Change and resets implementation work", async () => {
+    const { call, restore } = await harness()
+    try {
+      const started = await call(
+        "start",
+        { request: "Fix the local 401 bug in the frontend request." },
+        "general",
+        "escalation-general",
+      )
+      expect(started.error).toBeUndefined()
+      const workflowId = String(started.workflowId)
+
+      const initial = await call(
+        "route",
+        {
+          humanFacing: false,
+          behavioral: false,
+          structural: false,
+          externalUnknown: false,
+          diagnostic: false,
+          productOutcome: true,
+          implementationRequested: true,
+          executionDepth: "task",
+        },
+        "general",
+        "escalation-general",
+      )
+      expect(initial.error).toBeUndefined()
+
+      await call(
+        "task_scope",
+        { workflowId, stepId: "worker", write: ["src/frontend/**"] },
+        "general",
+        "escalation-general",
+      )
+      const grant = await call(
+        "dispatch_grant",
+        { workflowId, stepId: "worker" },
+        "general",
+        "escalation-general",
+      )
+      await call(
+        "attach",
+        { grantId: grant.grantId, workflowId, stepId: "worker" },
+        "worker",
+        "escalation-worker",
+      )
+      const completed = await call(
+        "complete",
+        { workflowId, stepId: "worker", summary: "Found shared auth boundary across callers." },
+        "worker",
+        "escalation-worker",
+      )
+      expect(completed.error).toBeUndefined()
+
+      const escalated = await call(
+        "route",
+        {
+          humanFacing: false,
+          behavioral: false,
+          structural: true,
+          externalUnknown: false,
+          diagnostic: false,
+          productOutcome: true,
+          implementationRequested: true,
+          executionDepth: "change",
+        },
+        "general",
+        "escalation-general",
+      )
+      expect(escalated.error).toBeUndefined()
+      expect(escalated.path.map((step: { step: string }) => step.step)).toEqual([
+        "architect",
+        "review-architecture",
+        "worker",
+        "review-implementation",
+        "knowledge-sync",
+      ])
+
+      const status = await call(
+        "status",
+        { workflowId, detail: true },
+        "general",
+        "escalation-general",
+      )
+      expect(status.workflow.steps.find((step: any) => step.id === "worker").status).toBe("pending")
+      expect(status.workflow.steps.find((step: any) => step.id === "architect").status).toBe("pending")
+    } finally {
+      restore()
+    }
+  })
+
+  test("objective route rejects productOutcome=false instead of silently degrading", async () => {
+    const { call, restore } = await harness()
+    try {
+      const started = await call(
+        "start",
+        { anchor: "docs/anchors/test/anchor.md" },
+        "general",
+        "invalid-objective-session",
+      )
+      expect(started.error).toBeUndefined()
+
+      const routed = await call(
+        "route",
+        {
+          humanFacing: false,
+          behavioral: false,
+          structural: false,
+          externalUnknown: false,
+          diagnostic: false,
+          productOutcome: false,
+          implementationRequested: true,
+          executionDepth: "objective",
+        },
+        "general",
+        "invalid-objective-session",
+      )
+      expect(routed.error).toContain("Objective execution depth requires productOutcome=true")
     } finally {
       restore()
     }
