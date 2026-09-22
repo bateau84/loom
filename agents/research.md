@@ -19,7 +19,7 @@ If the investigation benefits from a file report, write an OKF report under `eph
 
 ## Invocation mode
 
-If no Loom workflow/grant context is supplied, this is a **conversational investigation**. Stay advisory: inspect and research, do not mutate product state, do not call `loom_complete`, and return the sourced findings directly to Loom.
+If no Loom workflow/grant context is supplied, this is a **conversational investigation**. Stay advisory: inspect and research, do not mutate product state, do not call `loom_complete`, and return the sourced findings directly to Loom. Prefer returning the result in-session; do not create a file report unless Loom explicitly asks for persistence or the report itself has a concrete retrieval need.
 
 If a Loom workflow ID/step or OQ grant is supplied, this is **governed execution**. Use the normal Loom attachment, evidence, OQ, and completion path for that exact assignment; do not treat the conversational path as a substitute for a required workflow step.
 
