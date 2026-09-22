@@ -16,8 +16,8 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_IMAGES = {
-    "opencode": "ghcr.io/bateau84/opencode-eval-runner@sha256:886d9a00d519312e03efb55dd76afb89060faadde8ee045e98d13327c8e35bc8",
-    "github-copilot-cli": "ghcr.io/bateau84/opencode-eval-runner@sha256:df9a5c98485ae919597a902d90770d30c9be648787b54435146c7976653bf300",
+    "opencode": "ghcr.io/bateau84/opencode-eval-runner@sha256:6a0e00024f409a4ea01b5fa8dcaf586e78006f918d2de515f04f070072c1a063",
+    "github-copilot-cli": "ghcr.io/bateau84/opencode-eval-runner@sha256:588038d95a79a809af4e9862fcce037859fe89b019e6b23f1b5322955893db69",
 }
 PROVIDER_ENVS = ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "OPENROUTER_API_KEY")
 COPILOT_ENVS = ("COPILOT_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN")
