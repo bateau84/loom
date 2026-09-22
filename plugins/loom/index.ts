@@ -1309,7 +1309,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           }
 
           const rawEffects = input as Effects
-          let resolvedDepth
+          let resolvedDepth: ReturnType<typeof resolveExecutionDepth>
           try {
             resolvedDepth = resolveExecutionDepth(rawEffects)
           } catch (error) {
