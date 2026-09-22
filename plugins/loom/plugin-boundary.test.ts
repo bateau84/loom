@@ -156,6 +156,45 @@ describe("Loom registered plugin boundary", () => {
     }
   })
 
+  test("restricts conversational Research and Diagnostic to safe inspection shell", async () => {
+    const { evaluatePermission, restore } = await harness()
+    try {
+      for (const agent of ["research", "diagnostic"]) {
+        const safe = await evaluatePermission({
+          agent,
+          action: "shell",
+          resources: ["rg retry src"],
+          sessionID: `${agent}-conversation`,
+          effect: "allow",
+        })
+        expect(safe.effect).toBe("allow")
+        expect(safe.message).toBeUndefined()
+
+        const mutation = await evaluatePermission({
+          agent,
+          action: "shell",
+          resources: ["rm -rf src"],
+          sessionID: `${agent}-conversation`,
+          effect: "allow",
+        })
+        expect(mutation.effect).toBe("deny")
+        expect(mutation.message).toContain("non-mutating inspection and verification")
+
+        const edit = await evaluatePermission({
+          agent,
+          action: "edit",
+          resources: ["src/app.ts"],
+          sessionID: `${agent}-conversation`,
+          effect: "allow",
+        })
+        expect(edit.effect).toBe("deny")
+        expect(edit.message).toContain("cannot edit product files")
+      }
+    } finally {
+      restore()
+    }
+  })
+
   test("does not let conversational Research or Diagnostic bypass an active workflow grant", async () => {
     const { call, evaluatePermission, restore } = await harness()
     try {
