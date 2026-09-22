@@ -55,7 +55,7 @@ Used without implying execution:
 - Research for factual/deep-dive work;
 - Diagnostic for bounded fresh-context causal investigation.
 
-These are read-only/advisory unless the user has separately crossed an execution boundary.
+These are advisory and non-product-mutating before durable execution starts. Once a workflow exists, any Research/Diagnostic work required by that workflow remains governed by its normal routing, grant, budget, evidence, and completion boundaries; conversation is not a bypass.
 
 ## Execution capabilities
 
@@ -99,7 +99,8 @@ This is primarily a product-interface and routing-policy migration, not a destru
 
 - Keep the OpenCode runtime identifier `general` during this change so existing sessions/configuration do not require an identifier migration.
 - Demote `brainstorm` from primary to subagent while preserving the file/capability, making rollback straightforward if evidence shows the unified primary agent performs worse.
-- Conversational Research/Diagnostic dispatch remains read-only and does not create workflow authority. Once durable execution state exists, the normal grant/budget path remains authoritative.
+- Conversational Research/Diagnostic dispatch remains advisory/non-product-mutating and does not create workflow authority. Once durable execution state exists, the normal grant/budget path remains authoritative.
+- A pre-execution "build/fix/apply this" commitment may accept only product meaning already established in the conversation. Anchor synthesis is a capture step, not a new semantic authority; newly discovered user-owned meaning reopens only that narrow branch.
 - Existing Anchors, requirements, architecture, workflow state, and specialist artifacts remain valid; this decision changes how Loom reaches and coordinates them, not their historical meaning.
 
 Rollback is therefore mostly prompt/routing/configuration reversal. A future host-visible rename from `general` to `loom` is intentionally excluded because it would have separate session/configuration migration consequences.
