@@ -191,7 +191,7 @@
       "trap": "The report contains useful durable knowledge, which can tempt the agent to promote the whole failed gate report and thereby confuse usefulness with durable report value or authority.",
       "expectations": [
         "Keeps the raw failed Critic report ephemeral because the report itself has no stated lasting audit, historical, or compliance value.",
-        "Routes the durable architectural constraint to the Architect-owned architecture documentation rather than using the raw report as substitute authority.",
+        "States that the durable architectural constraint should be routed to the Architect-owned architecture documentation rather than using the raw report as substitute authority.",
         "States that promotion or durable placement would not upgrade the report's semantic authority."
       ],
       "must_not": [
