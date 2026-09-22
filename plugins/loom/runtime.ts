@@ -1126,6 +1126,52 @@ async function upgradeLateLegacyImport(
   return applied
 }
 
+function createScopedProjectUpgradeStorage(scoped: RawStorage, projectId: string): RawStorage {
+  const requireLocal = (key: string) => {
+    if (
+      key.startsWith(PROJECT_PREFIX) ||
+      GLOBAL_PREFIXES.some((prefix) => key.startsWith(prefix))
+    ) {
+      throw new Error(
+        `Project runtime upgrade for ${projectId} may not escape its project namespace: ${key}`,
+      )
+    }
+    return key
+  }
+  const storage: RawStorage = {
+    get(key) {
+      return scoped.get(requireLocal(key))
+    },
+    set(key, value) {
+      return scoped.set(requireLocal(key), value)
+    },
+    scan(input) {
+      return scoped.scan({ ...input, prefix: requireLocal(input.prefix) })
+    },
+  }
+  if (scoped.transaction) storage.transaction = (fn) => scoped.transaction!(fn)
+  return storage
+}
+
+async function upgradeLegacySessionImport(
+  scoped: RawStorage,
+  runtime: LoomRuntimeIdentity,
+  targetVersion: number,
+  steps: RuntimeUpgradeStep[],
+) {
+  if (targetVersion <= RUNTIME_BASELINE_VERSION) return [] as string[]
+
+  const applied: string[] = []
+  const projectStorage = createScopedProjectUpgradeStorage(scoped, runtime.projectId)
+  for (const step of runtimeUpgradePath(steps, RUNTIME_BASELINE_VERSION, targetVersion)) {
+    if (step.applyProject) {
+      await step.applyProject(projectStorage, runtime.projectId, runtime)
+    }
+    applied.push(step.id)
+  }
+  return applied
+}
+
 export async function importLegacyPluginStorage(
   source: RawStorage,
   target: RawStorage,
@@ -1193,6 +1239,7 @@ export type LegacyMigrationResult = {
   intentId?: string
   migratedKeys: number
   provenance?: LegacyMigrationProvenance
+  appliedUpgradeIds?: string[]
 }
 
 async function copyLegacyKey(
@@ -1285,6 +1332,9 @@ async function recordLegacySessionReconciliation(
     provenance: Extract<LegacyMigrationProvenance, "opencode-session-continuity" | "canonical-workflow">
     workflowId?: string
     intentId?: string
+    sourceRuntimeVersion?: number
+    targetRuntimeVersion?: number
+    appliedUpgradeIds?: string[]
   },
 ) {
   const now = new Date().toISOString()
@@ -1299,6 +1349,15 @@ async function recordLegacySessionReconciliation(
       ...(input.workflowId ? { workflowId: input.workflowId } : {}),
       ...(input.intentId ? { intentId: input.intentId } : {}),
       provenance: input.provenance,
+      ...(input.sourceRuntimeVersion !== undefined
+        ? { sourceRuntimeVersion: input.sourceRuntimeVersion }
+        : {}),
+      ...(input.targetRuntimeVersion !== undefined
+        ? { targetRuntimeVersion: input.targetRuntimeVersion }
+        : {}),
+      ...(input.appliedUpgradeIds?.length
+        ? { appliedUpgradeIds: input.appliedUpgradeIds }
+        : {}),
       reconciledAt: now,
     },
   )
@@ -1324,6 +1383,10 @@ export async function migrateLegacySessionState(
     currentProjectId: string
     resumeProof?: LegacySessionResumeProof
   },
+  options: {
+    targetVersion?: number
+    steps?: RuntimeUpgradeStep[]
+  } = {},
 ): Promise<LegacyMigrationResult> {
   const sessionKey = `session/${input.sessionId}`
   const sessionIntentKey = `session-intent/${input.sessionId}`
@@ -1352,6 +1415,30 @@ export async function migrateLegacySessionState(
       "OpenCode session project does not match the current plugin location; legacy ownership is ambiguous."
     await recordMigrationRefusal(raw, runtime, input.sessionId, reason)
     throw new Error(`Legacy Loom migration refused: ${reason}`)
+  }
+
+  const canonicalWorkflowId =
+    typeof scopedWorkflowId === "string" && scopedWorkflowId.length > 0
+      ? scopedWorkflowId
+      : undefined
+  const canonicalIntentId =
+    typeof scopedIntentId === "string" && scopedIntentId.length > 0
+      ? scopedIntentId
+      : undefined
+
+  // Canonical Loom state outranks compatibility storage after a controlled rebind.
+  // Legacy data may only complete missing pieces when it still names the same
+  // canonical workflow. A stale different workflow/intent is historical only.
+  if (
+    canonicalWorkflowId &&
+    (!hasLegacyWorkflow || legacyWorkflowId !== canonicalWorkflowId)
+  ) {
+    return {
+      status: "already-scoped",
+      workflowId: canonicalWorkflowId,
+      ...(canonicalIntentId ? { intentId: canonicalIntentId } : {}),
+      migratedKeys: 0,
+    }
   }
 
   const [legacyWorkflowForProvenance, canonicalWorkflowForProvenance] = hasLegacyWorkflow
@@ -1399,170 +1486,185 @@ export async function migrateLegacySessionState(
     throw new Error(`Legacy Loom migration refused: ${reason}`)
   }
 
-  let migratedKeys = 0
-  let migratedIntentId = typeof scopedIntentId === "string" ? scopedIntentId : undefined
-
-  if (scopedIntentId === undefined && hasLegacyIntent) {
-    const intent = await raw.get(`intent/${legacyIntentId}`)
-    if (intent !== undefined) {
-      if ((await scoped.get(`intent/${legacyIntentId}`)) === undefined) {
-        await scoped.set(`intent/${legacyIntentId}`, intent)
-        migratedKeys++
-      }
-      await scoped.set(sessionIntentKey, legacyIntentId)
-      migratedKeys++
-      migratedIntentId = legacyIntentId
-    }
-  }
-
-  let migratedWorkflowId = typeof scopedWorkflowId === "string" ? scopedWorkflowId : undefined
-  let objectiveId: string | undefined
-
-  if (scopedWorkflowId === undefined && hasLegacyWorkflow) {
-    const result = await withRuntimeLock(runtime, "workflow", legacyWorkflowId, async () => {
-      const currentScopedSession = await scoped.get(sessionKey)
-      if (typeof currentScopedSession === "string") {
-        return { workflowId: currentScopedSession, copied: 0, objectiveId: undefined as string | undefined }
-      }
-
-      const currentLegacyWorkflowId = await raw.get(sessionKey)
-      if (currentLegacyWorkflowId !== legacyWorkflowId) {
-        throw new Error("Legacy Loom migration refused: session workflow binding changed during migration.")
-      }
-
-      const legacyWorkflow = await raw.get(`workflow/${legacyWorkflowId}`)
-      if (!legacyWorkflow || typeof legacyWorkflow !== "object") {
-        throw new Error("Legacy Loom migration refused: bound workflow record is missing.")
-      }
-
-      const legacyProjectId = (legacyWorkflow as any).projectId
-      if (legacyProjectId !== undefined && legacyProjectId !== runtime.projectId) {
-        const reason = "legacy workflow explicitly belongs to another project epoch."
-        await recordMigrationRefusal(raw, runtime, input.sessionId, reason)
-        throw new Error(`Legacy Loom migration refused: ${reason}`)
-      }
-
-      let copied = 0
-      let workflow = await scoped.get(`workflow/${legacyWorkflowId}`)
-      if (workflow === undefined) {
-        const legacyRevision = (legacyWorkflow as any).revision
-        workflow = {
-          ...(legacyWorkflow as Record<string, unknown>),
-          projectId: runtime.projectId,
-          revision:
-            Number.isSafeInteger(legacyRevision) && legacyRevision >= 0
-              ? legacyRevision
-              : 0,
+  return storageTransaction(scoped, async () => {
+    let migratedKeys = 0
+    let migratedIntentId = typeof scopedIntentId === "string" ? scopedIntentId : undefined
+    
+    if (scopedIntentId === undefined && hasLegacyIntent) {
+      const intent = await raw.get(`intent/${legacyIntentId}`)
+      if (intent !== undefined) {
+        if ((await scoped.get(`intent/${legacyIntentId}`)) === undefined) {
+          await scoped.set(`intent/${legacyIntentId}`, intent)
+          migratedKeys++
         }
-        await scoped.set(`workflow/${legacyWorkflowId}`, workflow)
+        await scoped.set(sessionIntentKey, legacyIntentId)
+        migratedKeys++
+        migratedIntentId = legacyIntentId
+      }
+    }
+    
+    let migratedWorkflowId = typeof scopedWorkflowId === "string" ? scopedWorkflowId : undefined
+    let objectiveId: string | undefined
+    
+    if (scopedWorkflowId === undefined && hasLegacyWorkflow) {
+      const result = await withRuntimeLock(runtime, "workflow", legacyWorkflowId, async () => {
+        const currentScopedSession = await scoped.get(sessionKey)
+        if (typeof currentScopedSession === "string") {
+          return { workflowId: currentScopedSession, copied: 0, objectiveId: undefined as string | undefined }
+        }
+    
+        const currentLegacyWorkflowId = await raw.get(sessionKey)
+        if (currentLegacyWorkflowId !== legacyWorkflowId) {
+          throw new Error("Legacy Loom migration refused: session workflow binding changed during migration.")
+        }
+    
+        const legacyWorkflow = await raw.get(`workflow/${legacyWorkflowId}`)
+        if (!legacyWorkflow || typeof legacyWorkflow !== "object") {
+          throw new Error("Legacy Loom migration refused: bound workflow record is missing.")
+        }
+    
+        const legacyProjectId = (legacyWorkflow as any).projectId
+        if (legacyProjectId !== undefined && legacyProjectId !== runtime.projectId) {
+          const reason = "legacy workflow explicitly belongs to another project epoch."
+          await recordMigrationRefusal(raw, runtime, input.sessionId, reason)
+          throw new Error(`Legacy Loom migration refused: ${reason}`)
+        }
+    
+        let copied = 0
+        let workflow = await scoped.get(`workflow/${legacyWorkflowId}`)
+        if (workflow === undefined) {
+          const legacyRevision = (legacyWorkflow as any).revision
+          workflow = {
+            ...(legacyWorkflow as Record<string, unknown>),
+            projectId: runtime.projectId,
+            revision:
+              Number.isSafeInteger(legacyRevision) && legacyRevision >= 0
+                ? legacyRevision
+                : 0,
+          }
+          await scoped.set(`workflow/${legacyWorkflowId}`, workflow)
+          copied++
+        }
+    
+        await scoped.set(sessionKey, legacyWorkflowId)
         copied++
-      }
-
-      await scoped.set(sessionKey, legacyWorkflowId)
-      copied++
-
-      for (const key of [
-        `budget/${legacyWorkflowId}`,
-        `limits/${legacyWorkflowId}`,
-        `acceptance/${legacyWorkflowId}`,
-        `knowledge/${legacyWorkflowId}`,
-        `oq-index/${legacyWorkflowId}`,
-        `session-step/${input.sessionId}`,
-      ]) {
-        const result = await copyLegacyKey(raw, scoped, key)
-        if (result.copied) copied++
-      }
-
-      const questionEntries = await copyLegacyPrefix(raw, scoped, `oq/${legacyWorkflowId}/`)
-      const scopeEntries = await copyLegacyPrefix(raw, scoped, `scope/${legacyWorkflowId}/`)
-      const stepEvidenceEntries = await copyLegacyPrefix(
-        raw,
-        scoped,
-        `evidence-step/${legacyWorkflowId}/`,
-      )
-      const sessionEvidenceEntries = await copyLegacyPrefix(
-        raw,
-        scoped,
-        `evidence-session/${input.sessionId}/`,
-      )
-      const claimEntries = await copyLegacyPrefix(
-        raw,
-        scoped,
-        `evidence-claim/${legacyWorkflowId}/`,
-      )
-
-      copied += [...questionEntries, ...scopeEntries, ...stepEvidenceEntries, ...sessionEvidenceEntries, ...claimEntries]
-        .filter((entry) => entry.copied).length
-
-      const evidenceIds = new Set<string>()
-      for (const entry of [...stepEvidenceEntries, ...sessionEvidenceEntries]) {
-        if (typeof entry.value === "string") evidenceIds.add(entry.value)
-      }
-      for (const evidenceId of evidenceIds) {
-        const evidence = await copyLegacyKey(raw, scoped, `evidence/${evidenceId}`)
-        if (evidence.copied) copied++
-      }
-
-      for (const entry of claimEntries) {
-        const claimId =
-          entry.value && typeof entry.value === "object"
-            ? (entry.value as any).id
+    
+        for (const key of [
+          `budget/${legacyWorkflowId}`,
+          `limits/${legacyWorkflowId}`,
+          `acceptance/${legacyWorkflowId}`,
+          `knowledge/${legacyWorkflowId}`,
+          `oq-index/${legacyWorkflowId}`,
+          `session-step/${input.sessionId}`,
+        ]) {
+          const result = await copyLegacyKey(raw, scoped, key)
+          if (result.copied) copied++
+        }
+    
+        const questionEntries = await copyLegacyPrefix(raw, scoped, `oq/${legacyWorkflowId}/`)
+        const scopeEntries = await copyLegacyPrefix(raw, scoped, `scope/${legacyWorkflowId}/`)
+        const stepEvidenceEntries = await copyLegacyPrefix(
+          raw,
+          scoped,
+          `evidence-step/${legacyWorkflowId}/`,
+        )
+        const sessionEvidenceEntries = await copyLegacyPrefix(
+          raw,
+          scoped,
+          `evidence-session/${input.sessionId}/`,
+        )
+        const claimEntries = await copyLegacyPrefix(
+          raw,
+          scoped,
+          `evidence-claim/${legacyWorkflowId}/`,
+        )
+    
+        copied += [...questionEntries, ...scopeEntries, ...stepEvidenceEntries, ...sessionEvidenceEntries, ...claimEntries]
+          .filter((entry) => entry.copied).length
+    
+        const evidenceIds = new Set<string>()
+        for (const entry of [...stepEvidenceEntries, ...sessionEvidenceEntries]) {
+          if (typeof entry.value === "string") evidenceIds.add(entry.value)
+        }
+        for (const evidenceId of evidenceIds) {
+          const evidence = await copyLegacyKey(raw, scoped, `evidence/${evidenceId}`)
+          if (evidence.copied) copied++
+        }
+    
+        for (const entry of claimEntries) {
+          const claimId =
+            entry.value && typeof entry.value === "object"
+              ? (entry.value as any).id
+              : undefined
+          if (typeof claimId !== "string") continue
+          const claimIndex = await copyLegacyKey(raw, scoped, `evidence-claim-id/${claimId}`)
+          if (claimIndex.copied) copied++
+        }
+    
+        const workId =
+          workflow && typeof workflow === "object"
+            ? (workflow as any).work?.objectiveId
             : undefined
-        if (typeof claimId !== "string") continue
-        const claimIndex = await copyLegacyKey(raw, scoped, `evidence-claim-id/${claimId}`)
-        if (claimIndex.copied) copied++
-      }
-
-      const workId =
-        workflow && typeof workflow === "object"
-          ? (workflow as any).work?.objectiveId
+    
+        return {
+          workflowId: legacyWorkflowId,
+          copied,
+          objectiveId: typeof workId === "string" ? workId : undefined,
+        }
+      })
+    
+      migratedWorkflowId = result.workflowId
+      migratedKeys += result.copied
+      objectiveId = result.objectiveId
+    }
+    
+    if (!objectiveId && migratedWorkflowId) {
+      const scopedWorkflow = await scoped.get(`workflow/${migratedWorkflowId}`)
+      const resumedWorkId =
+        scopedWorkflow && typeof scopedWorkflow === "object"
+          ? (scopedWorkflow as any).work?.objectiveId
           : undefined
-
-      return {
-        workflowId: legacyWorkflowId,
-        copied,
-        objectiveId: typeof workId === "string" ? workId : undefined,
-      }
-    })
-
-    migratedWorkflowId = result.workflowId
-    migratedKeys += result.copied
-    objectiveId = result.objectiveId
-  }
-
-  if (!objectiveId && migratedWorkflowId) {
-    const scopedWorkflow = await scoped.get(`workflow/${migratedWorkflowId}`)
-    const resumedWorkId =
-      scopedWorkflow && typeof scopedWorkflow === "object"
-        ? (scopedWorkflow as any).work?.objectiveId
-        : undefined
-    if (typeof resumedWorkId === "string") objectiveId = resumedWorkId
-  }
-
-  if (objectiveId) {
-    await withRuntimeLock(runtime, "work", objectiveId, async () => {
-      const work = await copyLegacyKey(raw, scoped, `work/${encodeURIComponent(objectiveId)}`)
-      if (work.copied) migratedKeys++
-    })
-  }
-
-  if (provenance === "opencode-session-continuity" || provenance === "canonical-workflow") {
-    await recordLegacySessionReconciliation(raw, scoped, runtime, {
-      sessionId: input.sessionId,
-      sessionProjectId: input.sessionProjectId,
-      provenance,
+      if (typeof resumedWorkId === "string") objectiveId = resumedWorkId
+    }
+    
+    if (objectiveId) {
+      await withRuntimeLock(runtime, "work", objectiveId, async () => {
+        const work = await copyLegacyKey(raw, scoped, `work/${encodeURIComponent(objectiveId)}`)
+        if (work.copied) migratedKeys++
+      })
+    }
+    
+    const targetVersion = options.targetVersion ?? RUNTIME_STATE_VERSION
+    let appliedUpgradeIds: string[] = []
+    if (migratedKeys > 0 && targetVersion > RUNTIME_BASELINE_VERSION) {
+      const schema = await assertRuntimeStateVersion(scoped, targetVersion)
+      appliedUpgradeIds = await upgradeLegacySessionImport(
+        scoped,
+        runtime,
+        schema.currentVersion,
+        options.steps ?? RUNTIME_UPGRADE_STEPS,
+      )
+    }
+    
+    if (provenance === "opencode-session-continuity" || provenance === "canonical-workflow") {
+      await recordLegacySessionReconciliation(raw, scoped, runtime, {
+        sessionId: input.sessionId,
+        sessionProjectId: input.sessionProjectId,
+        provenance,
+        ...(migratedWorkflowId ? { workflowId: migratedWorkflowId } : {}),
+        ...(migratedIntentId ? { intentId: migratedIntentId } : {}),
+      })
+    }
+    
+    return {
+      status: migratedKeys > 0 ? "migrated" : "already-scoped",
       ...(migratedWorkflowId ? { workflowId: migratedWorkflowId } : {}),
       ...(migratedIntentId ? { intentId: migratedIntentId } : {}),
-    })
-  }
-
-  return {
-    status: migratedKeys > 0 ? "migrated" : "already-scoped",
-    ...(migratedWorkflowId ? { workflowId: migratedWorkflowId } : {}),
-    ...(migratedIntentId ? { intentId: migratedIntentId } : {}),
-    migratedKeys,
-    provenance,
-  }
+      migratedKeys,
+      provenance,
+      ...(appliedUpgradeIds.length ? { appliedUpgradeIds } : {}),
+    }
+  })
 }
 
 
