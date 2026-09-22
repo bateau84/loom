@@ -280,9 +280,9 @@
       "prompt": "Set up a tracked investigation of why the frontend request returns 401. Preserve the root-cause evidence and have the findings independently verified, but do not fix anything.",
       "trap": "Treat an explicitly tracked/governed read-only investigation as casual conversation, or route it through mutation/product ceremony.",
       "expectations": [
-        "Starts a bounded request workflow without creating a new Anchor.",
-        "Routes it at Task depth with diagnosis enabled and implementation disabled.",
-        "After Diagnostic returns, continues the governed workflow through the read-only Reviewer verification gate rather than stopping at findings.",
+        "Starts a bounded request workflow before broad investigation and routes it at Task depth with diagnosis enabled and implementation disabled.",
+        "Dispatches Diagnostic to establish the concrete 401 root cause from the fixture evidence.",
+        "After Diagnostic returns, immediately continues the governed workflow through the read-only Reviewer verification gate rather than stopping at findings.",
         "Preserves the findings through the read-only Reviewer verification path."
       ],
       "must_not": [
@@ -312,7 +312,25 @@
             "equals": "reviewer"
           }
         ]
-      }
+      },
+      "fixture_files": [
+        {
+          "path": "frontend/src/api/client.ts",
+          "content": "export async function loadProfile(token: string) {\n  return fetch(\"http://backend.test/api/profile\", {\n    headers: {\n      \"X-Access-Token\": token,\n    },\n  })\n}\n"
+        },
+        {
+          "path": "backend/src/auth.ts",
+          "content": "export function authenticate(headers: Record<string, string | undefined>) {\n  const auth = headers[\"authorization\"]\n  if (!auth?.startsWith(\"Bearer \")) {\n    return { ok: false as const, status: 401, reason: \"missing bearer token\" }\n  }\n  return { ok: true as const, token: auth.slice(\"Bearer \".length) }\n}\n"
+        },
+        {
+          "path": "backend/src/profile.ts",
+          "content": "import { authenticate } from \"./auth\"\n\nexport function profile(headers: Record<string, string | undefined>) {\n  const result = authenticate(headers)\n  if (!result.ok) return { status: result.status, body: { error: result.reason } }\n  return { status: 200, body: { id: \"user-1\" } }\n}\n"
+        },
+        {
+          "path": "README.md",
+          "content": "# 401 fixture\n\nThe frontend profile request is expected to authenticate to the backend API. Diagnose the current 401 without changing files.\n"
+        }
+      ]
     },
     {
       "id": "PROP-RUNTIME-02",
