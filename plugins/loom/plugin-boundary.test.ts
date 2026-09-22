@@ -1536,6 +1536,23 @@ Verdict: FAIL
       )
       expect(acceptedProof.error).toBeUndefined()
       expect(acceptedProof.proven).toBe(requirementId)
+
+      const completed = await call(
+        "complete",
+        {
+          workflowId,
+          stepId: "diagnostic",
+          summary: "Governed diagnosis complete.",
+        },
+        "diagnostic",
+        diagnosticSession,
+      )
+      expect(completed.error).toBeUndefined()
+      expect(completed.runnable).toContainEqual({ id: "review-task", agent: "reviewer" })
+
+      const afterCompletedStep = await observeShell("post-complete", "git status --short")
+      expect(afterCompletedStep.workflowId).toBeUndefined()
+      expect(afterCompletedStep.stepId).toBeUndefined()
     } finally {
       restore()
     }
