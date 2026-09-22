@@ -48,14 +48,14 @@ Raw reports are committed only when the report itself has lasting documentary, a
 
 Durable raw reports live only under:
 
-`docs/reports/**`
+`docs/reports/<producer>/**`
 
 Agents must not write directly there. General performs explicit promotion through `loom_report_promote`.
 
 Promotion:
 1. accepts one Markdown source under `ephemeral-reports/`;
-2. requires OKF-style report frontmatter;
-3. accepts one destination under `docs/reports/`;
+2. requires OKF-style report frontmatter whose `report <producer>` type matches the source producer namespace when a producer suffix is present;
+3. accepts one destination under the matching `docs/reports/<producer>/` namespace;
 4. copies bytes unchanged;
 5. retains the ephemeral source;
 6. serializes promotion/recovery per destination with Loom's cross-process runtime lock;
