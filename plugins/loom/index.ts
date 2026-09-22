@@ -4383,10 +4383,15 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       const observedStep = observedStepId
         ? observedWorkflow?.steps.find((step) => step.id === observedStepId)
         : undefined
+      const observedStepRunnable =
+        observedWorkflow && observedStepId
+          ? runnable(observedWorkflow).some((step) => step.id === observedStepId)
+          : false
       const governedEvidenceBinding =
         observedWorkflow &&
         observedStepId &&
         observedStep &&
+        observedStepRunnable &&
         (!raw.agent || observedStep.agent === String(raw.agent))
           ? { workflowId: observedWorkflow.id, stepId: observedStepId }
           : {}
