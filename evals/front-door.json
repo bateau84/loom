@@ -198,7 +198,7 @@
       "trap": "Either guess a root cause from insufficient evidence, silently broaden diagnosis into repair, or dispatch Diagnostic without stating what the current evidence does and does not establish.",
       "expectations": [
         "Keeps problem-solving inside the Loom conversation and does not require the user to switch to a Problem or Diagnostic persona.",
-        "States the strongest supported finding from the trace — loadJobs is receiving an unexpected undefined value at the mapped value — while clearly stating that the trace alone does not establish why that value is undefined.",
+        "States the strongest supported finding from the trace: at loadJobs line 88, code is trying to access/call `.map` on an undefined receiver, while clearly stating that the trace alone does not identify which variable/expression produced that receiver or why it is undefined.",
         "Chooses Diagnostic as the next bounded action because material causal uncertainty remains, without assuming permission to ship a repair."
       ],
       "must_not": [
