@@ -277,9 +277,15 @@ def safe_fixture_path(project: Path, value: str) -> Path:
     return target
 
 
-def write_project_config(project: Path, agent: str) -> None:
+def write_project_config(project: Path, agent: str, *, loom_plugin: bool = False) -> None:
+    config: dict[str, Any] = {
+        "$schema": "https://opencode.ai/config.json",
+        "default_agent": agent,
+    }
+    if loom_plugin:
+        config["plugins"] = ["./.opencode/plugins/loom"]
     (project / "opencode.json").write_text(
-        json.dumps({"$schema": "https://opencode.ai/config.json", "default_agent": agent}, indent=2) + "\n",
+        json.dumps(config, indent=2) + "\n",
         encoding="utf-8",
     )
 
@@ -296,6 +302,12 @@ def setup_projects(case: dict[str, Any]) -> tuple[Path, Path, Path]:
     (judge_oc / "agents").mkdir(parents=True)
 
     shutil.copytree(ROOT / "skills", target_oc / "skills", dirs_exist_ok=True)
+    if case["execution"] == "runtime":
+        shutil.copytree(
+            ROOT / "plugins" / "loom",
+            target_oc / "plugins" / "loom",
+            dirs_exist_ok=True,
+        )
 
     if case.get("_skill_owned"):
         target_agent = skill_eval_agent(str(case["skill"]))
@@ -314,7 +326,11 @@ def setup_projects(case: dict[str, Any]) -> tuple[Path, Path, Path]:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(fixture["content"], encoding="utf-8")
 
-    write_project_config(target_project, case["agent"])
+    write_project_config(
+        target_project,
+        case["agent"],
+        loom_plugin=case["execution"] == "runtime",
+    )
     write_project_config(judge_project, "eval-judge")
     return temp, target_project, judge_project
 
