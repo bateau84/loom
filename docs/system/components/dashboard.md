@@ -59,7 +59,7 @@ The UI implements Fleet → Project → Workflow → Session context, expandable
 
 Workflow routes are stable deep links of the form `/#/project/<projectId>/workflow/<workflowId>`. Loom's sidebar RPC derives that URL from the same runtime project/workflow identity and the active shared dashboard endpoint lease, so interactive status reachability does not depend on a model copying tool output into its reply.
 
-Because projection publication is asynchronous, a deep link whose project/workflow is not yet present is held in a waiting state instead of being immediately rewritten. The dashboard redirects only after the requested identity remains absent across multiple successful complete projections; bounded/truncated workflow projections do not prove absence.
+Because projection publication is asynchronous, a deep link whose project/workflow is not currently present is held in a waiting state instead of being rewritten. Re-reading the same projection is not evidence that authoritative state disappeared, and bounded/truncated workflow projections do not prove absence. The deep link remains intact until the user explicitly follows the Fleet/Project fallback navigation or the requested state appears.
 
 ## Source
 
