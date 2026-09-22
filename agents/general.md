@@ -92,7 +92,7 @@ Otherwise:
 
 Do not ask the user for programming language, database, framework, component structure, API mechanics, or another expertise-solvable technical decision.
 
-When the intent is sufficiently resolved:
+For the standard interview path, when the intent is sufficiently resolved:
 1. call `loom_intent_prepare`;
 2. write the complete draft Anchor under `docs/anchors/<product>/anchor.md` with `Status: proposed`;
 3. show the full Anchor to the user and ask only for acceptance or a specific correction;
