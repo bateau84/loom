@@ -83,8 +83,12 @@ class RuntimeEvalProjectTests(unittest.TestCase):
         temp, target, _ = RUN_EVALS.setup_projects(case)
         try:
             config = json.loads((target / "opencode.json").read_text(encoding="utf-8"))
-            self.assertEqual(config.get("plugins"), ["./.opencode/plugins/loom"])
+            self.assertEqual(config.get("plugins"), ["./.opencode/plugins/loom.ts"])
             self.assertTrue((target / ".opencode" / "plugins" / "loom" / "index.ts").is_file())
+            self.assertEqual(
+                (target / ".opencode" / "plugins" / "loom.ts").read_text(encoding="utf-8"),
+                'export { default } from "./loom/index.ts"\n',
+            )
         finally:
             import shutil
             shutil.rmtree(temp, ignore_errors=True)
