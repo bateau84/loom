@@ -127,10 +127,7 @@ button:focus-visible, select:focus-visible, input:focus-visible, a:focus-visible
     agent: "",
     lastKeys: new Set(),
     hierarchyOpen: new Map(),
-    projectionGeneration: 0,
-    missingRoute: null,
   };
-  const MISSING_ROUTE_GRACE_REFRESHES = 2;
   const main = document.getElementById("main");
   const crumbs = document.getElementById("breadcrumbs");
   const live = document.getElementById("live");
@@ -351,35 +348,23 @@ button:focus-visible, select:focus-visible, input:focus-visible, a:focus-visible
     }
   }
 
-  function routeKey(r) {
-    if (r.kind === "fleet") return "fleet";
-    return [r.kind, r.projectId || "", r.workflowId || "", r.instanceId || ""].join(":");
-  }
-
-  function missingRouteAge(r) {
-    const key = routeKey(r);
-    if (!state.missingRoute || state.missingRoute.key !== key) {
-      state.missingRoute = { key, firstGeneration: state.projectionGeneration };
-    }
-    return state.projectionGeneration - state.missingRoute.firstGeneration;
-  }
-
-  function clearMissingRoute() {
-    state.missingRoute = null;
-  }
-
   function renderProjectionWait(r, detail) {
     crumbs.innerHTML =
       '<a href="#/">Fleet</a>' +
       (r.projectId ? ' / <span>' + esc(r.projectId) + '</span>' : '') +
       (r.workflowId ? ' / <span>' + esc(r.workflowId) + '</span>' : '');
+    const fallbackHref = r.workflowId && r.projectId
+      ? '#/project/' + enc(r.projectId)
+      : '#/';
+    const fallbackLabel = r.workflowId ? 'Return to Project' : 'Return to Fleet';
     main.innerHTML =
       '<section class="panel empty">' +
         '<strong>Waiting for Loom projection…</strong>' +
         '<div>' + esc(detail) + '</div>' +
-        '<div class="meta">The requested dashboard URL is preserved while the read-only projection catches up.</div>' +
+        '<div class="meta">The requested dashboard URL is preserved. The dashboard does not treat repeated reads of the same projection as proof that the target disappeared.</div>' +
+        '<div><a href="' + esc(fallbackHref) + '">' + fallbackLabel + '</a></div>' +
       '</section>';
-    live.textContent = "Waiting for the requested Loom state to appear in the dashboard projection.";
+    live.textContent = "The requested Loom state is not currently projected; the deep link remains unchanged.";
   }
 
   function render() {
@@ -389,42 +374,24 @@ button:focus-visible, select:focus-visible, input:focus-visible, a:focus-visible
     const project = r.projectId ? projectById(r.projectId) : undefined;
     const workflow = project && r.workflowId ? workflowById(project, r.workflowId) : undefined;
     if (r.kind === "fleet") {
-      clearMissingRoute();
       renderFleet();
     } else if (!project) {
-      const age = missingRouteAge(r);
-      if (age < MISSING_ROUTE_GRACE_REFRESHES) {
-        renderProjectionWait(r, "The requested project is not present in the latest projection yet.");
-      } else {
-        state.missingRoute = null;
-        live.textContent = "The selected project remained absent across multiple successful projections. Returned to Fleet.";
-        location.hash = "#/";
-        renderFleet();
-      }
+      renderProjectionWait(
+        r,
+        "The requested project is not currently present in the read-only projection. It may still be propagating, stale, or no longer projected.",
+      );
     } else if (r.kind === "project") {
-      clearMissingRoute();
       renderProject(project);
     } else if (!workflow) {
-      const age = missingRouteAge(r);
-      const truncated = project.projectionWindow?.workflowsTruncated === true;
-      if (truncated || age < MISSING_ROUTE_GRACE_REFRESHES) {
-        renderProjectionWait(
-          r,
-          truncated
-            ? "The requested workflow is outside the current bounded projection window; waiting without discarding the deep link."
-            : "The requested workflow is not present in the latest projection yet.",
-        );
-      } else {
-        state.missingRoute = null;
-        live.textContent = "The selected workflow remained absent across multiple complete projections. Returned to Project.";
-        location.hash = "#/project/" + enc(project.projectId);
-        renderProject(project);
-      }
+      renderProjectionWait(
+        r,
+        project.projectionWindow?.workflowsTruncated === true
+          ? "The requested workflow is outside the current bounded projection window. Its deep link is retained because absence is not proven."
+          : "The requested workflow is not currently present in the read-only projection. It may still be propagating or may no longer be projected.",
+      );
     } else if (r.kind === "workflow") {
-      clearMissingRoute();
       renderWorkflow(project, workflow);
     } else {
-      clearMissingRoute();
       renderSession(project, workflow, r.instanceId);
     }
 
@@ -447,7 +414,6 @@ button:focus-visible, select:focus-visible, input:focus-visible, a:focus-visible
       const response = await fetch("/api/fleet", { cache: "no-store" });
       if (!response.ok) throw new Error("fleet request failed");
       state.fleet = await response.json();
-      state.projectionGeneration += 1;
       projectionStatus.hidden = true;
       projectionStatus.textContent = "";
       render();
