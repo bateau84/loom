@@ -185,8 +185,7 @@
       ],
       "must_not": [
         "Must not require the user to invoke Research explicitly.",
-        "Must not start product implementation, an Anchor interview, or a durable execution workflow.",
-        "Must not make actual synthesis of the Research result a requirement of this routing-only case; that behavior is covered by CONVERSATION-02-SYNTH."
+        "Must not start product implementation, an Anchor interview, or a durable execution workflow."
       ]
     },
     {
@@ -201,12 +200,13 @@
       "trap": "Either turn the mocked advisory research into implementation authority, merely repeat that Research happened without answering the user, or dump the fixture mechanically without synthesizing the decision.",
       "expectations": [
         "Synthesizes a few strong storage alternatives and their meaningful trade-offs from the Research brief in a useful user-facing answer.",
-        "Preserves source attribution/references for load-bearing external claims and distinguishes repository facts from uncertainty.",
+        "Carries forward explicit source references from the Research brief for load-bearing external claims, including at least two concrete source URLs, while distinguishing repository facts from uncertainty.",
         "Keeps the result advisory and explicitly avoids treating the Research recommendation as permission to change the product."
       ],
       "must_not": [
         "Must not start implementation or claim that Research created product authority.",
-        "Must not ask the user to invoke Research or repeat the mock brief verbatim without integration."
+        "Must not ask the user to invoke Research or repeat the mock brief verbatim without integration.",
+        "Must not replace concrete Research references with vague attribution such as only saying 'Research says' or 'Research conclusion'."
       ]
     },
     {
