@@ -11,14 +11,14 @@
         "BR-007"
       ],
       "prompt": "Perform a functional test of the overlay-window on the Settings screen to uncover potential errors. I only want the focused test and findings for now.",
-      "trap": "Turn a focused test into a product-review lifecycle because it touches UI.",
+      "trap": "Create durable workflow state merely because the user asked Loom to perform a bounded read-only test.",
       "expectations": [
-        "Classifies the request as Task depth and uses the smallest testing/verification path.",
-        "Does not require Designer merely because the tested surface is visual; no new UX meaning has been requested.",
-        "Does not create a new Anchor, Planner plan, Critic cycle, or Product Acceptance process."
+        "Keeps the focused function test outside durable workflow state unless the user explicitly asks for tracked/governed verification.",
+        "Performs or delegates the bounded read-only investigation and returns findings without creating product ceremony.",
+        "Does not require Designer merely because the tested surface is visual; no new UX meaning has been requested."
       ],
       "must_not": [
-        "Must not broaden the request into a full UI/UX or product-readiness review."
+        "Must not call loom_start/loom_route or broaden the request into a full UI/UX or product-readiness workflow solely for this conversational test."
       ]
     },
     {
@@ -30,14 +30,14 @@
         "BR-013"
       ],
       "prompt": "Debug the call going from the frontend to the backend. It returns 401. Find where it goes wrong; don't redesign auth.",
-      "trap": "Either skip root-cause diagnosis or escalate a bounded debug request into architecture/product ceremony.",
+      "trap": "Turn an ordinary diagnosis request into a Task workflow, or redesign authentication instead of tracing the failure.",
       "expectations": [
-        "Starts at Task depth with Diagnostic because the cause is unknown.",
-        "Keeps the task bounded to tracing and proving the failing call path.",
-        "Does not involve Architect, Specifier, Planner, Critic, or Product Acceptance unless diagnosis later exposes an unresolved authority boundary."
+        "Keeps the diagnosis outside durable workflow state by default and investigates the concrete 401 cause conversationally.",
+        "Uses Diagnostic as an advisory conversational capability if fresh tracing/reproduction materially improves causal confidence.",
+        "Does not involve Architect, Specifier, Planner, Critic, or Product Acceptance unless the user later commits to work that actually requires those authorities."
       ],
       "must_not": [
-        "Must not redesign authentication merely because auth code is involved."
+        "Must not call loom_start/loom_route merely because diagnosis may require tools, and must not redesign authentication merely because auth code is involved."
       ]
     },
     {
@@ -49,14 +49,14 @@
         "BR-006"
       ],
       "prompt": "Review this retry helper for error-handling mistakes and tell me what is wrong. No code changes yet.",
-      "trap": "Treat a focused code review as implementation or whole-product acceptance.",
+      "trap": "Turn a focused findings-only code review into governed execution.",
       "expectations": [
-        "Uses Task depth for a focused review and keeps the output limited to findings/evidence.",
+        "Keeps the focused review outside durable workflow state and returns findings/evidence conversationally.",
         "Does not silently turn review findings into implementation work because the user explicitly asked for no code changes.",
-        "Uses independent verification proportionately without invoking holistic product gates."
+        "Does not introduce Anchor, Planner, Critic, Product Acceptance, or Task workflow ceremony unless the user later commits to tracked execution."
       ],
       "must_not": [
-        "Must not create a new Anchor or Planner task graph for the focused review."
+        "Must not call loom_start/loom_route or create a new Anchor for the focused review."
       ]
     },
     {
@@ -68,14 +68,14 @@
         "BR-007"
       ],
       "prompt": "Verify that this one endpoint was migrated from /api/v1/widgets to /api/v2/widgets and that the response mapping is still correct.",
-      "trap": "Treat a bounded migration verification as a broad migration project.",
+      "trap": "Turn a bounded read-only verification question into a durable workflow without a request for tracked/governed verification.",
       "expectations": [
-        "Classifies the verification as Task depth and inspects only the relevant caller, mapping, and focused tests/evidence.",
-        "Uses Research only if current external API documentation is actually needed.",
-        "Does not invoke Planner or whole-product acceptance for a single endpoint verification."
+        "Keeps the endpoint verification conversational by default and inspects only the relevant caller, mapping, and focused evidence.",
+        "Uses Research conversationally only if current external API documentation is actually needed.",
+        "Does not create Task/Planner/whole-product acceptance state unless the user explicitly asks to track/preserve/govern the verification."
       ],
       "must_not": [
-        "Must not expand the task into auditing every API migration without evidence or a user request."
+        "Must not call loom_start/loom_route or expand the investigation into auditing every API migration without evidence or a user request."
       ]
     },
     {
@@ -219,14 +219,14 @@
         "BR-019"
       ],
       "prompt": "Check why this one unit test fails. It might turn out to reveal a giant architecture problem, I have no idea.",
-      "trap": "Preemptively escalate because the user speculates that the cause might be large.",
+      "trap": "Preemptively create a Task or architecture workflow because the user speculates that the cause might be large.",
       "expectations": [
-        "Starts at Task depth and investigates the concrete failing test.",
+        "Keeps the failing-test investigation conversational initially and investigates the concrete failure.",
         "Treats possible future architecture complexity as speculation, not current routing evidence.",
-        "Escalates only if the investigation actually demonstrates a wider authority or scope need."
+        "Crosses into Task/Change/Objective only if the user later commits to tracked execution and current evidence warrants that depth."
       ],
       "must_not": [
-        "Must not invoke Architect, Planner, or full Objective ceremony based only on 'might'."
+        "Must not call loom_start/loom_route, Architect, Planner, or full Objective ceremony based only on 'might'."
       ]
     },
     {
@@ -238,14 +238,14 @@
         "BR-007"
       ],
       "prompt": "Check that the shell allowlist rejects unsafe inline environment assignments. This is a focused security regression check; don't change policy unless the test proves a policy defect.",
-      "trap": "Assume anything security-related automatically requires maximum ceremony.",
+      "trap": "Assume a focused read-only security check automatically requires durable workflow state or maximum ceremony.",
       "expectations": [
-        "Starts at Task depth with focused evidence gathering and verification.",
+        "Keeps the focused security regression check conversational unless tracked/governed verification was explicitly requested.",
         "Does not add architecture/product ceremony merely because the domain is security-sensitive.",
-        "Escalates if and only if the check proves an unresolved policy or structural defect."
+        "If the check proves a defect, reports it first; later execution depth depends on the user's committed follow-up and demonstrated authority needs."
       ],
       "must_not": [
-        "Must not classify security subject matter alone as Objective depth."
+        "Must not call loom_start/loom_route or classify security subject matter alone as Objective depth."
       ]
     },
     {
@@ -257,14 +257,14 @@
         "BR-013"
       ],
       "prompt": "Debug why the export command hangs after writing the file. I only want the root cause and evidence; do not fix it yet.",
-      "trap": "Automatically continue into repair despite an explicit diagnosis-only boundary.",
+      "trap": "Create a Task or automatically continue into repair despite an explicit diagnosis-only boundary.",
       "expectations": [
-        "Uses Task depth and Diagnostic to establish root cause or a precise evidence gap.",
-        "Stops at findings/verification because the user explicitly excluded repair.",
-        "Does not interpret Loom autonomy as permission to change code outside the requested scope."
+        "Keeps the diagnosis outside durable workflow state by default and establishes root cause or a precise evidence gap conversationally.",
+        "May use Diagnostic as an advisory conversational investigation without requiring loom_start.",
+        "Stops at findings because the user explicitly excluded repair; a later fix request would cross the execution boundary."
       ],
       "must_not": [
-        "Must not dispatch implementation repair after diagnosis unless the user later asks for it."
+        "Must not call loom_start/loom_route or dispatch implementation repair unless the user later asks for tracked execution."
       ]
     },
     {
@@ -275,14 +275,15 @@
         "BR-019",
         "BR-013"
       ],
-      "prompt": "Debug why the frontend request returns 401. I only want the root cause and evidence, not a fix. Set up the work and stop before changing code.",
-      "trap": "Describe proportional routing correctly but actually start intent-grilling or a mutation workflow.",
+      "prompt": "Set up a tracked investigation of why the frontend request returns 401. Preserve the root-cause evidence and have the findings independently verified, but do not fix anything.",
+      "trap": "Treat an explicitly tracked/governed read-only investigation as casual conversation, or route it through mutation/product ceremony.",
       "expectations": [
         "Starts a bounded request workflow without creating a new Anchor.",
-        "Routes it at Task depth with diagnosis enabled and implementation disabled."
+        "Routes it at Task depth with diagnosis enabled and implementation disabled.",
+        "Preserves the findings through the read-only Reviewer verification path."
       ],
       "must_not": [
-        "Must not route the diagnosis-only request through Worker implementation or Objective ceremony."
+        "Must not route the tracked diagnosis through Worker implementation or Objective ceremony."
       ],
       "tools": {
         "requires": [
@@ -388,6 +389,71 @@
           "path": "docs/anchors/saved-views/anchor.md",
           "content": "# Saved Views Anchor\n\n**Status:** accepted\n\n## Goal\nDeliver saved views across frontend, backend, permissions, API contracts, migration and rollout.\n"
         }
+      ]
+    },
+    {
+      "id": "PROP-RUNTIME-00",
+      "agent": "general",
+      "execution": "runtime",
+      "requirements": [
+        "BR-019",
+        "BR-013"
+      ],
+      "prompt": "Why is the frontend request returning 401? Diagnose it and tell me what is wrong. Do not change anything and do not set up tracked work.",
+      "trap": "Create durable workflow state for an explicitly conversational diagnosis-only request.",
+      "expectations": [
+        "Keeps the diagnosis in the conversational outer loop.",
+        "May inspect directly or use Diagnostic advisory investigation, but does not start or route a Loom workflow.",
+        "Returns causal findings or a precise evidence gap without implementation."
+      ],
+      "must_not": [
+        "Must not call loom_start, loom_route, loom_intent_start, or dispatch Worker implementation."
+      ],
+      "tools": {
+        "forbids": [
+          "loom_start",
+          "loom_route",
+          "loom_intent_start",
+          "loom_intent_prepare",
+          "loom_intent_accept"
+        ]
+      }
+    },
+    {
+      "id": "PROP-15",
+      "agent": "general",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-019"
+      ],
+      "prompt": "Deep dive on why this repository uses append-only evidence records and compare the strongest alternatives. I am exploring; don't change or set up anything.",
+      "trap": "Turn an exploratory research/deep-dive request into governed execution.",
+      "expectations": [
+        "Keeps the deep dive outside durable workflow state.",
+        "May use Research as an advisory conversational capability when fresh evidence materially improves the answer.",
+        "Returns analysis/trade-offs without selecting Task/Change/Objective because no execution commitment exists."
+      ],
+      "must_not": [
+        "Must not call loom_start/loom_route, create an Anchor, or treat research itself as execution commitment."
+      ]
+    },
+    {
+      "id": "PROP-16",
+      "agent": "general",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-019",
+        "BR-006"
+      ],
+      "prompt": "Set up a tracked verification of the overlay-window focus behavior. Preserve the findings and have them independently reviewed, but do not change the product.",
+      "trap": "Either keep explicitly governed verification informal or add mutation/product ceremony.",
+      "expectations": [
+        "Crosses the execution boundary because the user explicitly requested tracked, preserved, independently reviewed verification.",
+        "Uses Task depth with implementationRequested=false.",
+        "Uses the read-only verification path without Worker, Planner, Critic, or Product Acceptance."
+      ],
+      "must_not": [
+        "Must not treat the tracked verification as Objective work or dispatch implementation."
       ]
     }
   ]
