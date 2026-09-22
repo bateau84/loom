@@ -280,15 +280,9 @@ def safe_fixture_path(project: Path, value: str) -> Path:
     return target
 
 
-def write_project_config(project: Path, agent: str, *, loom_plugin: bool = False) -> None:
-    config: dict[str, Any] = {
-        "$schema": "https://opencode.ai/config.json",
-        "default_agent": agent,
-    }
-    if loom_plugin:
-        config["plugins"] = ["./.opencode/plugins/loom.ts"]
+def write_project_config(project: Path, agent: str) -> None:
     (project / "opencode.json").write_text(
-        json.dumps(config, indent=2) + "\n",
+        json.dumps({"$schema": "https://opencode.ai/config.json", "default_agent": agent}, indent=2) + "\n",
         encoding="utf-8",
     )
 
@@ -305,17 +299,6 @@ def setup_projects(case: dict[str, Any]) -> tuple[Path, Path, Path]:
     (judge_oc / "agents").mkdir(parents=True)
 
     shutil.copytree(ROOT / "skills", target_oc / "skills", dirs_exist_ok=True)
-    if case["execution"] == "runtime":
-        plugin_root = target_oc / "plugins"
-        shutil.copytree(
-            ROOT / "plugins" / "loom",
-            plugin_root / "loom",
-            dirs_exist_ok=True,
-        )
-        (plugin_root / "loom.ts").write_text(
-            'export { default } from "./loom/index.ts"\n',
-            encoding="utf-8",
-        )
 
     if case.get("_skill_owned"):
         target_agent = skill_eval_agent(str(case["skill"]))
@@ -334,11 +317,7 @@ def setup_projects(case: dict[str, Any]) -> tuple[Path, Path, Path]:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(fixture["content"], encoding="utf-8")
 
-    write_project_config(
-        target_project,
-        case["agent"],
-        loom_plugin=case["execution"] == "runtime",
-    )
+    write_project_config(target_project, case["agent"])
     write_project_config(judge_project, "eval-judge")
     return temp, target_project, judge_project
 
@@ -1653,11 +1632,12 @@ def run_case(
             config=config,
             models_catalog=models_catalog,
             database_seed=database_seed,
-            # Runtime eval projects install Loom locally in .opencode/plugins and
-            # declare it in their project config. Do not also materialize a second
-            # global plugin copy through the runner; OpenCode host integration
-            # already proves the project-local path and duplicate bootstrap is brittle.
-            config_root=None,
+            # Proven OpenCode 2.0.x runtime topology: seed Loom as the global
+            # config root so the runner materializes a flat plugins/loom.ts
+            # entrypoint that re-exports the copied Loom module tree. Do not run
+            # the later tool-registry preflight here; the runtime case's required
+            # loom_* actions are the authoritative registration evidence.
+            config_root=ROOT if case["execution"] == "runtime" and args.target_transport == "opencode" else None,
             expected_plugin=None,
             timeout=args.timeout_seconds,
             container_timeout=args.container_timeout,
