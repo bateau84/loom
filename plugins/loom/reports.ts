@@ -94,6 +94,8 @@ function reportFrontmatter(text: string) {
   ) {
     throw new Error("Ephemeral report OKF tags must be a non-empty string array.")
   }
+
+  return { type }
 }
 
 async function existingDirectory(root: string, relativePath: string, label: string) {
@@ -228,7 +230,26 @@ export async function prepareReportPromotion(
 
   const bytes = await readFile(sourceActual)
   if (bytes.includes(0)) throw new Error("Report must be text Markdown.")
-  reportFrontmatter(bytes.toString("utf8"))
+  const frontmatter = reportFrontmatter(bytes.toString("utf8"))
+
+  const sourceParts = source.split("/")
+  const destinationParts = destination.split("/")
+  const producer = sourceParts[1]
+  if (!producer || producer === "." || producer === "..") {
+    throw new Error("Ephemeral reports must live under ephemeral-reports/<producer>/.")
+  }
+
+  const declaredProducer = frontmatter.type.slice("report".length).trim()
+  if (declaredProducer && declaredProducer !== producer) {
+    throw new Error(
+      `Report type producer '${declaredProducer}' does not match source namespace '${producer}'.`,
+    )
+  }
+  if (destinationParts[2] !== producer) {
+    throw new Error(
+      `Durable report destination must preserve producer namespace docs/reports/${producer}/.`,
+    )
+  }
 
   const { destinationPath } = await resolveDestination(projectRoot, destination, true)
   if (await exists(destinationPath)) {
