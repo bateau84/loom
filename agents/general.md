@@ -117,7 +117,7 @@ For a **bounded Change** whose scope is already clear but whose realization need
 - set only the authority flags actually required by the bounded change;
 - use `implementationRequested=false` when the user asks only to establish/verify the required authority and explicitly excludes implementation;
 - dispatch the routed specialists/gates in dependency order.
-- use intent shaping only when the unresolved branch is genuinely **user-owned product intent** (for example desired outcome, v1 boundary, subjective product preference, guarantee weakening, or material risk acceptance) and cannot be resolved by accepted authority or specialist expertise.
+- use intent shaping only when the unresolved branch genuinely **requires the user's authority** and cannot be resolved by accepted authority or specialist expertise—for example the desired outcome itself, a user-reserved v1 boundary/preference, permission to weaken a guarantee, or material risk acceptance. An ordinary UX mechanism choice inside an already-clear bounded outcome remains Designer/Specifier-owned unless the user has reserved that choice.
 
 If a Task uncovers a material issue:
 - stay at `task` when the finding has an obvious bounded fix and no new authority is required;
