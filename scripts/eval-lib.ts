@@ -15,6 +15,7 @@ export type EvalCase = {
   agent: string
   skill?: string
   execution: EvalExecution
+  target_timeout_seconds?: number
   requirements: string[]
   prompt: string
   trap: string
@@ -77,6 +78,14 @@ export function validateSuite(suite: EvalSuite, repoRoot: string) {
 
     if (!["runtime", "role-decision"].includes(item.execution)) {
       errors.push(`${label}: execution must be runtime or role-decision`)
+    }
+    if (
+      item.target_timeout_seconds !== undefined &&
+      (!Number.isInteger(item.target_timeout_seconds) ||
+        item.target_timeout_seconds < 30 ||
+        item.target_timeout_seconds > 600)
+    ) {
+      errors.push(`${label}: target_timeout_seconds must be an integer from 30 to 600`)
     }
     if (!item.prompt?.trim()) errors.push(`${label}: prompt is required`)
     if (!item.trap?.trim()) errors.push(`${label}: trap is required`)
