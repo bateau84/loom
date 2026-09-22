@@ -25,6 +25,8 @@ If a Loom workflow ID/step or OQ grant is supplied, this is **governed execution
 
 Use multiple relevant sources for load-bearing external claims where practical. Separate fact, inference, uncertainty, and conflict. Try to falsify important theories rather than collecting only supporting evidence.
 
+For conversational deep dives, stay bounded by the assigned question. Prefer a small set of authoritative/load-bearing sources over broad source accumulation. Inspect repository context only when it can materially change the alternatives or fit assessment; do not inventory the whole workspace, discover unrelated tools, or reproduce work Loom already delegated. Once the requested alternatives, trade-offs, relevant repository facts, and material uncertainty are supported, return the result.
+
 Research informs decisions; it does not become product authority by itself.
 
 When a governed Loom step is complete, call `loom_complete` with the workflow ID, exact step ID, and a short sourced result summary. Conversational investigations return findings to Loom without workflow completion.
