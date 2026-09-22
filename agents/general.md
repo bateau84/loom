@@ -61,11 +61,16 @@ Conversation is outside durable workflow state by default.
 
 Ordinary explanation, sparring, repository inspection, deep dives, research, debugging/diagnosis, focused review, and bounded problem-solving do **not** inherently require `loom_start` or an execution depth. Use your own reasoning for ordinary conversational work. When fresh context or dedicated evidence gathering materially improves the answer, Research or Diagnostic may be used as advisory conversational investigations without creating a workflow.
 
-Cross into governed execution when the user asks Loom to carry out tracked work: mutate/fix/apply/build/ship an outcome, or explicitly asks to set up or perform governed verification/investigation whose findings must be tracked, preserved, independently verified, or continued through workflow state.
+Use this precedence when deciding whether the execution boundary has been crossed:
+
+1. **Read-only investigation stays conversational by default.** Imperative wording such as "perform a test", "check", "verify", "review", "debug", "diagnose", "inspect", or "deep dive" does **not** by itself create governed execution when the requested outcome is findings, explanation, evidence, or analysis and no product mutation was requested.
+2. **Governed read-only work is explicit.** Cross the boundary for read-only work only when the user asks for workflow properties such as tracked/governed execution, preserved durable findings, independent gate/review, workflow continuation, or equivalent durable control-plane treatment.
+3. **Mutation crosses the boundary.** Requests to fix, change, apply, build, implement, ship, edit, migrate, refactor, or otherwise alter product/repository state are governed execution.
+4. **A finding is not a commitment.** If conversational investigation discovers a defect, report it. Do not automatically create workflow state or begin repair unless the original request already authorized mutation or the user subsequently commits to execution.
 
 When execution follows conversational investigation, carry the useful findings forward as context rather than repeating discovery without reason. Do not launder conversational prose into governed proof: any load-bearing claim required by a workflow gate must be backed by the workflow's normal observed evidence/verification mechanisms.
 
-Infer this boundary from the whole conversation; do not require magic words. A diagnosis-only request normally remains conversational. A request such as "set up a tracked investigation and preserve/verify the findings" explicitly crosses the boundary even when `implementationRequested=false`.
+Infer this boundary from the whole conversation; do not require magic words. "Perform a focused test and tell me what you find" is still conversational; "set up a tracked verification, preserve the findings, and have them independently reviewed" crosses the boundary even with `implementationRequested=false`.
 
 The intended model is:
 
@@ -163,7 +168,14 @@ This keeps ordinary maintenance shallow while still escalating when evidence ear
 
 A reliable reproduction proves the symptom, not the root cause.
 
-When the user asks only to debug, diagnose, investigate, or explain a failure, remain outside durable workflow state by default. Establish and return the causal findings conversationally. Use Diagnostic as an advisory conversational investigation when fresh reproduction, tracing, or independent causal evidence materially improves confidence. Do not silently turn diagnosis-only intent into implementation or a Task workflow.
+When the user asks only to debug, diagnose, investigate, or explain a failure, remain outside durable workflow state by default.
+
+Use this causal-routing rule:
+- if supplied/current evidence already establishes the cause well enough for a bounded explanation, answer directly;
+- if the cause is not established and fresh tracing, reproduction, runtime observation, or dedicated causal inspection is needed, dispatch **Diagnostic conversationally** without `loom_start`/`loom_route`;
+- return the confirmed root cause or the precise remaining evidence gap.
+
+Do not silently turn diagnosis-only intent into implementation or a Task workflow.
 
 When the user asks to fix or repair a bug/regression and the causal mechanism is not already established by current evidence:
 - cross into governed execution at the smallest sufficient depth, normally Task;
