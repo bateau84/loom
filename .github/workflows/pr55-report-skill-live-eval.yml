@@ -14,8 +14,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
-      EVAL_MODEL: openai/gpt-5.5
-      JUDGE_MODEL: openai/gpt-5.5
+      EVAL_MODEL: opencode-go/gpt-5.6-luna
+      JUDGE_MODEL: opencode-go/gpt-5.6-luna
       TARGET_TRANSPORT: opencode
       JUDGE_TRANSPORT: opencode
       EVAL_CASES: SKILL-REPORT-KEEP-01,SKILL-REPORT-KEEP-02
