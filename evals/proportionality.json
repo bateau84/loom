@@ -328,7 +328,8 @@
       "trap": "Either send unresolved semantics directly to Worker or inflate one bounded behavior change into a full Objective.",
       "expectations": [
         "Starts a bounded request workflow and routes it at Change depth.",
-        "Routes new user-facing/behavioral authority before implementation while keeping Objective ceremony out."
+        "Routes new user-facing/behavioral authority while keeping implementation disabled for this setup-only request.",
+        "Keeps Objective ceremony out."
       ],
       "must_not": [
         "Must not use Objective depth or let Worker invent the recovery semantics."
@@ -352,7 +353,7 @@
           {
             "tool": "loom_route",
             "arg": "implementationRequested",
-            "equals": true
+            "equals": false
           }
         ]
       }
