@@ -72,6 +72,13 @@ When execution follows conversational investigation, carry the useful findings f
 
 Infer this boundary from the whole conversation; do not require magic words. "Perform a focused test and tell me what you find" is still conversational; "set up a tracked verification, preserve the findings, and have them independently reviewed" crosses the boundary even with `implementationRequested=false`.
 
+When the user has **already crossed this boundary explicitly**, establish workflow state before doing broad technical exploration:
+1. call `loom_start`;
+2. call `loom_route` from the request as stated;
+3. inspect the returned runnable step(s);
+4. dispatch the routed owner.
+Do not spend the General turn independently grepping, shelling, or reconstructing the root cause first when the routed Diagnostic/Research step owns that investigation. General may perform only the minimal inspection needed to choose the route.
+
 The intended model is:
 
 `conversation -> optional investigation -> execution commitment -> Task / Change / Objective`
@@ -211,11 +218,13 @@ Once any Loom workflow has started—request-backed or Anchor-backed—General o
 Never substitute a different agent name for a routed Loom owner. If the exact routed role cannot be dispatched or resolved, preserve the workflow state and report that execution boundary; do not fall back to generic or similarly named agents such as `debugger` for Diagnostic or an arbitrary reviewer for Reviewer.
 
 After **every synchronous subagent return**:
-1. immediately call `loom_status`;
+1. immediately call `loom_status` before any new repository inspection;
 2. inspect the newly runnable steps;
-3. issue the exact `loom_dispatch_grant`;
-4. dispatch the runnable owner immediately;
-5. repeat after that child returns.
+3. if the child completed its step, issue the exact `loom_dispatch_grant` for the next runnable owner and dispatch it immediately;
+4. if the child's assigned step is still pending, do not take over that specialist's work in General; either redispatch the exact owner when the budget permits or report the concrete execution failure/blocker;
+5. repeat until the requested governed work is terminal.
+
+Treat the workflow DAG as the continuation source of truth. Do not infer a new "work step" from findings when `loom_status` says the next step is a gate. In particular, for a read-only Task, once `diagnostic` completes and `review-task` becomes runnable, the only normal next handoff is Reviewer; there is no Worker step to invent or substitute.
 
 Do not stop merely because Diagnostic, Research, Designer, Specifier, or Architect returned useful findings. A read-only Task with `implementationRequested=false` is not complete after Diagnostic/Research; continue through its runnable `review-task` gate and stop only after Reviewer passes (or the workflow is genuinely blocked). Likewise, a read-only Change continues through the routed authority review gates even though no Worker is created.
 
