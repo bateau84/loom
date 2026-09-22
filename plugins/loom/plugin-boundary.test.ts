@@ -1152,9 +1152,10 @@ Verdict: FAIL
           action: "shell",
           resources: [command],
           sessionID: `conversation-${agent}`,
+          effect: "allow",
         }
         await evaluate!(safeShell)
-        expect(safeShell.effect).not.toBe("deny")
+        expect(safeShell.effect).toBe("allow")
       }
 
       for (const agent of ["research", "diagnostic"] as const) {
@@ -1163,6 +1164,7 @@ Verdict: FAIL
           action: "shell",
           resources: ["rm -f src/app.ts"],
           sessionID: `conversation-${agent}`,
+          effect: "allow",
         }
         await evaluate!(mutatingShell)
         expect(mutatingShell.effect).toBe("deny")
@@ -1173,6 +1175,7 @@ Verdict: FAIL
           action: "edit",
           resources: ["src/app.ts"],
           sessionID: `conversation-${agent}`,
+          effect: "allow",
         }
         await evaluate!(productEdit)
         expect(productEdit.effect).toBe("deny")
@@ -1183,9 +1186,10 @@ Verdict: FAIL
           action: "edit",
           resources: [`ephemeral-reports/${agent}/finding.md`],
           sessionID: `conversation-${agent}`,
+          effect: "allow",
         }
         await evaluate!(ownReportEdit)
-        expect(ownReportEdit.effect).not.toBe("deny")
+        expect(ownReportEdit.effect).toBe("allow")
 
         const otherReportEdit: any = {
           agent,
@@ -1194,6 +1198,7 @@ Verdict: FAIL
             `ephemeral-reports/${agent === "research" ? "diagnostic" : "research"}/finding.md`,
           ],
           sessionID: `conversation-${agent}`,
+          effect: "allow",
         }
         await evaluate!(otherReportEdit)
         expect(otherReportEdit.effect).toBe("deny")
