@@ -25,7 +25,7 @@ Potential future complexity MUST NOT be treated as present complexity, and poten
 ## Acceptance Criteria
 
 1. Ordinary explanation, sparring, research/deep-dive, diagnosis-only, focused-review, and bounded problem-solving requests may complete without creating workflow state.
-2. A clear bounded **execution commitment** can start without creating a new Anchor when no new product authority is required.
+2. A clear bounded **execution commitment** can start without creating a new Anchor when no new user-owned product intent must be decided. New Designer/Specifier/Architect authority may be obtained inside Change depth.
 3. An explicitly governed read-only Task does not invoke Worker or require a Worker write scope; it ends through Reviewer verification after any required governed Diagnostic/Research work.
 4. Task-depth work does not invoke Planner, Critic, Product Acceptance, knowledge sync, or final product gates unless another independent requirement specifically makes one necessary.
 5. Diagnostic and bounded Research may occur conversationally without workflow state, or inside Task depth when the user explicitly requested governed/tracked work; neither automatically promotes execution depth.
