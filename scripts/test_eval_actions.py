@@ -68,10 +68,10 @@ class WorkflowCredentialTests(unittest.TestCase):
         workflow = (
             RUN_EVALS.ROOT / ".github" / "workflows" / "loom-live-evals.yml"
         ).read_text(encoding="utf-8")
-        expected_action = "bateau84/opencode-eval-runner@2c9e19f96ddaf4f996042263a92f072a32237ec8"
+        expected_action = "bateau84/opencode-eval-runner@e2022f1075e34fe7be2a33eae3c9460f3f5c7263"
         expected_image = (
             "ghcr.io/bateau84/opencode-eval-runner@"
-            "sha256:9dad96313bb15efaa4164a976bfd244ad804cac851b33543b44dcfb4e1cafc22"
+            "sha256:3e5f95ce54fee127230c5bf84a7f09124a2236dfca544269e6547c8f79e8ad5d"
         )
 
         self.assertIn(expected_action, workflow)
