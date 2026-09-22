@@ -104,6 +104,51 @@ class RuntimeEvalProjectTests(unittest.TestCase):
             import shutil
             shutil.rmtree(temp, ignore_errors=True)
 
+    def test_runtime_project_materializes_real_loom_subagents(self):
+        case = next(
+            case
+            for case in RUN_EVALS.load_cases()
+            if case["id"] == "PROP-RUNTIME-01"
+        )
+        temp, target, _ = RUN_EVALS.setup_projects(case)
+        try:
+            agent_root = target / ".opencode" / "agents"
+            expected = {
+                path.name
+                for path in (RUN_EVALS.ROOT / "agents").glob("*.md")
+            }
+            observed = {
+                path.name
+                for path in agent_root.glob("*.md")
+            }
+            self.assertEqual(observed, expected)
+            self.assertTrue((agent_root / "diagnostic.md").is_file())
+            self.assertTrue((agent_root / "reviewer.md").is_file())
+            diagnostic = (agent_root / "diagnostic.md").read_text(encoding="utf-8")
+            reviewer = (agent_root / "reviewer.md").read_text(encoding="utf-8")
+            self.assertIn("mode: subagent", diagnostic)
+            self.assertIn("mode: subagent", reviewer)
+        finally:
+            import shutil
+            shutil.rmtree(temp, ignore_errors=True)
+
+    def test_role_decision_project_keeps_unrelated_agents_out(self):
+        case = next(
+            case
+            for case in RUN_EVALS.load_cases()
+            if case["id"] == "PROP-02"
+        )
+        temp, target, _ = RUN_EVALS.setup_projects(case)
+        try:
+            observed = sorted(
+                path.name
+                for path in (target / ".opencode" / "agents").glob("*.md")
+            )
+            self.assertEqual(observed, ["general.md"])
+        finally:
+            import shutil
+            shutil.rmtree(temp, ignore_errors=True)
+
     def test_all_runtime_eval_targets_are_rw(self):
         promoting = next(
             case
