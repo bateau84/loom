@@ -120,7 +120,17 @@ button:focus-visible, select:focus-visible, input:focus-visible, a:focus-visible
 </div>
 <script>
 (() => {
-  const state = { fleet: { projects: [] }, status: "all", project: "", agent: "", lastKeys: new Set(), hierarchyOpen: new Map() };
+  const state = {
+    fleet: { projects: [] },
+    status: "all",
+    project: "",
+    agent: "",
+    lastKeys: new Set(),
+    hierarchyOpen: new Map(),
+    projectionGeneration: 0,
+    missingRoute: null,
+  };
+  const MISSING_ROUTE_GRACE_REFRESHES = 2;
   const main = document.getElementById("main");
   const crumbs = document.getElementById("breadcrumbs");
   const live = document.getElementById("live");
@@ -341,24 +351,82 @@ button:focus-visible, select:focus-visible, input:focus-visible, a:focus-visible
     }
   }
 
+  function routeKey(r) {
+    if (r.kind === "fleet") return "fleet";
+    return [r.kind, r.projectId || "", r.workflowId || "", r.instanceId || ""].join(":");
+  }
+
+  function missingRouteAge(r) {
+    const key = routeKey(r);
+    if (!state.missingRoute || state.missingRoute.key !== key) {
+      state.missingRoute = { key, firstGeneration: state.projectionGeneration };
+    }
+    return state.projectionGeneration - state.missingRoute.firstGeneration;
+  }
+
+  function clearMissingRoute(r) {
+    if (state.missingRoute?.key === routeKey(r)) state.missingRoute = null;
+  }
+
+  function renderProjectionWait(r, detail) {
+    crumbs.innerHTML =
+      '<a href="#/">Fleet</a>' +
+      (r.projectId ? ' / <span>' + esc(r.projectId) + '</span>' : '') +
+      (r.workflowId ? ' / <span>' + esc(r.workflowId) + '</span>' : '');
+    main.innerHTML =
+      '<section class="panel empty">' +
+        '<strong>Waiting for Loom projection…</strong>' +
+        '<div>' + esc(detail) + '</div>' +
+        '<div class="meta">The requested dashboard URL is preserved while the read-only projection catches up.</div>' +
+      '</section>';
+    live.textContent = "Waiting for the requested Loom state to appear in the dashboard projection.";
+  }
+
   function render() {
     captureHierarchyOpen();
     const focused = document.activeElement?.dataset?.key || "";
     const r = route();
     const project = r.projectId ? projectById(r.projectId) : undefined;
     const workflow = project && r.workflowId ? workflowById(project, r.workflowId) : undefined;
-    if (r.kind === "fleet") renderFleet();
-    else if (!project) {
-      live.textContent = "The selected project is no longer available. Returned to Fleet.";
-      location.hash = "#/";
+    if (r.kind === "fleet") {
+      clearMissingRoute(r);
       renderFleet();
-    } else if (r.kind === "project") renderProject(project);
-    else if (!workflow) {
-      live.textContent = "The selected workflow is no longer available. Returned to Project.";
-      location.hash = "#/project/" + enc(project.projectId);
+    } else if (!project) {
+      const age = missingRouteAge(r);
+      if (age < MISSING_ROUTE_GRACE_REFRESHES) {
+        renderProjectionWait(r, "The requested project is not present in the latest projection yet.");
+      } else {
+        state.missingRoute = null;
+        live.textContent = "The selected project remained absent across multiple successful projections. Returned to Fleet.";
+        location.hash = "#/";
+        renderFleet();
+      }
+    } else if (r.kind === "project") {
+      clearMissingRoute(r);
       renderProject(project);
-    } else if (r.kind === "workflow") renderWorkflow(project, workflow);
-    else renderSession(project, workflow, r.instanceId);
+    } else if (!workflow) {
+      const age = missingRouteAge(r);
+      const truncated = project.projectionWindow?.workflowsTruncated === true;
+      if (truncated || age < MISSING_ROUTE_GRACE_REFRESHES) {
+        renderProjectionWait(
+          r,
+          truncated
+            ? "The requested workflow is outside the current bounded projection window; waiting without discarding the deep link."
+            : "The requested workflow is not present in the latest projection yet.",
+        );
+      } else {
+        state.missingRoute = null;
+        live.textContent = "The selected workflow remained absent across multiple complete projections. Returned to Project.";
+        location.hash = "#/project/" + enc(project.projectId);
+        renderProject(project);
+      }
+    } else if (r.kind === "workflow") {
+      clearMissingRoute(r);
+      renderWorkflow(project, workflow);
+    } else {
+      clearMissingRoute(r);
+      renderSession(project, workflow, r.instanceId);
+    }
 
     restoreHierarchyOpen();
 
@@ -379,6 +447,7 @@ button:focus-visible, select:focus-visible, input:focus-visible, a:focus-visible
       const response = await fetch("/api/fleet", { cache: "no-store" });
       if (!response.ok) throw new Error("fleet request failed");
       state.fleet = await response.json();
+      state.projectionGeneration += 1;
       projectionStatus.hidden = true;
       projectionStatus.textContent = "";
       render();
