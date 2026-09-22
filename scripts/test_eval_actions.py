@@ -104,7 +104,7 @@ class RuntimeEvalProjectTests(unittest.TestCase):
             import shutil
             shutil.rmtree(temp, ignore_errors=True)
 
-    def test_mutating_report_eval_is_rw_but_normal_runtime_eval_stays_ro(self):
+    def test_all_runtime_eval_targets_are_rw(self):
         promoting = next(
             case
             for case in RUN_EVALS.load_cases()
@@ -117,11 +117,15 @@ class RuntimeEvalProjectTests(unittest.TestCase):
         )
 
         self.assertEqual(RUN_EVALS.case_workspace_mode(promoting), "rw")
-        self.assertEqual(RUN_EVALS.case_workspace_mode(ordinary), "ro")
+        self.assertEqual(RUN_EVALS.case_workspace_mode(ordinary), "rw")
+        self.assertEqual(
+            RUN_EVALS.case_workspace_mode({"execution": "role-decision"}),
+            "ro",
+        )
 
 
 class MountPreparationTests(unittest.TestCase):
-    def test_runtime_mountpoint_exists_before_read_only_workspace_mount(self):
+    def test_runtime_mountpoint_exists_before_workspace_mount(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             project = root / "project"
