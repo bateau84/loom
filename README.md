@@ -22,7 +22,7 @@ bun run eval:live -- \
   --model openai/gpt-5.5
 ```
 
-Run the full behavioral system suite once. The current default suite contains 35 cases:
+Run the full behavioral system suite once. The current default suite contains 29 cases:
 
 ```bash
 bun run eval:system -- \
