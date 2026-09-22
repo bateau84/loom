@@ -1,6 +1,6 @@
 import { test, expect } from "@playwright/test"
 import { spawn } from "node:child_process"
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { createServer } from "node:net"
 import { join, resolve } from "node:path"
 import { tmpdir } from "node:os"
@@ -253,6 +253,53 @@ test.afterAll(async () => {
   await rm(root, { recursive: true, force: true })
 })
 
+test("dashboard child process publishes its effective endpoint lease", async () => {
+  const record = JSON.parse(
+    await readFile(join(stateRoot, "loom", "dashboard-endpoint.json"), "utf8"),
+  )
+  expect(record).toMatchObject({
+    schemaVersion: 1,
+    baseUrl: `http://127.0.0.1:${port}`,
+  })
+  expect(Date.parse(record.leaseExpiresAt)).toBeGreaterThan(Date.now())
+})
+
+test("workflow deep link survives projection lag and opens when the project/workflow appears", async ({ page }) => {
+  await rm(
+    join(runtimeRoot, "instances", "installation-e2e", "instance-a"),
+    { recursive: true, force: true },
+  )
+
+  const url = `http://127.0.0.1:${port}/#/project/project-a/workflow/workflow-a`
+  await page.goto(url)
+  await expect(page.getByText("Waiting for Loom projection…", { exact: true })).toBeVisible()
+  await expect(page).toHaveURL(/#\/project\/project-a\/workflow\/workflow-a$/)
+
+  // Multiple successful reads of the same lagging projection must not be
+  // interpreted as proof that the requested authoritative workflow vanished.
+  await page.waitForTimeout(6_400)
+  await expect(page.getByText("Waiting for Loom projection…", { exact: true })).toBeVisible()
+  await expect(page).toHaveURL(/#\/project\/project-a\/workflow\/workflow-a$/)
+
+  await writePublisher({
+    instanceId: "instance-a",
+    projectId: "project-a",
+    displayName: "Project A",
+    canonicalLocation: "/work/project-a",
+    workflows: [workflow({
+      id: "workflow-a",
+      revision: 4,
+      digest: "digest-a",
+      status: "active",
+      sessionId: "session-a",
+    })],
+  })
+
+  await page.waitForTimeout(3_400)
+  await expect(page).toHaveURL(/#\/project\/project-a\/workflow\/workflow-a$/)
+  await expect(page.getByText("Workflow workflow-a", { exact: false })).toBeVisible()
+})
+
 test("keyboard drill-down and browser back preserve Fleet filters", async ({ page }) => {
   await page.goto(`http://127.0.0.1:${port}/`)
   await expect(page.getByText("consistency conflict", { exact: true })).toBeVisible()
@@ -292,6 +339,13 @@ test("keyboard drill-down and browser back preserve Fleet filters", async ({ pag
   await expect(page.getByText("No workflows match the current filters.", { exact: true })).toBeVisible()
 })
 
+test("stable workflow dashboard deep link opens the requested workflow directly", async ({ page }) => {
+  await page.goto(`http://127.0.0.1:${port}/#/project/project-a/workflow/workflow-a`)
+  await expect(page).toHaveURL(/#\/project\/project-a\/workflow\/workflow-a$/)
+  await expect(page.getByText("Workflow workflow-a", { exact: false })).toBeVisible()
+  await expect(page.getByText("OpenCode sessions", { exact: true })).toBeVisible()
+})
+
 test("background refresh preserves focus and disappearance has predictable fallback", async ({ page }) => {
   await page.goto(`http://127.0.0.1:${port}/`)
   const card = page.locator('a[data-key="project-a:workflow-a"]')
@@ -329,6 +383,22 @@ test("project hierarchy exposes active workflow claims", async ({ page }) => {
   await page.goto(`http://127.0.0.1:${port}/#/project/project-a`)
   await expect(page.getByText("Objective → Phase → Wave → Task", { exact: true })).toBeVisible()
   await expect(page.getByText(/claimed by workflow-a/)).toBeVisible()
+})
+
+test("project hierarchy preserves manual expansion state across background refresh", async ({ page }) => {
+  await page.goto(`http://127.0.0.1:${port}/#/project/project-a`)
+  const wave = page.locator('details[data-hierarchy-key="project:project-a:objective:objective-project-a:phase:phase-build:wave:wave-runtime"]')
+  await expect(wave).toHaveAttribute("open", "")
+
+  const summary = wave.locator("summary")
+  await summary.click()
+  await expect(wave).not.toHaveAttribute("open", "")
+  await summary.focus()
+  await expect(summary).toBeFocused()
+
+  await page.waitForTimeout(3_400)
+  await expect(wave).not.toHaveAttribute("open", "")
+  await expect(summary).toBeFocused()
 })
 
 test("refresh failure keeps last known Fleet visible and marks projection degradation", async ({ page }) => {

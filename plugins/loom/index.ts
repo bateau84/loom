@@ -3,11 +3,26 @@ import { RUNTIME_STATE_VERSION, consumeDispatchGrantLocked, createProjectStorage
 import { LoomRpc } from "./rpc"
 import { buildSidebarSnapshot } from "./sidebar"
 import { renderToolOutput } from "./presentation"
+import {
+  buildStatusView,
+  clippedSummary,
+  dashboardWorkflowUrl,
+  compactQuestions,
+  compactVerification,
+  renderStatusMarkdown,
+  statusPresentation,
+  writeStatusArtifact,
+} from "./status-view"
 import { createDashboardPublisher } from "./dashboard"
+
+export const LOOM_NATIVE_TOOL_GUIDANCE =
+  "Loom control-plane tools are available through two equivalent OpenCode surfaces: native loom_* tools and Code Mode mirrors under tools.loom.code.*. Use either surface directly according to the active tool paradigm. If using Code Mode, search for Loom tools and invoke the returned tools.loom.code.* signatures; do not fall back to shell/filesystem discovery for Loom commands. Interactive status is dashboard-first and does not depend on model prose: the Loom sidebar exposes a stable workflow dashboard URL, while loom_status may also return presentation metadata. Desktop browser preview is optional metadata only; do not invoke tools.browser.preview merely because presentation metadata exists."
 import {
   addVerificationRequirement,
   applyTaskPlan,
   buildSteps,
+  resolveExecutionDepth,
+  executionDepthRank,
   plannedTaskSteps,
   preserveSatisfied,
   finishStep,
@@ -132,8 +147,6 @@ const loomAgents = new Set([
   "research",
   "diagnostic",
 ])
-
-const conversationalInvestigationAgents = new Set(["research", "diagnostic"])
 
 const reportProducerAgents = new Set([
   "general",
@@ -543,96 +556,6 @@ function questionState(questions: OpenQuestion[], workflow: Workflow) {
 }
 
 
-function clippedSummary(value?: string, max = 180) {
-  if (!value) return undefined
-  const normalized = value.replace(/\s+/g, " ").trim()
-  return normalized.length <= max ? normalized : normalized.slice(0, max - 1) + "…"
-}
-
-function compactQuestions(questions: OpenQuestion[], workflow: Workflow) {
-  const state = questionState(questions, workflow)
-  return {
-    open: state.unresolved.length,
-    routes: state.routes,
-    reconcile: state.reconcile,
-  }
-}
-
-function compactVerification(workflow: Workflow) {
-  const requirements = workflow.verification ?? []
-  return {
-    open: requirements
-      .filter((requirement) => requirement.status === "open")
-      .map((requirement) => ({
-        id: requirement.id,
-        before: requirement.beforeStepId,
-        kind: requirement.kind,
-        statement: clippedSummary(requirement.statement, 140),
-      })),
-    satisfied: requirements.filter((requirement) => requirement.status === "satisfied").length,
-  }
-}
-
-function compactWorkflowState(
-  workflow: Workflow,
-  questions: OpenQuestion[],
-  budget: BudgetState,
-  limits: ExecutionLimits,
-  acceptance?: AcceptancePlan,
-  knowledge?: KnowledgeReport,
-) {
-  const ready = runnable(workflow)
-  const finished = workflow.steps.filter((step) => ["complete", "passed", "failed"].includes(step.status))
-  const failed = workflow.steps.filter((step) => step.status === "failed")
-  const pending = workflow.steps.filter((step) => step.status === "pending")
-  const readyIds = new Set(ready.map((step) => step.id))
-  const blockedPending = pending.filter((step) => !readyIds.has(step.id))
-
-  const state =
-    failed.length > 0 && ready.length === 0
-      ? "blocked"
-      : pending.length === 0
-        ? "complete"
-        : "active"
-
-  return {
-    workflowId: workflow.id,
-    state,
-    progress: {
-      finished: finished.length,
-      total: workflow.steps.length,
-      failed: failed.length,
-    },
-    now: ready.map((step) => ({ step: step.id, agent: step.agent, kind: step.kind })),
-    recent: finished.slice(-5).map((step) => ({
-      step: step.id,
-      agent: step.agent,
-      status: step.status,
-      ...(step.summary ? { summary: clippedSummary(step.summary) } : {}),
-    })),
-    upcoming: blockedPending.slice(0, 6).map((step) => ({
-      step: step.id,
-      agent: step.agent,
-      waitsFor: step.dependsOn.filter(
-        (dependency) =>
-          !workflow.steps.some(
-            (candidate) =>
-              candidate.id === dependency && ["complete", "passed"].includes(candidate.status),
-          ),
-      ),
-    })),
-    questions: compactQuestions(questions, workflow),
-    verification: compactVerification(workflow),
-    budget: {
-      dispatches: budget.totalDispatches,
-      maxDispatches: limits.maxTotalDispatches,
-      ...(budget.exhausted ? { exhausted: budget.exhausted } : {}),
-    },
-    acceptance: acceptance ? acceptanceReadiness(acceptance) : null,
-    knowledge: knowledge ? { valid: knowledge.valid } : null,
-  }
-}
-
 function evidenceKey(id: string) {
   return `evidence/${id}`
 }
@@ -690,12 +613,10 @@ async function bindSessionEvidence(ctx: any, sessionID: string, workflowId: stri
   let bound = 0
 
   for (const observation of observations) {
-    if (observation.workflowId && (observation.workflowId !== workflowId || observation.stepId !== stepId)) {
-      continue
-    }
+    // Evidence is bound at observation time. Never retroactively upgrade
+    // conversational/pre-attachment observations into governed workflow proof.
+    if (observation.workflowId !== workflowId || observation.stepId !== stepId) continue
 
-    const next = { ...observation, workflowId, stepId }
-    await ctx.storage.set(evidenceKey(observation.id), next)
     await ctx.storage.set(`${stepEvidencePrefix(workflowId, stepId)}${observation.id}`, observation.id)
     bound++
   }
@@ -793,7 +714,12 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         const workflow = await activeWorkflow(ctx, sessionID, ensureLegacySession)
         const questions = workflow ? await readQuestions(ctx, workflow.id) : []
         const work = workflow?.work ? await readWork(ctx, workflow.work.objectiveId) : undefined
-        return buildSidebarSnapshot(workflow, questions, work)
+        return buildSidebarSnapshot(
+          workflow,
+          questions,
+          work,
+          workflow ? await dashboardWorkflowUrl(runtime, workflow.id) : undefined,
+        )
       },
     })
 
@@ -1306,13 +1232,17 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
       editor.add({
         name: "start",
-        description: "Start a Loom workflow for an accepted Anchor. General only.",
+        description: "Start governed Loom execution for an accepted Anchor or a bounded committed task. Ordinary conversation/investigation does not require this tool. General only.",
         input: {
           type: "object",
           properties: {
             anchor: { type: "string", description: "Repository path to the accepted Anchor." },
+            request: {
+              type: "string",
+              description:
+                "Bounded committed execution request when no new product intent or Anchor is needed. Do not use for ordinary conversational research/diagnosis/review. Provide exactly one of anchor or request.",
+            },
           },
-          required: ["anchor"],
           additionalProperties: false,
         },
         options: { namespace: "loom", codemode: false },
@@ -1321,7 +1251,15 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             return { content: renderToolOutput({ error: "Only general may start a Loom workflow." }) }
           }
 
-          const { anchor } = input as { anchor: string }
+          const { anchor, request } = input as { anchor?: string; request?: string }
+          if (Boolean(anchor) === Boolean(request)) {
+            return {
+              content: renderToolOutput({
+                error: "Provide exactly one of anchor or request.",
+              }),
+            }
+          }
+
           const intent = await activeIntent(ctx, tool.sessionID, ensureLegacySession)
           if (intent && intent.state !== "accepted") {
             return {
@@ -1331,7 +1269,10 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               }),
             }
           }
-          if (intent?.acceptedAnchor && intent.acceptedAnchor.path !== anchor) {
+          if (
+            intent?.acceptedAnchor &&
+            (!anchor || intent.acceptedAnchor.path !== anchor)
+          ) {
             return {
               content: renderToolOutput({
                 error: "Workflow Anchor does not match the accepted intent Anchor.",
@@ -1341,17 +1282,19 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           }
 
           const id = crypto.randomUUID()
+          const workflowAnchor = anchor ?? `task:${id}`
           const workflow: Workflow = {
             id,
             projectId: runtime.projectId,
             revision: 0,
-            anchor,
+            anchor: workflowAnchor,
+            ...(request ? { request } : {}),
             createdBySession: tool.sessionID,
             createdAt: new Date().toISOString(),
             steps: [],
           }
 
-          const existingObjectiveId = objectiveIdForAnchor(anchor)
+          const existingObjectiveId = objectiveIdForAnchor(workflowAnchor)
           const observedBinding = (await ctx.storage.get(sessionKey(tool.sessionID))) as string | undefined
           const resources = [
             { aggregate: "workflow", resourceIdentity: id },
@@ -1370,7 +1313,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 id,
               )
 
-              const current = await readWork(ctx, existingObjectiveId)
+              const current = request ? undefined : await readWork(ctx, existingObjectiveId)
               if (current) {
                 attachWorkflowToWork(current, workflow.id, new Date().toISOString())
                 await ctx.storage.set(workKey(current.objectiveId), current)
@@ -1398,7 +1341,14 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             return { content: renderToolOutput({ error: error instanceof Error ? error.message : String(error) }) }
           }
 
-          return { content: renderToolOutput({ workflowId: id, anchor, status: "started" }) }
+          return {
+            content: renderToolOutput({
+              workflowId: id,
+              anchor: workflowAnchor,
+              ...(request ? { request } : {}),
+              status: "started",
+            }),
+          }
         },
       })
 
@@ -1432,13 +1382,25 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             },
             productOutcome: {
               type: "boolean",
-              description: "True for product work that requires Planner decomposition.",
+              description:
+                "True when the request delivers a product outcome. Objective depth requires this to be true.",
+            },
+            implementationRequested: {
+              type: "boolean",
+              description:
+                "True when this request is authorized to mutate/implement. False for inspect, test, diagnose, verify, or review-only work.",
+            },
+            executionDepth: {
+              type: "string",
+              enum: ["task", "change", "objective"],
+              description:
+                "Proportional workflow depth. task = smallest bounded path; change = earned specialist/architecture authority plus direct implementation/review; objective = full product lifecycle. Start shallow and escalate only on material evidence.",
             },
             workLevel: {
               type: "string",
               enum: ["objective", "wave"],
               description:
-                "Objective runs may close whole-product Product Acceptance. Wave runs execute one bounded Wave and leave the parent Objective active. Defaults to objective.",
+                "Only meaningful for executionDepth=objective. Objective runs may close whole-product Product Acceptance; wave runs execute one bounded Wave.",
             },
           },
           required: [
@@ -1448,6 +1410,8 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             "externalUnknown",
             "diagnostic",
             "productOutcome",
+            "implementationRequested",
+            "executionDepth",
           ],
           additionalProperties: false,
         },
@@ -1462,40 +1426,95 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             return { content: renderToolOutput({ error: "No active Loom workflow. Call loom_start first." }) }
           }
 
-          const implementationStarted = workflow.steps.some(
-            (step) =>
-              (
-                ["worker", "plan", "review-implementation", "critic-final"].includes(step.id) ||
-                step.id.startsWith("task:")
-              ) &&
-              ["complete", "passed"].includes(step.status),
-          )
-          if (implementationStarted) {
+          const rawEffects = input as Effects
+          let resolvedDepth: ReturnType<typeof resolveExecutionDepth>
+          try {
+            resolvedDepth = resolveExecutionDepth(rawEffects)
+          } catch (error) {
             return {
               content: renderToolOutput({
-                error:
-                  "V0 route reclassification is only supported before implementation completion. Start a correction workflow for later reclassification.",
+                error: error instanceof Error ? error.message : String(error),
               }),
             }
           }
 
-          const rawEffects = input as Effects
+          if (workflow.request && resolvedDepth === "objective") {
+            return {
+              content: renderToolOutput({
+                error:
+                  "Objective-depth execution requires an accepted Anchor. Complete the bounded task or shape/accept product intent, then start an Anchor-backed objective workflow.",
+              }),
+            }
+          }
+
+          const implementationStarted = workflow.steps.some(
+            (step) =>
+              (
+                ["worker", "plan", "review-implementation", "review-task", "critic-final"].includes(step.id) ||
+                step.id.startsWith("task:")
+              ) &&
+              ["complete", "passed"].includes(step.status),
+          )
+          const currentDepth = workflow.effects
+            ? resolveExecutionDepth(workflow.effects)
+            : undefined
+          const deeper =
+            currentDepth !== undefined &&
+            executionDepthRank(resolvedDepth) > executionDepthRank(currentDepth)
+
+          if (implementationStarted && !deeper) {
+            return {
+              content: renderToolOutput({
+                error:
+                  "Route reclassification after completed execution is only allowed when escalating to a deeper execution depth.",
+              }),
+            }
+          }
+
           const effects: Effects = {
             ...rawEffects,
-            ...(rawEffects.productOutcome
+            executionDepth: resolvedDepth,
+            ...(resolvedDepth === "objective" && rawEffects.productOutcome
               ? { workLevel: rawEffects.workLevel ?? "objective" }
-              : {}),
+              : { workLevel: undefined }),
           }
 
           const applyRouteMutation = () => {
             const next = buildSteps(effects)
             preserveSatisfied(workflow.steps, next)
+
+            // Escalation preserves discovery/authority evidence but never treats
+            // previously completed implementation as satisfying newly widened work.
+            if (deeper) {
+              for (const step of next) {
+                if (
+                  step.id === "worker" ||
+                  step.id === "review-implementation" ||
+                  step.id === "review-task" ||
+                  step.id === "plan" ||
+                  step.id.startsWith("task:") ||
+                  ["knowledge-sync", "product-acceptance", "designer-validation", "review-product", "critic-final"].includes(step.id)
+                ) {
+                  step.status = "pending"
+                  delete step.summary
+                }
+              }
+            }
+
             workflow.effects = effects
             workflow.steps = next
             reconcileVerificationAfterRoute(workflow)
           }
 
-          if (effects.productOutcome) {
+          const invalidateEscalatedWorkerScope = async () => {
+            if (deeper && workflow.steps.some((step) => step.id === "worker")) {
+              // null is an intentional durable tombstone: Worker dispatch treats
+              // it as no declared scope and General must issue a fresh bounded scope.
+              await ctx.storage.set(scopeKey(workflow.id, "worker"), null)
+            }
+          }
+
+          if (effects.productOutcome && effects.executionDepth === "objective") {
             const objectiveId = objectiveIdForAnchor(workflow.anchor)
             await withWorkflowWorkLocks(runtime, workflow.id, objectiveId, async () => {
               await validateWorkflowMutationLocked(ctx, runtime, workflow)
@@ -1506,14 +1525,17 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               await ctx.storage.set(workKey(objectiveId), work)
               workflow.work = { objectiveId, generation: work.generation }
               applyRouteMutation()
+              await invalidateEscalatedWorkerScope()
               await persistWorkflowMutationLocked(ctx, runtime, workflow)
             })
           } else {
             applyRouteMutation()
+            await invalidateEscalatedWorkerScope()
             await persistWorkflowMutation(ctx, runtime, workflow)
           }
 
           const questions = await readQuestions(ctx, workflow.id)
+          const now = runnable(workflow).map((step) => ({ step: step.id, agent: step.agent }))
           return {
             content: renderToolOutput({
               workflowId: workflow.id,
@@ -1523,7 +1545,16 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 kind: step.kind,
                 waitsFor: step.dependsOn,
               })),
-              now: runnable(workflow).map((step) => ({ step: step.id, agent: step.agent })),
+              now,
+              continuation: {
+                next: now,
+                implementationRequested: effects.implementationRequested ?? true,
+                workerPresent: workflow.steps.some((step) => step.agent === "worker"),
+                instruction:
+                  now.length > 0
+                    ? "Issue loom_dispatch_grant for the exact runnable step, dispatch that owner, then call loom_status immediately after the child returns."
+                    : "No workflow step is currently runnable; inspect questions/blockers before taking any other action.",
+              },
               questions: compactQuestions(questions, workflow),
             }),
           }
@@ -1532,7 +1563,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
       editor.add({
         name: "status",
-        description: "Inspect Loom progress, current/next work, blockers, OQs, verification, and budget. Compact by default; detail=true returns internals.",
+        description: "Inspect Loom progress, current/next work, blockers, OQs, verification, and budget. Compact by default; detail=true returns internals. Interactive status is available independently through Loom's stable dashboard workflow URL exposed in the sidebar; the tool also returns browser-safe presentation metadata as a convenience. OpenCode Desktop browser preview is optional metadata only and must not be invoked merely because presentation metadata exists. Presentation availability never blocks or alters Loom workflow state.",
         input: {
           type: "object",
           properties: {
@@ -1560,25 +1591,46 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           const knowledge = (await ctx.storage.get(knowledgeKey(workflow.id))) as KnowledgeReport | undefined
           const work = workflow.work ? await readWork(ctx, workflow.work.objectiveId) : undefined
           const detail = Boolean((input as { detail?: boolean }).detail)
-          const workSummary = work
-            ? { tree: workTree(work), nextRunnableWaves: nextRunnableWaves(work), version: work.version }
-            : null
+          const view = buildStatusView(
+            workflow,
+            questions,
+            budget,
+            limits,
+            acceptance,
+            knowledge,
+            work,
+          )
+          const artifact = await writeStatusArtifact(runtime, view).catch(() => undefined)
+          const presentation = statusPresentation(artifact)
+          const compact = renderStatusMarkdown(view, artifact)
+          const metadata = {
+            loom: {
+              kind: "workflow-status",
+              workflowId: workflow.id,
+              state: view.state,
+              ...(presentation ? { presentation } : {}),
+            },
+          }
 
           if (!detail) {
-            return {
-              content: renderToolOutput({
-                ...compactWorkflowState(workflow, questions, budget, limits, acceptance, knowledge),
-                work: workSummary,
-              }),
+            if (process.env.LOOM_TOOL_OUTPUT === "json") {
+              return {
+                content: renderToolOutput(
+                  {
+                    ...view,
+                    ...(presentation ? { presentation } : {}),
+                  },
+                  "json",
+                ),
+                metadata,
+              }
             }
+            return { content: compact, metadata }
           }
 
           return {
             content: renderToolOutput({
-              summary: {
-                ...compactWorkflowState(workflow, questions, budget, limits, acceptance, knowledge),
-                work: workSummary,
-              },
+              summary: view,
               workflow,
               runnable: runnable(workflow).map((step) => ({ id: step.id, agent: step.agent })),
               questions: questionState(questions, workflow),
@@ -1589,6 +1641,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 : null,
               knowledge: knowledge ?? null,
             }),
+            metadata,
           }
         },
       })
@@ -2312,8 +2365,13 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           }
 
           const attachedWorkflow = (await ctx.storage.get(sessionKey(tool.sessionID))) as string | undefined
-          if (attachedWorkflow !== value.workflowId) {
-            return { content: renderToolOutput({ error: "Current session is not attached to this workflow." }) }
+          const attachedStep = (await ctx.storage.get(sessionStepKey(tool.sessionID))) as string | undefined
+          if (attachedWorkflow !== value.workflowId || !attachedStep) {
+            return {
+              content: renderToolOutput({
+                error: "Verification proof requires a session attached to an exact workflow step.",
+              }),
+            }
           }
 
           const requirement = (workflow.verification ?? []).find(
@@ -2330,6 +2388,20 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           if (observations.length !== value.observationIds.length) {
             return { content: renderToolOutput({ error: "Every proof id must be an observed event from the current session." }) }
           }
+          if (
+            observations.some(
+              (observation) =>
+                observation.workflowId !== value.workflowId ||
+                observation.stepId !== attachedStep,
+            )
+          ) {
+            return {
+              content: renderToolOutput({
+                error:
+                  "Verification proof may only use observations captured while this session was attached to the current workflow step.",
+              }),
+            }
+          }
           if (!observationsSupportKind(requirement.kind, observations)) {
             return {
               content: renderToolOutput({
@@ -2338,7 +2410,6 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             }
           }
 
-          const attachedStep = (await ctx.storage.get(sessionStepKey(tool.sessionID))) as string | undefined
           try {
             const proven = proveVerificationRequirement(workflow, requirement.id, {
               byAgent: tool.agent,
@@ -2453,6 +2524,20 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           if (observations.length !== value.observationIds.length) {
             return { content: renderToolOutput({ error: "Every evidence id must be an observed event from the current session." }) }
           }
+          if (
+            observations.some(
+              (observation) =>
+                observation.workflowId !== value.workflowId ||
+                observation.stepId !== value.stepId,
+            )
+          ) {
+            return {
+              content: renderToolOutput({
+                error:
+                  "Evidence claims may only use observations captured while this session was attached to the claimed workflow step.",
+              }),
+            }
+          }
 
           try {
             const claim = createClaim({
@@ -2468,8 +2553,6 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
             await withRuntimeLock(runtime, "workflow", value.workflowId, async () => {
               for (const observation of observations) {
-                const next = { ...observation, workflowId: value.workflowId, stepId: value.stepId }
-                await ctx.storage.set(evidenceKey(observation.id), next)
                 await ctx.storage.set(
                   `${stepEvidencePrefix(value.workflowId, value.stepId)}${observation.id}`,
                   observation.id,
@@ -3956,6 +4039,25 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         },
       })
 
+      editor.namespace({
+        name: "loom.code",
+        description: "Code Mode mirrors of Loom control-plane tools. Same schemas, executors, authority, and workflow semantics as native loom_* tools.",
+      })
+      const nativeLoomTools = editor
+        .list()
+        .filter((tool) => tool.options?.namespace === "loom" && tool.options?.codemode === false)
+      for (const tool of nativeLoomTools) {
+        const { id: nativeId, ...definition } = tool
+        editor.add({
+          ...definition,
+          options: {
+            namespace: "loom.code",
+            codemode: true,
+            permission: tool.options?.permission ?? nativeId,
+          },
+        })
+      }
+
     })
 
     await ctx.permission.hook("evaluate", async (event) => {
@@ -4008,30 +4110,34 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         return
       }
 
-      if (event.agent && conversationalInvestigationAgents.has(event.agent)) {
-        const workflowId = (await ctx.storage.get(sessionKey(event.sessionID))) as string | undefined
-        if (!workflowId) {
-          if (event.action === "edit") {
-            const reportOnly =
-              event.resources.length > 0 &&
-              event.resources.every((resource) =>
-                resourceMatchesScope(resource, `ephemeral-reports/${event.agent}/**`),
-              )
-            if (!reportOnly) {
-              event.effect = "deny"
-              event.message =
-                "Conversational Research/Diagnostic is advisory and cannot edit product files."
-              return
-            }
+      if (
+        (event.agent === "research" || event.agent === "diagnostic") &&
+        (event.action === "shell" || event.action === "edit")
+      ) {
+        const workflow = await activeWorkflow(ctx, event.sessionID, ensureLegacySession)
+        const conversational = !workflow || workflowBindingTerminal(workflow)
+
+        if (conversational && event.action === "shell") {
+          if (!shellResourcesAllowed(event.resources)) {
+            event.effect = "deny"
+            event.message =
+              "Conversational Research/Diagnostic shell access is read-only: use Loom's safe inspection/verification commands and do not mutate product state."
           }
-          if (event.action === "shell") {
-            if (!shellResourcesAllowed(event.resources)) {
-              event.effect = "deny"
-              event.message =
-                "Conversational Research/Diagnostic shell is limited to Loom's non-mutating inspection and verification commands."
-            }
+          return
+        }
+
+        if (conversational && event.action === "edit") {
+          const reportScope = `ephemeral-reports/${event.agent}/**`
+          if (
+            event.resources.length > 0 &&
+            event.resources.every((resource) => resourceMatchesScope(resource, reportScope))
+          ) {
             return
           }
+          event.effect = "deny"
+          event.message =
+            `Conversational ${event.agent} may only edit its own ${reportScope} report namespace; product/repository edits require governed execution.`
+          return
         }
       }
 
@@ -4101,19 +4207,16 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       if (!target) return
 
       const workflow = await activeWorkflow(ctx, event.sessionID, ensureLegacySession)
-      if (!workflow) {
-        if (conversationalInvestigationAgents.has(target)) return
-
+      if (!workflow || workflowBindingTerminal(workflow)) {
+        if (target === "research" || target === "diagnostic") {
+          // Conversation-first boundary: a fresh session, or a session whose
+          // previous workflow is terminal, may use Research/Diagnostic as
+          // advisory non-mutating capabilities without reviving governed state.
+          return
+        }
         event.effect = "deny"
-        event.message = "Start and route a Loom workflow before dispatching Loom subagents."
-        return
-      }
-
-      if (workflowBindingTerminal(workflow) && conversationalInvestigationAgents.has(target)) return
-
-      if (workflow.steps.length === 0) {
-        event.effect = "deny"
-        event.message = "Route the active Loom workflow before dispatching governed Loom subagents."
+        event.message =
+          "Only conversational Research or Diagnostic may run without an active Loom workflow. Start and route governed execution before dispatching other Loom subagents."
         return
       }
 
@@ -4176,6 +4279,10 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         event.effect = "deny"
         event.message = `Loom execution budget exhausted: ${recorded.reason}`
       }
+    })
+
+    await ctx.session.hook("context", (event) => {
+      event.system.push({ type: "text", text: LOOM_NATIVE_TOOL_GUIDANCE })
     })
 
     await ctx.session.hook("retry", (event) => {
@@ -4264,6 +4371,34 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         }
       }
 
+      // Evidence observation is passive bookkeeping. Do not trigger legacy
+      // session migration from a generic tool hook; canonical workflow binding
+      // is sufficient here and keeps observation compatible with hosts that do
+      // not expose session lookup on this path.
+      const observedWorkflow = await activeWorkflow(
+        ctx,
+        String(raw.sessionID),
+      )
+      const observedStepId =
+        observedWorkflow && !workflowBindingTerminal(observedWorkflow)
+          ? ((await ctx.storage.get(sessionStepKey(String(raw.sessionID)))) as string | undefined)
+          : undefined
+      const observedStep = observedStepId
+        ? observedWorkflow?.steps.find((step) => step.id === observedStepId)
+        : undefined
+      const observedStepRunnable =
+        observedWorkflow && observedStepId
+          ? runnable(observedWorkflow).some((step) => step.id === observedStepId)
+          : false
+      const governedEvidenceBinding =
+        observedWorkflow &&
+        observedStepId &&
+        observedStep &&
+        observedStepRunnable &&
+        (!raw.agent || observedStep.agent === String(raw.agent))
+          ? { workflowId: observedWorkflow.id, stepId: observedStepId }
+          : {}
+
       const observation: EvidenceObservation = {
         id: crypto.randomUUID(),
         sessionID: String(raw.sessionID),
@@ -4276,6 +4411,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         ...(raw.status === "error" ? { error: String(raw.error?.message ?? raw.error ?? "tool error").slice(0, 1000) } : {}),
         ...summary,
         ...(reportPromotion ? { reportPromotion } : {}),
+        ...governedEvidenceBinding,
       }
 
       await ctx.storage.set(evidenceKey(observation.id), observation)

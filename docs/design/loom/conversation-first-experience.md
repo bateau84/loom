@@ -156,4 +156,11 @@ Independent gates remain genuinely independent; "tool-like" does not mean Loom m
 - [BR-009](../../requirements/loom/br-009-maintain-living-repository-knowledge.md)
 - [BR-013](../../requirements/loom/br-013-diagnose-root-causes.md)
 - [BR-014](../../requirements/loom/br-014-support-deliberate-sparring.md)
-- [BR-019](../../requirements/loom/br-019-conversation-is-primary-interface.md)
+- [BR-020](../../requirements/loom/br-020-conversation-is-primary-interface.md)
+
+
+## Proportional delivery behind the conversation
+
+This interface builds on [BR-019](../../requirements/loom/br-019-keep-workflow-ceremony-proportional.md), not a second execution engine. Task and Change may be request-backed; Objective requires accepted product authority. Loom chooses depth and specialist authority automatically after execution is warranted.
+
+The merged control plane remains the owner of conversational mutation limits, grants, terminal bindings, and observation-time evidence provenance. The primary-agent change must not restore older permission hooks or retroactive evidence attachment. Independent gates remain independent.

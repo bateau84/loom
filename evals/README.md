@@ -46,9 +46,9 @@ Each case includes:
 - positive `expectations`
 - forbidden `must_not` behavior
 - optional deterministic tool assertions
-- optional runtime action assertions that match a tool plus one concrete argument with `equals` or `ends_with`
+- optional runtime action assertions that match a tool alone or a tool argument with `equals`, `ends_with`, or `contains`; `actions.any_of` groups accept any one equivalent action
 
-Action assertions are runtime-only. They are evaluated against observed OpenCode tool actions and their captured input arguments. Use them when tool identity alone is insufficient—for example, to prove that Reviewer read a specific `ASSESSMENT.md` or Critic read a specific `QA.md`.
+Action assertions are runtime-only. They are evaluated against observed OpenCode tool actions and their captured input arguments. Use them when tool identity alone is insufficient—for example, to prove that Reviewer read a specific `ASSESSMENT.md` or Critic read a specific `QA.md`. `output.contains` and `output.forbids` assert literal text in the target model's final user-facing output.
 
 Assertions use stable semantic argument names. The harness currently normalizes OpenCode V2 aliases such as `skill.id` ↔ `skill.name` and `read.path` ↔ `read.filePath`, so behavioral cases do not become coupled to a transport-only parameter rename.
 
@@ -59,7 +59,14 @@ Example:
   "actions": {
     "requires": [
       {"tool": "skill", "arg": "name", "equals": "golang-concurrency"},
-      {"tool": "read", "arg": "filePath", "ends_with": "skills/golang-concurrency/ASSESSMENT.md"}
+      {"tool": "read", "arg": "filePath", "ends_with": "skills/golang-concurrency/ASSESSMENT.md"},
+      {"tool": "execute", "arg": "code", "contains": "tools.browser.preview"}
+    ],
+    "any_of": [
+      [
+        {"tool": "loom_status"},
+        {"tool": "execute", "arg": "code", "contains": "tools.loom.code.status"}
+      ]
     ],
     "forbids": [
       {"tool": "read", "arg": "filePath", "ends_with": "skills/golang-concurrency/QA.md"}
@@ -132,6 +139,37 @@ bun run eval:live -- --target-kind skill --model openai/gpt-5.5
 bun run eval:live -- --target-kind skill --target web-ui-design --model openai/gpt-5.5
 ```
 
+### Parallelism and runtime evidence
+
+`--parallel N` parallelizes non-runtime eval work. Runtime cases are serialized by default even when `--parallel` is larger than one.
+
+That distinction is deliberate: one runtime case can already dispatch multiple model-backed Loom subagents internally. Running several runtime cases concurrently changes a behavioral repeatability run into a provider/OpenCode load test and can create wall-clock timeout noise unrelated to the behavioral contract.
+
+Use repeated runtime cases for behavioral stability like this:
+
+```bash
+bun run eval:live -- \
+  --cases PROP-RUNTIME-01 \
+  --iterations 3 \
+  --parallel 3 \
+  --model openai/gpt-5.6-luna
+```
+
+The runtime iterations still execute sequentially; unrelated role-decision/skill cases may use the ordinary parallel budget.
+
+To intentionally stress concurrent runtime execution, opt in explicitly:
+
+```bash
+bun run eval:live -- \
+  --cases PROP-RUNTIME-01 \
+  --iterations 3 \
+  --parallel 3 \
+  --runtime-parallel 3 \
+  --model openai/gpt-5.6-luna
+```
+
+Results from `--runtime-parallel >1` are load/stress evidence as well as behavioral evidence. Provider or wall-clock timeout failures from that mode should not be interpreted as a semantic regression without reproducing them under normal serialized runtime execution.
+
 Skill evaluation has two complementary sources:
 
 - central runtime cases in `evals/skills.json` test production-role skill discovery and companion-methodology behavior with one normal runtime execution;
@@ -166,8 +204,8 @@ The harness chooses Podman first, then Docker. Override it explicitly with `--en
 The harness pins the runner images by digest so the Action source and container runtime cannot drift independently:
 
 ```text
-OpenCode: ghcr.io/bateau84/opencode-eval-runner@sha256:5cc9571629bfba84636d5205e04ed6a0b6cbd77369061a25ccee5377631570ae
-Copilot:  ghcr.io/bateau84/opencode-eval-runner@sha256:ada713db25e57a76d1e35a9bbd2c507bb2f3300c128ea44efc8b3d74d80dcdc9
+OpenCode: ghcr.io/bateau84/opencode-eval-runner@sha256:3e5f95ce54fee127230c5bf84a7f09124a2236dfca544269e6547c8f79e8ad5d
+Copilot:  ghcr.io/bateau84/opencode-eval-runner@sha256:8def0aa1885b0e60b36a1434c2725667b1b9555def31426f08dd7e2a87dc02c5
 ```
 
 Override them independently with `--opencode-image` / `--copilot-image`, or use `--image` to force one explicit image for both transports. Changing the pinned runner revision and image digests is one compatibility update.
@@ -304,3 +342,24 @@ A failure may be:
 3. **harness/provider** — OpenCode/provider/judge execution failed.
 
 Harness/provider failure is non-evidence. It must not be counted as behavioral PASS or FAIL.
+
+
+## Conversation-first tests and explicit cost boundaries
+
+- `role-decision` checks the next production decision with tools denied.
+- `conversation-response` checks a user-facing answer from supplied context with tools denied. It receives no decision-only prompt suffix.
+- `runtime` runs the real host/plugin and may invoke model-backed specialists.
+
+`CONVERSATION-02` covers research routing. `CONVERSATION-02-SYNTH` supplies a mock Research brief for synthesis, trade-offs, and source preservation. Neither invokes a Research model. The reference check counts distinct supplied URLs, not repetitions or invented references; the semantic judge still checks the comparison.
+
+Every top-level suite remains discoverable and schema-validated. A suite with `"default": false` is excluded from default execution, including `--all`, `--target`, and ordinary case selection. Explicit `--suite` selection opts into it. Omitted `default` means true; malformed metadata fails rather than silently spending inference.
+
+Real nested research is opt-in:
+
+```sh
+bun run eval:live -- --suite evals/live-integration.json --cases CONVERSATION-02-LIVE --iterations 1 --network host --model <model>
+```
+
+That suite retains a 360-second target limit with at least 420 seconds for the outer container. Other cases keep the global defaults. Runtime cases remain serialized unless `--runtime-parallel` explicitly requests load testing; `--parallel` applies to non-runtime tests.
+
+A mocked synthesis PASS proves only the response from supplied context. It does not prove that Research ran, that the mock describes the current repository, or that the complete runtime interaction passed. Record the tested revision and distinguish focused results from a full same-head suite run.

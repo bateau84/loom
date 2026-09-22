@@ -11,6 +11,7 @@ export function buildSidebarSnapshot(
   workflow?: Workflow,
   questions: OpenQuestion[] = [],
   hierarchy?: WorkHierarchy,
+  statusUrl?: string,
 ): LoomSidebarSnapshot {
   if (!workflow) {
     return {
@@ -76,6 +77,7 @@ export function buildSidebarSnapshot(
       failed: failed.length,
     },
     ...(work ? { work } : {}),
+    ...(statusUrl ? { statusUrl } : {}),
     tasks: plannedTaskSteps(workflow).map((step) => {
       let status: LoomSidebarTaskStatus = "pending"
       if (step.status === "failed") status = "failed"

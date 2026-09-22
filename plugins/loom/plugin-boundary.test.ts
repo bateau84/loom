@@ -30,6 +30,7 @@ class MemoryStorage {
 
 type RegisteredTool = {
   name: string
+  options?: { namespace?: string; codemode?: boolean; permission?: string }
   execute: (input: unknown, tool: { agent: string; sessionID: string }) => Promise<{ content: string }>
 }
 
@@ -50,6 +51,8 @@ async function harness(
   process.env.LOOM_TOOL_OUTPUT = "json"
 
   const registered = new Map<string, RegisteredTool>()
+  const namespaces = new Map<string, string>()
+  const sessionHooks = new Map<string, (event: any) => void | Promise<void>>()
   const permissionHooks = new Map<string, (event: any) => void | Promise<void>>()
   const toolHooks = new Map<string, (event: any) => void | Promise<void>>()
   const storage = existing?.storage ?? new MemoryStorage()
@@ -70,8 +73,15 @@ async function harness(
     tool: {
       transform: async (fn: (editor: any) => unknown) =>
         fn({
-          namespace: () => {},
-          add: (definition: RegisteredTool) => registered.set(definition.name, definition),
+          namespace: (definition: { name: string; description: string }) =>
+            namespaces.set(definition.name, definition.description),
+          list: () =>
+            [...registered.entries()].map(([id, definition]) => ({ ...definition, id })),
+          add: (definition: RegisteredTool) => {
+            const namespace = definition.options?.namespace
+            const id = namespace ? `${namespace.replaceAll(".", "_")}_${definition.name}` : definition.name
+            registered.set(id, definition)
+          },
         }),
       hook: async (name: string, fn: (event: any) => void | Promise<void>) => {
         toolHooks.set(name, fn)
@@ -88,7 +98,10 @@ async function harness(
           id: sessionID,
           projectID,
         },
-      hook: async () => {},
+      hook: async (name: string, callback: (event: any) => void | Promise<void>) => {
+        sessionHooks.set(name, callback)
+        return { dispose: async () => {} }
+      },
     },
   }
 
@@ -106,7 +119,7 @@ async function harness(
     agent: string,
     sessionID: string,
   ) => {
-    const tool = registered.get(name)
+    const tool = registered.get(name) ?? registered.get(`loom_${name}`)
     if (!tool) throw new Error(`Tool not registered: ${name}`)
     const result = await tool.execute(input, { agent, sessionID })
     return JSON.parse(result.content)
@@ -119,7 +132,7 @@ async function harness(
     sessionID: string,
     callID: string,
   ) => {
-    const tool = registered.get(name)
+    const tool = registered.get(name) ?? registered.get(`loom_${name}`)
     if (!tool) throw new Error(`Tool not registered: ${name}`)
     const toolName = `loom_${name}`
     await toolHooks.get("execute.before")?.({
@@ -165,14 +178,7 @@ async function harness(
     else process.env.LOOM_TOOL_OUTPUT = previousOutput
   }
 
-  const evaluatePermission = async (event: any) => {
-    const hook = permissionHooks.get("evaluate")
-    if (!hook) throw new Error("Permission evaluate hook not registered")
-    await hook(event)
-    return event
-  }
-
-  return { root, storage, projectID, registered, permissionHooks, toolHooks, durableStorage, call, callObserved, evaluatePermission, restore }
+  return { root, storage, projectID, registered, namespaces, sessionHooks, permissionHooks, toolHooks, durableStorage, call, callObserved, restore }
 }
 
 afterEach(async () => {
@@ -180,154 +186,51 @@ afterEach(async () => {
 })
 
 describe("Loom registered plugin boundary", () => {
-  test("allows conversational Research and Diagnostic before workflow start but keeps governed agents gated", async () => {
-    const { evaluatePermission, restore } = await harness()
+  test("registers equivalent Code Mode mirrors without removing native Loom tools", async () => {
+    const { registered, namespaces, restore } = await harness()
     try {
-      for (const target of ["research", "diagnostic"]) {
-        const event = await evaluatePermission({
-          agent: "general",
-          action: "subagent",
-          resources: [target],
-          sessionID: "conversation-session",
-          effect: "allow",
-          source: { messageID: "message", id: `dispatch-${target}` },
-        })
-        expect(event.effect).toBe("allow")
-        expect(event.message).toBeUndefined()
-      }
+      expect(namespaces.get("loom.code")).toContain("Code Mode mirrors")
 
-      const worker = await evaluatePermission({
-        agent: "general",
-        action: "subagent",
-        resources: ["worker"],
-        sessionID: "conversation-session",
-        effect: "allow",
-        source: { messageID: "message", id: "dispatch-worker" },
+      const native = registered.get("loom_start")
+      const mirror = registered.get("loom_code_start")
+      expect(native).toBeDefined()
+      expect(mirror).toBeDefined()
+      expect(native?.options).toMatchObject({ namespace: "loom", codemode: false })
+      expect(mirror?.options).toMatchObject({
+        namespace: "loom.code",
+        codemode: true,
+        permission: "loom_start",
       })
-      expect(worker.effect).toBe("deny")
-      expect(worker.message).toContain("Start and route a Loom workflow")
+      expect(mirror?.execute).toBe(native?.execute)
+
+      const nativeStatus = registered.get("loom_status")
+      const mirrorStatus = registered.get("loom_code_status")
+      expect(nativeStatus).toBeDefined()
+      expect(mirrorStatus).toBeDefined()
+      expect(mirrorStatus?.execute).toBe(nativeStatus?.execute)
+      expect(mirrorStatus?.options?.permission).toBe("loom_status")
     } finally {
       restore()
     }
   })
 
-  test("allows conversational investigation after a terminal workflow remains bound", async () => {
-    const sessionID = "terminal-conversation"
-    const workflowId = "terminal-workflow"
-    const { evaluatePermission, restore } = await harness(async (storage) => {
-      await storage.set(`session/${sessionID}`, workflowId)
-      await storage.set(`workflow/${workflowId}`, {
-        id: workflowId,
-        anchor: "docs/anchors/test/anchor.md",
-        createdBySession: sessionID,
-        createdAt: "before-project-scoping",
-        steps: [
-          { id: "worker", agent: "worker", kind: "work", dependsOn: [], status: "complete" },
-          { id: "review-implementation", agent: "reviewer", kind: "gate", dependsOn: ["worker"], status: "passed" },
-        ],
-      })
-    })
+  test("session context tells Code Mode models to call native Loom tools directly", async () => {
+    const { sessionHooks, restore } = await harness()
     try {
-      const event = await evaluatePermission({
-        agent: "general",
-        action: "subagent",
-        resources: ["research"],
-        sessionID,
-        effect: "allow",
-        source: { messageID: "message", id: "post-workflow-research" },
-      })
-      expect(event.effect).toBe("allow")
-      expect(event.message).toBeUndefined()
-    } finally {
-      restore()
-    }
-  })
-
-  test("restricts conversational Research and Diagnostic to safe non-product mutation", async () => {
-    const { evaluatePermission, restore } = await harness()
-    try {
-      for (const agent of ["research", "diagnostic"]) {
-        const safe = await evaluatePermission({
-          agent,
-          action: "shell",
-          resources: ["rg retry src"],
-          sessionID: `${agent}-conversation`,
-          effect: "allow",
-        })
-        expect(safe.effect).toBe("allow")
-        expect(safe.message).toBeUndefined()
-
-        const mutation = await evaluatePermission({
-          agent,
-          action: "shell",
-          resources: ["rm -rf src"],
-          sessionID: `${agent}-conversation`,
-          effect: "allow",
-        })
-        expect(mutation.effect).toBe("deny")
-        expect(mutation.message).toContain("non-mutating inspection and verification")
-
-        const edit = await evaluatePermission({
-          agent,
-          action: "edit",
-          resources: ["src/app.ts"],
-          sessionID: `${agent}-conversation`,
-          effect: "allow",
-        })
-        expect(edit.effect).toBe("deny")
-        expect(edit.message).toContain("cannot edit product files")
-
-        const report = await evaluatePermission({
-          agent,
-          action: "edit",
-          resources: [`ephemeral-reports/${agent}/conversation.md`],
-          sessionID: `${agent}-conversation`,
-          effect: "allow",
-        })
-        expect(report.effect).toBe("allow")
-      }
-    } finally {
-      restore()
-    }
-  })
-
-  test("does not let conversational Research or Diagnostic bypass an active workflow grant", async () => {
-    const { call, evaluatePermission, restore } = await harness()
-    try {
-      const started = await call(
-        "start",
-        { anchor: "docs/anchors/test/anchor.md" },
-        "general",
-        "general-session",
-      )
-      expect(started.error).toBeUndefined()
-
-      const routed = await call(
-        "route",
-        {
-          humanFacing: false,
-          behavioral: false,
-          structural: false,
-          externalUnknown: true,
-          diagnostic: false,
-          productOutcome: false,
-        },
-        "general",
-        "general-session",
-      )
-      expect(routed.error).toBeUndefined()
-      expect(routed.now).toEqual([{ step: "research", agent: "research" }])
-
-      const withoutGrant = await evaluatePermission({
-        agent: "general",
-        action: "subagent",
-        resources: ["research"],
-        sessionID: "general-session",
-        effect: "allow",
-        source: { messageID: "message", id: "dispatch-research" },
-      })
-      expect(withoutGrant.effect).toBe("deny")
-      expect(withoutGrant.message).toContain("loom_dispatch_grant")
+      const hook = sessionHooks.get("context")
+      expect(hook).toBeDefined()
+      const event = { system: [] as Array<{ type: string; text: string }> }
+      await hook!(event)
+      expect(event.system).toHaveLength(1)
+      expect(event.system[0]?.text).toContain("loom_*")
+      expect(event.system[0]?.text).toContain("two equivalent OpenCode surfaces")
+      expect(event.system[0]?.text).toContain("tools.loom.code.*")
+      expect(event.system[0]?.text).toContain("do not fall back to shell/filesystem discovery")
+      expect(event.system[0]?.text).toContain("dashboard-first")
+      expect(event.system[0]?.text).toContain("does not depend on model prose")
+      expect(event.system[0]?.text).toContain("stable workflow dashboard URL")
+      expect(event.system[0]?.text).toContain("Desktop browser preview is optional")
+      expect(event.system[0]?.text).toContain("do not invoke tools.browser.preview")
     } finally {
       restore()
     }
@@ -542,6 +445,8 @@ describe("Loom registered plugin boundary", () => {
           externalUnknown: false,
           diagnostic: false,
           productOutcome: false,
+          implementationRequested: true,
+          executionDepth: "task",
         },
         "general",
         "general-session",
@@ -958,6 +863,825 @@ Verdict: FAIL
       await evaluate!(directShell)
       expect(directShell.effect).toBe("deny")
       expect(directShell.message).toContain("Shell access to durable report storage is blocked")
+    } finally {
+      restore()
+    }
+  })
+
+  test("bounded request workflows start without an Anchor and stay shallow", async () => {
+    const { call, restore } = await harness()
+    try {
+      const started = await call(
+        "start",
+        { request: "Debug the frontend-to-backend call and identify why it returns 401." },
+        "general",
+        "bounded-task-session",
+      )
+      expect(started.error).toBeUndefined()
+      expect(started.request).toContain("frontend-to-backend")
+      expect(String(started.anchor)).toStartWith("task:")
+
+      const routed = await call(
+        "route",
+        {
+          humanFacing: false,
+          behavioral: false,
+          structural: false,
+          externalUnknown: false,
+          diagnostic: true,
+          productOutcome: false,
+          implementationRequested: false,
+          executionDepth: "task",
+        },
+        "general",
+        "bounded-task-session",
+      )
+      expect(routed.error).toBeUndefined()
+      expect(routed.path.map((step: { step: string }) => step.step)).toEqual([
+        "diagnostic",
+        "review-task",
+      ])
+      expect(routed.path.some((step: { agent: string }) => step.agent === "worker")).toBe(false)
+      expect(routed.path.some((step: { agent: string }) => step.agent === "planner")).toBe(false)
+      expect(routed.path.some((step: { agent: string }) => step.agent === "critic")).toBe(false)
+      expect(routed.continuation).toEqual({
+        next: [{ step: "diagnostic", agent: "diagnostic" }],
+        implementationRequested: false,
+        workerPresent: false,
+        instruction:
+          "Issue loom_dispatch_grant for the exact runnable step, dispatch that owner, then call loom_status immediately after the child returns.",
+      })
+    } finally {
+      restore()
+    }
+  })
+
+
+  test("completed task implementation may escalate to Change and resets implementation work", async () => {
+    const { call, restore } = await harness()
+    try {
+      const started = await call(
+        "start",
+        { request: "Fix the local 401 bug in the frontend request." },
+        "general",
+        "escalation-general",
+      )
+      expect(started.error).toBeUndefined()
+      const workflowId = String(started.workflowId)
+
+      const initial = await call(
+        "route",
+        {
+          humanFacing: false,
+          behavioral: false,
+          structural: false,
+          externalUnknown: false,
+          diagnostic: false,
+          productOutcome: true,
+          implementationRequested: true,
+          executionDepth: "task",
+        },
+        "general",
+        "escalation-general",
+      )
+      expect(initial.error).toBeUndefined()
+
+      await call(
+        "task_scope",
+        { workflowId, stepId: "worker", write: ["src/frontend/**"] },
+        "general",
+        "escalation-general",
+      )
+      const grant = await call(
+        "dispatch_grant",
+        { workflowId, stepId: "worker" },
+        "general",
+        "escalation-general",
+      )
+      await call(
+        "attach",
+        { grantId: grant.grantId, workflowId, stepId: "worker" },
+        "worker",
+        "escalation-worker",
+      )
+      const completed = await call(
+        "complete",
+        { workflowId, stepId: "worker", summary: "Found shared auth boundary across callers." },
+        "worker",
+        "escalation-worker",
+      )
+      expect(completed.error).toBeUndefined()
+
+      const escalated = await call(
+        "route",
+        {
+          humanFacing: false,
+          behavioral: false,
+          structural: true,
+          externalUnknown: false,
+          diagnostic: false,
+          productOutcome: true,
+          implementationRequested: true,
+          executionDepth: "change",
+        },
+        "general",
+        "escalation-general",
+      )
+      expect(escalated.error).toBeUndefined()
+      expect(escalated.path.map((step: { step: string }) => step.step)).toEqual([
+        "architect",
+        "review-architecture",
+        "worker",
+        "review-implementation",
+        "knowledge-sync",
+      ])
+
+      const status = await call(
+        "status",
+        { workflowId, detail: true },
+        "general",
+        "escalation-general",
+      )
+      expect(status.workflow.steps.find((step: any) => step.id === "worker").status).toBe("pending")
+      expect(status.workflow.steps.find((step: any) => step.id === "architect").status).toBe("pending")
+
+      const scope = await call(
+        "scope_status",
+        { workflowId, stepId: "worker" },
+        "general",
+        "escalation-general",
+      )
+      expect(scope.scope).toBeNull()
+    } finally {
+      restore()
+    }
+  })
+
+  test("objective route rejects productOutcome=false instead of silently degrading", async () => {
+    const { call, restore } = await harness()
+    try {
+      const started = await call(
+        "start",
+        { anchor: "docs/anchors/test/anchor.md" },
+        "general",
+        "invalid-objective-session",
+      )
+      expect(started.error).toBeUndefined()
+
+      const routed = await call(
+        "route",
+        {
+          humanFacing: false,
+          behavioral: false,
+          structural: false,
+          externalUnknown: false,
+          diagnostic: false,
+          productOutcome: false,
+          implementationRequested: true,
+          executionDepth: "objective",
+        },
+        "general",
+        "invalid-objective-session",
+      )
+      expect(routed.error).toContain("Objective execution depth requires productOutcome=true")
+    } finally {
+      restore()
+    }
+  })
+
+
+  test("completed read-only Task may promote to an implementation Change", async () => {
+    const { call, restore } = await harness()
+    try {
+      const started = await call(
+        "start",
+        { request: "Function-test the overlay and report findings only." },
+        "general",
+        "readonly-escalation-general",
+      )
+      expect(started.error).toBeUndefined()
+      const workflowId = String(started.workflowId)
+
+      const initial = await call(
+        "route",
+        {
+          humanFacing: false,
+          behavioral: false,
+          structural: false,
+          externalUnknown: false,
+          diagnostic: false,
+          productOutcome: false,
+          implementationRequested: false,
+          executionDepth: "task",
+        },
+        "general",
+        "readonly-escalation-general",
+      )
+      expect(initial.path.map((step: { step: string }) => step.step)).toEqual(["review-task"])
+
+      const reviewGrant = await call(
+        "dispatch_grant",
+        { workflowId, stepId: "review-task" },
+        "general",
+        "readonly-escalation-general",
+      )
+      await call(
+        "attach",
+        { grantId: reviewGrant.grantId, workflowId, stepId: "review-task" },
+        "reviewer",
+        "readonly-escalation-reviewer",
+      )
+      const reviewed = await call(
+        "complete",
+        {
+          workflowId,
+          stepId: "review-task",
+          outcome: "pass",
+          summary: "Finding: shared overlay focus semantics are undefined.",
+        },
+        "reviewer",
+        "readonly-escalation-reviewer",
+      )
+      expect(reviewed.error).toBeUndefined()
+
+      const escalated = await call(
+        "route",
+        {
+          humanFacing: true,
+          behavioral: true,
+          structural: false,
+          externalUnknown: false,
+          diagnostic: false,
+          productOutcome: true,
+          implementationRequested: true,
+          executionDepth: "change",
+        },
+        "general",
+        "readonly-escalation-general",
+      )
+      expect(escalated.error).toBeUndefined()
+      expect(escalated.path.map((step: { step: string }) => step.step)).toEqual([
+        "designer",
+        "specifier",
+        "review-think",
+        "worker",
+        "review-implementation",
+      ])
+      expect(escalated.now.map((step: { step: string }) => step.step).sort()).toEqual([
+        "designer",
+        "specifier",
+      ])
+    } finally {
+      restore()
+    }
+  })
+
+
+  test("conversational Research and Diagnostic are technically non-mutating", async () => {
+    const { permissionHooks, restore } = await harness()
+    try {
+      const evaluate = permissionHooks.get("evaluate")
+      expect(evaluate).toBeDefined()
+
+      for (const [agent, command] of [
+        ["research", "git status"],
+        ["diagnostic", "rg failure src"],
+      ] as const) {
+        const safeShell: any = {
+          agent,
+          action: "shell",
+          resources: [command],
+          sessionID: `conversation-${agent}`,
+          effect: "allow",
+        }
+        await evaluate!(safeShell)
+        expect(safeShell.effect).toBe("allow")
+      }
+
+      for (const agent of ["research", "diagnostic"] as const) {
+        const mutatingShell: any = {
+          agent,
+          action: "shell",
+          resources: ["rm -f src/app.ts"],
+          sessionID: `conversation-${agent}`,
+          effect: "allow",
+        }
+        await evaluate!(mutatingShell)
+        expect(mutatingShell.effect).toBe("deny")
+        expect(mutatingShell.message).toContain("read-only")
+
+        const productEdit: any = {
+          agent,
+          action: "edit",
+          resources: ["src/app.ts"],
+          sessionID: `conversation-${agent}`,
+          effect: "allow",
+        }
+        await evaluate!(productEdit)
+        expect(productEdit.effect).toBe("deny")
+        expect(productEdit.message).toContain("product/repository edits require governed execution")
+
+        const ownReportEdit: any = {
+          agent,
+          action: "edit",
+          resources: [`ephemeral-reports/${agent}/finding.md`],
+          sessionID: `conversation-${agent}`,
+          effect: "allow",
+        }
+        await evaluate!(ownReportEdit)
+        expect(ownReportEdit.effect).toBe("allow")
+
+        const otherReportEdit: any = {
+          agent,
+          action: "edit",
+          resources: [
+            `ephemeral-reports/${agent === "research" ? "diagnostic" : "research"}/finding.md`,
+          ],
+          sessionID: `conversation-${agent}`,
+          effect: "allow",
+        }
+        await evaluate!(otherReportEdit)
+        expect(otherReportEdit.effect).toBe("deny")
+      }
+    } finally {
+      restore()
+    }
+  })
+
+  test("active workflows do not grant conversational Research or Diagnostic bypass", async () => {
+    const { call, permissionHooks, restore } = await harness()
+    try {
+      const evaluate = permissionHooks.get("evaluate")
+      expect(evaluate).toBeDefined()
+
+      const unrouted = await call(
+        "start",
+        { request: "Track a bounded investigation." },
+        "general",
+        "active-unrouted-general",
+      )
+      expect(unrouted.error).toBeUndefined()
+
+      const beforeRoute: any = {
+        agent: "general",
+        action: "subagent",
+        resources: ["research"],
+        sessionID: "active-unrouted-general",
+        source: { messageID: "message", id: "call-unrouted-research" },
+      }
+      await evaluate!(beforeRoute)
+      expect(beforeRoute.effect).toBe("deny")
+
+      for (const target of ["research", "diagnostic"] as const) {
+        const sessionID = `active-${target}-general`
+        const started = await call(
+          "start",
+          { request: `Track governed ${target} work.` },
+          "general",
+          sessionID,
+        )
+        expect(started.error).toBeUndefined()
+        const workflowId = String(started.workflowId)
+
+        const routed = await call(
+          "route",
+          {
+            humanFacing: false,
+            behavioral: false,
+            structural: false,
+            externalUnknown: target === "research",
+            diagnostic: target === "diagnostic",
+            productOutcome: false,
+            implementationRequested: false,
+            executionDepth: "task",
+          },
+          "general",
+          sessionID,
+        )
+        expect(routed.error).toBeUndefined()
+        expect(routed.now).toContainEqual({ step: target, agent: target })
+
+        const withoutGrant: any = {
+          agent: "general",
+          action: "subagent",
+          resources: [target],
+          sessionID,
+          source: { messageID: "message", id: `call-${target}-without-grant` },
+        }
+        await evaluate!(withoutGrant)
+        expect(withoutGrant.effect).toBe("deny")
+        expect(withoutGrant.message).toContain("loom_dispatch_grant")
+
+        const grant = await call(
+          "dispatch_grant",
+          { workflowId, stepId: target },
+          "general",
+          sessionID,
+        )
+        expect(grant.expectedAgent).toBe(target)
+
+        const withGrant: any = {
+          agent: "general",
+          action: "subagent",
+          resources: [target],
+          sessionID,
+          source: { messageID: "message", id: `call-${target}-with-grant` },
+        }
+        await evaluate!(withGrant)
+        expect(withGrant.effect).not.toBe("deny")
+      }
+    } finally {
+      restore()
+    }
+  })
+
+  test("terminal workflow bindings return General to conversational investigation", async () => {
+    const { call, permissionHooks, restore } = await harness()
+    try {
+      const evaluate = permissionHooks.get("evaluate")
+      expect(evaluate).toBeDefined()
+      const generalSession = "terminal-conversation-general"
+
+      const started = await call(
+        "start",
+        { request: "Perform tracked read-only verification." },
+        "general",
+        generalSession,
+      )
+      expect(started.error).toBeUndefined()
+      const workflowId = String(started.workflowId)
+
+      const routed = await call(
+        "route",
+        {
+          humanFacing: false,
+          behavioral: false,
+          structural: false,
+          externalUnknown: false,
+          diagnostic: false,
+          productOutcome: false,
+          implementationRequested: false,
+          executionDepth: "task",
+        },
+        "general",
+        generalSession,
+      )
+      expect(routed.now).toEqual([{ step: "review-task", agent: "reviewer" }])
+
+      const grant = await call(
+        "dispatch_grant",
+        { workflowId, stepId: "review-task" },
+        "general",
+        generalSession,
+      )
+      await call(
+        "attach",
+        { grantId: grant.grantId, workflowId, stepId: "review-task" },
+        "reviewer",
+        "terminal-conversation-reviewer",
+      )
+      const completed = await call(
+        "complete",
+        {
+          workflowId,
+          stepId: "review-task",
+          outcome: "pass",
+          summary: "Tracked verification complete.",
+        },
+        "reviewer",
+        "terminal-conversation-reviewer",
+      )
+      expect(completed.error).toBeUndefined()
+      expect(completed.runnable).toEqual([])
+
+      for (const target of ["research", "diagnostic"] as const) {
+        const conversational: any = {
+          agent: "general",
+          action: "subagent",
+          resources: [target],
+          sessionID: generalSession,
+          source: { messageID: "later-message", id: `later-${target}` },
+        }
+        await evaluate!(conversational)
+        expect(conversational.effect).not.toBe("deny")
+      }
+
+      for (const target of ["worker", "designer", "reviewer"] as const) {
+        const governed: any = {
+          agent: "general",
+          action: "subagent",
+          resources: [target],
+          sessionID: generalSession,
+          source: { messageID: "later-message", id: `later-${target}` },
+        }
+        await evaluate!(governed)
+        expect(governed.effect).toBe("deny")
+      }
+    } finally {
+      restore()
+    }
+  })
+
+  test("conversational observations cannot be laundered into governed evidence", async () => {
+    const { call, toolHooks, durableStorage, restore } = await harness()
+    try {
+      const diagnosticSession = "evidence-laundering-diagnostic"
+      const generalSession = "evidence-laundering-general"
+
+      const observeShell = async (callID: string, command: string) => {
+        await toolHooks.get("execute.before")?.({
+          tool: "shell",
+          callID,
+          sessionID: diagnosticSession,
+          agent: "diagnostic",
+          input: { command },
+        })
+        await toolHooks.get("execute.after")?.({
+          tool: "shell",
+          callID,
+          sessionID: diagnosticSession,
+          agent: "diagnostic",
+          input: { command },
+          status: "completed",
+          result: "ok",
+        })
+        const records = (await durableStorage.scan({ prefix: "evidence/", limit: 1000 })).entries
+          .map((entry: any) => entry.value)
+          .filter((value: any) =>
+            value?.sessionID === diagnosticSession &&
+            value?.command === command
+          )
+        expect(records).toHaveLength(1)
+        return records[0]
+      }
+
+      const conversational = await observeShell("pre-workflow", "git status")
+      expect(conversational.workflowId).toBeUndefined()
+      expect(conversational.stepId).toBeUndefined()
+
+      const started = await call(
+        "start",
+        { request: "Track a governed diagnosis and independently review it." },
+        "general",
+        generalSession,
+      )
+      expect(started.error).toBeUndefined()
+      const workflowId = String(started.workflowId)
+
+      const routed = await call(
+        "route",
+        {
+          humanFacing: false,
+          behavioral: false,
+          structural: false,
+          externalUnknown: false,
+          diagnostic: true,
+          productOutcome: false,
+          implementationRequested: false,
+          executionDepth: "task",
+        },
+        "general",
+        generalSession,
+      )
+      expect(routed.now).toContainEqual({ step: "diagnostic", agent: "diagnostic" })
+
+      const grant = await call(
+        "dispatch_grant",
+        { workflowId, stepId: "diagnostic" },
+        "general",
+        generalSession,
+      )
+      await call(
+        "attach",
+        { grantId: grant.grantId, workflowId, stepId: "diagnostic" },
+        "diagnostic",
+        diagnosticSession,
+      )
+
+      const governed = await observeShell("post-attach", "rg failure src")
+      expect(governed).toMatchObject({
+        workflowId,
+        stepId: "diagnostic",
+      })
+
+      const rejectedClaim = await call(
+        "evidence_claim",
+        {
+          workflowId,
+          stepId: "diagnostic",
+          kind: "other",
+          statement: "Conversational observation must not become governed proof.",
+          observationIds: [conversational.id],
+        },
+        "diagnostic",
+        diagnosticSession,
+      )
+      expect(rejectedClaim.error).toContain("captured while this session was attached")
+
+      const acceptedClaim = await call(
+        "evidence_claim",
+        {
+          workflowId,
+          stepId: "diagnostic",
+          kind: "other",
+          statement: "Governed diagnostic observation.",
+          observationIds: [governed.id],
+        },
+        "diagnostic",
+        diagnosticSession,
+      )
+      expect(acceptedClaim.error).toBeUndefined()
+      expect(acceptedClaim.claim.observationIds).toEqual([governed.id])
+
+      const required = await call(
+        "verification",
+        {
+          action: "require",
+          workflowId,
+          beforeStepId: "review-task",
+          kind: "other",
+          statement: "Reviewer must see governed diagnostic proof.",
+        },
+        "diagnostic",
+        diagnosticSession,
+      )
+      expect(required.error).toBeUndefined()
+      const requirementId = String(required.requirement.id)
+
+      const rejectedProof = await call(
+        "verification",
+        {
+          action: "prove",
+          workflowId,
+          requirementId,
+          statement: "Old conversational result.",
+          observationIds: [conversational.id],
+        },
+        "diagnostic",
+        diagnosticSession,
+      )
+      expect(rejectedProof.error).toContain("captured while this session was attached")
+
+      const acceptedProof = await call(
+        "verification",
+        {
+          action: "prove",
+          workflowId,
+          requirementId,
+          statement: "Governed diagnostic result.",
+          observationIds: [governed.id],
+        },
+        "diagnostic",
+        diagnosticSession,
+      )
+      expect(acceptedProof.error).toBeUndefined()
+      expect(acceptedProof.proven).toBe(requirementId)
+
+      const completed = await call(
+        "complete",
+        {
+          workflowId,
+          stepId: "diagnostic",
+          summary: "Governed diagnosis complete.",
+        },
+        "diagnostic",
+        diagnosticSession,
+      )
+      expect(completed.error).toBeUndefined()
+      expect(completed.runnable).toContainEqual({ id: "review-task", agent: "reviewer" })
+
+      const afterCompletedStep = await observeShell("post-complete", "git status --short")
+      expect(afterCompletedStep.workflowId).toBeUndefined()
+      expect(afterCompletedStep.stepId).toBeUndefined()
+    } finally {
+      restore()
+    }
+  })
+
+  test("failed terminal workflow bindings also return General to conversation", async () => {
+    const { call, permissionHooks, restore } = await harness()
+    try {
+      const evaluate = permissionHooks.get("evaluate")
+      expect(evaluate).toBeDefined()
+      const generalSession = "failed-terminal-general"
+
+      const started = await call(
+        "start",
+        { request: "Perform tracked verification that may fail." },
+        "general",
+        generalSession,
+      )
+      expect(started.error).toBeUndefined()
+      const workflowId = String(started.workflowId)
+      await call(
+        "route",
+        {
+          humanFacing: false,
+          behavioral: false,
+          structural: false,
+          externalUnknown: false,
+          diagnostic: false,
+          productOutcome: false,
+          implementationRequested: false,
+          executionDepth: "task",
+        },
+        "general",
+        generalSession,
+      )
+
+      const grant = await call(
+        "dispatch_grant",
+        { workflowId, stepId: "review-task" },
+        "general",
+        generalSession,
+      )
+      await call(
+        "attach",
+        { grantId: grant.grantId, workflowId, stepId: "review-task" },
+        "reviewer",
+        "failed-terminal-reviewer",
+      )
+      const failed = await call(
+        "complete",
+        {
+          workflowId,
+          stepId: "review-task",
+          outcome: "fail",
+          summary: "Verification failed.",
+        },
+        "reviewer",
+        "failed-terminal-reviewer",
+      )
+      expect(failed.error).toBeUndefined()
+
+      for (const target of ["research", "diagnostic"] as const) {
+        const event: any = {
+          agent: "general",
+          action: "subagent",
+          resources: [target],
+          sessionID: generalSession,
+          effect: "allow",
+          source: { messageID: "later-message", id: `failed-later-${target}` },
+        }
+        await evaluate!(event)
+        expect(event.effect).toBe("allow")
+      }
+
+      const worker: any = {
+        agent: "general",
+        action: "subagent",
+        resources: ["worker"],
+        sessionID: generalSession,
+        effect: "allow",
+        source: { messageID: "later-message", id: "failed-later-worker" },
+      }
+      await evaluate!(worker)
+      expect(worker.effect).toBe("deny")
+    } finally {
+      restore()
+    }
+  })
+
+  test("conversation may dispatch Research or Diagnostic without a workflow", async () => {
+    const { permissionHooks, restore } = await harness()
+    try {
+      const evaluate = permissionHooks.get("evaluate")
+      expect(evaluate).toBeDefined()
+
+      for (const target of ["research", "diagnostic"]) {
+        const event: any = {
+          agent: "general",
+          action: "subagent",
+          resources: [target],
+          sessionID: `conversation-${target}`,
+          source: { messageID: "message", id: `call-${target}` },
+        }
+        await evaluate!(event)
+        expect(event.effect).toBeUndefined()
+      }
+    } finally {
+      restore()
+    }
+  })
+
+  test("conversation still blocks governed Loom agents without a workflow", async () => {
+    const { permissionHooks, restore } = await harness()
+    try {
+      const evaluate = permissionHooks.get("evaluate")
+      expect(evaluate).toBeDefined()
+
+      for (const target of ["worker", "designer", "specifier", "architect", "reviewer", "critic", "acceptance", "planner", "documenter"]) {
+        const event: any = {
+          agent: "general",
+          action: "subagent",
+          resources: [target],
+          sessionID: `conversation-${target}`,
+          source: { messageID: "message", id: `call-${target}` },
+        }
+        await evaluate!(event)
+        expect(event.effect).toBe("deny")
+        expect(event.message).toContain("Only conversational Research or Diagnostic")
+      }
     } finally {
       restore()
     }

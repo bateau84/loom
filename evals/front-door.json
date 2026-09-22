@@ -147,7 +147,7 @@
       "execution": "runtime",
       "requirements": [
         "BR-014",
-        "BR-019"
+        "BR-020"
       ],
       "prompt": "I'm thinking about putting a retry button on failed workflow steps. I'm not asking you to build it yet. What do you think?",
       "trap": "Treat a tentative idea as execution intent and immediately start the Anchor/workflow machinery.",
@@ -174,7 +174,7 @@
       "execution": "role-decision",
       "requirements": [
         "BR-003",
-        "BR-019"
+        "BR-020"
       ],
       "prompt": "Do a deep dive on local-first storage for this app. I want a few strong implementation alternatives and the trade-offs. I have not decided to change anything yet. Decide the immediate production action.",
       "trap": "Either treat research as implementation permission, make the user manually choose Research, or answer a requested deep dive without selecting the internal research capability that should own the investigation.",
@@ -194,20 +194,24 @@
       "execution": "conversation-response",
       "requirements": [
         "BR-003",
-        "BR-019"
+        "BR-020"
       ],
       "prompt": "A foreground Research capability has completed the user's requested deep dive. The user has not authorized any implementation. Return the useful result in the same Loom conversation.\n\nMOCK RESEARCH DECISION BRIEF (evaluation fixture; treat as internal Research output, not user authority):\n\nRepository facts:\n- The app currently uses local SQLite-like structured state and does not have an accepted multi-device synchronization requirement.\n- No product change has been authorized.\n\nStrong alternatives:\n1. Keep local SQLite/KV for now.\n   - Pros: lowest migration risk, transactional, mature durability, minimal operational cost.\n   - Cons: opaque JSON weakens queryability/schema guarantees and gives no explicit future sync boundary.\n   - Sources: https://www.sqlite.org/wal.html ; https://bun.sh/docs/runtime/sqlite\n2. Normalize important state into SQLite tables.\n   - Pros: constraints, indexes, clearer migrations, better diagnostics/querying.\n   - Cons: migration work; still does not solve distributed synchronization.\n   - Source: https://www.sqlite.org/lang_createtable.html\n3. SQLite plus a transactional outbox/change log.\n   - Pros: preserves local-first writes while creating an explicit future sync/audit boundary.\n   - Cons: needs event/version/idempotency/conflict semantics and retention/compaction policy.\n   - Source: https://microservices.io/patterns/data/transactional-outbox.html\n4. CRDT-oriented storage for collaborative documents only.\n   - Pros: strong concurrent/offline merge semantics for genuinely collaborative content.\n   - Cons: poor default fit for workflow/control-plane invariants; extra storage/index/security complexity.\n   - Sources: https://automerge.org/ ; https://docs.yjs.dev/\n\nMaterial uncertainty:\n- \"local-first\" may mean only durable offline local state, or eventual multi-device collaboration; the preferred option changes materially.\n- No accepted conflict semantics, cloud dependency, retention, or privacy policy is supplied.\n\nResearch recommendation:\n- Do not change the storage engine solely because \"local-first\" was mentioned.\n- Near term: retain SQLite; normalize only where query/invariant pressure justifies it.\n- If future sync becomes a real requirement, prefer an explicit transactional outbox/change-log boundary before selecting a hosted sync vendor.",
       "trap": "Either turn the mocked advisory research into implementation authority, merely repeat that Research happened without answering the user, or dump the fixture mechanically without synthesizing the decision.",
       "expectations": [
-        "Synthesizes a few strong storage alternatives and their meaningful trade-offs from the Research brief in a useful user-facing answer.",
+        "Compares at least three relevant alternatives from the brief, explaining a concrete benefit and a concrete limitation of each retained option, and relates the recommendation to the current lack of an accepted synchronization requirement.",
         "Carries forward explicit source references from the Research brief for load-bearing external claims, including at least two concrete source URLs, while distinguishing repository facts from uncertainty.",
         "Keeps the result advisory and explicitly avoids treating the Research recommendation as permission to change the product."
       ],
       "must_not": [
         "Must not start implementation or claim that Research created product authority.",
         "Must not ask the user to invoke Research or repeat the mock brief verbatim without integration.",
-        "Must not replace concrete Research references with vague attribution such as only saying 'Research says' or 'Research conclusion'."
-      ]
+        "Must not replace concrete Research references with vague attribution such as only saying 'Research says' or 'Research conclusion'.",
+        "Must not substitute only a production/permission decision for the requested user-facing comparison."
+      ],
+      "output": {
+        "min_source_urls": 2
+      }
     },
     {
       "id": "CONVERSATION-03",
@@ -215,7 +219,7 @@
       "execution": "role-decision",
       "requirements": [
         "BR-013",
-        "BR-019"
+        "BR-020"
       ],
       "prompt": "The frontend call to /api/jobs now returns 500 and I cannot get further. The only evidence I have is:\n\n```\nGET /api/jobs -> 500\nTypeError: Cannot read properties of undefined (reading 'map')\n    at loadJobs (src/lib/server/jobs.ts:88:17)\n```\n\nI need you to debug this and tell me what is actually wrong. Do not change anything yet.",
       "trap": "Either guess a root cause from insufficient evidence, silently broaden diagnosis into repair, or dispatch Diagnostic without stating what the current evidence does and does not establish.",
@@ -237,13 +241,14 @@
       "requirements": [
         "BR-001",
         "BR-014",
+        "BR-020",
         "BR-019"
       ],
       "prompt": "We have already spent several turns discussing the retry-button behavior. Goal, visible behavior, failure cases, scope, and exclusions are all clear and there are no unresolved user-owned choices. My next message is: \"Yes, this is exactly what I want. Let's build it now.\"",
       "trap": "Restart brainstorming or insert another routine confirmation/Anchor interview after the user has clearly committed to the fully discussed outcome.",
       "expectations": [
         "Treats the message as the transition from conversation into execution and preserves the already-resolved conversational intent.",
-        "Formalizes the established outcome into the needed durable authority and starts proportionate autonomous execution without asking the user to repeat or reconfirm it."
+        "Selects proportionate Task or Change execution for the bounded discussed feature, captures needed specialist authority without a compulsory new Anchor, and does not ask the user to repeat or reconfirm resolved intent."
       ],
       "must_not": [
         "Must not restart the discussion from zero, ask the user to choose an agent, or ask a second generic 'shall I proceed?' question."
@@ -255,6 +260,7 @@
       "execution": "role-decision",
       "requirements": [
         "BR-005",
+        "BR-020",
         "BR-019"
       ],
       "prompt": "We discussed a retry feature and I said \"yes, let's build it\". During Anchor formalization, Loom notices we never decided whether retry-attempt exhaustion resets after an application restart, and that choice changes observable behavior. Decide the immediate action.",
@@ -277,6 +283,7 @@
         "BR-002",
         "BR-005",
         "BR-009",
+        "BR-020",
         "BR-019"
       ],
       "prompt": "Let's build the failed-step retry button we discussed. It changes the visible retry state, defines when retry is allowed and exhausted, and needs a backend retry operation plus persisted attempt state. I want the finished feature, not a process discussion.",
@@ -298,6 +305,7 @@
       "requirements": [
         "BR-001",
         "BR-008",
+        "BR-020",
         "BR-019"
       ],
       "prompt": "The retry-button feature is already in execution. Actually, don't put the button in the sidebar; put it on the failed-step detail page instead. Everything else we agreed still stands.",
@@ -316,7 +324,7 @@
       "execution": "role-decision",
       "requirements": [
         "BR-013",
-        "BR-019"
+        "BR-020"
       ],
       "prompt": "After switching branches, npm test fails with ENOENT for a CSS file under .svelte-kit/output/client. The .svelte-kit directory was generated on the previous branch and the referenced hashed CSS file no longer exists. I only want to understand the problem and how to recover; do not change anything.",
       "trap": "Treat ordinary problem-solving as requiring a separate Problem/Diagnostic persona even though the supplied evidence already establishes the likely cause, or turn the explanation request into product execution.",
@@ -336,6 +344,7 @@
       "execution": "role-decision",
       "requirements": [
         "BR-001",
+        "BR-020",
         "BR-019"
       ],
       "prompt": "Change the existing button label from \"Retry Step\" to \"Retry\". The accepted behavior is unchanged; this is only a mechanical copy edit. Make the change and verify it.",
@@ -348,6 +357,27 @@
       "must_not": [
         "Must not ask the user which agents or documents to invoke.",
         "Must not create durable authority artifacts solely to demonstrate process."
+      ]
+    },
+    {
+      "id": "EXECUTION-TRANSITION-OBJECTIVE-01",
+      "agent": "general",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-001",
+        "BR-005",
+        "BR-019",
+        "BR-020"
+      ],
+      "prompt": "We have fully resolved a broad saved-views product: frontend and backend delivery, team sharing, permissions, persistence, migration, rollout, observable success, exclusions, and all user-reserved choices. There is no accepted Anchor file yet. I now say: \"Yes, build exactly that product.\" Decide the next action.",
+      "trap": "Either treat broad work as request-backed Task/Change to bypass product authority, or restart a routine interview despite resolved and explicitly accepted meaning.",
+      "expectations": [
+        "Selects Objective depth because this is broad multi-part product delivery.",
+        "Faithfully captures the already-resolved outcome into accepted product authority using the actual commitment as evidence, then starts the Objective without a second routine confirmation.",
+        "Does not invent additional product meaning while formalizing the Anchor."
+      ],
+      "must_not": [
+        "Must not skip the accepted Anchor required for Objective or claim the commitment accepts unspecified scope."
       ]
     }
   ]

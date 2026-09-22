@@ -2,6 +2,9 @@
 description: Fresh internal ideation specialist for challenging assumptions and producing alternatives for Loom.
 mode: subagent
 permissions:
+  - action: shell
+    resource: "*"
+    effect: deny
   - action: edit
     resource: "*"
     effect: deny

@@ -1,6 +1,6 @@
 ---
 type: requirement
-title: BR-019 — Conversation Is Loom's Primary Interface
+title: BR-020 — Conversation Is Loom's Primary Interface
 description: Loom behaves as one conversational engineering partner and turns discussion into governed execution only when the user's intent crosses an execution boundary.
 tags: [requirement, loom, conversation, primary-agent, autonomy, routing]
 ---
@@ -56,3 +56,14 @@ Valid behavior feels like one capable engineering partner with an internal toolb
 ## Derived from
 
 - [Loom Anchor](../../anchors/loom/anchor.md)
+
+
+## Composition with proportional execution
+
+[BR-019 — Keep Workflow Ceremony Proportional](br-019-keep-workflow-ceremony-proportional.md) owns execution depth. This requirement owns the continuing user-facing conversation and the transition into that execution model.
+
+A clear bounded Task or Change may start from the committed request without a new Anchor. Objective depth requires accepted product authority. A prior discussion plus a clear execution commitment accepts only the meaning actually established in that discussion; it does not grant new scope, invent user-owned decisions, or validate research as governed proof.
+
+An ordinary read-only investigation remains conversational. Explicitly requested tracked or independently gated verification may use a read-only Task. Specialist-owned realization questions within a clear bounded outcome are routed to the specialist rather than automatically starting an Anchor interview.
+
+Conversation remains available during execution, but is not a route around grants, scope, budget, evidence, or independent gates. Pre-attachment conversational observations are context, not retrospective completion evidence.

@@ -327,4 +327,207 @@ describe("Loom routing DAG", () => {
     ])
   })
 
+
+  test("task depth keeps a small product change on the shallow worker-review path", () => {
+    const w = workflow(buildSteps({
+      humanFacing: false,
+      behavioral: false,
+      structural: false,
+      externalUnknown: false,
+      diagnostic: false,
+      productOutcome: true,
+      executionDepth: "task",
+    }))
+
+    expect(w.steps.map((step) => step.id)).toEqual(["worker", "review-implementation"])
+    expect(w.steps.some((step) => step.agent === "planner")).toBe(false)
+    expect(w.steps.some((step) => step.agent === "critic")).toBe(false)
+    expect(w.steps.some((step) => step.agent === "acceptance")).toBe(false)
+  })
+
+  test("task depth permits bounded diagnosis and research without product ceremony", () => {
+    const w = workflow(buildSteps({
+      humanFacing: false,
+      behavioral: false,
+      structural: false,
+      externalUnknown: true,
+      diagnostic: true,
+      productOutcome: false,
+      executionDepth: "task",
+    }))
+
+    expect(w.steps.map((step) => step.id)).toEqual([
+      "diagnostic",
+      "research",
+      "worker",
+      "review-implementation",
+    ])
+    expect(runnable(w).map((step) => step.id).sort()).toEqual(["diagnostic", "research"])
+  })
+
+  test("task depth cannot suppress authority that the route already says is unresolved", () => {
+    const w = workflow(buildSteps({
+      humanFacing: true,
+      behavioral: true,
+      structural: true,
+      externalUnknown: false,
+      diagnostic: false,
+      productOutcome: true,
+      executionDepth: "task",
+    }))
+
+    expect(w.steps.map((step) => step.id)).toEqual([
+      "designer",
+      "specifier",
+      "review-think",
+      "architect",
+      "review-architecture",
+      "worker",
+      "review-implementation",
+      "knowledge-sync",
+    ])
+    expect(w.steps.some((step) => step.id === "critic-solution")).toBe(false)
+    expect(w.steps.some((step) => step.id === "plan")).toBe(false)
+  })
+
+  test("change depth uses earned authority but skips objective lifecycle ceremony", () => {
+    const w = workflow(buildSteps({
+      humanFacing: true,
+      behavioral: true,
+      structural: false,
+      externalUnknown: false,
+      diagnostic: false,
+      productOutcome: true,
+      executionDepth: "change",
+    }))
+
+    expect(w.steps.map((step) => step.id)).toEqual([
+      "designer",
+      "specifier",
+      "review-think",
+      "worker",
+      "review-implementation",
+    ])
+  })
+
+  test("rerouting from task to change preserves completed diagnosis", () => {
+    const first = buildSteps({
+      humanFacing: false,
+      behavioral: false,
+      structural: false,
+      externalUnknown: false,
+      diagnostic: true,
+      productOutcome: false,
+      executionDepth: "task",
+    })
+    const w = workflow(first)
+    finishStep(w, "diagnostic", "diagnostic", "complete", "shared auth boundary found")
+
+    const next = buildSteps({
+      humanFacing: false,
+      behavioral: true,
+      structural: true,
+      externalUnknown: false,
+      diagnostic: true,
+      productOutcome: true,
+      executionDepth: "change",
+    })
+    preserveSatisfied(w.steps, next)
+
+    expect(next.find((step) => step.id === "diagnostic")?.status).toBe("complete")
+    expect(next.some((step) => step.id === "specifier")).toBe(true)
+    expect(next.some((step) => step.id === "architect")).toBe(true)
+    expect(next.some((step) => step.id === "plan")).toBe(false)
+  })
+
+
+  test("read-only task depth ends at Reviewer without a Worker", () => {
+    const w = workflow(buildSteps({
+      humanFacing: false,
+      behavioral: false,
+      structural: false,
+      externalUnknown: false,
+      diagnostic: true,
+      productOutcome: false,
+      implementationRequested: false,
+      executionDepth: "task",
+    }))
+
+    expect(w.steps.map((step) => step.id)).toEqual(["diagnostic", "review-task"])
+    expect(runnable(w).map((step) => step.id)).toEqual(["diagnostic"])
+    finishStep(w, "diagnostic", "diagnostic", "complete", "root cause established")
+    expect(runnable(w).map((step) => step.id)).toEqual(["review-task"])
+  })
+
+  test("focused review-only task is directly runnable by Reviewer", () => {
+    const w = workflow(buildSteps({
+      humanFacing: false,
+      behavioral: false,
+      structural: false,
+      externalUnknown: false,
+      diagnostic: false,
+      productOutcome: false,
+      implementationRequested: false,
+      executionDepth: "task",
+    }))
+
+    expect(w.steps.map((step) => step.id)).toEqual(["review-task"])
+    expect(runnable(w).map((step) => step.id)).toEqual(["review-task"])
+  })
+
+  test("objective depth rejects non-product and read-only combinations", () => {
+    expect(() => buildSteps({
+      humanFacing: false,
+      behavioral: false,
+      structural: false,
+      externalUnknown: false,
+      diagnostic: false,
+      productOutcome: false,
+      implementationRequested: true,
+      executionDepth: "objective",
+    })).toThrow("Objective execution depth requires productOutcome=true.")
+
+    expect(() => buildSteps({
+      humanFacing: false,
+      behavioral: false,
+      structural: false,
+      externalUnknown: false,
+      diagnostic: false,
+      productOutcome: true,
+      implementationRequested: false,
+      executionDepth: "objective",
+    })).toThrow("Objective execution depth requires implementationRequested=true.")
+  })
+
+  test("changed dependencies invalidate a previously satisfied gate", () => {
+    const previous = buildSteps({
+      humanFacing: true,
+      behavioral: false,
+      structural: false,
+      externalUnknown: false,
+      diagnostic: false,
+      productOutcome: true,
+      implementationRequested: true,
+      executionDepth: "change",
+    })
+    const w = workflow(previous)
+    finishStep(w, "designer", "designer", "complete", "design done")
+    finishStep(w, "review-think", "reviewer", "pass", "design review passed")
+
+    const next = buildSteps({
+      humanFacing: true,
+      behavioral: true,
+      structural: false,
+      externalUnknown: false,
+      diagnostic: false,
+      productOutcome: true,
+      implementationRequested: true,
+      executionDepth: "change",
+    })
+    preserveSatisfied(w.steps, next)
+
+    expect(next.find((step) => step.id === "designer")?.status).toBe("complete")
+    expect(next.find((step) => step.id === "review-think")?.status).toBe("pending")
+  })
+
 })

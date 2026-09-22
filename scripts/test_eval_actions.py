@@ -64,6 +64,20 @@ class WorkflowCredentialTests(unittest.TestCase):
         self.assertNotIn("actions/upload-artifact@v4", live)
         self.assertNotIn("- run: bun install\n", live + ci)
 
+    def test_live_workflow_and_harness_pin_opencode_2_0_12_runner(self):
+        workflow = (
+            RUN_EVALS.ROOT / ".github" / "workflows" / "loom-live-evals.yml"
+        ).read_text(encoding="utf-8")
+        expected_action = "bateau84/opencode-eval-runner@e2022f1075e34fe7be2a33eae3c9460f3f5c7263"
+        expected_image = (
+            "ghcr.io/bateau84/opencode-eval-runner@"
+            "sha256:3e5f95ce54fee127230c5bf84a7f09124a2236dfca544269e6547c8f79e8ad5d"
+        )
+
+        self.assertIn(expected_action, workflow)
+        self.assertIn(expected_image, workflow)
+        self.assertEqual(RUN_EVALS.DEFAULT_IMAGES["opencode"], expected_image)
+
     def test_live_workflow_forwards_opencode_api_key_explicitly(self):
         workflow = (
             RUN_EVALS.ROOT / ".github" / "workflows" / "loom-live-evals.yml"
@@ -73,35 +87,8 @@ class WorkflowCredentialTests(unittest.TestCase):
         self.assertIn('args+=(--env OPENCODE_API_KEY)', workflow)
 
 
-class EvalSuiteCostBoundaryTests(unittest.TestCase):
-    def test_default_suite_uses_mocked_research_and_excludes_live_nested_integration(self):
-        default_cases = RUN_EVALS.load_cases()
-        default_ids = {case["id"] for case in default_cases}
-
-        self.assertIn("CONVERSATION-02", default_ids)
-        self.assertIn("CONVERSATION-02-SYNTH", default_ids)
-        self.assertNotIn("CONVERSATION-02-LIVE", default_ids)
-
-        routing = next(case for case in default_cases if case["id"] == "CONVERSATION-02")
-        synthesis = next(case for case in default_cases if case["id"] == "CONVERSATION-02-SYNTH")
-        self.assertEqual(routing["execution"], "role-decision")
-        self.assertEqual(synthesis["execution"], "conversation-response")
-        self.assertIn("MOCK RESEARCH DECISION BRIEF", synthesis["prompt"])
-
-    def test_live_integration_suite_keeps_real_nested_research_opt_in(self):
-        live_path = RUN_EVALS.ROOT / "evals" / "live-integration.json"
-        cases = RUN_EVALS.load_cases([live_path])
-
-        self.assertEqual([case["id"] for case in cases], ["CONVERSATION-02-LIVE"])
-        case = cases[0]
-        self.assertEqual(case["execution"], "runtime")
-        self.assertEqual(case["target_timeout_seconds"], 360)
-        self.assertEqual(case["actions"]["requires"][0]["equals"], "research")
-        self.assertIs(case["actions"]["requires"][1]["equals"], False)
-
-
 class RuntimeEvalProjectTests(unittest.TestCase):
-    def test_runtime_project_installs_loom_plugin_and_lists_it_in_config(self):
+    def test_runtime_project_keeps_loom_out_of_project_plugin_config(self):
         case = next(
             case
             for case in RUN_EVALS.load_cases()
@@ -110,91 +97,76 @@ class RuntimeEvalProjectTests(unittest.TestCase):
         temp, target, _ = RUN_EVALS.setup_projects(case)
         try:
             config = json.loads((target / "opencode.json").read_text(encoding="utf-8"))
-            self.assertEqual(config.get("plugins"), ["./.opencode/plugins/loom"])
-            self.assertTrue((target / ".opencode" / "plugins" / "loom" / "index.ts").is_file())
+            self.assertNotIn("plugins", config)
+            self.assertFalse((target / ".opencode" / "plugins" / "loom").exists())
+            self.assertFalse((target / ".opencode" / "plugins" / "loom.ts").exists())
         finally:
             import shutil
             shutil.rmtree(temp, ignore_errors=True)
 
-    def test_runtime_agent_eval_installs_production_subagents(self):
-        runtime_case = next(
+    def test_runtime_project_materializes_real_loom_subagents(self):
+        case = next(
             case
             for case in RUN_EVALS.load_cases()
-            if case["id"] == "CONVERSATION-01"
+            if case["id"] == "PROP-RUNTIME-01"
         )
-        decision_case = next(
-            case
-            for case in RUN_EVALS.load_cases()
-            if case["id"] == "CONVERSATION-03"
-        )
-        response_case = next(
-            case
-            for case in RUN_EVALS.load_cases()
-            if case["id"] == "CONVERSATION-02-SYNTH"
-        )
-
-        runtime_temp, runtime_target, _ = RUN_EVALS.setup_projects(runtime_case)
-        decision_temp, decision_target, _ = RUN_EVALS.setup_projects(decision_case)
-        response_temp, response_target, _ = RUN_EVALS.setup_projects(response_case)
+        temp, target, _ = RUN_EVALS.setup_projects(case)
         try:
-            runtime_agents = runtime_target / ".opencode" / "agents"
-            decision_agents = decision_target / ".opencode" / "agents"
-            response_agents = response_target / ".opencode" / "agents"
-
-            self.assertTrue((runtime_agents / "research.md").is_file())
-            self.assertTrue((runtime_agents / "diagnostic.md").is_file())
-            self.assertTrue((runtime_agents / "brainstorm.md").is_file())
-            self.assertTrue((runtime_agents / "general.md").is_file())
-
-            # Decision and conversational-response tests remain isolated from
-            # actual subagent execution.
-            self.assertEqual(
-                sorted(path.name for path in decision_agents.iterdir()),
-                ["general.md"],
-            )
-            self.assertEqual(
-                sorted(path.name for path in response_agents.iterdir()),
-                ["general.md"],
-            )
-
-            response_agent = (response_agents / "general.md").read_text(encoding="utf-8")
-            self.assertIn("Isolated conversational-response evaluation boundary", response_agent)
-            self.assertIn('action: "*"', response_agent)
-            self.assertIn("effect: deny", response_agent)
+            agent_root = target / ".opencode" / "agents"
+            expected = {
+                path.name
+                for path in (RUN_EVALS.ROOT / "agents").glob("*.md")
+            }
+            observed = {
+                path.name
+                for path in agent_root.glob("*.md")
+            }
+            self.assertEqual(observed, expected)
+            self.assertTrue((agent_root / "diagnostic.md").is_file())
+            self.assertTrue((agent_root / "reviewer.md").is_file())
+            diagnostic = (agent_root / "diagnostic.md").read_text(encoding="utf-8")
+            reviewer = (agent_root / "reviewer.md").read_text(encoding="utf-8")
+            self.assertIn("mode: subagent", diagnostic)
+            self.assertIn("mode: subagent", reviewer)
         finally:
             import shutil
-            shutil.rmtree(runtime_temp, ignore_errors=True)
-            shutil.rmtree(decision_temp, ignore_errors=True)
-            shutil.rmtree(response_temp, ignore_errors=True)
+            shutil.rmtree(temp, ignore_errors=True)
 
-    def test_case_specific_target_timeout_keeps_global_defaults_for_other_cases(self):
-        deep_research = RUN_EVALS.load_cases(
-            [RUN_EVALS.ROOT / "evals" / "live-integration.json"]
-        )[0]
-        ordinary = next(
+    def test_tracked_401_runtime_materializes_diagnostic_fixture(self):
+        case = next(
             case
             for case in RUN_EVALS.load_cases()
-            if case["id"] == "CONVERSATION-01"
+            if case["id"] == "PROP-RUNTIME-01"
         )
+        temp, target, _ = RUN_EVALS.setup_projects(case)
+        try:
+            frontend = (target / "frontend" / "src" / "api" / "client.ts").read_text(encoding="utf-8")
+            backend = (target / "backend" / "src" / "auth.ts").read_text(encoding="utf-8")
+            self.assertIn('"X-Access-Token": token', frontend)
+            self.assertIn('headers["authorization"]', backend)
+            self.assertIn('startsWith("Bearer ")', backend)
+        finally:
+            import shutil
+            shutil.rmtree(temp, ignore_errors=True)
 
-        self.assertEqual(
-            RUN_EVALS.case_target_timeout_seconds(deep_research, 240),
-            360,
+    def test_role_decision_project_keeps_unrelated_agents_out(self):
+        case = next(
+            case
+            for case in RUN_EVALS.load_cases()
+            if case["id"] == "PROP-02"
         )
-        self.assertEqual(
-            RUN_EVALS.case_target_container_timeout(deep_research, 300, 360),
-            420,
-        )
-        self.assertEqual(
-            RUN_EVALS.case_target_timeout_seconds(ordinary, 240),
-            240,
-        )
-        self.assertEqual(
-            RUN_EVALS.case_target_container_timeout(ordinary, 300, 240),
-            300,
-        )
+        temp, target, _ = RUN_EVALS.setup_projects(case)
+        try:
+            observed = sorted(
+                path.name
+                for path in (target / ".opencode" / "agents").glob("*.md")
+            )
+            self.assertEqual(observed, ["general.md"])
+        finally:
+            import shutil
+            shutil.rmtree(temp, ignore_errors=True)
 
-    def test_mutating_report_eval_is_rw_but_normal_runtime_eval_stays_ro(self):
+    def test_all_runtime_eval_targets_are_rw(self):
         promoting = next(
             case
             for case in RUN_EVALS.load_cases()
@@ -207,11 +179,15 @@ class RuntimeEvalProjectTests(unittest.TestCase):
         )
 
         self.assertEqual(RUN_EVALS.case_workspace_mode(promoting), "rw")
-        self.assertEqual(RUN_EVALS.case_workspace_mode(ordinary), "ro")
+        self.assertEqual(RUN_EVALS.case_workspace_mode(ordinary), "rw")
+        self.assertEqual(
+            RUN_EVALS.case_workspace_mode({"execution": "role-decision"}),
+            "ro",
+        )
 
 
 class MountPreparationTests(unittest.TestCase):
-    def test_runtime_mountpoint_exists_before_read_only_workspace_mount(self):
+    def test_runtime_mountpoint_exists_before_workspace_mount(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             project = root / "project"
@@ -225,6 +201,79 @@ class MountPreparationTests(unittest.TestCase):
             self.assertTrue((project / "node_modules").is_dir())
 
 
+
+class EvalConcurrencyTests(unittest.TestCase):
+    def test_parallel_does_not_parallelize_runtime_cases_by_default(self):
+        jobs = [
+            ({"id": "R1", "execution": "runtime"}, 1),
+            ({"id": "R1", "execution": "runtime"}, 2),
+            ({"id": "R1", "execution": "runtime"}, 3),
+        ]
+
+        non_runtime, non_runtime_limit, runtime, runtime_limit, mode = (
+            RUN_EVALS.eval_job_concurrency(jobs, parallel=3, runtime_parallel=1)
+        )
+
+        self.assertEqual(non_runtime, [])
+        self.assertEqual(non_runtime_limit, 0)
+        self.assertEqual(len(runtime), 3)
+        self.assertEqual(runtime_limit, 1)
+        self.assertEqual(mode, "runtime=sequential")
+
+    def test_runtime_parallel_explicitly_enables_stress_mode(self):
+        jobs = [
+            ({"id": "R1", "execution": "runtime"}, 1),
+            ({"id": "R1", "execution": "runtime"}, 2),
+            ({"id": "R1", "execution": "runtime"}, 3),
+        ]
+
+        _, _, _, runtime_limit, mode = RUN_EVALS.eval_job_concurrency(
+            jobs,
+            parallel=3,
+            runtime_parallel=3,
+        )
+
+        self.assertEqual(runtime_limit, 3)
+        self.assertEqual(mode, "runtime=parallel:3 (stress)")
+
+    def test_non_runtime_jobs_still_use_parallel_limit(self):
+        jobs = [
+            ({"id": "A", "execution": "role-decision"}, 1),
+            ({"id": "B", "execution": "role-decision"}, 1),
+            ({"id": "R", "execution": "runtime"}, 1),
+        ]
+
+        non_runtime, non_runtime_limit, runtime, runtime_limit, mode = (
+            RUN_EVALS.eval_job_concurrency(jobs, parallel=2, runtime_parallel=1)
+        )
+
+        self.assertEqual(len(non_runtime), 2)
+        self.assertEqual(non_runtime_limit, 2)
+        self.assertEqual(len(runtime), 1)
+        self.assertEqual(runtime_limit, 1)
+        self.assertEqual(mode, "non-runtime=parallel:2, runtime=sequential")
+
+
+class CentralEvalDiscoveryTests(unittest.TestCase):
+    def test_discovers_every_json_suite_in_eval_directory(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            evals = Path(tmp) / "evals"
+            evals.mkdir()
+            (evals / "z-new-suite.json").write_text('{"version":1,"name":"z","cases":[]}', encoding="utf-8")
+            (evals / "a-existing-suite.json").write_text('{"version":1,"name":"a","cases":[]}', encoding="utf-8")
+            (evals / "README.md").write_text("not a suite", encoding="utf-8")
+            (evals / "ignored.txt").write_text("{}", encoding="utf-8")
+
+            discovered = RUN_EVALS.behavioral_eval_files(evals)
+
+            self.assertEqual(
+                [path.name for path in discovered],
+                ["a-existing-suite.json", "z-new-suite.json"],
+            )
+
+    def test_repository_default_discovery_includes_proportionality_suite(self):
+        discovered = RUN_EVALS.behavioral_eval_files(RUN_EVALS.ROOT / "evals")
+        self.assertIn("proportionality.json", [path.name for path in discovered])
 
 class SkillOwnedEvalDiscoveryTests(unittest.TestCase):
     def test_discovers_every_json_filename_inside_skill_evals_folder(self):
@@ -477,27 +526,6 @@ class SkillOwnedEvalDiscoveryTests(unittest.TestCase):
 
 
 
-class ActionAssertionTests(unittest.TestCase):
-    def test_boolean_action_equality_matches_exactly(self):
-        action = {
-            "tool": "subagent",
-            "args": {"agent": "research", "background": False},
-        }
-
-        self.assertTrue(
-            RUN_EVALS.action_matches(
-                action,
-                {"tool": "subagent", "arg": "background", "equals": False},
-            )
-        )
-        self.assertFalse(
-            RUN_EVALS.action_matches(
-                action,
-                {"tool": "subagent", "arg": "background", "equals": True},
-            )
-        )
-
-
 class EvidenceRedactionTests(unittest.TestCase):
     def test_redacts_environment_auth_and_database_credentials(self):
         env_secret = "sk-env-secret-123456"
@@ -623,6 +651,7 @@ class EvidenceRedactionTests(unittest.TestCase):
                     timeout=30,
                     container_timeout=60,
                     mount_node_modules=False,
+                    workspace_mode="ro",
                     extra_envs=[],
                 )
 
@@ -668,6 +697,7 @@ class EvidenceRedactionTests(unittest.TestCase):
                     timeout=30,
                     container_timeout=60,
                     mount_node_modules=False,
+                    workspace_mode="ro",
                     extra_envs=[],
                 )
 
@@ -744,6 +774,7 @@ class ActionAssertionTests(unittest.TestCase):
                     timeout=30,
                     container_timeout=60,
                     mount_node_modules=False,
+                    workspace_mode="ro",
                     extra_envs=[],
                     network="host",
                 )
@@ -781,11 +812,71 @@ class ActionAssertionTests(unittest.TestCase):
                     timeout=30,
                     container_timeout=60,
                     mount_node_modules=False,
+                    workspace_mode="ro",
                     extra_envs=[],
                     network=None,
                 )
 
         self.assertNotIn("--network", run.call_args.args[0])
+
+    def test_eval_runner_cli_forwards_expected_plugin_preflight(self):
+        class Result:
+            returncode = 0
+            stdout = ""
+            stderr = ""
+
+        seen: list[str] = []
+
+        def fake_run(command, **kwargs):
+            seen.extend(command)
+            output = Path(command[command.index("--output") + 1])
+            output.write_text(
+                json.dumps({
+                    "exit_code": 0,
+                    "text": "ok",
+                    "tools": ["loom_status"],
+                    "actions": [],
+                    "skills_loaded": [],
+                }),
+                encoding="utf-8",
+            )
+            return Result()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            config_root = project / "config-root"
+            config_root.mkdir()
+            with patch.object(
+                RUN_EVALS.shutil,
+                "which",
+                side_effect=lambda name: "/usr/bin/opencode-eval-runner" if name == "opencode-eval-runner" else None,
+            ), patch.object(RUN_EVALS.subprocess, "run", side_effect=fake_run):
+                result = RUN_EVALS.invoke_container(
+                    engine="podman",
+                    image="test-image",
+                    transport="opencode",
+                    model="openai/test",
+                    agent="general",
+                    prompt="test",
+                    system="",
+                    project=project,
+                    auth=None,
+                    config=None,
+                    models_catalog=None,
+                    database_seed=None,
+                    config_root=config_root,
+                    expected_plugin="loom",
+                    timeout=30,
+                    container_timeout=60,
+                    mount_node_modules=False,
+                    workspace_mode="ro",
+                    extra_envs=[],
+                    network="host",
+                )
+
+        self.assertEqual(result["exit_code"], 0)
+        self.assertIn("--expected-plugin", seen)
+        self.assertEqual(seen[seen.index("--expected-plugin") + 1], "loom")
 
     def test_eval_runner_cli_receives_explicit_network_mode(self):
         class Result:
@@ -835,6 +926,7 @@ class ActionAssertionTests(unittest.TestCase):
                     timeout=30,
                     container_timeout=60,
                     mount_node_modules=False,
+                    workspace_mode="ro",
                     extra_envs=[],
                     network="host",
                 )
@@ -943,6 +1035,92 @@ class ActionAssertionTests(unittest.TestCase):
             }
         }
         self.assertEqual(RUN_EVALS.deterministic_failures(case, ["skill", "read"], actions), [])
+
+    def test_matches_contains_action_arguments(self):
+        actions = [
+            {
+                "tool": "execute",
+                "args": {
+                    "code": 'return await tools.browser.preview({ path: "/tmp/status.html" })'
+                },
+            },
+        ]
+        case = {
+            "actions": {
+                "requires": [
+                    {
+                        "tool": "execute",
+                        "arg": "code",
+                        "contains": "tools.browser.preview",
+                    }
+                ]
+            }
+        }
+        self.assertEqual(
+            RUN_EVALS.deterministic_failures(case, ["execute"], actions),
+            [],
+        )
+
+    def test_grades_required_and_forbidden_output_text(self):
+        case = {
+            "output": {
+                "contains": ["http://127.0.0.1:4318/status/"],
+                "forbids": ["OpenCode Desktop is required"],
+            }
+        }
+        self.assertEqual(
+            RUN_EVALS.deterministic_failures(
+                case,
+                [],
+                text="Open: http://127.0.0.1:4318/status/install/project/workflow.html",
+            ),
+            [],
+        )
+        self.assertEqual(
+            RUN_EVALS.deterministic_failures(case, [], text="No link"),
+            ["required output text not observed: 'http://127.0.0.1:4318/status/'"],
+        )
+
+    def test_accepts_tool_only_and_any_of_action_assertions(self):
+        native_actions = [
+            {"tool": "loom_start", "args": {"anchor": "docs/anchors/status-preview/anchor.md"}},
+            {"tool": "loom_status", "args": {"workflowId": "wf-1"}},
+        ]
+        code_actions = [
+            {
+                "tool": "execute",
+                "args": {"code": "return await tools.loom.code.start({ anchor: 'docs/anchors/status-preview/anchor.md' })"},
+            },
+            {
+                "tool": "execute",
+                "args": {"code": "return await tools.loom.code.status({ workflowId: 'wf-1' })"},
+            },
+        ]
+        case = {
+            "actions": {
+                "any_of": [
+                    [
+                        {"tool": "loom_start"},
+                        {"tool": "execute", "arg": "code", "contains": "tools.loom.code.start"},
+                    ],
+                    [
+                        {"tool": "loom_status"},
+                        {"tool": "execute", "arg": "code", "contains": "tools.loom.code.status"},
+                    ],
+                ],
+                "forbids": [
+                    {"tool": "execute", "arg": "code", "contains": "tools.browser.preview"},
+                ],
+            }
+        }
+        self.assertEqual(
+            RUN_EVALS.deterministic_failures(case, ["loom_start", "loom_status"], native_actions),
+            [],
+        )
+        self.assertEqual(
+            RUN_EVALS.deterministic_failures(case, ["execute"], code_actions),
+            [],
+        )
 
     def test_matches_current_opencode_v2_argument_names(self):
         actions = [
@@ -1200,6 +1378,104 @@ class ActionAssertionTests(unittest.TestCase):
         self.assertEqual(len(failures), 2)
         self.assertTrue(failures[0].startswith("required action not observed:"))
         self.assertTrue(failures[1].startswith("forbidden action observed:"))
+
+
+
+
+class ConversationCompositionTests(unittest.TestCase):
+    def test_default_excludes_expensive_suite_but_explicit_selection_includes_it(self):
+        cases = RUN_EVALS.load_cases()
+        ids = {case["id"] for case in cases}
+        self.assertIn("CONVERSATION-02", ids)
+        self.assertIn("CONVERSATION-02-SYNTH", ids)
+        self.assertIn("PROP-RUNTIME-01", ids)
+        self.assertNotIn("CONVERSATION-02-LIVE", ids)
+        explicit = RUN_EVALS.load_cases([RUN_EVALS.ROOT / "evals" / "live-integration.json"])
+        self.assertEqual([case["id"] for case in explicit], ["CONVERSATION-02-LIVE"])
+        self.assertEqual(RUN_EVALS.load_cases([]), [])
+        self.assertIn("live-integration.json", [path.name for path in RUN_EVALS.behavioral_eval_files(RUN_EVALS.ROOT / "evals")])
+
+    def test_default_metadata_is_generic_and_fails_closed(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "evals").mkdir()
+            target = root / "evals" / "arbitrary-name.json"
+            target.write_text(json.dumps({"default": False, "cases": [{"id": "costly"}]}))
+            with patch.object(RUN_EVALS, "ROOT", root):
+                self.assertEqual(RUN_EVALS.load_cases(), [])
+                self.assertEqual(RUN_EVALS.load_cases([target])[0]["id"], "costly")
+                target.write_text(json.dumps({"default": "false", "cases": []}))
+                with self.assertRaises(ValueError):
+                    RUN_EVALS.load_cases()
+
+    def test_response_is_isolated_and_has_no_decision_only_suffix(self):
+        response = next(case for case in RUN_EVALS.load_cases() if case["id"] == "CONVERSATION-02-SYNTH")
+        self.assertEqual(response["execution"], "conversation-response")
+        self.assertEqual(RUN_EVALS.target_prompt(response), response["prompt"])
+        decision = next(case for case in RUN_EVALS.load_cases() if case["id"] == "CONVERSATION-02")
+        self.assertIn("production decision/action", RUN_EVALS.target_prompt(decision))
+        temp, target, _ = RUN_EVALS.setup_projects(response)
+        try:
+            agents = target / ".opencode" / "agents"
+            self.assertEqual(sorted(path.name for path in agents.iterdir()), ["general.md"])
+            text = (agents / "general.md").read_text()
+            self.assertIn("Isolated conversational-response evaluation boundary", text)
+            self.assertIn('action: "*"', text)
+            self.assertIn("effect: deny", text)
+            self.assertNotIn("State the exact decision/action you would take and why.", text)
+            self.assertFalse((target / ".opencode" / "plugins").exists())
+            self.assertEqual(RUN_EVALS.case_workspace_mode(response), "ro")
+        finally:
+            import shutil
+            shutil.rmtree(temp, ignore_errors=True)
+        self.assertIn(response["prompt"], RUN_EVALS.judge_prompt(response, "answer", []))
+
+    def test_source_references_are_distinct_and_come_from_supplied_context(self):
+        case = {"prompt": "Sources: https://source.test/a and https://source.test/b", "output": {"min_source_urls": 2}}
+        self.assertEqual(RUN_EVALS.deterministic_failures(case, [], text="[A](https://source.test/a) [B](https://source.test/b)"), [])
+        self.assertTrue(RUN_EVALS.deterministic_failures(case, [], text="https://source.test/a https://source.test/a"))
+        self.assertTrue(RUN_EVALS.deterministic_failures(case, [], text="https://unrelated.test/a https://unrelated.test/b"))
+        self.assertTrue(RUN_EVALS.deterministic_failures(case, [], text="Research says so."))
+
+    def test_action_equality_is_type_safe_and_conjunctive_within_one_call(self):
+        expected = {"tool": "subagent", "args": {"agent": "research", "background": False}}
+        self.assertTrue(RUN_EVALS.action_matches({"tool": "subagent", "args": {"agent": "research", "background": False}}, expected))
+        self.assertFalse(RUN_EVALS.action_matches({"tool": "subagent", "args": {"agent": "research", "background": 0}}, expected))
+        self.assertFalse(RUN_EVALS.action_matches({"tool": "subagent", "args": {"agent": "research", "background": True}}, expected))
+        self.assertFalse(RUN_EVALS.action_matches({"tool": "subagent", "args": {"agent": "diagnostic", "background": False}}, expected))
+        case = {"actions": {"requires": [expected]}}
+        split = [{"tool": "subagent", "args": {"agent": "research", "background": True}}, {"tool": "subagent", "args": {"agent": "diagnostic", "background": False}}]
+        self.assertTrue(RUN_EVALS.deterministic_failures(case, ["subagent"], split))
+        self.assertFalse(RUN_EVALS.action_matches({"tool": "subagent", "args": {}}, {"tool": "subagent", "arg": "background", "equals": None}))
+        self.assertTrue(RUN_EVALS.action_matches({"tool": "subagent", "args": {"background": None}}, {"tool": "subagent", "arg": "background", "equals": None}))
+
+    def test_nested_timeout_does_not_change_ordinary_defaults(self):
+        live = RUN_EVALS.load_cases([RUN_EVALS.ROOT / "evals" / "live-integration.json"])[0]
+        self.assertEqual(RUN_EVALS.case_target_timeout_seconds(live, 240), 360)
+        self.assertEqual(RUN_EVALS.case_target_container_timeout(live, 300, 360), 420)
+        self.assertEqual(RUN_EVALS.case_target_timeout_seconds({}, 240), 240)
+        self.assertEqual(RUN_EVALS.case_target_container_timeout({}, 300, 240), 300)
+        for bad in [True, "360", 0, 601]:
+            with self.assertRaises(ValueError):
+                RUN_EVALS.case_target_timeout_seconds({"target_timeout_seconds": bad}, 240)
+
+    def test_non_runtime_modes_do_not_consume_runtime_concurrency(self):
+        jobs = [({"execution": "conversation-response"}, 1), ({"execution": "role-decision"}, 1), ({"execution": "runtime"}, 1), ({"execution": "runtime"}, 2)]
+        non_runtime, count, runtime, runtime_count, _ = RUN_EVALS.eval_job_concurrency(jobs, 6, 1)
+        self.assertEqual((len(non_runtime), count, len(runtime), runtime_count), (2, 2, 2, 1))
+
+    def test_one_primary_and_non_colliding_requirements(self):
+        import re
+        primary = [path.stem for path in (RUN_EVALS.ROOT / "agents").glob("*.md") if re.search(r"^mode: primary$", path.read_text(), re.M)]
+        self.assertEqual(primary, ["general"])
+        brainstorm = (RUN_EVALS.ROOT / "agents" / "brainstorm.md").read_text()
+        self.assertIn('action: shell\n    resource: "*"\n    effect: deny', brainstorm)
+        requirements = RUN_EVALS.ROOT / "docs" / "requirements" / "loom"
+        self.assertEqual(len(list(requirements.glob("br-019-*.md"))), 1)
+        self.assertEqual(len(list(requirements.glob("br-020-*.md"))), 1)
+        self.assertTrue((requirements / "br-019-keep-workflow-ceremony-proportional.md").is_file())
+        self.assertTrue((requirements / "br-020-conversation-is-primary-interface.md").is_file())
 
 
 if __name__ == "__main__":

@@ -132,5 +132,12 @@ Rejected because independent authority, fresh context, bounded permissions, and 
 # Related
 
 - [Conversation-First Loom Experience](../../../design/loom/conversation-first-experience.md)
-- [BR-019](../../../requirements/loom/br-019-conversation-is-primary-interface.md)
+- [BR-020](../../../requirements/loom/br-020-conversation-is-primary-interface.md)
 - [Execution Model](../execution-model.md)
+
+
+# Composition with proportional execution
+
+This interface builds on [BR-019](../../../requirements/loom/br-019-keep-workflow-ceremony-proportional.md), not a second execution engine. Task and Change may be request-backed; Objective requires accepted product authority. Loom chooses depth and specialist authority automatically after execution is warranted.
+
+The merged control plane remains the owner of conversational mutation limits, grants, terminal bindings, and observation-time evidence provenance. The primary-agent change must not restore older permission hooks or retroactive evidence attachment. Independent gates remain independent.
