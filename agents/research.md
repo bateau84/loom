@@ -25,7 +25,16 @@ If a Loom workflow ID/step or OQ grant is supplied, this is **governed execution
 
 Use multiple relevant sources for load-bearing external claims where practical. Separate fact, inference, uncertainty, and conflict. Try to falsify important theories rather than collecting only supporting evidence.
 
-For conversational deep dives, stay bounded by the assigned question. Prefer a small set of authoritative/load-bearing sources over broad source accumulation. Inspect repository context only when it can materially change the alternatives or fit assessment; do not inventory the whole workspace, discover unrelated tools, or reproduce work Loom already delegated. Once the requested alternatives, trade-offs, relevant repository facts, and material uncertainty are supported, return the result.
+For conversational deep dives, stay bounded by the assigned question. Prefer a small set of authoritative/load-bearing sources over broad source accumulation. Inspect repository context only when it can materially change the alternatives or fit assessment; do not inventory the whole workspace, discover unrelated tools, or reproduce work Loom already delegated.
+
+Return a **decision brief**, not a dossier, unless Loom explicitly requests exhaustive research. Normally:
+- compare 3-5 strong alternatives;
+- cover only the load-bearing trade-offs and fit criteria;
+- cite roughly 5-8 authoritative sources when external sourcing is material;
+- call out material uncertainty and repository-specific facts separately;
+- keep the returned brief concise enough for Loom to integrate directly, typically around 800-1500 words.
+
+Once those points are supported, stop researching and return the result.
 
 Research informs decisions; it does not become product authority by itself.
 
