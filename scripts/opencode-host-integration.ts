@@ -546,7 +546,7 @@ async function createProject(base: string, name: string, mockBaseUrl: string) {
     "utf8",
   )
   await symlink(join(root, "plugins", "loom"), join(pluginDir, "loom"), "dir")
-  for (const agent of ["general", "worker", "reviewer"]) {
+  for (const agent of ["general", "worker", "reviewer", "planner"]) {
     await symlink(join(root, "agents", `${agent}.md`), join(agentDir, `${agent}.md`), "file")
   }
   await writeFile(
@@ -576,6 +576,96 @@ async function createProject(base: string, name: string, mockBaseUrl: string) {
     "utf8",
   )
   return project
+}
+
+async function updateProjectPluginList(project: string, plugins: string[]) {
+  const path = join(project, "opencode.json")
+  const config = JSON.parse(await readFile(path, "utf8"))
+  config.plugins = plugins
+  await writeFile(path, JSON.stringify(config, null, 2) + "\n", "utf8")
+}
+
+async function installLegacyUpgradePlugin(project: string) {
+  const pluginDir = join(project, ".opencode", "plugins")
+  await rm(join(pluginDir, "loom"), { recursive: true, force: true })
+  const legacyPath = join(pluginDir, "loom-legacy.ts")
+  await writeFile(
+    legacyPath,
+    `
+const legacyLoomPlugin = {
+  id: "loom",
+  async setup(ctx) {
+    await ctx.tool.transform(async (editor) => {
+      editor.namespace({
+        name: "loom",
+        description: "Legacy Loom integration fixture for host restart verification.",
+      })
+      editor.add({
+        name: "legacy_seed",
+        description: "Seed pre-project-epoch Loom state for restart verification.",
+        input: {
+          type: "object",
+          properties: {
+            workflowId: { type: "string" },
+            secondarySessionId: { type: "string" },
+          },
+          required: ["workflowId", "secondarySessionId"],
+          additionalProperties: false,
+        },
+        options: { namespace: "loom", codemode: false },
+        execute: async (input, tool) => {
+          const workflowId = String(input.workflowId)
+          const secondarySessionId = String(input.secondarySessionId)
+          await ctx.storage.set("session/" + tool.sessionID, workflowId)
+          await ctx.storage.set("session/" + secondarySessionId, workflowId)
+          await ctx.storage.set("session-step/" + secondarySessionId, "plan")
+          await ctx.storage.set("workflow/" + workflowId, {
+            id: workflowId,
+            anchor: "docs/anchors/shared-name/anchor.md",
+            createdBySession: tool.sessionID,
+            createdAt: "pre-upgrade-host-fixture",
+            steps: [
+              {
+                id: "plan",
+                agent: "planner",
+                kind: "work",
+                dependsOn: [],
+                status: "pending",
+              },
+            ],
+          })
+          await ctx.storage.set("budget/" + workflowId, {
+            totalDispatches: 0,
+            byKey: {},
+            seenDispatches: [],
+            grants: [],
+          })
+          return {
+            content: JSON.stringify({
+              seeded: true,
+              workflowId,
+              primarySessionId: tool.sessionID,
+              secondarySessionId,
+            }),
+          }
+        },
+      })
+    })
+  },
+}
+export default legacyLoomPlugin
+`.trimStart(),
+    "utf8",
+  )
+  await updateProjectPluginList(project, ["./.opencode/plugins/loom-legacy.ts"])
+}
+
+async function installCurrentLoomPlugin(project: string) {
+  const pluginDir = join(project, ".opencode", "plugins")
+  await rm(join(pluginDir, "loom-legacy.ts"), { force: true })
+  await rm(join(pluginDir, "loom"), { recursive: true, force: true })
+  await symlink(join(root, "plugins", "loom"), join(pluginDir, "loom"), "dir")
+  await updateProjectPluginList(project, ["./.opencode/plugins/loom"])
 }
 
 type ServerHandle = {
