@@ -558,6 +558,14 @@ describe("Loom registered plugin boundary", () => {
       )
       expect(status.workflow.steps.find((step: any) => step.id === "worker").status).toBe("pending")
       expect(status.workflow.steps.find((step: any) => step.id === "architect").status).toBe("pending")
+
+      const scope = await call(
+        "scope_status",
+        { workflowId, stepId: "worker" },
+        "general",
+        "escalation-general",
+      )
+      expect(scope.scope).toBeNull()
     } finally {
       restore()
     }
