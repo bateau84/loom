@@ -440,4 +440,94 @@ describe("Loom routing DAG", () => {
     expect(next.some((step) => step.id === "plan")).toBe(false)
   })
 
+
+  test("read-only task depth ends at Reviewer without a Worker", () => {
+    const w = workflow(buildSteps({
+      humanFacing: false,
+      behavioral: false,
+      structural: false,
+      externalUnknown: false,
+      diagnostic: true,
+      productOutcome: false,
+      implementationRequested: false,
+      executionDepth: "task",
+    }))
+
+    expect(w.steps.map((step) => step.id)).toEqual(["diagnostic", "review-task"])
+    expect(runnable(w).map((step) => step.id)).toEqual(["diagnostic"])
+    finishStep(w, "diagnostic", "diagnostic", "complete", "root cause established")
+    expect(runnable(w).map((step) => step.id)).toEqual(["review-task"])
+  })
+
+  test("focused review-only task is directly runnable by Reviewer", () => {
+    const w = workflow(buildSteps({
+      humanFacing: false,
+      behavioral: false,
+      structural: false,
+      externalUnknown: false,
+      diagnostic: false,
+      productOutcome: false,
+      implementationRequested: false,
+      executionDepth: "task",
+    }))
+
+    expect(w.steps.map((step) => step.id)).toEqual(["review-task"])
+    expect(runnable(w).map((step) => step.id)).toEqual(["review-task"])
+  })
+
+  test("objective depth rejects non-product and read-only combinations", () => {
+    expect(() => buildSteps({
+      humanFacing: false,
+      behavioral: false,
+      structural: false,
+      externalUnknown: false,
+      diagnostic: false,
+      productOutcome: false,
+      implementationRequested: true,
+      executionDepth: "objective",
+    })).toThrow("Objective execution depth requires productOutcome=true.")
+
+    expect(() => buildSteps({
+      humanFacing: false,
+      behavioral: false,
+      structural: false,
+      externalUnknown: false,
+      diagnostic: false,
+      productOutcome: true,
+      implementationRequested: false,
+      executionDepth: "objective",
+    })).toThrow("Objective execution depth requires implementationRequested=true.")
+  })
+
+  test("changed dependencies invalidate a previously satisfied gate", () => {
+    const previous = buildSteps({
+      humanFacing: true,
+      behavioral: false,
+      structural: false,
+      externalUnknown: false,
+      diagnostic: false,
+      productOutcome: true,
+      implementationRequested: true,
+      executionDepth: "change",
+    })
+    const w = workflow(previous)
+    finishStep(w, "designer", "designer", "complete", "design done")
+    finishStep(w, "review-think", "reviewer", "pass", "design review passed")
+
+    const next = buildSteps({
+      humanFacing: true,
+      behavioral: true,
+      structural: false,
+      externalUnknown: false,
+      diagnostic: false,
+      productOutcome: true,
+      implementationRequested: true,
+      executionDepth: "change",
+    })
+    preserveSatisfied(w.steps, next)
+
+    expect(next.find((step) => step.id === "designer")?.status).toBe("complete")
+    expect(next.find((step) => step.id === "review-think")?.status).toBe("pending")
+  })
+
 })
