@@ -1,5 +1,5 @@
 import type * as OpenCodePlugin from "@opencode/plugin"
-import { RUNTIME_STATE_VERSION, consumeDispatchGrantLocked, createProjectStorage, createTransactionalStorage, ensureRuntimeStateVersion, findUsableDispatchGrant, importLegacyPluginStorage, issueDispatchGrantLocked, migrateLegacySessionState, resolveRuntimeIdentity, sessionBoundToOq, sessionBoundToStep, sessionBoundToWorkflow, withRuntimeLock, withRuntimeLocks, type LoomRuntimeIdentity } from "./runtime"
+import { RUNTIME_STATE_VERSION, consumeDispatchGrantLocked, createProjectStorage, createTransactionalStorage, ensureRuntimeStateVersion, findUsableDispatchGrant, importLegacyPluginStorage, issueDispatchGrantLocked, migrateLegacySessionState, resolveRuntimeIdentity, sessionBoundToOq, sessionBoundToStep, sessionBoundToWorkflow, withRuntimeAdvisoryLock, withRuntimeLock, withRuntimeLocks, type LoomRuntimeIdentity } from "./runtime"
 import { LoomRpc } from "./rpc"
 import { buildSidebarSnapshot } from "./sidebar"
 import { renderToolOutput } from "./presentation"
@@ -48,8 +48,9 @@ import {
   type ExecutionLimits,
   type ProgressSignal,
 } from "./budget"
-import { resourcesWithinScope, validateWriteScope, type TaskScope } from "./scope"
+import { resourceMatchesScope, resourcesWithinScope, validateWriteScope, type TaskScope } from "./scope"
 import { shellResourcesAllowed } from "./shell"
+import { prepareReportPromotion, publishPreparedReport, reconcilePendingReportPromotion, type ReportPromotionInput, type ReportPromotionRecord } from "./reports"
 import {
   findPaths,
   grepText,
@@ -132,6 +133,16 @@ const loomAgents = new Set([
   "diagnostic",
 ])
 
+const reportProducerAgents = new Set([
+  "general",
+  "reviewer",
+  "critic",
+  "designer",
+  "acceptance",
+  "research",
+  "diagnostic",
+])
+
 function intentKey(id: string) {
   return `intent/${id}`
 }
@@ -172,6 +183,75 @@ function acceptanceKey(workflowId: string) {
 
 function knowledgeKey(workflowId: string) {
   return `knowledge/${workflowId}`
+}
+
+function reportPromotionKey(id: string) {
+  return `report-promotion/${id}`
+}
+
+function reportPromotionDestinationKey(destination: string) {
+  const normalized = destination.trim().replaceAll("\\", "/").replace(/^\.\//, "")
+  return `report-promotion-destination/${encodeURIComponent(normalized)}`
+}
+
+async function recoverPendingReportPromotions(
+  ctx: any,
+  runtime: LoomRuntimeIdentity,
+  projectDirectory: string,
+) {
+  let after: string | undefined
+  let recovered = 0
+  let failed = 0
+
+  do {
+    const page = await ctx.storage.scan({
+      prefix: "report-promotion/",
+      limit: 100,
+      ...(after ? { after } : {}),
+    })
+
+    for (const entry of page.entries) {
+      const observed = entry.value as ReportPromotionRecord
+      if (!observed || observed.status !== "pending") continue
+
+      await withRuntimeAdvisoryLock(
+        runtime,
+        "report-promotion",
+        reportPromotionDestinationKey(observed.destination),
+        async () => {
+          const record = (await ctx.storage.get(
+            reportPromotionKey(observed.id),
+          )) as ReportPromotionRecord | undefined
+          if (!record || record.status !== "pending") return
+
+          let next: ReportPromotionRecord
+          try {
+            next = await reconcilePendingReportPromotion(projectDirectory, record)
+          } catch (error) {
+            next = {
+              ...record,
+              status: "failed",
+              failedAt: new Date().toISOString(),
+              error: `Recovery failed: ${error instanceof Error ? error.message : String(error)}`.slice(0, 1000),
+            }
+          }
+
+          if (next.status === "pending") return
+          if (next.status === "completed") {
+            await ctx.storage.set(reportPromotionDestinationKey(next.destination), next.id)
+            recovered += 1
+          } else {
+            failed += 1
+          }
+          await ctx.storage.set(reportPromotionKey(record.id), next)
+        },
+      )
+    }
+
+    after = page.next
+  } while (after)
+
+  return { recovered, failed }
 }
 
 function scopeKey(workflowId: string, stepId: string) {
@@ -627,20 +707,20 @@ function toolEventKey(raw: any) {
 
 const pendingToolInputs = new Map<string, unknown>()
 
-const inspectionToolNames = new Set(["find", "grep", "select", "stats"])
+const evidenceObservedLoomToolNames = new Set(["find", "grep", "select", "stats", "report_promote"])
 
 function isLoomToolName(tool: string) {
   return tool.startsWith("loom_") || tool.startsWith("loom.")
 }
 
-function isLoomInspectionToolName(tool: string) {
+function isEvidenceObservedLoomToolName(tool: string) {
   if (!isLoomToolName(tool)) return false
   const leaf = tool.replace(/^loom[._]/, "")
-  return inspectionToolNames.has(leaf)
+  return evidenceObservedLoomToolNames.has(leaf)
 }
 
 function skipLoomEvidence(tool: string) {
-  return isLoomToolName(tool) && !isLoomInspectionToolName(tool)
+  return isLoomToolName(tool) && !isEvidenceObservedLoomToolName(tool)
 }
 
 const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
@@ -670,6 +750,8 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         return Reflect.get(target, property, receiver)
       },
     }) as typeof ctx
+
+    await recoverPendingReportPromotions(ctx, runtime, ctx.location.directory)
 
     const dashboardPublisher = createDashboardPublisher(scopedStorage, runtime)
     dashboardPublisher.trigger()
@@ -851,6 +933,116 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         execute: async (input) => ({
           content: renderToolOutput(await statPaths(ctx.location.directory, input as StatsOptions)),
         }),
+      })
+
+      editor.add({
+        name: "report_promote",
+        description:
+          "Promote one OKF-compliant ephemeral Markdown report unchanged into docs/reports. General only; promotion preserves source and authority and never overwrites.",
+        input: {
+          type: "object",
+          properties: {
+            source: {
+              type: "string",
+              description: "Project-relative source under ephemeral-reports/.",
+            },
+            destination: {
+              type: "string",
+              description: "Project-relative destination under docs/reports/.",
+            },
+            reason: {
+              type: "string",
+              description: "Why the report itself has lasting documentary, audit, historical, or compliance value.",
+            },
+          },
+          required: ["source", "destination", "reason"],
+          additionalProperties: false,
+        },
+        options: { namespace: "loom", codemode: false },
+        execute: async (input, tool) => {
+          if (tool.agent !== "general") {
+            throw new Error("Only General may promote durable reports.")
+          }
+
+          const value = input as ReportPromotionInput
+          return withRuntimeAdvisoryLock(
+            runtime,
+            "report-promotion",
+            reportPromotionDestinationKey(value.destination),
+            async () => {
+              const promotionId = crypto.randomUUID()
+              const startedAt = new Date().toISOString()
+
+              let prepared
+              try {
+                prepared = await prepareReportPromotion(ctx.location.directory, value, promotionId)
+              } catch (error) {
+                const message = error instanceof Error ? error.message : String(error)
+                await ctx.storage.set(reportPromotionKey(promotionId), {
+                  id: promotionId,
+                  status: "failed",
+                  source: value.source,
+                  destination: value.destination,
+                  reason: value.reason,
+                  actor: tool.agent,
+                  startedAt,
+                  failedAt: new Date().toISOString(),
+                  authority: "unchanged",
+                  error: message.slice(0, 1000),
+                } satisfies ReportPromotionRecord)
+                throw error
+              }
+
+              const pending: ReportPromotionRecord = {
+                id: promotionId,
+                status: "pending",
+                source: prepared.source,
+                destination: prepared.destination,
+                reason: prepared.reason,
+                actor: tool.agent,
+                startedAt,
+                sha256: prepared.sha256,
+                bytes: prepared.bytes.byteLength,
+                authority: "unchanged",
+              }
+              await ctx.storage.set(reportPromotionKey(promotionId), pending)
+
+              try {
+                const promoted = await publishPreparedReport(prepared)
+                const promotedAt = new Date().toISOString()
+                const record: ReportPromotionRecord = {
+                  ...pending,
+                  status: "completed",
+                  promotedAt,
+                }
+                await ctx.storage.set(reportPromotionDestinationKey(promoted.destination), promotionId)
+                await ctx.storage.set(reportPromotionKey(promotionId), record)
+
+                return {
+                  content: renderToolOutput({
+                    ...promoted,
+                    promotionId,
+                    actor: tool.agent,
+                    promotedAt,
+                  }),
+                }
+              } catch (error) {
+                const reconciled = await reconcilePendingReportPromotion(
+                  ctx.location.directory,
+                  pending,
+                )
+                if (reconciled.status === "completed") {
+                  await ctx.storage.set(
+                    reportPromotionDestinationKey(reconciled.destination),
+                    promotionId,
+                  )
+                }
+                await ctx.storage.set(reportPromotionKey(promotionId), reconciled)
+                throw error
+              }
+            },
+          )
+        },
       })
 
       editor.add({
@@ -2200,6 +2392,9 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             at: observation.observedAt,
             ...(observation.command ? { command: clippedSummary(observation.command, 180) } : {}),
             ...(observation.path ? { path: observation.path } : {}),
+            ...(observation.destination ? { destination: observation.destination } : {}),
+            ...(observation.reason ? { reason: clippedSummary(observation.reason, 180) } : {}),
+            ...(observation.reportPromotion ? { promotion: observation.reportPromotion } : {}),
           }))
           return {
             content: renderToolOutput({
@@ -3762,6 +3957,55 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
     })
 
     await ctx.permission.hook("evaluate", async (event) => {
+      if (event.action === "edit") {
+        const reportResources = event.resources.filter((resource) =>
+          resourceMatchesScope(resource, "ephemeral-reports/**"),
+        )
+        const reportAgent = typeof event.agent === "string" ? event.agent : ""
+        if (
+          reportResources.length > 0 &&
+          (
+            !reportProducerAgents.has(reportAgent) ||
+            !resourcesWithinScope(reportResources, [`ephemeral-reports/${reportAgent}/**`])
+          )
+        ) {
+          event.effect = "deny"
+          event.message =
+            "Ephemeral report mutation is producer-scoped. Each report-producing role may edit only its own ephemeral-reports/<role>/ namespace."
+          return
+        }
+      }
+
+      if (
+        event.action === "edit" &&
+        event.resources.some((resource) => resourceMatchesScope(resource, "docs/reports/**"))
+      ) {
+        event.effect = "deny"
+        event.message =
+          "Durable reports are promotion-only. Write operational reports under ephemeral-reports/ and use loom_report_promote when the report itself deserves durable retention."
+        return
+      }
+
+      if (
+        event.action === "shell" &&
+        event.resources.some((resource) => resource.replaceAll("\\", "/").includes("docs/reports"))
+      ) {
+        event.effect = "deny"
+        event.message =
+          "Shell access to durable report storage is blocked. Use OKF-MCP to inspect reports and loom_report_promote for durable retention."
+        return
+      }
+
+      if (
+        event.action === "shell" &&
+        event.resources.some((resource) => resource.replaceAll("\\", "/").includes("ephemeral-reports"))
+      ) {
+        event.effect = "deny"
+        event.message =
+          "Shell access to ephemeral report storage is blocked. Use role-scoped edit permissions for report creation and OKF-MCP for discovery/read."
+        return
+      }
+
       if (event.agent === "worker" && event.action === "shell") {
         const workflowId = (await ctx.storage.get(sessionKey(event.sessionID))) as string | undefined
         const stepId = (await ctx.storage.get(sessionStepKey(event.sessionID))) as string | undefined
@@ -3948,6 +4192,39 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       }
 
       const summary = safeInputSummary(tool, input)
+      let reportPromotion: EvidenceObservation["reportPromotion"]
+      const loomTool = tool.replace(/^loom[._]/, "")
+      if (
+        raw.status === "completed" &&
+        loomTool === "report_promote" &&
+        input &&
+        typeof input === "object" &&
+        typeof (input as Record<string, unknown>).destination === "string"
+      ) {
+        const promotionId = (await ctx.storage.get(
+          reportPromotionDestinationKey(String((input as Record<string, unknown>).destination)),
+        )) as string | undefined
+        const record = promotionId
+          ? ((await ctx.storage.get(reportPromotionKey(promotionId))) as ReportPromotionRecord | undefined)
+          : undefined
+        if (
+          record?.status === "completed" &&
+          record.sha256 &&
+          record.promotedAt
+        ) {
+          reportPromotion = {
+            id: record.id,
+            source: record.source,
+            destination: record.destination,
+            reason: record.reason,
+            sha256: record.sha256,
+            actor: record.actor,
+            promotedAt: record.promotedAt,
+            authority: "unchanged",
+          }
+        }
+      }
+
       const observation: EvidenceObservation = {
         id: crypto.randomUUID(),
         sessionID: String(raw.sessionID),
@@ -3959,6 +4236,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         ...(raw.status === "completed" ? { resultDigest: await digest(raw.result) } : {}),
         ...(raw.status === "error" ? { error: String(raw.error?.message ?? raw.error ?? "tool error").slice(0, 1000) } : {}),
         ...summary,
+        ...(reportPromotion ? { reportPromotion } : {}),
       }
 
       await ctx.storage.set(evidenceKey(observation.id), observation)

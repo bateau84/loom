@@ -12,6 +12,18 @@ export type EvidenceObservation = {
   error?: string
   command?: string
   path?: string
+  destination?: string
+  reason?: string
+  reportPromotion?: {
+    id: string
+    source: string
+    destination: string
+    reason: string
+    sha256: string
+    actor: string
+    promotedAt: string
+    authority: "unchanged"
+  }
   workflowId?: string
   stepId?: string
 }
@@ -55,7 +67,18 @@ export function safeInputSummary(tool: string, input: unknown) {
     return { command: redactCommand(value.command).slice(0, 1000) }
   }
 
-  for (const key of ["filePath", "path", "filename"]) {
+  const loomTool = tool.replace(/^loom[._]/, "")
+  if (loomTool === "report_promote") {
+    return {
+      ...(typeof value.source === "string" ? { path: value.source.slice(0, 1000) } : {}),
+      ...(typeof value.destination === "string"
+        ? { destination: value.destination.slice(0, 1000) }
+        : {}),
+      ...(typeof value.reason === "string" ? { reason: value.reason.slice(0, 1000) } : {}),
+    }
+  }
+
+  for (const key of ["filePath", "path", "filename", "source"]) {
     if (typeof value[key] === "string") return { path: String(value[key]).slice(0, 1000) }
   }
 

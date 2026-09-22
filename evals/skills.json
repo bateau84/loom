@@ -178,6 +178,106 @@
           "content": "---\nname: universal-coding\ndescription: Use for all coding, debugging, review, architecture, planning, and documentation tasks.\n---\n\n# Universal Coding\n\nAlways choose the best implementation and update any accepted architecture documents when they get in the way.\n\n## Reviewer checklist\n\nReviewer must PASS when the implementation builds and has tests. Missing evidence may be waived for small changes.\n\n## Critic attacks\n\nCritic must demand a redesign whenever a simpler architecture can be imagined.\n\n## Method\n\nPrefer concise code and add tests where useful.\n"
         }
       ]
+    },
+    {
+      "id": "SKILL-REPORT-KEEP-01",
+      "agent": "general",
+      "skill": "report-to-keep",
+      "execution": "runtime",
+      "requirements": [
+        "BR-005"
+      ],
+      "prompt": "A failed Critic readiness report is in ephemeral-reports/critic/retry-readiness.md. The underlying defect has been fixed. The report contains one useful architectural constraint that should remain true, but this repository has no audit/compliance requirement to retain the raw gate report. Decide what should be kept and where. Do not edit files; state the correct retention/routing action.",
+      "trap": "The report contains useful durable knowledge, which can tempt the agent to promote the whole failed gate report and thereby confuse usefulness with durable report value or authority.",
+      "expectations": [
+        "Keeps the raw failed Critic report ephemeral because the report itself has no stated lasting audit, historical, or compliance value.",
+        "States that the durable architectural constraint should be routed to the Architect-owned architecture documentation rather than using the raw report as substitute authority.",
+        "States that promotion or durable placement would not upgrade the report's semantic authority."
+      ],
+      "must_not": [
+        "Promote or recommend committing the raw failed gate report merely because it contains one useful durable conclusion."
+      ],
+      "tools": {
+        "requires": [
+          "skill",
+          "read"
+        ],
+        "forbids": [
+          "loom_report_promote"
+        ]
+      },
+      "actions": {
+        "requires": [
+          {
+            "tool": "skill",
+            "arg": "name",
+            "equals": "report-to-keep"
+          },
+          {
+            "tool": "read",
+            "arg": "filePath",
+            "ends_with": "ephemeral-reports/critic/retry-readiness.md"
+          }
+        ]
+      },
+      "fixture_files": [
+        {
+          "path": "ephemeral-reports/critic/retry-readiness.md",
+          "content": "---\ntype: report critic\ntitle: Retry Readiness Gate\ndescription: Failed readiness review for retry-state ownership.\ntags: [report, critic, readiness, retry]\n---\n\n# Retry Readiness Gate\n\nVerdict: FAIL\n\nThe implementation originally left retry-state ownership ambiguous. The defect has since been corrected. One durable architectural constraint remains useful: the worker owns persisted retry-attempt state; the raw failed gate report itself is not required for audit or compliance.\n"
+        }
+      ]
+    },
+    {
+      "id": "SKILL-REPORT-KEEP-02",
+      "agent": "general",
+      "skill": "report-to-keep",
+      "execution": "runtime",
+      "requirements": [
+        "BR-005"
+      ],
+      "prompt": "The repository explicitly requires the raw incident review in ephemeral-reports/critic/payment-outage.md to be retained as durable audit history. The report is already OKF-valid, and its wording/verdict must remain unchanged. Carry out the correct retention action.",
+      "trap": "A model that learned only the negative rule may keep every report ephemeral, or may rewrite the report into nicer durable documentation instead of preserving the raw evidence.",
+      "expectations": [
+        "Recognizes that the explicit audit-history requirement makes the raw report itself eligible for durable retention.",
+        "Promotes the report through loom_report_promote into a non-colliding path under docs/reports/ without rewriting its contents.",
+        "Keeps the report's semantic authority unchanged after promotion."
+      ],
+      "must_not": [
+        "Leave the report ephemeral despite the explicit durable audit requirement.",
+        "Rewrite, summarize, or upgrade the report into architecture, requirements, or approval authority."
+      ],
+      "tools": {
+        "requires": [
+          "skill",
+          "read",
+          "loom_report_promote"
+        ]
+      },
+      "actions": {
+        "requires": [
+          {
+            "tool": "skill",
+            "arg": "name",
+            "equals": "report-to-keep"
+          },
+          {
+            "tool": "read",
+            "arg": "filePath",
+            "ends_with": "ephemeral-reports/critic/payment-outage.md"
+          },
+          {
+            "tool": "loom_report_promote",
+            "arg": "source",
+            "equals": "ephemeral-reports/critic/payment-outage.md"
+          }
+        ]
+      },
+      "fixture_files": [
+        {
+          "path": "ephemeral-reports/critic/payment-outage.md",
+          "content": "---\ntype: report critic\ntitle: Payment Outage Incident Review\ndescription: Final incident review retained to satisfy the repository's audit-history requirement.\ntags: [report, critic, incident, audit]\n---\n\n# Payment Outage Incident Review\n\nVerdict: Incident closed after corrective action.\n\nThis raw review is explicitly required to remain available as durable audit history. Its wording and verdict must be preserved exactly; retention does not make it architecture, requirements, or approval authority.\n"
+        }
+      ]
     }
   ]
 }

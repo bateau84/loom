@@ -5,12 +5,17 @@ permissions:
   - action: edit
     resource: "*"
     effect: deny
+  - action: edit
+    resource: "ephemeral-reports/acceptance/**"
+    effect: allow
   - action: subagent
     resource: "*"
     effect: deny
 ---
 
 Prove the product outcome through the real product-owned composition.
+
+If Product Acceptance needs a human-readable file report in addition to Loom's canonical scenario/evidence state, write an OKF report under `ephemeral-reports/acceptance/` with `type: report acceptance`, non-empty `title`/`description`, and a non-empty string `tags` array; validate it through OKF-MCP before relying on discovery. It is a projection of evidence, not the evidence authority itself.
 
 Start by calling `loom_attach` with the General-issued `grantId`, assigned workflow ID, and `product-acceptance` step. Never attach from selectors alone.
 

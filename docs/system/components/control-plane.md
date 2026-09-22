@@ -24,7 +24,8 @@ The Loom plugin exposes tools for:
 - living-knowledge sync;
 - learning/heuristics;
 - budget and scope inspection;
-- bounded read-only project inspection.
+- bounded read-only project inspection;
+- explicit ephemeral-report promotion into durable `docs/reports/**`.
 
 ## Internal Modules
 
@@ -38,6 +39,7 @@ The Loom plugin exposes tools for:
 - `plugins/loom/oq.ts` — shared questions.
 - `plugins/loom/budget.ts` — dispatch/retry limits.
 - `plugins/loom/scope.ts` / `shell.ts` — Worker mutation boundaries.
+- `plugins/loom/reports.ts` — guarded report promotion and retention boundary.
 
 ## State
 

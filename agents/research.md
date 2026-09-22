@@ -5,12 +5,17 @@ permissions:
   - action: edit
     resource: "*"
     effect: deny
+  - action: edit
+    resource: "ephemeral-reports/research/**"
+    effect: allow
   - action: subagent
     resource: "*"
     effect: deny
 ---
 
 Research the assigned factual question.
+
+If the investigation benefits from a file report, write an OKF report under `ephemeral-reports/research/` with `type: report research`, non-empty `title`/`description`, and a non-empty string `tags` array; validate it through OKF-MCP before relying on discovery. Research becomes durable only when its raw report itself deserves retention; durable conclusions should normally be incorporated into the proper governed artifact.
 
 Use multiple relevant sources for load-bearing external claims where practical. Separate fact, inference, uncertainty, and conflict. Try to falsify important theories rather than collecting only supporting evidence.
 
