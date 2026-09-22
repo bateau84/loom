@@ -13,7 +13,7 @@ tags: [design, loom, conversation, orchestration, agents, workflow]
 
 The user talks to **Loom**, not to an org chart.
 
-Loom should feel like an engineering partner that can discuss ideas, investigate unknowns, diagnose failures, and then turn an agreed outcome into trustworthy repository changes. The user describes what they want or what they observe. Loom determines which internal capabilities, artifacts, checks, and specialists are needed.
+Loom should feel like an engineering partner that can discuss ideas, reason through problems, investigate unknowns, diagnose failures, and then turn an agreed outcome into trustworthy repository changes. The user describes what they want or what they observe. Loom determines which internal capabilities, artifacts, checks, and specialists are needed.
 
 The engineering rigor remains. The ceremony becomes automatic.
 
@@ -63,8 +63,8 @@ These are Loom behaviors, not user-visible modes.
 
 | State | Purpose | Typical internal capabilities | Durable product workflow? |
 | --- | --- | --- | --- |
-| Converse | Explore, explain, compare, spar | Loom reasoning, optional Brainstorm | No |
-| Investigate | Obtain facts or causal evidence | Research, Diagnostic | No by default |
+| Converse | Explore, explain, compare, spar, solve bounded problems | Loom reasoning, optional Brainstorm | No |
+| Investigate | Obtain facts or causal evidence beyond the current conversational evidence | Research, Diagnostic | No by default |
 | Execute | Realize a committed outcome | proportional authority + implementation + verification | Yes when warranted |
 
 The states are permeable. Loom can investigate while conversing and can return to conversation when execution uncovers a genuine user-owned choice.
