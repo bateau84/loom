@@ -301,16 +301,6 @@
             "tool": "loom_route",
             "arg": "executionDepth",
             "equals": "task"
-          },
-          {
-            "tool": "loom_route",
-            "arg": "implementationRequested",
-            "equals": false
-          },
-          {
-            "tool": "loom_route",
-            "arg": "diagnostic",
-            "equals": true
           }
         ]
       }
@@ -349,11 +339,6 @@
             "tool": "loom_route",
             "arg": "executionDepth",
             "equals": "change"
-          },
-          {
-            "tool": "loom_route",
-            "arg": "implementationRequested",
-            "equals": false
           }
         ]
       }
@@ -395,16 +380,6 @@
             "tool": "loom_route",
             "arg": "executionDepth",
             "equals": "objective"
-          },
-          {
-            "tool": "loom_route",
-            "arg": "productOutcome",
-            "equals": true
-          },
-          {
-            "tool": "loom_route",
-            "arg": "implementationRequested",
-            "equals": true
           }
         ]
       },
