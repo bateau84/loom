@@ -184,7 +184,11 @@ function reportPromotionDestinationKey(destination: string) {
   return `report-promotion-destination/${encodeURIComponent(normalized)}`
 }
 
-async function recoverPendingReportPromotions(ctx: any, projectDirectory: string) {
+async function recoverPendingReportPromotions(
+  ctx: any,
+  runtime: LoomRuntimeIdentity,
+  projectDirectory: string,
+) {
   let after: string | undefined
   let recovered = 0
   let failed = 0
@@ -197,30 +201,41 @@ async function recoverPendingReportPromotions(ctx: any, projectDirectory: string
     })
 
     for (const entry of page.entries) {
-      const record = entry.value as ReportPromotionRecord
-      if (!record || record.status !== "pending") continue
+      const observed = entry.value as ReportPromotionRecord
+      if (!observed || observed.status !== "pending") continue
 
-      let next: ReportPromotionRecord
-      try {
-        next = await reconcilePendingReportPromotion(projectDirectory, record)
-      } catch (error) {
-        next = {
-          ...record,
-          status: "failed",
-          failedAt: new Date().toISOString(),
-          error: `Recovery failed: ${error instanceof Error ? error.message : String(error)}`.slice(0, 1000),
-        }
-      }
+      await withRuntimeLock(
+        runtime,
+        "report-promotion",
+        reportPromotionDestinationKey(observed.destination),
+        async () => {
+          const record = (await ctx.storage.get(
+            reportPromotionKey(observed.id),
+          )) as ReportPromotionRecord | undefined
+          if (!record || record.status !== "pending") return
 
-      if (next.status === "pending") continue
-      await ctx.storage.set(reportPromotionKey(record.id), next)
+          let next: ReportPromotionRecord
+          try {
+            next = await reconcilePendingReportPromotion(projectDirectory, record)
+          } catch (error) {
+            next = {
+              ...record,
+              status: "failed",
+              failedAt: new Date().toISOString(),
+              error: `Recovery failed: ${error instanceof Error ? error.message : String(error)}`.slice(0, 1000),
+            }
+          }
 
-      if (next.status === "completed") {
-        await ctx.storage.set(reportPromotionDestinationKey(next.destination), next.id)
-        recovered += 1
-      } else {
-        failed += 1
-      }
+          if (next.status === "pending") return
+          if (next.status === "completed") {
+            await ctx.storage.set(reportPromotionDestinationKey(next.destination), next.id)
+            recovered += 1
+          } else {
+            failed += 1
+          }
+          await ctx.storage.set(reportPromotionKey(record.id), next)
+        },
+      )
     }
 
     after = page.next
@@ -726,7 +741,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       },
     }) as typeof ctx
 
-    await recoverPendingReportPromotions(ctx, ctx.location.directory)
+    await recoverPendingReportPromotions(ctx, runtime, ctx.location.directory)
 
     const dashboardPublisher = createDashboardPublisher(scopedStorage, runtime)
     dashboardPublisher.trigger()
@@ -939,76 +954,84 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             throw new Error("Only General may promote durable reports.")
           }
 
-          await recoverPendingReportPromotions(ctx, ctx.location.directory)
-
           const value = input as ReportPromotionInput
-          const promotionId = crypto.randomUUID()
-          const startedAt = new Date().toISOString()
+          return withRuntimeLock(
+            runtime,
+            "report-promotion",
+            reportPromotionDestinationKey(value.destination),
+            async () => {
+              const promotionId = crypto.randomUUID()
+              const startedAt = new Date().toISOString()
 
-          let prepared
-          try {
-            prepared = await prepareReportPromotion(ctx.location.directory, value, promotionId)
-          } catch (error) {
-            const message = error instanceof Error ? error.message : String(error)
-            await ctx.storage.set(reportPromotionKey(promotionId), {
-              id: promotionId,
-              status: "failed",
-              source: value.source,
-              destination: value.destination,
-              reason: value.reason,
-              actor: tool.agent,
-              startedAt,
-              failedAt: new Date().toISOString(),
-              authority: "unchanged",
-              error: message.slice(0, 1000),
-            } satisfies ReportPromotionRecord)
-            throw error
-          }
+              let prepared
+              try {
+                prepared = await prepareReportPromotion(ctx.location.directory, value, promotionId)
+              } catch (error) {
+                const message = error instanceof Error ? error.message : String(error)
+                await ctx.storage.set(reportPromotionKey(promotionId), {
+                  id: promotionId,
+                  status: "failed",
+                  source: value.source,
+                  destination: value.destination,
+                  reason: value.reason,
+                  actor: tool.agent,
+                  startedAt,
+                  failedAt: new Date().toISOString(),
+                  authority: "unchanged",
+                  error: message.slice(0, 1000),
+                } satisfies ReportPromotionRecord)
+                throw error
+              }
 
-          const pending: ReportPromotionRecord = {
-            id: promotionId,
-            status: "pending",
-            source: prepared.source,
-            destination: prepared.destination,
-            reason: prepared.reason,
-            actor: tool.agent,
-            startedAt,
-            sha256: prepared.sha256,
-            bytes: prepared.bytes.byteLength,
-            authority: "unchanged",
-          }
-          await ctx.storage.set(reportPromotionKey(promotionId), pending)
-
-          try {
-            const promoted = await publishPreparedReport(prepared)
-            const promotedAt = new Date().toISOString()
-            const record: ReportPromotionRecord = {
-              ...pending,
-              status: "completed",
-              promotedAt,
-            }
-            await ctx.storage.set(reportPromotionKey(promotionId), record)
-            await ctx.storage.set(reportPromotionDestinationKey(promoted.destination), promotionId)
-
-            return {
-              content: renderToolOutput({
-                ...promoted,
-                promotionId,
+              const pending: ReportPromotionRecord = {
+                id: promotionId,
+                status: "pending",
+                source: prepared.source,
+                destination: prepared.destination,
+                reason: prepared.reason,
                 actor: tool.agent,
-                promotedAt,
-              }),
-            }
-          } catch (error) {
-            const reconciled = await reconcilePendingReportPromotion(
-              ctx.location.directory,
-              pending,
-            )
-            await ctx.storage.set(reportPromotionKey(promotionId), reconciled)
-            if (reconciled.status === "completed") {
-              await ctx.storage.set(reportPromotionDestinationKey(reconciled.destination), promotionId)
-            }
-            throw error
-          }
+                startedAt,
+                sha256: prepared.sha256,
+                bytes: prepared.bytes.byteLength,
+                authority: "unchanged",
+              }
+              await ctx.storage.set(reportPromotionKey(promotionId), pending)
+
+              try {
+                const promoted = await publishPreparedReport(prepared)
+                const promotedAt = new Date().toISOString()
+                const record: ReportPromotionRecord = {
+                  ...pending,
+                  status: "completed",
+                  promotedAt,
+                }
+                await ctx.storage.set(reportPromotionDestinationKey(promoted.destination), promotionId)
+                await ctx.storage.set(reportPromotionKey(promotionId), record)
+
+                return {
+                  content: renderToolOutput({
+                    ...promoted,
+                    promotionId,
+                    actor: tool.agent,
+                    promotedAt,
+                  }),
+                }
+              } catch (error) {
+                const reconciled = await reconcilePendingReportPromotion(
+                  ctx.location.directory,
+                  pending,
+                )
+                if (reconciled.status === "completed") {
+                  await ctx.storage.set(
+                    reportPromotionDestinationKey(reconciled.destination),
+                    promotionId,
+                  )
+                }
+                await ctx.storage.set(reportPromotionKey(promotionId), reconciled)
+                throw error
+              }
+            },
+          )
         },
       })
 
