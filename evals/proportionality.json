@@ -316,6 +316,13 @@
             "arg": "agent",
             "equals": "reviewer"
           }
+        ],
+        "forbids": [
+          {
+            "tool": "subagent",
+            "arg": "agent",
+            "equals": "worker"
+          }
         ]
       },
       "fixture_files": [
