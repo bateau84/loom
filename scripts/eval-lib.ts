@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, readdirSync } from "node:fs"
 import { join } from "node:path"
 
-export type EvalExecution = "runtime" | "role-decision"
+export type EvalExecution = "runtime" | "role-decision" | "conversation-response"
 
 export type ActionAssertion = {
   tool: string
@@ -76,8 +76,8 @@ export function validateSuite(suite: EvalSuite, repoRoot: string) {
       }
     }
 
-    if (!["runtime", "role-decision"].includes(item.execution)) {
-      errors.push(`${label}: execution must be runtime or role-decision`)
+    if (!["runtime", "role-decision", "conversation-response"].includes(item.execution)) {
+      errors.push(`${label}: execution must be runtime, role-decision, or conversation-response`)
     }
     if (
       item.target_timeout_seconds !== undefined &&
