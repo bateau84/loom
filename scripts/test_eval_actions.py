@@ -73,6 +73,33 @@ class WorkflowCredentialTests(unittest.TestCase):
         self.assertIn('args+=(--env OPENCODE_API_KEY)', workflow)
 
 
+class EvalSuiteCostBoundaryTests(unittest.TestCase):
+    def test_default_suite_uses_mocked_research_and_excludes_live_nested_integration(self):
+        default_cases = RUN_EVALS.load_cases()
+        default_ids = {case["id"] for case in default_cases}
+
+        self.assertIn("CONVERSATION-02", default_ids)
+        self.assertIn("CONVERSATION-02-SYNTH", default_ids)
+        self.assertNotIn("CONVERSATION-02-LIVE", default_ids)
+
+        routing = next(case for case in default_cases if case["id"] == "CONVERSATION-02")
+        synthesis = next(case for case in default_cases if case["id"] == "CONVERSATION-02-SYNTH")
+        self.assertEqual(routing["execution"], "role-decision")
+        self.assertEqual(synthesis["execution"], "role-decision")
+        self.assertIn("MOCK RESEARCH DECISION BRIEF", synthesis["prompt"])
+
+    def test_live_integration_suite_keeps_real_nested_research_opt_in(self):
+        live_path = RUN_EVALS.ROOT / "evals" / "live-integration.json"
+        cases = RUN_EVALS.load_cases([live_path])
+
+        self.assertEqual([case["id"] for case in cases], ["CONVERSATION-02-LIVE"])
+        case = cases[0]
+        self.assertEqual(case["execution"], "runtime")
+        self.assertEqual(case["target_timeout_seconds"], 360)
+        self.assertEqual(case["actions"]["requires"][0]["equals"], "research")
+        self.assertIs(case["actions"]["requires"][1]["equals"], False)
+
+
 class RuntimeEvalProjectTests(unittest.TestCase):
     def test_runtime_project_installs_loom_plugin_and_lists_it_in_config(self):
         case = next(
