@@ -331,6 +331,7 @@ describe("Loom runtime upgrade ledger", () => {
 
       let contextSeen: any
       let broadScanKeys: string[] = []
+      let broadScanNext: string | undefined
       let directReadDenied = false
       let directScanDenied = false
 
@@ -350,9 +351,13 @@ describe("Loom runtime upgrade ledger", () => {
                 directReadDenied = String(error).includes("framework-owned runtime upgrade metadata")
               }
 
-              broadScanKeys = (
-                await installationStorage.scan({ prefix: "installation/", limit: 100 })
-              ).entries.map((entry: any) => entry.key)
+              const broadPage = await installationStorage.scan({
+                prefix: "installation/",
+                limit: 100,
+              })
+              broadScanKeys = broadPage.entries.map((entry: any) => entry.key)
+              broadScanNext = broadPage.next
+              expect(Object.isFrozen(context)).toBe(true)
 
               try {
                 await installationStorage.scan({
@@ -382,6 +387,7 @@ describe("Loom runtime upgrade ledger", () => {
       expect(directScanDenied).toBe(true)
       expect(broadScanKeys).not.toContain("installation/runtime-schema")
       expect(broadScanKeys.some((key) => key.startsWith("installation/runtime-upgrades/"))).toBe(false)
+      expect(broadScanNext).toBeUndefined()
       expect(await storage.get("installation/payload")).toEqual({ version: 1 })
       expect(await storage.get("installation/runtime-schema")).toMatchObject({ currentVersion: 1 })
       expect(

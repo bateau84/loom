@@ -55,9 +55,9 @@ export type RuntimeUpgradePhase =
   | "legacy-session-import"
 
 export type RuntimeUpgradeContext = {
-  fromVersion: number
-  toVersion: number
-  phase: RuntimeUpgradePhase
+  readonly fromVersion: number
+  readonly toVersion: number
+  readonly phase: RuntimeUpgradePhase
 }
 
 export type RuntimeUpgradeStep = {
@@ -504,7 +504,7 @@ function createInstallationUpgradeStorage(raw: RawStorage): RawStorage {
   const scanVisible = async (input: { prefix: string; limit?: number; after?: string }) => {
     const prefix = requireGlobal(input.prefix)
     const limit = Math.max(1, Math.min(input.limit ?? 100, 1000))
-    const entries: Array<{ key: string; value: unknown }> = []
+    const visible: Array<{ key: string; value: unknown }> = []
     let after = input.after
 
     do {
@@ -513,9 +513,7 @@ function createInstallationUpgradeStorage(raw: RawStorage): RawStorage {
         limit: 1000,
         ...(after ? { after } : {}),
       })
-      const pageEntries = page.entries ?? []
-      for (let index = 0; index < pageEntries.length; index++) {
-        const entry = pageEntries[index]
+      for (const entry of page.entries ?? []) {
         if (
           !entry ||
           typeof entry.key !== "string" ||
@@ -523,19 +521,18 @@ function createInstallationUpgradeStorage(raw: RawStorage): RawStorage {
         ) {
           continue
         }
-        entries.push(entry)
-        if (entries.length === limit) {
-          const moreRawEntries = index < pageEntries.length - 1 || Boolean(page.next)
+        visible.push(entry)
+        if (visible.length > limit) {
           return {
-            entries,
-            next: moreRawEntries ? entry.key : undefined,
+            entries: visible.slice(0, limit),
+            next: visible[limit - 1]?.key,
           }
         }
       }
       after = page.next
     } while (after)
 
-    return { entries, next: undefined }
+    return { entries: visible, next: undefined }
   }
 
   const storage: RawStorage = {
@@ -665,11 +662,11 @@ export async function ensureRuntimeStateVersion(
           )
         }
 
-        const context: RuntimeUpgradeContext = {
+        const context: RuntimeUpgradeContext = Object.freeze({
           fromVersion: step.fromVersion,
           toVersion: step.toVersion,
           phase: "canonical-upgrade",
-        }
+        })
         const details: Record<string, unknown> = {}
         if (step.applyInstallation) {
           const installationDetails = await step.applyInstallation(
@@ -1189,11 +1186,11 @@ async function upgradeLateLegacyImport(
 
   const applied: string[] = []
   for (const step of runtimeUpgradePath(steps, RUNTIME_BASELINE_VERSION, targetVersion)) {
-    const context: RuntimeUpgradeContext = {
+    const context: RuntimeUpgradeContext = Object.freeze({
       fromVersion: step.fromVersion,
       toVersion: step.toVersion,
       phase: "late-plugin-import",
-    }
+    })
     if (step.applyInstallation) {
       await step.applyInstallation(
         createInstallationUpgradeStorage(target),
@@ -1252,11 +1249,11 @@ async function upgradeLegacySessionImport(
   const applied: string[] = []
   const projectStorage = createScopedProjectUpgradeStorage(scoped, runtime.projectId)
   for (const step of runtimeUpgradePath(steps, RUNTIME_BASELINE_VERSION, targetVersion)) {
-    const context: RuntimeUpgradeContext = {
+    const context: RuntimeUpgradeContext = Object.freeze({
       fromVersion: step.fromVersion,
       toVersion: step.toVersion,
       phase: "legacy-session-import",
-    }
+    })
     if (step.applyProject) {
       await step.applyProject(projectStorage, runtime.projectId, runtime, context)
     }
