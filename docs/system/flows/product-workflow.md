@@ -47,10 +47,10 @@ A Task does not require a new Anchor. It may use an existing accepted Anchor whe
 
 ### Change
 
-When Task evidence shows new UX semantics, behavioral guarantees, or structural authority is actually needed:
+When the committed request already demonstrates—or Task evidence later reveals—a bounded need for new UX semantics, behavioral guarantees, or structural authority:
 
 ```text
-material bounded change
+clear bounded change commitment
   -> required Research / Designer / Specifier only as earned
   -> Reviewer over changed meaning
   -> Architect + Reviewer only when structural authority is required
@@ -61,6 +61,8 @@ material bounded change
 ```
 
 Change depth deliberately skips Planner, Critic, whole-product Product Acceptance, and final product gates.
+
+A Change may therefore start directly as a request-backed workflow; it does not need a preceding Task. Unresolved Designer/Specifier/Architect work is specialist-owned realization, not automatically user-owned product intent. Use intent shaping only when a load-bearing choice truly belongs to the user rather than Loom expertise.
 
 ### Objective
 
@@ -112,6 +114,8 @@ Start shallow. Stay shallow for obvious bounded findings. A completed Task may e
 
 Conversation precedes execution. Mentioning an idea, asking for alternatives, requesting a deep dive, asking for diagnosis, or requesting findings does not by itself create a workflow or Anchor.
 
-When the user clearly asks Loom to carry out the outcome, Loom crosses into governed execution. Bounded work may start as request-backed Task/Change without a new Anchor when no new product authority is required. Broad/new product work still requires accepted product authority before Objective execution.
+When the user clearly asks Loom to carry out the outcome, Loom crosses into governed execution. Bounded work may start as request-backed Task/Change without a new Anchor when no new **user-owned product intent** must be decided. Change may obtain new Designer/Specifier/Architect authority inside that bounded workflow. Broad/new product work still requires accepted product authority before Objective execution.
+
+Once a governed workflow starts, General continues it as an orchestration loop: after each synchronous child returns, inspect status and dispatch the next runnable owner. Read-only Task/Change workflows continue through their independent review gates even though no Worker is present.
 
 After execution authority is established, ordinary expertise-solvable work proceeds autonomously. Product intent is not repeatedly reopened without new material evidence.
