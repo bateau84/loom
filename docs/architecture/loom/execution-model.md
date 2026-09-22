@@ -13,8 +13,10 @@ Loom's repository is the global OpenCode config directory. Agent files therefore
 
 ### Primary
 
-- **general** — user-facing execution governor; shapes fuzzy intent, records the Anchor acceptance boundary, then starts/resumes autonomous workflows.
-- **brainstorm** — optional explicit sparring mode for intent exploration without autonomous execution.
+- **Loom** — the single user-facing conversational engineering partner. The current OpenCode compatibility identifier is `general`.
+- Loom owns exploration, sparring, investigation, the execution transition, autonomous routing, and continuity with the user.
+- **brainstorm** is an optional fresh subagent used as an internal ideation capability; it is not a second primary user mode.
+- **research** and **diagnostic** may be used during conversation for bounded investigation without implying product mutation.
 
 ### Authority subagents
 
@@ -55,7 +57,7 @@ Large workflow history is not copied into every child context.
 
 ## Explicit Routing
 
-General does not rely only on prompt memory to decide whether expertise is required.
+Loom does not rely only on prompt memory to decide whether expertise is required after execution begins.
 
 Before dependent work, the control plane records required capabilities.
 
@@ -125,11 +127,14 @@ Different-model independence is preferred for holistic review, but absence of a 
 - [BR-012](../../requirements/loom/br-012-prefer-deep-modules-and-remove-obsolete-code.md)
 - [BR-013](../../requirements/loom/br-013-diagnose-root-causes.md)
 - [BR-014](../../requirements/loom/br-014-support-deliberate-sparring.md)
+- [BR-019](../../requirements/loom/br-019-conversation-is-primary-interface.md)
 
 
-## Intent interviewing
+## Conversation and intent interviewing
 
-General loads the `intent-grilling` skill only when product intent is unresolved.
+Conversation precedes workflow. Loom may discuss ideas, compare alternatives, research, or diagnose without starting an intent session.
+
+Loom loads the `intent-grilling` skill only after the user has committed to execution and product intent remains unresolved.
 
 The interview follows four runtime-enforced rules:
 - one unresolved user question at a time;
