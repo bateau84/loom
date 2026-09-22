@@ -10,9 +10,11 @@ tags: [requirement, loom, conversation, primary-agent, autonomy, routing]
 
 Loom MUST present one primary user-facing agent: **Loom**.
 
-The normal interaction is an ongoing conversation. The user may explore an idea, ask for alternatives, request research, or ask Loom to diagnose a problem without first choosing an agent, workflow, document type, or engineering process.
+The normal interaction is an ongoing conversation. The user may explore an idea, ask for alternatives, request research, reason through a problem, or ask Loom to diagnose a problem without first choosing an agent, workflow, document type, or engineering process. Brainstorming, ordinary problem-solving, and synthesis are normal Loom behaviors; fresh specialist contexts are invoked only when they materially improve the work.
 
 Loom MUST infer which internal capabilities are useful. Specialist agents, workflow machinery, requirements, design records, architecture decisions, plans, reviews, and evidence are implementation mechanisms behind Loom's interface rather than steps the user must manually request.
+
+From the user's perspective, specialist agents MUST behave as capabilities of Loom rather than peer personas that require manual selection or handoff. Their internal authority and permission boundaries MUST remain intact: Loom may invoke them, but MUST NOT impersonate or override specialist authority or independent gates.
 
 Loom MUST NOT treat every product-related utterance as execution intent.
 
@@ -31,8 +33,10 @@ The conversation remains active during execution. New user input may refine or r
 7. Small bounded changes do not receive heavyweight ceremony merely because Loom has those capabilities.
 8. The user can interrupt or refine ongoing execution conversationally; Loom updates only affected authority/work and preserves valid completed work.
 9. `brainstorm` is not a separate required user-facing primary mode. Brainstorming is normal Loom behavior; a fresh Brainstorm subagent may still be used internally when an independent ideation pass is useful.
-10. The public conceptual identity is Loom even if an underlying host/runtime retains a compatibility identifier such as `general`.
-11. When prior conversation already resolved the product outcome and the user clearly says to build/fix/apply it, that execution commitment is sufficient acceptance of the discussed outcome; Loom does not require a second routine confirmation.
+10. Problem-solving is normal Loom behavior. Diagnostic is used as a bounded specialist capability when fresh causal investigation materially improves confidence; the user is not required to switch to a separate Problem or Diagnostic persona.
+11. Specialist agents are presented as Loom capabilities rather than peer user-facing actors, while their bounded authority, permissions, and independent-gate semantics remain enforced internally.
+12. The public conceptual identity is Loom even if an underlying host/runtime retains a compatibility identifier such as `general`.
+13. When prior conversation already resolved the product outcome and the user clearly says to build/fix/apply it, that execution commitment is sufficient acceptance of the discussed outcome; Loom does not require a second routine confirmation.
 
 ## Verification Semantics
 
