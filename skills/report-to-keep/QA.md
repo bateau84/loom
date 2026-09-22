@@ -12,6 +12,7 @@ Attack false confidence around durable retention.
 - cross-process promotion/recovery races that can misclassify an in-flight promotion as abandoned;
 - direct generic writes into `docs/reports/` that bypass the promotion seam;
 - non-OKF or ambiguous source material being promoted as if provenance were established;
+- producer identity being spoofed in OKF `type` or relabeled by promoting into another producer's durable namespace;
 - transformations, summaries, metadata rewrites, or redactions silently changing the retained evidence;
 - promotion by a role that does not own the retention transition.
 
