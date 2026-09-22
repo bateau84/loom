@@ -6,7 +6,7 @@ permissions:
     resource: "*"
     effect: deny
   - action: edit
-    resource: "ephemeral-reports/**"
+    resource: "ephemeral-reports/research/**"
     effect: allow
   - action: subagent
     resource: "*"
