@@ -319,6 +319,79 @@ describe("Loom runtime upgrade ledger", () => {
     })
   })
 
+  test("installation upgrade callbacks cannot observe or mutate the framework-owned schema ledger", async () => {
+    await withRoots(async (root) => {
+      const legacy = new MemoryStorage()
+      const project = join(root, "upgrade-ledger-boundary")
+      await mkdir(project, { recursive: true })
+      const runtime = await resolveRuntimeIdentity(project, legacy as any)
+      const storage = await createTransactionalStorage(runtime)
+      await ensureRuntimeStateVersion(storage, runtime)
+      await storage.set("installation/payload", { version: 1 })
+
+      let contextSeen: any
+      let broadScanKeys: string[] = []
+      let directReadDenied = false
+      let directScanDenied = false
+
+      await expect(
+        ensureRuntimeStateVersion(storage, runtime, {
+          targetVersion: 2,
+          steps: [{
+            id: "test-ledger-private-v1-to-v2",
+            fromVersion: 1,
+            toVersion: 2,
+            applyInstallation: async (installationStorage: any, _runtime: any, context: any) => {
+              contextSeen = context
+
+              try {
+                await installationStorage.get("installation/runtime-schema")
+              } catch (error) {
+                directReadDenied = String(error).includes("framework-owned runtime upgrade metadata")
+              }
+
+              broadScanKeys = (
+                await installationStorage.scan({ prefix: "installation/", limit: 100 })
+              ).entries.map((entry: any) => entry.key)
+
+              try {
+                await installationStorage.scan({
+                  prefix: "installation/runtime-upgrades/",
+                  limit: 100,
+                })
+              } catch (error) {
+                directScanDenied = String(error).includes("framework-owned runtime upgrade metadata")
+              }
+
+              await installationStorage.set("installation/payload", { version: 2 })
+              await installationStorage.set(
+                "installation/runtime-upgrades/forged-future-receipt",
+                { unsafe: true },
+              )
+            },
+          }],
+        }),
+      ).rejects.toThrow("framework-owned runtime upgrade metadata")
+
+      expect(contextSeen).toEqual({
+        fromVersion: 1,
+        toVersion: 2,
+        phase: "canonical-upgrade",
+      })
+      expect(directReadDenied).toBe(true)
+      expect(directScanDenied).toBe(true)
+      expect(broadScanKeys).not.toContain("installation/runtime-schema")
+      expect(broadScanKeys.some((key) => key.startsWith("installation/runtime-upgrades/"))).toBe(false)
+      expect(await storage.get("installation/payload")).toEqual({ version: 1 })
+      expect(await storage.get("installation/runtime-schema")).toMatchObject({ currentVersion: 1 })
+      expect(
+        await storage.get("installation/runtime-upgrades/forged-future-receipt"),
+      ).toBeUndefined()
+      const receipts = await storage.scan({ prefix: "installation/runtime-upgrades/" })
+      expect(receipts.entries).toHaveLength(0)
+    })
+  })
+
   test("project-scoped upgrade callbacks migrate every canonical project before advancing the installation version", async () => {
     await withRoots(async (root) => {
       const legacy = new MemoryStorage()
@@ -476,6 +549,71 @@ describe("Loom late legacy import upgrades", () => {
       expect(await target.get("installation/runtime-schema")).toMatchObject({
         currentVersion: 2,
       })
+    })
+  })
+
+  test("late legacy import receives explicit version context without access to framework ledger", async () => {
+    await withRoots(async (root) => {
+      const legacy = new MemoryStorage()
+      const project = join(root, "late-import-ledger-boundary")
+      await mkdir(project, { recursive: true })
+      const runtime = await resolveRuntimeIdentity(project, legacy as any)
+      const target = await createTransactionalStorage(runtime)
+
+      const phases: string[] = []
+      let lateReadDenied = false
+      let lateWriteDenied = false
+      let lateScanKeys: string[] = []
+
+      const steps = [{
+        id: "test-late-ledger-private-v1-to-v2",
+        fromVersion: 1,
+        toVersion: 2,
+        applyInstallation: async (storage: any, _runtime: any, context: any) => {
+          phases.push(context.phase)
+          if (context.phase !== "late-plugin-import") return
+
+          try {
+            await storage.get("installation/runtime-schema")
+          } catch (error) {
+            lateReadDenied = String(error).includes("framework-owned runtime upgrade metadata")
+          }
+
+          lateScanKeys = (
+            await storage.scan({ prefix: "installation/", limit: 100 })
+          ).entries.map((entry: any) => entry.key)
+
+          try {
+            await storage.set("installation/runtime-schema", { currentVersion: 99 })
+          } catch (error) {
+            lateWriteDenied = String(error).includes("framework-owned runtime upgrade metadata")
+          }
+
+          const episode = await storage.get("episode/e1")
+          if (episode) await storage.set("episode/e1", { ...(episode as any), format: 2 })
+        },
+      }]
+
+      await ensureRuntimeStateVersion(target, runtime, { targetVersion: 2, steps })
+      const beforeSchema = await target.get("installation/runtime-schema")
+      const beforeReceipts = await target.scan({ prefix: "installation/runtime-upgrades/" })
+
+      await legacy.set("episode/e1", { id: "e1", format: 1 })
+      const copied = await importLegacyPluginStorage(legacy as any, target, runtime, {
+        targetVersion: 2,
+        steps,
+      })
+
+      expect(copied).toBe(1)
+      expect(phases).toEqual(["canonical-upgrade", "late-plugin-import"])
+      expect(lateReadDenied).toBe(true)
+      expect(lateWriteDenied).toBe(true)
+      expect(lateScanKeys).not.toContain("installation/runtime-schema")
+      expect(lateScanKeys.some((key) => key.startsWith("installation/runtime-upgrades/"))).toBe(false)
+      expect(await target.get("episode/e1")).toEqual({ id: "e1", format: 2 })
+      expect(await target.get("installation/runtime-schema")).toEqual(beforeSchema)
+      const afterReceipts = await target.scan({ prefix: "installation/runtime-upgrades/" })
+      expect(afterReceipts.entries).toEqual(beforeReceipts.entries)
     })
   })
 

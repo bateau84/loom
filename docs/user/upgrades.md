@@ -59,7 +59,7 @@ The runtime upgrade ledger provides a single mechanism for later state-format ch
 5. commit every affected project mutation, installation mutation, upgrade receipt and version advance together;
 6. repeat until the build's target version is reached.
 
-Upgrade steps must be idempotent. A failed transactional step leaves the prior complete version/data generation intact. Loom refuses runtime state created by a newer build or a missing upgrade path instead of guessing.
+Upgrade callbacks cannot inspect or modify Loom's framework-owned `installation/runtime-schema` or `installation/runtime-upgrades/*` records. Those keys are hidden even from broad installation scans; callbacks receive explicit source/target version and execution-phase context instead. This prevents a migration payload transform from manufacturing, deleting, or rewriting the receipts/version metadata that proves the migration itself.\n\nUpgrade steps must be idempotent. A failed transactional step leaves the prior complete version/data generation intact. Loom refuses runtime state created by a newer build or a missing upgrade path instead of guessing.
 
 A project that has not been opened for a long time may still have records only in OpenCode's older plugin storage. If that project returns after the canonical Loom installation has already advanced to a newer runtime schema, Loom treats those records as baseline-version input and runs the registered idempotent upgrade callbacks over the imported project/global records before committing them. The same baseline→current transformation rule applies when an old **unscoped** session/workflow is reconciled lazily after the installation has advanced. The old-format records are never exposed as canonical newer-version state.
 

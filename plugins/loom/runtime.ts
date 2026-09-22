@@ -49,6 +49,17 @@ const GLOBAL_PREFIXES = ["installation/", "episode/", "heuristic/"]
 export const RUNTIME_BASELINE_VERSION = 1
 export const RUNTIME_STATE_VERSION = 1
 
+export type RuntimeUpgradePhase =
+  | "canonical-upgrade"
+  | "late-plugin-import"
+  | "legacy-session-import"
+
+export type RuntimeUpgradeContext = {
+  fromVersion: number
+  toVersion: number
+  phase: RuntimeUpgradePhase
+}
+
 export type RuntimeUpgradeStep = {
   id: string
   fromVersion: number
@@ -56,11 +67,13 @@ export type RuntimeUpgradeStep = {
   applyInstallation?: (
     storage: RawStorage,
     runtime: LoomRuntimeIdentity,
+    context: RuntimeUpgradeContext,
   ) => Promise<Record<string, unknown> | void>
   applyProject?: (
     storage: RawStorage,
     projectId: string,
     runtime: LoomRuntimeIdentity,
+    context: RuntimeUpgradeContext,
   ) => Promise<Record<string, unknown> | void>
 }
 
@@ -464,6 +477,15 @@ function isInstallationUpgradeKey(key: string) {
   return GLOBAL_PREFIXES.some((prefix) => key.startsWith(prefix))
 }
 
+function isRuntimeUpgradeControlKey(key: string) {
+  return (
+    key === "installation/runtime-schema" ||
+    key.startsWith("installation/runtime-schema/") ||
+    key === "installation/runtime-upgrades" ||
+    key.startsWith("installation/runtime-upgrades/")
+  )
+}
+
 function createInstallationUpgradeStorage(raw: RawStorage): RawStorage {
   const requireGlobal = (key: string) => {
     if (!isInstallationUpgradeKey(key)) {
@@ -471,8 +493,51 @@ function createInstallationUpgradeStorage(raw: RawStorage): RawStorage {
         `Installation runtime upgrade may not access project-scoped key: ${key}`,
       )
     }
+    if (isRuntimeUpgradeControlKey(key)) {
+      throw new Error(
+        `Installation runtime upgrade may not access framework-owned runtime upgrade metadata: ${key}`,
+      )
+    }
     return key
   }
+
+  const scanVisible = async (input: { prefix: string; limit?: number; after?: string }) => {
+    const prefix = requireGlobal(input.prefix)
+    const limit = Math.max(1, Math.min(input.limit ?? 100, 1000))
+    const entries: Array<{ key: string; value: unknown }> = []
+    let after = input.after
+
+    do {
+      const page = await raw.scan({
+        prefix,
+        limit: 1000,
+        ...(after ? { after } : {}),
+      })
+      const pageEntries = page.entries ?? []
+      for (let index = 0; index < pageEntries.length; index++) {
+        const entry = pageEntries[index]
+        if (
+          !entry ||
+          typeof entry.key !== "string" ||
+          isRuntimeUpgradeControlKey(entry.key)
+        ) {
+          continue
+        }
+        entries.push(entry)
+        if (entries.length === limit) {
+          const moreRawEntries = index < pageEntries.length - 1 || Boolean(page.next)
+          return {
+            entries,
+            next: moreRawEntries ? entry.key : undefined,
+          }
+        }
+      }
+      after = page.next
+    } while (after)
+
+    return { entries, next: undefined }
+  }
+
   const storage: RawStorage = {
     get(key) {
       return raw.get(requireGlobal(key))
@@ -481,7 +546,7 @@ function createInstallationUpgradeStorage(raw: RawStorage): RawStorage {
       return raw.set(requireGlobal(key), value)
     },
     scan(input) {
-      return raw.scan({ ...input, prefix: requireGlobal(input.prefix) })
+      return scanVisible(input)
     },
   }
   if (raw.transaction) storage.transaction = (fn) => raw.transaction!(fn)
@@ -600,11 +665,17 @@ export async function ensureRuntimeStateVersion(
           )
         }
 
+        const context: RuntimeUpgradeContext = {
+          fromVersion: step.fromVersion,
+          toVersion: step.toVersion,
+          phase: "canonical-upgrade",
+        }
         const details: Record<string, unknown> = {}
         if (step.applyInstallation) {
           const installationDetails = await step.applyInstallation(
             createInstallationUpgradeStorage(storage),
             runtime,
+            context,
           )
           if (installationDetails) details.installation = installationDetails
         }
@@ -616,6 +687,7 @@ export async function ensureRuntimeStateVersion(
               createProjectUpgradeStorage(storage, projectId),
               projectId,
               runtime,
+              context,
             )
             if (result) projectDetails[projectId] = result
           }
@@ -1117,14 +1189,24 @@ async function upgradeLateLegacyImport(
 
   const applied: string[] = []
   for (const step of runtimeUpgradePath(steps, RUNTIME_BASELINE_VERSION, targetVersion)) {
+    const context: RuntimeUpgradeContext = {
+      fromVersion: step.fromVersion,
+      toVersion: step.toVersion,
+      phase: "late-plugin-import",
+    }
     if (step.applyInstallation) {
-      await step.applyInstallation(createInstallationUpgradeStorage(target), runtime)
+      await step.applyInstallation(
+        createInstallationUpgradeStorage(target),
+        runtime,
+        context,
+      )
     }
     if (step.applyProject) {
       await step.applyProject(
         createProjectUpgradeStorage(target, runtime.projectId),
         runtime.projectId,
         runtime,
+        context,
       )
     }
     applied.push(step.id)
@@ -1170,8 +1252,13 @@ async function upgradeLegacySessionImport(
   const applied: string[] = []
   const projectStorage = createScopedProjectUpgradeStorage(scoped, runtime.projectId)
   for (const step of runtimeUpgradePath(steps, RUNTIME_BASELINE_VERSION, targetVersion)) {
+    const context: RuntimeUpgradeContext = {
+      fromVersion: step.fromVersion,
+      toVersion: step.toVersion,
+      phase: "legacy-session-import",
+    }
     if (step.applyProject) {
-      await step.applyProject(projectStorage, runtime.projectId, runtime)
+      await step.applyProject(projectStorage, runtime.projectId, runtime, context)
     }
     applied.push(step.id)
   }
