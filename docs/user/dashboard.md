@@ -23,7 +23,7 @@ By default it listens on:
 http://127.0.0.1:4318
 ```
 
-Set `LOOM_DASHBOARD_PORT` to choose another local port.
+Set `LOOM_DASHBOARD_PORT` to choose another local port. The running dashboard publishes its effective endpoint into Loom's installation state, and active Loom/OpenCode processes resolve sidebar/status links from that shared endpoint lease.
 
 ## Views
 
@@ -62,7 +62,11 @@ The OpenCode terminal client's Loom sidebar exposes that stable deep link for th
 
 The `/status/...` endpoint serves only generated workflow-status artifacts and remains GET-only. It does not expose a general runtime filesystem route.
 
-Use `LOOM_DASHBOARD_PORT` for a different local port. Use `LOOM_DASHBOARD_URL` when the browser reaches the dashboard through a tunnel, reverse proxy, or another explicitly configured base URL.
+Use `LOOM_DASHBOARD_PORT` for a different local port. The dashboard process publishes that effective endpoint and refreshes a short lease, so existing OpenCode/Loom processes pick up the active port without requiring matching environment variables or a restart.
+
+Use `LOOM_DASHBOARD_URL` on the dashboard process when the browser reaches the dashboard through a tunnel or reverse proxy. That advertised base URL is published through the same shared endpoint lease.
+
+> **Remote-access trust boundary:** the dashboard has no built-in authentication and is designed for host-local observation. Do not expose it directly to the public internet. Use a private tunnel or an authenticated/authorized reverse proxy, and treat canonical project paths/workflow metadata as operationally sensitive.
 
 ### Optional OpenCode Desktop preview
 
