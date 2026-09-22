@@ -139,6 +139,37 @@ bun run eval:live -- --target-kind skill --model openai/gpt-5.5
 bun run eval:live -- --target-kind skill --target web-ui-design --model openai/gpt-5.5
 ```
 
+### Parallelism and runtime evidence
+
+`--parallel N` parallelizes non-runtime eval work. Runtime cases are serialized by default even when `--parallel` is larger than one.
+
+That distinction is deliberate: one runtime case can already dispatch multiple model-backed Loom subagents internally. Running several runtime cases concurrently changes a behavioral repeatability run into a provider/OpenCode load test and can create wall-clock timeout noise unrelated to the behavioral contract.
+
+Use repeated runtime cases for behavioral stability like this:
+
+```bash
+bun run eval:live -- \
+  --cases PROP-RUNTIME-01 \
+  --iterations 3 \
+  --parallel 3 \
+  --model openai/gpt-5.6-luna
+```
+
+The runtime iterations still execute sequentially; unrelated role-decision/skill cases may use the ordinary parallel budget.
+
+To intentionally stress concurrent runtime execution, opt in explicitly:
+
+```bash
+bun run eval:live -- \
+  --cases PROP-RUNTIME-01 \
+  --iterations 3 \
+  --parallel 3 \
+  --runtime-parallel 3 \
+  --model openai/gpt-5.6-luna
+```
+
+Results from `--runtime-parallel >1` are load/stress evidence as well as behavioral evidence. Provider or wall-clock timeout failures from that mode should not be interpreted as a semantic regression without reproducing them under normal serialized runtime execution.
+
 Skill evaluation has two complementary sources:
 
 - central runtime cases in `evals/skills.json` test production-role skill discovery and companion-methodology behavior with one normal runtime execution;
