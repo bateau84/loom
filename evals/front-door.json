@@ -212,7 +212,8 @@
             "equals": false
           }
         ]
-      }
+      },
+      "target_timeout_seconds": 360
     },
     {
       "id": "CONVERSATION-03",
