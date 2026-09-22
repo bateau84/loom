@@ -1,6 +1,11 @@
 import { readFile } from "node:fs/promises"
 import { join } from "node:path"
 import { aggregateFleetFromDisk, resolveDashboardRuntimeRoot } from "../plugins/loom/dashboard"
+import {
+  configuredDashboardBaseUrl,
+  dashboardStateRoot,
+  publishDashboardEndpoint,
+} from "../plugins/loom/dashboard-endpoint"
 import { dashboardHtml } from "./ui"
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
@@ -67,11 +72,26 @@ export function createDashboardHandler(runtimeRoot: string) {
 
 if (import.meta.main) {
   const runtimeRoot = await resolveDashboardRuntimeRoot()
-  const port = Number(process.env.LOOM_DASHBOARD_PORT || "4318")
+  const requestedPort = Number(process.env.LOOM_DASHBOARD_PORT || "4318")
+  const port = Number.isInteger(requestedPort) && requestedPort > 0 && requestedPort <= 65535
+    ? requestedPort
+    : 4318
   const server = Bun.serve({
     hostname: "127.0.0.1",
     port,
     fetch: createDashboardHandler(runtimeRoot),
   })
-  console.log(`Loom dashboard (read-only): http://127.0.0.1:${server.port}`)
+
+  const stateRoot = dashboardStateRoot()
+  const advertisedBaseUrl = configuredDashboardBaseUrl(server.port)
+  const publishEndpoint = () =>
+    publishDashboardEndpoint(stateRoot, advertisedBaseUrl).catch((error) => {
+      console.error("Unable to publish Loom dashboard endpoint:", error)
+    })
+
+  await publishDashboardEndpoint(stateRoot, advertisedBaseUrl)
+  const endpointHeartbeat = setInterval(publishEndpoint, 5_000)
+  ;(endpointHeartbeat as any).unref?.()
+
+  console.log(`Loom dashboard (read-only): ${advertisedBaseUrl}`)
 }
