@@ -23,6 +23,15 @@ Research, Designer, Specifier, Architect, Planner, Worker, Reviewer, Critic, Acc
 
 The user's conversation with Loom is the top-level control loop. Workflow state is created when committed execution needs durable coordination; it is not the default container for every useful conversation.
 
+# Drivers and constraints
+
+- The user should interact with one stable engineering partner rather than choose among internal agent personas.
+- Exploration, research, and diagnosis must be possible without implying permission to mutate the repository.
+- Once execution is committed, existing specialist authority, permissions, independent review, evidence, and control-plane gates must remain enforceable.
+- Loom should preserve durable repository knowledge when it has future value without manufacturing documents for tiny mechanical work.
+- The change must remain compatible with OpenCode's existing `general` runtime identifier while product identity moves to Loom.
+- Conversational convenience must not become a path around workflow grants, budgets, authority ownership, or independent gates.
+
 # Why
 
 The previous model made the workflow too close to the user interface:
@@ -83,6 +92,27 @@ Authority-producing agents create durable documents only when the change establi
 - Some current assumptions that "product idea means start intent interview" must be relaxed.
 - Evals must test transition boundaries, not only successful workflow routing.
 - Host/runtime naming may continue to expose `general` until a safe identifier migration is justified.
+
+## Migration and reversibility
+
+This is primarily a product-interface and routing-policy migration, not a destructive state-format migration.
+
+- Keep the OpenCode runtime identifier `general` during this change so existing sessions/configuration do not require an identifier migration.
+- Demote `brainstorm` from primary to subagent while preserving the file/capability, making rollback straightforward if evidence shows the unified primary agent performs worse.
+- Conversational Research/Diagnostic dispatch remains read-only and does not create workflow authority. Once durable execution state exists, the normal grant/budget path remains authoritative.
+- Existing Anchors, requirements, architecture, workflow state, and specialist artifacts remain valid; this decision changes how Loom reaches and coordinates them, not their historical meaning.
+
+Rollback is therefore mostly prompt/routing/configuration reversal. A future host-visible rename from `general` to `loom` is intentionally excluded because it would have separate session/configuration migration consequences.
+
+## Reconsideration triggers
+
+Revisit this decision if evidence shows any of the following:
+
+- models cannot reliably distinguish conversational investigation from execution intent even with discriminating behavioral evals;
+- the single-primary model causes measurable loss of specialist independence or repeated authority leakage;
+- conversational specialist dispatch becomes a practical bypass around workflow grants, budgets, or required evidence;
+- users consistently need explicit modes because one conversational surface makes state or intent materially less understandable;
+- OpenCode gains a safer first-class mechanism for capability dispatch that changes the current agent/subagent tradeoff.
 
 # Rejected alternatives
 
