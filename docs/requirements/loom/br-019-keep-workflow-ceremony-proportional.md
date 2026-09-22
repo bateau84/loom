@@ -17,7 +17,7 @@ When the user commits Loom to tracked/governed execution — for example mutate/
 Execution depth is evidence-driven **after that boundary**:
 
 - **Task** — direct bounded work. Read-only tasks use the relevant Diagnostic/Research/Reviewer path; mutation tasks use Worker plus independent verification.
-- **Change** — substantial but bounded work that has demonstrably earned new Designer, Specifier, or Architect authority.
+- **Change** — substantial but bounded work that has demonstrably earned new Designer, Specifier, or Architect authority. A bounded Change may start directly from the committed request when its scope/outcome are clear; it does not need a preceding Task.
 - **Objective** — broad product work that warrants decomposition, holistic Critic gates, whole-product Product Acceptance, and final product review.
 
 Potential future complexity MUST NOT be treated as present complexity, and potential future execution MUST NOT be treated as a reason to create workflow state during ordinary conversation.
@@ -39,6 +39,8 @@ Potential future complexity MUST NOT be treated as present complexity, and poten
 13. Diagnosis-only, research-only, review-only, test-only, and verification-only conversation does not silently expand into implementation or durable workflow state merely because the request is phrased imperatively. A later explicit fix/apply/build request crosses the execution boundary and then selects Task/Change/Objective from the demonstrated scope.
 14. Conversational findings may carry forward as context when execution begins, but load-bearing workflow proof MUST be established through normal governed evidence/verification rather than treating conversational prose as proof.
 15. A defect discovered during conversational investigation is reported as a finding; discovery alone does not create execution commitment.
+16. A bounded Change with clear scope/outcome but unresolved specialist-owned UX, behavioral, or structural realization starts request-backed at Change depth and obtains Designer/Specifier/Architect authority there. Specialist-owned ambiguity MUST NOT be converted into intent-grilling; intent shaping is reserved for unresolved user-owned product intent.
+17. Once governed execution starts, General MUST continue the workflow after every synchronous child return by inspecting current status and dispatching the next runnable owner. An explicitly governed read-only Task is complete only after its Reviewer gate passes or the workflow is genuinely blocked; Diagnostic/Research completion alone is not terminal.
 
 ## Verification Semantics
 
