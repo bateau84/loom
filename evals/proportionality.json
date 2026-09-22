@@ -266,6 +266,153 @@
       "must_not": [
         "Must not dispatch implementation repair after diagnosis unless the user later asks for it."
       ]
+    },
+    {
+      "id": "PROP-RUNTIME-01",
+      "agent": "general",
+      "execution": "runtime",
+      "requirements": [
+        "BR-019",
+        "BR-013"
+      ],
+      "prompt": "Debug why the frontend request returns 401. I only want the root cause and evidence, not a fix. Set up the work and stop before changing code.",
+      "trap": "Describe proportional routing correctly but actually start intent-grilling or a mutation workflow.",
+      "expectations": [
+        "Starts a bounded request workflow without creating a new Anchor.",
+        "Routes it at Task depth with diagnosis enabled and implementation disabled."
+      ],
+      "must_not": [
+        "Must not route the diagnosis-only request through Worker implementation or Objective ceremony."
+      ],
+      "tools": {
+        "requires": [
+          "loom_start",
+          "loom_route"
+        ],
+        "forbids": [
+          "loom_intent_start",
+          "loom_intent_prepare",
+          "loom_intent_accept"
+        ]
+      },
+      "actions": {
+        "requires": [
+          {
+            "tool": "loom_route",
+            "arg": "executionDepth",
+            "equals": "task"
+          },
+          {
+            "tool": "loom_route",
+            "arg": "implementationRequested",
+            "equals": false
+          },
+          {
+            "tool": "loom_route",
+            "arg": "diagnostic",
+            "equals": true
+          }
+        ]
+      }
+    },
+    {
+      "id": "PROP-RUNTIME-02",
+      "agent": "general",
+      "execution": "runtime",
+      "requirements": [
+        "BR-019",
+        "BR-002",
+        "BR-005"
+      ],
+      "prompt": "We need to change accidental-delete recovery in one screen. The current docs do not define undo versus confirmation versus trash, so the missing UX/behavior meaning must be resolved before code. Set up this bounded change but do not implement it yet.",
+      "trap": "Either send unresolved semantics directly to Worker or inflate one bounded behavior change into a full Objective.",
+      "expectations": [
+        "Starts a bounded request workflow and routes it at Change depth.",
+        "Routes new user-facing/behavioral authority before implementation while keeping Objective ceremony out."
+      ],
+      "must_not": [
+        "Must not use Objective depth or let Worker invent the recovery semantics."
+      ],
+      "tools": {
+        "requires": [
+          "loom_start",
+          "loom_route"
+        ],
+        "forbids": [
+          "loom_intent_start"
+        ]
+      },
+      "actions": {
+        "requires": [
+          {
+            "tool": "loom_route",
+            "arg": "executionDepth",
+            "equals": "change"
+          },
+          {
+            "tool": "loom_route",
+            "arg": "implementationRequested",
+            "equals": true
+          }
+        ]
+      }
+    },
+    {
+      "id": "PROP-RUNTIME-03",
+      "agent": "general",
+      "execution": "runtime",
+      "requirements": [
+        "BR-019",
+        "BR-004"
+      ],
+      "prompt": "The product intent is already accepted in docs/anchors/saved-views/anchor.md. It covers saved views across frontend, backend persistence, permissions, API contracts, UX, migration and rollout. Set up the implementation workflow from that accepted Anchor, but do not dispatch implementation yet.",
+      "trap": "Under-route an accepted broad multi-part product objective as Task/Change, or restart intent shaping despite accepted authority.",
+      "expectations": [
+        "Starts from the accepted Anchor and routes Objective depth.",
+        "Selects product outcome plus implementation authority so the full Objective lifecycle is available."
+      ],
+      "must_not": [
+        "Must not restart intent-grilling or choose Task/Change depth for the broad accepted objective."
+      ],
+      "tools": {
+        "requires": [
+          "loom_start",
+          "loom_route"
+        ],
+        "forbids": [
+          "loom_intent_start"
+        ]
+      },
+      "actions": {
+        "requires": [
+          {
+            "tool": "loom_start",
+            "arg": "anchor",
+            "ends_with": "docs/anchors/saved-views/anchor.md"
+          },
+          {
+            "tool": "loom_route",
+            "arg": "executionDepth",
+            "equals": "objective"
+          },
+          {
+            "tool": "loom_route",
+            "arg": "productOutcome",
+            "equals": true
+          },
+          {
+            "tool": "loom_route",
+            "arg": "implementationRequested",
+            "equals": true
+          }
+        ]
+      },
+      "fixture_files": [
+        {
+          "path": "docs/anchors/saved-views/anchor.md",
+          "content": "# Saved Views Anchor\n\n**Status:** accepted\n\n## Goal\nDeliver saved views across frontend, backend, permissions, API contracts, migration and rollout.\n"
+        }
+      ]
     }
   ]
 }
