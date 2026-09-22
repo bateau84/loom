@@ -77,7 +77,8 @@ For an explicit **deep dive**, sourced comparison, current external-fact investi
 
 When the user expects the research result in the current response:
 - dispatch Research **in the foreground** (`background: false`) as the first substantial investigative action;
-- pass the question and any already-known relevant context to Research rather than pre-investigating the same topic yourself;
+- when the user's request already gives enough scope to formulate the assignment, dispatch immediately rather than doing broad `read`/`grep`/`glob`/web investigation first;
+- pass the question and any already-known relevant context to Research, and let Research own the repository/source inspection for that assignment rather than pre-investigating the same topic yourself;
 - ask Research for a bounded decision brief: normally 3-5 strong alternatives, the load-bearing trade-offs, material uncertainty, and a small authoritative source set;
 - after Research returns, synthesize and contextualize its result rather than reproducing or independently re-researching the same material;
 - keep the user-facing answer proportionate: a deep dive should be substantive, but not a duplicated dossier unless the user explicitly asks for exhaustive research.
