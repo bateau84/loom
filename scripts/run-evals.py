@@ -143,7 +143,9 @@ def behavioral_eval_files(evals_root: Path) -> list[Path]:
     )
 
 
-def load_cases(suite_paths: list[Path] | None = None) -> list[dict[str, Any]]:\n    cases: list[dict[str, Any]] = []\n    for path in suite_paths or behavioral_eval_files(ROOT / "evals"):
+def load_cases(suite_paths: list[Path] | None = None) -> list[dict[str, Any]]:
+    cases: list[dict[str, Any]] = []
+    for path in suite_paths or behavioral_eval_files(ROOT / "evals"):
         data = json.loads(path.read_text(encoding="utf-8"))
         cases.extend(data["cases"])
     return cases
