@@ -68,10 +68,10 @@ class WorkflowCredentialTests(unittest.TestCase):
         workflow = (
             RUN_EVALS.ROOT / ".github" / "workflows" / "loom-live-evals.yml"
         ).read_text(encoding="utf-8")
-        expected_action = "bateau84/opencode-eval-runner@8e1a8439fd8b15343abcf69c50203c96847f1c2e"
+        expected_action = "bateau84/opencode-eval-runner@2c9e19f96ddaf4f996042263a92f072a32237ec8"
         expected_image = (
             "ghcr.io/bateau84/opencode-eval-runner@"
-            "sha256:eece79be0987d41c96cfbc43a4a0792987af383f2edec4e6651f43a954f1874f"
+            "sha256:9dad96313bb15efaa4164a976bfd244ad804cac851b33543b44dcfb4e1cafc22"
         )
 
         self.assertIn(expected_action, workflow)
@@ -537,6 +537,7 @@ class EvidenceRedactionTests(unittest.TestCase):
                     timeout=30,
                     container_timeout=60,
                     mount_node_modules=False,
+                    workspace_mode="ro",
                     extra_envs=[],
                 )
 
@@ -582,6 +583,7 @@ class EvidenceRedactionTests(unittest.TestCase):
                     timeout=30,
                     container_timeout=60,
                     mount_node_modules=False,
+                    workspace_mode="ro",
                     extra_envs=[],
                 )
 
@@ -658,6 +660,7 @@ class ActionAssertionTests(unittest.TestCase):
                     timeout=30,
                     container_timeout=60,
                     mount_node_modules=False,
+                    workspace_mode="ro",
                     extra_envs=[],
                     network="host",
                 )
@@ -695,6 +698,7 @@ class ActionAssertionTests(unittest.TestCase):
                     timeout=30,
                     container_timeout=60,
                     mount_node_modules=False,
+                    workspace_mode="ro",
                     extra_envs=[],
                     network=None,
                 )
@@ -751,6 +755,7 @@ class ActionAssertionTests(unittest.TestCase):
                     timeout=30,
                     container_timeout=60,
                     mount_node_modules=False,
+                    workspace_mode="ro",
                     extra_envs=[],
                     network="host",
                 )
@@ -807,6 +812,7 @@ class ActionAssertionTests(unittest.TestCase):
                     timeout=30,
                     container_timeout=60,
                     mount_node_modules=False,
+                    workspace_mode="ro",
                     extra_envs=[],
                     network="host",
                 )
