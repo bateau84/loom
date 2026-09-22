@@ -364,8 +364,8 @@ button:focus-visible, select:focus-visible, input:focus-visible, a:focus-visible
     return state.projectionGeneration - state.missingRoute.firstGeneration;
   }
 
-  function clearMissingRoute(r) {
-    if (state.missingRoute?.key === routeKey(r)) state.missingRoute = null;
+  function clearMissingRoute() {
+    state.missingRoute = null;
   }
 
   function renderProjectionWait(r, detail) {
@@ -389,7 +389,7 @@ button:focus-visible, select:focus-visible, input:focus-visible, a:focus-visible
     const project = r.projectId ? projectById(r.projectId) : undefined;
     const workflow = project && r.workflowId ? workflowById(project, r.workflowId) : undefined;
     if (r.kind === "fleet") {
-      clearMissingRoute(r);
+      clearMissingRoute();
       renderFleet();
     } else if (!project) {
       const age = missingRouteAge(r);
@@ -402,7 +402,7 @@ button:focus-visible, select:focus-visible, input:focus-visible, a:focus-visible
         renderFleet();
       }
     } else if (r.kind === "project") {
-      clearMissingRoute(r);
+      clearMissingRoute();
       renderProject(project);
     } else if (!workflow) {
       const age = missingRouteAge(r);
@@ -421,10 +421,10 @@ button:focus-visible, select:focus-visible, input:focus-visible, a:focus-visible
         renderProject(project);
       }
     } else if (r.kind === "workflow") {
-      clearMissingRoute(r);
+      clearMissingRoute();
       renderWorkflow(project, workflow);
     } else {
-      clearMissingRoute(r);
+      clearMissingRoute();
       renderSession(project, workflow, r.instanceId);
     }
 
