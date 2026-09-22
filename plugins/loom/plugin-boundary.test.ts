@@ -49,6 +49,7 @@ async function harness(
   process.env.LOOM_TOOL_OUTPUT = "json"
 
   const registered = new Map<string, RegisteredTool>()
+  let permissionEvaluate: ((event: any) => Promise<void> | void) | undefined
   const storage = existing?.storage ?? new MemoryStorage()
   const projectID = "opencode-project-a"
   await seed?.(storage, root, projectID)
@@ -72,7 +73,11 @@ async function harness(
         }),
       hook: async () => {},
     },
-    permission: { hook: async () => {} },
+    permission: {
+      hook: async (name: string, fn: (event: any) => Promise<void> | void) => {
+        if (name === "evaluate") permissionEvaluate = fn
+      },
+    },
     session: {
       get: async ({ sessionID }: { sessionID: string }) =>
         sessionInfo?.(sessionID, projectID) ?? {
@@ -106,7 +111,13 @@ async function harness(
     else process.env.LOOM_TOOL_OUTPUT = previousOutput
   }
 
-  return { root, storage, projectID, registered, call, restore }
+  const evaluatePermission = async (event: any) => {
+    if (!permissionEvaluate) throw new Error("Permission evaluate hook not registered")
+    await permissionEvaluate(event)
+    return event
+  }
+
+  return { root, storage, projectID, registered, call, evaluatePermission, restore }
 }
 
 afterEach(async () => {
@@ -114,6 +125,78 @@ afterEach(async () => {
 })
 
 describe("Loom registered plugin boundary", () => {
+  test("allows conversational Research and Diagnostic before workflow start but keeps governed agents gated", async () => {
+    const { evaluatePermission, restore } = await harness()
+    try {
+      for (const target of ["research", "diagnostic"]) {
+        const event = await evaluatePermission({
+          agent: "general",
+          action: "subagent",
+          resources: [target],
+          sessionID: "conversation-session",
+          effect: "allow",
+          source: { messageID: "message", id: `dispatch-${target}` },
+        })
+        expect(event.effect).toBe("allow")
+        expect(event.message).toBeUndefined()
+      }
+
+      const worker = await evaluatePermission({
+        agent: "general",
+        action: "subagent",
+        resources: ["worker"],
+        sessionID: "conversation-session",
+        effect: "allow",
+        source: { messageID: "message", id: "dispatch-worker" },
+      })
+      expect(worker.effect).toBe("deny")
+      expect(worker.message).toContain("Start and route a Loom workflow")
+    } finally {
+      restore()
+    }
+  })
+
+  test("does not let conversational Research or Diagnostic bypass an active workflow grant", async () => {
+    const { call, evaluatePermission, restore } = await harness()
+    try {
+      const started = await call(
+        "start",
+        { anchor: "docs/anchors/test/anchor.md" },
+        "general",
+        "general-session",
+      )
+      expect(started.error).toBeUndefined()
+
+      const routed = await call(
+        "route",
+        {
+          humanFacing: false,
+          behavioral: false,
+          structural: false,
+          externalUnknown: true,
+          diagnostic: false,
+          productOutcome: false,
+        },
+        "general",
+        "general-session",
+      )
+      expect(routed.error).toBeUndefined()
+      expect(routed.now).toEqual([{ step: "research", agent: "research" }])
+
+      const withoutGrant = await evaluatePermission({
+        agent: "general",
+        action: "subagent",
+        resources: ["research"],
+        sessionID: "general-session",
+        effect: "allow",
+        source: { messageID: "message", id: "dispatch-research" },
+      })
+      expect(withoutGrant.effect).toBe("deny")
+      expect(withoutGrant.message).toContain("loom_dispatch_grant")
+    } finally {
+      restore()
+    }
+  })
   test("resumed pre-upgrade OpenCode session automatically reconciles its ongoing workflow", async () => {
     const sessionID = "resumed-general-session"
     const workflowId = "legacy-workflow"
