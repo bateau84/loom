@@ -26,7 +26,7 @@ tags: [report, critic, readiness]
 Verdict: FAIL
 `
 
-async function promoteReport(root: string, input: ReportPromotionInput, id = crypto.randomUUID()) {
+async function promoteReport(root: string, input: ReportPromotionInput, id: string = crypto.randomUUID()) {
   const prepared = await prepareReportPromotion(root, input, id)
   return publishPreparedReport(prepared)
 }
