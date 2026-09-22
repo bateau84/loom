@@ -53,9 +53,13 @@ The server binds only to `127.0.0.1` by default and exposes:
 
 The status route accepts only Loom UUID installation/project identities and generated `workflow-<20 hex>.html` names; it is not a general filesystem endpoint. Non-GET methods are rejected.
 
+The running dashboard also publishes a short-lived `dashboard-endpoint.json` lease under the installation state root. Sidebar/status URL generation resolves this shared endpoint on demand. This keeps a separately started dashboard process and already-running OpenCode/Loom processes consistent when a non-default port or advertised reverse-proxy URL is used; an expired lease falls back to explicit configuration/defaults rather than remaining authoritative indefinitely.
+
 The UI implements Fleet → Project → Workflow → Session context, expandable Objective → Phase → Wave → Task hierarchy, attention-first state labels, filters, keyboard-native navigation, focus preservation across refresh, explicit stale/conflict treatment and Loom-authoritative vs optional-telemetry provenance.
 
-Workflow routes are stable deep links of the form `/#/project/<projectId>/workflow/<workflowId>`. Loom's sidebar RPC derives that URL from the same runtime project/workflow identity, so interactive status reachability does not depend on a model copying tool output into its reply.
+Workflow routes are stable deep links of the form `/#/project/<projectId>/workflow/<workflowId>`. Loom's sidebar RPC derives that URL from the same runtime project/workflow identity and the active shared dashboard endpoint lease, so interactive status reachability does not depend on a model copying tool output into its reply.
+
+Because projection publication is asynchronous, a deep link whose project/workflow is not yet present is held in a waiting state instead of being immediately rewritten. The dashboard redirects only after the requested identity remains absent across multiple successful complete projections; bounded/truncated workflow projections do not prove absence.
 
 ## Source
 
