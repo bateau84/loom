@@ -10,7 +10,7 @@ tags: [requirement, loom, routing, proportionality, ceremony, escalation]
 
 Ordinary conversation MUST remain outside durable workflow state by default.
 
-Explanation, sparring, deep dives, research, diagnosis/debugging, focused review, inspection, and bounded problem-solving do not inherently require `loom_start` or an execution depth. Research and Diagnostic may operate as advisory conversational investigations when fresh specialist context materially improves the answer.
+Explanation, sparring, deep dives, research, diagnosis/debugging, focused review, inspection, and bounded problem-solving do not inherently require `loom_start` or an execution depth. Imperative read-only verbs such as "perform", "check", "verify", "review", "debug", "diagnose", and "inspect" remain conversational when the requested outcome is findings/evidence/analysis rather than mutation or durable control-plane treatment. Research and Diagnostic may operate as advisory conversational investigations when fresh specialist context materially improves the answer.
 
 When the user commits Loom to tracked/governed execution — for example mutate/fix/apply/build/ship work, or an explicitly governed investigation/verification whose findings must be tracked, preserved, or independently verified — Loom MUST use the smallest workflow that can safely complete that committed work.
 
@@ -36,7 +36,8 @@ Potential future complexity MUST NOT be treated as present complexity, and poten
 10. Request-backed work cannot silently become an Objective; Objective-depth execution requires accepted product authority.
 11. Existing completed evidence is preserved when a workflow is re-routed deeper, but a gate is not preserved when its dependency set changes.
 12. User approval to fix findings does not by itself force Objective depth; demonstrated breadth and authority needs control the depth.
-13. Diagnosis-only or research-only conversation does not silently expand into implementation or durable workflow state. A later explicit fix/apply/build request crosses the execution boundary and then selects Task/Change/Objective from the demonstrated scope.
+13. Diagnosis-only, research-only, review-only, test-only, and verification-only conversation does not silently expand into implementation or durable workflow state merely because the request is phrased imperatively. A later explicit fix/apply/build request crosses the execution boundary and then selects Task/Change/Objective from the demonstrated scope.
+15. A defect discovered during conversational investigation is reported as a finding; discovery alone does not create execution commitment.
 14. Conversational findings may carry forward as context when execution begins, but load-bearing workflow proof MUST be established through normal governed evidence/verification rather than treating conversational prose as proof.
 
 ## Verification Semantics
