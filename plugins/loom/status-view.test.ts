@@ -12,7 +12,7 @@ import {
   type StatusView,
 } from "./status-view"
 import type { LoomRuntimeIdentity } from "./runtime"
-import { publishDashboardEndpoint } from "./dashboard-endpoint"
+import { publishDashboardEndpoint, resolveDashboardBaseUrl } from "./dashboard-endpoint"
 
 const roots: string[] = []
 
@@ -177,10 +177,16 @@ describe("interactive Loom status presentation", () => {
       "http://127.0.0.1:4318/#/project/project%20a/workflow/wf%2Fstatus",
     )
 
-    await publishDashboardEndpoint(runtime.stateRoot, "http://127.0.0.1:4999")
+    const lease = await publishDashboardEndpoint(runtime.stateRoot, "http://127.0.0.1:4999", 1_000)
     expect(await dashboardWorkflowUrl(runtime, "wf/status")).toBe(
       "http://127.0.0.1:4999/#/project/project%20a/workflow/wf%2Fstatus",
     )
+    expect(
+      await resolveDashboardBaseUrl(
+        runtime.stateRoot,
+        new Date(Date.parse(lease.leaseExpiresAt) + 1),
+      ),
+    ).toBe("http://127.0.0.1:4318")
   })
 
   test("writes the artifact under the private Loom runtime root", async () => {
