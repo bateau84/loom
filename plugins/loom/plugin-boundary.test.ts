@@ -323,6 +323,7 @@ describe("Loom registered plugin boundary", () => {
           externalUnknown: false,
           diagnostic: false,
           productOutcome: false,
+          executionDepth: "task",
         },
         "general",
         "general-session",
@@ -426,4 +427,45 @@ describe("Loom registered plugin boundary", () => {
       restore()
     }
   })
+
+  test("bounded request workflows start without an Anchor and stay shallow", async () => {
+    const { call, restore } = await harness()
+    try {
+      const started = await call(
+        "start",
+        { request: "Debug the frontend-to-backend call and identify why it returns 401." },
+        "general",
+        "bounded-task-session",
+      )
+      expect(started.error).toBeUndefined()
+      expect(started.request).toContain("frontend-to-backend")
+      expect(String(started.anchor)).toStartWith("task:")
+
+      const routed = await call(
+        "route",
+        {
+          humanFacing: false,
+          behavioral: false,
+          structural: false,
+          externalUnknown: false,
+          diagnostic: true,
+          productOutcome: false,
+          executionDepth: "task",
+        },
+        "general",
+        "bounded-task-session",
+      )
+      expect(routed.error).toBeUndefined()
+      expect(routed.path.map((step: { step: string }) => step.step)).toEqual([
+        "diagnostic",
+        "worker",
+        "review-implementation",
+      ])
+      expect(routed.path.some((step: { agent: string }) => step.agent === "planner")).toBe(false)
+      expect(routed.path.some((step: { agent: string }) => step.agent === "critic")).toBe(false)
+    } finally {
+      restore()
+    }
+  })
+
 })
