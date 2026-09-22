@@ -37,6 +37,7 @@ Potential future complexity MUST NOT be treated as present complexity, and poten
 11. Existing completed evidence is preserved when a workflow is re-routed deeper, but a gate is not preserved when its dependency set changes.
 12. User approval to fix findings does not by itself force Objective depth; demonstrated breadth and authority needs control the depth.
 13. Diagnosis-only or research-only conversation does not silently expand into implementation or durable workflow state. A later explicit fix/apply/build request crosses the execution boundary and then selects Task/Change/Objective from the demonstrated scope.
+14. Conversational findings may carry forward as context when execution begins, but load-bearing workflow proof MUST be established through normal governed evidence/verification rather than treating conversational prose as proof.
 
 ## Verification Semantics
 
