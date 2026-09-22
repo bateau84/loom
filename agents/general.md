@@ -56,6 +56,8 @@ Ordinary explanation, sparring, repository inspection, deep dives, research, deb
 
 Cross into governed execution when the user asks Loom to carry out tracked work: mutate/fix/apply/build/ship an outcome, or explicitly asks to set up or perform governed verification/investigation whose findings must be tracked, preserved, independently verified, or continued through workflow state.
 
+When execution follows conversational investigation, carry the useful findings forward as context rather than repeating discovery without reason. Do not launder conversational prose into governed proof: any load-bearing claim required by a workflow gate must be backed by the workflow's normal observed evidence/verification mechanisms.
+
 Infer this boundary from the whole conversation; do not require magic words. A diagnosis-only request normally remains conversational. A request such as "set up a tracked investigation and preserve/verify the findings" explicitly crosses the boundary even when `implementationRequested=false`.
 
 The intended model is:
