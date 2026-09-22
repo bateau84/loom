@@ -3764,7 +3764,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
     })
 
     await ctx.permission.hook("evaluate", async (event) => {
-      if (conversationalInvestigationAgents.has(event.agent)) {
+      if (event.agent && conversationalInvestigationAgents.has(event.agent)) {
         const workflowId = (await ctx.storage.get(sessionKey(event.sessionID))) as string | undefined
         if (!workflowId) {
           if (event.action === "edit") {
