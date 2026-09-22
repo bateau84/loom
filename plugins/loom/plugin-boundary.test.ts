@@ -1137,6 +1137,246 @@ Verdict: FAIL
   })
 
 
+  test("conversational Research and Diagnostic are technically non-mutating", async () => {
+    const { permissionHooks, restore } = await harness()
+    try {
+      const evaluate = permissionHooks.get("evaluate")
+      expect(evaluate).toBeDefined()
+
+      for (const [agent, command] of [
+        ["research", "git status"],
+        ["diagnostic", "rg failure src"],
+      ] as const) {
+        const safeShell: any = {
+          agent,
+          action: "shell",
+          resources: [command],
+          sessionID: `conversation-${agent}`,
+        }
+        await evaluate!(safeShell)
+        expect(safeShell.effect).not.toBe("deny")
+      }
+
+      for (const agent of ["research", "diagnostic"] as const) {
+        const mutatingShell: any = {
+          agent,
+          action: "shell",
+          resources: ["rm -f src/app.ts"],
+          sessionID: `conversation-${agent}`,
+        }
+        await evaluate!(mutatingShell)
+        expect(mutatingShell.effect).toBe("deny")
+        expect(mutatingShell.message).toContain("read-only")
+
+        const productEdit: any = {
+          agent,
+          action: "edit",
+          resources: ["src/app.ts"],
+          sessionID: `conversation-${agent}`,
+        }
+        await evaluate!(productEdit)
+        expect(productEdit.effect).toBe("deny")
+        expect(productEdit.message).toContain("product/repository edits require governed execution")
+
+        const ownReportEdit: any = {
+          agent,
+          action: "edit",
+          resources: [`ephemeral-reports/${agent}/finding.md`],
+          sessionID: `conversation-${agent}`,
+        }
+        await evaluate!(ownReportEdit)
+        expect(ownReportEdit.effect).not.toBe("deny")
+
+        const otherReportEdit: any = {
+          agent,
+          action: "edit",
+          resources: [
+            `ephemeral-reports/${agent === "research" ? "diagnostic" : "research"}/finding.md`,
+          ],
+          sessionID: `conversation-${agent}`,
+        }
+        await evaluate!(otherReportEdit)
+        expect(otherReportEdit.effect).toBe("deny")
+      }
+    } finally {
+      restore()
+    }
+  })
+
+  test("active workflows do not grant conversational Research or Diagnostic bypass", async () => {
+    const { call, permissionHooks, restore } = await harness()
+    try {
+      const evaluate = permissionHooks.get("evaluate")
+      expect(evaluate).toBeDefined()
+
+      const unrouted = await call(
+        "start",
+        { request: "Track a bounded investigation." },
+        "general",
+        "active-unrouted-general",
+      )
+      expect(unrouted.error).toBeUndefined()
+
+      const beforeRoute: any = {
+        agent: "general",
+        action: "subagent",
+        resources: ["research"],
+        sessionID: "active-unrouted-general",
+        source: { messageID: "message", id: "call-unrouted-research" },
+      }
+      await evaluate!(beforeRoute)
+      expect(beforeRoute.effect).toBe("deny")
+
+      for (const target of ["research", "diagnostic"] as const) {
+        const sessionID = `active-${target}-general`
+        const started = await call(
+          "start",
+          { request: `Track governed ${target} work.` },
+          "general",
+          sessionID,
+        )
+        expect(started.error).toBeUndefined()
+        const workflowId = String(started.workflowId)
+
+        const routed = await call(
+          "route",
+          {
+            humanFacing: false,
+            behavioral: false,
+            structural: false,
+            externalUnknown: target === "research",
+            diagnostic: target === "diagnostic",
+            productOutcome: false,
+            implementationRequested: false,
+            executionDepth: "task",
+          },
+          "general",
+          sessionID,
+        )
+        expect(routed.error).toBeUndefined()
+        expect(routed.now).toContainEqual({ step: target, agent: target })
+
+        const withoutGrant: any = {
+          agent: "general",
+          action: "subagent",
+          resources: [target],
+          sessionID,
+          source: { messageID: "message", id: `call-${target}-without-grant` },
+        }
+        await evaluate!(withoutGrant)
+        expect(withoutGrant.effect).toBe("deny")
+        expect(withoutGrant.message).toContain("loom_dispatch_grant")
+
+        const grant = await call(
+          "dispatch_grant",
+          { workflowId, stepId: target },
+          "general",
+          sessionID,
+        )
+        expect(grant.expectedAgent).toBe(target)
+
+        const withGrant: any = {
+          agent: "general",
+          action: "subagent",
+          resources: [target],
+          sessionID,
+          source: { messageID: "message", id: `call-${target}-with-grant` },
+        }
+        await evaluate!(withGrant)
+        expect(withGrant.effect).not.toBe("deny")
+      }
+    } finally {
+      restore()
+    }
+  })
+
+  test("terminal workflow bindings return General to conversational investigation", async () => {
+    const { call, permissionHooks, restore } = await harness()
+    try {
+      const evaluate = permissionHooks.get("evaluate")
+      expect(evaluate).toBeDefined()
+      const generalSession = "terminal-conversation-general"
+
+      const started = await call(
+        "start",
+        { request: "Perform tracked read-only verification." },
+        "general",
+        generalSession,
+      )
+      expect(started.error).toBeUndefined()
+      const workflowId = String(started.workflowId)
+
+      const routed = await call(
+        "route",
+        {
+          humanFacing: false,
+          behavioral: false,
+          structural: false,
+          externalUnknown: false,
+          diagnostic: false,
+          productOutcome: false,
+          implementationRequested: false,
+          executionDepth: "task",
+        },
+        "general",
+        generalSession,
+      )
+      expect(routed.now).toEqual([{ step: "review-task", agent: "reviewer" }])
+
+      const grant = await call(
+        "dispatch_grant",
+        { workflowId, stepId: "review-task" },
+        "general",
+        generalSession,
+      )
+      await call(
+        "attach",
+        { grantId: grant.grantId, workflowId, stepId: "review-task" },
+        "reviewer",
+        "terminal-conversation-reviewer",
+      )
+      const completed = await call(
+        "complete",
+        {
+          workflowId,
+          stepId: "review-task",
+          outcome: "pass",
+          summary: "Tracked verification complete.",
+        },
+        "reviewer",
+        "terminal-conversation-reviewer",
+      )
+      expect(completed.error).toBeUndefined()
+      expect(completed.runnable).toEqual([])
+
+      for (const target of ["research", "diagnostic"] as const) {
+        const conversational: any = {
+          agent: "general",
+          action: "subagent",
+          resources: [target],
+          sessionID: generalSession,
+          source: { messageID: "later-message", id: `later-${target}` },
+        }
+        await evaluate!(conversational)
+        expect(conversational.effect).not.toBe("deny")
+      }
+
+      for (const target of ["worker", "designer", "reviewer"] as const) {
+        const governed: any = {
+          agent: "general",
+          action: "subagent",
+          resources: [target],
+          sessionID: generalSession,
+          source: { messageID: "later-message", id: `later-${target}` },
+        }
+        await evaluate!(governed)
+        expect(governed.effect).toBe("deny")
+      }
+    } finally {
+      restore()
+    }
+  })
+
   test("conversation may dispatch Research or Diagnostic without a workflow", async () => {
     const { permissionHooks, restore } = await harness()
     try {
