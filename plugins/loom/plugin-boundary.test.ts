@@ -282,7 +282,7 @@ describe("Loom registered plugin boundary", () => {
           runtime.projectId,
         )
         expect(await scoped.get(`session/${sessionID}`)).toBe(workflowB)
-        expect(await scoped.get(`session-intent/${sessionID}`)).toBe("")
+        expect(await scoped.get(`session-intent/${sessionID}`)).toBeUndefined()
         expect(await scoped.get("intent/legacy-intent-a")).toBeUndefined()
         expect(await scoped.get(`work/${encodeURIComponent("objective-b")}`)).toBeUndefined()
 
