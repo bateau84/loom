@@ -191,7 +191,7 @@
     {
       "id": "CONVERSATION-02-SYNTH",
       "agent": "general",
-      "execution": "role-decision",
+      "execution": "conversation-response",
       "requirements": [
         "BR-003",
         "BR-019"
