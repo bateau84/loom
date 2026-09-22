@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
 import loomPlugin from "./index"
+import { prepareReportPromotion, publishPreparedReport, type ReportPromotionRecord } from "./reports"
 import {
   createProjectStorage,
   createTransactionalStorage,
@@ -482,6 +483,86 @@ describe("Loom registered plugin boundary", () => {
       expect(unrelated.error).toContain("Workflow not found")
     } finally {
       restore()
+    }
+  })
+
+  test("startup reconciles a report published before its pending audit could finalize", async () => {
+    const sourceBody = `---
+type: report critic
+title: Crash Recovery Gate
+description: Durable report used to verify interrupted promotion recovery.
+tags: [report, critic, recovery]
+---
+
+# Crash Recovery Gate
+
+Verdict: FAIL
+`
+
+    const first = await harness()
+    try {
+      await mkdir(join(first.root, "ephemeral-reports", "critic"), { recursive: true })
+      await writeFile(
+        join(first.root, "ephemeral-reports", "critic", "crash-recovery.md"),
+        sourceBody,
+      )
+
+      const id = "crash-after-publish"
+      const prepared = await prepareReportPromotion(
+        first.root,
+        {
+          source: "ephemeral-reports/critic/crash-recovery.md",
+          destination: "docs/reports/critic/crash-recovery.md",
+          reason: "Retain recovery evidence.",
+        },
+        id,
+      )
+      const pending: ReportPromotionRecord = {
+        id,
+        status: "pending",
+        source: prepared.source,
+        destination: prepared.destination,
+        reason: prepared.reason,
+        actor: "general",
+        startedAt: new Date().toISOString(),
+        sha256: prepared.sha256,
+        bytes: prepared.bytes.byteLength,
+        authority: "unchanged",
+      }
+      await first.durableStorage.set(`report-promotion/${id}`, pending)
+      await publishPreparedReport(prepared)
+    } finally {
+      first.restore()
+    }
+
+    const second = await harness(undefined, undefined, {
+      root: first.root,
+      storage: first.storage,
+    })
+    try {
+      const recovered = await second.durableStorage.get("report-promotion/crash-after-publish") as any
+      expect(recovered).toMatchObject({
+        status: "completed",
+        recovered: true,
+        source: "ephemeral-reports/critic/crash-recovery.md",
+        destination: "docs/reports/critic/crash-recovery.md",
+        reason: "Retain recovery evidence.",
+        authority: "unchanged",
+      })
+      expect(
+        await second.durableStorage.get(
+          "report-promotion-destination/" +
+            encodeURIComponent("docs/reports/critic/crash-recovery.md"),
+        ),
+      ).toBe("crash-after-publish")
+      expect(
+        await readFile(
+          join(second.root, "docs", "reports", "critic", "crash-recovery.md"),
+          "utf8",
+        ),
+      ).toBe(sourceBody)
+    } finally {
+      second.restore()
     }
   })
 
