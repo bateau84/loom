@@ -22,6 +22,8 @@ conversation
 
 Execution commitment means the user asks Loom to carry out tracked/governed work: mutate/fix/apply/build/ship an outcome, or explicitly requests governed verification/investigation whose findings must be tracked, preserved, or independently verified.
 
+Execution depth classifies that governed execution; it does not classify ordinary conversation.
+
 ## Proportional paths
 
 After that boundary, Loom starts with the smallest workflow that can safely finish the committed work. Complexity discovered later may deepen the path; possible future complexity does not.
