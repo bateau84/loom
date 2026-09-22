@@ -642,6 +642,11 @@ def prepare_node_modules_mount(project: Path, source: Path | None) -> Path | Non
     return source
 
 
+def case_workspace_mode(case: dict[str, Any]) -> str:
+    required_tools = set((case.get("tools") or {}).get("requires") or [])
+    return "rw" if "loom_report_promote" in required_tools else "ro"
+
+
 def image_for_transport(args: argparse.Namespace, transport: str) -> str:
     if args.image:
         return args.image
@@ -677,6 +682,7 @@ def invoke_container(
     timeout: int,
     container_timeout: int,
     mount_node_modules: bool,
+    workspace_mode: str,
     extra_envs: list[str],
     skill: str | None = None,
     network: str | None = None,
@@ -711,7 +717,7 @@ def invoke_container(
                 "--image", image,
                 "--transport", transport,
                 "--workspace", str(project),
-                "--workspace-mode", "ro",
+                "--workspace-mode", workspace_mode,
                 "--model", model,
                 "--prompt-file", str(prompt_file),
                 "--system-file", str(system_file),
@@ -823,7 +829,7 @@ def invoke_container(
             "--workdir",
             "/workspace",
         ]
-        command += volume(project, "/workspace", True)
+        command += volume(project, "/workspace", workspace_mode != "rw")
         command += volume(input_dir, "/input", True)
 
         if node_modules:
@@ -1335,6 +1341,7 @@ def run_skill_ablation_case(
             timeout=args.timeout_seconds,
             container_timeout=args.container_timeout,
             mount_node_modules=False,
+            workspace_mode="ro",
             extra_envs=args.env,
             skill=skill if with_skill and args.target_transport == "opencode" else None,
             network=args.network,
@@ -1359,6 +1366,7 @@ def run_skill_ablation_case(
             timeout=args.timeout_seconds,
             container_timeout=args.container_timeout,
             mount_node_modules=False,
+            workspace_mode="ro",
             extra_envs=args.env,
             skill=None,
             network=args.network,
@@ -1642,6 +1650,7 @@ def run_case(
             timeout=args.timeout_seconds,
             container_timeout=args.container_timeout,
             mount_node_modules=case["execution"] == "runtime",
+            workspace_mode=case_workspace_mode(case),
             extra_envs=args.env,
             skill=(
                 str(case.get("skill") or "") or None
@@ -1702,6 +1711,7 @@ def run_case(
                 timeout=args.timeout_seconds,
                 container_timeout=args.container_timeout,
                 mount_node_modules=False,
+                workspace_mode="ro",
                 extra_envs=args.env,
                 skill=None,
                 network=args.network,
