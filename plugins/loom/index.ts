@@ -133,6 +133,16 @@ const loomAgents = new Set([
   "diagnostic",
 ])
 
+const reportProducerAgents = new Set([
+  "general",
+  "reviewer",
+  "critic",
+  "designer",
+  "acceptance",
+  "research",
+  "diagnostic",
+])
+
 function intentKey(id: string) {
   return `intent/${id}`
 }
@@ -3947,6 +3957,24 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
     })
 
     await ctx.permission.hook("evaluate", async (event) => {
+      if (event.action === "edit") {
+        const reportResources = event.resources.filter((resource) =>
+          resourceMatchesScope(resource, "ephemeral-reports/**"),
+        )
+        if (
+          reportResources.length > 0 &&
+          (
+            !reportProducerAgents.has(event.agent) ||
+            !resourcesWithinScope(reportResources, [`ephemeral-reports/${event.agent}/**`])
+          )
+        ) {
+          event.effect = "deny"
+          event.message =
+            "Ephemeral report mutation is producer-scoped. Each report-producing role may edit only its own ephemeral-reports/<role>/ namespace."
+          return
+        }
+      }
+
       if (
         event.action === "edit" &&
         event.resources.some((resource) => resourceMatchesScope(resource, "docs/reports/**"))
@@ -3964,6 +3992,16 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         event.effect = "deny"
         event.message =
           "Shell access to durable report storage is blocked. Use OKF-MCP to inspect reports and loom_report_promote for durable retention."
+        return
+      }
+
+      if (
+        event.action === "shell" &&
+        event.resources.some((resource) => resource.replaceAll("\\", "/").includes("ephemeral-reports"))
+      ) {
+        event.effect = "deny"
+        event.message =
+          "Shell access to ephemeral report storage is blocked. Use role-scoped edit permissions for report creation and OKF-MCP for discovery/read."
         return
       }
 
