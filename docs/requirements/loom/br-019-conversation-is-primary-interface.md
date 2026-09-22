@@ -14,7 +14,7 @@ The normal interaction is an ongoing conversation. The user may explore an idea,
 
 Loom MUST infer which internal capabilities are useful. Specialist agents, workflow machinery, requirements, design records, architecture decisions, plans, reviews, and evidence are implementation mechanisms behind Loom's interface rather than steps the user must manually request.
 
-From the user's perspective, specialist agents MUST behave as capabilities of Loom rather than peer personas that require manual selection or handoff. Their internal authority and permission boundaries MUST remain intact: Loom may invoke them, but MUST NOT impersonate or override specialist authority or independent gates.
+From the user's perspective, specialist agents MUST behave as capabilities of Loom rather than peer personas that require manual selection or handoff. Their internal authority and permission boundaries MUST remain intact: Loom may invoke them, but MUST NOT impersonate or override specialist authority or independent gates. Conversational Research/Diagnostic work MUST remain advisory and non-product-mutating; once a durable execution workflow exists, required specialist work remains subject to normal workflow routing, grants, budgets, and evidence.
 
 Loom MUST NOT treat every product-related utterance as execution intent.
 
@@ -37,6 +37,7 @@ The conversation remains active during execution. New user input may refine or r
 11. Specialist agents are presented as Loom capabilities rather than peer user-facing actors, while their bounded authority, permissions, and independent-gate semantics remain enforced internally.
 12. The public conceptual identity is Loom even if an underlying host/runtime retains a compatibility identifier such as `general`.
 13. When prior conversation already resolved the product outcome and the user clearly says to build/fix/apply it, that execution commitment is sufficient acceptance of the discussed outcome; Loom does not require a second routine confirmation.
+14. Synthesizing durable authority from an already-accepted conversation is capture-only: Loom MUST NOT introduce, weaken, or choose new user-owned product meaning under the earlier acceptance. Any newly discovered material user-owned branch remains unresolved and is surfaced narrowly before the affected authority is accepted.
 
 ## Verification Semantics
 
