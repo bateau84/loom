@@ -286,7 +286,7 @@ def write_project_config(project: Path, agent: str, *, loom_plugin: bool = False
         "default_agent": agent,
     }
     if loom_plugin:
-        config["plugins"] = ["./.opencode/plugins/loom"]
+        config["plugins"] = ["./.opencode/plugins/loom.ts"]
     (project / "opencode.json").write_text(
         json.dumps(config, indent=2) + "\n",
         encoding="utf-8",
@@ -306,10 +306,15 @@ def setup_projects(case: dict[str, Any]) -> tuple[Path, Path, Path]:
 
     shutil.copytree(ROOT / "skills", target_oc / "skills", dirs_exist_ok=True)
     if case["execution"] == "runtime":
+        plugin_root = target_oc / "plugins"
         shutil.copytree(
             ROOT / "plugins" / "loom",
-            target_oc / "plugins" / "loom",
+            plugin_root / "loom",
             dirs_exist_ok=True,
+        )
+        (plugin_root / "loom.ts").write_text(
+            'export { default } from "./loom/index.ts"\n',
+            encoding="utf-8",
         )
 
     if case.get("_skill_owned"):
