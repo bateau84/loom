@@ -4371,10 +4371,13 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         }
       }
 
+      // Evidence observation is passive bookkeeping. Do not trigger legacy
+      // session migration from a generic tool hook; canonical workflow binding
+      // is sufficient here and keeps observation compatible with hosts that do
+      // not expose session lookup on this path.
       const observedWorkflow = await activeWorkflow(
         ctx,
         String(raw.sessionID),
-        ensureLegacySession,
       )
       const observedStepId =
         observedWorkflow && !workflowBindingTerminal(observedWorkflow)
