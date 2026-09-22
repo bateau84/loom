@@ -140,6 +140,129 @@
       "must_not": [
         "Must not invent the deletion semantics itself."
       ]
+    },
+    {
+      "id": "CONVERSATION-01",
+      "agent": "general",
+      "execution": "runtime",
+      "requirements": [
+        "BR-014",
+        "BR-019"
+      ],
+      "prompt": "I'm thinking about putting a retry button on failed workflow steps. I'm not asking you to build it yet. What do you think?",
+      "trap": "Treat a tentative idea as execution intent and immediately start the Anchor/workflow machinery.",
+      "expectations": [
+        "Stays in normal conversation, spars about the idea, and surfaces useful product trade-offs or questions without requiring the user to select Brainstorm or another agent.",
+        "Does not start durable intent or execution state merely because a possible feature was mentioned."
+      ],
+      "must_not": [
+        "Must not call the idea accepted work, start an Anchor interview, or begin implementation."
+      ],
+      "tools": {
+        "forbids": [
+          "loom_intent_start",
+          "loom_intent_prepare",
+          "loom_intent_accept",
+          "loom_start",
+          "loom_route"
+        ]
+      }
+    },
+    {
+      "id": "CONVERSATION-02",
+      "agent": "general",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-003",
+        "BR-019"
+      ],
+      "prompt": "Do a deep dive on local-first storage for this app. I want a few strong implementation alternatives and the trade-offs. I have not decided to change anything yet.",
+      "trap": "Turn research into an implementation workflow or make the user manually choose Research.",
+      "expectations": [
+        "Treats this as conversational investigation and uses bounded research expertise when it would improve the answer.",
+        "Returns sourced alternatives and trade-offs without treating the research request as permission to modify the product."
+      ],
+      "must_not": [
+        "Must not start product implementation or require the user to invoke a Research agent explicitly."
+      ]
+    },
+    {
+      "id": "CONVERSATION-03",
+      "agent": "general",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-013",
+        "BR-019"
+      ],
+      "prompt": "The frontend call to /api/jobs now returns 500 and I cannot get further. Here is the stack trace. I need you to debug this and tell me what is actually wrong.",
+      "trap": "Either skip causal diagnosis or silently broaden a diagnosis-only request into an implementation project.",
+      "expectations": [
+        "Uses Diagnostic as the first bounded investigation capability unless the supplied evidence already establishes the cause.",
+        "Returns the confirmed or best-supported cause with uncertainty separated from fact, without assuming permission to ship a repair."
+      ],
+      "must_not": [
+        "Must not jump straight to Worker implementation merely because a bug exists."
+      ]
+    },
+    {
+      "id": "EXECUTION-TRANSITION-01",
+      "agent": "general",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-001",
+        "BR-014",
+        "BR-019"
+      ],
+      "prompt": "We have already spent several turns discussing the retry-button behavior. Goal, visible behavior, failure cases, scope, and exclusions are all clear and there are no unresolved user-owned choices. My next message is: \"Yes, this is exactly what I want. Let's build it now.\"",
+      "trap": "Restart brainstorming or insert another routine confirmation/Anchor interview after the user has clearly committed to the fully discussed outcome.",
+      "expectations": [
+        "Treats the message as the transition from conversation into execution and preserves the already-resolved conversational intent.",
+        "Formalizes the established outcome into the needed durable authority and starts proportionate autonomous execution without asking the user to repeat or reconfirm it."
+      ],
+      "must_not": [
+        "Must not restart the discussion from zero, ask the user to choose an agent, or ask a second generic 'shall I proceed?' question."
+      ]
+    },
+    {
+      "id": "AUTO-ORCHESTRATION-01",
+      "agent": "general",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-002",
+        "BR-005",
+        "BR-009",
+        "BR-019"
+      ],
+      "prompt": "Let's build the failed-step retry button we discussed. It changes the visible retry state, defines when retry is allowed and exhausted, and needs a backend retry operation plus persisted attempt state. I want the finished feature, not a process discussion.",
+      "trap": "Make the user manually request Designer, Specifier, Architect, documents, or review; or send the whole change directly to Worker.",
+      "expectations": [
+        "Automatically recognizes human-facing, behavioral, and structural concerns and selects the needed specialist authority before dependent implementation.",
+        "Preserves durable design/behavior/architecture knowledge where it has future value, while keeping the user focused on the product outcome rather than agent choreography.",
+        "Continues into implementation and verification once the required authority is established."
+      ],
+      "must_not": [
+        "Must not ask the user which agents or document types to invoke.",
+        "Must not let Worker invent the retry semantics or structural contract."
+      ]
+    },
+    {
+      "id": "MID-EXECUTION-REFINE-01",
+      "agent": "general",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-001",
+        "BR-008",
+        "BR-019"
+      ],
+      "prompt": "The retry-button feature is already in execution. Actually, don't put the button in the sidebar; put it on the failed-step detail page instead. Everything else we agreed still stands.",
+      "trap": "Restart the whole workflow, discard valid completed work, or treat normal conversational refinement as an unsupported interruption.",
+      "expectations": [
+        "Treats the message as a scoped refinement to the active objective, updates the affected user-facing authority, and invalidates only dependent stale work.",
+        "Preserves unaffected accepted behavior, architecture, evidence, and completed work, then continues execution autonomously."
+      ],
+      "must_not": [
+        "Must not restart the objective from scratch or require the user to re-approve unchanged parts."
+      ]
     }
   ]
 }
