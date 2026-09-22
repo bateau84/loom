@@ -73,6 +73,38 @@ class WorkflowCredentialTests(unittest.TestCase):
         self.assertIn('args+=(--env OPENCODE_API_KEY)', workflow)
 
 
+class RuntimeEvalProjectTests(unittest.TestCase):
+    def test_runtime_project_installs_loom_plugin_and_lists_it_in_config(self):
+        case = next(
+            case
+            for case in RUN_EVALS.load_cases()
+            if case["id"] == "SKILL-REPORT-KEEP-02"
+        )
+        temp, target, _ = RUN_EVALS.setup_projects(case)
+        try:
+            config = json.loads((target / "opencode.json").read_text(encoding="utf-8"))
+            self.assertEqual(config.get("plugins"), ["./.opencode/plugins/loom"])
+            self.assertTrue((target / ".opencode" / "plugins" / "loom" / "index.ts").is_file())
+        finally:
+            import shutil
+            shutil.rmtree(temp, ignore_errors=True)
+
+    def test_mutating_report_eval_is_rw_but_normal_runtime_eval_stays_ro(self):
+        promoting = next(
+            case
+            for case in RUN_EVALS.load_cases()
+            if case["id"] == "SKILL-REPORT-KEEP-02"
+        )
+        ordinary = next(
+            case
+            for case in RUN_EVALS.load_cases()
+            if case["id"] == "SKILL-REPORT-KEEP-01"
+        )
+
+        self.assertEqual(RUN_EVALS.case_workspace_mode(promoting), "rw")
+        self.assertEqual(RUN_EVALS.case_workspace_mode(ordinary), "ro")
+
+
 class MountPreparationTests(unittest.TestCase):
     def test_runtime_mountpoint_exists_before_read_only_workspace_mount(self):
         with tempfile.TemporaryDirectory() as tmp:
