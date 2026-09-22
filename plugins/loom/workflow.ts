@@ -15,6 +15,7 @@ export type Step = {
 }
 
 export type WorkLevel = "objective" | "wave"
+export type ExecutionDepth = "task" | "change" | "objective"
 
 export type Effects = {
   humanFacing: boolean
@@ -24,6 +25,7 @@ export type Effects = {
   diagnostic: boolean
   productOutcome: boolean
   workLevel?: WorkLevel
+  executionDepth?: ExecutionDepth
 }
 
 export type VerificationRequirementStatus = "open" | "satisfied" | "superseded"
@@ -199,11 +201,49 @@ function gate(id: string, agent: string, dependsOn: string[] = []): Step {
   return { id, agent, kind: "gate", dependsOn, status: "pending" }
 }
 
+export function resolveExecutionDepth(effects: Effects): ExecutionDepth {
+  const requested = effects.executionDepth ?? (effects.productOutcome ? "objective" : "change")
+
+  // Task depth is intentionally shallow. If the route says new user-facing,
+  // behavioral, or structural authority is actually unresolved, the work has
+  // already earned Change depth and must not bypass that authority.
+  if (
+    requested === "task" &&
+    (effects.humanFacing || effects.behavioral || effects.structural)
+  ) {
+    return "change"
+  }
+
+  return requested
+}
+
 export function buildSteps(effects: Effects): Step[] {
   const steps: Step[] = []
   const think: string[] = []
+  const executionDepth = resolveExecutionDepth(effects)
   const workLevel: WorkLevel = effects.workLevel ?? "objective"
-  const objectiveClosure = effects.productOutcome && workLevel === "objective"
+  const objectiveClosure =
+    executionDepth === "objective" &&
+    effects.productOutcome &&
+    workLevel === "objective"
+
+  // Small, already-bounded work gets the shortest safe path. Diagnosis and
+  // bounded research are allowed without turning the request into a product
+  // lifecycle. Independent implementation review remains the default check.
+  if (executionDepth === "task") {
+    if (effects.diagnostic) {
+      steps.push(work("diagnostic", "diagnostic"))
+      think.push("diagnostic")
+    }
+    if (effects.externalUnknown) {
+      steps.push(work("research", "research"))
+      think.push("research")
+    }
+
+    steps.push(work("worker", "worker", think))
+    steps.push(gate("review-implementation", "reviewer", ["worker"]))
+    return steps
+  }
 
   if (effects.diagnostic) {
     steps.push(work("diagnostic", "diagnostic"))
@@ -235,12 +275,22 @@ export function buildSteps(effects: Effects): Step[] {
     lastThink = ["review-architecture"]
   }
 
+  // Change depth is for substantial but still bounded work. It uses only the
+  // authority earned by the evidence, then implements and verifies directly.
+  if (executionDepth === "change") {
+    steps.push(work("worker", "worker", lastThink))
+    steps.push(gate("review-implementation", "reviewer", ["worker"]))
+
+    if (effects.structural) {
+      steps.push(work("knowledge-sync", "documenter", ["review-implementation"]))
+    }
+    return steps
+  }
+
+  // Objective depth preserves the full product lifecycle.
   if (effects.productOutcome) {
     steps.push(gate("critic-solution", "critic", lastThink))
     lastThink = ["critic-solution"]
-  }
-
-  if (effects.productOutcome) {
     steps.push(work("plan", "planner", lastThink))
     steps.push(gate("review-implementation", "reviewer", ["plan"]))
   } else {
