@@ -3,6 +3,11 @@ import { mkdir, mkdtemp, rm } from "node:fs/promises"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
 import loomPlugin from "./index"
+import {
+  createProjectStorage,
+  createTransactionalStorage,
+  resolveRuntimeIdentity,
+} from "./runtime"
 
 const roots: string[] = []
 
@@ -30,9 +35,10 @@ type RegisteredTool = {
 async function harness(
   seed?: (storage: MemoryStorage, root: string, projectID: string) => void | Promise<void>,
   sessionInfo?: (sessionID: string, projectID: string) => { id: string; projectID?: string },
+  existing?: { root: string; storage: MemoryStorage },
 ) {
-  const root = await mkdtemp(join(tmpdir(), "loom-plugin-boundary-"))
-  roots.push(root)
+  const root = existing?.root ?? await mkdtemp(join(tmpdir(), "loom-plugin-boundary-"))
+  if (!existing) roots.push(root)
   await mkdir(join(root, "src"), { recursive: true })
 
   const previousState = process.env.XDG_STATE_HOME
@@ -43,7 +49,7 @@ async function harness(
   process.env.LOOM_TOOL_OUTPUT = "json"
 
   const registered = new Map<string, RegisteredTool>()
-  const storage = new MemoryStorage()
+  const storage = existing?.storage ?? new MemoryStorage()
   const projectID = "opencode-project-a"
   await seed?.(storage, root, projectID)
 
@@ -100,7 +106,7 @@ async function harness(
     else process.env.LOOM_TOOL_OUTPUT = previousOutput
   }
 
-  return { root, registered, call, restore }
+  return { root, storage, projectID, registered, call, restore }
 }
 
 afterEach(async () => {
@@ -200,6 +206,99 @@ describe("Loom registered plugin boundary", () => {
       })
     } finally {
       restore()
+    }
+  })
+
+  test("controlled canonical rebind survives restart without consulting stale legacy workflow authority", async () => {
+    const sessionID = "rebound-general"
+    const first = await harness(async (storage) => {
+      await storage.set(`session/${sessionID}`, "legacy-workflow-a")
+      await storage.set("workflow/legacy-workflow-a", {
+        id: "legacy-workflow-a",
+        anchor: "docs/anchors/a.md",
+        createdBySession: sessionID,
+        createdAt: "before-project-scoping",
+        steps: [
+          {
+            id: "worker",
+            agent: "worker",
+            kind: "work",
+            dependsOn: [],
+            status: "complete",
+          },
+        ],
+      })
+    })
+
+    try {
+      const admitted = await first.call(
+        "status",
+        { workflowId: "legacy-workflow-a", detail: true },
+        "general",
+        sessionID,
+      )
+      expect(admitted.error).toBeUndefined()
+
+      const rebound = await first.call(
+        "start",
+        { anchor: "docs/anchors/b.md" },
+        "general",
+        sessionID,
+      )
+      expect(rebound.error).toBeUndefined()
+      const workflowB = String(rebound.workflowId)
+      expect(workflowB).not.toBe("legacy-workflow-a")
+
+      // Compatibility storage remains historical at A and gains stale data that
+      // must not participate after the canonical Loom-controlled rebind to B.
+      await first.storage.set(`session-intent/${sessionID}`, "legacy-intent-a")
+      await first.storage.set("intent/legacy-intent-a", {
+        id: "legacy-intent-a",
+        state: "accepted",
+      })
+      await first.storage.set(`work/${encodeURIComponent("objective-b")}`, {
+        objectiveId: "objective-b",
+        title: "stale compatibility work",
+      })
+
+      const second = await harness(
+        undefined,
+        undefined,
+        { root: first.root, storage: first.storage },
+      )
+      try {
+        const afterRestart = await second.call(
+          "status",
+          { workflowId: workflowB, detail: true },
+          "general",
+          sessionID,
+        )
+        expect(afterRestart.error).toBeUndefined()
+        expect(afterRestart.workflow.id).toBe(workflowB)
+
+        const runtime = await resolveRuntimeIdentity(first.root, first.storage as any)
+        const scoped = createProjectStorage(
+          await createTransactionalStorage(runtime),
+          runtime.projectId,
+        )
+        expect(await scoped.get(`session/${sessionID}`)).toBe(workflowB)
+        expect(await scoped.get(`session-intent/${sessionID}`)).toBe("")
+        expect(await scoped.get("intent/legacy-intent-a")).toBeUndefined()
+        expect(await scoped.get(`work/${encodeURIComponent("objective-b")}`)).toBeUndefined()
+
+        const receipts = await scoped.scan({
+          prefix: "installation/upgrade-reconciliation/legacy-session-v0-to-runtime-v1/",
+        })
+        expect(receipts.entries).toHaveLength(1)
+        expect(receipts.entries[0].value).toMatchObject({
+          workflowId: "legacy-workflow-a",
+          provenance: "opencode-session-continuity",
+        })
+      } finally {
+        second.restore()
+      }
+    } finally {
+      first.restore()
     }
   })
 
