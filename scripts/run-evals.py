@@ -1648,8 +1648,12 @@ def run_case(
             config=config,
             models_catalog=models_catalog,
             database_seed=database_seed,
-            config_root=ROOT if case["execution"] == "runtime" and args.target_transport == "opencode" else None,
-            expected_plugin="loom" if case["execution"] == "runtime" and args.target_transport == "opencode" else None,
+            # Runtime eval projects install Loom locally in .opencode/plugins and
+            # declare it in their project config. Do not also materialize a second
+            # global plugin copy through the runner; OpenCode host integration
+            # already proves the project-local path and duplicate bootstrap is brittle.
+            config_root=None,
+            expected_plugin=None,
             timeout=args.timeout_seconds,
             container_timeout=args.container_timeout,
             mount_node_modules=case["execution"] == "runtime",
