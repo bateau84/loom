@@ -198,6 +198,20 @@
           "loom_start",
           "loom_route"
         ]
+      },
+      "actions": {
+        "requires": [
+          {
+            "tool": "subagent",
+            "arg": "agent",
+            "equals": "research"
+          },
+          {
+            "tool": "subagent",
+            "arg": "background",
+            "equals": false
+          }
+        ]
       }
     },
     {
