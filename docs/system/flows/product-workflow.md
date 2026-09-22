@@ -14,9 +14,9 @@ conversation
   -> optional sparring / repository inspection / research / diagnosis
   -> explicit execution intent
   -> focused intent resolution only where user-owned product meaning remains
-  -> proposed Anchor
-  -> explicit user acceptance
   -> accepted Anchor
+     (a clear build/fix/apply commitment may accept an already-resolved discussed outcome;
+      otherwise show the proposed Anchor for explicit acceptance)
   -> required Research / Designer / Specifier
   -> Reviewer
   -> Architect when structural realization is needed
