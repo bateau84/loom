@@ -32,6 +32,7 @@ The conversation remains active during execution. New user input may refine or r
 8. The user can interrupt or refine ongoing execution conversationally; Loom updates only affected authority/work and preserves valid completed work.
 9. `brainstorm` is not a separate required user-facing primary mode. Brainstorming is normal Loom behavior; a fresh Brainstorm subagent may still be used internally when an independent ideation pass is useful.
 10. The public conceptual identity is Loom even if an underlying host/runtime retains a compatibility identifier such as `general`.
+11. When prior conversation already resolved the product outcome and the user clearly says to build/fix/apply it, that execution commitment is sufficient acceptance of the discussed outcome; Loom does not require a second routine confirmation.
 
 ## Verification Semantics
 
