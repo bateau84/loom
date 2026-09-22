@@ -12,6 +12,7 @@ import {
   type StatusView,
 } from "./status-view"
 import type { LoomRuntimeIdentity } from "./runtime"
+import { publishDashboardEndpoint } from "./dashboard-endpoint"
 
 const roots: string[] = []
 
@@ -160,18 +161,25 @@ describe("interactive Loom status presentation", () => {
     expect(() => new Function(script)).not.toThrow()
   })
 
-  test("builds a stable dashboard workflow deep link independent of artifact generation", () => {
+  test("builds stable workflow links from the active shared dashboard endpoint", async () => {
+    const root = await mkdtemp(join(tmpdir(), "loom-dashboard-endpoint-"))
+    roots.push(root)
     const runtime = {
       installationId: "installation-a",
       instanceId: "instance-a",
       projectId: "project a",
       canonicalLocation: "/workspace/project-a",
-      runtimeRoot: "/tmp/loom",
-      stateRoot: "/tmp/loom-state",
+      runtimeRoot: join(root, "runtime"),
+      stateRoot: join(root, "state"),
     } as LoomRuntimeIdentity
 
-    expect(dashboardWorkflowUrl(runtime, "wf/status")).toBe(
+    expect(await dashboardWorkflowUrl(runtime, "wf/status")).toBe(
       "http://127.0.0.1:4318/#/project/project%20a/workflow/wf%2Fstatus",
+    )
+
+    await publishDashboardEndpoint(runtime.stateRoot, "http://127.0.0.1:4999")
+    expect(await dashboardWorkflowUrl(runtime, "wf/status")).toBe(
+      "http://127.0.0.1:4999/#/project/project%20a/workflow/wf%2Fstatus",
     )
   })
 
