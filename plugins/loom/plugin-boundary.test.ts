@@ -132,7 +132,7 @@ async function harness(
     sessionID: string,
     callID: string,
   ) => {
-    const tool = registered.get(name)
+    const tool = registered.get(name) ?? registered.get(`loom_${name}`)
     if (!tool) throw new Error(`Tool not registered: ${name}`)
     const toolName = `loom_${name}`
     await toolHooks.get("execute.before")?.({
