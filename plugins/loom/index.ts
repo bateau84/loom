@@ -4170,8 +4170,16 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
       const workflow = await activeWorkflow(ctx, event.sessionID, ensureLegacySession)
       if (!workflow || workflow.steps.length === 0) {
+        if (target === "research" || target === "diagnostic") {
+          // Conversation-first boundary: Research and Diagnostic may be used as
+          // advisory, non-product-mutating capabilities before durable execution.
+          // Their agent contracts prohibit loom_complete without workflow/grant
+          // context. All authority, mutation, and gate agents remain governed.
+          return
+        }
         event.effect = "deny"
-        event.message = "Start and route a Loom workflow before dispatching Loom subagents."
+        event.message =
+          "Only conversational Research or Diagnostic may run before a Loom workflow. Start and route governed execution before dispatching other Loom subagents."
         return
       }
 
