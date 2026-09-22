@@ -1863,6 +1863,17 @@ def main() -> int:
         metavar="N",
         help="Run cases concurrently. Without N, run the full case×iteration matrix in parallel; with N, cap concurrency.",
     )
+    parser.add_argument(
+        "--runtime-parallel",
+        type=int,
+        default=1,
+        metavar="N",
+        help=(
+            "Maximum concurrent runtime evals. Defaults to 1 because one runtime "
+            "case may already dispatch multiple model-backed subagents. Values >1 "
+            "are an explicit load/stress test."
+        ),
+    )
     parser.add_argument("--keep-temp", action="store_true")
     parser.add_argument("--list", action="store_true")
     args = parser.parse_args()
@@ -1897,6 +1908,8 @@ def main() -> int:
         parser.error("--iterations must be >= 1")
     if args.parallel < 0:
         parser.error("--parallel must be >= 1 when a limit is supplied")
+    if args.runtime_parallel < 1:
+        parser.error("--runtime-parallel must be >= 1")
 
     selected_ids = {value.strip() for value in args.cases.split(",") if value.strip()}
     selected_targets = {value.strip() for value in args.target.split(",") if value.strip()}
@@ -1953,8 +1966,31 @@ def main() -> int:
         for case in selected
         for iteration in range(1, args.iterations + 1)
     ]
-    concurrency = len(jobs) if args.parallel == 0 else min(args.parallel, len(jobs))
-    mode = "parallel=%d" % concurrency if concurrency > 1 else "sequential"
+    non_runtime_jobs = [job for job in jobs if job[0]["execution"] != "runtime"]
+    runtime_jobs = [job for job in jobs if job[0]["execution"] == "runtime"]
+    concurrency = (
+        len(non_runtime_jobs)
+        if args.parallel == 0
+        else min(args.parallel, len(non_runtime_jobs))
+    ) if non_runtime_jobs else 0
+    runtime_concurrency = min(args.runtime_parallel, len(runtime_jobs)) if runtime_jobs else 0
+
+    mode_parts: list[str] = []
+    if non_runtime_jobs:
+        mode_parts.append(
+            "non-runtime=" + (
+                "parallel:%d" % concurrency if concurrency > 1 else "sequential"
+            )
+        )
+    if runtime_jobs:
+        mode_parts.append(
+            "runtime=" + (
+                "parallel:%d (stress)" % runtime_concurrency
+                if runtime_concurrency > 1
+                else "sequential"
+            )
+        )
+    mode = ", ".join(mode_parts) or "sequential"
     skill_ablation_jobs = sum(1 for case, _ in jobs if case.get("_skill_owned"))
     print(
         "Running %d Loom live behavioral eval run(s) (%d case(s) x %d iteration(s)) via %s "
@@ -2070,19 +2106,30 @@ def main() -> int:
             print("  - " + str(semantic.get("summary", "semantic judge failed")))
         return False
 
-    passed = 0
-    if concurrency == 1:
-        for job in jobs:
-            case, iteration, result, error = execute(job)
-            if report(case, iteration, result, error):
-                passed += 1
-    else:
-        with ThreadPoolExecutor(max_workers=concurrency) as pool:
-            futures = [pool.submit(execute, job) for job in jobs]
+    def execute_group(group: list[tuple[dict[str, Any], int]], limit: int) -> int:
+        if not group:
+            return 0
+        group_passed = 0
+        if limit <= 1:
+            for job in group:
+                case, iteration, result, error = execute(job)
+                if report(case, iteration, result, error):
+                    group_passed += 1
+            return group_passed
+
+        with ThreadPoolExecutor(max_workers=limit) as pool:
+            futures = [pool.submit(execute, job) for job in group]
             for future in as_completed(futures):
                 case, iteration, result, error = future.result()
                 if report(case, iteration, result, error):
-                    passed += 1
+                    group_passed += 1
+        return group_passed
+
+    # Behavioral repeatability and runtime load are intentionally separate.
+    # Runtime cases may dispatch multiple model-backed subagents internally, so
+    # they are serialized unless --runtime-parallel explicitly opts into stress.
+    passed = execute_group(non_runtime_jobs, concurrency)
+    passed += execute_group(runtime_jobs, runtime_concurrency)
 
     print("%d/%d passed" % (passed, len(jobs)))
     return 0 if passed == len(jobs) else 1
