@@ -32,6 +32,7 @@ The Loom plugin exposes tools for:
 - `plugins/loom/index.ts` — OpenCode integration and tool/hook surface.
 - `plugins/loom/runtime.ts` — project/install identity, scoped storage, transactional persistence, cross-process locks, migration and grants.
 - `plugins/loom/dashboard.ts` — read-only operational projection publication and aggregation.
+- `plugins/loom/dashboard-endpoint.ts` — installation-shared advertised dashboard endpoint lease consumed by status/sidebar links.
 - `plugins/loom/status-view.ts` — compact status presentation plus user-private interactive HTML workflow artifact generation.
 - `plugins/loom/intent.ts` — intent interview and Anchor-acceptance state.
 - `plugins/loom/workflow.ts` — workflow DAG and step state.
@@ -58,7 +59,7 @@ OpenCode plugin storage is used only as the legacy import source during bounded 
 
 ## OpenCode tool presentation
 
-Loom control-plane tools have two equivalent OpenCode access surfaces. Existing native tools remain available as `loom_*`. The plugin also mirrors the same schemas/executors into the Code Mode catalog under `tools.loom.code.*`, preserving the native permission identity. Models can therefore use Loom correctly whether they prefer native tool calls or Code Mode discovery. Interactive status is dashboard-first and does not depend on model-generated presentation prose. The sidebar RPC exposes the active workflow's stable dashboard deep link; optional OpenCode Desktop preview metadata is kept separate from the normal execution path.
+Loom control-plane tools have two equivalent OpenCode access surfaces. Existing native tools remain available as `loom_*`. The plugin also mirrors the same schemas/executors into the Code Mode catalog under `tools.loom.code.*`, preserving the native permission identity. Models can therefore use Loom correctly whether they prefer native tool calls or Code Mode discovery. Interactive status is dashboard-first and does not depend on model-generated presentation prose. The sidebar RPC exposes the active workflow's stable dashboard deep link using the dashboard process's shared advertised-endpoint lease; optional OpenCode Desktop preview metadata is kept separate from the normal execution path.
 
 ## Read-only presentation
 
