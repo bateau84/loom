@@ -904,6 +904,13 @@ Verdict: FAIL
       expect(routed.path.some((step: { agent: string }) => step.agent === "worker")).toBe(false)
       expect(routed.path.some((step: { agent: string }) => step.agent === "planner")).toBe(false)
       expect(routed.path.some((step: { agent: string }) => step.agent === "critic")).toBe(false)
+      expect(routed.continuation).toEqual({
+        next: [{ step: "diagnostic", agent: "diagnostic" }],
+        implementationRequested: false,
+        workerPresent: false,
+        instruction:
+          "Issue loom_dispatch_grant for the exact runnable step, dispatch that owner, then call loom_status immediately after the child returns.",
+      })
     } finally {
       restore()
     }
