@@ -16,9 +16,9 @@ jobs:
         with:
           persist-credentials: false
       - name: Smoke test pinned eval-runner action/runtime pair
-        uses: bateau84/opencode-eval-runner@c5149331b0feee2e3d25b9b8fd4128764423e4f8
+        uses: bateau84/opencode-eval-runner@2c9e19f96ddaf4f996042263a92f072a32237ec8
         with:
-          opencode-image: ghcr.io/bateau84/opencode-eval-runner@sha256:e442ea2fe41a48a489ff832815ca7b3752ebdd4f667992e984c91a47847440e4
+          opencode-image: ghcr.io/bateau84/opencode-eval-runner@sha256:9dad96313bb15efaa4164a976bfd244ad804cac851b33543b44dcfb4e1cafc22
           copilot-image: ghcr.io/bateau84/opencode-eval-runner@sha256:4574ac32b32f42f5f1bfeefe091a56edca14b40a95570544e324dad87c068215
           prepare-opencode: true
           prepare-copilot: true
@@ -34,7 +34,7 @@ jobs:
       - name: Verify real Loom plugin activation in pinned eval runner
         run: |
           set -euo pipefail
-          image="ghcr.io/bateau84/opencode-eval-runner@sha256:e442ea2fe41a48a489ff832815ca7b3752ebdd4f667992e984c91a47847440e4"
+          image="ghcr.io/bateau84/opencode-eval-runner@sha256:9dad96313bb15efaa4164a976bfd244ad804cac851b33543b44dcfb4e1cafc22"
           docker run --rm \
             --workdir /workspace \
             --volume "$PWD:/workspace:ro" \
