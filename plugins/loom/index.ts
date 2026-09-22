@@ -3850,16 +3850,20 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
       const workflow = await activeWorkflow(ctx, event.sessionID, ensureLegacySession)
       if (!workflow) {
-        // Research and Diagnostic are also conversational read-only capabilities.
-        // Before execution starts they may be dispatched without creating workflow
-        // state. Once a workflow exists, normal grants/budgets apply so execution
-        // cannot launder governed specialist work through the conversational path.
+        // Research and Diagnostic are also conversational advisory capabilities.
+        // Before execution starts they may be dispatched without creating workflow state.
         if (conversationalInvestigationAgents.has(target)) return
 
         event.effect = "deny"
         event.message = "Start and route a Loom workflow before dispatching Loom subagents."
         return
       }
+
+      // A terminal workflow remains bound for history/continuity, but it no longer
+      // owns new conversational investigation. Non-terminal workflows keep the
+      // normal grant/budget path so governed work cannot be laundered as chat.
+      if (workflowBindingTerminal(workflow) && conversationalInvestigationAgents.has(target)) return
+
       if (workflow.steps.length === 0) {
         event.effect = "deny"
         event.message = "Route the active Loom workflow before dispatching governed Loom subagents."
