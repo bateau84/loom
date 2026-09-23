@@ -15,7 +15,7 @@ Keep deterministic coordination out of model memory.
 
 The Loom plugin exposes tools for:
 - intent interview start/question/resolve/prepare/accept;
-- workflow start/routing/status/completion/reopen;
+- workflow start/routing/status/completion/reopen and explicit user-authorized cancellation;
 - shared OQs;
 - executable task DAGs and task attachment;
 - one-use child dispatch grants and exact workflow/step/OQ attachment;
@@ -35,8 +35,9 @@ The Loom plugin exposes tools for:
 - `plugins/loom/dashboard-endpoint.ts` — installation-shared advertised dashboard endpoint lease consumed by status/sidebar links.
 - `plugins/loom/status-view.ts` — compact status presentation plus user-private interactive HTML workflow artifact generation.
 - `plugins/loom/intent.ts` — intent interview and Anchor-acceptance state.
-- `plugins/loom/workflow.ts` — workflow DAG and step state.
-- `plugins/loom/work.ts` — Objective → Phase → Wave → Task hierarchy and claims.
+- `plugins/loom/workflow.ts` — workflow DAG, step state and cancellation fence.
+- `plugins/loom/lifecycle.ts` — atomic workflow cancellation, tool admission, terminal bindings and reviewed-Wave history recovery.
+- `plugins/loom/work.ts` — Objective → Phase → Wave → Task hierarchy, live claims and reviewed-Wave receipts.
 - `plugins/loom/tasks.ts` — bounded implementation DAG validation.
 - `plugins/loom/oq.ts` — shared questions.
 - `plugins/loom/budget.ts` — dispatch/retry limits.

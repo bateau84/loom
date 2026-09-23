@@ -72,3 +72,18 @@ An upgrade may happen while another OpenCode+Loom process from the previous buil
 Every normal project mutation validates the durable runtime version against the running build in the same transaction as the write. If another process upgrades the installation, an older still-running process fails closed on its next canonical project-state access/mutation and must be restarted with the current Loom build.
 
 A mutation already in flight before the upgrade is serialized by the canonical SQLite transaction boundary; the upgrade runs after that old-version mutation commits and migrates its result.
+
+
+## Cancelling or replacing a stuck workflow
+
+After installing the cancellation update, stop/restart all OpenCode+Loom processes. Runtime version 2 preserves existing records but rejects older fence-capable writers, which must restart before using the shared state. Do not downgrade against that upgraded store.
+
+In the original General session, a request such as **“Abort this workflow, keep completed work, and start the replacement plan we agreed on”** authorizes cancellation and that replacement. General calls `loom_cancel` with the workflow ID, a reason and your exact confirmation, then checks the result before calling `loom_start`. Both native `loom_cancel` and the Code Mode mirror `tools.loom.code.cancel` use the same operation. This is an agent tool, not a shell command.
+
+The old workflow remains visible as **cancelled** in status, sidebar and dashboard. Its completed Tasks, evidence and review outcomes remain available; unfinished checks stay unfinished. The Objective stays active/incomplete unless it had already independently completed. Cancellation does not revert files or stop a tool that was already running outside Loom.
+
+The operation works before planning and after a completed Wave no longer has a live claim. Repeating it is safe, including after starting the replacement. Missing work state and claims belonging to another workflow are reported; those foreign claims are not released. A different General session cannot cancel a workflow merely by knowing its ID: resume the owning session rather than editing the database.
+
+For the old **“Wave ... is claimed by nobody”** closure failure, upgrading may also let the owning Documenter finish normally when the completed Wave has uniquely provable stored review history. That missing live claim is expected after successful implementation review. Ambiguous history is not converted into proof; an explicit cancellation is still available to leave the workflow and create a separately authorized replacement.
+
+Do not use `loom_work_release` as an abort command, delete runtime storage, rerun completed implementation, or manufacture a failed gate to escape a binding. Cancelled children cannot resume old work; a reused child needs a new exact grant for a different active workflow. Completed or failed terminal workflows keep their original outcome rather than being relabelled by a later cancel request.

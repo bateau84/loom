@@ -14,6 +14,8 @@ Loom may stop for the user only when product intent or material scope genuinely 
 
 A phase change, agent handoff, review result, planning boundary, or implementation wave is not by itself a user boundary.
 
+An explicit user cancellation is a separate terminal boundary. It ends that workflow, not the accepted product Objective. Cancellation is neither successful delivery nor a manufactured failed gate, and it does not undo files or already-running external operations.
+
 ## Acceptance Criteria
 
 1. An accepted executable objective starts real work without asking the user for routine permission to continue.
@@ -21,10 +23,13 @@ A phase change, agent handoff, review result, planning boundary, or implementati
 3. Technical or expert-owned blockers are routed to the capable authority without becoming user questions.
 4. User interruption occurs only for a user-owned decision or exhausted capability boundary.
 5. Completed independent work is preserved when one dependent path becomes blocked.
+6. An explicit user cancellation works before planning, during execution, and after Wave review has ended its live claim. The owning General session records the reason and exact confirmation; retries do not modify a replacement workflow.
+7. Cancellation preserves completed work, evidence, review outcomes and unfinished obligations, permits a new authorized workflow, and does not imply Objective completion. New dispatches, attachments to the cancelled workflow and late workflow mutations are refused.
+8. Finishing a reviewed Wave does not prevent its remaining documentation or product gates from closing against that Wave's exact reviewed history.
 
 ## Verification Semantics
 
-Verify with workflow traces from representative greenfield and maintenance runs.
+Verify with workflow traces from representative greenfield and maintenance runs. Exercise reviewed-Wave closure and user cancellation through registered tools, including replacement start, restart, missing/stale/foreign claims, late child actions and interrupted persistence. Deterministic lifecycle tests prove those control transitions; they do not by themselves prove reliable natural-language cancellation intent handling.
 
 Valid proof includes uninterrupted phase progression, automatic expert rerouting, and a deliberate user stop only at a seeded user-owned decision.
 

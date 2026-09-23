@@ -49,6 +49,29 @@ export type VerificationRequirement = {
   }
 }
 
+export type WorkflowCancellation = {
+  at: string
+  byAgent: "general"
+  bySessionId: string
+  reason: string
+  confirmation: string
+  releasedClaimIds: string[]
+  retainedForeignClaimIds: string[]
+  workMissing: boolean
+  revokedGrantIds: string[]
+}
+
+export class WorkflowCancelledError extends Error {
+  constructor(workflowId: string) {
+    super(`Workflow ${workflowId} is cancelled. Start a new workflow; cancelled execution cannot resume.`)
+    this.name = "WorkflowCancelledError"
+  }
+}
+
+export function assertWorkflowNotCancelled(workflow: Workflow) {
+  if (workflow.cancellation) throw new WorkflowCancelledError(workflow.id)
+}
+
 export type Workflow = {
   id: string
   projectId: string
@@ -57,6 +80,7 @@ export type Workflow = {
   request?: string
   createdBySession: string
   createdAt: string
+  cancellation?: WorkflowCancellation
   effects?: Effects
   work?: {
     objectiveId: string
@@ -189,6 +213,7 @@ export function resetVerificationAfterReopen(workflow: Workflow, resetStepIds: s
 }
 
 export function runnable(workflow: Workflow) {
+  if (workflow.cancellation) return []
   const done = new Set(workflow.steps.filter(satisfied).map((step) => step.id))
   return workflow.steps.filter(
     (step) => step.status === "pending" && step.dependsOn.every((dependency) => done.has(dependency)),
@@ -370,6 +395,7 @@ export function finishStep(
   outcome: "complete" | "pass" | "fail",
   summary: string,
 ) {
+  assertWorkflowNotCancelled(workflow)
   const step = workflow.steps.find((candidate) => candidate.id === stepId)
   if (!step) throw new Error("Step not found.")
   if (step.agent !== agent) throw new Error(`Step ${stepId} belongs to ${step.agent}, not ${agent}.`)
@@ -400,6 +426,7 @@ export function finishStep(
 }
 
 export function reopenFrom(workflow: Workflow, stepId: string) {
+  assertWorkflowNotCancelled(workflow)
   const target = workflow.steps.find((step) => step.id === stepId)
   if (!target) throw new Error("Step not found.")
 

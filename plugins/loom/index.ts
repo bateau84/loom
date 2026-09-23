@@ -1,6 +1,7 @@
 import type * as OpenCodePlugin from "@opencode/plugin"
 import { RUNTIME_STATE_VERSION, consumeDispatchGrantLocked, createProjectStorage, createTransactionalStorage, ensureRuntimeStateVersion, findUsableDispatchGrant, importLegacyPluginStorage, issueDispatchGrantLocked, migrateLegacySessionState, resolveRuntimeIdentity, sessionBoundToOq, sessionBoundToStep, sessionBoundToWorkflow, withRuntimeAdvisoryLock, withRuntimeLock, withRuntimeLocks, type LoomRuntimeIdentity } from "./runtime"
 import { LoomRpc } from "./rpc"
+import { assertLoomToolAdmission, assertCancelledChildToolAdmission, cancelWorkflow, ensureCompletedWaveHistory, workflowBindingTerminal, type CancelWorkflowInput } from "./lifecycle"
 import { buildSidebarSnapshot } from "./sidebar"
 import { renderToolOutput } from "./presentation"
 import {
@@ -18,6 +19,8 @@ import { createDashboardPublisher } from "./dashboard"
 export const LOOM_NATIVE_TOOL_GUIDANCE =
   "Loom control-plane tools are available through two equivalent OpenCode surfaces: native loom_* tools and Code Mode mirrors under tools.loom.code.*. Use either surface directly according to the active tool paradigm. If using Code Mode, search for Loom tools and invoke the returned tools.loom.code.* signatures; do not fall back to shell/filesystem discovery for Loom commands. Interactive status is dashboard-first and does not depend on model prose: the Loom sidebar exposes a stable workflow dashboard URL, while loom_status may also return presentation metadata. Desktop browser preview is optional metadata only; do not invoke tools.browser.preview merely because presentation metadata exists."
 import {
+  assertWorkflowNotCancelled,
+  WorkflowCancelledError,
   addVerificationRequirement,
   applyTaskPlan,
   buildSteps,
@@ -355,17 +358,6 @@ function bindingReleaseKey(workflowId: string, sessionID: string) {
   return `binding-release/${workflowId}/${sessionID}`
 }
 
-function workflowBindingTerminal(workflow: Workflow) {
-  if (workflow.steps.length === 0) return false
-  if (workflow.steps.every((step) => ["complete", "passed", "failed"].includes(step.status))) {
-    return true
-  }
-  return (
-    runnable(workflow).length === 0 &&
-    workflow.steps.some((step) => step.status === "failed")
-  )
-}
-
 async function assertSessionRebindingAllowedLocked(
   ctx: any,
   sessionID: string,
@@ -411,6 +403,7 @@ async function validateWorkflowMutationLocked(
   if (current.projectId !== runtime.projectId) {
     throw new Error("Workflow belongs to another project.")
   }
+  assertWorkflowNotCancelled(current)
   if (current.revision !== workflow.revision) {
     throw new Error(
       `Stale workflow revision: expected ${workflow.revision}, current ${current.revision}.`,
@@ -444,10 +437,12 @@ async function bumpWorkflowRevisionLocked(
   ctx: any,
   runtime: LoomRuntimeIdentity,
   workflowId: string,
+  allowCancelledBindingTransition = false,
 ): Promise<Workflow> {
   const current = await readWorkflow(ctx, workflowId)
   if (!current) throw new Error("Workflow disappeared during guarded mutation.")
   if (current.projectId !== runtime.projectId) throw new Error("Workflow belongs to another project.")
+  if (!allowCancelledBindingTransition) assertWorkflowNotCancelled(current)
   current.revision += 1
   await ctx.storage.set(workflowKey(current.id), current)
   return current
@@ -485,6 +480,7 @@ async function exactOqBinding(ctx: any, sessionID: string, workflowId: string, q
 async function assertWorkerWorkClaim(ctx: any, workflowId: string, stepId: string) {
   const workflow = await readWorkflow(ctx, workflowId)
   if (!workflow) throw new Error("Workflow not found.")
+  assertWorkflowNotCancelled(workflow)
   const step = workflow.steps.find((candidate) => candidate.id === stepId)
   if (!step) throw new Error("Step not found.")
   if (!step.task || !workflow.work) return
@@ -708,6 +704,16 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       legacyCheckedSessions.add(sessionID)
     }
 
+    // A resumed pre-epoch child can first return through a host/MCP tool rather
+    // than loom_attach. Admit its existing legacy binding before checking the
+    // cancellation fence, but do not perform host lookups for fresh sessions.
+    const ensureLegacyCancellationBoundary = async (sessionID: string) => {
+      if (await scopedStorage.get(sessionKey(sessionID)) !== undefined) return
+      if (await legacyStorage.get(sessionKey(sessionID)) !== undefined) {
+        await ensureLegacySession(sessionID)
+      }
+    }
+
     await ctx.rpc.register(LoomRpc, {
       sidebar: async (input) => {
         const { sessionID } = input as { sessionID: string }
@@ -728,13 +734,30 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
     })
 
     await ctx.tool.transform((editor) => {
+      const addLoomTool: typeof editor.add = (definition) => {
+        const execute = definition.execute
+        editor.add({
+          ...definition,
+          execute: async (input, tool) => {
+            try {
+              await ensureLegacyCancellationBoundary(tool.sessionID)
+              await assertLoomToolAdmission(ctx.storage as any, definition.name, input, tool)
+              return await execute(input, tool)
+            } catch (error) {
+              if (!(error instanceof WorkflowCancelledError)) throw error
+              return { content: renderToolOutput({ error: error.message }) }
+            }
+          },
+        })
+      }
+
       editor.namespace({
         name: "loom",
         description: "Loom workflow control, shared questions, routing, step state, and bounded project inspection.",
       })
 
 
-      editor.add({
+      addLoomTool({
         name: "find",
         description:
           "Read-only project file discovery. Structured replacement for find/sort/head-style shell pipelines; paths cannot escape the project.",
@@ -759,7 +782,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         }),
       })
 
-      editor.add({
+      addLoomTool({
         name: "grep",
         description:
           "Read-only bounded literal text search across project files. Structured replacement for grep -F / rg -F plus sort/head; supports context lines without arbitrary regex execution.",
@@ -786,7 +809,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         }),
       })
 
-      editor.add({
+      addLoomTool({
         name: "select",
         description:
           "Read-only field filtering/projection for line-oriented text. Structured replacement for common awk/cut/sort/uniq/head/tail jobs without executing a programming language.",
@@ -840,7 +863,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         }),
       })
 
-      editor.add({
+      addLoomTool({
         name: "stats",
         description:
           "Read-only project file metadata and optional line counts. Structured replacement for common stat/wc inspection.",
@@ -863,7 +886,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         }),
       })
 
-      editor.add({
+      addLoomTool({
         name: "report_promote",
         description:
           "Promote one OKF-compliant ephemeral Markdown report unchanged into docs/reports. General only; promotion preserves source and authority and never overwrites.",
@@ -973,7 +996,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         },
       })
 
-      editor.add({
+      addLoomTool({
         name: "intent_start",
         description:
           "Start Loom intent shaping from a fuzzy product idea. General only. Use before an accepted Anchor exists.",
@@ -1007,7 +1030,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         },
       })
 
-      editor.add({
+      addLoomTool({
         name: "intent_status",
         description: "Inspect the active Loom intent interview or one explicit intent id.",
         input: {
@@ -1026,7 +1049,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         },
       })
 
-      editor.add({
+      addLoomTool({
         name: "intent_question",
         description:
           "Register exactly one user-owned interview question with Loom's recommended answer and rationale. General only.",
@@ -1064,7 +1087,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         },
       })
 
-      editor.add({
+      addLoomTool({
         name: "intent_resolve",
         description:
           "Resolve the current intent branch from the exact user answer or from repository/research evidence. General only.",
@@ -1107,7 +1130,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         },
       })
 
-      editor.add({
+      addLoomTool({
         name: "intent_prepare",
         description:
           "Mark the interview draft-ready after goal, observable success, scope, exclusions, user-owned decisions, and context are sufficiently resolved.",
@@ -1154,7 +1177,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         },
       })
 
-      editor.add({
+      addLoomTool({
         name: "intent_reopen",
         description: "Return a draft-ready intent to interviewing after the user requests a correction. General only.",
         input: {
@@ -1179,7 +1202,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         },
       })
 
-      editor.add({
+      addLoomTool({
         name: "intent_accept",
         description:
           "Record the explicit user acceptance boundary for a completed Anchor. General only; provide the exact user confirmation text.",
@@ -1230,7 +1253,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         },
       })
 
-      editor.add({
+      addLoomTool({
         name: "start",
         description: "Start governed Loom execution for an accepted Anchor or a bounded committed task. Ordinary conversation/investigation does not require this tool. General only.",
         input: {
@@ -1334,7 +1357,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               await ctx.storage.set(budgetKey(id), newBudgetState())
 
               if (previousBinding && previousBinding !== id) {
-                await bumpWorkflowRevisionLocked(ctx, runtime, previousBinding)
+                await bumpWorkflowRevisionLocked(ctx, runtime, previousBinding, true)
               }
             })
           } catch (error) {
@@ -1352,7 +1375,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         },
       })
 
-      editor.add({
+      addLoomTool({
         name: "route",
         description:
           "Classify or reclassify accepted work and create the required Loom execution DAG. General only.",
@@ -1529,9 +1552,12 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               await persistWorkflowMutationLocked(ctx, runtime, workflow)
             })
           } else {
-            applyRouteMutation()
-            await invalidateEscalatedWorkerScope()
-            await persistWorkflowMutation(ctx, runtime, workflow)
+            await withRuntimeLock(runtime, "workflow", workflow.id, async () => {
+              await validateWorkflowMutationLocked(ctx, runtime, workflow)
+              applyRouteMutation()
+              await invalidateEscalatedWorkerScope()
+              await persistWorkflowMutationLocked(ctx, runtime, workflow)
+            })
           }
 
           const questions = await readQuestions(ctx, workflow.id)
@@ -1561,7 +1587,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         },
       })
 
-      editor.add({
+      addLoomTool({
         name: "status",
         description: "Inspect Loom progress, current/next work, blockers, OQs, verification, and budget. Compact by default; detail=true returns internals. Interactive status is available independently through Loom's stable dashboard workflow URL exposed in the sidebar; the tool also returns browser-safe presentation metadata as a convenience. OpenCode Desktop browser preview is optional metadata only and must not be invoked merely because presentation metadata exists. Presentation availability never blocks or alters Loom workflow state.",
         input: {
@@ -1646,7 +1672,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         },
       })
 
-      editor.add({
+      addLoomTool({
         name: "complete",
         description:
           "Finish one Loom step. Work uses complete; Reviewer/Critic gates use pass or fail. Blocking OQs must be closed first.",
@@ -1744,6 +1770,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               throw new Error("Step has unresolved blocking questions.")
             }
 
+            const reviewedWave = workflow.steps.some((candidate) => candidate.id === "review-implementation" && candidate.status === "passed")
             finishStep(workflow, stepId, tool.agent, resolvedOutcome, summary)
             evidenceBound = await bindSessionEvidence(ctx, tool.sessionID, workflowId, stepId)
 
@@ -1753,26 +1780,19 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
               assertWorkGeneration(work, workflow.work.generation)
               const taskIds = plannedTaskSteps(workflow).map((taskStep) => taskStep.task!.id)
-              if (taskIds.length > 0) {
-                assertWaveClaimForTasks(
-                  work,
-                  workflow.id,
-                  workflow.work.generation,
-                  taskIds,
+              const now = new Date().toISOString()
+              if (taskIds.length > 0 && reviewedWave) {
+                // Wave review ended the execution lease. Later gates/documentation
+                // consume its receipt; they must not re-sync or reclaim Tasks.
+                await ensureCompletedWaveHistory(ctx.storage as any, work, workflow)
+              } else if (taskIds.length > 0) {
+                assertWaveClaimForTasks(work, workflow.id, workflow.work.generation, taskIds)
+                syncWorkTaskStatuses(
+                  work, workflow.id, workflow.work.generation,
+                  plannedTaskSteps(workflow).map((taskStep) => ({ taskId: taskStep.task!.id, complete: taskStep.status === "complete" })),
+                  now,
                 )
               }
-
-              const now = new Date().toISOString()
-              syncWorkTaskStatuses(
-                work,
-                workflow.id,
-                workflow.work.generation,
-                plannedTaskSteps(workflow).map((taskStep) => ({
-                  taskId: taskStep.task!.id,
-                  complete: taskStep.status === "complete",
-                })),
-                now,
-              )
 
               if (
                 stepId === "review-implementation" &&
@@ -1830,7 +1850,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         },
       })
 
-      editor.add({
+      addLoomTool({
         name: "reopen",
         description:
           "Reopen one prior workflow step after failed review or new evidence. Resets only that step and downstream dependents. General only.",
@@ -1900,12 +1920,9 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 assertWorkGeneration(work, workflow.work.generation)
                 const taskIds = plannedTaskSteps(workflow).map((taskStep) => taskStep.task!.id)
                 if (taskIds.length > 0) {
-                  assertWaveClaimForTasks(
-                    work,
-                    workflow.id,
-                    workflow.work.generation,
-                    taskIds,
-                  )
+                  const reviewed = workflow.steps.some((candidate) => candidate.id === "review-implementation" && candidate.status === "passed")
+                  if (reviewed) await ensureCompletedWaveHistory(ctx.storage as any, work, workflow)
+                  else assertWaveClaimForTasks(work, workflow.id, workflow.work.generation, taskIds)
                 }
               }
 
@@ -1936,22 +1953,14 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
               if (work && workflow.work) {
                 const taskIds = plannedTaskSteps(workflow).map((taskStep) => taskStep.task!.id)
-                syncWorkTaskStatuses(
-                  work,
-                  workflow.id,
-                  workflow.work.generation,
-                  plannedTaskSteps(workflow).map((taskStep) => ({
-                    taskId: taskStep.task!.id,
-                    complete: taskStep.status === "complete",
-                  })),
-                  now,
-                )
                 if (reset.includes("review-implementation") && taskIds.length > 0) {
-                  reopenWaveForTasks(
-                    work,
-                    workflow.id,
-                    workflow.work.generation,
-                    taskIds,
+                  reopenWaveForTasks(work, workflow.id, workflow.work.generation, taskIds, now)
+                }
+                // Documentation-only reopening does not resurrect the Wave lease.
+                if (taskIds.length > 0 && !workflow.steps.some((candidate) => candidate.id === "review-implementation" && candidate.status === "passed")) {
+                  syncWorkTaskStatuses(
+                    work, workflow.id, workflow.work.generation,
+                    plannedTaskSteps(workflow).map((taskStep) => ({ taskId: taskStep.task!.id, complete: taskStep.status === "complete" })),
                     now,
                   )
                 }
@@ -1985,7 +1994,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         },
       })
 
-      editor.add({
+      addLoomTool({
         name: "oq_raise",
         description:
           "Raise a shared workflow question. Blocking questions automatically make the raising step a required consumer.",
@@ -2056,7 +2065,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         },
       })
 
-      editor.add({
+      addLoomTool({
         name: "oq_list",
         description: "List shared questions relevant to the current agent or one assigned step.",
         input: {
@@ -2083,7 +2092,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         },
       })
 
-      editor.add({
+      addLoomTool({
         name: "oq_answer",
         description:
           "Answer a shared question. Agent-owned questions require the named authority. User-owned answers are recorded by General with source=user.",
@@ -2138,7 +2147,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         },
       })
 
-      editor.add({
+      addLoomTool({
         name: "oq_reconcile",
         description:
           "Record how one workflow step consumed an answered question. Late consumers may register themselves through reconciliation.",
@@ -2197,7 +2206,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         },
       })
 
-      editor.add({
+      addLoomTool({
         name: "oq_reopen",
         description:
           "Reopen a shared question when its answer is stale, conflicting, or new consumers require reconsideration. Answer preservation must be explicit.",
@@ -2245,7 +2254,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         },
       })
 
-      editor.add({
+      addLoomTool({
         name: "verification",
         description:
           "Manage load-bearing Loom verification. action=status inspects requirements; action=require persists a specialist-owned requirement; action=prove satisfies one with observed current-session evidence.",
@@ -2434,7 +2443,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         },
       })
 
-      editor.add({
+      addLoomTool({
         name: "evidence_observations",
         description: "List automatically observed non-Loom tool executions from the current session.",
         input: {
@@ -2479,7 +2488,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         },
       })
 
-      editor.add({
+      addLoomTool({
         name: "evidence_claim",
         description:
           "Create an evidence claim backed by observed tool events from this session. Verification claim kinds are checked against observed commands.",
@@ -2570,7 +2579,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         },
       })
 
-      editor.add({
+      addLoomTool({
         name: "evidence_list",
         description: "List observed evidence and evidence claims bound to one workflow step.",
         input: {
@@ -2595,7 +2604,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       })
 
 
-      editor.add({
+      addLoomTool({
         name: "knowledge_record",
         description:
           "Record the current living-documentation outcome for knowledge-sync. Requires observed successful OKF-MCP discovery/verification from this Documenter session.",
@@ -2668,7 +2677,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         },
       })
 
-      editor.add({
+      addLoomTool({
         name: "knowledge_status",
         description: "Inspect the current workflow's living-documentation report.",
         input: {
@@ -2688,7 +2697,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         },
       })
 
-      editor.add({
+      addLoomTool({
         name: "pa_plan",
         description:
           "Create or replace the current Product Acceptance scenario plan before results are recorded. Scenarios must map to accepted Anchor/requirement criteria.",
@@ -2759,7 +2768,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         },
       })
 
-      editor.add({
+      addLoomTool({
         name: "pa_status",
         description: "Inspect Product Acceptance scenarios, results, evidence references, and readiness.",
         input: {
@@ -2784,7 +2793,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         },
       })
 
-      editor.add({
+      addLoomTool({
         name: "pa_result",
         description:
           "Record one immutable Product Acceptance scenario result for the current attempt. PASS requires product-acceptance evidence claims from the Product Acceptance step.",
@@ -2858,7 +2867,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         },
       })
 
-      editor.add({
+      addLoomTool({
         name: "budget_status",
         description: "Inspect Loom execution limits and current dispatch consumption.",
         input: {
@@ -2880,7 +2889,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       })
 
 
-      editor.add({
+      addLoomTool({
         name: "budget_grant",
         description:
           "Grant exactly one extra dispatch to an exhausted runnable workflow step or unanswered agent-owned OQ after material progress. General only; dispatch history and the workflow-wide total limit are preserved.",
@@ -2995,7 +3004,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       })
 
 
-      editor.add({
+      addLoomTool({
         name: "work_plan",
         description:
           "Create or replace the persistent Objective/Phase/Wave/Task plan for the accepted product Objective. Planner only. Replacing an existing generation requires its exact current version and a reason.",
@@ -3117,7 +3126,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         },
       })
 
-      editor.add({
+      addLoomTool({
         name: "work_status",
         description:
           "Inspect persistent Objective/Phase/Wave/Task progress and the next dependency-eligible Waves. Uses the current workflow when no id is supplied.",
@@ -3168,10 +3177,34 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       })
 
 
-      editor.add({
+      addLoomTool({
+        name: "cancel",
+        description: "Cancel this workflow after an explicit user instruction. Preserve completed work/evidence, revoke further execution and permit a replacement. General owner only; safe to retry. Does not undo already-running external tools.",
+        input: {
+          type: "object",
+          properties: {
+            workflowId: { type: "string" },
+            reason: { type: "string" },
+            confirmation: { type: "string", description: "Exact explicit user instruction authorizing cancellation; not a model inference." },
+          },
+          required: ["workflowId", "reason", "confirmation"],
+          additionalProperties: false,
+        },
+        options: { namespace: "loom", codemode: false },
+        execute: async (input, tool) => {
+          try {
+            await ensureLegacySession(tool.sessionID)
+            return { content: renderToolOutput(await cancelWorkflow(ctx.storage as any, runtime, input as CancelWorkflowInput, tool)) }
+          } catch (error) {
+            return { content: renderToolOutput({ error: error instanceof Error ? error.message : String(error) }) }
+          }
+        },
+      })
+
+      addLoomTool({
         name: "work_release",
         description:
-          "Release this workflow's persistent Wave claim when abandoning or recovering bounded work. General only; completed Wave history is unchanged.",
+          "Release a live persistent Wave claim. This is not workflow cancellation; use loom_cancel for user-authorized abort/replacement, including already-completed Waves. General only.",
         input: {
           type: "object",
           properties: {
@@ -3248,7 +3281,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       })
 
 
-      editor.add({
+      addLoomTool({
         name: "task_plan",
         description:
           "Create the bounded Worker DAG for exactly one remaining runnable Wave from the persistent work plan. Planner only. Tasks become real workflow steps with immutable write scopes.",
@@ -3360,7 +3393,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         },
       })
 
-      editor.add({
+      addLoomTool({
         name: "task_status",
         description: "Inspect planned Worker tasks, status, dependencies, scopes, skills, and currently runnable tasks.",
         input: {
@@ -3390,7 +3423,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         },
       })
 
-      editor.add({
+      addLoomTool({
         name: "task_scope",
         description:
           "Declare the bounded writable surface for one Worker step. General only. Accepted authority documents cannot be delegated to Worker.",
@@ -3445,7 +3478,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         },
       })
 
-      editor.add({
+      addLoomTool({
         name: "dispatch_grant",
         description:
           "Issue one short-lived, single-use attachment grant for an exact runnable workflow step or unanswered OQ. General only; pass the returned grantId to the child session.",
@@ -3551,7 +3584,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         },
       })
 
-      editor.add({
+      addLoomTool({
         name: "attach",
         description:
           "Consume a General-issued one-use grant and attach the current child session to its exact Loom workflow step or OQ.",
@@ -3612,6 +3645,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 throw new Error("Workflow belongs to another project.")
               }
 
+              assertWorkflowNotCancelled(workflow)
               if (value.stepId) {
                 const step = workflow.steps.find((candidate) => candidate.id === value.stepId)
                 if (!step) throw new Error("Step not found.")
@@ -3666,7 +3700,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               await ctx.storage.set(sessionOqKey(tool.sessionID), value.questionId ?? "")
               await bumpWorkflowRevisionLocked(ctx, runtime, value.workflowId)
               if (previousBinding && previousBinding !== value.workflowId) {
-                await bumpWorkflowRevisionLocked(ctx, runtime, previousBinding)
+                await bumpWorkflowRevisionLocked(ctx, runtime, previousBinding, true)
               }
             })
           } catch (error) {
@@ -3685,7 +3719,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         },
       })
 
-      editor.add({
+      addLoomTool({
         name: "scope_status",
         description: "Inspect the declared Worker write scope for one workflow step.",
         input: {
@@ -3708,7 +3742,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         },
       })
 
-      editor.add({
+      addLoomTool({
         name: "learn_record",
         description:
           "Record one evidence-backed episodic lesson from current work. Learning is advisory and never becomes product authority.",
@@ -3776,7 +3810,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         },
       })
 
-      editor.add({
+      addLoomTool({
         name: "learn_query",
         description:
           "Local lexical fallback for canonical Loom learning records. Prefer SynaBun_recall for semantic recall, then verify recalled Loom ids with loom_learn_get.",
@@ -3813,7 +3847,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       })
 
 
-      editor.add({
+      addLoomTool({
         name: "learn_get",
         description:
           "Resolve exact canonical Loom learning records after semantic recall. Retired records are returned with their current status so stale SynaBun hits cannot silently govern work.",
@@ -3855,7 +3889,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         },
       })
 
-      editor.add({
+      addLoomTool({
         name: "learn_retire",
         description:
           "Retire a stale or contradicted episodic lesson. Reviewer or Critic only. Retired lessons remain auditable but are excluded from normal recall.",
@@ -3912,7 +3946,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       })
 
 
-      editor.add({
+      addLoomTool({
         name: "learn_unsynced",
         description:
           "List active canonical learning episodes whose SynaBun semantic copy is pending or failed.",
@@ -3941,7 +3975,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         },
       })
 
-      editor.add({
+      addLoomTool({
         name: "heuristic_propose",
         description:
           "Propose a reusable heuristic from one or more recorded episodes. New heuristics are always provisional.",
@@ -3984,7 +4018,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         },
       })
 
-      editor.add({
+      addLoomTool({
         name: "heuristic_review",
         description:
           "Validate or retire a heuristic. Only Reviewer or Critic may do this; validation requires repeated supporting episodes.",
@@ -4061,6 +4095,17 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
     })
 
     await ctx.permission.hook("evaluate", async (event) => {
+      if (["edit", "shell", "subagent"].includes(event.action)) {
+        await ensureLegacyCancellationBoundary(event.sessionID)
+      }
+      if (["edit", "shell", "subagent"].includes(event.action)) {
+        const bound = await activeWorkflow(ctx, event.sessionID, ensureLegacySession)
+        if (bound?.cancellation && bound.createdBySession !== event.sessionID) {
+          event.effect = "deny"
+          event.message = new WorkflowCancelledError(bound.id).message
+          return
+        }
+      }
       if (event.action === "edit") {
         const reportResources = event.resources.filter((resource) =>
           resourceMatchesScope(resource, "ephemeral-reports/**"),
@@ -4291,9 +4336,13 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       }
     })
 
-    await ctx.tool.hook("execute.before", (event) => {
+    await ctx.tool.hook("execute.before", async (event) => {
       const raw = event as any
       const tool = String(raw.tool ?? "")
+      if (raw.sessionID) {
+        await ensureLegacyCancellationBoundary(String(raw.sessionID))
+        await assertCancelledChildToolAdmission(ctx.storage as any, tool, raw.input, String(raw.sessionID))
+      }
       if (skipLoomEvidence(tool)) return
       pendingToolInputs.set(toolEventKey(raw), raw.input)
     })

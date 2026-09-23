@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto"
+import { assertWorkflowNotCancelled, type Workflow } from "./workflow"
 import { execFile, spawn } from "node:child_process"
 import { once } from "node:events"
 import { AsyncLocalStorage } from "node:async_hooks"
@@ -47,7 +48,7 @@ const PROJECT_PREFIX = "project/"
 const GLOBAL_PREFIXES = ["installation/", "episode/", "heuristic/"]
 
 export const RUNTIME_BASELINE_VERSION = 1
-export const RUNTIME_STATE_VERSION = 1
+export const RUNTIME_STATE_VERSION = 2
 
 export type RuntimeUpgradePhase =
   | "canonical-upgrade"
@@ -94,7 +95,14 @@ type RuntimeUpgradeReceiptV1 = {
   details?: Record<string, unknown>
 }
 
-const RUNTIME_UPGRADE_STEPS: RuntimeUpgradeStep[] = []
+// Existing records remain readable. The version advance fences older writers
+// that do not understand cancellation; legacy Wave receipts are recovered lazily.
+const RUNTIME_UPGRADE_STEPS: RuntimeUpgradeStep[] = [{
+  id: "workflow-cancellation-v2",
+  fromVersion: 1,
+  toVersion: 2,
+  applyInstallation: async () => ({ cancellationFence: true }),
+}]
 
 function sha256(value: string) {
   return createHash("sha256").update(value).digest("hex")
@@ -1831,6 +1839,30 @@ export type DispatchGrantV1 = {
   expiresAt: string
   consumedAt?: string
   consumingSessionId?: string
+  revokedAt?: string
+}
+
+export async function revokeWorkflowDispatchGrantsLocked(
+  storage: RawStorage, runtime: LoomRuntimeIdentity, workflowId: string, at: string,
+) {
+  const revoked: string[] = []
+  let after: string | undefined
+  do {
+    const page = await storage.scan({ prefix: "dispatch-grant/", limit: 100, ...(after ? { after } : {}) })
+    for (const entry of page.entries ?? []) {
+      const grant = entry.value as DispatchGrantV1
+      if (grant?.projectId !== runtime.projectId || grant.workflowId !== workflowId || grant.revokedAt || grant.consumedAt) continue
+      await storage.set(entry.key, { ...grant, revokedAt: at })
+      revoked.push(grant.grantId)
+    }
+    after = page.next
+  } while (after)
+  return revoked
+}
+
+async function assertGrantWorkflowActive(storage: RawStorage, workflowId: string) {
+  const workflow = await storage.get(`workflow/${workflowId}`) as Workflow | undefined
+  if (workflow) assertWorkflowNotCancelled(workflow)
 }
 
 function dispatchGrantKey(grantId: string) {
@@ -1866,6 +1898,7 @@ export async function issueDispatchGrantLocked(
   runtime: LoomRuntimeIdentity,
   input: IssueDispatchGrantInput,
 ): Promise<DispatchGrantV1> {
+  await assertGrantWorkflowActive(storage, input.workflowId)
   if (Boolean(input.stepId) === Boolean(input.oqId)) {
     throw new Error("Dispatch grant requires exactly one of stepId or oqId.")
   }
@@ -1918,6 +1951,8 @@ export async function findUsableDispatchGrant(
     now?: Date
   },
 ): Promise<DispatchGrantV1 | undefined> {
+  const workflow = await storage.get(`workflow/${input.workflowId}`) as Workflow | undefined
+  if (workflow?.cancellation) return undefined
   const now = (input.now ?? new Date()).getTime()
   let after: string | undefined
   do {
@@ -1932,6 +1967,7 @@ export async function findUsableDispatchGrant(
         grant?.schemaVersion === 1 &&
         grant.projectId === runtime.projectId &&
         !grant.consumedAt &&
+        !grant.revokedAt &&
         Date.parse(grant.expiresAt) > now &&
         grantMatchesSelector(grant, input)
       ) {
@@ -1958,10 +1994,12 @@ export async function consumeDispatchGrantLocked(
   runtime: LoomRuntimeIdentity,
   input: ConsumeDispatchGrantInput,
 ): Promise<DispatchGrantV1> {
+  await assertGrantWorkflowActive(storage, input.workflowId)
   const grant = (await storage.get(dispatchGrantKey(input.grantId))) as DispatchGrantV1 | undefined
   if (!grant || grant.schemaVersion !== 1) throw new Error("Dispatch grant not found.")
   if (grant.projectId !== runtime.projectId) throw new Error("Dispatch grant belongs to another project.")
   if (!grantMatchesSelector(grant, input)) throw new Error("Dispatch grant scope does not match this attachment.")
+  if (grant.revokedAt) throw new Error("Dispatch grant has been revoked.")
   if (grant.consumedAt) throw new Error("Dispatch grant has already been consumed.")
 
   const now = input.now ?? new Date()

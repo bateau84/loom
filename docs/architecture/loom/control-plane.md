@@ -311,3 +311,18 @@ An intent session records:
 The control plane refuses a second simultaneous user question and refuses repository/research resolutions without evidence references.
 
 `loom_start` refuses autonomous execution while the active intent session is unresolved. When the accepted Anchor starts its workflow, the session's active-intent pointer is cleared while the durable interview record remains auditable.
+
+
+## Workflow cancellation and reviewed completion
+
+`loom_cancel(workflowId, reason, confirmation)` is a General-only lifecycle transition; `confirmation` records the exact explicit user request. The caller must be the workflow's persisted creating/owning session in the same project. A first cancellation also requires its current binding. Repeating a completed cancellation returns the original record, even after that owner starts a replacement. An already normally terminal workflow is reported as terminal without rewriting its outcome.
+
+`plugins/loom/lifecycle.ts` owns cancellation and reviewed-history recovery. Under the existing ordered workflow/work locks and SQLite transaction, cancellation releases only claims naming that workflow (including stale-generation claims), revokes its unused grants, stores a cancellation record, and records the parent binding release. It leaves all step outcomes, evidence, review reports and product files intact. Missing hierarchy state is recorded and does not block cancellation; foreign ownership is reported and retained. Failure at any write rolls back the whole transition.
+
+Cancellation is a durable terminal marker, not a new step result. `runnable` becomes empty; normal workflow mutations, grant issuance and grant consumption reject it. Native and Code Mode tools share the same admission fence, and commit-time checks reject calls racing cancellation. Old child sessions cannot admit further host/MCP tools or edit/shell/delegation permissions, including non-Worker roles. Read-only Loom history is available; only a fresh exact attachment grant can authorize a reused child on a different active workflow. The owning General conversation may start new work under its normal permissions.
+
+These checks cannot undo a host/external tool already admitted before cancellation. Its later return may be stored as passive session history but cannot complete the cancelled workflow or become new governed proof for it. Cancellation does not terminate remote processes, roll back files, close unfinished verification, or accept the Objective.
+
+Wave completion and workflow completion are distinct. Passing `review-implementation` stores an exact reviewed-Wave receipt (workflow, generation, executed Task IDs, full reviewed Task set and time) and ends the live claim. Later gates and knowledge sync validate that receipt rather than requiring or recreating the claim. Task writes still require live ownership. An implementation reopen can reacquire its own reviewed Wave only if no downstream Wave has already consumed it; documentation-only reopen does not reacquire it.
+
+Runtime version 2 fences builds that do not understand cancellation. Existing records are not discarded. Legacy completed Waves without a receipt are recovered lazily under the same transaction only when exactly one persisted workflow proves the matching completed Tasks and passed independent implementation review. Ambiguous or mismatched history fails closed; cancellation remains the non-destructive escape from that workflow, not a way to invent review proof.

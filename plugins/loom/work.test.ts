@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test"
 import type { TaskSpec } from "./tasks"
 import {
+  assertCompletedWaveForTasks,
+  releaseCancelledWorkflowClaims,
   claimWorkflowWave,
   completeObjective,
   completeWaveForTasks,
@@ -287,4 +289,85 @@ describe("Loom persistent work hierarchy", () => {
     )
   })
 
+})
+
+
+describe("reviewed Wave history and cancellation claims", () => {
+  function completedFoundation() {
+    const work = createWorkHierarchy("docs/anchors/product/anchor.md", "wf-1", now)
+    materializeWorkPlan(work, "wf-1", plan(), now)
+    claimWorkflowWave(work, "wf-1", work.generation, [task("a"), task("b", ["a"])], false, now)
+    syncWorkTaskStatuses(work, "wf-1", work.generation, [
+      { taskId: "a", complete: true }, { taskId: "b", complete: true },
+    ], now)
+    completeWaveForTasks(work, "wf-1", work.generation, ["a", "b"], now)
+    return work
+  }
+
+  test("completion proof is exact to owner, generation and reviewed task set", () => {
+    const work = completedFoundation()
+    const before = structuredClone(work)
+    expect(assertCompletedWaveForTasks(work, "wf-1", work.generation, ["b", "a"]).completion!.provenance).toBe("implementation-review")
+    for (const ids of [[], ["a"], ["a", "a"], ["a", "c"], ["missing"]]) {
+      expect(() => assertCompletedWaveForTasks(work, "wf-1", work.generation, ids)).toThrow()
+    }
+    expect(() => assertCompletedWaveForTasks(work, "wf-other", work.generation, ["a", "b"])).toThrow()
+    expect(() => assertCompletedWaveForTasks(work, "wf-1", work.generation + 1, ["a", "b"])).toThrow()
+    expect(work).toEqual(before)
+    const wave = work.nodes.find((node) => node.type === "wave" && node.logicalId === "foundation")!
+    wave.completion!.reviewedTaskIds = ["a"]
+    expect(() => assertCompletedWaveForTasks(work, "wf-1", work.generation, ["a", "b"])).toThrow()
+  })
+
+  test("cancellation preserves partial completion and a successor can review the assembled Wave", () => {
+    const work = createWorkHierarchy("docs/anchors/product/anchor.md", "wf-1", now)
+    materializeWorkPlan(work, "wf-1", plan(), now)
+    claimWorkflowWave(work, "wf-1", work.generation, [task("a"), task("b", ["a"])], false, now)
+    syncWorkTaskStatuses(work, "wf-1", work.generation, [{ taskId: "a", complete: true }], now)
+    expect(releaseCancelledWorkflowClaims(work, "wf-1", "cancelled")).toHaveLength(3)
+    const priorTask = structuredClone(work.nodes.find((node) => node.logicalId === "a")!)
+    expect(priorTask.status).toBe("complete")
+    expect(priorTask.updatedAt).toBe(now)
+    expect(releaseCancelledWorkflowClaims(work, "wf-1", "retry")).toEqual([])
+    claimWorkflowWave(work, "wf-2", work.generation, [task("b")], false, "resumed")
+    syncWorkTaskStatuses(work, "wf-2", work.generation, [{ taskId: "b", complete: true }], "finished")
+    completeWaveForTasks(work, "wf-2", work.generation, ["b"], "reviewed")
+    expect(work.nodes.find((node) => node.logicalId === "a")).toEqual(priorTask)
+    expect(assertCompletedWaveForTasks(work, "wf-2", work.generation, ["b"]).completion).toMatchObject({
+      workflowId: "wf-2", taskIds: ["b"], reviewedTaskIds: ["a", "b"],
+    })
+    expect(work.objectiveStatus).toBe("active")
+    expect(() => assertCompletedWaveForTasks(work, "wf-1", work.generation, ["a", "b"])).toThrow()
+  })
+
+  test("reopen cannot steal another workflow's completed receipt or invalidate a claimed downstream Wave", () => {
+    const work = completedFoundation()
+    const before = structuredClone(work)
+    expect(() => reopenWaveForTasks(work, "wf-other", work.generation, ["a", "b"], "bad")).toThrow()
+    expect(work).toEqual(before)
+    claimWorkflowWave(work, "wf-2", work.generation, [task("c")], false, "next")
+    const claimed = structuredClone(work)
+    expect(() => reopenWaveForTasks(work, "wf-1", work.generation, ["a", "b"], "bad")).toThrow("downstream")
+    expect(work).toEqual(claimed)
+    syncWorkTaskStatuses(work, "wf-2", work.generation, [{ taskId: "c", complete: true }], "done")
+    completeWaveForTasks(work, "wf-2", work.generation, ["c"], "reviewed")
+    expect(() => reopenWaveForTasks(work, "wf-1", work.generation, ["a", "b"], "bad")).toThrow("downstream")
+  })
+
+  test("claim cancellation is owner-scoped across generations and does not alter completed receipts", () => {
+    const work = completedFoundation()
+    const prior = structuredClone(work.nodes)
+    const generation = work.generation
+    materializeWorkPlan(work, "wf-2", plan(), "new-plan")
+    claimWorkflowWave(work, "wf-2", work.generation, [task("a"), task("b", ["a"])], false, "new-claim")
+    // Simulate an old-generation claim left by an interrupted compatibility transition.
+    const stale = work.nodes.find((node) => node.generation === generation && node.logicalId === "c")!
+    stale.claimedByWorkflowId = "wf-stale"
+    stale.claimedAt = "old"
+    const live = structuredClone(work.nodes.filter((node) => node.generation === work.generation))
+    expect(releaseCancelledWorkflowClaims(work, "wf-stale", "recover")).toEqual([stale.id])
+    expect(work.nodes.filter((node) => node.generation === work.generation)).toEqual(live)
+    expect(work.nodes.find((node) => node.id === prior.find((node) => node.logicalId === "a")!.id)).toEqual(prior.find((node) => node.logicalId === "a"))
+    expect(work.nodes.find((node) => node.generation === generation && node.logicalId === "foundation")!.completion).toEqual(prior.find((node) => node.logicalId === "foundation")!.completion)
+  })
 })

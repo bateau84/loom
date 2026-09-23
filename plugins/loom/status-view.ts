@@ -30,14 +30,14 @@ export function compactQuestions(questions: OpenQuestion[], workflow: Workflow) 
   const unresolved = questions.filter((question) => question.status !== "closed")
   return {
     open: unresolved.length,
-    routes: unresolved
+    routes: (workflow.cancellation ? [] : unresolved)
       .filter((question) => !question.answer)
       .map((question) => ({
         questionId: question.id,
         requiredAuthority: question.requiredAuthority,
         blocking: question.blocking,
       })),
-    reconcile: unresolved
+    reconcile: (workflow.cancellation ? [] : unresolved)
       .filter((question) => Boolean(question.answer))
       .flatMap((question) =>
         question.consumerStepIds
@@ -82,6 +82,7 @@ export function compactWorkflowState(
   const blockedPending = pending.filter((step) => !readyIds.has(step.id))
 
   const state =
+    workflow.cancellation ? "cancelled" :
     failed.length > 0 && ready.length === 0
       ? "blocked"
       : pending.length === 0
@@ -91,6 +92,7 @@ export function compactWorkflowState(
   return {
     workflowId: workflow.id,
     state,
+    ...(workflow.cancellation ? { cancellation: { at: workflow.cancellation.at, reason: clippedSummary(workflow.cancellation.reason) } } : {}),
     progress: {
       finished: finished.length,
       total: workflow.steps.length,
@@ -103,7 +105,7 @@ export function compactWorkflowState(
       status: step.status,
       ...(step.summary ? { summary: clippedSummary(step.summary) } : {}),
     })),
-    upcoming: blockedPending.slice(0, 6).map((step) => ({
+    upcoming: (workflow.cancellation ? [] : blockedPending.slice(0, 6)).map((step) => ({
       step: step.id,
       agent: step.agent,
       waitsFor: step.dependsOn.filter(
@@ -252,6 +254,9 @@ export function renderStatusMarkdown(view: StatusView, artifact?: StatusArtifact
     `- **Workflow:** ${markdownCode(view.workflowId)}`,
   ]
 
+  if (view.cancellation) {
+    lines.push(`- **Cancelled:** ${clippedSummary(view.cancellation.reason)}. Completed work is preserved; unfinished checks are not passes. A replacement workflow may now start.`)
+  }
   if (view.work) {
     const objective = view.work.tree.objective
     lines.push(
@@ -482,6 +487,7 @@ ul { margin: 0; padding-left: 22px; }
     <div class="muted">Read-only presentation of Loom-authoritative state</div>
   </header>
 
+  ${view.cancellation ? `<section class="panel" aria-label="Cancellation"><h2>Workflow cancelled</h2><p>${esc(view.cancellation.reason)}</p><p>Completed work is preserved. Unfinished checks are not passes. Start a new workflow to continue.</p></section>` : ""}
   <section class="cards" aria-label="Workflow summary">
     <div class="card"><strong>${esc(view.progress.finished)}/${esc(view.progress.total)}</strong><span>Workflow steps</span></div>
     <div class="card"><strong>${esc(taskProgress)}</strong><span>Objective tasks</span></div>

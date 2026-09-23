@@ -431,3 +431,14 @@ The implementation should eventually prove at least these cases:
 - [BR-007](../../requirements/loom/br-007-evidence-outranks-model-claims.md)
 - [BR-008](../../requirements/loom/br-008-bounded-autonomy-and-progress.md)
 - [BR-010](../../requirements/loom/br-010-fresh-sessions-start-from-map.md)
+
+
+## Execution claim lifetime and cancellation
+
+A live Wave claim authorizes execution; it is not the permanent record of who reviewed completed work. `review-implementation` PASS records `completion` on the Wave and releases live claims. That receipt is exact to the completing workflow, work-plan generation, executed Tasks, and the full reviewed Task set. Later documentation/product gates consume it without modifying completed Task state. A replacement executing the remaining Tasks may assemble them with already-completed, unclaimed Tasks, but must still pass its own implementation review. This does not automatically adopt an unreviewed all-complete Wave or inherit another workflow's proof.
+
+`loom_cancel` terminates the workflow, not its Objective/Phase/Wave/Task hierarchy. It retains completed work and releases only claims owned by the cancelled workflow. Incomplete work remains incomplete; replan/supersession is a separate authorized action. A new plan generation may preserve old completed nodes as history, but cancellation never relabels those nodes as fresh proof.
+
+Implementation reopening requires the exact completed receipt and refuses to invalidate a Wave already consumed by claimed/completed downstream work. Documentation-only reopening leaves the live claim absent. For older completed Waves without receipts, the control plane admits only uniquely attributable persisted review history; ambiguity is reported, not repaired by taking ownership.
+
+See [Control Plane](control-plane.md#workflow-cancellation-and-reviewed-completion) and [Runtime Upgrades](../../user/upgrades.md#cancelling-or-replacing-a-stuck-workflow).

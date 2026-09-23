@@ -3,6 +3,8 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
 import loomPlugin from "./index"
+import { cancelWorkflow } from "./lifecycle"
+import { buildSidebarSnapshot } from "./sidebar"
 import { prepareReportPromotion, publishPreparedReport, type ReportPromotionRecord } from "./reports"
 import {
   createProjectStorage,
@@ -178,7 +180,7 @@ async function harness(
     else process.env.LOOM_TOOL_OUTPUT = previousOutput
   }
 
-  return { root, storage, projectID, registered, namespaces, sessionHooks, permissionHooks, toolHooks, durableStorage, call, callObserved, restore }
+  return { root, storage, runtime, projectID, registered, namespaces, sessionHooks, permissionHooks, toolHooks, durableStorage, call, callObserved, restore }
 }
 
 afterEach(async () => {
@@ -1687,4 +1689,430 @@ Verdict: FAIL
     }
   })
 
+})
+
+// Exercise the real registered tools, durable SQLite state and grant attachments.
+// External OKF discovery is represented by a host observation fixture only.
+async function waveLifecycleFixture(workLevel: "wave" | "objective" = "wave") {
+  const h = await harness()
+  try {
+    const { workflowId } = await h.call("start", { anchor: "docs/anchors/lifecycle/anchor.md" }, "general", "parent")
+    const attach = async (stepId: string, agent: string, sessionID = `${stepId}-child`) => {
+      const grant = await h.call("dispatch_grant", { workflowId, stepId }, "general", "parent")
+      expect(grant.error).toBeUndefined()
+      const result = await h.call("attach", { workflowId, stepId, grantId: grant.grantId }, agent, sessionID)
+      expect(result.error).toBeUndefined()
+      return sessionID
+    }
+    const finish = async (stepId: string, agent: string, outcome = "complete") => {
+      const sessionID = await attach(stepId, agent)
+      return h.call("complete", { workflowId, stepId, outcome, summary: "Lifecycle test fixture" }, agent, sessionID)
+    }
+    await h.call("route", {
+      humanFacing: false, behavioral: false, structural: false, externalUnknown: false,
+      diagnostic: false, productOutcome: true, implementationRequested: true,
+      executionDepth: "objective", workLevel,
+    }, "general", "parent")
+    expect((await finish("critic-solution", "critic", "pass")).error).toBeUndefined()
+    const planner = await attach("plan", "planner")
+    const task = { id: "one", title: "One", objective: "Build one", dependsOn: [] }
+    expect((await h.call("work_plan", {
+      workflowId, phases: [{ id: "core", title: "Core", waves: [{ id: "first", title: "First", tasks: [task] }] }],
+    }, "planner", planner)).error).toBeUndefined()
+    expect((await h.call("task_plan", {
+      workflowId, tasks: [{ ...task, write: ["src/**"], skills: [], verify: ["bun test"] }],
+    }, "planner", planner)).error).toBeUndefined()
+    expect((await h.call("complete", { workflowId, stepId: "plan", summary: "Planned" }, "planner", planner)).error).toBeUndefined()
+    const workflow = () => h.durableStorage.get(`workflow/${workflowId}`) as Promise<any>
+    const workKey = `work/${encodeURIComponent((await workflow()).work.objectiveId)}`
+    const work = () => h.durableStorage.get(workKey) as Promise<any>
+    const finishKnowledge = async () => {
+      const child = await attach("knowledge-sync", "documenter")
+      await h.toolHooks.get("execute.after")!({
+        tool: "okf-mcp_list_docs", callID: "knowledge-observation", sessionID: child,
+        agent: "documenter", status: "completed", result: [],
+      })
+      const observations = await h.call("evidence_observations", { detail: true }, "documenter", child)
+      expect((await h.call("knowledge_record", {
+        workflowId, changedDocs: [], unchangedReason: "The fixture has no documentation changes.",
+        okfObservationIds: observations.observations.map((item: any) => item.id),
+      }, "documenter", child)).error).toBeUndefined()
+      return h.call("complete", { workflowId, stepId: "knowledge-sync", summary: "Knowledge checked" }, "documenter", child)
+    }
+    return { ...h, workflowId, attach, finish, workflow, work, workKey, finishKnowledge }
+  } catch (error) {
+    h.restore()
+    throw error
+  }
+}
+
+const cancellationRequest = (workflowId: string) => ({
+  workflowId, reason: "Replace the old plan without repeating completed work.",
+  confirmation: "Abort that workflow and create a new one.",
+})
+
+describe("workflow lifecycle recovery", () => {
+  test("a reviewed Wave can finish knowledge-sync and start the next workflow", async () => {
+    const h = await waveLifecycleFixture()
+    try {
+      expect((await h.finish("task:one", "worker")).error).toBeUndefined()
+      expect((await h.finish("review-implementation", "reviewer", "pass")).error).toBeUndefined()
+      const completedWork = await h.work()
+      expect(completedWork.nodes.find((node: any) => node.type === "wave").claimedByWorkflowId).toBeUndefined()
+      expect((await h.finishKnowledge()).error).toBeUndefined()
+      expect(await h.work()).toEqual(completedWork)
+      const next = await h.call("start", { request: "Continue with the next bounded task." }, "general", "parent")
+      expect(next.error).toBeUndefined()
+      expect(next.workflowId).not.toBe(h.workflowId)
+    } finally { h.restore() }
+  })
+
+  test("explicit cancellation after Wave completion preserves history and permits replacement", async () => {
+    const h = await waveLifecycleFixture()
+    try {
+      await h.finish("task:one", "worker")
+      await h.finish("review-implementation", "reviewer", "pass")
+      const before = await h.workflow()
+      const workBefore = await h.work()
+      const grant = await h.call("dispatch_grant", { workflowId: h.workflowId, stepId: "knowledge-sync" }, "general", "parent")
+      const result = await h.call("cancel", cancellationRequest(h.workflowId), "general", "parent")
+      expect(result.cancelled).toBe(true)
+      expect((await h.workflow()).steps).toEqual(before.steps)
+      expect(await h.work()).toEqual(workBefore)
+      expect((await h.call("status", { detail: true }, "general", "parent")).summary.state).toBe("cancelled")
+      const stale = await h.call("attach", { workflowId: h.workflowId, stepId: "knowledge-sync", grantId: grant.grantId }, "documenter", "late-child")
+      expect(stale.error).toMatch(/cancelled|revoked/)
+      const next = await h.call("start", { request: "Create a replacement plan." }, "general", "parent")
+      expect(next.error).toBeUndefined()
+      const cancelled = await h.workflow()
+      expect((await h.call("cancel", cancellationRequest(h.workflowId), "general", "parent")).cancelled).toBe(true)
+      expect(await h.workflow()).toEqual(cancelled)
+      expect(await h.durableStorage.get("session/parent")).toBe(next.workflowId)
+    } finally { h.restore() }
+  })
+
+  test("cancellation works before routing and rejects unauthorized actors", async () => {
+    const h = await harness()
+    try {
+      const { workflowId } = await h.call("start", { request: "A small task." }, "general", "parent")
+      for (const [agent, session] of [["worker", "parent"], ["general", "unrelated"]]) {
+        expect((await h.call("cancel", cancellationRequest(workflowId), agent!, session!)).error).toBeDefined()
+      }
+      expect((await h.call("cancel", { ...cancellationRequest(workflowId), confirmation: " " }, "general", "parent")).error).toBeDefined()
+      expect((await h.call("cancel", cancellationRequest(workflowId), "general", "parent")).cancelled).toBe(true)
+      expect((await h.call("start", { request: "Another task." }, "general", "parent")).error).toBeUndefined()
+    } finally { h.restore() }
+  })
+
+  test("cancelled children lose edit/shell/tool authority and cannot complete late", async () => {
+    const h = await waveLifecycleFixture()
+    try {
+      const child = await h.attach("task:one", "worker")
+      expect((await h.call("cancel", cancellationRequest(h.workflowId), "general", "parent")).cancelled).toBe(true)
+      const afterCancel = await h.workflow()
+      for (const agent of ["worker", "documenter", "architect", "research"]) {
+        for (const action of ["edit", "shell", "subagent"]) {
+          const event = { agent, sessionID: child, action, resources: action === "shell" ? ["git status"] : ["src/a.ts"], effect: "allow", message: "" }
+          await h.permissionHooks.get("evaluate")!(event)
+          expect(event.effect).toBe("deny")
+          expect(event.message).toContain("cancelled")
+        }
+      }
+      await expect(h.toolHooks.get("execute.before")!({ tool: "mcp_mutate", sessionID: child, agent: "worker", input: {} })).rejects.toThrow("cancelled")
+      expect((await h.call("complete", { workflowId: h.workflowId, stepId: "task:one", summary: "late" }, "worker", child)).error).toMatch(/cancelled/)
+      expect(await h.workflow()).toEqual(afterCancel)
+      expect((await h.work()).nodes.every((node: any) => !node.claimedByWorkflowId)).toBe(true)
+      expect((await h.work()).objectiveStatus).toBe("active")
+    } finally { h.restore() }
+  })
+})
+
+const reopenRequest = (workflowId: string, stepId: string) => ({
+  workflowId, stepId, reason: "New evidence invalidates this step.",
+  newEvidence: true, changedHypothesis: false, changedStrategy: false, reducedUnresolved: false,
+})
+
+describe("workflow cancellation and reviewed-history boundaries", () => {
+  test("whole-Objective gates can close after Wave review without reclaiming Tasks", async () => {
+    const h = await waveLifecycleFixture("objective")
+    try {
+      await h.finish("task:one", "worker")
+      await h.finish("review-implementation", "reviewer", "pass")
+      expect((await h.finishKnowledge()).error).toBeUndefined()
+      const child = await h.attach("product-acceptance", "acceptance")
+      const scenario = { id: "behavior", title: "Fixture behavior", criteria: ["docs/anchors/lifecycle/anchor.md#success"] }
+      expect((await h.call("pa_plan", { workflowId: h.workflowId, scenarios: [scenario] }, "acceptance", child)).error).toBeUndefined()
+      await h.toolHooks.get("execute.after")!({
+        tool: "shell", callID: "acceptance-observation", sessionID: child, agent: "acceptance",
+        input: { command: "bun test fixture" }, status: "completed", result: "fixture passed",
+      })
+      const { observations } = await h.call("evidence_observations", { detail: true }, "acceptance", child)
+      const { claim } = await h.call("evidence_claim", {
+        workflowId: h.workflowId, stepId: "product-acceptance", kind: "product-acceptance",
+        statement: "Host observation fixture for lifecycle control, not a live Product Acceptance run.",
+        observationIds: observations.map((item: any) => item.id),
+      }, "acceptance", child)
+      expect((await h.call("pa_result", {
+        workflowId: h.workflowId, scenarioId: "behavior", outcome: "passed", evidenceClaimIds: [claim.id], note: "Fixture",
+      }, "acceptance", child)).error).toBeUndefined()
+      expect((await h.call("complete", { workflowId: h.workflowId, stepId: "product-acceptance", outcome: "pass", summary: "Fixture" }, "acceptance", child)).error).toBeUndefined()
+      expect((await h.finish("review-product", "reviewer", "pass")).error).toBeUndefined()
+      expect((await h.finish("critic-final", "critic", "pass")).error).toBeUndefined()
+      expect((await h.work()).objectiveStatus).toBe("complete")
+      const before = await h.workflow()
+      expect((await h.call("cancel", cancellationRequest(h.workflowId), "general", "parent")).terminal).toBe(true)
+      expect(await h.workflow()).toEqual(before)
+    } finally { h.restore() }
+  })
+
+  test("legacy completed Waves regain unique review provenance without repeating work", async () => {
+    const h = await waveLifecycleFixture()
+    try {
+      await h.finish("task:one", "worker")
+      await h.finish("review-implementation", "reviewer", "pass")
+      const work = await h.work()
+      const tasks = structuredClone(work.nodes.filter((node: any) => node.type === "task"))
+      delete work.nodes.find((node: any) => node.type === "wave").completion
+      await h.durableStorage.set(h.workKey, work)
+      expect((await h.finishKnowledge()).error).toBeUndefined()
+      const recovered = await h.work()
+      expect(recovered.nodes.find((node: any) => node.type === "wave").completion).toMatchObject({
+        workflowId: h.workflowId, provenance: "legacy-reviewed-workflow",
+      })
+      expect(recovered.nodes.filter((node: any) => node.type === "task")).toEqual(tasks)
+    } finally { h.restore() }
+  })
+
+  test("ambiguous legacy receipts fail closed but still allow cancellation", async () => {
+    const h = await waveLifecycleFixture()
+    try {
+      await h.finish("task:one", "worker")
+      await h.finish("review-implementation", "reviewer", "pass")
+      const work = await h.work()
+      delete work.nodes.find((node: any) => node.type === "wave").completion
+      const duplicate = { ...await h.workflow(), id: "ambiguous-other-workflow" }
+      work.workflowIds.push(duplicate.id)
+      await h.durableStorage.set(`workflow/${duplicate.id}`, duplicate)
+      await h.durableStorage.set(h.workKey, work)
+      expect((await h.finishKnowledge()).error).toContain("ambiguous")
+      expect(await h.work()).toEqual(work)
+      expect((await h.call("cancel", cancellationRequest(h.workflowId), "general", "parent")).cancelled).toBe(true)
+      expect(await h.work()).toEqual(work)
+    } finally { h.restore() }
+  })
+
+  test("reopening documentation does not reclaim reviewed work; implementation reopening does", async () => {
+    const h = await waveLifecycleFixture()
+    try {
+      await h.finish("task:one", "worker")
+      await h.finish("review-implementation", "reviewer", "pass")
+      await h.finishKnowledge()
+      const work = await h.work()
+      expect((await h.call("reopen", reopenRequest(h.workflowId, "knowledge-sync"), "general", "parent")).error).toBeUndefined()
+      expect(await h.work()).toEqual(work)
+      expect((await h.finishKnowledge()).error).toBeUndefined()
+      expect((await h.call("reopen", reopenRequest(h.workflowId, "task:one"), "general", "parent")).error).toBeUndefined()
+      const reopened = await h.work()
+      const wave = reopened.nodes.find((node: any) => node.type === "wave")
+      expect(wave.claimedByWorkflowId).toBe(h.workflowId)
+      expect(wave.completion).toBeUndefined()
+      expect(reopened.nodes.find((node: any) => node.type === "task").status).toBe("pending")
+      expect((await h.finish("task:one", "worker")).error).toBeUndefined()
+      expect((await h.finish("review-implementation", "reviewer", "pass")).error).toBeUndefined()
+      expect((await h.finishKnowledge()).error).toBeUndefined()
+    } finally { h.restore() }
+  })
+
+  test("stale-generation cancellation keeps other workflow claims and statuses intact", async () => {
+    const h = await waveLifecycleFixture()
+    try {
+      const workflow = await h.workflow()
+      const work = await h.work()
+      // Persisted crash/recovery fixture: a different workflow owns current work.
+      for (const node of work.nodes) if (node.claimedByWorkflowId) node.claimedByWorkflowId = "other-workflow"
+      workflow.work.generation--
+      await h.durableStorage.set(`workflow/${h.workflowId}`, workflow)
+      await h.durableStorage.set(h.workKey, work)
+      expect((await h.call("cancel", cancellationRequest(h.workflowId), "general", "parent")).cancelled).toBe(true)
+      expect(await h.work()).toEqual(work)
+      expect((await h.call("start", { request: "A different bounded task." }, "general", "parent")).error).toBeUndefined()
+    } finally { h.restore() }
+  })
+
+  test("cancellation reports foreign ownership rather than releasing it", async () => {
+    const h = await waveLifecycleFixture()
+    try {
+      const work = await h.work()
+      for (const node of work.nodes) if (node.claimedByWorkflowId) node.claimedByWorkflowId = "other-workflow"
+      await h.durableStorage.set(h.workKey, work)
+      const result = await h.call("cancel", cancellationRequest(h.workflowId), "general", "parent")
+      expect(result.cancellation.releasedClaimIds).toEqual([])
+      expect(result.cancellation.retainedForeignClaimIds).toHaveLength(2)
+      expect(await h.work()).toEqual(work)
+    } finally { h.restore() }
+  })
+
+  test("missing work state does not prevent an authorized cancellation", async () => {
+    const h = await waveLifecycleFixture()
+    try {
+      await h.durableStorage.set(h.workKey, null)
+      const result = await h.call("cancel", cancellationRequest(h.workflowId), "general", "parent")
+      expect(result.cancelled).toBe(true)
+      expect(result.cancellation.workMissing).toBe(true)
+      expect((await h.call("start", { request: "Replan." }, "general", "parent")).error).toBeUndefined()
+    } finally { h.restore() }
+  })
+
+  test("cancel/start survives restart and cannot reimport the stale legacy binding", async () => {
+    const h = await waveLifecycleFixture()
+    try {
+      await h.finish("task:one", "worker")
+      const child = await h.attach("review-implementation", "reviewer")
+      await h.call("cancel", cancellationRequest(h.workflowId), "general", "parent")
+      const next = await h.call("start", { request: "Replacement" }, "general", "parent")
+      await h.storage.set("session/parent", h.workflowId)
+      await h.storage.set(`workflow/${h.workflowId}`, await h.workflow())
+      const resumed = await harness(undefined, undefined, { root: h.root, storage: h.storage })
+      try {
+        expect((await resumed.call("status", { detail: true }, "general", "parent")).workflow.id).toBe(next.workflowId)
+        expect((await resumed.call("complete", { workflowId: h.workflowId, stepId: "review-implementation", summary: "late", outcome: "pass" }, "reviewer", child)).error).toContain("cancelled")
+      } finally { resumed.restore() }
+    } finally { h.restore() }
+  })
+
+  test("fault at the final cancellation write rolls back tombstone, claims and grants", async () => {
+    const h = await waveLifecycleFixture()
+    try {
+      const grant = await h.call("dispatch_grant", { workflowId: h.workflowId, stepId: "task:one" }, "general", "parent")
+      const before = await h.workflow()
+      const work = await h.work()
+      const grantBefore = await h.durableStorage.get(`dispatch-grant/${grant.grantId}`)
+      const faulted = { ...h.durableStorage, set: async (key: string, value: unknown) => {
+        if (key.startsWith("binding-release/")) throw new Error("Injected final-write failure")
+        return h.durableStorage.set(key, value)
+      } }
+      await expect(cancelWorkflow(faulted, h.runtime, cancellationRequest(h.workflowId), { agent: "general", sessionID: "parent" })).rejects.toThrow("Injected")
+      expect(await h.workflow()).toEqual(before)
+      expect(await h.work()).toEqual(work)
+      expect(await h.durableStorage.get(`dispatch-grant/${grant.grantId}`)).toEqual(grantBefore)
+      expect((await h.call("cancel", cancellationRequest(h.workflowId), "general", "parent")).cancelled).toBe(true)
+    } finally { h.restore() }
+  })
+
+  test("Code Mode cancellation shares native executor, preserves evidence and exposes no runnable work", async () => {
+    const h = await waveLifecycleFixture()
+    try {
+      const child = await h.attach("task:one", "worker")
+      await h.toolHooks.get("execute.after")!({ tool: "shell", sessionID: child, agent: "worker", callID: "observed", input: { command: "bun test" }, status: "completed", result: "passed" })
+      const before = await h.call("evidence_observations", { detail: true }, "worker", child)
+      expect(h.registered.get("loom_code_cancel")?.execute).toBe(h.registered.get("loom_cancel")?.execute)
+      expect((await h.call("loom_code_cancel", cancellationRequest(h.workflowId), "general", "parent")).cancelled).toBe(true)
+      expect(await h.call("evidence_observations", { detail: true }, "worker", child)).toEqual(before)
+      expect((await h.call("loom_code_evidence_claim", {
+        workflowId: h.workflowId, stepId: "task:one", kind: "test", statement: "late", observationIds: before.observations.map((item: any) => item.id),
+      }, "worker", child)).error).toContain("cancelled")
+      const sidebar = buildSidebarSnapshot(await h.workflow(), [], await h.work())
+      expect(sidebar.state).toBe("cancelled")
+      expect(sidebar.now).toEqual([])
+      const status = await h.call("status", { detail: true }, "general", "parent")
+      expect(status.runnable).toEqual([])
+      expect(status.summary.upcoming).toEqual([])
+      // A pre-cancellation external tool may return; it is passive history, not new governed proof.
+      await h.toolHooks.get("execute.after")!({ tool: "shell", sessionID: child, agent: "worker", callID: "late-observation", input: { command: "bun test" }, status: "completed", result: "late result" })
+      const { observations } = await h.call("evidence_observations", { detail: true }, "worker", child)
+      const late = observations.find((item: any) => !before.observations.some((prior: any) => prior.id === item.id))
+      expect(late.workflowId).toBeUndefined()
+    } finally { h.restore() }
+  })
+
+  test("concurrent cancellation and completion serialize without resurrecting execution", async () => {
+    const h = await waveLifecycleFixture()
+    try {
+      const child = await h.attach("task:one", "worker")
+      const [cancelled, completion] = await Promise.all([
+        h.call("cancel", cancellationRequest(h.workflowId), "general", "parent"),
+        h.call("complete", { workflowId: h.workflowId, stepId: "task:one", summary: "racing completion" }, "worker", child),
+      ])
+      expect(cancelled.cancelled).toBe(true)
+      const final = await h.workflow()
+      expect(final.cancellation).toBeDefined()
+      expect(final.steps.find((step: any) => step.id === "task:one").status).toBe(completion.error ? "pending" : "complete")
+      expect((await h.work()).nodes.every((node: any) => !node.claimedByWorkflowId)).toBe(true)
+      expect((await h.call("complete", { workflowId: h.workflowId, stepId: "task:one", summary: "late again" }, "worker", child)).error).toContain("cancelled")
+      expect(await h.workflow()).toEqual(final)
+    } finally { h.restore() }
+  })
+})
+
+
+describe("cancellation replay and grant boundaries", () => {
+  test("revokes every pending grant across storage pages and leaves other workflows alone", async () => {
+    const h = await waveLifecycleFixture()
+    try {
+      const original = await h.call("dispatch_grant", { workflowId: h.workflowId, stepId: "task:one" }, "general", "parent")
+      const template: any = await h.durableStorage.get(`dispatch-grant/${original.grantId}`)
+      for (let i = 0; i < 205; i++) {
+        const id = `paged-${String(i).padStart(4, "0")}`
+        await h.durableStorage.set(`dispatch-grant/${id}`, { ...template, grantId: id })
+      }
+      const foreign = { ...template, grantId: "foreign", workflowId: "foreign-workflow" }
+      const consumed = { ...template, grantId: "consumed", consumedAt: "earlier", consumingSessionId: "child" }
+      await h.durableStorage.set("dispatch-grant/foreign", foreign)
+      await h.durableStorage.set("dispatch-grant/consumed", consumed)
+      const result = await h.call("cancel", cancellationRequest(h.workflowId), "general", "parent")
+      expect(result.cancellation.revokedGrantIds).toHaveLength(206)
+      for (let i = 0; i < 205; i++) {
+        expect((await h.durableStorage.get(`dispatch-grant/paged-${String(i).padStart(4, "0")}`) as any).revokedAt).toBe(result.cancellation.at)
+      }
+      expect(await h.durableStorage.get("dispatch-grant/foreign")).toEqual(foreign)
+      expect(await h.durableStorage.get("dispatch-grant/consumed")).toEqual(consumed)
+    } finally { h.restore() }
+  })
+
+  test("all workflow mutations reject cancellation, including OQ grants and a rebound parent", async () => {
+    const h = await waveLifecycleFixture()
+    try {
+      await h.attach("task:one", "worker")
+      await h.call("cancel", cancellationRequest(h.workflowId), "general", "parent")
+      await h.call("start", { request: "Replacement" }, "general", "parent")
+      const before = await h.workflow()
+      for (const name of ["dispatch_grant", "oq_raise", "oq_answer", "oq_reconcile", "oq_reopen", "knowledge_record", "pa_plan", "pa_result", "task_scope", "reopen", "work_release", "task_plan", "work_plan", "budget_grant"]) {
+        const result = await h.call(name, { workflowId: h.workflowId }, "general", "parent")
+        expect(result.error).toContain("cancelled")
+      }
+      expect((await h.call("attach", { workflowId: h.workflowId, questionId: "oq-old", grantId: "old-oq-grant" }, "research", "fresh-session")).error).toContain("cancelled")
+      expect(await h.workflow()).toEqual(before)
+    } finally { h.restore() }
+  })
+
+  test("a cancelled child can only be reused with a new exact grant", async () => {
+    const h = await waveLifecycleFixture()
+    try {
+      const child = await h.attach("task:one", "worker")
+      await h.call("cancel", cancellationRequest(h.workflowId), "general", "parent")
+      const next = await h.call("start", { request: "Replacement bounded edit" }, "general", "parent")
+      await h.call("route", { humanFacing: false, behavioral: false, structural: false, externalUnknown: false, diagnostic: false, productOutcome: true, implementationRequested: true, executionDepth: "task" }, "general", "parent")
+      await h.call("task_scope", { workflowId: next.workflowId, stepId: "worker", write: ["src/**"] }, "general", "parent")
+      const grant = await h.call("dispatch_grant", { workflowId: next.workflowId, stepId: "worker" }, "general", "parent")
+      expect((await h.call("attach", { workflowId: next.workflowId, stepId: "worker", grantId: "invented" }, "worker", child)).error).toBeDefined()
+      expect((await h.call("attach", { workflowId: next.workflowId, stepId: "worker", grantId: grant.grantId }, "worker", child)).attached).toBe(true)
+      expect((await h.call("complete", { workflowId: next.workflowId, stepId: "worker", summary: "New scoped task completed" }, "worker", child)).error).toBeUndefined()
+      expect((await h.workflow()).cancellation).toBeDefined()
+    } finally { h.restore() }
+  })
+})
+
+
+test("a legacy-only child cannot bypass cancellation through its first host tool", async () => {
+  const h = await waveLifecycleFixture()
+  try {
+    const historical = await h.workflow()
+    await h.storage.set(`workflow/${h.workflowId}`, historical)
+    await h.storage.set("session/legacy-only-child", h.workflowId)
+    await h.storage.set("session-step/legacy-only-child", "knowledge-sync")
+    await h.call("cancel", cancellationRequest(h.workflowId), "general", "parent")
+    await expect(h.toolHooks.get("execute.before")!({ tool: "mcp_write", sessionID: "legacy-only-child", agent: "documenter", input: {} })).rejects.toThrow("cancelled")
+    expect((await h.workflow()).cancellation).toBeDefined()
+    expect(await h.durableStorage.get("session/legacy-only-child")).toBe(h.workflowId)
+  } finally { h.restore() }
 })

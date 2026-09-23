@@ -364,3 +364,21 @@ describe("Loom dashboard projection", () => {
   })
 
 })
+
+
+test("cancelled workflows remain historical without runnable steps or a false pass", async () => {
+  const root = await fixture()
+  const { storage, runtime } = await populated(root)
+  const current = workflow()
+  const originalSteps = structuredClone(current.steps)
+  current.cancellation = {
+    at: "2026-09-21T12:11:00.000Z", byAgent: "general", bySessionId: current.createdBySession,
+    reason: "User replaced the plan", confirmation: "Abort this workflow.", releasedClaimIds: [],
+    retainedForeignClaimIds: [], workMissing: false, revokedGrantIds: [],
+  }
+  await storage.set("workflow/workflow-a", current)
+  const snapshot = await buildProjectSnapshot(storage, runtime, 8, {}, new Date("2026-09-21T12:12:00.000Z"))
+  expect(snapshot.workflows[0].status).toBe("cancelled")
+  expect(snapshot.workflows[0].runnableSteps).toEqual([])
+  expect(await storage.get("workflow/workflow-a")).toMatchObject({ steps: originalSteps })
+})

@@ -38,6 +38,7 @@ export function buildSidebarSnapshot(
   )
 
   const state: LoomSidebarSnapshot["state"] =
+    workflow.cancellation ? "cancelled" :
     pending.length === 0
       ? "complete"
       : failed.length > 0 && ready.length === 0
