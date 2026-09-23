@@ -81,10 +81,9 @@ function redactAssignments(value: string, depth = 0) {
     key = key.replace(hiddenControls, "")
     if (!sensitiveKeys.has(key.toLowerCase())) {
       if (quote) {
-        // Logs may contain JSON serialized inside a quoted string. Do not expose its
-        // encoded credential value just because the outer token is not itself a key.
-        const nested = depth < 2 ? redactAssignments(key, depth + 1)
-          : key.includes(String.fromCharCode(92)) ? '[Encoded text omitted]' : key
+        // Logs may contain JSON serialized inside a quoted string. At the decoding
+        // limit, omit the whole token; do not inspect just one remaining escape.
+        const nested = depth < 2 ? redactAssignments(key, depth + 1) : '[Encoded text omitted]'
         if (nested !== key) {
           parts.push(value.slice(offset, tokenStart), quote + '[REDACTED]' + quote)
           offset = index
