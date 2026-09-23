@@ -16,15 +16,16 @@ jobs:
         with:
           persist-credentials: false
       - name: Smoke test pinned eval-runner action/runtime pair
-        uses: bateau84/opencode-eval-runner@e2022f1075e34fe7be2a33eae3c9460f3f5c7263
+        uses: bateau84/opencode-eval-runner@b17532ce4b9efb2a0151dca34268439056e775c9
         with:
-          opencode-image: ghcr.io/bateau84/opencode-eval-runner@sha256:3e5f95ce54fee127230c5bf84a7f09124a2236dfca544269e6547c8f79e8ad5d
+          opencode-image: ghcr.io/bateau84/opencode-eval-runner@sha256:f206d32bb0a5b39ce2080c5eed1e956a344ee86d362840538345202c4abc370c
           copilot-image: ghcr.io/bateau84/opencode-eval-runner@sha256:8def0aa1885b0e60b36a1434c2725667b1b9555def31426f08dd7e2a87dc02c5
           prepare-opencode: true
           prepare-copilot: true
           command: |
             opencode-eval-runner --help
             docker image inspect "$OPENCODE_EVAL_RUNNER_OPENCODE_IMAGE" >/dev/null
+            docker run --rm --entrypoint opencode "$OPENCODE_EVAL_RUNNER_OPENCODE_IMAGE" --version | grep -F "2.0.15"
             docker image inspect "$OPENCODE_EVAL_RUNNER_COPILOT_IMAGE" >/dev/null
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
@@ -34,7 +35,7 @@ jobs:
       - name: Verify real Loom plugin activation in pinned eval runner
         run: |
           set -euo pipefail
-          image="ghcr.io/bateau84/opencode-eval-runner@sha256:3e5f95ce54fee127230c5bf84a7f09124a2236dfca544269e6547c8f79e8ad5d"
+          image="ghcr.io/bateau84/opencode-eval-runner@sha256:f206d32bb0a5b39ce2080c5eed1e956a344ee86d362840538345202c4abc370c"
           workspace="$RUNNER_TEMP/loom-runtime-workspace"
           rm -rf "$workspace"
           mkdir -p "$workspace/.opencode/agents"
