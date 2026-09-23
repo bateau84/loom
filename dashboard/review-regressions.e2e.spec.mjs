@@ -141,7 +141,8 @@ test("R3: unbroken requested outcome wraps without clipping at narrow and deskto
   await publish("overflow")
   await page.goto(workflowURL())
   const requestPanel = page.locator("section.panel").filter({ has: page.getByRole("heading", { name: "Requested outcome", exact: true }) })
-  const text = "https://example.test/" + "x".repeat(580)
+  const text = "https://example.test/" + "x".repeat(600 - "https://example.test/".length)
+  expect(text.length).toBe(600)
   await expect(requestPanel.locator("p")).toHaveText(text)
   for (const width of [320, 390, 768, 1440]) {
     await page.setViewportSize({ width, height: 900 })
@@ -200,6 +201,39 @@ test("C2: retention warnings flow through the real publisher and aggregator, whi
   await page.locator("#refresh").click()
   await expect(page.locator('[data-history="unknown"]')).toBeVisible()
   await expect(page.locator('[data-history="limited"]')).toHaveCount(0)
+})
+
+test("malformed scalar fields are rejected before adoption and last-good navigation still works", async ({ page, request }) => {
+  const baseline = await (await request.get(`http://127.0.0.1:${port}/api/fleet`)).json()
+  const errors = []
+  page.on("pageerror", (error) => errors.push(String(error)))
+  await page.goto(workflowURL())
+  await expect(page.locator("#view-title")).toHaveText("Build persistence layer")
+  let payload = baseline
+  await page.route("**/api/fleet", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(payload) }))
+  for (const mutate of [
+    (p) => { p.workflows[0].projection.productAcceptance = { status: { toString: null } } },
+    (p) => { p.workflows[0].projection.openOqCount = { toString: null } },
+    (p) => { p.workflows[0].workflowRevision = { toString: null } },
+    (p) => { p.workObjectives[0].projection.phases[0].waves[0].tasks[0].status = { toString: null } },
+    (p) => { p.workflows[0].participants[0].live = "false" },
+    (p) => { p.projectId = "\ud800" },
+  ]) {
+    payload = structuredClone(baseline)
+    mutate(payload.projects[0])
+    await page.locator("#refresh").click()
+    await expect(page.locator("#refresh")).toBeEnabled()
+    await expect(page.locator("#projection-status")).toContainText("Showing the last known Loom projection")
+    await expect(page.locator('[aria-label="Workflow signals"] strong')).toHaveText(["0/1", "1", "1", "8/40"])
+    await page.locator('a[data-key^="link:work-map:"]').click()
+    await expect(page.locator("#view-title")).toHaveText("leash")
+    await page.locator("a.workflow").click()
+    await expect(page.getByRole("heading", { name: "Current work", exact: true })).toBeVisible()
+  }
+  payload = baseline
+  await page.locator("#refresh").click()
+  await expect(page.locator("#projection-status")).toBeHidden()
+  expect(errors).toEqual([])
 })
 
 test("rendered review evidence uses the actual server UI and synthetic production-publisher records", async ({ page, request }, info) => {

@@ -34,7 +34,7 @@ export function reviewFixture(root: string, mode = "normal", sample = 0) {
       { ...task, id: "task:1:package-ui", logicalId: "package-ui", parentId: "wave:1:delivery/build", title: "Package UI", claimedByWorkflowId: f.workflow.id },
     )
   } else if (mode === "overflow") {
-    f.workflow.request = "https://example.test/" + "x".repeat(580)
+    f.workflow.request = "https://example.test/" + "x".repeat(600 - "https://example.test/".length)
   } else if (mode === "secret") {
     const text = authorizationSamples[sample]
     if (text === undefined) throw new Error("Unknown authorization fixture")

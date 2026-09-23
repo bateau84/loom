@@ -101,9 +101,13 @@ test.describe("human-readable dashboard context", () => {
     await expect(session).toContainText("Build persistence layer")
     await session.click()
     await expect(page).toHaveURL(workflowUrl() + "/session/" + coordinator)
+    // Hash changes precede the routed DOM update. Verify the destination view,
+    // not just the URL, before selecting its technical disclosure.
+    await expect(page.locator("#view-title")).toHaveText("OpenCode session")
     expect(await page.locator("body").innerText()).not.toMatch(uuid)
     expect(await page.locator("body").innerText()).not.toContain("ses_")
-    const technical = page.locator('details[data-technical]')
+    const technical = page.locator('details[data-technical]').filter({ has: page.getByText("Session ID", { exact: true }) })
+    await expect(technical).toHaveCount(1)
     await technical.locator(":scope > summary").click()
     await expect(technical).toContainText(coordinator)
     await page.goBack(); await expect(session).toBeFocused()

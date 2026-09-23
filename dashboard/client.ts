@@ -1,4 +1,5 @@
 import { dashboardReadability } from "./readability"
+import { dashboardValidation } from "./validation"
 
 /** Browser code is served inline with the HTML. Projection values are always escaped. */
 export const dashboardScript = `
@@ -431,20 +432,7 @@ export const dashboardScript = `
     feed.textContent = (state.paused ? 'Display updates paused' : state.refreshFailed ? 'Refresh unavailable' : state.loaded ? 'Projection received' : 'Connecting…') + (last ? ' · ' + last : '');
     feed.title = 'This is dashboard delivery, not workflow or publisher health.';
   }
-  function validFleet(value) {
-    const text = (v) => v === undefined || typeof v === 'string';
-    const list = (v, predicate) => v === undefined || Array.isArray(v) && v.every(predicate);
-    const step = (v) => v && typeof v.id === 'string' && text(v.label) && text(v.agent) && text(v.status);
-    const projection = (p) => p == null || typeof p === 'object' && text(p.anchor) && text(p.activeAgent) &&
-      list(p.currentSteps, step) && list(p.runnableSteps, step) && list(p.participatingSessionIds, (id) => typeof id === 'string');
-    const objective = (o) => o && typeof o.objectiveId === 'string' && (!o.projection || list(o.projection.phases, (phase) =>
-      phase && typeof phase.phaseId === 'string' && list(phase.waves, (wave) => wave && typeof wave.waveId === 'string' &&
-        list(wave.tasks, (task) => task && typeof task.taskId === 'string'))));
-    return value && Array.isArray(value.projects) && value.projects.every((p) => p && typeof p.projectId === 'string' &&
-      text(p.displayName) && text(p.canonicalLocation) && list(p.workObjectives, objective) && Array.isArray(p.workflows) && p.workflows.every((w) =>
-        w && typeof w.workflowId === 'string' && projection(w.projection) && list(w.conflictCandidates, (candidate) => candidate && projection(candidate)) &&
-        list(w.participants, (participant) => participant && typeof participant.instanceId === 'string')));
-  }
+  ${dashboardValidation}
   async function refresh(manual = false) {
     if (state.inFlight) return;
     state.inFlight = true;
