@@ -62,7 +62,7 @@ Behavioral evaluation should cover at least:
 
 Valid behavior feels like one capable engineering partner with an internal toolbench, not a menu of agents or a workflow form.
 
-Human-facing quality is checked through actual returned answers, not statements that the agent intends to communicate well. Include paired short-status and detailed-report requests from identical evidence, a useful partial finding with causal uncertainty, conflicting independent evidence, precise blocker requests, explicit trace/format requests, unconfirmed cancellation, and a positive completed-Task control. The [human-interaction evaluation guide](../../../evals/human-interaction.md) maps these cases and their proof limits.
+Human-facing quality is checked through actual returned answers, not statements that the agent intends to communicate well. Include both short-status and detailed-report coverage, but they need not reuse identical scenario evidence when each independently exercises the intended presentation boundary. Also include a useful partial finding with causal uncertainty, conflicting independent evidence, precise blocker requests, explicit trace/format requests, unconfirmed cancellation, and a positive completed-Task control. The [human-interaction evaluation guide](../../../evals/human-interaction.md) maps these cases and their proof limits.
 
 A supplied-context response test proves only the response under that context. Actual execution/result reporting needs observed runtime actions. Timing, in-flight interruption, and cancellation claims require real host traces; static validation and mocked state do not establish those capabilities. No new host cancellation mechanism or periodic update guarantee is implied by these presentation criteria.
 

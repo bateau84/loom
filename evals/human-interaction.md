@@ -31,9 +31,9 @@ There are no target-visible grading instructions. Deterministic tests check defa
 
 ### Removed coverage
 
-At the user's explicit request, `HUMAN-02` and `HUMAN-02-EVIDENCE-FIRST` were deleted, along with their stress suite and preservation test. They are not retained as skipped or optional cases. The nine remaining default cases and five existing regressions keep their original prompts and grading.
+At the user's explicit request, `HUMAN-02` and `HUMAN-02-EVIDENCE-FIRST` were deleted, along with their stress suite and preservation test. They are not retained as skipped or optional cases. The nine remaining default cases and five existing regressions keep their target prompts. A later Reviewer pass strengthened judge-only grading for HUMAN-03 and HUMAN-CAUSE-UNKNOWN-01 without changing those target scenarios.
 
-This removes the two-sentence auth-status scenario and its input-order comparison, including the identical-evidence short/long pair with HUMAN-03. HUMAN-03 still covers the detailed handover, HUMAN-06 covers actionable test-service access, and opt-in HUMAN-CAUSE-01 covers a short missing-archive explanation. Those cases are related coverage, not proof that the removed auth-status omission is fixed. Historical results remain in [PR #59](https://github.com/bateau84/loom/pull/59); they are not converted to passes or re-scored after deletion. General's instructions and the separately recorded action-state limitation are unchanged.
+This removes the two-sentence auth-status scenario and its input-order comparison, including the identical-evidence short/long pair with HUMAN-03. BR-020 now requires both short-status and detailed-report coverage without requiring them to reuse identical scenario evidence. HUMAN-03 covers detailed handover, while opt-in HUMAN-CAUSE-01 covers a short blocked-status explanation. HUMAN-06 separately covers actionable test-service access. These related cases do not prove that the removed auth-status omission was fixed. Historical results remain in [PR #59](https://github.com/bateau84/loom/pull/59); they are not converted to passes or re-scored after deletion.
 
 ## Running the focused checks
 
@@ -73,15 +73,16 @@ These model runs consume provider budget. Do not enable them in ordinary CI or s
 
 ## Focused status and attribution regressions
 
-`human-interaction-regressions.json` contains five opt-in, tool-denied response cases. They test transfer to other scenarios and guard against errors introduced by more explicit reporting:
+`human-interaction-regressions.json` contains six opt-in, tool-denied response cases. They test transfer to other scenarios and guard against errors introduced by more explicit reporting:
 
 | Case | Distinguishing behavior |
 | --- | --- |
 | HUMAN-CAUSE-01 | A missing snapshot archive remains attached to the blocked replay check in a two-sentence status. |
-| HUMAN-CAUSE-UNKNOWN-01 | An incomplete handoff does not become an invented access problem, saved patch, or passing test. |
+| HUMAN-CAUSE-UNKNOWN-01 | An incomplete handoff does not become an invented access problem, saved patch, passing test, or verification attempt that the source never established. |
 | HUMAN-TRACE-01 | A requested exact trace retains its independent producer despite a separate Worker success. |
 | HUMAN-JSON-01 | Artifact facts stay out of passed-check lists; out-of-scope deployment is not remaining work; queued review is not an invented capability block. |
 | HUMAN-JSON-OBSERVED-01 | A genuine executed existence check is valid narrow evidence, and deployment remains required when explicitly in accepted scope. |
+| HUMAN-BLOCKER-PRIORITY-01 | Under a two-sentence limit, a required blocked check keeps its supplied immediate cause ahead of pending-review or non-deployment trivia. |
 
 The regression suite is excluded from default selection, including bare `--all`. Explicitly load it alongside the default suite. This six-case matrix is available for broader status/evidence verification, not required for every fixture edit. It is not the historical seven-case matrix and does not measure the removed scenario:
 
@@ -98,6 +99,10 @@ bun run eval:live -- \
 Use a fresh artifact directory and record the checkout SHA for each run. Inspect the actual answers even when their judge reports PASS: a valid JSON shape does not establish correct evidence categories. A failed result stays failed; a justified judge disagreement must be recorded separately rather than overwriting the raw artifact. These fixtures contain scenario facts, not reference answers or target-visible scoring rules. The wiring checks do not themselves establish semantic reliability.
 
 ### Grading correction after artifact inspection
+
+The subsequent Critic readiness fix strengthens General itself: a known blocker cause is atomic with its blocked check and outranks incidental non-events under tight reply budgets; blocked/pending state cannot become an invented attempt; handover suggestions cannot become required work unless established by scope or verification authority. After the first focused readiness run exposed one residual HUMAN-03 false obligation, the handover rule was narrowed further: hypothetical or unknown extra required checks are omitted unless the source establishes that they exist; optional recommendations must stay explicitly optional.
+
+Reviewer follow-up closed two additional false-green paths. HUMAN-CAUSE-UNKNOWN-01 now rejects turning a merely blocked required verification into an attempted/run/failed verification action. HUMAN-03 now distinguishes the established required sequence (restore authorized test-service access → run required startup verification → obtain the independent Reviewer verdict) from optional extra verification ideas; optional suggestions may be offered, but they cannot be presented as established remaining obligations. Both changes are judge-only: their target prompts are unchanged.
 
 HUMAN-09 retains its original expectations and prohibition, with additional judge-only criteria that make the evidence-category and scope boundaries explicit. Its old judge accepted answers listing patch existence as a passed check and unrequested deployment as remaining work. A separate regression case did not prevent those false greens in the original case, so its grading must discriminate them too.
 
@@ -137,6 +142,22 @@ After the run, package the entire directory even when evals fail. Run this separ
 tar -czf /tmp/loom-human-interaction-fact-selection.tar.gz \
   -C .loom-evals human-interaction-fact-selection
 ```
+
+### Focused readiness spot check
+
+The Critic readiness findings are intentionally tested with only three cases: the two tightened judge contracts plus a new blocker-priority regression that exercises the known failure class without restoring either deleted HUMAN-02 fixture.
+
+```sh
+bun run eval:live -- \
+  --suite evals/human-interaction.json \
+  --suite evals/human-interaction-regressions.json \
+  --cases HUMAN-03,HUMAN-CAUSE-UNKNOWN-01,HUMAN-BLOCKER-PRIORITY-01 \
+  --iterations 3 --parallel 3 \
+  --artifact-dir .loom-evals/human-interaction-readiness \
+  --model PROVIDER/MODEL
+```
+
+This is nine target responses plus nine judge calls. Inspect every answer, including passes. HUMAN-BLOCKER-PRIORITY-01 is new evidence for the concrete-cause priority rule; it does not rewrite or resurrect the deleted HUMAN-02 results. A deterministic wiring PASS does not substitute for semantic model evidence, and historical results keep their original grading contract.
 
 ## Evidence limits
 

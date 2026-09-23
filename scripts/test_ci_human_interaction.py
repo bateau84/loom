@@ -19,6 +19,7 @@ SPEC.loader.exec_module(RUNNER)
 RESPONSE_SUITE = ROOT / "evals/human-interaction.json"
 LIVE_SUITE = ROOT / "evals/human-interaction-live.json"
 REGRESSION_SUITE = ROOT / "evals/human-interaction-regressions.json"
+BR020 = ROOT / "docs/requirements/loom/br-020-conversation-is-primary-interface.md"
 
 
 class HumanInteractionWiringTests(unittest.TestCase):
@@ -42,7 +43,7 @@ class HumanInteractionWiringTests(unittest.TestCase):
         cases = RUNNER.load_cases([REGRESSION_SUITE])
         self.assertEqual({case["id"] for case in cases}, {
             "HUMAN-CAUSE-01", "HUMAN-CAUSE-UNKNOWN-01", "HUMAN-TRACE-01", "HUMAN-JSON-01",
-            "HUMAN-JSON-OBSERVED-01",
+            "HUMAN-JSON-OBSERVED-01", "HUMAN-BLOCKER-PRIORITY-01",
         })
         default_ids = {case["id"] for case in RUNNER.load_cases()}
         for case in cases:
@@ -54,6 +55,42 @@ class HumanInteractionWiringTests(unittest.TestCase):
             self.assertNotIn("actions", case)
             for grading in [case["trap"], *case["expectations"], *case["must_not"]]:
                 self.assertNotIn(grading, case["prompt"])
+
+    def test_removed_human_02_does_not_leave_a_stale_identical_evidence_requirement(self):
+        requirement = BR020.read_text()
+        self.assertIn("both short-status and detailed-report coverage", requirement)
+        self.assertNotIn("paired short-status and detailed-report requests from identical evidence", requirement)
+
+    def test_reviewer_false_green_boundaries_are_judge_only_and_explicit(self):
+        response = {case["id"]: case for case in RUNNER.load_cases([RESPONSE_SUITE])}
+        regressions = {case["id"]: case for case in RUNNER.load_cases([REGRESSION_SUITE])}
+
+        handover = response["HUMAN-03"]
+        handover_grading = [*handover["expectations"], *handover["must_not"]]
+        self.assertTrue(any("optional rather than required remaining work" in rule for rule in handover_grading))
+        self.assertTrue(any("unestablished check as required remaining work" in rule for rule in handover_grading))
+
+        unknown = regressions["HUMAN-CAUSE-UNKNOWN-01"]
+        unknown_grading = [*unknown["expectations"], *unknown["must_not"]]
+        self.assertTrue(any("blocked verification state into an attempted" in rule for rule in unknown_grading))
+        self.assertTrue(any("verification was attempted" in rule for rule in unknown_grading))
+
+        for case in (handover, unknown):
+            for grading in [case["trap"], *case["expectations"], *case["must_not"]]:
+                self.assertNotIn(grading, case["prompt"])
+
+    def test_status_contract_pins_critic_readiness_fixes(self):
+        source = (ROOT / "agents/general.md").read_text()
+        self.assertIn("affected check and any supplied immediate cause as one atomic fact", source)
+        self.assertIn("Omit unrequested non-events such as non-deployment before dropping a known cause", source)
+        self.assertIn("`blocked` or `pending` does not establish that a check was attempted", source)
+        self.assertIn("Do not mention hypothetical or unknown extra required checks", source)
+        self.assertIn("Additional prudent checks may be suggested only when clearly labeled optional", source)
+
+        regressions = {case["id"]: case for case in RUNNER.load_cases([REGRESSION_SUITE])}
+        priority = regressions["HUMAN-BLOCKER-PRIORITY-01"]
+        self.assertIn("staging gateway denies every currently authorized verification identity", priority["prompt"])
+        self.assertTrue(any("gateway-denial cause" in rule for rule in priority["must_not"]))
 
     def test_response_projects_keep_the_production_contract_but_not_grading_metadata(self):
         source_body = RUNNER.strip_frontmatter((ROOT / "agents/general.md").read_text())
