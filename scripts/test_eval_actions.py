@@ -80,14 +80,14 @@ class WorkflowCredentialTests(unittest.TestCase):
         self.assertEqual(host_version, plugin_version)
         self.assertEqual(plugin_version, "2.0.15")
 
-    def test_live_workflow_and_harness_pin_opencode_2_0_12_runner(self):
+    def test_live_workflow_and_harness_pin_opencode_2_0_15_runner(self):
         workflow = (
             RUN_EVALS.ROOT / ".github" / "workflows" / "loom-live-evals.yml"
         ).read_text(encoding="utf-8")
-        expected_action = "bateau84/opencode-eval-runner@e2022f1075e34fe7be2a33eae3c9460f3f5c7263"
+        expected_action = "bateau84/opencode-eval-runner@b17532ce4b9efb2a0151dca34268439056e775c9"
         expected_image = (
             "ghcr.io/bateau84/opencode-eval-runner@"
-            "sha256:3e5f95ce54fee127230c5bf84a7f09124a2236dfca544269e6547c8f79e8ad5d"
+            "sha256:f206d32bb0a5b39ce2080c5eed1e956a344ee86d362840538345202c4abc370c"
         )
 
         self.assertIn(expected_action, workflow)
