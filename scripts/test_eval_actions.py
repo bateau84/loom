@@ -1514,5 +1514,34 @@ class ConversationalFeedbackCostTests(unittest.TestCase):
                     shutil.rmtree(temp, ignore_errors=True)
 
 
+class ArtifactHandoffCostTests(unittest.TestCase):
+    def test_artifact_probes_are_default_isolated_and_do_not_expose_rubrics(self):
+        import shutil
+        cases = {case["id"]: case for case in RUN_EVALS.load_cases()}
+        expected = {
+            "AUTO-ORCHESTRATION-01-HANDOFF": "conversation-response",
+            "AUTO-ORCHESTRATION-01-RECORDS": "role-decision",
+        }
+        self.assertNotIn("CONVERSATION-02-LIVE", cases)
+        for case_id, execution in expected.items():
+            with self.subTest(case=case_id):
+                case = cases[case_id]
+                self.assertEqual(case["execution"], execution)
+                self.assertEqual(RUN_EVALS.case_workspace_mode(case), "ro")
+                prompt = RUN_EVALS.target_prompt(case)
+                self.assertIn(case["prompt"], prompt)
+                for criterion in case["expectations"] + case["must_not"]:
+                    self.assertNotIn(criterion, prompt)
+                temp, target, _ = RUN_EVALS.setup_projects(case)
+                try:
+                    agents = target / ".opencode" / "agents"
+                    self.assertEqual(sorted(p.name for p in agents.iterdir()), ["general.md"])
+                    wrapper = (agents / "general.md").read_text()
+                    self.assertIn('action: "*"', wrapper)
+                    self.assertIn('effect: deny', wrapper)
+                finally:
+                    shutil.rmtree(temp, ignore_errors=True)
+
+
 if __name__ == "__main__":
     unittest.main()

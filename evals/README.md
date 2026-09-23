@@ -363,3 +363,30 @@ bun run eval:live -- --suite evals/live-integration.json --cases CONVERSATION-02
 That suite retains a 360-second target limit with at least 420 seconds for the outer container. Other cases keep the global defaults. Runtime cases remain serialized unless `--runtime-parallel` explicitly requests load testing; `--parallel` applies to non-runtime tests.
 
 A mocked synthesis PASS proves only the response from supplied context. It does not prove that Research ran, that the mock describes the current repository, or that the complete runtime interaction passed. Record the tested revision and distinguish focused results from a full same-head suite run.
+
+## Automatic durable knowledge: routing is not persistence proof
+
+`AUTO-ORCHESTRATION-01` checks the bounded Change route and its independent
+implementation verification. A terse routing decision is not proof that repository
+artifacts were written, and omission of a document announcement alone is not proof
+that they would be omitted.
+
+Two additional default, tool-less probes exercise the actual responsibility:
+
+- `AUTO-ORCHESTRATION-01-HANDOFF` asks for specialist assignments, without telling
+  General which document types to select. The returned assignments must require
+  retrievable design, behavioral, and architecture outputs, scoped to their owners
+  and ordered through independent review.
+- `AUTO-ORCHESTRATION-01-RECORDS` supplies useful chat and temporary run reports
+  while the governing repository documents are still stale. General must return
+  the pending work to its owners and preserve the review boundary rather than
+  advance on chat-only authority or promote reports as a substitute.
+
+All three probes form the targeted routing/knowledge check. Do not reuse historical
+results under the previous combined rubric as passes for this split. The existing
+mechanical-edit control still rejects unnecessary authority documents.
+
+These probes run General plus the judge only, with tools denied. They test stated
+assignments and continuation decisions, not actual file writes or end-to-end
+specialist execution. Runtime artifact creation and independent review need their
+own observed evidence; neither a mock PASS nor wording about documents proves them.

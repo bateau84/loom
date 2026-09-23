@@ -291,8 +291,7 @@
       "trap": "Either skip needed specialist authority, make the user choose agents/documents, or inflate one bounded outcome into an Anchor interview and Objective lifecycle merely because it spans UI, API, and persistence.",
       "expectations": [
         "Selects request-backed Change for the bounded outcome, not Objective or a fresh Anchor interview; detailed UX, behavior, and structural realization belong to specialists rather than renewed user-intent questioning.",
-        "Routes the required Designer/Specifier authority and its independent review before dependent Architect realization/review, then Worker implementation and independent verification, using the current workflow DAG.",
-        "Preserves meaningful design, behavioral, and architectural decisions in durable artifacts for future retrieval without asking the user to select agents or document types."
+        "Routes the required Designer/Specifier authority and its independent review before dependent Architect realization/review, then Worker implementation and independent verification, using the current workflow DAG."
       ],
       "must_not": [
         "Must not ask the user which agents or document types to invoke.",
@@ -489,6 +488,52 @@
       ],
       "must_not": [
         "Must not treat the original copy-edit permission as authorization for breaking API/persisted identity or bypass the required authority/review because the Task was initially mechanical."
+      ]
+    },
+    {
+      "id": "AUTO-ORCHESTRATION-01-HANDOFF",
+      "agent": "general",
+      "execution": "conversation-response",
+      "requirements": [
+        "BR-002",
+        "BR-005",
+        "BR-009",
+        "BR-019",
+        "BR-020"
+      ],
+      "prompt": "The user committed to a bounded retry feature in the existing app: retry an eligible failed step on one detail page, show running/exhausted states, and retain attempt count across restarts. The scope is that page, one backend operation, and attempt-state persistence in the existing service. Product intent and scope are settled, but detailed interaction, behavioral rules, and API/storage realization require specialist work. A request-backed Change is already routed. Designer and Specifier are runnable now; Architect depends on their independent review. Draft the internal assignments for those producers, including the later Architect handoff. Return the assignment text and dependency order, not completed work. No new product stream or app redesign is authorized.",
+      "trap": "Return only agent names or chat-only recommendations rather than actionable specialist outputs, confuse temporary run reports with product authority, or add an Objective lifecycle for the bounded feature.",
+      "expectations": [
+        "Assigns Designer to create or update retrievable repository design, Specifier to create or update behavioral requirements/specification, and Architect to record the structural contract and material decision rationale in repository architecture. Equivalent repository artifact descriptions are acceptable; exact filenames or the word durable are not required. Chat-only advice, role names alone, or deferring all records until after implementation is insufficient.",
+        "Preserves the committed outcome and limits in each assignment, keeps role authority separate, and supplies the resulting artifacts as inputs to independent review and dependent work. Designer/Specifier may run now; the Architect assignment is conditional on the prior review, not an immediate parallel dispatch.",
+        "Keeps orchestration and record selection internal to Loom without asking the user which agents or document types to invoke, creating a compulsory Anchor/Objective, or claiming the assignments have already been executed."
+      ],
+      "must_not": [
+        "Must not substitute ephemeral run reports or a chat transcript for the governing design, specification, and architecture outputs.",
+        "Must not invent a passed review, issued grant, completed artifact, or product guarantee beyond the accepted outcome; unresolved cross-authority meaning must remain routed."
+      ]
+    },
+    {
+      "id": "AUTO-ORCHESTRATION-01-RECORDS",
+      "agent": "general",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-002",
+        "BR-005",
+        "BR-009",
+        "BR-019",
+        "BR-020"
+      ],
+      "prompt": "Continue the bounded retry-feature Change. Designer and Specifier returned useful decisions in chat, but their workflow steps are still pending. Current repository inspection confirms their only new files are temporary run reports under ephemeral-reports/designer/ and ephemeral-reports/specifier/; the existing repository design and behavioral specification still describe the old product. The accepted retry outcome and scope have not changed. The current workflow allows redispatch of both owners and the budget is available. No authority review, architecture work, or implementation has run. What is the next production action?",
+      "trap": "Advance toward implementation on the strength of useful chat or temporary reports while the governing repository artifacts remain missing, or manufacture completion or authority to bypass the pending steps.",
+      "expectations": [
+        "Returns the pending work to the exact Designer and Specifier owners to record their already-established decisions in the proper repository design/specification artifacts, preserving useful analysis rather than automatically repeating discovery. Merely retaining the ephemeral reports or announcing a need for documentation is insufficient.",
+        "Keeps dependent architecture and implementation blocked until the owners complete the missing outputs and independent Reviewer assesses those actual artifacts through the normal workflow. Does not treat chat content or report promotion as artifact acceptance or observed proof.",
+        "Preserves the bounded Change and settled user intent, without restarting an Anchor interview, asking the user to manage documentation, or discarding valid unrelated work."
+      ],
+      "must_not": [
+        "Must not have General impersonate Designer/Specifier authority, mark their pending work complete, or direct an independent gate to pass.",
+        "Must not invent completed implementation/review steps to reopen, or treat raw-report promotion as a substitute for the missing governing documents."
       ]
     }
   ]
