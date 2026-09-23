@@ -4,6 +4,7 @@ import { basename, dirname, isAbsolute, join } from "node:path"
 import { homedir } from "node:os"
 import { acceptanceReadiness, type AcceptancePlan } from "./acceptance"
 import type { BudgetState, ExecutionLimits } from "./budget"
+import { buildDashboardWorkflowContext, type DashboardWorkflowContext } from "./dashboard-context"
 import type { KnowledgeReport } from "./knowledge"
 import type { OpenQuestion } from "./oq"
 import type { LoomRuntimeIdentity, RawStorage } from "./runtime"
@@ -101,6 +102,7 @@ export type WorkflowProjectionV1 = {
   participatingSessionIds: string[]
   activeAgent?: string
   activeSessionId?: string
+  context?: DashboardWorkflowContext
 }
 
 export type ProjectSnapshotV1 = {
@@ -368,7 +370,7 @@ async function workflowProjection(
   const scenarios = acceptance?.scenarios ?? []
   const questionValues = questions
     .map((entry) => entry.value as OpenQuestion)
-    .filter((question): question is OpenQuestion => Boolean(question?.id))
+    .filter((question): question is OpenQuestion => Boolean(question?.id) && question.workflowId === workflow.id)
   const recentActivityAt = latestTimestamp(
     [
       workflow.createdAt,
@@ -426,6 +428,7 @@ async function workflowProjection(
     participatingSessionIds: participants,
     ...(ready[0] ? { activeAgent: ready[0].agent } : {}),
     ...(participants[0] ? { activeSessionId: participants[0] } : {}),
+    context: buildDashboardWorkflowContext(workflow, questionValues, participants, questions.length >= 1000),
   }
   return { ...body, stateDigest: projectionDigest(body) }
 }

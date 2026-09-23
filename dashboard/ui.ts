@@ -43,7 +43,7 @@ export function dashboardHtml() {
     <div id="filters" class="filters" aria-label="Fleet filters" hidden>
       <label class="field">Status<select id="status-filter"><option value="all">All work</option><option value="attention">Needs attention</option><option value="active">Active</option><option value="complete">Complete</option><option value="cancelled">Cancelled</option><option value="stale">Stale/offline</option></select></label>
       <label class="field search">Project<input id="project-filter" type="search" autocomplete="off" placeholder="Find a project by name, path, or ID"></label>
-      <label class="field agent">Agent<input id="agent-filter" type="search" autocomplete="off" placeholder="Current agent"></label>
+      <label class="field agent">Next agent<input id="agent-filter" type="search" autocomplete="off" placeholder="Next available agent"></label>
       <button id="clear-filters" type="button">Clear filters</button>
     </div>
     <main id="main" tabindex="-1" aria-labelledby="view-title" aria-busy="true"><section class="panel empty"><strong>Loading Loom projection…</strong><p class="notice">Connecting to the read-only view. Missing data is not a healthy zero.</p></section></main>

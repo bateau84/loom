@@ -1,3 +1,5 @@
+import { dashboardReadability } from "./readability"
+
 /** Browser code is served inline with the HTML. Projection values are always escaped. */
 export const dashboardScript = `
 (() => {
@@ -25,8 +27,7 @@ export const dashboardScript = `
   const arr = (value) => Array.isArray(value) ? value : [];
   const number = (value) => typeof value === "number" && Number.isFinite(value) && value >= 0;
   const count = (value) => number(value) ? String(value) : "Unavailable";
-  const shortId = (id) => String(id).length > 22 ? String(id).slice(0, 10) + "…" + String(id).slice(-8) : String(id);
-  const projectName = (project) => project.displayName || project.canonicalLocation || project.projectId;
+  const projectName = (project) => projectLabel(project);
   const projectHref = (project) => "#/project/" + enc(project.projectId);
   const workflowHref = (project, workflow) => projectHref(project) + "/workflow/" + enc(workflow.workflowId);
   const link = (href, label) => '<a href="' + esc(href) + '">' + esc(label) + '</a>';
@@ -34,6 +35,7 @@ export const dashboardScript = `
   const projectById = (id) => state.fleet.projects.find((p) => p.projectId === id);
   const workflowById = (project, id) => project?.workflows.find((w) => w.workflowId === id);
   const plural = (n, singular, multiple = singular + "s") => count(n) + " " + (n === 1 ? singular : multiple);
+  ${dashboardReadability}
 
   function route() {
     try {
@@ -115,7 +117,7 @@ export const dashboardScript = `
     const agentNeedle = state.agent.trim().toLowerCase();
     return state.fleet.projects.flatMap((project) => project.workflows.filter((w) =>
       (!needle || [project.displayName, project.canonicalLocation, project.projectId].some((v) => String(v || "").toLowerCase().includes(needle))) &&
-      (!agentNeedle || String(resolved(w)?.activeAgent || "").toLowerCase().includes(agentNeedle))
+      (!agentNeedle || [resolved(w)?.activeAgent, roleName(resolved(w)?.activeAgent)].some((v) => String(v || "").toLowerCase().includes(agentNeedle)))
     ).map((workflow) => ({ project, workflow })));
   }
   function filteredWorkflows() {
@@ -128,17 +130,7 @@ export const dashboardScript = `
       return true;
     }));
   }
-  function titleFor(project, w) {
-    const p = resolved(w);
-    const objective = arr(project.workObjectives).find((o) => o.objectiveId === p?.workScope?.objectiveId && o.consistency === "ok" && o.projection?.generation === p?.workScope?.generation);
-    if (objective?.projection?.title) return objective.projection.title;
-    if (p?.anchor) {
-      const parts = p.anchor.split(/[\\\\/]/).filter(Boolean);
-      const leaf = parts.pop();
-      return leaf === "anchor.md" && parts.length ? parts.pop() : leaf || p.anchor;
-    }
-    return "Workflow " + shortId(w.workflowId);
-  }
+  function titleFor(project, w) { return workflowLabel(project, w); }
   function badge(label, valueTone = "neutral", isState = false) {
     return '<span class="badge" data-tone="' + esc(valueTone) + '"' + (isState ? ' data-state="' + esc(label) + '"' : '') + '>' + esc(label) + '</span>';
   }
@@ -179,7 +171,7 @@ export const dashboardScript = `
     const p = resolved(w);
     if (!p) return "Authoritative workflow fields are unavailable.";
     const parts = [];
-    if (p.openOqCount > 0) parts.push(plural(p.openOqCount, "open question"));
+    if (p.openOqCount > 0) parts.push((contextFor(p)?.questionCountIsLowerBound ? 'at least ' : '') + plural(p.openOqCount, "open question"));
     if (p.openVerificationCount > 0) parts.push(plural(p.openVerificationCount, "verification item"));
     if (p.budget?.exhausted === true) parts.push("dispatch budget exhausted");
     return parts.join(" · ");
@@ -196,7 +188,7 @@ export const dashboardScript = `
       '<a class="nav-link" data-key="nav:fleet" href="' + esc(fleetHref()) + '"' + (r.kind === "fleet" && state.status !== "attention" ? ' aria-current="page"' : '') + '><span class="nav-symbol" aria-hidden="true">▦</span>Fleet overview<span class="nav-count">' + total + '</span></a>' +
       '<a class="nav-link" data-key="nav:attention" href="#/?status=attention"' + (r.kind === "fleet" && state.status === "attention" ? ' aria-current="page"' : '') + '><span class="nav-symbol" aria-hidden="true">!</span>Needs attention<span class="nav-count">' + attention + '</span></a>';
     document.getElementById("project-nav").innerHTML = state.fleet.projects.map((p) =>
-      '<a class="nav-link" data-key="nav:project:' + esc(p.projectId) + '" href="' + esc(projectHref(p)) + '"' + (r.projectId === p.projectId ? ' aria-current="location"' : '') + '><span class="project-name">' + esc(p.displayName || shortId(p.projectId)) + '<small>' + esc(p.canonicalLocation) + '</small></span><span class="nav-count">' + p.workflows.length + '</span></a>'
+      '<a class="nav-link" data-key="nav:project:' + esc(p.projectId) + '" href="' + esc(projectHref(p)) + '"' + (r.projectId === p.projectId ? ' aria-current="location"' : '') + '><span class="project-name">' + esc(projectName(p)) + '<small>' + esc(p.canonicalLocation) + '</small></span><span class="nav-count">' + p.workflows.length + '</span></a>'
     ).join("") || '<span class="meta">' + (state.loaded ? "No projects projected." : "Waiting for projection…") + '</span>';
   }
   function summaryMetrics(items, interactive) {
@@ -216,12 +208,12 @@ export const dashboardScript = `
     const p = resolved(w);
     const tasks = p?.hierarchyProgress?.tasks;
     const current = arr(p?.currentSteps);
-    const currentText = current.length ? current[0].label || current[0].id : "No current step projected";
+    const currentText = current.length ? stepName(current[0]) : "No current step projected";
     const participants = arr(w.participants);
     return '<a class="workflow panel" data-key="' + esc(project.projectId + ":" + w.workflowId) + '" data-tone="' + tone(w) + '" href="' + esc(workflowHref(project, w)) + '">' +
-      '<div class="workflow-head"><div class="identity"><div class="project-cue">' + esc(projectName(project)) + '</div><div class="name">' + esc(titleFor(project, w)) + '</div><div class="path">' + esc(p?.anchor || project.canonicalLocation) + '</div></div><div class="badges">' + badges(w) + '</div></div>' +
-      (p ? '<div class="card-step"><div class="meta">' + esc(p.activeAgent || "Agent not projected") + ' · current work</div>' + esc(currentText) + (current.length > 1 ? ' <span class="meta">+' + (current.length - 1) + ' more</span>' : '') + '</div><div class="card-metrics"><div><strong>' + esc(ratio(tasks)) + '</strong><span>Tasks complete</span>' + progress(tasks) + '</div><div><strong>' + esc(ratio(p.budget, "used", "limit")) + '</strong><span>Budget used/limit</span></div><div><strong>' + participants.filter((v) => v.live).length + '/' + participants.length + '</strong><span>Live publishers</span></div></div>' : '<div class="notice">Conflicting highest-revision snapshots: ' + arr(w.conflictCandidates).length + '. No winner is selected.</div>') +
-      '<div class="card-foot"><span class="' + (attentionText(w) ? "card-reasons" : "meta") + '">' + esc(attentionText(w) || "Open questions: " + count(p?.openOqCount) + " · Verification: " + count(p?.openVerificationCount)) + '</span><span class="meta">' + (p ? 'Activity ' + time(p.recentActivityAt) : 'State withheld') + ' · rev ' + esc(w.workflowRevision) + ' <span aria-hidden="true">↗</span></span></div></a>';
+      '<div class="workflow-head"><div class="identity"><div class="project-cue">' + esc(projectName(project)) + '</div><div class="name">' + esc(titleFor(project, w)) + '</div><div class="path">' + esc(project.canonicalLocation) + '</div></div><div class="badges">' + badges(w) + '</div></div>' +
+      (p ? '<div class="card-step"><div class="meta">' + esc(p.activeAgent ? roleName(p.activeAgent) : "Agent not projected") + ' · next available work</div>' + esc(currentText) + (current.length > 1 ? ' <span class="meta">+' + (current.length - 1) + ' more</span>' : '') + '</div><div class="card-metrics"><div><strong>' + esc(ratio(tasks)) + '</strong><span>Tasks complete</span>' + progress(tasks) + '</div><div><strong>' + esc(ratio(p.budget, "used", "limit")) + '</strong><span>Budget used/limit</span></div><div><strong>' + participants.filter((v) => v.live).length + '/' + participants.length + '</strong><span>Live publishers</span></div></div>' : '<div class="notice">Conflicting highest-revision snapshots: ' + arr(w.conflictCandidates).length + '. No winner is selected.</div>') +
+      '<div class="card-foot"><span class="' + (attentionText(w) ? "card-reasons" : "meta") + '">' + esc(attentionText(w) || "Open questions: " + count(p?.openOqCount) + " · Verification: " + count(p?.openVerificationCount)) + '</span><span class="meta">' + (p ? 'Activity ' + time(p.recentActivityAt) : 'State withheld') + ' · revision ' + esc(w.workflowRevision) + ' <span aria-hidden="true">↗</span></span></div></a>';
   }
   function empty(title, description, action = "") {
     return '<section class="panel empty"><span class="empty-icon" aria-hidden="true">◇</span><strong>' + esc(title) + '</strong><p class="notice">' + esc(description) + '</p>' + action + '</section>';
@@ -250,20 +242,22 @@ export const dashboardScript = `
   function renderHierarchy(project) {
     if (!arr(project.workObjectives).length) return '<p class="notice">No current work hierarchy is projected. Task progress is unavailable, not zero.</p>';
     return '<div class="hierarchy">' + project.workObjectives.map((objective) => {
-      if (objective.consistency === "conflict") return '<div class="callout" data-tone="danger"><strong>Work hierarchy conflict</strong><div class="notice">' + esc(objective.objectiveId) + ' · work version ' + esc(objective.workVersion) + '. No hierarchy winner is selected.</div></div>';
-      const p = objective.projection;
       const base = 'project:' + project.projectId + ':objective:' + objective.objectiveId;
+      if (objective.consistency === "conflict") return '<div class="callout" data-tone="danger"><strong>Work hierarchy conflict</strong><div class="notice">Different reports describe this objective at work version ' + esc(objective.workVersion) + '. No hierarchy winner is selected.</div>' + technical(base, [['Objective ID', objective.objectiveId]]) + '</div>';
+      const p = objective.projection;
       const phases = arr(p?.phases).map((phase) => {
         const phaseKey = base + ':phase:' + phase.phaseId;
         const waves = arr(phase.waves).map((wave) => {
           const waveKey = phaseKey + ':wave:' + wave.waveId;
-          return '<details ' + (hierarchyOpen(wave.status) ? 'open ' : '') + 'data-hierarchy-key="' + esc(waveKey) + '" data-status="' + esc(wave.status) + '"><summary data-key="' + esc('hierarchy:' + waveKey) + '"><span>' + esc(wave.title || wave.waveId) + ' — ' + esc(wave.status) + '</span></summary><ul>' + arr(wave.tasks).map((task) =>
-            '<li><span class="name">' + esc(task.title || task.taskId) + '</span> — ' + esc(task.status) + (task.claimedByWorkflowId ? '<div class="meta">' + link(projectHref(project) + '/workflow/' + enc(task.claimedByWorkflowId), 'claimed by ' + task.claimedByWorkflowId) + '</div>' : '') + '</li>'
-          ).join("") + '</ul></details>';
+          return '<details ' + (hierarchyOpen(wave.status) ? 'open ' : '') + 'data-hierarchy-key="' + esc(waveKey) + '" data-status="' + esc(wave.status) + '"><summary data-key="' + esc('hierarchy:' + waveKey) + '"><span>' + esc(named(wave.title, 'Unnamed wave')) + ' — ' + esc(wave.status) + '</span></summary><ul>' + arr(wave.tasks).map((task) => {
+            const owner = workflowById(project, task.claimedByWorkflowId);
+            const ownership = task.claimedByWorkflowId ? '<div class="meta">Owned by: <a data-key="' + esc('owner:' + waveKey + ':' + task.taskId) + '" href="' + esc(projectHref(project) + '/workflow/' + enc(task.claimedByWorkflowId)) + '">' + esc(owner ? titleFor(project, owner) : 'Workflow outside this view') + '</a></div>' : '';
+            return '<li><span class="name">' + esc(named(task.title, 'Unnamed task')) + '</span> — ' + esc(task.status) + ownership + technical(waveKey + ':task:' + task.taskId, [['Task ID', task.taskId], ['claimed by workflow ID', task.claimedByWorkflowId]]) + '</li>';
+          }).join("") + '</ul>' + technical(waveKey, [['Wave ID', wave.waveId]]) + '</details>';
         }).join("");
-        return '<details ' + (hierarchyOpen(phase.status) ? 'open ' : '') + 'data-hierarchy-key="' + esc(phaseKey) + '" data-status="' + esc(phase.status) + '"><summary data-key="' + esc('hierarchy:' + phaseKey) + '"><span>' + esc(phase.title || phase.phaseId) + ' — ' + esc(phase.status) + '</span></summary>' + waves + '</details>';
+        return '<details ' + (hierarchyOpen(phase.status) ? 'open ' : '') + 'data-hierarchy-key="' + esc(phaseKey) + '" data-status="' + esc(phase.status) + '"><summary data-key="' + esc('hierarchy:' + phaseKey) + '"><span>' + esc(named(phase.title, 'Unnamed phase')) + ' — ' + esc(phase.status) + '</span></summary>' + waves + technical(phaseKey, [['Phase ID', phase.phaseId]]) + '</details>';
       }).join("");
-      return '<details open data-hierarchy-key="' + esc(base) + '" data-status="' + esc(p?.status || 'unknown') + '"><summary data-key="' + esc('hierarchy:' + base) + '"><span class="name">' + esc(p?.title || objective.objectiveId) + '</span><span class="meta">Objective: ' + esc(p?.status || 'unknown') + ' · version ' + esc(objective.workVersion) + (objective.sourceFreshness === 'stale-source' ? ' · stale/offline source' : '') + '</span></summary>' + phases + '</details>';
+      return '<details open data-hierarchy-key="' + esc(base) + '" data-status="' + esc(p?.status || 'unknown') + '"><summary data-key="' + esc('hierarchy:' + base) + '"><span class="name">' + esc(named(p?.title, 'Unnamed objective')) + '</span><span class="meta">Objective: ' + esc(p?.status || 'unknown') + ' · version ' + esc(objective.workVersion) + (objective.sourceFreshness === 'stale-source' ? ' · stale/offline source' : '') + '</span></summary>' + phases + technical(base, [['Objective ID', objective.objectiveId], ['Anchor reference', p?.anchor]]) + '</details>';
     }).join("") + '</div>';
   }
   function renderProject(project) {
@@ -274,7 +268,7 @@ export const dashboardScript = `
       ? '<div class="callout"><strong>Bounded projection</strong><div class="notice">Some older work is outside the current projection window. This is not the full project history; existing deep links remain valid navigation targets.</div></div>' : '';
     main.innerHTML = summaryMetrics(items, false) + windowNotice +
       '<section class="panel"><div class="panel-head"><h2>Work map</h2><span class="meta">Objective → Phase → Wave → Task</span></div><div class="panel-body">' + renderHierarchy(project) + '</div></section>' +
-      '<section class="section"><div class="panel-head"><h2>Workflows</h2><span class="meta">' + plural(items.length, 'projected workflow') + '</span></div><div class="grid section">' + (items.map(({workflow}) => workflowCard(project, workflow)).join('') || '<p class="notice">No workflows are currently projected for this project.</p>') + '</div></section>';
+      '<section class="section"><div class="panel-head"><h2>Workflows</h2><span class="meta">' + plural(items.length, 'projected workflow') + '</span></div><div class="grid section">' + (items.map(({workflow}) => workflowCard(project, workflow)).join('') || '<p class="notice">No workflows are currently projected for this project.</p>') + '</div></section>' + technical('project:' + project.projectId, [['Project ID', project.projectId]]);
   }
   function panel(title, content, detail = '') {
     return '<section class="panel"><div class="panel-head"><h2>' + esc(title) + '</h2>' + (detail ? '<span class="meta">' + esc(detail) + '</span>' : '') + '</div><div class="panel-body">' + content + '</div></section>';
@@ -287,7 +281,7 @@ export const dashboardScript = `
       (session ? link(workflowHref(project, w), titleFor(project, w)) + '<span aria-hidden="true">/</span><span aria-current="page">Session</span>' : '<span aria-current="page">' + esc(titleFor(project, w)) + '</span>');
   }
   function publisherDetails(project, w, open = false) {
-    const rows = arr(w.participants).map((participant) => '<div class="row"><div class="name mono">' + esc(participant.instanceId) + '</div><div class="meta">Revision ' + esc(participant.workflowRevision) + ' · ' + (participant.live ? 'live publisher' : 'stale/offline publisher') + (participant.workflowRevision < w.workflowRevision ? ' · lagging revision' : '') + '</div><div class="meta">Lease expires: ' + esc(participant.leaseExpiresAt || 'Unavailable') + '</div></div>').join('') || '<p class="notice">No participating publisher is projected.</p>';
+    const rows = arr(w.participants).map((participant, index) => '<div class="row"><div class="name">Publisher ' + (index + 1) + '</div><div class="meta">Revision ' + esc(participant.workflowRevision) + ' · ' + (participant.live ? 'live publisher' : 'stale/offline publisher') + (participant.workflowRevision < w.workflowRevision ? ' · lagging revision' : '') + '</div><div class="meta">Lease expires: ' + esc(participant.leaseExpiresAt || 'Unavailable') + '</div>' + technical(project.projectId + ':' + w.workflowId + ':publisher:' + participant.instanceId, [['Publisher ID', participant.instanceId], ['Installation ID', participant.installationId]]) + '</div>').join('') || '<p class="notice">No participating publisher is projected.</p>';
     const content = '<h3>Participating publishers</h3><div class="list section">' + rows + '</div><h3 class="section">Authority provenance</h3><p class="notice">Workflow, OQ, verification, budget, Product Acceptance, hierarchy and knowledge values are Loom-authoritative. OpenCode session/model/token/cost telemetry is supplemental; missing telemetry never implies zero or success.</p><p class="meta section">Highest workflow revision: ' + esc(w.workflowRevision) + '. Publisher liveness and workflow source freshness are separate.</p>';
     return disclosure('publishers:' + project.projectId + ':' + w.workflowId, 'Publishers & provenance · ' + arr(w.participants).length, content, open);
   }
@@ -295,30 +289,32 @@ export const dashboardScript = `
     const p = resolved(w);
     let result = '';
     if (w.sourceFreshness === 'stale-source') result += '<div class="callout" data-tone="stale"><strong>Latest-known state · stale source</strong><div class="notice">The publishers carrying revision ' + esc(w.workflowRevision) + ' are stale/offline. A live lower-revision publisher does not replace this snapshot. Last meaningful activity: ' + time(p?.recentActivityAt) + '.</div></div>';
-    if (p?.status === 'blocked' || p?.status === 'failed') result += '<div class="callout" data-tone="' + (p.status === 'failed' ? 'danger' : 'warn') + '"><strong>' + (p.status === 'failed' ? 'Workflow reports failure' : 'Workflow is blocked') + '</strong><div class="notice">The projection does not include a detailed cause. Inspect the current work and open boundaries below; continue diagnosis in Loom rather than treating a count as the cause.</div></div>';
+    if (p?.status === 'blocked' || p?.status === 'failed') result += '<div class="callout" data-tone="' + (p.status === 'failed' ? 'danger' : 'warn') + '"><strong>' + (p.status === 'failed' ? 'Workflow reports failure' : 'Workflow is blocked') + '</strong><div class="notice">Inspect the workflow’s reported results, questions and required checks. An open-item count alone does not establish the cause.</div></div>';
     return result;
   }
   function stepRows(steps, runnableIds) {
-    return steps.map((step) => '<div class="step"><span class="step-symbol" aria-hidden="true">' + (step.status === 'complete' ? '✓' : step.status === 'failed' ? '×' : step.status === 'blocked' ? '!' : '→') + '</span><div class="identity"><div class="name">' + esc(step.label || step.id) + '</div><div class="badges">' + badge(step.agent || 'Agent unavailable') + badge(step.status || 'Status unavailable', step.status === 'failed' ? 'danger' : step.status === 'blocked' ? 'warn' : 'neutral') + (runnableIds.has(step.id) ? badge('runnable', 'info') : '') + '</div></div></div>').join('');
+    return steps.map((step) => '<div class="step"><span class="step-symbol" aria-hidden="true">' + (step.status === 'complete' || step.status === 'passed' ? '✓' : step.status === 'failed' ? '×' : '→') + '</span><div class="identity"><div class="name">' + esc(stepName(step)) + '</div><div class="badges">' + badge(roleName(step.agent)) + badge(step.status || 'Status unavailable', step.status === 'failed' ? 'danger' : 'neutral') + (runnableIds.has(step.id) ? badge('Ready to dispatch', 'info') : '') + '</div></div></div>').join('');
   }
-  function sessionRow(project, w, sessionId, active) {
+  function sessionRow(project, w, sessionId) {
     const href = workflowHref(project, w) + '/session/' + enc(sessionId);
-    return '<a class="row" data-key="session:' + esc(sessionId) + '" href="' + esc(href) + '" aria-label="OpenCode session ' + esc(sessionId) + '"><span class="nav-symbol" aria-hidden="true">' + (active ? '▶' : '↳') + '</span><span class="identity"><span class="name">' + (active ? 'Active session' : 'Participating session') + '</span><span class="meta mono" style="display:block" title="' + esc(sessionId) + '">' + esc(shortId(sessionId)) + '</span></span><span class="go" aria-hidden="true">↗</span></a>';
+    const name = sessionName(w, sessionId);
+    return '<a class="row" data-key="session:' + esc(sessionId) + '" href="' + esc(href) + '" aria-label="Inspect ' + esc(name + ' for ' + titleFor(project, w)) + '"><span class="nav-symbol" aria-hidden="true">↳</span><span class="identity"><span class="name">' + esc(name) + '</span><span class="meta" style="display:block">' + esc(titleFor(project, w)) + '</span></span><span class="go" aria-hidden="true">↗</span></a>';
   }
   function renderWorkflow(project, w) {
     workflowCrumbs(project, w);
     const p = resolved(w);
-    setHeading('Workflow · ' + projectName(project), titleFor(project, w), '<div class="path mono">' + esc(p?.anchor || 'No resolved Anchor reference') + '</div><div class="meta">Workflow ' + esc(w.workflowId) + ' · revision ' + esc(w.workflowRevision) + '</div>', badges(w));
+    const c = contextFor(p);
+    setHeading('Workflow · ' + projectName(project), titleFor(project, w), '<div class="meta">Latest recorded workflow state · revision ' + esc(w.workflowRevision) + '</div>', badges(w));
     if (w.consistency === 'conflict') {
-      const candidates = arr(w.conflictCandidates).map((candidate) => '<div class="row"><div class="meta mono">Digest ' + esc(candidate.stateDigest) + '</div><div>Status ' + esc(candidate.status) + '</div></div>').join('');
-      main.innerHTML = '<div class="callout" data-tone="danger"><strong>Consistency conflict</strong><div class="notice">Publishers report different Loom-authoritative state for the same highest workflow revision. No winner is selected; state-specific fields are withheld until the conflict resolves.</div></div>' + panel('Conflicting snapshots', '<div class="list">' + candidates + '</div>') + '<div class="section">' + publisherDetails(project, w, true) + '</div>';
+      const candidates = arr(w.conflictCandidates).map((candidate, index) => '<div class="row"><div class="name">Report ' + (index + 1) + '</div><div>Reported status: ' + esc(candidate.status) + '</div>' + technical(project.projectId + ':' + w.workflowId + ':candidate:' + index, [['State digest', candidate.stateDigest]]) + '</div>').join('');
+      main.innerHTML = '<div class="callout" data-tone="danger"><strong>Consistency conflict</strong><div class="notice">Publishers report different Loom-authoritative state for the same highest workflow revision. No winner is selected; state-specific fields are withheld until the conflict resolves. During an upgrade, restart all participating Loom processes before expecting the reports to agree.</div></div>' + panel('Conflicting snapshots', '<div class="list">' + candidates + '</div>') + '<div class="section">' + publisherDetails(project, w, true) + '</div>' + workflowTechnical(project, w);
       return;
     }
-    if (!p) { main.innerHTML = empty('Workflow state unavailable.', 'No resolved workflow projection is available. Refresh to retry; no successful or failed state is inferred.'); return; }
+    if (!p) { main.innerHTML = empty('Workflow state unavailable.', 'No resolved workflow projection is available. Refresh to retry; no successful or failed state is inferred.') + workflowTechnical(project, w); return; }
     const tasks = p.hierarchyProgress?.tasks;
     const metricData = [
       [ratio(tasks), 'Tasks complete', progress(tasks)],
-      [count(p.openOqCount), 'Open questions (OQs)', ''],
+      [(c?.questionCountIsLowerBound ? 'At least ' : '') + count(p.openOqCount), 'Open questions (OQs)', ''],
       [count(p.openVerificationCount), 'Verification items', ''],
       [ratio(p.budget, 'used', 'limit'), 'Budget used/limit', budgetMeter(p.budget)],
     ];
@@ -328,36 +324,41 @@ export const dashboardScript = `
     const runnableIds = new Set(runnable.map((step) => step.id));
     const additional = runnable.filter((step) => !current.some((s) => s.id === step.id));
     let work = stepRows(current, runnableIds) || '<p class="notice">No current step is projected. This does not imply that the workflow is complete.</p>';
-    if (additional.length) work += '<h3 class="section">Also runnable</h3><div class="section">' + stepRows(additional, runnableIds) + '</div>';
-    work += '<div class="section">' + link(projectHref(project), 'View project work map →') + '</div>';
-    const sessions = arr(p.participatingSessionIds);
-    const active = sessions.includes(p.activeSessionId) ? p.activeSessionId : null;
-    const other = sessions.filter((id) => id !== active);
-    const visible = active ? [active] : other.slice(0, 2);
-    const remaining = active ? other : other.slice(2);
-    let sessionContent = '<div class="list">' + visible.map((id) => sessionRow(project, w, id, id === active)).join('') + '</div>';
-    if (remaining.length) sessionContent += '<div class="section">' + disclosure('sessions:' + project.projectId + ':' + w.workflowId, 'More sessions · ' + remaining.length, '<div class="list">' + remaining.map((id) => sessionRow(project, w, id, false)).join('') + '</div>') + '</div>';
+    if (additional.length) work += '<h3 class="section">Also available next</h3><div class="section">' + stepRows(additional, runnableIds) + '</div>';
+    const failures = arr(c?.steps).filter((step) => step.status === 'failed');
+    if (failures.length) work += '<h3 class="section">Reported failures</h3><div class="list section">' + failures.map((step) => '<div class="row"><div class="name">' + esc(stepName(step)) + '</div><p class="notice">Reported result: ' + (step.reportedResult ? description(step.reportedResult) : 'No explanation was recorded.') + '</p></div>').join('') + '</div>';
+    if (c?.truncated.steps) work += '<p class="notice section">The step list is limited. Inspect the remaining steps in Loom.</p>';
+    work += '<p class="notice section">Ready means eligible for dispatch, not proof that an agent is currently running.</p><div class="section">' + link(projectHref(project), 'View project work map →') + '</div>';
+    work += technical(project.projectId + ':' + w.workflowId + ':steps', [...current, ...additional].map((step) => [stepName(step) + ' — step ID', step.id]));
+    const sessions = arr(p.participatingSessionIds).slice().sort();
+    const coordinator = sessions.includes(c?.coordinatorSessionId) ? c.coordinatorSessionId : null;
+    const ordered = coordinator ? [coordinator, ...sessions.filter((id) => id !== coordinator)] : sessions;
+    const visible = ordered.slice(0, coordinator ? 1 : 2);
+    const remaining = ordered.slice(visible.length);
+    let sessionContent = '<div class="list">' + visible.map((id) => sessionRow(project, w, id)).join('') + '</div>';
+    if (remaining.length) sessionContent += '<div class="section">' + disclosure('sessions:' + project.projectId + ':' + w.workflowId, 'More sessions · ' + remaining.length, '<div class="list">' + remaining.map((id) => sessionRow(project, w, id)).join('') + '</div>') + '</div>';
     if (!sessions.length) sessionContent = '<p class="notice">No participating OpenCode session is projected.</p>';
-    sessionContent += '<p class="notice section">Session links show membership. Model, token, cost, and output telemetry are not enabled here.</p>';
-    const attention = attentionText(w);
-    const boundaries = (attention ? '<div class="callout"><strong>Open boundaries</strong><div class="notice">' + esc(attention) + '.</div></div>' : '') + '<dl class="facts">' +
-      '<div class="fact"><dt>Current agent</dt><dd>' + esc(p.activeAgent || 'Not projected') + '</dd></div>' +
-      '<div class="fact"><dt>Execution stage</dt><dd class="mono">' + esc(p.executionStage || 'Not projected') + '</dd></div>' +
+    sessionContent += '<p class="notice section">Session labels describe membership, not live activity. Session titles and per-agent activity are not available; numbered labels distinguish sessions in this view.</p>';
+    const boundaries = '<dl class="facts">' +
+      '<div class="fact"><dt>Next agent</dt><dd>' + esc(p.activeAgent ? roleName(p.activeAgent) : 'Not projected') + '</dd></div>' +
+      '<div class="fact"><dt>Execution stage</dt><dd>' + esc(stageName(p)) + '</dd></div>' +
       '<div class="fact"><dt>Product Acceptance</dt><dd>' + badge(p.productAcceptance?.status || 'Not projected', p.productAcceptance?.status === 'failed' ? 'danger' : p.productAcceptance?.status === 'passed' ? 'ok' : 'neutral') + '</dd></div>' +
       '<div class="fact"><dt>Knowledge sync</dt><dd>' + (p.knowledgeSync?.valid === true ? badge('valid', 'ok') : p.knowledgeSync?.valid === false ? badge('stale', 'warn') : 'Not projected') + '</dd></div>' +
-      '<div class="fact"><dt>Last meaningful activity</dt><dd>' + time(p.recentActivityAt) + '</dd></div></dl><p class="notice section">Counts are signals, not causal explanations. OQ owners, gate evidence, and detailed blockers are not included in this projection.</p>';
-    main.innerHTML = workflowWarnings(w) + metrics + '<div class="detail-grid"><div class="stack">' + panel('Current work', work, 'Latest projected step state') + panel('OpenCode sessions', sessionContent, plural(sessions.length, 'session')) + '</div><div class="stack">' + panel('Gates & context', boundaries) + publisherDetails(project, w) + '</div></div><p class="provenance">Read-only · Loom-authoritative workflow state. Display refresh does not control execution.</p>';
+      '<div class="fact"><dt>Last meaningful activity</dt><dd>' + time(p.recentActivityAt) + '</dd></div></dl><p class="notice section">Counts are signals, not causal explanations. Budget measures agent dispatches, not money or task completion. Resolve questions and supply evidence through Loom; this dashboard cannot change them.</p>';
+    main.innerHTML = workflowWarnings(w) + metrics + '<div class="detail-grid"><div class="stack">' +
+      (c?.request ? panel('Requested outcome', '<p>' + description(c.request) + '</p>') : '') +
+      panel('Current work', work, 'Latest projected step state') + boundaryPanels(project, w) + panel('OpenCode sessions', sessionContent, plural(sessions.length, 'session')) + '</div><div class="stack">' + panel('Gates & context', boundaries) + publisherDetails(project, w) + workflowTechnical(project, w) + '</div></div><p class="provenance">Read-only · Loom-authoritative workflow state. Display refresh does not control execution.</p>';
   }
   function renderSession(project, w, sessionId) {
     workflowCrumbs(project, w, true);
-    setHeading('Session context · ' + projectName(project), 'OpenCode session', '<span class="mono path">' + esc(sessionId) + '</span>', badges(w));
+    setHeading('Session context · ' + projectName(project), 'OpenCode session', esc(sessionName(w, sessionId) + ' · ' + titleFor(project, w)), badges(w));
     const p = resolved(w);
     const present = arr(p?.participatingSessionIds).includes(sessionId);
     const membership = w.consistency === 'conflict'
       ? '<div class="callout" data-tone="danger"><strong>Session membership unresolved</strong><div class="notice">Workflow publishers conflict. No session membership or workflow-state winner is selected.</div></div>'
-      : present ? '<dl class="facts"><div class="fact"><dt>Session ID</dt><dd class="mono">' + esc(sessionId) + '</dd></div><div class="fact"><dt>Workflow</dt><dd>' + link(workflowHref(project, w), titleFor(project, w)) + '<div class="meta mono">' + esc(w.workflowId) + '</div></dd></div></dl>'
+      : present ? '<dl class="facts"><div class="fact"><dt>Session</dt><dd>' + esc(sessionName(w, sessionId)) + '</dd></div><div class="fact"><dt>Workflow</dt><dd>' + link(workflowHref(project, w), titleFor(project, w)) + '</dd></div></dl><p class="notice section">Membership is known. A session title or running agent has not been established by this projection.</p>'
       : '<p class="notice">This participating session is no longer available in the selected projection. The requested URL is retained; absence does not prove deletion.</p>';
-    main.innerHTML = workflowWarnings(w) + panel('Loom membership', membership) + '<section class="panel section"><div class="panel-head"><h2>OpenCode telemetry</h2>' + badge('Supplemental · not enabled') + '</div><div class="panel-body"><p class="notice">Not enabled / unavailable. Missing telemetry is not treated as zero or success.</p></div></section><p class="section">' + link(workflowHref(project, w), '← Return to workflow') + '</p>';
+    main.innerHTML = workflowWarnings(w) + panel('Loom membership', membership) + '<section class="panel section"><div class="panel-head"><h2>OpenCode telemetry</h2>' + badge('Supplemental · not enabled') + '</div><div class="panel-body"><p class="notice">Not enabled / unavailable. Missing telemetry is not treated as zero or success.</p></div></section>' + workflowTechnical(project, w, sessionId) + '<p class="section">' + link(workflowHref(project, w), '← Return to workflow') + '</p>';
   }
   function remember(map, key, value, limit) {
     if (map.has(key)) map.delete(key);
@@ -374,10 +375,10 @@ export const dashboardScript = `
     }
   }
   function renderProjectionWait(r, detail) {
-    crumbs.innerHTML = link(fleetHref(), 'Fleet') + (r.projectId ? '<span aria-hidden="true">/</span><span>' + esc(shortId(r.projectId)) + '</span>' : '');
+    crumbs.innerHTML = link(fleetHref(), 'Fleet') + (r.projectId ? '<span aria-hidden="true">/</span><span>Requested project</span>' : '');
     setHeading('Projection pending', 'Waiting for Loom projection…', 'Your requested location is preserved.');
     const href = r.workflowId && r.projectId ? '#/project/' + enc(r.projectId) : fleetHref();
-    main.innerHTML = empty('Requested state is not currently projected.', detail + ' The dashboard does not treat repeated reads of the same projection as proof that the target disappeared.', link(href, r.workflowId ? 'Return to Project' : 'Return to Fleet'));
+    main.innerHTML = empty('Requested state is not currently projected.', detail + ' The dashboard does not treat repeated reads of the same projection as proof that the target disappeared.', link(href, r.workflowId ? 'Return to Project' : 'Return to Fleet')) + technical('waiting:' + location.hash, [['Project ID', r.projectId], ['Workflow ID', r.workflowId], ['Session ID', r.sessionId]]);
   }
   function focusKey(key) {
     return [...document.querySelectorAll('[data-key]')].find((node) => node.dataset.key === key && node.getClientRects().length);
@@ -452,7 +453,6 @@ export const dashboardScript = `
       const response = await fetch('/api/fleet', { cache: 'no-store', signal: controller.signal });
       if (!response.ok) throw new Error('Fleet request failed');
       const next = await response.json();
-      // Pausing freezes the displayed snapshot, including an already pending read.
       if (!manual && (state.paused || epoch !== state.displayEpoch)) return;
       if (!validFleet(next)) throw new Error('Invalid fleet projection');
       const signature = JSON.stringify(next.projects);
