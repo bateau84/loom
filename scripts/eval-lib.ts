@@ -1,12 +1,13 @@
 import { existsSync, readFileSync, readdirSync } from "node:fs"
 import { join } from "node:path"
 
-export type EvalExecution = "runtime" | "role-decision"
+export type EvalExecution = "runtime" | "role-decision" | "conversation-response"
 
 export type ActionAssertion = {
   tool: string
   arg?: string
-  equals?: string
+  equals?: string | number | boolean | null
+  args?: Record<string, string | number | boolean | null>
   ends_with?: string
   contains?: string
 }
@@ -16,6 +17,7 @@ export type EvalCase = {
   agent: string
   skill?: string
   execution: EvalExecution
+  target_timeout_seconds?: number
   requirements: string[]
   prompt: string
   trap: string
@@ -31,6 +33,7 @@ export type EvalCase = {
     any_of?: ActionAssertion[][]
   }
   output?: {
+    min_source_urls?: number
     contains?: string[]
     forbids?: string[]
   }
@@ -38,6 +41,7 @@ export type EvalCase = {
 }
 
 export type EvalSuite = {
+  default?: boolean
   version: number
   name: string
   cases: EvalCase[]
@@ -52,6 +56,7 @@ export function loadSuite(path: string): EvalSuite {
 
 export function validateSuite(suite: EvalSuite, repoRoot: string) {
   const errors: string[] = []
+  if (suite.default !== undefined && typeof suite.default !== "boolean") errors.push("suite default must be a boolean")
   if (suite.version !== 1) errors.push("suite version must be 1")
   if (!suite.name?.trim()) errors.push("suite name is required")
   if (!Array.isArray(suite.cases) || suite.cases.length === 0) {
@@ -81,8 +86,11 @@ export function validateSuite(suite: EvalSuite, repoRoot: string) {
       }
     }
 
-    if (!["runtime", "role-decision"].includes(item.execution)) {
-      errors.push(`${label}: execution must be runtime or role-decision`)
+    if (!["runtime", "role-decision", "conversation-response"].includes(item.execution)) {
+      errors.push(`${label}: execution must be runtime, role-decision, or conversation-response`)
+    }
+    if (item.target_timeout_seconds !== undefined && (!Number.isInteger(item.target_timeout_seconds) || item.target_timeout_seconds < 30 || item.target_timeout_seconds > 600)) {
+      errors.push(`${label}: target_timeout_seconds must be an integer from 30 to 600`)
     }
     if (!item.prompt?.trim()) errors.push(`${label}: prompt is required`)
     if (!item.trap?.trim()) errors.push(`${label}: trap is required`)
@@ -117,6 +125,9 @@ export function validateSuite(suite: EvalSuite, repoRoot: string) {
       }
     }
     if (item.output) {
+      if (item.output.min_source_urls !== undefined && (!Number.isInteger(item.output.min_source_urls) || item.output.min_source_urls < 1 || item.output.min_source_urls > 100)) {
+        errors.push(`${label}: output.min_source_urls must be an integer from 1 to 100`)
+      }
       for (const key of ["contains", "forbids"] as const) {
         const values = item.output[key]
         if (values !== undefined && (!Array.isArray(values) || values.some((value) => typeof value !== "string" || !value))) {
@@ -140,12 +151,23 @@ export function validateSuite(suite: EvalSuite, repoRoot: string) {
         if (hasArg && (typeof assertion.arg !== "string" || !assertion.arg.trim())) {
           errors.push(`${prefix}.arg must be a non-empty string when present`)
         }
-        const comparators = [assertion.equals, assertion.ends_with, assertion.contains].filter((value) => value !== undefined)
-        if (hasArg) {
-          if (comparators.length !== 1 || comparators.some((value) => typeof value !== "string")) {
-            errors.push(`${prefix} with arg requires exactly one string comparator: equals, ends_with, or contains`)
+        const comparatorKeys = (["equals", "ends_with", "contains"] as const).filter((key) => Object.prototype.hasOwnProperty.call(assertion, key))
+        const scalar = (value: unknown) => value === null || typeof value === "string" || typeof value === "boolean" || (typeof value === "number" && Number.isFinite(value))
+        if (assertion.args !== undefined) {
+          if (hasArg || comparatorKeys.length) errors.push(`${prefix}: args cannot be combined with arg/comparators`)
+          if (!assertion.args || typeof assertion.args !== "object" || Array.isArray(assertion.args) || !Object.keys(assertion.args).length || Object.entries(assertion.args).some(([key, value]) => !key.trim() || !scalar(value))) {
+            errors.push(`${prefix}.args must be a non-empty map of argument names to JSON scalars`)
           }
-        } else if (comparators.length !== 0) {
+        } else if (hasArg) {
+          if (comparatorKeys.length !== 1) {
+            errors.push(`${prefix} with arg requires exactly one comparator: equals, ends_with, or contains`)
+          } else {
+            const key = comparatorKeys[0]!
+            if (key === "equals" ? !scalar(assertion[key]) : typeof assertion[key] !== "string") {
+              errors.push(`${prefix}: equals requires a JSON scalar; ends_with/contains require strings`)
+            }
+          }
+        } else if (comparatorKeys.length !== 0) {
           errors.push(`${prefix} comparators require arg`)
         }
       }

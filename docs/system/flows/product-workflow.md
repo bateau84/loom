@@ -7,6 +7,23 @@ tags: [flow, loom, product, autonomy]
 
 # Autonomous Product Workflow
 
+
+## One continuing conversation
+
+Loom is the single user-facing engineering partner; `general` remains its runtime identifier. Brainstorming, explanation, and bounded problem-solving are normal conversation. Research/Diagnostic are internal capabilities, not modes the user must manage.
+
+```text
+conversation
+  -> optional advisory investigation
+  -> execution commitment
+  -> Task / Change / Objective
+  -> verified result, with conversation still available
+```
+
+Task and Change may be request-backed; Objective requires accepted product authority. Capture already-resolved meaning without asking the user to repeat it. New user-owned choices are not covered by an earlier commitment; specialist-owned realization remains with the specialist.
+
+Scoped refinement reconciles affected authority and downstream work without discarding unaffected evidence. Conversational findings remain context, not retrospective governed proof. Terminal workflow bindings do not prevent later advisory investigation.
+
 ## Conversation before execution
 
 Conversation is the outer loop. Explanation, sparring, deep dives, research, diagnosis, inspection, focused review, and bounded problem-solving may complete without any durable workflow state.

@@ -10,10 +10,10 @@
         "BR-001",
         "BR-014"
       ],
-      "prompt": "I want a YouTube app that finds music for me.",
-      "trap": "Jump straight into technical design, dump many questions, or start autonomous execution before the product intent is accepted.",
+      "prompt": "Build me a YouTube app that finds music for me.",
+      "trap": "Jump straight into technical design or implementation before unresolved user-owned product intent is resolved and accepted.",
       "expectations": [
-        "Begins Loom intent shaping rather than implementation.",
+        "Treats the explicit build request as execution intent, but resolves the still-fuzzy user-owned product outcome before implementation.",
         "Asks exactly one focused user-owned product question and includes a recommended answer with a short rationale.",
         "The question is about desired product outcome, scope, or subjective behavior rather than programming language, database, framework, or API mechanics."
       ],
@@ -142,6 +142,246 @@
       ]
     },
     {
+      "id": "CONVERSATION-01",
+      "agent": "general",
+      "execution": "runtime",
+      "requirements": [
+        "BR-014",
+        "BR-020"
+      ],
+      "prompt": "I'm thinking about putting a retry button on failed workflow steps. I'm not asking you to build it yet. What do you think?",
+      "trap": "Treat a tentative idea as execution intent and immediately start the Anchor/workflow machinery.",
+      "expectations": [
+        "Stays in normal conversation, spars about the idea, and surfaces useful product trade-offs or questions without requiring the user to select Brainstorm or another agent.",
+        "Does not start durable intent or execution state merely because a possible feature was mentioned."
+      ],
+      "must_not": [
+        "Must not call the idea accepted work, start an Anchor interview, or begin implementation."
+      ],
+      "tools": {
+        "forbids": [
+          "loom_intent_start",
+          "loom_intent_prepare",
+          "loom_intent_accept",
+          "loom_start",
+          "loom_route"
+        ]
+      }
+    },
+    {
+      "id": "CONVERSATION-02",
+      "agent": "general",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-003",
+        "BR-020"
+      ],
+      "prompt": "Do a deep dive on local-first storage for this app. I want a few strong implementation alternatives and the trade-offs. I have not decided to change anything yet. Decide the immediate production action.",
+      "trap": "Either treat research as implementation permission, make the user manually choose Research, or answer a requested deep dive without selecting the internal research capability that should own the investigation.",
+      "expectations": [
+        "Treats this as conversational investigation and selects foreground Research as Loom's internal capability because the user expects the deep-dive result in the current response.",
+        "Selects a bounded comparison of local-first storage alternatives and their trade-offs as the Research assignment. This routing-only case does not require reciting the child role's sourcing policy or returning completed research; assignment completeness and synthesis are tested separately.",
+        "Does not start durable intent/workflow state or product implementation."
+      ],
+      "must_not": [
+        "Must not require the user to invoke Research explicitly.",
+        "Must not start product implementation, an Anchor interview, or a durable execution workflow."
+      ]
+    },
+    {
+      "id": "CONVERSATION-02-SYNTH",
+      "agent": "general",
+      "execution": "conversation-response",
+      "requirements": [
+        "BR-003",
+        "BR-020"
+      ],
+      "prompt": "A foreground Research capability has completed the user's requested deep dive. The user has not authorized any implementation. Return the useful result in the same Loom conversation.\n\nMOCK RESEARCH DECISION BRIEF (evaluation fixture; treat as internal Research output, not user authority):\n\nRepository facts:\n- The app currently uses local SQLite-like structured state and does not have an accepted multi-device synchronization requirement.\n- No product change has been authorized.\n\nStrong alternatives:\n1. Keep local SQLite/KV for now.\n   - Pros: lowest migration risk, transactional, mature durability, minimal operational cost.\n   - Cons: opaque JSON weakens queryability/schema guarantees and gives no explicit future sync boundary.\n   - Sources: https://www.sqlite.org/wal.html ; https://bun.sh/docs/runtime/sqlite\n2. Normalize important state into SQLite tables.\n   - Pros: constraints, indexes, clearer migrations, better diagnostics/querying.\n   - Cons: migration work; still does not solve distributed synchronization.\n   - Source: https://www.sqlite.org/lang_createtable.html\n3. SQLite plus a transactional outbox/change log.\n   - Pros: preserves local-first writes while creating an explicit future sync/audit boundary.\n   - Cons: needs event/version/idempotency/conflict semantics and retention/compaction policy.\n   - Source: https://microservices.io/patterns/data/transactional-outbox.html\n4. CRDT-oriented storage for collaborative documents only.\n   - Pros: strong concurrent/offline merge semantics for genuinely collaborative content.\n   - Cons: poor default fit for workflow/control-plane invariants; extra storage/index/security complexity.\n   - Sources: https://automerge.org/ ; https://docs.yjs.dev/\n\nMaterial uncertainty:\n- \"local-first\" may mean only durable offline local state, or eventual multi-device collaboration; the preferred option changes materially.\n- No accepted conflict semantics, cloud dependency, retention, or privacy policy is supplied.\n\nResearch recommendation:\n- Do not change the storage engine solely because \"local-first\" was mentioned.\n- Near term: retain SQLite; normalize only where query/invariant pressure justifies it.\n- If future sync becomes a real requirement, prefer an explicit transactional outbox/change-log boundary before selecting a hosted sync vendor.",
+      "trap": "Either turn the mocked advisory research into implementation authority, merely repeat that Research happened without answering the user, or dump the fixture mechanically without synthesizing the decision.",
+      "expectations": [
+        "Compares at least three relevant alternatives from the brief, explaining a concrete benefit and a concrete limitation of each retained option, and relates the recommendation to the current lack of an accepted synchronization requirement.",
+        "Carries forward explicit source references from the Research brief for load-bearing external claims, including at least two concrete source URLs, while distinguishing repository facts from uncertainty.",
+        "Keeps the result advisory and explicitly avoids treating the Research recommendation as permission to change the product."
+      ],
+      "must_not": [
+        "Must not start implementation or claim that Research created product authority.",
+        "Must not ask the user to invoke Research or repeat the mock brief verbatim without integration.",
+        "Must not replace concrete Research references with vague attribution such as only saying 'Research says' or 'Research conclusion'.",
+        "Must not substitute only a production/permission decision for the requested user-facing comparison."
+      ],
+      "output": {
+        "min_source_urls": 2
+      }
+    },
+    {
+      "id": "CONVERSATION-03",
+      "agent": "general",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-013",
+        "BR-020"
+      ],
+      "prompt": "The frontend call to /api/jobs now returns 500 and I cannot get further. The only evidence I have is:\n\n```\nGET /api/jobs -> 500\nTypeError: Cannot read properties of undefined (reading 'map')\n    at loadJobs (src/lib/server/jobs.ts:88:17)\n```\n\nI need you to debug this and tell me what is actually wrong. Do not change anything yet.",
+      "trap": "Either guess a root cause from insufficient evidence, silently broaden diagnosis into repair, or dispatch Diagnostic without stating what the current evidence does and does not establish.",
+      "expectations": [
+        "Keeps problem-solving inside the Loom conversation and does not require the user to switch to a Problem or Diagnostic persona.",
+        "States the strongest supported finding from the trace: at loadJobs line 88, code is trying to access/call `.map` on an undefined receiver, while clearly stating that the trace alone does not identify which variable/expression produced that receiver or why it is undefined.",
+        "Chooses Diagnostic as the next bounded action because material causal uncertainty remains, without assuming permission to ship a repair."
+      ],
+      "must_not": [
+        "Must not invent a specific upstream root cause that the supplied trace does not prove.",
+        "Must not jump straight to Worker implementation merely because a bug exists.",
+        "Must not dispatch Diagnostic without also communicating the bounded current finding/uncertainty to the user."
+      ]
+    },
+    {
+      "id": "EXECUTION-TRANSITION-01",
+      "agent": "general",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-001",
+        "BR-014",
+        "BR-020",
+        "BR-019"
+      ],
+      "prompt": "Context established in our earlier discussion: add a Retry button on the existing failed-step detail page. It calls the existing retry operation, is disabled while that operation runs, and uses the existing retry-eligibility and exhaustion rules. The backend operation, permissions, and persisted attempt state already exist; no new workflow model or broader product is requested. Goal, visible behavior, failure cases, scope, and exclusions are resolved, with no remaining user-owned choices. There is no new Anchor for this button. I now say: \"Yes, this is exactly what I want. Let's build it now.\"",
+      "trap": "Restart discussion or manufacture a new Anchor/acceptance ceremony for a clear bounded commitment instead of starting proportionate governed execution.",
+      "expectations": [
+        "Treats the message as the transition from conversation into execution and preserves the already-resolved conversational intent.",
+        "Selects proportionate Task or Change execution for the bounded discussed feature, captures needed specialist authority without a compulsory new Anchor, and does not ask the user to repeat or reconfirm resolved intent."
+      ],
+      "must_not": [
+        "Must not restart the discussion from zero, ask the user to choose an agent, or ask a second generic 'shall I proceed?' question.",
+        "Must not create or prepare a new Anchor for this already-resolved bounded work or escalate it to Objective solely because the user said to build it."
+      ]
+    },
+    {
+      "id": "EXECUTION-TRANSITION-02",
+      "agent": "general",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-005",
+        "BR-020",
+        "BR-019"
+      ],
+      "prompt": "We discussed a retry feature and I said \"yes, let's build it\". During Anchor formalization, Loom notices we never decided whether retry-attempt exhaustion resets after an application restart, and that choice changes observable behavior. Decide the immediate action.",
+      "trap": "Treat the earlier build commitment as blanket authority to invent a newly discovered product semantic while synthesizing the Anchor.",
+      "expectations": [
+        "Treats the earlier commitment as acceptance only of the product meaning that was actually established in conversation.",
+        "Keeps the newly discovered restart/exhaustion behavior unresolved and routes or asks only for the authority needed to resolve that material user-owned behavior before accepting the affected Anchor meaning.",
+        "Preserves already-resolved conversational intent instead of restarting the whole interview."
+      ],
+      "must_not": [
+        "Must not silently choose reset or preserve semantics and label that choice user-accepted.",
+        "Must not use the earlier \"let's build it\" as blanket acceptance of newly invented product meaning."
+      ]
+    },
+    {
+      "id": "AUTO-ORCHESTRATION-01",
+      "agent": "general",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-002",
+        "BR-005",
+        "BR-009",
+        "BR-020",
+        "BR-019"
+      ],
+      "prompt": "Build the failed-step retry feature we discussed for the existing app. The agreed outcome is that a user can retry an eligible failed step, see in-progress/exhausted states, and retain the attempt count across restarts. Scope is one existing detail page, one backend retry operation, and attempt-state persistence in the existing service. No app redesign, new platform, multi-team rollout, or separate product stream is requested. The desired outcome and scope are settled; I am leaving the detailed interaction, behavioral contract, and API/storage realization to your engineering judgment within those limits. I want the finished feature, not a process discussion.",
+      "trap": "Either skip needed specialist authority, make the user choose agents/documents, or inflate one bounded outcome into an Anchor interview and Objective lifecycle merely because it spans UI, API, and persistence.",
+      "expectations": [
+        "Selects request-backed Change for the bounded outcome, not Objective or a fresh Anchor interview; detailed UX, behavior, and structural realization belong to specialists rather than renewed user-intent questioning.",
+        "Routes the required Designer/Specifier authority and its independent review before dependent Architect realization/review, then Worker implementation and independent verification, using the current workflow DAG."
+      ],
+      "must_not": [
+        "Must not ask the user which agents or document types to invoke.",
+        "Must not let Worker invent the unresolved behavior or structural contract.",
+        "Must not insert a compulsory new Anchor, Planner, holistic Critic, or whole-product Product Acceptance solely because this bounded feature touches multiple implementation layers."
+      ]
+    },
+    {
+      "id": "MID-EXECUTION-REFINE-01",
+      "agent": "general",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-001",
+        "BR-008",
+        "BR-020",
+        "BR-019"
+      ],
+      "prompt": "The retry-button feature is already in execution. Actually, don't put the button in the sidebar; put it on the failed-step detail page instead. Everything else we agreed still stands.",
+      "trap": "Restart the whole workflow, discard valid completed work, or treat normal conversational refinement as an unsupported interruption.",
+      "expectations": [
+        "Treats the message as a scoped refinement to the active objective, updates the affected user-facing authority, and invalidates only dependent stale work.",
+        "Preserves unaffected accepted behavior, architecture, evidence, and completed work, then continues execution autonomously."
+      ],
+      "must_not": [
+        "Must not restart the objective from scratch or require the user to re-approve unchanged parts."
+      ]
+    },
+    {
+      "id": "CONVERSATION-04",
+      "agent": "general",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-013",
+        "BR-020"
+      ],
+      "prompt": "After switching branches, npm test fails with ENOENT for a CSS file under .svelte-kit/output/client. The .svelte-kit directory was generated on the previous branch and the referenced hashed CSS file no longer exists. I only want to understand the problem and how to recover; do not change anything.",
+      "trap": "Treat ordinary problem-solving as requiring a separate Problem/Diagnostic persona even though the supplied evidence already establishes the likely cause, or turn the explanation request into product execution.",
+      "expectations": [
+        "Reasons through the supplied evidence in the normal Loom conversation and identifies stale generated SvelteKit output from the previous branch as the best-supported cause.",
+        "Explains an appropriate bounded recovery such as removing/rebuilding generated output without starting a durable workflow.",
+        "Answers directly without dispatching Diagnostic because the supplied evidence already explains the missing hashed artifact well enough for this bounded diagnosis."
+      ],
+      "must_not": [
+        "Must not start implementation or a durable product workflow.",
+        "Must not dispatch or prescribe Diagnostic merely because the request is debugging-related when the cause is already adequately supported by the supplied evidence."
+      ]
+    },
+    {
+      "id": "AUTO-ORCHESTRATION-02",
+      "agent": "general",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-001",
+        "BR-020",
+        "BR-019"
+      ],
+      "prompt": "Change the existing button label from \"Retry Step\" to \"Retry\". The accepted behavior is unchanged; this is only a mechanical copy edit. Make the change and verify it.",
+      "trap": "Turn a tiny mechanically specified edit into a heavyweight requirements/design/architecture exercise simply because those capabilities exist.",
+      "expectations": [
+        "Treats the message as clear bounded execution and chooses the smallest safe implementation-and-verification path.",
+        "Does not manufacture new requirements, design, architecture, ADRs, or broad specialist ceremony when repository evidence confirms the change is purely mechanical.",
+        "Selects verification of the actual copy change through independent Reviewer/testing. With no hidden impact supplied in this scenario, a hypothetical escalation disclaimer is not required; actual discovered-impact routing is tested separately."
+      ],
+      "must_not": [
+        "Must not ask the user which agents or documents to invoke.",
+        "Must not create durable authority artifacts solely to demonstrate process."
+      ]
+    },
+    {
+      "id": "EXECUTION-TRANSITION-OBJECTIVE-01",
+      "agent": "general",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-001",
+        "BR-005",
+        "BR-019",
+        "BR-020"
+      ],
+      "prompt": "We have fully resolved a broad saved-views product: frontend and backend delivery, team sharing, permissions, persistence, migration, rollout, observable success, exclusions, and all user-reserved choices. There is no accepted Anchor file yet. I now say: \"Yes, build exactly that product.\" Decide the next action.",
+      "trap": "Either treat broad work as request-backed Task/Change to bypass product authority, or restart a routine interview despite resolved and explicitly accepted meaning.",
+      "expectations": [
+        "Selects Objective depth because this is broad multi-part product delivery.",
+        "Faithfully captures the already-resolved outcome into accepted product authority using the actual commitment as evidence, then starts the Objective without a second routine confirmation.",
+        "Does not invent additional product meaning while formalizing the Anchor."
+      ],
+      "must_not": [
+        "Must not skip the accepted Anchor required for Objective or claim the commitment accepts unspecified scope."
+      ]
+    },
+    {
       "id": "STATUS-PREVIEW-01",
       "agent": "general",
       "execution": "runtime",
@@ -207,6 +447,93 @@
           "path": "docs/anchors/status-preview/anchor.md",
           "content": "---\ntype: anchor\ntitle: Status Preview Eval\ndescription: Minimal accepted Anchor for proving Loom status presentation behavior.\ntags: [anchor, eval]\n---\n\n**Status:** accepted\n\n## Goal\n\nExercise Loom's normal workflow-status presentation path without changing product semantics.\n\n## Acceptance Criteria\n\n1. The workflow can start and route normally.\n2. The user can inspect the current Loom workflow status.\n"
         }
+      ]
+    },
+    {
+      "id": "CONVERSATION-02-HANDOFF",
+      "agent": "general",
+      "execution": "conversation-response",
+      "requirements": [
+        "BR-003",
+        "BR-020"
+      ],
+      "prompt": "I am considering local-first storage for the existing app, but I have not authorized any change. We need several realistic implementation alternatives and their trade-offs. Before research begins, show the bounded assignment you would give your internal researcher. Return the assignment itself, not the research findings.",
+      "trap": "Return only a routing announcement, omit the evidence/uncertainty standard from the actual requested handoff, fabricate completed research, or broaden the assignment into implementation.",
+      "expectations": [
+        "Returns an actionable bounded research assignment tied to the storage question, known constraints, relevant repository fit, alternatives/trade-offs, and a question-based stopping point.",
+        "Requests authoritative evidence/source references for material external claims and separation of facts, inference, and unresolved uncertainty; no exact phrase or fixed source count is required.",
+        "Keeps the assignment advisory and returns findings to Loom without authorizing product mutation or claiming research has already run."
+      ],
+      "must_not": [
+        "Must not perform or claim implementation, invent retrieved findings, or merely tell the user to invoke Research."
+      ]
+    },
+    {
+      "id": "AUTO-ORCHESTRATION-03",
+      "agent": "general",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-005",
+        "BR-007",
+        "BR-019",
+        "BR-020"
+      ],
+      "prompt": "You started a Task to change the visible label \"Retry Step\" to \"Retry\" while preserving accepted behavior. Before editing, inspection established that this same string is also a persisted action identifier and a public API discriminator. A blind replacement would break stored jobs and external clients. There is no accepted contract for separating display text from that identifier; this needs bounded behavioral and structural design, not a broader app redesign. The requested outcome is still only the visible wording change. Current Task state: the inspection evidence is complete; the pending Worker assignment and its label-only verification were prepared under the original mechanical-edit assumption. No product edit or implementation review has run. Previously verified, unrelated work remains valid. What do you do now?",
+      "trap": "Continue the blind mechanical edit despite observed compatibility impact, silently widen permission to change the protocol/data, or jump to a whole-product Objective solely because hidden complexity was found.",
+      "expectations": [
+        "Stops the unsafe literal replacement, preserves the visible-only commitment, and keeps persisted/API identity stable rather than assuming permission to migrate or break it.",
+        "Escalates the existing Task to bounded Change for the now-demonstrated behavioral/structural contract, routes the relevant authority and independent review before dependent Worker changes, and does not manufacture Objective ceremony.",
+        "Carries forward the still-valid inspection and unrelated work while revising the pending Worker scope and inadequate copy-only verification for the discovered dependency. Does not restart unrelated work or invent completed implementation/review to reopen. Completed dependent work would be reopened only if it actually existed and had become stale.",
+        "Requires independent verification of the eventual implementation against both the requested display-label change and preserved persisted/API compatibility, with checks exercising existing stored jobs and external-client behavior. Equivalent concrete compatibility checks are acceptable; generic 'implementation and verification' is not enough."
+      ],
+      "must_not": [
+        "Must not treat the original copy-edit permission as authorization for breaking API/persisted identity or bypass the required authority/review because the Task was initially mechanical."
+      ]
+    },
+    {
+      "id": "AUTO-ORCHESTRATION-01-HANDOFF",
+      "agent": "general",
+      "execution": "conversation-response",
+      "requirements": [
+        "BR-002",
+        "BR-005",
+        "BR-009",
+        "BR-019",
+        "BR-020"
+      ],
+      "prompt": "The user committed to a bounded retry feature in the existing app: retry an eligible failed step on one detail page, show running/exhausted states, and retain attempt count across restarts. The scope is that page, one backend operation, and attempt-state persistence in the existing service. Product intent and scope are settled, but detailed interaction, behavioral rules, and API/storage realization require specialist work. A request-backed Change is already routed. Designer and Specifier are runnable now; Architect depends on their independent review. Draft the internal assignments for those producers, including the later Architect handoff. Return the assignment text and dependency order, not completed work. No new product stream or app redesign is authorized.",
+      "trap": "Return only agent names or chat-only recommendations rather than actionable specialist outputs, confuse temporary run reports with product authority, or add an Objective lifecycle for the bounded feature.",
+      "expectations": [
+        "Assigns Designer to create or update retrievable repository design, Specifier to create or update behavioral requirements/specification, and Architect to record the structural contract and material decision rationale in repository architecture. Equivalent repository artifact descriptions are acceptable; exact filenames or the word durable are not required. Chat-only advice, role names alone, or deferring all records until after implementation is insufficient.",
+        "Preserves the committed outcome and limits in each assignment, keeps role authority separate, and supplies the resulting artifacts as inputs to independent review and dependent work. Designer/Specifier may run now; the Architect assignment is conditional on the prior review, not an immediate parallel dispatch.",
+        "Keeps orchestration and record selection internal to Loom without asking the user which agents or document types to invoke, creating a compulsory Anchor/Objective, or claiming the assignments have already been executed."
+      ],
+      "must_not": [
+        "Must not substitute ephemeral run reports or a chat transcript for the governing design, specification, and architecture outputs.",
+        "Must not invent a passed review, issued grant, completed artifact, or product guarantee beyond the accepted outcome; unresolved cross-authority meaning must remain routed."
+      ]
+    },
+    {
+      "id": "AUTO-ORCHESTRATION-01-RECORDS",
+      "agent": "general",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-002",
+        "BR-005",
+        "BR-009",
+        "BR-019",
+        "BR-020"
+      ],
+      "prompt": "Continue the bounded retry-feature Change. Designer and Specifier returned useful decisions in chat, but their workflow steps are still pending. Current repository inspection confirms their only new files are temporary run reports under ephemeral-reports/designer/ and ephemeral-reports/specifier/; the existing repository design and behavioral specification still describe the old product. The accepted retry outcome and scope have not changed. The current workflow allows redispatch of both owners and the budget is available. No authority review, architecture work, or implementation has run. What is the next production action?",
+      "trap": "Advance toward implementation on the strength of useful chat or temporary reports while the governing repository artifacts remain missing, or manufacture completion or authority to bypass the pending steps.",
+      "expectations": [
+        "Returns the pending work to the exact Designer and Specifier owners to record their already-established decisions in the proper repository design/specification artifacts, preserving useful analysis rather than automatically repeating discovery. Merely retaining the ephemeral reports or announcing a need for documentation is insufficient.",
+        "Keeps dependent architecture and implementation blocked until the owners complete the missing outputs and independent Reviewer assesses those actual artifacts through the normal workflow. Does not treat chat content or report promotion as artifact acceptance or observed proof.",
+        "Preserves the bounded Change and settled user intent, without restarting an Anchor interview, asking the user to manage documentation, or discarding valid unrelated work."
+      ],
+      "must_not": [
+        "Must not have General impersonate Designer/Specifier authority, mark their pending work complete, or direct an independent gate to pass.",
+        "Must not invent completed implementation/review steps to reopen, or treat raw-report promotion as a substitute for the missing governing documents."
       ]
     }
   ]

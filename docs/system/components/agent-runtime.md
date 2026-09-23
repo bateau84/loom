@@ -7,10 +7,12 @@ tags: [component, loom, agents]
 
 # Agent Runtime
 
-## Primary Contexts
+## Primary Context
 
-- `general` — user-facing governor, default intent interviewer, and autonomous scheduler.
-- `brainstorm` — optional explicit sparring mode; not required for normal Anchor shaping.
+- **Loom** is the single user-facing primary agent. The current OpenCode compatibility identifier is `general`.
+- Loom owns the continuing conversation across exploration, ordinary problem-solving, investigation, and execution.
+- `brainstorm` is an optional fresh subagent for independent ideation, not a second user-facing primary mode.
+- `diagnostic` and `research` may be used as fresh-context conversational investigation capabilities without implying permission to implement. They remain bounded internal capabilities rather than user-facing personas.
 
 ## Authority Contexts
 
@@ -43,4 +45,4 @@ Each subagent runs fresh and is given only its bounded objective/context.
 
 ## Intent methodology
 
-General loads `skills/intent-grilling/SKILL.md` for fuzzy product requests. The skill keeps interview methodology out of the always-loaded General directive and is inspired by one-question-at-a-time product grilling: recommendation with each question, resolve code/research-answerable branches independently, then converge on an Anchor.
+Loom loads `skills/intent-grilling/SKILL.md` after the conversation has crossed into committed product execution and user-owned product intent still needs resolution. The skill keeps interview methodology out of the always-loaded General directive and is inspired by one-question-at-a-time product grilling: recommendation with each question, resolve code/research-answerable branches independently, then converge on an Anchor.

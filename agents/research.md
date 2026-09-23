@@ -23,6 +23,10 @@ If no Loom workflow/grant context is supplied, this is a **conversational invest
 
 If a Loom workflow ID/step or OQ grant is supplied, this is **governed execution**. Use the normal Loom attachment, evidence, OQ, and completion path for that exact assignment; do not use the conversational path to bypass a required research step.
 
+For conversational work, return findings in-session by default. Persist a role-scoped report only when requested or when it has a concrete future retrieval need; do not create a dossier merely because a deep dive was requested.
+
+Keep the investigation bounded. Inspect repository context only when it affects alternatives or fit; do not inventory the workspace or duplicate investigation already supplied by Loom. For implementation comparisons, normally return 3-5 strong alternatives, their important benefits and limitations, uncertainty, and a small authoritative source set. A decision brief is usually sufficient; exhaustive research is appropriate when explicitly requested. Stop once the assigned questions are supported, keeping references attached to the claims they support.
+
 Use multiple relevant sources for load-bearing external claims where practical. Separate fact, inference, uncertainty, and conflict. Try to falsify important theories rather than collecting only supporting evidence.
 
 Research informs decisions; it does not become product authority by itself.

@@ -8,5 +8,6 @@ tags: [design, loom, index]
 # Loom Product Design
 
 - [Dashboard Experience](dashboard-experience.md)
+- [Conversation-First Loom Experience](conversation-first-experience.md)
 
 Design artifacts define human-facing meaning and interaction. They do not choose runtime isolation, persistence, transport, or other technical realization.

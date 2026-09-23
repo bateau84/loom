@@ -26,5 +26,6 @@ tags: [requirements, loom, index]
 - [BR-017 — Concurrent Sessions and Projects Are Compartmentalized](br-017-concurrent-sessions-projects-compartmentalized.md)
 - [BR-018 — External Operational Dashboard](br-018-external-operational-dashboard.md)
 - [BR-019 — Keep Workflow Ceremony Proportional](br-019-keep-workflow-ceremony-proportional.md)
+- [BR-020 — Conversation Is Loom's Primary Interface](br-020-conversation-is-primary-interface.md)
 
 Each requirement is its own OKF document so relationships, dependencies, retrieval, and future supersession remain explicit and machine-discoverable.

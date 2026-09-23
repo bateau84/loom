@@ -1,3 +1,5 @@
+import { validateSuite } from "./eval-lib"
+import { loadSuite } from "./eval-lib"
 import { describe, expect, test } from "bun:test"
 import {
   extractAssistantText,
@@ -57,5 +59,34 @@ describe("behavioral eval utilities", () => {
       summary: "ok",
     }))
     expect(grade.passed).toBe(true)
+  })
+})
+
+
+describe("conversation-first eval schema", () => {
+  const root = new URL("..", import.meta.url).pathname
+  const fixture = () => loadSuite(new URL("../evals/front-door.json", import.meta.url).pathname)
+  test("accepts conversation responses and optional-suite metadata", () => {
+    const suite = fixture()
+    suite.default = false
+    expect(validateSuite(suite, root)).toEqual([])
+    ;(suite as any).default = "false"
+    expect(validateSuite(suite, root).some((error) => error.includes("default"))).toBe(true)
+  })
+  test("accepts scalar equality and same-call argument conjunctions", () => {
+    const suite = fixture()
+    suite.cases = [suite.cases.find((item) => item.id === "CONVERSATION-01")!]
+    suite.cases[0]!.actions = { requires: [{ tool: "subagent", args: { agent: "research", background: false } }, { tool: "subagent", arg: "background", equals: false }] }
+    expect(validateSuite(suite, root)).toEqual([])
+    suite.cases[0]!.actions!.requires![0]!.arg = "agent"
+    expect(validateSuite(suite, root).some((error) => error.includes("cannot be combined"))).toBe(true)
+  })
+  test("rejects invalid response limits", () => {
+    const suite = fixture()
+    suite.cases[0]!.target_timeout_seconds = 601
+    expect(validateSuite(suite, root).some((error) => error.includes("target_timeout"))).toBe(true)
+    delete suite.cases[0]!.target_timeout_seconds
+    suite.cases[0]!.output = { min_source_urls: 0 }
+    expect(validateSuite(suite, root).some((error) => error.includes("min_source_urls"))).toBe(true)
   })
 })

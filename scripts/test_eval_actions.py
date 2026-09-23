@@ -1380,5 +1380,168 @@ class ActionAssertionTests(unittest.TestCase):
         self.assertTrue(failures[1].startswith("forbidden action observed:"))
 
 
+
+
+class ConversationCompositionTests(unittest.TestCase):
+    def test_newer_main_status_case_and_conversation_navigation_survive(self):
+        suite = json.loads((RUN_EVALS.ROOT / "evals" / "front-door.json").read_text())
+        cases = {case["id"]: case for case in suite["cases"]}
+        self.assertTrue({"INTENT-01", "INTENT-02", "INTENT-03", "AUTONOMY-01", "AUTONOMY-02", "ROUTING-01", "OQ-ROUTE-01", "STATUS-PREVIEW-01"}.issubset(cases))
+        status = cases["STATUS-PREVIEW-01"]
+        self.assertEqual(status["execution"], "runtime")
+        self.assertEqual(len(status["actions"]["any_of"]), 2)
+        self.assertEqual(status["fixture_files"][0]["path"], "docs/anchors/status-preview/anchor.md")
+        self.assertTrue(any(item.get("contains") == "tools.browser.preview" for item in status["actions"]["forbids"]))
+        index = (RUN_EVALS.ROOT / "docs" / "architecture" / "loom" / "index.md").read_text()
+        self.assertIn("decisions/conversation-primary-agent.md", index)
+
+    def test_default_excludes_expensive_suite_but_explicit_selection_includes_it(self):
+        cases = RUN_EVALS.load_cases()
+        ids = {case["id"] for case in cases}
+        self.assertIn("CONVERSATION-02", ids)
+        self.assertIn("CONVERSATION-02-SYNTH", ids)
+        self.assertIn("PROP-RUNTIME-01", ids)
+        self.assertNotIn("CONVERSATION-02-LIVE", ids)
+        explicit = RUN_EVALS.load_cases([RUN_EVALS.ROOT / "evals" / "live-integration.json"])
+        self.assertEqual([case["id"] for case in explicit], ["CONVERSATION-02-LIVE"])
+        self.assertEqual(RUN_EVALS.load_cases([]), [])
+        self.assertIn("live-integration.json", [path.name for path in RUN_EVALS.behavioral_eval_files(RUN_EVALS.ROOT / "evals")])
+
+    def test_default_metadata_is_generic_and_fails_closed(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "evals").mkdir()
+            target = root / "evals" / "arbitrary-name.json"
+            target.write_text(json.dumps({"default": False, "cases": [{"id": "costly"}]}))
+            with patch.object(RUN_EVALS, "ROOT", root):
+                self.assertEqual(RUN_EVALS.load_cases(), [])
+                self.assertEqual(RUN_EVALS.load_cases([target])[0]["id"], "costly")
+                target.write_text(json.dumps({"default": "false", "cases": []}))
+                with self.assertRaises(ValueError):
+                    RUN_EVALS.load_cases()
+
+    def test_response_is_isolated_and_has_no_decision_only_suffix(self):
+        response = next(case for case in RUN_EVALS.load_cases() if case["id"] == "CONVERSATION-02-SYNTH")
+        self.assertEqual(response["execution"], "conversation-response")
+        self.assertEqual(RUN_EVALS.target_prompt(response), response["prompt"])
+        decision = next(case for case in RUN_EVALS.load_cases() if case["id"] == "CONVERSATION-02")
+        self.assertIn("production decision/action", RUN_EVALS.target_prompt(decision))
+        temp, target, _ = RUN_EVALS.setup_projects(response)
+        try:
+            agents = target / ".opencode" / "agents"
+            self.assertEqual(sorted(path.name for path in agents.iterdir()), ["general.md"])
+            text = (agents / "general.md").read_text()
+            self.assertIn("Isolated conversational-response evaluation boundary", text)
+            self.assertIn('action: "*"', text)
+            self.assertIn("effect: deny", text)
+            self.assertNotIn("State the exact decision/action you would take and why.", text)
+            self.assertFalse((target / ".opencode" / "plugins").exists())
+            self.assertEqual(RUN_EVALS.case_workspace_mode(response), "ro")
+        finally:
+            import shutil
+            shutil.rmtree(temp, ignore_errors=True)
+        self.assertIn(response["prompt"], RUN_EVALS.judge_prompt(response, "answer", []))
+
+    def test_source_references_are_distinct_and_come_from_supplied_context(self):
+        case = {"prompt": "Sources: https://source.test/a and https://source.test/b", "output": {"min_source_urls": 2}}
+        self.assertEqual(RUN_EVALS.deterministic_failures(case, [], text="[A](https://source.test/a) [B](https://source.test/b)"), [])
+        self.assertTrue(RUN_EVALS.deterministic_failures(case, [], text="https://source.test/a https://source.test/a"))
+        self.assertTrue(RUN_EVALS.deterministic_failures(case, [], text="https://unrelated.test/a https://unrelated.test/b"))
+        self.assertTrue(RUN_EVALS.deterministic_failures(case, [], text="Research says so."))
+
+    def test_action_equality_is_type_safe_and_conjunctive_within_one_call(self):
+        expected = {"tool": "subagent", "args": {"agent": "research", "background": False}}
+        self.assertTrue(RUN_EVALS.action_matches({"tool": "subagent", "args": {"agent": "research", "background": False}}, expected))
+        self.assertFalse(RUN_EVALS.action_matches({"tool": "subagent", "args": {"agent": "research", "background": 0}}, expected))
+        self.assertFalse(RUN_EVALS.action_matches({"tool": "subagent", "args": {"agent": "research", "background": True}}, expected))
+        self.assertFalse(RUN_EVALS.action_matches({"tool": "subagent", "args": {"agent": "diagnostic", "background": False}}, expected))
+        case = {"actions": {"requires": [expected]}}
+        split = [{"tool": "subagent", "args": {"agent": "research", "background": True}}, {"tool": "subagent", "args": {"agent": "diagnostic", "background": False}}]
+        self.assertTrue(RUN_EVALS.deterministic_failures(case, ["subagent"], split))
+        self.assertFalse(RUN_EVALS.action_matches({"tool": "subagent", "args": {}}, {"tool": "subagent", "arg": "background", "equals": None}))
+        self.assertTrue(RUN_EVALS.action_matches({"tool": "subagent", "args": {"background": None}}, {"tool": "subagent", "arg": "background", "equals": None}))
+
+    def test_nested_timeout_does_not_change_ordinary_defaults(self):
+        live = RUN_EVALS.load_cases([RUN_EVALS.ROOT / "evals" / "live-integration.json"])[0]
+        self.assertEqual(RUN_EVALS.case_target_timeout_seconds(live, 240), 360)
+        self.assertEqual(RUN_EVALS.case_target_container_timeout(live, 300, 360), 420)
+        self.assertEqual(RUN_EVALS.case_target_timeout_seconds({}, 240), 240)
+        self.assertEqual(RUN_EVALS.case_target_container_timeout({}, 300, 240), 300)
+        for bad in [True, "360", 0, 601]:
+            with self.assertRaises(ValueError):
+                RUN_EVALS.case_target_timeout_seconds({"target_timeout_seconds": bad}, 240)
+
+    def test_non_runtime_modes_do_not_consume_runtime_concurrency(self):
+        jobs = [({"execution": "conversation-response"}, 1), ({"execution": "role-decision"}, 1), ({"execution": "runtime"}, 1), ({"execution": "runtime"}, 2)]
+        non_runtime, count, runtime, runtime_count, _ = RUN_EVALS.eval_job_concurrency(jobs, 6, 1)
+        self.assertEqual((len(non_runtime), count, len(runtime), runtime_count), (2, 2, 2, 1))
+
+    def test_one_primary_and_non_colliding_requirements(self):
+        import re
+        primary = [path.stem for path in (RUN_EVALS.ROOT / "agents").glob("*.md") if re.search(r"^mode: primary$", path.read_text(), re.M)]
+        self.assertEqual(primary, ["general"])
+        brainstorm = (RUN_EVALS.ROOT / "agents" / "brainstorm.md").read_text()
+        self.assertIn('action: shell\n    resource: "*"\n    effect: deny', brainstorm)
+        requirements = RUN_EVALS.ROOT / "docs" / "requirements" / "loom"
+        self.assertEqual(len(list(requirements.glob("br-019-*.md"))), 1)
+        self.assertEqual(len(list(requirements.glob("br-020-*.md"))), 1)
+        self.assertTrue((requirements / "br-019-keep-workflow-ceremony-proportional.md").is_file())
+        self.assertTrue((requirements / "br-020-conversation-is-primary-interface.md").is_file())
+
+
+class ConversationalFeedbackCostTests(unittest.TestCase):
+    def test_handoff_and_observed_impact_probes_do_not_install_subagents(self):
+        import shutil
+        expected = {
+            "CONVERSATION-02-HANDOFF": "conversation-response",
+            "AUTO-ORCHESTRATION-03": "role-decision",
+        }
+        cases = {case["id"]: case for case in RUN_EVALS.load_cases()}
+        for case_id, execution in expected.items():
+            with self.subTest(case=case_id):
+                case = cases[case_id]
+                self.assertEqual(case["execution"], execution)
+                self.assertEqual(RUN_EVALS.case_workspace_mode(case), "ro")
+                temp, target, _ = RUN_EVALS.setup_projects(case)
+                try:
+                    agents = target / ".opencode" / "agents"
+                    self.assertEqual(sorted(p.name for p in agents.iterdir()), ["general.md"])
+                    wrapper = (agents / "general.md").read_text()
+                    self.assertIn('action: "*"', wrapper)
+                    self.assertIn('effect: deny', wrapper)
+                finally:
+                    shutil.rmtree(temp, ignore_errors=True)
+
+
+class ArtifactHandoffCostTests(unittest.TestCase):
+    def test_artifact_probes_are_default_isolated_and_do_not_expose_rubrics(self):
+        import shutil
+        cases = {case["id"]: case for case in RUN_EVALS.load_cases()}
+        expected = {
+            "AUTO-ORCHESTRATION-01-HANDOFF": "conversation-response",
+            "AUTO-ORCHESTRATION-01-RECORDS": "role-decision",
+        }
+        self.assertNotIn("CONVERSATION-02-LIVE", cases)
+        for case_id, execution in expected.items():
+            with self.subTest(case=case_id):
+                case = cases[case_id]
+                self.assertEqual(case["execution"], execution)
+                self.assertEqual(RUN_EVALS.case_workspace_mode(case), "ro")
+                prompt = RUN_EVALS.target_prompt(case)
+                self.assertIn(case["prompt"], prompt)
+                for criterion in case["expectations"] + case["must_not"]:
+                    self.assertNotIn(criterion, prompt)
+                temp, target, _ = RUN_EVALS.setup_projects(case)
+                try:
+                    agents = target / ".opencode" / "agents"
+                    self.assertEqual(sorted(p.name for p in agents.iterdir()), ["general.md"])
+                    wrapper = (agents / "general.md").read_text()
+                    self.assertIn('action: "*"', wrapper)
+                    self.assertIn('effect: deny', wrapper)
+                finally:
+                    shutil.rmtree(temp, ignore_errors=True)
+
+
 if __name__ == "__main__":
     unittest.main()

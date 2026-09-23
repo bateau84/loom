@@ -41,9 +41,10 @@ Loom's first proving ground is **YuHaul**. Its longer-term target is harder: Loo
 20. Learned heuristics remain evidence-backed and advisory until sufficiently validated; memory never silently overrides current accepted product authority.
 21. Loom supports deep diagnostics that seek root cause rather than merely mitigating symptoms.
 22. Loom supports deep research using multiple relevant sources, explicit uncertainty, and active attempts to prove and disprove important theories.
-23. Loom provides an interactive sparring mode for refining ideas, exposing assumptions, and challenging weak reasoning before or outside autonomous execution.
+23. Loom's normal primary conversation supports sparring, deep research, diagnosis, and refinement before or outside autonomous execution without requiring the user to select an agent or workflow mode.
 24. The user can inspect what Loom is doing, why it is doing it, what evidence supports it, and why it stopped when work cannot safely continue.
 25. Loom runs inside OpenCode.
+26. Loom presents one primary user-facing identity and automatically selects proportionate specialists, durable artifacts, and governance after the user commits to execution.
 
 ## Minimal Version
 
@@ -100,6 +101,7 @@ Routine technical, design, implementation, planning, research, and verification 
 - Loom is a greenfield redesign. Previous AOS work is research material only and carries no automatic authority.
 - The design should preserve useful lessons from the previous AOS while avoiding its bureaucracy, correction loops, and dependence on large directive sets.
 - The intended user experience is analogous to: "I want a carpet." Loom should determine the remaining expertise-solvable details and return a finished, trustworthy carpet.
+- Conversation is the outer interaction loop. The user can spar, research, and debug with Loom naturally, then say the equivalent of "let's build this" and let Loom choose the engineering process.
 - YuHaul is the first end-to-end proving product; Leash is the longer-term target for Loom's autonomous product-building capability.
 - The system should favor software-enforced workflow, evidence, limits, and state where possible, while using models for judgment, reasoning, creativity, implementation, review, and adversarial challenge.
 - Repository knowledge should follow OKF-compatible structure and be accessible to agents through OKF tooling where available.
