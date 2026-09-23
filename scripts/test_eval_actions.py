@@ -80,9 +80,12 @@ class WorkflowCredentialTests(unittest.TestCase):
         self.assertEqual(host_version, plugin_version)
         self.assertEqual(plugin_version, "2.0.15")
 
-    def test_live_workflow_and_harness_pin_opencode_2_0_15_runner(self):
-        workflow = (
+    def test_workflows_and_harness_pin_opencode_2_0_15_runner(self):
+        live = (
             RUN_EVALS.ROOT / ".github" / "workflows" / "loom-live-evals.yml"
+        ).read_text(encoding="utf-8")
+        ci = (
+            RUN_EVALS.ROOT / ".github" / "workflows" / "loom-ci.yml"
         ).read_text(encoding="utf-8")
         expected_action = "bateau84/opencode-eval-runner@b17532ce4b9efb2a0151dca34268439056e775c9"
         expected_image = (
@@ -90,8 +93,10 @@ class WorkflowCredentialTests(unittest.TestCase):
             "sha256:f206d32bb0a5b39ce2080c5eed1e956a344ee86d362840538345202c4abc370c"
         )
 
-        self.assertIn(expected_action, workflow)
-        self.assertIn(expected_image, workflow)
+        for workflow in (live, ci):
+            self.assertIn(expected_action, workflow)
+            self.assertIn(expected_image, workflow)
+        self.assertIn('opencode "$OPENCODE_EVAL_RUNNER_OPENCODE_IMAGE" --version | grep -F "2.0.15"', ci)
         self.assertEqual(RUN_EVALS.DEFAULT_IMAGES["opencode"], expected_image)
 
     def test_live_workflow_forwards_opencode_api_key_explicitly(self):
