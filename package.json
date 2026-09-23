@@ -11,7 +11,7 @@
     "eval:system": "python3 scripts/run-evals.py --all",
     "eval:stress": "python3 scripts/run-evals.py --all --iterations 3 --parallel 4",
     "skills:validate": "python3 scripts/validate-skills.py",
-    "eval:harness-test": "python3 scripts/test_eval_actions.py",
+    "eval:harness-test": "python3 scripts/test_eval_actions.py && python3 scripts/test_eval_fixtures.py && python3 scripts/test_eval_tool_results.py",
     "dashboard": "bun dashboard/server.ts",
     "integration:opencode": "bun scripts/opencode-host-integration.ts && python3 scripts/verify_conversation_profile.py"
   },

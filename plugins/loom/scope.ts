@@ -6,6 +6,7 @@ export type TaskScope = {
 
 const forbiddenAuthorityRoots = [
   "docs/anchors/",
+  "docs/design/",
   "docs/requirements/",
   "docs/architecture/",
 ]

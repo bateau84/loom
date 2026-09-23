@@ -104,7 +104,7 @@ Examples:
 - Reviewer and Critic cannot edit product code.
 - Specifier cannot edit implementation.
 - Architect cannot implement.
-- Worker cannot edit accepted authority documents unless explicitly assigned documentation work.
+- Worker cannot edit accepted Anchor, design, requirements, or architecture. Current-reality system/user documentation belongs to Documenter; documentation work does not grant Worker normative-authority writes.
 - Research has web/read tools but no product mutation.
 - Diagnostic may inspect and experiment but does not silently ship fixes.
 
