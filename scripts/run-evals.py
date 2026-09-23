@@ -463,8 +463,9 @@ def sanitize_database_seed(source: Path, destination: Path) -> Path:
                 "WHEN 'view' THEN 2 WHEN 'trigger' THEN 3 ELSE 4 END, name"
             ).fetchall()
             tables = {name for object_type, name, _ in schema if object_type == "table"}
-            if "credential" not in tables or "session" not in tables:
-                raise RuntimeError("OpenCode V2 database is missing credential/session schema")
+            has_session_schema = "session_v2" in tables or "session" in tables
+            if "credential" not in tables or not has_session_schema:
+                raise RuntimeError("OpenCode V2 database is missing credential and session/session_v2 schema")
 
             dst_db.execute("PRAGMA foreign_keys=OFF")
             for object_type, _, sql in schema:
