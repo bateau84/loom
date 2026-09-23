@@ -1,5 +1,5 @@
 /** Browser code is served inline with the HTML. Projection values are always escaped. */
-export const dashboardScript = String.raw`
+export const dashboardScript = `
 (() => {
   const state = {
     fleet: { projects: [] }, loaded: false, signature: "", status: "all", project: "", agent: "",
@@ -133,7 +133,7 @@ export const dashboardScript = String.raw`
     const objective = arr(project.workObjectives).find((o) => o.objectiveId === p?.workScope?.objectiveId && o.consistency === "ok" && o.projection?.generation === p?.workScope?.generation);
     if (objective?.projection?.title) return objective.projection.title;
     if (p?.anchor) {
-      const parts = p.anchor.split(/[\\/]/).filter(Boolean);
+      const parts = p.anchor.split(/[\\\\/]/).filter(Boolean);
       const leaf = parts.pop();
       return leaf === "anchor.md" && parts.length ? parts.pop() : leaf || p.anchor;
     }

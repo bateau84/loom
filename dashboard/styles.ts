@@ -1,5 +1,5 @@
 /** Shared visual tokens and responsive layout for the read-only operations UI. */
-export const dashboardStyles = String.raw`
+export const dashboardStyles = `
 :root {
   color-scheme: dark;
   --bg:#0d1117; --rail:#10161e; --surface:#161e28; --surface-2:#1c2733;

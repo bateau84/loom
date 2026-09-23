@@ -67,6 +67,18 @@ describe("Loom external dashboard", () => {
     expect(() => new Function(script)).not.toThrow()
   })
 
+  test("generated CSS keeps status glyphs rather than JavaScript Unicode escape text", () => {
+    // Bun may escape non-ASCII source while transpiling tagged raw templates.
+    // CSS does not understand JavaScript's backslash-u escape syntax.
+    const html = dashboardHtml()
+    const css = html.slice(html.indexOf("<style>") + 7, html.indexOf("</style>"))
+    expect(css).toContain('content:"● "')
+    expect(css).toContain('content:"Ⅱ "')
+    expect(css).toContain('content:"✓"')
+    expect(css).not.toContain("\\u25CF")
+    expect(css).not.toContain("\\u2713")
+  })
+
   test("UI contains accessible Fleet to Project to Workflow to Session semantics and explicit provenance", () => {
     const html = dashboardHtml()
     expect(html).toContain("Loom Operations")
