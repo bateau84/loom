@@ -30,7 +30,8 @@ export const dashboardScript = `
   const projectName = (project) => projectLabel(project);
   const projectHref = (project) => "#/project/" + enc(project.projectId);
   const workflowHref = (project, workflow) => projectHref(project) + "/workflow/" + enc(workflow.workflowId);
-  const link = (href, label) => '<a href="' + esc(href) + '">' + esc(label) + '</a>';
+  // The placement and destination survive label changes and distinguish duplicate destinations.
+  const link = (href, label, place) => '<a data-key="' + esc('link:' + place + ':' + href) + '" href="' + esc(href) + '">' + esc(label) + '</a>';
   const resolved = (w) => w.consistency === "ok" ? w.projection : null;
   const projectById = (id) => state.fleet.projects.find((p) => p.projectId === id);
   const workflowById = (project, id) => project?.workflows.find((w) => w.workflowId === id);
@@ -185,7 +186,7 @@ export const dashboardScript = `
     const total = state.loaded ? all.length : "—";
     const attention = state.loaded ? all.filter(needsAttention).length : "—";
     document.getElementById("primary-nav").innerHTML =
-      '<a class="nav-link" data-key="nav:fleet" href="' + esc(fleetHref()) + '"' + (r.kind === "fleet" && state.status !== "attention" ? ' aria-current="page"' : '') + '><span class="nav-symbol" aria-hidden="true">▦</span>Fleet overview<span class="nav-count">' + total + '</span></a>' +
+      '<a class="nav-link" data-key="nav:fleet" href="' + esc(fleetHref('all')) + '"' + (r.kind === "fleet" && state.status !== "attention" ? ' aria-current="page"' : '') + '><span class="nav-symbol" aria-hidden="true">▦</span>Fleet overview<span class="nav-count">' + total + '</span></a>' +
       '<a class="nav-link" data-key="nav:attention" href="#/?status=attention"' + (r.kind === "fleet" && state.status === "attention" ? ' aria-current="page"' : '') + '><span class="nav-symbol" aria-hidden="true">!</span>Needs attention<span class="nav-count">' + attention + '</span></a>';
     document.getElementById("project-nav").innerHTML = state.fleet.projects.map((p) =>
       '<a class="nav-link" data-key="nav:project:' + esc(p.projectId) + '" href="' + esc(projectHref(p)) + '"' + (r.projectId === p.projectId ? ' aria-current="location"' : '') + '><span class="project-name">' + esc(projectName(p)) + '<small>' + esc(p.canonicalLocation) + '</small></span><span class="nav-count">' + p.workflows.length + '</span></a>'
@@ -261,11 +262,14 @@ export const dashboardScript = `
     }).join("") + '</div>';
   }
   function renderProject(project) {
-    crumbs.innerHTML = link(fleetHref(), 'Fleet') + '<span aria-hidden="true">/</span><span aria-current="page">' + esc(projectName(project)) + '</span>';
+    crumbs.innerHTML = link(fleetHref(), 'Fleet', 'crumb:fleet') + '<span aria-hidden="true">/</span><span aria-current="page">' + esc(projectName(project)) + '</span>';
     setHeading('Project workspace', projectName(project), '<span class="path mono">' + esc(project.canonicalLocation) + '</span>');
     const items = sortWorkflows(project.workflows.map((workflow) => ({project, workflow})));
-    const windowNotice = project.projectionWindow?.workflowsTruncated || project.projectionWindow?.completedObjectivesTruncated
-      ? '<div class="callout"><strong>Bounded projection</strong><div class="notice">Some older work is outside the current projection window. This is not the full project history; existing deep links remain valid navigation targets.</div></div>' : '';
+    const coverage = project.projectionWindow;
+    const windowNotice = coverage?.workflowsTruncated === true || coverage?.completedObjectivesTruncated === true
+      ? '<div class="callout" data-history="limited"><strong>Bounded projection</strong><div class="notice">At least one publisher limits its history. This combined view may omit older work; it is not proof of complete history. Existing deep links remain valid navigation targets.</div></div>'
+      : coverage?.workflowsTruncated === false && coverage?.completedObjectivesTruncated === false ? ''
+      : '<div class="callout" data-history="unknown"><strong>History coverage unavailable</strong><div class="notice">Not every publisher reports its history limits. Do not treat this view as a complete history.</div></div>';
     main.innerHTML = summaryMetrics(items, false) + windowNotice +
       '<section class="panel"><div class="panel-head"><h2>Work map</h2><span class="meta">Objective → Phase → Wave → Task</span></div><div class="panel-body">' + renderHierarchy(project) + '</div></section>' +
       '<section class="section"><div class="panel-head"><h2>Workflows</h2><span class="meta">' + plural(items.length, 'projected workflow') + '</span></div><div class="grid section">' + (items.map(({workflow}) => workflowCard(project, workflow)).join('') || '<p class="notice">No workflows are currently projected for this project.</p>') + '</div></section>' + technical('project:' + project.projectId, [['Project ID', project.projectId]]);
@@ -277,8 +281,8 @@ export const dashboardScript = `
     return '<details class="disclosure" data-hierarchy-key="' + esc(key) + '"' + (open ? ' open' : '') + '><summary data-key="' + esc('disclosure:' + key) + '">' + esc(title) + '</summary><div class="panel-body">' + content + '</div></details>';
   }
   function workflowCrumbs(project, w, session = false) {
-    crumbs.innerHTML = link(fleetHref(), 'Fleet') + '<span aria-hidden="true">/</span>' + link(projectHref(project), projectName(project)) + '<span aria-hidden="true">/</span>' +
-      (session ? link(workflowHref(project, w), titleFor(project, w)) + '<span aria-hidden="true">/</span><span aria-current="page">Session</span>' : '<span aria-current="page">' + esc(titleFor(project, w)) + '</span>');
+    crumbs.innerHTML = link(fleetHref(), 'Fleet', 'crumb:fleet') + '<span aria-hidden="true">/</span>' + link(projectHref(project), projectName(project), 'crumb:project') + '<span aria-hidden="true">/</span>' +
+      (session ? link(workflowHref(project, w), titleFor(project, w), 'crumb:workflow') + '<span aria-hidden="true">/</span><span aria-current="page">Session</span>' : '<span aria-current="page">' + esc(titleFor(project, w)) + '</span>');
   }
   function publisherDetails(project, w, open = false) {
     const rows = arr(w.participants).map((participant, index) => '<div class="row"><div class="name">Publisher ' + (index + 1) + '</div><div class="meta">Revision ' + esc(participant.workflowRevision) + ' · ' + (participant.live ? 'live publisher' : 'stale/offline publisher') + (participant.workflowRevision < w.workflowRevision ? ' · lagging revision' : '') + '</div><div class="meta">Lease expires: ' + esc(participant.leaseExpiresAt || 'Unavailable') + '</div>' + technical(project.projectId + ':' + w.workflowId + ':publisher:' + participant.instanceId, [['Publisher ID', participant.instanceId], ['Installation ID', participant.installationId]]) + '</div>').join('') || '<p class="notice">No participating publisher is projected.</p>';
@@ -328,7 +332,7 @@ export const dashboardScript = `
     const failures = arr(c?.steps).filter((step) => step.status === 'failed');
     if (failures.length) work += '<h3 class="section">Reported failures</h3><div class="list section">' + failures.map((step) => '<div class="row"><div class="name">' + esc(stepName(step)) + '</div><p class="notice">Reported result: ' + (step.reportedResult ? description(step.reportedResult) : 'No explanation was recorded.') + '</p></div>').join('') + '</div>';
     if (c?.truncated.steps) work += '<p class="notice section">The step list is limited. Inspect the remaining steps in Loom.</p>';
-    work += '<p class="notice section">Ready means eligible for dispatch, not proof that an agent is currently running.</p><div class="section">' + link(projectHref(project), 'View project work map →') + '</div>';
+    work += '<p class="notice section">Ready means eligible for dispatch, not proof that an agent is currently running.</p><div class="section">' + link(projectHref(project), 'View project work map →', 'work-map') + '</div>';
     work += technical(project.projectId + ':' + w.workflowId + ':steps', [...current, ...additional].map((step) => [stepName(step) + ' — step ID', step.id]));
     const sessions = arr(p.participatingSessionIds).slice().sort();
     const coordinator = sessions.includes(c?.coordinatorSessionId) ? c.coordinatorSessionId : null;
@@ -356,9 +360,9 @@ export const dashboardScript = `
     const present = arr(p?.participatingSessionIds).includes(sessionId);
     const membership = w.consistency === 'conflict'
       ? '<div class="callout" data-tone="danger"><strong>Session membership unresolved</strong><div class="notice">Workflow publishers conflict. No session membership or workflow-state winner is selected.</div></div>'
-      : present ? '<dl class="facts"><div class="fact"><dt>Session</dt><dd>' + esc(sessionName(w, sessionId)) + '</dd></div><div class="fact"><dt>Workflow</dt><dd>' + link(workflowHref(project, w), titleFor(project, w)) + '</dd></div></dl><p class="notice section">Membership is known. A session title or running agent has not been established by this projection.</p>'
+      : present ? '<dl class="facts"><div class="fact"><dt>Session</dt><dd>' + esc(sessionName(w, sessionId)) + '</dd></div><div class="fact"><dt>Workflow</dt><dd>' + link(workflowHref(project, w), titleFor(project, w), 'membership:workflow') + '</dd></div></dl><p class="notice section">Membership is known. A session title or running agent has not been established by this projection.</p>'
       : '<p class="notice">This participating session is no longer available in the selected projection. The requested URL is retained; absence does not prove deletion.</p>';
-    main.innerHTML = workflowWarnings(w) + panel('Loom membership', membership) + '<section class="panel section"><div class="panel-head"><h2>OpenCode telemetry</h2>' + badge('Supplemental · not enabled') + '</div><div class="panel-body"><p class="notice">Not enabled / unavailable. Missing telemetry is not treated as zero or success.</p></div></section>' + workflowTechnical(project, w, sessionId) + '<p class="section">' + link(workflowHref(project, w), '← Return to workflow') + '</p>';
+    main.innerHTML = workflowWarnings(w) + panel('Loom membership', membership) + '<section class="panel section"><div class="panel-head"><h2>OpenCode telemetry</h2>' + badge('Supplemental · not enabled') + '</div><div class="panel-body"><p class="notice">Not enabled / unavailable. Missing telemetry is not treated as zero or success.</p></div></section>' + workflowTechnical(project, w, sessionId) + '<p class="section">' + link(workflowHref(project, w), '← Return to workflow', 'return:workflow') + '</p>';
   }
   function remember(map, key, value, limit) {
     if (map.has(key)) map.delete(key);
@@ -375,10 +379,10 @@ export const dashboardScript = `
     }
   }
   function renderProjectionWait(r, detail) {
-    crumbs.innerHTML = link(fleetHref(), 'Fleet') + (r.projectId ? '<span aria-hidden="true">/</span><span>Requested project</span>' : '');
+    crumbs.innerHTML = link(fleetHref(), 'Fleet', 'crumb:fleet') + (r.projectId ? '<span aria-hidden="true">/</span><span>Requested project</span>' : '');
     setHeading('Projection pending', 'Waiting for Loom projection…', 'Your requested location is preserved.');
     const href = r.workflowId && r.projectId ? '#/project/' + enc(r.projectId) : fleetHref();
-    main.innerHTML = empty('Requested state is not currently projected.', detail + ' The dashboard does not treat repeated reads of the same projection as proof that the target disappeared.', link(href, r.workflowId ? 'Return to Project' : 'Return to Fleet')) + technical('waiting:' + location.hash, [['Project ID', r.projectId], ['Workflow ID', r.workflowId], ['Session ID', r.sessionId]]);
+    main.innerHTML = empty('Requested state is not currently projected.', detail + ' The dashboard does not treat repeated reads of the same projection as proof that the target disappeared.', link(href, r.workflowId ? 'Return to Project' : 'Return to Fleet', 'return:parent')) + technical('waiting:' + location.hash, [['Project ID', r.projectId], ['Workflow ID', r.workflowId], ['Session ID', r.sessionId]]);
   }
   function focusKey(key) {
     return [...document.querySelectorAll('[data-key]')].find((node) => node.dataset.key === key && node.getClientRects().length);
@@ -396,8 +400,8 @@ export const dashboardScript = `
       main.innerHTML = empty('Loading Loom projection…', 'Missing data is not treated as a healthy zero.');
     } else if (r.kind === 'invalid') {
       setHeading('Navigation', 'Invalid dashboard address', 'No workflow has been selected.');
-      crumbs.innerHTML = link(fleetHref(), 'Fleet');
-      main.innerHTML = empty('This dashboard address is not recognized.', 'Use Fleet navigation to select a project or workflow. The address has not been silently rewritten.', link(fleetHref(), 'Return to Fleet'));
+      crumbs.innerHTML = link(fleetHref(), 'Fleet', 'crumb:fleet');
+      main.innerHTML = empty('This dashboard address is not recognized.', 'Use Fleet navigation to select a project or workflow. The address has not been silently rewritten.', link(fleetHref(), 'Return to Fleet', 'return:fleet'));
     } else if (r.kind === 'fleet') renderFleet();
     else if (!project) renderProjectionWait(r, 'The requested project may still be propagating, stale, or no longer projected.');
     else if (r.kind === 'project') renderProject(project);

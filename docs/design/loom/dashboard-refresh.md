@@ -34,6 +34,11 @@ Unnamed workflow, Unnamed task, or Workflow outside this view. A UUID, hash or
 session identifier is not a display name. No title is borrowed across projects,
 conflicting objective reports, or generations.
 
+Wave identity is the phase/wave pair, not the wave ID alone. Resolve an explicitly
+scoped wave only inside its specified phase. Missing, ambiguous or mismatched
+phase/wave/task scope falls back to the recorded request or Anchor cue; a partial
+match must not label a multi-task workflow as a different single task.
+
 Same-named workflows in one project receive numbered Run labels. These are local
 disambiguators for the current view, not durable titles. Routing always uses exact
 IDs. A task's Owned by link resolves the actual workflow in its own project.
@@ -58,6 +63,8 @@ cues. Fleet has labeled status/project/next-agent filters, a four-value summary,
 and urgency-ordered workflows. Summary counts follow project/agent filters across
 statuses; their scope is explained. Counts cover the current bounded projection,
 not lifetime work. Summary buttons select status without clearing other filters.
+Fleet overview leaves attention/status filtering while keeping project and agent
+filters. Breadcrumbs and browser Back retain the previous filter context instead.
 
 Order conflicts, failures, blocked work, other open boundaries, active work,
 completed work, other states, and stale history. Failed/blocked stale work retains
@@ -73,6 +80,12 @@ not money or task completion. A bounded question scan marks its count At least.
 
 Project exposes Objective → Phase → Wave → Task and named ownership links.
 Completed branches remain available; active/blocked branches start expanded.
+History coverage is carried through aggregation: if any publisher reports a
+truncation flag, show that at least one source limits history and that the combined
+view may be incomplete. Do not claim that every omitted item is absent from the
+union. A flag is false only when all contributing sources explicitly say false;
+missing or malformed flags remain unknown. Stale sources also contribute to this
+conservative warning. Unknown coverage gets its own explanatory notice.
 
 ## Workflow and session context
 
@@ -114,6 +127,12 @@ Changed data preserves keyed focus; disappearance moves focus predictably and is
 announced. Identical snapshots need not replace the DOM or announce unchanged data.
 Client memories are bounded.
 
+All replaceable navigation links, including breadcrumbs, work-map, membership,
+return and recovery links, have stable placement-and-destination identity. Changing
+a label must not lose focus or move it to another link with the same destination.
+Refresh caused only by a publisher heartbeat has the same focus obligations as a
+workflow-state change.
+
 Refresh is a bounded display-only GET. Pause freezes automatic display updates,
 including pending automatic responses. Manual Refresh remains possible while
 paused. Resume requests current data. These controls never pause or resume Loom
@@ -132,6 +151,8 @@ Preserve zoom, text-backed status, visible focus, logical reading order, keyboar
 paths, skip navigation, reduced motion and forced colors. Aim for WCAG 2.2 AA
 contrast/reflow; automation is not a full conformance audit. Narrow layouts stack
 work/context, disclose Projects, and wrap paths/IDs rather than hiding content.
+Authored request paragraphs and long unbroken URLs also wrap at narrow and desktop
+widths without clipping or replacing the text with ellipses.
 
 Validate the realized interface: triage, filters, copied/reloaded URLs, keyboard
 Back/focus, changed snapshots, disclosures, disappearance/lag, pause/race/retry,
@@ -140,5 +161,12 @@ The readability follow-up also checks the actual production publisher through th
 server/browser: real record titles, question ownership, required evidence, coordinator
 membership, reported failures, no default UUIDs, keyboard-reachable technical IDs,
 legacy/unsupported context, escaping, redaction and bounded text at 320 CSS pixels.
+
+Regression coverage includes repeated wave IDs in separate phases, complete scope
+matching, same-destination link focus through renames, heartbeat refresh, unbroken
+request text, leaving attention mode, and producer-to-HTTP history markers and
+credential redaction. CI retains only synthetic dashboard screenshots and their
+generated HTML/fixture response for short-lived inspection; these artifacts are
+not user transcripts, canonical runtime state, or executable deployment inputs.
 Test-produced data is not the user's live workflow, and no model reliability or
 independent Reviewer/Critic verdict follows from deterministic browser checks.

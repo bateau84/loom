@@ -79,7 +79,7 @@ p { margin:0.4rem 0 0; }
 .name { font-weight:650; overflow-wrap:anywhere; }
 .panel { background:var(--surface); border:1px solid var(--line); border-radius:9px; min-width:0; }
 .panel-head { display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.75rem; padding:1rem 1.15rem; border-bottom:1px solid var(--line); }
-.panel-body { padding:1rem 1.15rem; }
+.panel-body { padding:1rem 1.15rem; overflow-wrap:anywhere; }
 .section { margin-top:1.25rem; }
 .stack { display:grid; gap:1rem; align-content:start; min-width:0; }
 .detail-grid { display:grid; grid-template-columns:minmax(0,1.75fr) minmax(16rem,1fr); gap:1rem; align-items:start; }

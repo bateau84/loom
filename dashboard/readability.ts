@@ -55,12 +55,24 @@ export const dashboardReadability = `
     const objective = arr(project.workObjectives).find((o) => o.objectiveId === p?.workScope?.objectiveId &&
       o.consistency === 'ok' && o.projection?.generation === p?.workScope?.generation);
     if (objective) {
-      const waves = arr(objective.projection?.phases).flatMap((phase) => arr(phase.waves));
-      const tasks = waves.flatMap((wave) => arr(wave.tasks)).filter((task) => arr(p.workScope?.taskIds).includes(task.taskId));
-      if (tasks.length === 1 && named(tasks[0].title)) return tasks[0].title;
-      const wave = waves.find((candidate) => candidate.waveId === p.workScope?.waveId);
-      if (named(wave?.title)) return wave.title;
-      if (named(objective.projection?.title)) return objective.projection.title;
+      const scope = p.workScope;
+      const phases = arr(objective.projection?.phases);
+      const matches = scope.phaseId === undefined ? phases : phases.filter((phase) => phase.phaseId === scope.phaseId);
+      const phase = matches.length === 1 ? matches[0] : undefined;
+      // Wave IDs are unique only within their phase. Never search all phases for one.
+      const waves = scope.waveId === undefined
+        ? matches.flatMap((candidate) => arr(candidate.waves))
+        : phase ? arr(phase.waves).filter((wave) => wave.waveId === scope.waveId) : [];
+      const validScope = (scope.phaseId === undefined || Boolean(phase)) &&
+        (scope.waveId === undefined || scope.phaseId !== undefined && waves.length === 1);
+      const taskIds = arr(scope.taskIds);
+      const tasks = waves.flatMap((wave) => arr(wave.tasks)).filter((task) => taskIds.includes(task.taskId));
+      const validTasks = taskIds.length === tasks.length && new Set(tasks.map((task) => task.taskId)).size === taskIds.length;
+      if (validScope && validTasks) {
+        if (tasks.length === 1 && named(tasks[0].title)) return tasks[0].title;
+        if (scope.waveId !== undefined && named(waves[0]?.title)) return waves[0].title;
+        if (named(objective.projection?.title)) return objective.projection.title;
+      }
     }
     const request = named(contextFor(p)?.request?.text);
     if (request) return request.length > 120 ? request.slice(0, 120) + '…' : request;

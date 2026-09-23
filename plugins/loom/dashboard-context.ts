@@ -36,31 +36,79 @@ export const DASHBOARD_CONTEXT_ITEMS = 24
 export const DASHBOARD_CONTEXT_STEPS = 100
 export const DASHBOARD_CONTEXT_TEXT = 600
 
-/** Linear scanning avoids ambiguous repeated regex branches on hostile escape sequences. */
-function redactQuotedAssignments(value: string) {
-  const prefix = /((?:["']?(?:api[_-]?key|token|password|secret)["']?)\s*[:=]\s*)(["'])/gi
-  let result = ""
-  let offset = 0
-  let match: RegExpExecArray | null
-  while ((match = prefix.exec(value)) !== null) {
-    let end = prefix.lastIndex
-    while (end < value.length) {
-      if (value[end] === "\\") { end += 2; continue }
-      if (value[end++] === match[2]) break
+const sensitiveKeys = new Set(["apikey", "api_key", "api-key", "token", "password", "secret", "authorization", "proxy-authorization"])
+
+/** Read one quoted token, including JSON escapes and YAML doubled single quotes. */
+function quotedToken(value: string, start: number) {
+  const quote = value[start]
+  let text = ""
+  let end = start + 1
+  while (end < value.length) {
+    const char = value[end++]
+    if (char === quote) {
+      if (quote === "'" && value[end] === "'") { text += quote; end++; continue }
+      return { text, end }
     }
-    end = Math.min(end, value.length)
-    result += value.slice(offset, match.index) + match[1] + "[REDACTED]"
-    offset = end
-    prefix.lastIndex = end
+    if (char === "\\" && end < value.length) {
+      if (value[end] === "u" && /^[0-9a-f]{4}$/i.test(value.slice(end + 1, end + 5))) {
+        text += String.fromCharCode(parseInt(value.slice(end + 1, end + 5), 16)); end += 5
+      } else { text += value[end++] }
+    } else { text += char }
   }
-  return result + value.slice(offset)
+  // An unterminated credential value must not leak its remaining tail.
+  return { text, end }
+}
+
+/** Linear token scanning: recognize keys, then remove complete values before shortening. */
+function redactAssignments(value: string, depth = 0) {
+  const parts: string[] = []
+  let offset = 0
+  let index = 0
+  while (index < value.length) {
+    const tokenStart = index
+    const quote = value[index] === '"' || value[index] === "'" ? value[index] : undefined
+    let key: string
+    if (value[index] === '"' || value[index] === "'") {
+      const token = quotedToken(value, index)
+      key = token.text; index = token.end
+    } else if (/[a-z_]/i.test(value[index])) {
+      const start = index++
+      while (index < value.length && /[a-z0-9_-]/i.test(value[index])) index++
+      key = value.slice(start, index)
+    } else { index++; continue }
+    if (!sensitiveKeys.has(key.toLowerCase())) {
+      if (quote) {
+        // Logs may contain JSON serialized inside a quoted string. Do not expose its
+        // encoded credential value just because the outer token is not itself a key.
+        const nested = depth < 2 ? redactAssignments(key, depth + 1)
+          : key.includes(String.fromCharCode(92)) ? '[Encoded text omitted]' : key
+        if (nested !== key) {
+          parts.push(value.slice(offset, tokenStart), quote + '[REDACTED]' + quote)
+          offset = index
+        }
+      }
+      continue
+    }
+    let start = index
+    while (start < value.length && /\s/.test(value[start])) start++
+    if (value[start] !== ":" && value[start] !== "=") continue
+    start++
+    while (start < value.length && /\s/.test(value[start])) start++
+    let end = start
+    if (value[start] === '"' || value[start] === "'") end = quotedToken(value, start).end
+    else if (value[start] === "|" || value[start] === ">") end = value.length
+    else while (end < value.length && !/[\r\n,;}\]]/.test(value[end])) end++
+    parts.push(value.slice(offset, start), "[REDACTED]")
+    offset = end; index = end
+  }
+  return parts.join("") + value.slice(offset)
 }
 
 /** Defense in depth for authored summaries, not a guarantee that arbitrary text is secret-free. */
 export function dashboardText(value: string | undefined): DashboardText {
   if (!value) return { text: "Description not recorded", truncated: false }
   if (value.length > 16_000) return { text: "Long description omitted. Inspect it in Loom.", truncated: true }
-  const cleaned = redactCommand(redactQuotedAssignments(value
+  const cleaned = redactCommand(redactAssignments(value
     .replace(/-----BEGIN [^-]*PRIVATE KEY-----[\s\S]*?(?:-----END [^-]*PRIVATE KEY-----|$)/g, "[PRIVATE KEY REDACTED]"))
     .replace(/(authorization\s*:\s*(?:bearer|basic)\s+)[^\s]+/gi, "$1[REDACTED]")
     .replace(/(https?:\/\/)[^\s/@]+:[^\s/@]+@/gi, "$1[REDACTED]@")

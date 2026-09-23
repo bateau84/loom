@@ -182,6 +182,7 @@ export type FleetProject = {
   canonicalLocation: string
   workflows: AggregatedWorkflow[]
   workObjectives: AggregatedWorkObjective[]
+  projectionWindow?: Partial<ProjectSnapshotV1["projectionWindow"]>
 }
 
 export type FleetSnapshot = {
@@ -771,6 +772,18 @@ function aggregatedRecentActivity(workflow: AggregatedWorkflow) {
     ""
 }
 
+/** A union cannot prove that another publisher fills each omitted history item. */
+function aggregateProjectionWindow(records: PublisherRecord[]) {
+  const result: Partial<ProjectSnapshotV1["projectionWindow"]> = {}
+  for (const key of ["workflowsTruncated", "completedObjectivesTruncated"] as const) {
+    const flags = records.map((record) => record.snapshot.projectionWindow?.[key])
+    if (flags.some((flag) => flag === true)) result[key] = true
+    else if (flags.length && flags.every((flag) => flag === false)) result[key] = false
+    // Omitted or malformed legacy flags are unknown, not false.
+  }
+  return result
+}
+
 export function aggregateFleet(records: PublisherRecord[], now = new Date()): FleetSnapshot {
   const nowMs = now.getTime()
   const byProject = new Map<string, PublisherRecord[]>()
@@ -814,6 +827,7 @@ export function aggregateFleet(records: PublisherRecord[], now = new Date()): Fl
       canonicalLocation: latestRecord.snapshot.project.canonicalLocation,
       workflows,
       workObjectives,
+      projectionWindow: aggregateProjectionWindow(projectRecords),
     })
   }
 
