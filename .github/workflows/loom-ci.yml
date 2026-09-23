@@ -11,6 +11,7 @@ permissions:
 jobs:
   conformance:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -32,41 +33,34 @@ jobs:
           bun-version: 1.4.2
       - run: bun install --frozen-lockfile
 
-      - name: Verify real Loom plugin activation in pinned eval runner
+      - name: Verify real Loom plugin activation and rejection in pinned eval runner
         run: |
           set -euo pipefail
           image="ghcr.io/bateau84/opencode-eval-runner@sha256:f206d32bb0a5b39ce2080c5eed1e956a344ee86d362840538345202c4abc370c"
           workspace="$RUNNER_TEMP/loom-runtime-workspace"
-          rm -rf "$workspace"
-          mkdir -p "$workspace/.opencode/agents"
+          runtime="$RUNNER_TEMP/loom-preflight-runtime"
+          rm -rf "$workspace" "$runtime"
+          mkdir -p "$workspace/.opencode/agents" "$runtime"
           cp agents/general.md "$workspace/.opencode/agents/general.md"
           printf '%s\n' '{"$schema":"https://opencode.ai/config.json","default_agent":"general"}' > "$workspace/opencode.json"
 
+          # Execute a mounted file: python3 - with a heredoc silently did no
+          # work when Docker stdin was closed. Require emitted proof as well
+          # as a successful exit; the script checks activation and rejection.
+          # Both writable roots belong to the invoking non-root UID, rather
+          # than assuming the image and hosted runner use the same identity.
           docker run --rm \
+            --user "$(id -u):$(id -g)" \
             --workdir /workspace \
             --volume "$workspace:/workspace:rw" \
+            --volume "$runtime:/tmp/runtime:rw" \
             --volume "$PWD/node_modules:/workspace/node_modules:ro" \
             --volume "$PWD:/seed/opencode-config:ro" \
             --entrypoint python3 \
-            "$image" - <<'PY'
-          import sys
-
-          sys.path.insert(0, "/opt/opencode-eval-runner")
-          from container.invoke import prepare_opencode_env, verify_expected_plugin
-
-          env = prepare_opencode_env()
-          result = verify_expected_plugin(
-              env,
-              "general",
-              "openai/preflight-no-inference",
-              "loom",
-              30,
-          )
-          assert result["plugin"]["id"] == "loom", result
-          assert result["plugin"]["state"]["status"] == "active", result
-          assert result["verification"] == "plugin-entrypoint+activation-barrier+plugin-inventory", result
-          print("PASS real Loom plugin activation")
-          PY
+            "$image" /seed/opencode-config/scripts/verify_runner_plugin.py \
+            | tee "$RUNNER_TEMP/loom-plugin-preflight.log"
+          grep -Fxq 'PASS real Loom plugin activation' "$RUNNER_TEMP/loom-plugin-preflight.log"
+          grep -Fxq 'PASS missing plugin rejected' "$RUNNER_TEMP/loom-plugin-preflight.log"
 
       - name: Install OpenCode V2 for zero-inference host integration
         run: |
