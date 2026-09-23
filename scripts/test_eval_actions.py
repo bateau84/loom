@@ -64,18 +64,39 @@ class WorkflowCredentialTests(unittest.TestCase):
         self.assertNotIn("actions/upload-artifact@v4", live)
         self.assertNotIn("- run: bun install\n", live + ci)
 
-    def test_live_workflow_and_harness_pin_opencode_2_0_12_runner(self):
+    def test_opencode_host_and_plugin_api_share_compat_version(self):
         workflow = (
+            RUN_EVALS.ROOT / ".github" / "workflows" / "loom-ci.yml"
+        ).read_text(encoding="utf-8")
+        package = json.loads((RUN_EVALS.ROOT / "package.json").read_text(encoding="utf-8"))
+        plugin_version = package["devDependencies"]["@opencode/plugin"]
+        install_prefix = "npm install --global @opencode/cli@"
+        install_line = next(
+            line.strip()
+            for line in workflow.splitlines()
+            if install_prefix in line
+        )
+        host_version = install_line.split(install_prefix, 1)[1].strip()
+        self.assertEqual(host_version, plugin_version)
+        self.assertEqual(plugin_version, "2.0.15")
+
+    def test_workflows_and_harness_pin_opencode_2_0_15_runner(self):
+        live = (
             RUN_EVALS.ROOT / ".github" / "workflows" / "loom-live-evals.yml"
         ).read_text(encoding="utf-8")
-        expected_action = "bateau84/opencode-eval-runner@e2022f1075e34fe7be2a33eae3c9460f3f5c7263"
+        ci = (
+            RUN_EVALS.ROOT / ".github" / "workflows" / "loom-ci.yml"
+        ).read_text(encoding="utf-8")
+        expected_action = "bateau84/opencode-eval-runner@b17532ce4b9efb2a0151dca34268439056e775c9"
         expected_image = (
             "ghcr.io/bateau84/opencode-eval-runner@"
-            "sha256:3e5f95ce54fee127230c5bf84a7f09124a2236dfca544269e6547c8f79e8ad5d"
+            "sha256:f206d32bb0a5b39ce2080c5eed1e956a344ee86d362840538345202c4abc370c"
         )
 
-        self.assertIn(expected_action, workflow)
-        self.assertIn(expected_image, workflow)
+        for workflow in (live, ci):
+            self.assertIn(expected_action, workflow)
+            self.assertIn(expected_image, workflow)
+        self.assertIn('opencode "$OPENCODE_EVAL_RUNNER_OPENCODE_IMAGE" --version | grep -F "2.0.15"', ci)
         self.assertEqual(RUN_EVALS.DEFAULT_IMAGES["opencode"], expected_image)
 
     def test_live_workflow_forwards_opencode_api_key_explicitly(self):
@@ -85,6 +106,59 @@ class WorkflowCredentialTests(unittest.TestCase):
 
         self.assertIn("OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}", workflow)
         self.assertIn('args+=(--env OPENCODE_API_KEY)', workflow)
+
+
+class DatabaseSeedTests(unittest.TestCase):
+    def test_sanitizer_accepts_fresh_v2_session_schema(self):
+        import sqlite3
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "source.db"
+            destination = root / "sanitized.db"
+
+            with sqlite3.connect(source) as db:
+                db.execute("CREATE TABLE credential (provider TEXT, data TEXT)")
+                db.execute("CREATE TABLE session_v2 (id TEXT PRIMARY KEY)")
+                db.execute(
+                    "INSERT INTO credential(provider, data) VALUES (?, ?)",
+                    ("openai", json.dumps({"type": "oauth", "refresh": "secret-value"})),
+                )
+                db.commit()
+
+            result = RUN_EVALS.sanitize_database_seed(source, destination)
+            self.assertEqual(result, destination)
+            with sqlite3.connect(destination) as db:
+                self.assertEqual(
+                    db.execute("SELECT provider, data FROM credential").fetchall(),
+                    [("openai", json.dumps({"type": "oauth", "refresh": "secret-value"}))],
+                )
+                tables = {
+                    row[0]
+                    for row in db.execute(
+                        "SELECT name FROM sqlite_master WHERE type = 'table'"
+                    )
+                }
+                self.assertIn("session_v2", tables)
+
+    def test_sanitizer_keeps_legacy_session_schema_compatible(self):
+        import sqlite3
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "source.db"
+            destination = root / "sanitized.db"
+
+            with sqlite3.connect(source) as db:
+                db.execute("CREATE TABLE credential (provider TEXT, data TEXT)")
+                db.execute("CREATE TABLE session (id TEXT PRIMARY KEY)")
+                db.commit()
+
+            self.assertEqual(
+                RUN_EVALS.sanitize_database_seed(source, destination),
+                destination,
+            )
+
 
 
 class RuntimeEvalProjectTests(unittest.TestCase):

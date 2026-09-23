@@ -409,7 +409,7 @@ function chooseMockAction(prompt: string, results: Map<string, unknown>, state: 
       return {
         name: "execute",
         args: {
-          code: 'return search({ query: "loom", limit: 100 })',
+          code: 'return search({ query: "", namespace: "tools.loom.code", limit: 100 })',
         },
       }
     }
