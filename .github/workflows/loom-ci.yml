@@ -133,7 +133,20 @@ jobs:
           npm install --no-save --package-lock=false --legacy-peer-deps @playwright/test@1.55.0
           npx playwright install --with-deps chromium
       - name: Run browser Designer validation
-        run: npx playwright test dashboard/e2e.spec.mjs dashboard/status-view.e2e.spec.ts --browser=chromium --workers=1
+        id: dashboard-browser
+        run: npx playwright test dashboard/e2e.spec.mjs dashboard/status-view.e2e.spec.ts dashboard/review-regressions.e2e.spec.mjs --browser=chromium --workers=1
+      - name: Retain synthetic dashboard review evidence
+        if: ${{ !cancelled() && (steps.dashboard-browser.outcome == 'success' || steps.dashboard-browser.outcome == 'failure') }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: dashboard-review-evidence
+          path: |
+            test-results/**/*.png
+            test-results/**/generated-ui.html
+            test-results/**/fleet.json
+          retention-days: 7
+          if-no-files-found: warn
+          include-hidden-files: false
       - run: bun run eval:validate
       - run: bun run eval:harness-test
       - run: bun run skills:validate

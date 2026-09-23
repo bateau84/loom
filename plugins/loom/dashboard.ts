@@ -4,6 +4,7 @@ import { basename, dirname, isAbsolute, join } from "node:path"
 import { homedir } from "node:os"
 import { acceptanceReadiness, type AcceptancePlan } from "./acceptance"
 import type { BudgetState, ExecutionLimits } from "./budget"
+import { buildDashboardWorkflowContext, type DashboardWorkflowContext } from "./dashboard-context"
 import type { KnowledgeReport } from "./knowledge"
 import type { OpenQuestion } from "./oq"
 import type { LoomRuntimeIdentity, RawStorage } from "./runtime"
@@ -101,6 +102,7 @@ export type WorkflowProjectionV1 = {
   participatingSessionIds: string[]
   activeAgent?: string
   activeSessionId?: string
+  context?: DashboardWorkflowContext
 }
 
 export type ProjectSnapshotV1 = {
@@ -180,6 +182,7 @@ export type FleetProject = {
   canonicalLocation: string
   workflows: AggregatedWorkflow[]
   workObjectives: AggregatedWorkObjective[]
+  projectionWindow?: Partial<ProjectSnapshotV1["projectionWindow"]>
 }
 
 export type FleetSnapshot = {
@@ -368,7 +371,7 @@ async function workflowProjection(
   const scenarios = acceptance?.scenarios ?? []
   const questionValues = questions
     .map((entry) => entry.value as OpenQuestion)
-    .filter((question): question is OpenQuestion => Boolean(question?.id))
+    .filter((question): question is OpenQuestion => Boolean(question?.id) && question.workflowId === workflow.id)
   const recentActivityAt = latestTimestamp(
     [
       workflow.createdAt,
@@ -426,6 +429,7 @@ async function workflowProjection(
     participatingSessionIds: participants,
     ...(ready[0] ? { activeAgent: ready[0].agent } : {}),
     ...(participants[0] ? { activeSessionId: participants[0] } : {}),
+    context: buildDashboardWorkflowContext(workflow, questionValues, participants, questions.length >= 1000),
   }
   return { ...body, stateDigest: projectionDigest(body) }
 }
@@ -673,6 +677,27 @@ function aggregateWork(
   }
 }
 
+type WorkflowCandidate = { workflow: WorkflowProjectionV1; record: PublisherRecord }
+
+/** Missing optional context is not contradictory context. Never normalize real disagreements. */
+function compatibleContextCandidates(candidates: WorkflowCandidate[]): WorkflowCandidate[] | undefined {
+  const rich = candidates.filter(({ workflow }) => workflow.context !== undefined)
+  if (!rich.length || rich.length === candidates.length) return undefined
+  const commonDigests = new Set<string>()
+  for (const { workflow } of candidates) {
+    const { stateDigest, context, ...common } = workflow
+    if (context !== undefined && context?.version !== 1) return undefined
+    // The compatibility exception requires intact complete payloads on both sides.
+    const body = context === undefined ? common : { ...common, context }
+    if (projectionDigest(body) !== stateDigest) return undefined
+    commonDigests.add(projectionDigest(common))
+  }
+  if (commonDigests.size !== 1) return undefined
+  if (new Set(rich.map(({ workflow }) => workflow.stateDigest)).size !== 1) return undefined
+  // Select one whole context-bearing snapshot, not fields from different publishers.
+  return rich
+}
+
 function aggregateWorkflow(
   records: PublisherRecord[],
   projectId: string,
@@ -688,8 +713,12 @@ function aggregateWorkflow(
   if (values.length === 0) return undefined
   const highest = Math.max(...values.map((value) => value.workflow.workflowRevision))
   const candidates = values.filter((value) => value.workflow.workflowRevision === highest)
-  const conflict = new Set(candidates.map((value) => value.workflow.stateDigest)).size > 1
-  const sourceFreshness = candidates.some((value) => live(value.record, nowMs))
+  const sameDigest = new Set(candidates.map((value) => value.workflow.stateDigest)).size === 1
+  const compatible = sameDigest ? candidates : compatibleContextCandidates(candidates)
+  const conflict = compatible === undefined
+  const sources = compatible ?? candidates
+  // A live legacy publisher cannot make context supplied only by stale sources live.
+  const sourceFreshness = sources.some((value) => live(value.record, nowMs))
     ? "live" as const
     : "stale-source" as const
   const participants = values
@@ -715,7 +744,7 @@ function aggregateWorkflow(
     }
   }
 
-  const chosen = candidates.find((value) => live(value.record, nowMs)) ?? candidates[0]
+  const chosen = sources.find((value) => live(value.record, nowMs)) ?? sources[0]
   return {
     projectId,
     workflowId,
@@ -741,6 +770,18 @@ function aggregatedRecentActivity(workflow: AggregatedWorkflow) {
   return workflow.projection?.recentActivityAt ??
     workflow.conflictCandidates?.map((candidate) => candidate.recentActivityAt).sort().at(-1) ??
     ""
+}
+
+/** A union cannot prove that another publisher fills each omitted history item. */
+function aggregateProjectionWindow(records: PublisherRecord[]) {
+  const result: Partial<ProjectSnapshotV1["projectionWindow"]> = {}
+  for (const key of ["workflowsTruncated", "completedObjectivesTruncated"] as const) {
+    const flags = records.map((record) => record.snapshot.projectionWindow?.[key])
+    if (flags.some((flag) => flag === true)) result[key] = true
+    else if (flags.length && flags.every((flag) => flag === false)) result[key] = false
+    // Omitted or malformed legacy flags are unknown, not false.
+  }
+  return result
 }
 
 export function aggregateFleet(records: PublisherRecord[], now = new Date()): FleetSnapshot {
@@ -786,6 +827,7 @@ export function aggregateFleet(records: PublisherRecord[], now = new Date()): Fl
       canonicalLocation: latestRecord.snapshot.project.canonicalLocation,
       workflows,
       workObjectives,
+      projectionWindow: aggregateProjectionWindow(projectRecords),
     })
   }
 

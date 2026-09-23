@@ -15,6 +15,7 @@ import {
 import type { LoomRuntimeIdentity, RawStorage } from "./runtime"
 import type { Workflow } from "./workflow"
 import type { WorkHierarchy } from "./work"
+import "../../dashboard/readability.test"
 
 const roots: string[] = []
 
@@ -104,7 +105,12 @@ async function populated(root: string) {
   await storage.set("work/objective", work())
   await storage.set("session/session-general", "workflow-a")
   await storage.set("session/session-reviewer", "workflow-a")
-  await storage.set("oq/workflow-a/OQ-1", { id: "OQ-1", status: "open" })
+  await storage.set("oq/workflow-a/OQ-1", {
+    id: "OQ-1", workflowId: "workflow-a", question: "Which behavior applies?",
+    raisedByAgent: "worker", raisedByStepId: "task:build", requiredAuthority: "reviewer",
+    blocking: true, consumerStepIds: ["task:build"], evidence: [], status: "open",
+    reconciliations: {}, createdAt: "2026-09-21T12:01:00.000Z",
+  })
   await storage.set("budget/workflow-a", { totalDispatches: 5, byKey: {}, seenDispatches: [] })
   await storage.set("limits/workflow-a", { maxTotalDispatches: 40 })
   return { storage, runtime: runtime(root) }
