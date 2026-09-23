@@ -85,7 +85,7 @@ class HumanInteractionWiringTests(unittest.TestCase):
         self.assertIn("Omit unrequested non-events such as non-deployment before dropping a known cause", source)
         self.assertIn("`blocked` or `pending` does not establish that a check was attempted", source)
         self.assertIn("Do not mention hypothetical or unknown extra required checks", source)
-        self.assertIn("additional prudent checks may be suggested only when clearly labeled optional", source)
+        self.assertIn("Additional prudent checks may be suggested only when clearly labeled optional", source)
 
         regressions = {case["id"]: case for case in RUNNER.load_cases([REGRESSION_SUITE])}
         priority = regressions["HUMAN-BLOCKER-PRIORITY-01"]
