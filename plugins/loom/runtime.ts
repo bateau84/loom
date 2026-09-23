@@ -48,7 +48,7 @@ const PROJECT_PREFIX = "project/"
 const GLOBAL_PREFIXES = ["installation/", "episode/", "heuristic/"]
 
 export const RUNTIME_BASELINE_VERSION = 1
-export const RUNTIME_STATE_VERSION = 2
+export const RUNTIME_STATE_VERSION = 3
 
 export type RuntimeUpgradePhase =
   | "canonical-upgrade"
@@ -96,12 +96,17 @@ type RuntimeUpgradeReceiptV1 = {
 }
 
 // Existing records remain readable. The version advance fences older writers
-// that do not understand cancellation; legacy Wave receipts are recovered lazily.
+// that lack cancellation/admission fences; legacy Wave receipts recover lazily.
 const RUNTIME_UPGRADE_STEPS: RuntimeUpgradeStep[] = [{
   id: "workflow-cancellation-v2",
   fromVersion: 1,
   toVersion: 2,
   applyInstallation: async () => ({ cancellationFence: true }),
+}, {
+  id: "evidence-admission-v3",
+  fromVersion: 2,
+  toVersion: 3,
+  applyInstallation: async () => ({ admissionBoundEvidence: true }),
 }]
 
 function sha256(value: string) {

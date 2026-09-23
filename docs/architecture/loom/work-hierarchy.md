@@ -442,3 +442,6 @@ A live Wave claim authorizes execution; it is not the permanent record of who re
 Implementation reopening requires the exact completed receipt and refuses to invalidate a Wave already consumed by claimed/completed downstream work. Documentation-only reopening leaves the live claim absent. For older completed Waves without receipts, the control plane admits only uniquely attributable persisted review history; ambiguity is reported, not repaired by taking ownership.
 
 See [Control Plane](control-plane.md#workflow-cancellation-and-reviewed-completion) and [Runtime Upgrades](../../user/upgrades.md#cancelling-or-replacing-a-stuck-workflow).
+
+
+When reopening a partial-recovery workflow, downstream-consumer checks start from **every Task in the reviewed Wave**, not only the Tasks that replacement executed. Removing a whole-Wave receipt invalidates the admission prerequisite of any dependent Wave. Claimed or completed direct/transitive consumers block reopening before any state change; unconsumed work remains reopenable.

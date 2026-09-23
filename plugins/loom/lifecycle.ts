@@ -1,3 +1,4 @@
+import { recoveryCodeCall } from "./recovery-code"
 import { plannedTaskSteps, runnable, assertWorkflowNotCancelled, WorkflowCancelledError, type Workflow } from "./workflow"
 import { assertWorkGeneration, assertCompletedWaveForTasks, releaseCancelledWorkflowClaims, type WorkHierarchy } from "./work"
 import { revokeWorkflowDispatchGrantsLocked, withRuntimeLocks, type RawStorage, type LoomRuntimeIdentity } from "./runtime"
@@ -54,6 +55,8 @@ export async function assertCancelledChildToolAdmission(
   const name = loomToolLeaf(tool)
   const isLoom = /^(?:tools\.)?loom[._]/.test(tool)
   if (isLoom && (readOnlyTool(name, input) || name === "attach")) return
+  const recovery = tool === "execute" ? recoveryCodeCall(input) : undefined
+  if (recovery && (recovery.name === "attach" || readOnlyTool(recovery.name, recovery.input))) return
   throw new WorkflowCancelledError(workflow.id)
 }
 
@@ -85,10 +88,17 @@ export async function cancelWorkflow(
     }
     // Retrying after the owner has started a replacement must not touch it.
     if (workflow.cancellation) return { cancelled: true, alreadyCancelled: true, workflowId: workflow.id, cancellation: workflow.cancellation }
-    if (await storage.get(`session/${actor.sessionID}`) !== workflow.id) {
+    const terminal = workflowBindingTerminal(workflow)
+    const released = await storage.get(`binding-release/${workflow.id}/${actor.sessionID}`)
+    if (await storage.get(`session/${actor.sessionID}`) !== workflow.id && !terminal && !released) {
       throw new Error("General is no longer bound to this workflow.")
     }
-    if (workflowBindingTerminal(workflow)) return { cancelled: false, terminal: true, workflowId: workflow.id }
+    // A failed gate is a terminal outcome, not proof that claims/grants were
+    // cleaned up. The owning General may abandon it even after rebinding.
+    // Successful closure stays a no-op; never relabel completed work cancelled.
+    if (terminal && !workflow.steps.some((step) => step.status === "failed")) {
+      return { cancelled: false, terminal: true, workflowId: workflow.id }
+    }
 
     const at = new Date().toISOString()
     let releasedClaimIds: string[] = []

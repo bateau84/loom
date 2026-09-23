@@ -594,8 +594,12 @@ export function reopenWaveForTasks(
   if (!wave || wave.status !== "complete") return hierarchy
   assertCompletedWaveForTasks(hierarchy, workflowId, generation, taskIds)
 
-  // Reopening cannot invalidate work already consumed by another Wave.
-  const dependentIds = new Set(taskIds)
+  // Reopening invalidates the whole assembled Wave receipt, not just the
+  // Tasks this (possibly partial-recovery) workflow executed. Admission of a
+  // downstream Task depended on that whole Wave having passed review.
+  const dependentIds = new Set(activeNodes(hierarchy)
+    .filter((node) => node.type === "task" && node.parentId === wave.id)
+    .map((node) => node.logicalId))
   let changed = true
   while (changed) {
     changed = false

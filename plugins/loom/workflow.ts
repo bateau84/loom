@@ -10,6 +10,7 @@ export type Step = {
   kind: StepKind
   dependsOn: string[]
   status: StepStatus
+  attempt?: number
   summary?: string
   task?: TaskSpec
 }
@@ -372,6 +373,7 @@ export function preserveSatisfied(previous: Step[], next: Step[]) {
 
   for (const step of next) {
     const old = byID.get(step.id)
+    if (old) step.attempt = (old.attempt ?? 0) + 1
     const sameDependencies =
       old?.dependsOn.length === step.dependsOn.length &&
       old.dependsOn.every((dependency, index) => dependency === step.dependsOn[index])
@@ -382,6 +384,7 @@ export function preserveSatisfied(previous: Step[], next: Step[]) {
       sameDependencies &&
       satisfied(old)
     ) {
+      step.attempt = old.attempt
       step.status = old.status
       step.summary = old.summary
     }
@@ -445,6 +448,7 @@ export function reopenFrom(workflow: Workflow, stepId: string) {
 
   for (const step of workflow.steps) {
     if (affected.has(step.id)) {
+      step.attempt = (step.attempt ?? 0) + 1
       step.status = "pending"
       delete step.summary
     }
@@ -475,6 +479,7 @@ export function applyTaskPlan(workflow: Workflow, tasks: TaskSpec[]) {
     dependsOn: ["plan", ...task.dependsOn.map(taskStepId)],
     status: "pending",
     task,
+    attempt: (existing.find((step) => step.id === taskStepId(task.id))?.attempt ?? -1) + 1,
   }))
 
   const withoutTasks = workflow.steps.filter((step) => !step.id.startsWith("task:"))

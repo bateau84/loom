@@ -1,3 +1,4 @@
+import { captureEvidenceAdmission, observationCallKey, persistEvidenceObservation, sessionAttachmentKey, type EvidenceAdmission } from "./evidence-admission"
 import type * as OpenCodePlugin from "@opencode/plugin"
 import { RUNTIME_STATE_VERSION, consumeDispatchGrantLocked, createProjectStorage, createTransactionalStorage, ensureRuntimeStateVersion, findUsableDispatchGrant, importLegacyPluginStorage, issueDispatchGrantLocked, migrateLegacySessionState, resolveRuntimeIdentity, sessionBoundToOq, sessionBoundToStep, sessionBoundToWorkflow, withRuntimeAdvisoryLock, withRuntimeLock, withRuntimeLocks, type LoomRuntimeIdentity } from "./runtime"
 import { LoomRpc } from "./rpc"
@@ -51,6 +52,7 @@ import {
 import {
   createClaim,
   observationsSupportKind,
+  observationMatchesStep,
   safeInputSummary,
   type EvidenceClaim,
   type EvidenceKind,
@@ -609,8 +611,8 @@ async function bindSessionEvidence(ctx: any, sessionID: string, workflowId: stri
   let bound = 0
 
   for (const observation of observations) {
-    // Evidence is bound at observation time. Never retroactively upgrade
-    // conversational/pre-attachment observations into governed workflow proof.
+    // Evidence scope was fixed at admission and checked at return. Never upgrade
+    // passive/conversational history into governed workflow proof here.
     if (observation.workflowId !== workflowId || observation.stepId !== stepId) continue
 
     await ctx.storage.set(`${stepEvidencePrefix(workflowId, stepId)}${observation.id}`, observation.id)
@@ -619,12 +621,6 @@ async function bindSessionEvidence(ctx: any, sessionID: string, workflowId: stri
 
   return bound
 }
-
-function toolEventKey(raw: any) {
-  return String(raw.callID ?? raw.id ?? `${raw.sessionID ?? "unknown"}:${raw.tool ?? "unknown"}`)
-}
-
-const pendingToolInputs = new Map<string, unknown>()
 
 const evidenceObservedLoomToolNames = new Set(["find", "grep", "select", "stats", "report_promote"])
 
@@ -676,6 +672,15 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
     dashboardPublisher.trigger()
     dashboardPublisher.startHeartbeat()
 
+    // Per-plugin-instance, bounded pending observations. Missing/evicted before
+    // events remain passive; they are never reconstructed from a later binding.
+    const pendingObservations = new Map<string, {
+      ambiguous: boolean
+      ready: boolean
+      inputDigest?: string
+      summary?: ReturnType<typeof safeInputSummary>
+      admission?: EvidenceAdmission
+    }>()
     const legacyCheckedSessions = new Set<string>()
     const ensureLegacySession = async (sessionID: string) => {
       if (legacyCheckedSessions.has(sessionID)) return
@@ -1348,6 +1353,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
               await ctx.storage.set(workflowKey(id), workflow)
               await ctx.storage.set(sessionKey(tool.sessionID), id)
+              await ctx.storage.set(sessionAttachmentKey(tool.sessionID), crypto.randomUUID())
               await ctx.storage.set(sessionStepKey(tool.sessionID), "")
               await ctx.storage.set(sessionOqKey(tool.sessionID), "")
               if (intent?.acceptedAnchor?.path === anchor) {
@@ -2400,8 +2406,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           if (
             observations.some(
               (observation) =>
-                observation.workflowId !== value.workflowId ||
-                observation.stepId !== attachedStep,
+                !observationMatchesStep(observation, workflow, attachedStep),
             )
           ) {
             return {
@@ -2536,8 +2541,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           if (
             observations.some(
               (observation) =>
-                observation.workflowId !== value.workflowId ||
-                observation.stepId !== value.stepId,
+                !observationMatchesStep(observation, workflow, value.stepId),
             )
           ) {
             return {
@@ -2550,6 +2554,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
           try {
             const claim = createClaim({
+              attempt: step.attempt ?? 0,
               id: crypto.randomUUID(),
               workflowId: value.workflowId,
               stepId: value.stepId,
@@ -2561,6 +2566,12 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             })
 
             await withRuntimeLock(runtime, "workflow", value.workflowId, async () => {
+              const current = await readWorkflow(ctx, value.workflowId)
+              if (!current || !(await exactStepBinding(ctx, tool.sessionID, value.workflowId, value.stepId)) ||
+                  observations.some((observation) => !observationMatchesStep(observation, current, value.stepId))) {
+                throw new Error("Evidence attachment/attempt changed before claim commit.")
+              }
+              assertWorkflowNotCancelled(current)
               for (const observation of observations) {
                 await ctx.storage.set(
                   `${stepEvidencePrefix(value.workflowId, value.stepId)}${observation.id}`,
@@ -2650,6 +2661,9 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           if (observations.length !== value.okfObservationIds.length) {
             return { content: renderToolOutput({ error: "Every OKF observation id must belong to the current Documenter session." }) }
           }
+          if (observations.some((observation) => !observationMatchesStep(observation, workflow, "knowledge-sync"))) {
+            return { content: renderToolOutput({ error: "Knowledge proof must be admitted to this workflow's current knowledge-sync attempt." }) }
+          }
 
           try {
             const report = await withRuntimeLock(runtime, "workflow", value.workflowId, async () => {
@@ -2658,6 +2672,11 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               if (currentWorkflow.projectId !== runtime.projectId) {
                 throw new Error("Workflow belongs to another project.")
               }
+              if (!(await exactStepBinding(ctx, tool.sessionID, value.workflowId, "knowledge-sync")) ||
+                  observations.some((observation) => !observationMatchesStep(observation, currentWorkflow, "knowledge-sync"))) {
+                throw new Error("Knowledge attachment/attempt changed before proof commit.")
+              }
+              assertWorkflowNotCancelled(currentWorkflow)
               const next = createKnowledgeReport({
                 workflowId: value.workflowId,
                 changedDocs: value.changedDocs,
@@ -2843,6 +2862,15 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               }
               if (claims.some((claim) => claim.byAgent !== "acceptance")) {
                 throw new Error("Product Acceptance evidence claims must be produced by acceptance.")
+              }
+              const current = await readWorkflow(ctx, value.workflowId)
+              if (!current || !(await exactStepBinding(ctx, tool.sessionID, value.workflowId, "product-acceptance"))) {
+                throw new Error("Product Acceptance attachment changed before result commit.")
+              }
+              assertWorkflowNotCancelled(current)
+              const attempt = current.steps.find((step) => step.id === "product-acceptance")?.attempt ?? 0
+              if (value.outcome === "passed" && claims.some((claim) => (claim.attempt ?? 0) !== attempt)) {
+                throw new Error("Product Acceptance claims must belong to the current step attempt.")
               }
 
               const scenario = recordAcceptanceResult({
@@ -3696,6 +3724,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               })
 
               await ctx.storage.set(sessionKey(tool.sessionID), value.workflowId)
+              await ctx.storage.set(sessionAttachmentKey(tool.sessionID), crypto.randomUUID())
               await ctx.storage.set(sessionStepKey(tool.sessionID), value.stepId ?? "")
               await ctx.storage.set(sessionOqKey(tool.sessionID), value.questionId ?? "")
               await bumpWorkflowRevisionLocked(ctx, runtime, value.workflowId)
@@ -4344,7 +4373,25 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         await assertCancelledChildToolAdmission(ctx.storage as any, tool, raw.input, String(raw.sessionID))
       }
       if (skipLoomEvidence(tool)) return
-      pendingToolInputs.set(toolEventKey(raw), raw.input)
+      const key = observationCallKey(raw)
+      if (!key) return
+      // A duplicate in-flight identifier is ambiguous, not a newer authority.
+      if (pendingObservations.has(key)) {
+        pendingObservations.get(key)!.ambiguous = true
+        return
+      }
+      // Reserve the key before awaiting storage so concurrent before events do
+      // not overwrite each other's admission.
+      const pending: {
+        ambiguous: boolean; ready: boolean; inputDigest?: string
+        summary?: ReturnType<typeof safeInputSummary>; admission?: EvidenceAdmission
+      } = { ambiguous: false, ready: false }
+      pendingObservations.set(key, pending)
+      if (pendingObservations.size > 1024) pendingObservations.delete(pendingObservations.keys().next().value!)
+      pending.admission = await captureEvidenceAdmission(ctx.storage as any, runtime, String(raw.sessionID), String(raw.agent ?? ""))
+      pending.inputDigest = raw.input === undefined ? undefined : await digest(raw.input)
+      pending.summary = safeInputSummary(tool, raw.input)
+      pending.ready = true
     })
 
     await ctx.tool.hook("execute.after", async (event) => {
@@ -4360,9 +4407,13 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       if (skipLoomEvidence(tool)) return
       if (!raw.sessionID) return
 
-      const key = toolEventKey(raw)
-      const input = raw.input ?? pendingToolInputs.get(key)
-      pendingToolInputs.delete(key)
+      const key = observationCallKey(raw)
+      const matched = key ? pendingObservations.get(key) : undefined
+      if (key) pendingObservations.delete(key)
+      const pending = matched?.ready && !matched.ambiguous ? matched : undefined
+      const input = raw.input
+      const inputDigest = input === undefined ? undefined : await digest(input)
+      const eventMatches = Boolean(pending) && inputDigest === pending!.inputDigest
 
       if (tool.toLowerCase().includes("synabun") && /(?:^|_)remember$/i.test(tool)) {
         const episodeId = episodeIdFromRememberInput(input)
@@ -4386,7 +4437,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         }
       }
 
-      const summary = safeInputSummary(tool, input)
+      const summary = pending?.summary ?? safeInputSummary(tool, input)
       let reportPromotion: EvidenceObservation["reportPromotion"]
       const loomTool = tool.replace(/^loom[._]/, "")
       if (
@@ -4420,34 +4471,6 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         }
       }
 
-      // Evidence observation is passive bookkeeping. Do not trigger legacy
-      // session migration from a generic tool hook; canonical workflow binding
-      // is sufficient here and keeps observation compatible with hosts that do
-      // not expose session lookup on this path.
-      const observedWorkflow = await activeWorkflow(
-        ctx,
-        String(raw.sessionID),
-      )
-      const observedStepId =
-        observedWorkflow && !workflowBindingTerminal(observedWorkflow)
-          ? ((await ctx.storage.get(sessionStepKey(String(raw.sessionID)))) as string | undefined)
-          : undefined
-      const observedStep = observedStepId
-        ? observedWorkflow?.steps.find((step) => step.id === observedStepId)
-        : undefined
-      const observedStepRunnable =
-        observedWorkflow && observedStepId
-          ? runnable(observedWorkflow).some((step) => step.id === observedStepId)
-          : false
-      const governedEvidenceBinding =
-        observedWorkflow &&
-        observedStepId &&
-        observedStep &&
-        observedStepRunnable &&
-        (!raw.agent || observedStep.agent === String(raw.agent))
-          ? { workflowId: observedWorkflow.id, stepId: observedStepId }
-          : {}
-
       const observation: EvidenceObservation = {
         id: crypto.randomUUID(),
         sessionID: String(raw.sessionID),
@@ -4455,16 +4478,15 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         tool,
         status: raw.status === "error" ? "error" : "completed",
         observedAt: new Date().toISOString(),
-        ...(input === undefined ? {} : { inputDigest: await digest(input) }),
+        ...((pending?.inputDigest ?? inputDigest) === undefined ? {} : { inputDigest: pending?.inputDigest ?? inputDigest }),
         ...(raw.status === "completed" ? { resultDigest: await digest(raw.result) } : {}),
         ...(raw.status === "error" ? { error: String(raw.error?.message ?? raw.error ?? "tool error").slice(0, 1000) } : {}),
         ...summary,
         ...(reportPromotion ? { reportPromotion } : {}),
-        ...governedEvidenceBinding,
+        ...(!eventMatches && pending ? { unscopedReason: "input-changed" } : {}),
       }
 
-      await ctx.storage.set(evidenceKey(observation.id), observation)
-      await ctx.storage.set(`${sessionEvidencePrefix(observation.sessionID)}${observation.id}`, observation.id)
+      await persistEvidenceObservation(ctx.storage as any, runtime, observation, pending?.admission)
     })
   },
 }

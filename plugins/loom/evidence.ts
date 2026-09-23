@@ -1,3 +1,6 @@
+import type { EvidenceAdmission } from "./evidence-admission"
+import type { Workflow } from "./workflow"
+
 export type EvidenceStatus = "completed" | "error"
 
 export type EvidenceObservation = {
@@ -7,6 +10,8 @@ export type EvidenceObservation = {
   tool: string
   status: EvidenceStatus
   observedAt: string
+  admission?: EvidenceAdmission
+  unscopedReason?: string
   inputDigest?: string
   resultDigest?: string
   error?: string
@@ -39,6 +44,7 @@ export type EvidenceKind =
   | "other"
 
 export type EvidenceClaim = {
+  attempt?: number
   id: string
   workflowId: string
   stepId: string
@@ -151,6 +157,7 @@ export function observationsSupportKind(kind: EvidenceKind, observations: Eviden
 }
 
 export function createClaim(input: {
+  attempt?: number
   id: string
   workflowId: string
   stepId: string
@@ -173,5 +180,17 @@ export function createClaim(input: {
     statement: input.statement,
     observationIds: input.observations.map((observation) => observation.id),
     createdAt: input.now,
+    ...(input.attempt === undefined ? {} : { attempt: input.attempt }),
   } satisfies EvidenceClaim
+}
+
+/** Legacy scoped evidence remains readable; new admissions also bind the attempt. */
+export function observationMatchesStep(observation: EvidenceObservation, workflow: Workflow, stepId: string) {
+  if (observation.workflowId !== workflow.id || observation.stepId !== stepId || observation.unscopedReason) return false
+  const step = workflow.steps.find((step) => step.id === stepId)
+  if (!step) return false
+  const origin = observation.admission
+  if (!origin) return (step.attempt ?? 0) === 0
+  return (origin.workflowId === workflow.id && origin.stepId === stepId &&
+    origin.agent === step.agent && origin.attempt === (step.attempt ?? 0))
 }

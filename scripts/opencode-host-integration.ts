@@ -1,3 +1,4 @@
+import { runLifecycleHostScenarios } from "./lifecycle-host-scenarios"
 import { createServer } from "node:net"
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises"
 import { join, resolve } from "node:path"
@@ -99,6 +100,7 @@ async function waitForFile(path: string, timeoutMs = 15_000) {
 const UPGRADE_WORKFLOW_ID = "legacy-upgrade-workflow"
 
 type MockProviderState = {
+  programs: Map<string, { code: string; done: boolean; result?: unknown }>
   workflowId?: string
   workerGrantId?: string
   reviewerGrantId?: string
@@ -248,6 +250,13 @@ function toolRejected(value: unknown) {
 }
 
 function chooseMockAction(prompt: string, results: Map<string, unknown>, state: MockProviderState) {
+  const program = state.programs.get(prompt)
+  if (program) {
+    if (!results.has("execute")) return { name: "execute", args: { code: program.code } }
+    program.result = results.get("execute")
+    program.done = true
+    return null
+  }
   const startResult = results.get("loom_start") as any
   const grantResult = results.get("loom_dispatch_grant") as any
   if (grantResult?.grantId && grantResult?.expectedAgent === "worker") state.workerGrantId = String(grantResult.grantId)
@@ -487,6 +496,7 @@ function chooseMockAction(prompt: string, results: Map<string, unknown>, state: 
 
 async function startMockProvider() {
   const state: MockProviderState = {
+    programs: new Map(),
     workerAttached: false,
     workerCompleted: false,
     reviewerAttached: false,
@@ -771,6 +781,9 @@ async function createProject(base: string, name: string, mockBaseUrl: string) {
     "utf8",
   )
   await symlink(join(root, "plugins", "loom"), join(pluginDir, "loom"), "dir")
+  if (name === "project-a") {
+    await symlink(join(root, "scripts", "fixtures", "lifecycle-delay-plugin.ts"), join(pluginDir, "lifecycle-delay-plugin.ts"), "file")
+  }
   for (const agent of ["general", "worker", "reviewer", "planner"]) {
     await symlink(join(root, "agents", `${agent}.md`), join(agentDir, `${agent}.md`), "file")
   }
@@ -778,7 +791,7 @@ async function createProject(base: string, name: string, mockBaseUrl: string) {
     join(project, "opencode.json"),
     JSON.stringify({
       "$schema": "https://opencode.ai/config.json",
-      plugins: ["./.opencode/plugins/loom"],
+      plugins: ["./.opencode/plugins/loom", ...(name === "project-a" ? ["./.opencode/plugins/lifecycle-delay-plugin.ts"] : [])],
       model: "loommock/mock",
       enabled_providers: ["loommock"],
       permission: { browser: "allow" },
@@ -1296,6 +1309,28 @@ try {
   if (resumedPrimaryOutput?.workflowId !== UPGRADE_WORKFLOW_ID || resumedSecondaryOutput?.workflowId !== UPGRADE_WORKFLOW_ID) {
     throw new Error("Restarted real OpenCode sessions did not reconcile to the legacy workflow")
   }
+
+  await runLifecycleHostScenarios({
+    project: projectA,
+    create: async (agent, parent) => {
+      const session = await jsonRequestAny([`${serverA.baseUrl}/api/session`, `${serverA.baseUrl}/session`], serverA.authorization, {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify(sessionCreateBody("Loom lifecycle regression", agent, parent)),
+      })
+      if (!session?.id) throw new Error("Lifecycle scenario could not create a real session")
+      return session.id
+    },
+    run: async (sessionID, code) => {
+      const prompt = `LOOM_PROGRAM_${crypto.randomUUID()}`
+      const program: { code: string; done: boolean; result?: unknown } = { code, done: false }
+      mock.state.programs.set(prompt, program)
+      try {
+        await sendPrompt(serverA, sessionID, prompt)
+        await waitForCondition(() => program.done, "lifecycle host program", () => program, 30_000)
+        return program.result
+      } finally { mock.state.programs.delete(prompt) }
+    },
+  })
 
   console.log("PASS OpenCode host integration")
   console.log(` - workflow: ${mock.state.workflowId}`)

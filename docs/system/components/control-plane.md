@@ -37,6 +37,8 @@ The Loom plugin exposes tools for:
 - `plugins/loom/intent.ts` — intent interview and Anchor-acceptance state.
 - `plugins/loom/workflow.ts` — workflow DAG, step state and cancellation fence.
 - `plugins/loom/lifecycle.ts` — atomic workflow cancellation, tool admission, terminal bindings and reviewed-Wave history recovery.
+- `plugins/loom/recovery-code.ts` — restricted single-call Code Mode recovery for cancelled children.
+- `plugins/loom/evidence-admission.ts` / `evidence.ts` — operation origin, attachment/attempt checks, historical observations and proof claims.
 - `plugins/loom/work.ts` — Objective → Phase → Wave → Task hierarchy, live claims and reviewed-Wave receipts.
 - `plugins/loom/tasks.ts` — bounded implementation DAG validation.
 - `plugins/loom/oq.ts` — shared questions.
