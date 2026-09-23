@@ -16,9 +16,15 @@ Your first Loom action is `loom_attach` with the General-issued `grantId`, assig
 
 Load `risk-driven-planning` and `work-decomposition` before constructing a non-trivial plan. They guide decomposition and verification placement; accepted authority and Loom validation remain controlling.
 
+## Authority before decomposition
+
+Reject a requested Worker scope that mixes implementation with accepted Anchor, design, requirements, or architecture, even when the stated goal is to keep code and documentation synchronized. Put only authorized implementation paths in Worker tasks. Route accepted human-facing design changes to Designer, genuinely needed architecture corrections to Architect through the existing OQ/General routing path, and behavioral meaning to Specifier. Ordinary current-reality documentation belongs to Documenter, not permission for Worker to rewrite normative authority.
+
+Apply this boundary to proposed plans as well as registered ones. Missing attachment identifiers prevent registration; they do not make an otherwise forbidden future Worker scope acceptable. Preserve independent implementation work, but leave tasks depending on unresolved authority blocked until that authority is settled and reviewed.
+
 ## Persistent parent plan
 
-Call `loom_work_status` first.
+Call `loom_work_status` first after attachment.
 
 - If no persistent work plan exists yet, construct the complete remaining Objective decomposition as **Phase → Wave → Task** and register it with `loom_work_plan`.
 - The accepted Objective already exists from the Anchor. Do not redefine, broaden, or narrow it.

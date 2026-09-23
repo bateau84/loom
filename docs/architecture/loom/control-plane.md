@@ -233,7 +233,7 @@ V1 validation requires:
 - known acyclic dependencies;
 - at least one verification expectation per task;
 - bounded project-relative write scopes;
-- no Worker authority over accepted Anchor, requirements, or architecture;
+- no Worker authority over accepted Anchor, design, requirements, or architecture;
 - no parallel tasks with potentially overlapping write surfaces unless dependency ordering makes them sequential.
 
 Accepted tasks become real workflow nodes named `task:<id>`.
@@ -257,7 +257,7 @@ For planned product work, the validated task DAG creates each Worker scope mecha
 
 For the simple non-product `worker` path, General may declare a bounded scope directly.
 
-Repository-wide wildcards and accepted authority roots (`docs/anchors`, `docs/requirements`, `docs/architecture`) are rejected.
+Repository-wide wildcards and accepted authority roots (`docs/anchors`, `docs/design`, `docs/requirements`, `docs/architecture`) are rejected.
 
 The Worker child session must attach to the exact currently runnable workflow step before editing. Attachment returns the task envelope for planned work.
 

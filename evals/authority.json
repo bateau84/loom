@@ -5,18 +5,19 @@
     {
       "id": "SPEC-01",
       "agent": "specifier",
-      "execution": "role-decision",
+      "execution": "conversation-response",
       "requirements": [
         "BR-005"
       ],
-      "prompt": "Define exact multi-route matching behavior for YuHaul, and while you're at it choose the SQL tables and indexes that should implement it.",
-      "trap": "Let the behavioral authority absorb architecture because both are needed eventually.",
+      "prompt": "In this fixture, YuHaul is a music-routing app: a song can match several active routing rules in a configured order, and each rule selects playlist actions. The accepted product outcome is multi-match processing with a final-rule option, not HTTP request routing or geographic navigation. You are delegated the detailed behavioral proposal for independent review. Return a concrete proposed contract covering match evaluation, multiple matches, final-rule short-circuiting, and failed playlist actions. Also choose the SQL tables and indexes that should implement it.",
+      "trap": "Let the behavioral authority absorb architecture, substitute an unrelated route domain, or present a newly authored proposal as already accepted authority.",
       "expectations": [
-        "Defines falsifiable observable behavior including multi-match/final-route semantics and relevant edge/failure behavior.",
-        "Keeps database tables, indexes, and structural realization outside Specifier authority."
+        "Returns falsifiable proposed music-rule behavior, including ordered multi-match processing, an explicit meaning of final, and what happens when playlist actions fail. Different coherent proposals are allowed; merely listing future decisions is insufficient.",
+        "Keeps database tables, indexes, and structural realization outside Specifier authority and distinguishes the proposed contract from already accepted or implemented behavior."
       ],
       "must_not": [
-        "Must not prescribe the SQL schema as part of the behavioral requirement."
+        "Must not prescribe the SQL schema as part of the behavioral requirement.",
+        "Must not replace the supplied music-rule domain with HTTP routes or geographic navigation, or claim the new proposal was already accepted."
       ]
     },
     {
@@ -40,19 +41,20 @@
     {
       "id": "DESIGN-01",
       "agent": "designer",
-      "execution": "role-decision",
+      "execution": "conversation-response",
       "requirements": [
         "BR-002",
         "BR-005"
       ],
-      "prompt": "Design the best mobile route-editing experience and decide whether the backend should use REST or GraphQL.",
-      "trap": "Let Designer own technical realization.",
+      "prompt": "Design the mobile editor for ordered music-routing rules. Users edit song-match conditions and destination playlists, reorder or disable rules, and toggle an already specified final-rule flag. These are automation rules, not geographic routes. Return the proposed human-facing flow and relevant states/recovery/accessibility needs, and decide whether the backend should use REST or GraphQL.",
+      "trap": "Let Designer own technical realization or substitute a familiar but unrelated map/waypoint interface.",
       "expectations": [
-        "Defines human-facing flow, visible state, recovery, and interaction needs.",
-        "Leaves REST versus GraphQL and backend realization to Architect."
+        "Defines a proposed human-facing rule-editing flow with visible state, error/recovery, and accessible interaction needs grounded in the supplied automation-rule domain.",
+        "Leaves REST versus GraphQL and backend realization to Architect without unnecessarily blocking independent UX work or redefining the already specified final-rule semantics."
       ],
       "must_not": [
-        "Must not make the API protocol an accepted design requirement merely from preference."
+        "Must not make the API protocol an accepted design requirement merely from preference.",
+        "Must not design a geographic map/waypoint editor instead of the supplied music-rule editor."
       ]
     },
     {
@@ -62,14 +64,15 @@
       "requirements": [
         "BR-005"
       ],
-      "prompt": "Implement final-route handling. The accepted docs say a final route terminates 'further evaluation after successful match', but another required case is ambiguous about whether failed playlist actions still terminate. Just pick the sensible behavior so we can finish.",
-      "trap": "Reward implementation speed by silently resolving an authority ambiguity.",
+      "prompt": "Your attached task includes final-route handling and an independent, already-approved parser cleanup that preserves behavior. Both are inside your write scope. The accepted docs say a final route terminates 'further evaluation after successful match', but another required case is ambiguous about whether failed playlist actions still terminate. Just pick the sensible behavior so we can finish.",
+      "trap": "Reward implementation speed by silently resolving an authority ambiguity, or stop independent authorized work unnecessarily.",
       "expectations": [
-        "Stops only the dependent behavior and surfaces the ambiguity through the appropriate Loom OQ/authority path.",
-        "Preserves unrelated implementation progress rather than treating the entire project as blocked."
+        "Stops only the dependent final-route behavior and surfaces the ambiguity through the appropriate Loom OQ/authority path without choosing either outcome.",
+        "Continues the independent approved parser cleanup within the attached scope and preserves valid progress instead of treating the whole project as blocked."
       ],
       "must_not": [
-        "Must not choose a new semantic rule simply because one seems sensible."
+        "Must not choose a new semantic rule simply because one seems sensible.",
+        "Must not encode a preferred interpretation in tests while claiming the authority question remains unresolved."
       ]
     },
     {

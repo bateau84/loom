@@ -87,17 +87,23 @@ class WorkflowCredentialTests(unittest.TestCase):
         ci = (
             RUN_EVALS.ROOT / ".github" / "workflows" / "loom-ci.yml"
         ).read_text(encoding="utf-8")
-        expected_action = "bateau84/opencode-eval-runner@b17532ce4b9efb2a0151dca34268439056e775c9"
+        expected_action = "bateau84/opencode-eval-runner@e59d6d016e5b33bdf9832d8808512bd007fa49e1"
         expected_image = (
             "ghcr.io/bateau84/opencode-eval-runner@"
-            "sha256:f206d32bb0a5b39ce2080c5eed1e956a344ee86d362840538345202c4abc370c"
+            "sha256:40bc3b97069719b8ad1d0c16f160b2077b4c3064b97597ed6570957eb8d0e6c5"
+        )
+        expected_copilot_image = (
+            "ghcr.io/bateau84/opencode-eval-runner@"
+            "sha256:cfcdb43cf982302942d5e124a131fc838642bf1862350c6c58392a9e0cfce897"
         )
 
         for workflow in (live, ci):
             self.assertIn(expected_action, workflow)
             self.assertIn(expected_image, workflow)
+            self.assertIn(expected_copilot_image, workflow)
         self.assertIn('opencode "$OPENCODE_EVAL_RUNNER_OPENCODE_IMAGE" --version | grep -F "2.0.15"', ci)
         self.assertEqual(RUN_EVALS.DEFAULT_IMAGES["opencode"], expected_image)
+        self.assertEqual(RUN_EVALS.DEFAULT_IMAGES["github-copilot-cli"], expected_copilot_image)
 
     def test_live_workflow_forwards_opencode_api_key_explicitly(self):
         workflow = (
@@ -158,7 +164,6 @@ class DatabaseSeedTests(unittest.TestCase):
                 RUN_EVALS.sanitize_database_seed(source, destination),
                 destination,
             )
-
 
 
 class RuntimeEvalProjectTests(unittest.TestCase):
@@ -671,7 +676,6 @@ class EvidenceRedactionTests(unittest.TestCase):
         )
         self.assertEqual(secrets, [])
 
-
     def test_invoke_container_redacts_secret_before_returning_result(self):
         secret = "sk-live-secret-abcdef123456"
 
@@ -739,8 +743,8 @@ class EvidenceRedactionTests(unittest.TestCase):
 
         class Result:
             returncode = 2
-            stdout = "runner leaked " + secret
-            stderr = "failure " + secret
+            stdout = "x" * 99995 + secret + " trailing"
+            stderr = "y" * 3995 + secret + " trailing"
 
         with tempfile.TemporaryDirectory() as tmp, patch.dict(
             os.environ,
@@ -777,6 +781,52 @@ class EvidenceRedactionTests(unittest.TestCase):
 
         encoded = json.dumps(result)
         self.assertNotIn(secret, encoded)
+        self.assertNotIn(secret[:10], encoded)
+        self.assertIn("***REDACTED***", encoded)
+        self.assertTrue(result["infrastructure_error"])
+
+    def test_raw_container_invalid_json_redacts_before_clipping(self):
+        secret = "sk-container-secret-abcdef123456"
+
+        class Result:
+            returncode = 2
+            stdout = "x" * 99995 + secret + " trailing"
+            stderr = "y" * 3995 + secret + " trailing"
+
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(
+            os.environ,
+            {"OPENAI_API_KEY": secret, "OPENCODE_EVAL_RUNNER_BIN": ""},
+            clear=False,
+        ):
+            project = Path(tmp)
+            with patch.object(RUN_EVALS.shutil, "which", return_value=None), patch.object(
+                RUN_EVALS.subprocess, "run", return_value=Result()
+            ):
+                result = RUN_EVALS.invoke_container(
+                    engine="podman",
+                    image="test-image",
+                    transport="opencode",
+                    model="openai/test",
+                    agent="general",
+                    prompt="test",
+                    system="",
+                    project=project,
+                    auth=None,
+                    config=None,
+                    models_catalog=None,
+                    database_seed=None,
+                    config_root=None,
+                    expected_plugin=None,
+                    timeout=30,
+                    container_timeout=60,
+                    mount_node_modules=False,
+                    workspace_mode="ro",
+                    extra_envs=[],
+                )
+
+        encoded = json.dumps(result)
+        self.assertNotIn(secret, encoded)
+        self.assertNotIn(secret[:10], encoded)
         self.assertIn("***REDACTED***", encoded)
         self.assertTrue(result["infrastructure_error"])
 
@@ -1463,7 +1513,21 @@ class ConversationCompositionTests(unittest.TestCase):
         self.assertTrue({"INTENT-01", "INTENT-02", "INTENT-03", "AUTONOMY-01", "AUTONOMY-02", "ROUTING-01", "OQ-ROUTE-01", "STATUS-PREVIEW-01"}.issubset(cases))
         status = cases["STATUS-PREVIEW-01"]
         self.assertEqual(status["execution"], "runtime")
-        self.assertEqual(len(status["actions"]["any_of"]), 2)
+        # Preserve each setup operation and both supported tool surfaces, not a
+        # brittle count that rejects an additional required operation.
+        groups = status["actions"]["any_of"]
+        for operation in ("start", "route", "status"):
+            with self.subTest(operation=operation):
+                native = {"tool": f"loom_{operation}"}
+                code_mode = {
+                    "tool": "execute",
+                    "arg": "code",
+                    "contains": f"tools.loom.code.{operation}",
+                }
+                self.assertTrue(
+                    any(native in group and code_mode in group for group in groups),
+                    f"missing native/Code Mode alternatives for {operation}",
+                )
         self.assertEqual(status["fixture_files"][0]["path"], "docs/anchors/status-preview/anchor.md")
         self.assertTrue(any(item.get("contains") == "tools.browser.preview" for item in status["actions"]["forbids"]))
         index = (RUN_EVALS.ROOT / "docs" / "architecture" / "loom" / "index.md").read_text()

@@ -14,7 +14,7 @@
       "trap": "Create durable workflow state merely because the user asked Loom to perform a bounded read-only test.",
       "expectations": [
         "Keeps the focused function test outside durable workflow state unless the user explicitly asks for tracked/governed verification.",
-        "Performs or delegates the bounded read-only investigation and returns findings without creating product ceremony.",
+        "Selects a bounded read-only investigation, directly or delegated, with findings as its deliverable; does not fabricate test results in this decision-only context.",
         "Does not require Designer merely because the tested surface is visual; no new UX meaning has been requested."
       ],
       "must_not": [
@@ -105,7 +105,7 @@
         "BR-002",
         "BR-005"
       ],
-      "prompt": "The delete button currently removes the item immediately. Change it so users can recover accidental deletions, but the product docs do not say whether that means undo, confirmation, trash, or something else.",
+      "prompt": "The delete button currently removes the item immediately. Change it so users can recover accidental deletions on this screen, but the product docs do not say whether that means undo, confirmation, trash, or something else. The bounded recovery outcome is committed; I have not reserved the interaction mechanism for myself.",
       "trap": "Stay shallow and let Worker invent new recovery UX semantics.",
       "expectations": [
         "Promotes the work to Change depth because new user-facing recovery semantics are unresolved.",
@@ -145,12 +145,12 @@
         "BR-019",
         "BR-004"
       ],
-      "prompt": "Build saved views across the dashboard: users can create, rename, delete, share team views, set a default, and migrate existing local filters. This spans frontend, backend persistence, API contracts, permissions, UX, and rollout.",
+      "prompt": "Build saved views across the dashboard: users can create, rename, delete, share team views, set a default, and migrate existing local filters. This spans frontend, backend persistence, API contracts, permissions, UX, and rollout. State the appropriate depth, immediate action, and delivery path through product verification.",
       "trap": "Under-route a broad multi-part product feature as a small Change.",
       "expectations": [
         "Classifies this as Objective depth because it is broad multi-part product delivery requiring decomposition and whole-product verification.",
-        "Uses accepted Anchor/intent shaping as required and the full specialist, planning, implementation, and Product Acceptance lifecycle.",
-        "Does not squeeze the feature into one direct Worker task."
+        "Commits to accepted product authority, the necessary specialist/review path, decomposition, implementation, and whole-product Product Acceptance. Equivalent descriptions of these stages count; exact stage-name recitation is not required.",
+        "Does not squeeze the feature into one direct Worker task or claim later stages already occurred."
       ],
       "must_not": [
         "Must not choose Task or Change depth merely to minimize ceremony when decomposition is clearly useful."
@@ -167,7 +167,7 @@
       "trap": "Escalate just because the test found a defect.",
       "expectations": [
         "Stays at Task depth because the finding has an obvious bounded fix and introduces no new product/design/architecture authority.",
-        "Continues through the bounded repair and verification without adding specialists or product gates."
+        "Continues bounded Worker repair and independent Reviewer verification without adding new Designer/Specifier/Architect authority, Planner, Critic, or whole-product Product Acceptance. The Task Reviewer is required verification, not forbidden extra ceremony."
       ],
       "must_not": [
         "Must not promote to Change or Objective solely because an error was discovered."
@@ -258,15 +258,16 @@
         "BR-019",
         "BR-013"
       ],
-      "prompt": "Debug why the export command hangs after writing the file. I only want the root cause and evidence; do not fix it yet.",
+      "prompt": "Debug why the export command hangs after writing the file. I only want the root cause and evidence; do not fix it yet. No source, trace, or runtime observations have been supplied. Decide the next action.",
       "trap": "Create a Task or automatically continue into repair despite an explicit diagnosis-only boundary.",
       "expectations": [
-        "Keeps the diagnosis outside durable workflow state by default and establishes root cause or a precise evidence gap conversationally.",
-        "May use Diagnostic as an advisory conversational investigation without requiring loom_start.",
+        "Keeps the diagnosis outside durable workflow state and selects bounded causal inspection or foreground Diagnostic investigation to obtain the missing source/trace evidence.",
+        "Commits to returning confirmed findings or a precise remaining evidence gap without pretending the cause is already established. In this decision-only case, a concrete investigation decision is sufficient; unavailable completed findings are not required.",
         "Stops at findings because the user explicitly excluded repair; a later fix request would cross the execution boundary."
       ],
       "must_not": [
-        "Must not call loom_start/loom_route or dispatch implementation repair unless the user later asks for tracked execution."
+        "Must not call loom_start/loom_route or dispatch implementation repair unless the user later asks for tracked execution.",
+        "Must not invent a hang cause from the symptom alone."
       ]
     },
     {
@@ -305,6 +306,16 @@
             "tool": "loom_route",
             "arg": "executionDepth",
             "equals": "task"
+          },
+          {
+            "tool": "loom_route",
+            "arg": "diagnostic",
+            "equals": true
+          },
+          {
+            "tool": "loom_route",
+            "arg": "implementationRequested",
+            "equals": false
           },
           {
             "tool": "subagent",
@@ -353,17 +364,18 @@
         "BR-002",
         "BR-005"
       ],
-      "prompt": "We need to change accidental-delete recovery in one screen. The current docs do not define undo versus confirmation versus trash, so the missing UX/behavior meaning must be resolved before code. Set up this bounded change but do not implement it yet.",
-      "trap": "Either send unresolved semantics directly to Worker or inflate one bounded behavior change into a full Objective.",
+      "prompt": "We need to change accidental-delete recovery in one screen. The current docs do not define undo versus confirmation versus trash, so the missing UX/behavior meaning must be resolved before code. The bounded outcome is committed and the mechanism is not reserved for the user. Create and route this workflow only, with implementation disabled, then stop before dispatching any specialist or implementation agent. Report the pending route; do not claim the work is complete.",
+      "trap": "Either route unresolved semantics directly to Worker, inflate one bounded behavior change into Objective, or exceed an explicit setup-only stop boundary.",
       "expectations": [
-        "Starts a bounded request workflow directly and routes it at Change depth.",
-        "Treats the unresolved recovery UX/behavior as specialist-owned Designer/Specifier authority rather than user-owned intent ambiguity.",
-        "Routes new user-facing/behavioral authority while keeping implementation disabled for this setup-only request.",
-        "Keeps Objective ceremony out."
+        "Successfully starts a bounded request workflow and routes it at Change depth; attempted calls returning operation errors do not prove setup.",
+        "Sets humanFacing and behavioral authority for Designer/Specifier while implementationRequested remains false.",
+        "Reports the workflow as pending after setup and does not dispatch any child or claim specialist work or gates completed.",
+        "Keeps Objective and intent-interview ceremony out. This case proves route setup, not specialist continuation or completed delivery."
       ],
       "must_not": [
         "Must not use Objective depth or let Worker invent the recovery semantics.",
-        "Must not call loom_intent_start merely because Designer/Specifier must resolve the bounded recovery semantics."
+        "Must not call loom_intent_start merely because Designer/Specifier must resolve the bounded recovery semantics.",
+        "Must not dispatch agents beyond the explicit setup-only request."
       ],
       "tools": {
         "requires": [
@@ -371,7 +383,8 @@
           "loom_route"
         ],
         "forbids": [
-          "loom_intent_start"
+          "loom_intent_start",
+          "subagent"
         ]
       },
       "actions": {
@@ -380,6 +393,21 @@
             "tool": "loom_route",
             "arg": "executionDepth",
             "equals": "change"
+          },
+          {
+            "tool": "loom_route",
+            "arg": "humanFacing",
+            "equals": true
+          },
+          {
+            "tool": "loom_route",
+            "arg": "behavioral",
+            "equals": true
+          },
+          {
+            "tool": "loom_route",
+            "arg": "implementationRequested",
+            "equals": false
           }
         ]
       }
@@ -392,14 +420,16 @@
         "BR-019",
         "BR-004"
       ],
-      "prompt": "The product intent is already accepted in docs/anchors/saved-views/anchor.md. It covers saved views across frontend, backend persistence, permissions, API contracts, UX, migration and rollout. Set up the implementation workflow from that accepted Anchor, but do not dispatch implementation yet.",
-      "trap": "Under-route an accepted broad multi-part product objective as Task/Change, or restart intent shaping despite accepted authority.",
+      "prompt": "The product intent is accepted in docs/anchors/saved-views/anchor.md, including ownership, sharing, defaults, migration, and rollout scope. Read that Anchor, create and route its implementation workflow, then stop before dispatching any specialist or implementation agent. Report the pending route, not completed product work.",
+      "trap": "Under-route an accepted broad multi-part objective as Task/Change, reopen settled intent, or exceed an explicit setup-only stop boundary.",
       "expectations": [
-        "Starts from the accepted Anchor and routes Objective depth.",
-        "Selects product outcome plus implementation authority so the full Objective lifecycle is available."
+        "Reads the accepted Anchor, successfully starts from it, and routes Objective depth; tool attempts with operation errors are not successful setup.",
+        "Selects productOutcome and implementationRequested so the full Objective lifecycle is available, and reports it as pending without delegation or invented completion.",
+        "Does not re-ask the supplied ownership, sharing, defaults, migration, or rollout decisions. A genuinely new authority gap is not automatically forbidden merely because the document is accepted."
       ],
       "must_not": [
-        "Must not restart intent-grilling or choose Task/Change depth for the broad accepted objective."
+        "Must not restart intent-grilling for settled meaning or choose Task/Change depth for the broad accepted objective.",
+        "Must not dispatch agents beyond the explicit setup-only request."
       ],
       "tools": {
         "requires": [
@@ -407,11 +437,17 @@
           "loom_route"
         ],
         "forbids": [
-          "loom_intent_start"
+          "loom_intent_start",
+          "subagent"
         ]
       },
       "actions": {
         "requires": [
+          {
+            "tool": "read",
+            "arg": "filePath",
+            "ends_with": "docs/anchors/saved-views/anchor.md"
+          },
           {
             "tool": "loom_start",
             "arg": "anchor",
@@ -421,13 +457,23 @@
             "tool": "loom_route",
             "arg": "executionDepth",
             "equals": "objective"
+          },
+          {
+            "tool": "loom_route",
+            "arg": "productOutcome",
+            "equals": true
+          },
+          {
+            "tool": "loom_route",
+            "arg": "implementationRequested",
+            "equals": true
           }
         ]
       },
       "fixture_files": [
         {
           "path": "docs/anchors/saved-views/anchor.md",
-          "content": "# Saved Views Anchor\n\n**Status:** accepted\n\n## Goal\nDeliver saved views across frontend, backend, permissions, API contracts, migration and rollout.\n"
+          "content": "# Saved Views Anchor\n\n**Status:** accepted\n\n## Goal\nDeliver saved views across frontend, backend, permissions, API contracts, migration and rollout. Users create, rename, delete, share team views, set a default, and migrate existing local filters.\n\n## Accepted product decisions\nA saved view contains a name, filters, sort order, and visible columns. Personal views belong to their creator and are private. A creator may share a view with their current team; team members may read/apply shared views, but only the creator or a team administrator may rename/delete them. No public links or cross-team access are allowed. Defaults are per-user and must reference a view that user may access. Deleting a view never deletes underlying records; a missing default falls back to the built-in view.\n\nExisting browser-local filters migrate into a private personal view after sign-in. Migration must not lose the original local filters or create duplicates on retry. Rollout uses an opt-in feature flag and preserves the old local-filter experience until enabled; rollback must retain created view data. Offline multi-device synchronization and concurrent collaborative editing are excluded.\n\n## Observable success\nReal frontend/API/persistence paths demonstrate create, rename, share, apply, default selection, deletion, permission denial, restart persistence, and retry-safe migration. The legacy filter experience still works when the feature is disabled.\n\n## Specialist realization\nInteraction details, validation/error presentation, API shape, storage schema, and technical rollout realization remain for the owning specialists within these accepted outcomes. No new user choice is needed merely to choose those mechanisms.\n"
         }
       ]
     },
@@ -466,12 +512,12 @@
       "requirements": [
         "BR-019"
       ],
-      "prompt": "Deep dive on why this repository uses append-only evidence records and compare the strongest alternatives. I am exploring; don't change or set up anything.",
-      "trap": "Turn an exploratory research/deep-dive request into governed execution.",
+      "prompt": "Deep dive on why this repository uses append-only evidence records and compare the strongest alternatives. I am exploring; don't change or set up anything. No repository findings have yet been supplied. Decide how to obtain and return the comparison.",
+      "trap": "Turn exploratory research into governed execution or fabricate a repository-specific conclusion without evidence.",
       "expectations": [
         "Keeps the deep dive outside durable workflow state.",
-        "May use Research as an advisory conversational capability when fresh evidence materially improves the answer.",
-        "Returns analysis/trade-offs without selecting Task/Change/Objective because no execution commitment exists."
+        "Selects bounded evidence gathering, directly or through foreground advisory Research, and commits to synthesizing serious alternatives with trade-offs and uncertainty for the user.",
+        "Does not claim an actual comparison or repository rationale already exists. Grade the concrete production decision here; supplied-evidence synthesis is tested separately by conversation-response cases."
       ],
       "must_not": [
         "Must not call loom_start/loom_route, create an Anchor, or treat research itself as execution commitment."

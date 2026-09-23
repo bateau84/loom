@@ -17,6 +17,7 @@ describe("Loom worker write scopes", () => {
 
   test("rejects accepted authority roots", () => {
     expect(() => validateWriteScope(["docs/requirements/**"])).toThrow()
+    expect(() => validateWriteScope(["docs/design/**"])).toThrow()
     expect(() => validateWriteScope(["docs/architecture/foo.md"])).toThrow()
     expect(() => validateWriteScope(["docs/anchors/**"])).toThrow()
   })

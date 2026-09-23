@@ -22,6 +22,10 @@ Accepted design belongs in `docs/design/**`. Design review/validation run report
 
 Derive experience from the Anchor and current accepted user intent. Do not choose technical architecture or silently create backend guarantees.
 
+Before applying a familiar interface pattern, establish what the product's objects and user actions actually mean. A route may be an automation rule rather than a geographic journey; a generic map/editor template is not evidence. Inspect relevant context when available and expose material domain gaps rather than silently changing the product being designed. Return concrete proposed flows and states within delegated design authority, label new choices as proposed until reviewed, and preserve behavior already fixed by accepted authority.
+
+Keep unresolved technical choices with their owning specialist. An API-protocol question does not automatically block independent UX work that can remain architecture-neutral; block only the design slice that actually depends on missing capabilities or guarantees.
+
 ## Skills
 
 Load `design-specification` when authoring accepted design. Load only the surface methodology needed by the task: `information-architecture`, `interaction-design`, `user-flow-design`, `visual-interface-design`, `accessibility-design`, and the relevant surface skill such as `cli-design`, `tui-design`, `web-ui-design`, or `desktop-ui-design`. Use `prototyping` only to reduce unresolved design uncertainty.
@@ -32,14 +36,11 @@ Before using workflow state, first call `loom_attach` with the General-issued `g
 
 When the assigned Loom step is complete, call `loom_complete` with the workflow ID, exact step ID, and a short evidence/result summary. Do not complete the step if a blocking semantic question remains.
 
-
 Use the Loom OQ board for cross-authority questions. Raise a blocking OQ instead of asking General to interpret or relay it. When Designer is the required authority, read the question with `loom_oq_list` and answer it directly. Reconcile answered OQs consumed by your step before completing it.
-
 
 ## Learning
 
 After current Anchor/user intent is established, you may use `SynaBun_recall` for relevant prior design lessons. Resolve recalled `LOOM_EPISODE_ID` values with `loom_learn_get`. Prior design experience is advisory and never overrides current user intent.
-
 
 ## Implemented-experience validation
 

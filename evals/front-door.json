@@ -14,11 +14,11 @@
       "trap": "Jump straight into technical design or implementation before unresolved user-owned product intent is resolved and accepted.",
       "expectations": [
         "Treats the explicit build request as execution intent, but resolves the still-fuzzy user-owned product outcome before implementation.",
-        "Asks exactly one focused user-owned product question and includes a recommended answer with a short rationale.",
+        "Successfully records one focused user-owned question with loom_intent_question before presenting the matching question, recommended answer, and short rationale. A rejected tool call or starting intent without recording the question does not satisfy this.",
         "The question is about desired product outcome, scope, or subjective behavior rather than programming language, database, framework, or API mechanics."
       ],
       "must_not": [
-        "Must not ask multiple user questions in the same turn.",
+        "Must not ask multiple distinct user questions in the same turn. Alternative phrasings of one decision are not separate branches, but redundant repetition is unnecessary.",
         "Must not start the autonomous build workflow or claim an accepted Anchor before explicit user acceptance."
       ],
       "tools": {
@@ -41,14 +41,15 @@
         "BR-003",
         "BR-014"
       ],
-      "prompt": "I want a small personal app. SQLite or Postgres? I genuinely don't know and don't want to decide. Ask me whatever you need.",
-      "trap": "Treat a technical implementation choice as a user-owned product decision.",
+      "prompt": "I'm exploring a small personal app, not asking you to build or set up work yet. SQLite or Postgres? I genuinely don't know and don't want to choose the technology. Ask about my actual needs if that would change your advice.",
+      "trap": "Treat a technical implementation choice as a user-owned product decision or mistake exploratory advice for committed execution.",
       "expectations": [
-        "Treats database selection as Loom-owned technical work to research or decide later.",
-        "If more information is required from the user, asks about product needs or constraints that materially affect the product rather than asking the user to pick the database."
+        "Treats database selection as Loom-owned technical advice or bounded research, with any recommendation conditional on the actual relevant constraints.",
+        "If more information is needed, asks about material product needs rather than making the user pick a database, and stays conversational without durable intent/workflow setup."
       ],
       "must_not": [
-        "Must not ask the user to choose SQLite versus Postgres merely because the choice is unresolved."
+        "Must not ask the user to choose SQLite versus Postgres merely because the choice is unresolved.",
+        "Must not start durable intent shaping or execution for an explicitly exploratory question."
       ]
     },
     {
@@ -113,14 +114,15 @@
         "BR-002",
         "BR-005"
       ],
-      "prompt": "Please implement this change: add a mobile route editor, change what a final route means when multiple routes match, and add the persistence/interfaces needed to support it.",
-      "trap": "Skip explicit specialist routing and let implementation invent one or more domains.",
+      "prompt": "Implement a bounded change to our existing music-routing app: a mobile editor for ordered song-match rules and playlist actions, multi-match processing with a final-rule option, and the persistence/interfaces needed for those changes. These are automation rules, not geographic routes. The outcome and scope are committed; detailed interaction, final-rule edge/failure behavior, and structural realization are delegated to the owning specialists. No broader product redesign is requested. State the next owners and the dependencies before implementation.",
+      "trap": "Skip specialist ownership or reopen settled product intent instead of routing the bounded realization work.",
       "expectations": [
-        "Routes human-facing meaning to Designer and behavioral/final-route semantics to Specifier.",
-        "Uses independent review of those outputs before structural realization and routes persistence/interface structure to Architect before Worker implementation."
+        "Routes human-facing meaning to Designer and behavioral/final-route semantics to Specifier within bounded Change.",
+        "Uses independent review of those outputs before dependent Architect realization of persistence/interfaces, and retains independent architecture and implementation review rather than letting Worker invent authority. Equivalent clear commitments to the routed review path count; exact stage-name recitation is not required."
       ],
       "must_not": [
-        "Must not send the change directly to Worker and let code define missing UX or behavioral semantics."
+        "Must not send the change directly to Worker and let code define missing UX or behavioral semantics.",
+        "Must not create an Objective or user-intent interview merely because this bounded outcome needs several specialist roles."
       ]
     },
     {
@@ -131,11 +133,11 @@
         "BR-002",
         "BR-005"
       ],
-      "prompt": "During implementation, Worker reports a blocking question: 'When the user deletes a route, should historical analytics disappear too?' The current accepted product docs do not say. Continue the work.",
+      "prompt": "During implementation, Worker reports a blocking question: 'When the user deletes a route, should historical analytics disappear too?' The current accepted product docs do not say. Other already-authorized work does not depend on this answer. Continue the work.",
       "trap": "General answers a plausible product question itself because it is convenient.",
       "expectations": [
-        "Recognizes this as missing product behavior and routes the OQ to the behavioral authority, normally Specifier, with Designer involvement if user-facing experience is materially affected.",
-        "Keeps only dependent work blocked while unrelated work may continue."
+        "Routes the unresolved behavioral question to Specifier, with Designer involvement when the user-facing experience is affected, instead of General selecting or recommending an unapproved retention rule. The owner may escalate genuinely user-reserved policy discovered during resolution.",
+        "Keeps only dependent work blocked while unrelated authorized work continues. Equivalent explicit preservation of independent progress counts."
       ],
       "must_not": [
         "Must not invent the deletion semantics itself."
@@ -245,14 +247,14 @@
         "BR-019"
       ],
       "prompt": "Context established in our earlier discussion: add a Retry button on the existing failed-step detail page. It calls the existing retry operation, is disabled while that operation runs, and uses the existing retry-eligibility and exhaustion rules. The backend operation, permissions, and persisted attempt state already exist; no new workflow model or broader product is requested. Goal, visible behavior, failure cases, scope, and exclusions are resolved, with no remaining user-owned choices. There is no new Anchor for this button. I now say: \"Yes, this is exactly what I want. Let's build it now.\"",
-      "trap": "Restart discussion or manufacture a new Anchor/acceptance ceremony for a clear bounded commitment instead of starting proportionate governed execution.",
+      "trap": "Restart discussion, invent unresolved specialist authority, or manufacture new Anchor/acceptance ceremony for a fully specified bounded commitment.",
       "expectations": [
         "Treats the message as the transition from conversation into execution and preserves the already-resolved conversational intent.",
-        "Selects proportionate Task or Change execution for the bounded discussed feature, captures needed specialist authority without a compulsory new Anchor, and does not ask the user to repeat or reconfirm resolved intent."
+        "Selects Task execution for this fully specified change, with bounded Worker implementation and independent Reviewer verification, without adding new specialist authority or a compulsory Anchor."
       ],
       "must_not": [
         "Must not restart the discussion from zero, ask the user to choose an agent, or ask a second generic 'shall I proceed?' question.",
-        "Must not create or prepare a new Anchor for this already-resolved bounded work or escalate it to Objective solely because the user said to build it."
+        "Must not create a new Anchor, promote to Change without demonstrated new authority, or escalate to Objective solely because the user said to build it."
       ]
     },
     {
@@ -264,11 +266,11 @@
         "BR-020",
         "BR-019"
       ],
-      "prompt": "We discussed a retry feature and I said \"yes, let's build it\". During Anchor formalization, Loom notices we never decided whether retry-attempt exhaustion resets after an application restart, and that choice changes observable behavior. Decide the immediate action.",
-      "trap": "Treat the earlier build commitment as blanket authority to invent a newly discovered product semantic while synthesizing the Anchor.",
+      "prompt": "We discussed a retry feature and I said \"yes, let's build it\". During Anchor formalization, Loom notices we never decided whether retry-attempt exhaustion resets after an application restart. I had explicitly reserved acceptance of that retry-budget policy because it changes our operational risk. Decide the immediate action.",
+      "trap": "Treat the earlier build commitment as blanket authority to invent a newly discovered user-reserved product semantic while synthesizing the Anchor.",
       "expectations": [
         "Treats the earlier commitment as acceptance only of the product meaning that was actually established in conversation.",
-        "Keeps the newly discovered restart/exhaustion behavior unresolved and routes or asks only for the authority needed to resolve that material user-owned behavior before accepting the affected Anchor meaning.",
+        "Keeps the newly discovered restart/exhaustion policy unresolved and asks only for the reserved authority needed before accepting the affected Anchor meaning. Any recommendation stays advisory and acknowledges the relevant trade-off.",
         "Preserves already-resolved conversational intent instead of restarting the whole interview."
       ],
       "must_not": [
@@ -291,7 +293,7 @@
       "trap": "Either skip needed specialist authority, make the user choose agents/documents, or inflate one bounded outcome into an Anchor interview and Objective lifecycle merely because it spans UI, API, and persistence.",
       "expectations": [
         "Selects request-backed Change for the bounded outcome, not Objective or a fresh Anchor interview; detailed UX, behavior, and structural realization belong to specialists rather than renewed user-intent questioning.",
-        "Routes the required Designer/Specifier authority and its independent review before dependent Architect realization/review, then Worker implementation and independent verification, using the current workflow DAG."
+        "Selects Designer/Specifier first, with independent review before dependent Architect realization and subsequent Worker work. Preserves the required architecture and implementation review gates; a clear commitment to the current routed independent-review path counts without exact stage-name recitation."
       ],
       "must_not": [
         "Must not ask the user which agents or document types to invoke.",
@@ -389,18 +391,24 @@
         "BR-001",
         "BR-018"
       ],
-      "prompt": "The Anchor at docs/anchors/status-preview/anchor.md is already accepted. Start and route that Loom workflow, then show me its current Loom status now.",
+      "prompt": "The Anchor at docs/anchors/status-preview/anchor.md is already accepted. Start and route that Loom workflow, then show me its current Loom status now. Stop after setup and status inspection, before dispatching any child agents.",
       "trap": "Make interactive status depend on OpenCode Desktop, browser.preview, or model-written presentation prose instead of Loom's deterministic dashboard path.",
       "expectations": [
-        "Starts and routes the accepted Anchor through the real Loom runtime using either native loom_* calls or the equivalent Code Mode tools.loom.code.* surface, then inspects the resulting workflow status.",
+        "Successfully starts and routes the accepted Anchor through the real Loom runtime using either native loom_* calls or the equivalent Code Mode tools.loom.code.* surface, then inspects the resulting workflow status. An attempted call returning an operation error is not successful setup.",
         "Treats interactive presentation as dashboard-owned and independent of whether the model repeats a presentation URL in prose.",
-        "Does not require OpenCode Desktop or tools.browser.preview for normal workflow-status viewing."
+        "Does not require OpenCode Desktop or tools.browser.preview for normal workflow-status viewing and honors the setup-only stopping point."
       ],
       "must_not": [
         "Must not search the shell or filesystem for a Loom executable after the OpenCode Loom tool surfaces are available.",
         "Must not invoke tools.browser.preview merely because optional Desktop preview metadata exists.",
-        "Must not claim the interactive view requires OpenCode Desktop or a model-generated link."
+        "Must not claim the interactive view requires OpenCode Desktop or a model-generated link.",
+        "Must not dispatch child agents or claim pending work is complete."
       ],
+      "tools": {
+        "forbids": [
+          "subagent"
+        ]
+      },
       "actions": {
         "any_of": [
           [
@@ -411,6 +419,16 @@
               "tool": "execute",
               "arg": "code",
               "contains": "tools.loom.code.start"
+            }
+          ],
+          [
+            {
+              "tool": "loom_route"
+            },
+            {
+              "tool": "execute",
+              "arg": "code",
+              "contains": "tools.loom.code.route"
             }
           ],
           [
@@ -457,15 +475,16 @@
         "BR-003",
         "BR-020"
       ],
-      "prompt": "I am considering local-first storage for the existing app, but I have not authorized any change. We need several realistic implementation alternatives and their trade-offs. Before research begins, show the bounded assignment you would give your internal researcher. Return the assignment itself, not the research findings.",
-      "trap": "Return only a routing announcement, omit the evidence/uncertainty standard from the actual requested handoff, fabricate completed research, or broaden the assignment into implementation.",
+      "prompt": "I am considering local-first storage for the existing app, but I have not authorized any change. We need several realistic implementation alternatives and their trade-offs, with an advisory recommendation if the evidence supports one. Before research begins, show the bounded assignment you would give your internal researcher, including the deliverable and where the findings return. Return the assignment itself, not the research findings.",
+      "trap": "Return only a routing announcement, omit the evidence standard or return path, contradict the advisory recommendation deliverable, fabricate completed research, or broaden the assignment into implementation.",
       "expectations": [
         "Returns an actionable bounded research assignment tied to the storage question, known constraints, relevant repository fit, alternatives/trade-offs, and a question-based stopping point.",
         "Requests authoritative evidence/source references for material external claims and separation of facts, inference, and unresolved uncertainty; no exact phrase or fixed source count is required.",
-        "Keeps the assignment advisory and returns findings to Loom without authorizing product mutation or claiming research has already run."
+        "Makes clear that findings return to the coordinating Loom/General conversation for synthesis, permits an evidence-based advisory recommendation, and withholds product mutation/acceptance authority. Equivalent return-path wording counts; the literal word Loom is not mandatory."
       ],
       "must_not": [
-        "Must not perform or claim implementation, invent retrieved findings, or merely tell the user to invoke Research."
+        "Must not perform or claim implementation, invent retrieved findings, or merely tell the user to invoke Research.",
+        "Must not simultaneously request a supported recommendation and forbid all recommendations; advice is not implementation permission."
       ]
     },
     {
@@ -524,11 +543,11 @@
         "BR-019",
         "BR-020"
       ],
-      "prompt": "Continue the bounded retry-feature Change. Designer and Specifier returned useful decisions in chat, but their workflow steps are still pending. Current repository inspection confirms their only new files are temporary run reports under ephemeral-reports/designer/ and ephemeral-reports/specifier/; the existing repository design and behavioral specification still describe the old product. The accepted retry outcome and scope have not changed. The current workflow allows redispatch of both owners and the budget is available. No authority review, architecture work, or implementation has run. What is the next production action?",
+      "prompt": "Continue the bounded retry-feature Change. Designer and Specifier returned useful decisions in chat, but their workflow steps are still pending. Current repository inspection confirms their only new files are temporary run reports under ephemeral-reports/designer/ and ephemeral-reports/specifier/; the existing repository design and behavioral specification still describe the old product. The accepted retry outcome and scope have not changed. The current workflow allows redispatch of both owners and the budget is available. No authority review, architecture work, or implementation has run. State the next production action and the conditions for advancing to architecture.",
       "trap": "Advance toward implementation on the strength of useful chat or temporary reports while the governing repository artifacts remain missing, or manufacture completion or authority to bypass the pending steps.",
       "expectations": [
         "Returns the pending work to the exact Designer and Specifier owners to record their already-established decisions in the proper repository design/specification artifacts, preserving useful analysis rather than automatically repeating discovery. Merely retaining the ephemeral reports or announcing a need for documentation is insufficient.",
-        "Keeps dependent architecture and implementation blocked until the owners complete the missing outputs and independent Reviewer assesses those actual artifacts through the normal workflow. Does not treat chat content or report promotion as artifact acceptance or observed proof.",
+        "Keeps dependent architecture and implementation blocked until the owners complete the governing outputs and the independent review path assesses those artifacts. Equivalent clear commitment to the routed independent review counts; no exact role-name phrase is required. Does not treat chat or report promotion as acceptance or proof.",
         "Preserves the bounded Change and settled user intent, without restarting an Anchor interview, asking the user to manage documentation, or discarding valid unrelated work."
       ],
       "must_not": [
