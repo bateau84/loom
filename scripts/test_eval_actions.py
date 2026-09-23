@@ -64,6 +64,22 @@ class WorkflowCredentialTests(unittest.TestCase):
         self.assertNotIn("actions/upload-artifact@v4", live)
         self.assertNotIn("- run: bun install\n", live + ci)
 
+    def test_opencode_host_and_plugin_api_share_compat_version(self):
+        workflow = (
+            RUN_EVALS.ROOT / ".github" / "workflows" / "loom-ci.yml"
+        ).read_text(encoding="utf-8")
+        package = json.loads((RUN_EVALS.ROOT / "package.json").read_text(encoding="utf-8"))
+        plugin_version = package["devDependencies"]["@opencode/plugin"]
+        install_prefix = "npm install --global @opencode/cli@"
+        install_line = next(
+            line.strip()
+            for line in workflow.splitlines()
+            if install_prefix in line
+        )
+        host_version = install_line.split(install_prefix, 1)[1].strip()
+        self.assertEqual(host_version, plugin_version)
+        self.assertEqual(plugin_version, "2.0.15")
+
     def test_live_workflow_and_harness_pin_opencode_2_0_12_runner(self):
         workflow = (
             RUN_EVALS.ROOT / ".github" / "workflows" / "loom-live-evals.yml"
