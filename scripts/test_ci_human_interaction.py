@@ -19,6 +19,7 @@ SPEC.loader.exec_module(RUNNER)
 RESPONSE_SUITE = ROOT / "evals/human-interaction.json"
 LIVE_SUITE = ROOT / "evals/human-interaction-live.json"
 REGRESSION_SUITE = ROOT / "evals/human-interaction-regressions.json"
+BR020 = ROOT / "docs/requirements/loom/br-020-conversation-is-primary-interface.md"
 
 
 class HumanInteractionWiringTests(unittest.TestCase):
@@ -52,6 +53,29 @@ class HumanInteractionWiringTests(unittest.TestCase):
             self.assertEqual(RUNNER.case_workspace_mode(case), "ro")
             self.assertNotIn("tools", case)
             self.assertNotIn("actions", case)
+            for grading in [case["trap"], *case["expectations"], *case["must_not"]]:
+                self.assertNotIn(grading, case["prompt"])
+
+    def test_removed_human_02_does_not_leave_a_stale_identical_evidence_requirement(self):
+        requirement = BR020.read_text()
+        self.assertIn("both short-status and detailed-report coverage", requirement)
+        self.assertNotIn("paired short-status and detailed-report requests from identical evidence", requirement)
+
+    def test_reviewer_false_green_boundaries_are_judge_only_and_explicit(self):
+        response = {case["id"]: case for case in RUNNER.load_cases([RESPONSE_SUITE])}
+        regressions = {case["id"]: case for case in RUNNER.load_cases([REGRESSION_SUITE])}
+
+        handover = response["HUMAN-03"]
+        handover_grading = [*handover["expectations"], *handover["must_not"]]
+        self.assertTrue(any("optional rather than required remaining work" in rule for rule in handover_grading))
+        self.assertTrue(any("unestablished check as required remaining work" in rule for rule in handover_grading))
+
+        unknown = regressions["HUMAN-CAUSE-UNKNOWN-01"]
+        unknown_grading = [*unknown["expectations"], *unknown["must_not"]]
+        self.assertTrue(any("blocked verification state into an attempted" in rule for rule in unknown_grading))
+        self.assertTrue(any("verification was attempted" in rule for rule in unknown_grading))
+
+        for case in (handover, unknown):
             for grading in [case["trap"], *case["expectations"], *case["must_not"]]:
                 self.assertNotIn(grading, case["prompt"])
 
