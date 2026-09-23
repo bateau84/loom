@@ -330,7 +330,8 @@ test("keyboard drill-down and browser back preserve Fleet filters", async ({ pag
   await page.goBack()
   await expect(page).toHaveURL(/workflow\/workflow-a$/)
   await page.goBack()
-  await expect(page).toHaveURL(new RegExp("^http://127\\.0\\.0\\.1:" + port + "/(?:#/)?$"))
+  await expect(page).toHaveURL(`http://127.0.0.1:${port}/#/?status=active&project=Project+A&agent=worker`)
+  await expect(card).toBeFocused()
   await expect(page.locator("#status-filter")).toHaveValue("active")
   await expect(page.locator("#project-filter")).toHaveValue("Project A")
   await expect(page.locator("#agent-filter")).toHaveValue("worker")
@@ -435,4 +436,223 @@ test("dashboard HTTP observation surface remains read-only in the real server", 
   })
   expect(response.status()).toBe(405)
   expect(response.headers().allow).toBe("GET")
+})
+
+// Redesign regressions use the real dashboard server and aggregation above.
+// Only transport failure/degraded-data tests explicitly intercept the API.
+async function editSnapshot(instanceId, projectId, change) {
+  const path = join(runtimeRoot, "instances", "installation-e2e", instanceId, "projects", `${projectId}.json`)
+  const snapshot = JSON.parse(await readFile(path, "utf8"))
+  change(snapshot)
+  snapshot.generation += 1
+  snapshot.generatedAt = iso()
+  await writeFile(path, JSON.stringify(snapshot, null, 2))
+}
+
+const aCard = 'a[data-key="project-a:workflow-a"]'
+const aWorkflowUrl = () => `http://127.0.0.1:${port}/#/project/project-a/workflow/workflow-a`
+
+test("Fleet triages conflicts and open boundaries, with reloadable filters and clear recovery", async ({ page }) => {
+  await page.goto(`http://127.0.0.1:${port}/`)
+  await expect(page.locator(".workflow").first()).toHaveAttribute("data-key", "project-b:workflow-b")
+  await expect(page.locator('button[data-status="attention"] strong')).toHaveText("3")
+  await page.locator("#status-filter").selectOption("attention")
+  // Active work with an OQ/verification item must not disappear from attention.
+  await expect(page.locator(aCard)).toBeVisible()
+  await page.locator("#project-filter").fill("/work/project-a")
+  await page.locator("#agent-filter").fill("worker")
+  await expect(page.locator(".workflow")).toHaveCount(1)
+  const filteredUrl = page.url()
+  await page.reload()
+  await expect(page).toHaveURL(filteredUrl)
+  await expect(page.locator("#project-filter")).toHaveValue("/work/project-a")
+  await expect(page.locator("#agent-filter")).toHaveValue("worker")
+  await expect(page.locator(".workflow")).toHaveCount(1)
+  await page.locator("#project-filter").fill("missing project")
+  await page.locator("[data-clear-filters]").click()
+  await expect(page.locator(".workflow")).toHaveCount(3)
+  await expect(page.locator("#status-filter")).toBeFocused()
+})
+
+test("workflow title uses an explicit matching objective generation, never an unrelated title", async ({ page }) => {
+  await editSnapshot("instance-a", "project-a", (snapshot) => {
+    snapshot.workflows[0].workScope = { objectiveId: "objective-project-a", generation: 1 }
+  })
+  await page.goto(aWorkflowUrl())
+  await expect(page.locator("#view-title")).toHaveText("Shared task name")
+  await editSnapshot("instance-a", "project-a", (snapshot) => {
+    snapshot.workObjectives[0].generation = 2
+    snapshot.workObjectives[0].workVersion += 1
+    snapshot.workObjectives[0].stateDigest = "new-objective-generation"
+    snapshot.workObjectives[0].title = "Unrelated new generation"
+  })
+  await page.locator("#refresh").click()
+  await expect(page.locator("#view-title")).toHaveText("workflow-a")
+  await expect(page.locator("#page-heading")).toContainText("docs/anchors/workflow-a/anchor.md")
+})
+
+test("sessions stay secondary and expanded state and focus survive a changed revision", async ({ page }) => {
+  await editSnapshot("instance-a", "project-a", (snapshot) => {
+    snapshot.workflows[0].participatingSessionIds = ["session-a", "session-a2", "session-a3"]
+  })
+  await page.goto(aWorkflowUrl())
+  const extra = page.locator('a[data-key="session:session-a2"]')
+  await expect(page.getByText("Active session", { exact: true })).toBeVisible()
+  await expect(extra).toBeHidden()
+  const details = page.locator('details[data-hierarchy-key="sessions:project-a:workflow-a"]')
+  const summary = details.locator("summary")
+  await summary.focus()
+  await page.keyboard.press("Enter")
+  await expect(extra).toBeVisible()
+  await editSnapshot("instance-a", "project-a", (snapshot) => {
+    snapshot.workflows[0].workflowRevision = 5
+    snapshot.workflows[0].stateDigest = "digest-a-5"
+  })
+  await expect(page.locator("#page-heading")).toContainText("revision 5", { timeout: 7_000 })
+  await expect(details).toHaveAttribute("open", "")
+  await expect(summary).toBeFocused()
+  await expect(page.getByText("Counts are signals, not causal explanations.", { exact: false })).toBeVisible()
+})
+
+test("pausing display rejects an in-flight automatic read but permits explicit refresh", async ({ page }) => {
+  await page.goto(aWorkflowUrl())
+  await expect(page.locator("#page-heading")).toContainText("revision 4")
+  let release
+  let intercepted = false
+  const held = new Promise((resolveHeld) => { release = resolveHeld })
+  await page.route("**/api/fleet", async (route) => {
+    intercepted = true
+    await held
+    await route.continue()
+  })
+  await expect.poll(() => intercepted, { timeout: 7_000 }).toBe(true)
+  await page.locator("#pause").click()
+  await editSnapshot("instance-a", "project-a", (snapshot) => {
+    snapshot.workflows[0].workflowRevision = 5
+    snapshot.workflows[0].stateDigest = "digest-a-5"
+  })
+  release()
+  await expect(page.locator("#refresh")).toBeEnabled()
+  await page.unroute("**/api/fleet")
+  await expect(page.locator("#page-heading")).toContainText("revision 4")
+  await page.waitForTimeout(3_400)
+  await expect(page.locator("#page-heading")).toContainText("revision 4")
+  await page.locator("#refresh").click()
+  await expect(page.locator("#page-heading")).toContainText("revision 5")
+  await expect(page.locator("#pause")).toHaveAttribute("aria-pressed", "true")
+  await editSnapshot("instance-a", "project-a", (snapshot) => {
+    snapshot.workflows[0].workflowRevision = 6
+    snapshot.workflows[0].stateDigest = "digest-a-6"
+  })
+  await page.locator("#pause").click()
+  await expect(page.locator("#page-heading")).toContainText("revision 6")
+  await expect(page.locator("#pause")).toHaveAttribute("aria-pressed", "false")
+})
+
+test("consistency conflict withholds progress and current work including session membership", async ({ page }) => {
+  await page.goto(`http://127.0.0.1:${port}/#/project/project-b/workflow/workflow-b`)
+  await expect(page.locator("#main")).toContainText("No winner is selected")
+  await expect(page.locator("#main")).toContainText("digest-b1")
+  await expect(page.locator("#main")).toContainText("digest-b2")
+  await expect(page.getByRole("heading", { name: "Current work", exact: true })).toHaveCount(0)
+  await expect(page.locator("progress, meter")).toHaveCount(0)
+  await page.goto(`http://127.0.0.1:${port}/#/project/project-b/workflow/workflow-b/session/session-b`)
+  await expect(page.locator("#main")).toContainText("Session membership unresolved")
+  await expect(page.locator("#main")).toContainText("Missing telemetry is not treated as zero or success")
+})
+
+test("stale highest revision is distinguished from a live lagging publisher", async ({ page }) => {
+  await writePublisher({
+    instanceId: "instance-c-live-lagging", projectId: "project-c", displayName: "Project C",
+    canonicalLocation: "/work/project-c", workflows: [workflow({
+      id: "workflow-c", revision: 1, digest: "digest-c-lagging", status: "active", sessionId: "session-c-old",
+    })],
+  })
+  await page.goto(`http://127.0.0.1:${port}/#/project/project-c/workflow/workflow-c`)
+  await expect(page.locator("#page-heading")).toContainText("revision 2")
+  await expect(page.locator("#main")).toContainText("Latest-known state · stale source")
+  const publishers = page.locator('details[data-hierarchy-key="publishers:project-c:workflow-c"]')
+  await publishers.locator("summary").click()
+  await expect(publishers).toContainText("Revision 1 · live publisher · lagging revision")
+  await expect(publishers).toContainText("Revision 2 · stale/offline publisher")
+})
+
+test("malformed API payload retains the last valid projection and refresh can recover", async ({ page }) => {
+  await page.goto(`http://127.0.0.1:${port}/`)
+  await expect(page.locator(aCard)).toBeVisible()
+  const errors = []
+  page.on("pageerror", (error) => errors.push(String(error)))
+  await page.route("**/api/fleet", (route) => route.fulfill({
+    status: 200, contentType: "application/json", body: '{"projects":[{"projectId":"bad","workflows":[null]}]}',
+  }))
+  await page.locator("#refresh").click()
+  await expect(page.locator("#projection-status")).toContainText("Showing the last known Loom projection")
+  await expect(page.locator(aCard)).toBeVisible()
+  await page.unroute("**/api/fleet")
+  await page.locator("#refresh").click()
+  await expect(page.locator("#projection-status")).toBeHidden()
+  expect(errors).toEqual([])
+})
+
+test("degraded API fields display unavailable rather than healthy zero", async ({ page, request }) => {
+  // Deliberate API degradation: this tests presentation, not publisher validity.
+  const response = await request.get(`http://127.0.0.1:${port}/api/fleet`)
+  const fleet = await response.json()
+  const projection = fleet.projects.find((p) => p.projectId === "project-a").workflows[0].projection
+  for (const key of ["openOqCount", "openVerificationCount", "hierarchyProgress", "budget", "productAcceptance", "knowledgeSync"]) delete projection[key]
+  await page.route("**/api/fleet", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(fleet) }))
+  await page.goto(`http://127.0.0.1:${port}/`)
+  await expect(page.locator(aCard)).toContainText("Open questions: Unavailable")
+  await page.locator(aCard).click()
+  await expect(page.locator('[aria-label="Workflow signals"] strong')).toHaveText(["Unavailable", "Unavailable", "Unavailable", "Unavailable"])
+  await expect(page.locator("progress, meter")).toHaveCount(0)
+  await expect(page.locator("#main")).toContainText("Not projected")
+})
+
+test("projected markup remains inert and malformed hash routes recover without rewriting", async ({ page }) => {
+  const payload = '\"><img src=x onerror="window.injected=true"><script>window.injected=true</script>'
+  await editSnapshot("instance-a", "project-a", (snapshot) => {
+    snapshot.project.displayName = payload
+    snapshot.workflows[0].anchor = payload
+    snapshot.workflows[0].currentSteps[0].label = payload
+  })
+  const errors = []
+  page.on("pageerror", (error) => errors.push(String(error)))
+  await page.goto(aWorkflowUrl())
+  await expect(page.locator("#main")).toContainText(payload)
+  await expect(page.locator("img")).toHaveCount(0)
+  expect(await page.evaluate(() => window.injected)).toBeUndefined()
+  await page.evaluate(() => { location.hash = "#/project/%E0%A4%A" })
+  await expect(page.locator("#view-title")).toHaveText("Invalid dashboard address")
+  expect(new URL(page.url()).hash).toBe("#/project/%E0%A4%A")
+  await page.getByRole("link", { name: "Return to Fleet", exact: true }).click()
+  await expect(page.locator(aCard)).toBeVisible()
+  expect(errors).toEqual([])
+})
+
+test("themes and expanded details reflow at 320 CSS pixels, with visible keyboard focus", async ({ page }) => {
+  for (const width of [320, 768, 1440]) {
+    await page.setViewportSize({ width, height: 900 })
+    for (const suffix of ["", "#/project/project-a", "#/project/project-a/workflow/workflow-a"]) {
+      await page.goto(`http://127.0.0.1:${port}/${suffix}`)
+      await expect(page.locator("#main")).toHaveAttribute("aria-busy", "false")
+      for (const theme of ["light", "dark"]) {
+        await page.locator("#theme").selectOption(theme)
+        await expect(page.locator("html")).toHaveAttribute("data-theme", theme)
+        await page.evaluate(() => document.querySelectorAll("details").forEach((d) => { d.open = true }))
+        expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+      }
+    }
+  }
+  await page.locator("#pause").focus()
+  await page.keyboard.press("Tab")
+  await expect(page.locator("#theme")).toBeFocused()
+  const focus = await page.locator("#theme").evaluate((node) => ({
+    width: getComputedStyle(node).outlineWidth, style: getComputedStyle(node).outlineStyle,
+  }))
+  expect(focus.style).not.toBe("none")
+  expect(parseFloat(focus.width)).toBeGreaterThanOrEqual(2)
+  await page.locator("#theme").selectOption("light")
+  await page.reload()
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "light")
 })
