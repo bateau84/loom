@@ -56,6 +56,7 @@ button:focus-visible, select:focus-visible, input:focus-visible, a:focus-visible
 .badge[data-state="stale/offline"]::before { content: "◷"; }
 .badge[data-state="active"]::before { content: "▶"; }
 .badge[data-state="complete"]::before { content: "✓"; }
+.badge[data-state="cancelled"]::before { content: "×"; }
 .stats { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.45rem; }
 .stat { padding: 0.45rem 0.55rem; border-radius: 0.5rem; background: var(--surface-2); }
 .stat strong { display: block; font-size: 1rem; }
@@ -102,6 +103,7 @@ button:focus-visible, select:focus-visible, input:focus-visible, a:focus-visible
           <option value="attention">Needs attention</option>
           <option value="active">Active</option>
           <option value="complete">Complete</option>
+          <option value="cancelled">Cancelled</option>
           <option value="stale">Stale/offline</option>
         </select>
       </label>
@@ -190,6 +192,7 @@ button:focus-visible, select:focus-visible, input:focus-visible, a:focus-visible
           if (state.status === "stale") return w.sourceFreshness === "stale-source";
           if (state.status === "active") return resolved(w)?.status === "active" && w.sourceFreshness === "live";
           if (state.status === "complete") return resolved(w)?.status === "complete";
+          if (state.status === "cancelled") return resolved(w)?.status === "cancelled";
           return true;
         })
         .map((workflow) => ({ project, workflow }))

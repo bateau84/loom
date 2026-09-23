@@ -1,7 +1,7 @@
 import type { Rpc } from "@opencode/plugin/rpc"
 
 export type LoomSidebarTaskStatus = "complete" | "failed" | "runnable" | "pending"
-export type LoomSidebarState = "idle" | "active" | "blocked" | "complete"
+export type LoomSidebarState = "idle" | "active" | "blocked" | "complete" | "cancelled"
 export type LoomSidebarWorkStatus =
   | "pending"
   | "active"
@@ -100,7 +100,7 @@ export const LoomRpc = {
         properties: {
           active: { type: "boolean" },
           workflowId: { type: "string" },
-          state: { type: "string", enum: ["idle", "active", "blocked", "complete"] },
+          state: { type: "string", enum: ["idle", "active", "blocked", "complete", "cancelled"] },
           progress: {
             type: "object",
             properties: {

@@ -10,6 +10,7 @@ export type Step = {
   kind: StepKind
   dependsOn: string[]
   status: StepStatus
+  attempt?: number
   summary?: string
   task?: TaskSpec
 }
@@ -49,6 +50,29 @@ export type VerificationRequirement = {
   }
 }
 
+export type WorkflowCancellation = {
+  at: string
+  byAgent: "general"
+  bySessionId: string
+  reason: string
+  confirmation: string
+  releasedClaimIds: string[]
+  retainedForeignClaimIds: string[]
+  workMissing: boolean
+  revokedGrantIds: string[]
+}
+
+export class WorkflowCancelledError extends Error {
+  constructor(workflowId: string) {
+    super(`Workflow ${workflowId} is cancelled. Start a new workflow; cancelled execution cannot resume.`)
+    this.name = "WorkflowCancelledError"
+  }
+}
+
+export function assertWorkflowNotCancelled(workflow: Workflow) {
+  if (workflow.cancellation) throw new WorkflowCancelledError(workflow.id)
+}
+
 export type Workflow = {
   id: string
   projectId: string
@@ -57,6 +81,7 @@ export type Workflow = {
   request?: string
   createdBySession: string
   createdAt: string
+  cancellation?: WorkflowCancellation
   effects?: Effects
   work?: {
     objectiveId: string
@@ -189,6 +214,7 @@ export function resetVerificationAfterReopen(workflow: Workflow, resetStepIds: s
 }
 
 export function runnable(workflow: Workflow) {
+  if (workflow.cancellation) return []
   const done = new Set(workflow.steps.filter(satisfied).map((step) => step.id))
   return workflow.steps.filter(
     (step) => step.status === "pending" && step.dependsOn.every((dependency) => done.has(dependency)),
@@ -347,6 +373,7 @@ export function preserveSatisfied(previous: Step[], next: Step[]) {
 
   for (const step of next) {
     const old = byID.get(step.id)
+    if (old) step.attempt = (old.attempt ?? 0) + 1
     const sameDependencies =
       old?.dependsOn.length === step.dependsOn.length &&
       old.dependsOn.every((dependency, index) => dependency === step.dependsOn[index])
@@ -357,6 +384,7 @@ export function preserveSatisfied(previous: Step[], next: Step[]) {
       sameDependencies &&
       satisfied(old)
     ) {
+      step.attempt = old.attempt
       step.status = old.status
       step.summary = old.summary
     }
@@ -370,6 +398,7 @@ export function finishStep(
   outcome: "complete" | "pass" | "fail",
   summary: string,
 ) {
+  assertWorkflowNotCancelled(workflow)
   const step = workflow.steps.find((candidate) => candidate.id === stepId)
   if (!step) throw new Error("Step not found.")
   if (step.agent !== agent) throw new Error(`Step ${stepId} belongs to ${step.agent}, not ${agent}.`)
@@ -400,6 +429,7 @@ export function finishStep(
 }
 
 export function reopenFrom(workflow: Workflow, stepId: string) {
+  assertWorkflowNotCancelled(workflow)
   const target = workflow.steps.find((step) => step.id === stepId)
   if (!target) throw new Error("Step not found.")
 
@@ -418,6 +448,7 @@ export function reopenFrom(workflow: Workflow, stepId: string) {
 
   for (const step of workflow.steps) {
     if (affected.has(step.id)) {
+      step.attempt = (step.attempt ?? 0) + 1
       step.status = "pending"
       delete step.summary
     }
@@ -448,6 +479,7 @@ export function applyTaskPlan(workflow: Workflow, tasks: TaskSpec[]) {
     dependsOn: ["plan", ...task.dependsOn.map(taskStepId)],
     status: "pending",
     task,
+    attempt: (existing.find((step) => step.id === taskStepId(task.id))?.attempt ?? -1) + 1,
   }))
 
   const withoutTasks = workflow.steps.filter((step) => !step.id.startsWith("task:"))

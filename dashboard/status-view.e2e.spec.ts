@@ -79,3 +79,19 @@ test("workflow status artifact supports keyboard-native expansion and filtering"
   await expect(page.getByText("Implement API", { exact: true })).toBeVisible()
   await expect(page.getByText("Later task", { exact: true })).not.toBeVisible()
 })
+
+
+test("cancelled status explains preserved work without advertising runnable steps", async ({ page }) => {
+  const cancelled = view()
+  cancelled.state = "cancelled"
+  cancelled.cancellation = { at: "2026-09-23T12:00:00Z", reason: "User replaced the old plan <script>bad()</script>" }
+  cancelled.now = []
+  await page.setContent(renderStatusHtml(cancelled))
+  await expect(page.getByRole("heading", { name: "Workflow cancelled" })).toBeVisible()
+  await expect(page.getByText("Completed work is preserved. Unfinished checks are not passes. Start a new workflow to continue.")).toBeVisible()
+  await expect(page.getByText("No runnable step.", { exact: true })).toBeVisible()
+  await expect(page.getByRole("region", { name: "Cancellation" })).toContainText("<script>bad()</script>")
+  await expect(page.getByRole("region", { name: "Cancellation" }).locator("script")).toHaveCount(0)
+  await page.getByRole("button", { name: "Expand all" }).click()
+  await expect(page.getByText("Completed task", { exact: true })).toBeVisible()
+})

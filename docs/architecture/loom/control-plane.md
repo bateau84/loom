@@ -311,3 +311,29 @@ An intent session records:
 The control plane refuses a second simultaneous user question and refuses repository/research resolutions without evidence references.
 
 `loom_start` refuses autonomous execution while the active intent session is unresolved. When the accepted Anchor starts its workflow, the session's active-intent pointer is cleared while the durable interview record remains auditable.
+
+
+## Workflow cancellation and reviewed completion
+
+`loom_cancel(workflowId, reason, confirmation)` is a General-only lifecycle transition; `confirmation` records the exact explicit user request. The caller must be the workflow's persisted creating/owning session in the same project. A first cancellation of active unreleased work also requires its current binding. The owning General can cancel a failed-terminal or explicitly released historical workflow after rebinding, without changing the replacement. Repeating a completed cancellation returns the original record. Fully successful terminal workflows remain no-ops; a failed-terminal workflow still requires cancellation cleanup, retaining every failed gate verdict unchanged.
+
+`plugins/loom/lifecycle.ts` owns cancellation and reviewed-history recovery. Under the existing ordered workflow/work locks and SQLite transaction, cancellation releases only claims naming that workflow (including stale-generation claims), revokes its unused grants, stores a cancellation record, and records the parent binding release. It leaves all step outcomes, evidence, review reports and product files intact. Missing hierarchy state is recorded and does not block cancellation; foreign ownership is reported and retained. Failure at any write rolls back the whole transition.
+
+Cancellation is a durable terminal marker, not a new step result. `runnable` becomes empty; normal workflow mutations, grant issuance and grant consumption reject it. Native and Code Mode tools share the same admission fence, and commit-time checks reject calls racing cancellation. Old child sessions cannot admit further host/MCP tools or edit/shell/delegation permissions, including non-Worker roles. Read-only Loom history is available; only a fresh exact attachment grant can authorize a reused child on a different active workflow. The owning General conversation may start new work under its normal permissions.
+
+These checks cannot undo a host/external tool already admitted before cancellation. Its later return may be stored as passive session history but cannot complete the cancelled workflow or become new governed proof for it. Cancellation does not terminate remote processes, roll back files, close unfinished verification, or accept the Objective.
+
+Wave completion and workflow completion are distinct. Passing `review-implementation` stores an exact reviewed-Wave receipt (workflow, generation, executed Task IDs, full reviewed Task set and time) and ends the live claim. Later gates and knowledge sync validate that receipt rather than requiring or recreating the claim. Task writes still require live ownership. An implementation reopen can reacquire its own reviewed Wave only if no downstream Wave has already consumed it; documentation-only reopen does not reacquire it.
+
+Runtime version 3 fences both pre-cancellation builds and earlier draft version-2 builds without admission-bound evidence. Existing records are not discarded. Legacy completed Waves without a receipt are recovered lazily under the same transaction only when exactly one persisted workflow proves the matching completed Tasks and passed independent implementation review. Ambiguous or mismatched history fails closed; cancellation remains the non-destructive escape from that workflow, not a way to invent review proof.
+
+
+### Recovery and evidence admission
+
+For a cancelled child, the Code Mode outer `execute` surface admits only one direct call: `return await tools.loom.code.<tool>(<JSON object>)`. `<tool>` must be `attach` or an existing read-only history/inspection tool; `verification` must have `action: "status"`. Arguments are JSON data, not expressions. No extra statements, spreads, computed properties, prototype keys or arbitrary programs are admitted. The inner tool retains its ordinary schema, project, owner and exact-grant checks. This narrow outer route never itself grants attachment authority.
+
+Tool proof is scoped at admission, not assigned from the session at return. The observer captures workflow, step, step attempt, agent and a durable attachment epoch before execution. Every successful attachment rotates the epoch, even on the same step. Reopening advances affected step attempts; replacing pending routing/plans advances their attempts too. The observation key includes session, message, call ID and tool, in a per-plugin-instance bounded tracker.
+
+At return, Loom serializes attribution with workflow transitions and checks the original attachment and attempt. Closed/cancelled work, rebinding, changed event inputs/actor, missing admission, duplicate in-flight IDs, tracker eviction or observer restart cannot acquire new proof scope. The result retains its known admission origin as passive history. Evidence claims, verification proof and knowledge reports reject observations from another workflow or attempt. Historical scoped records predating admission metadata remain readable and can be consumed only before their step is reopened into a new attempt. Acceptance claims also carry the originating attempt, so an already-minted claim cannot bypass the raw-observation check after reopening. Existing records are not retroactively rewritten or promoted.
+
+Already admitted host operations are not killed by this observer. A late result cannot become replacement-workflow proof, even when the same child legitimately attaches to the replacement before the result arrives.

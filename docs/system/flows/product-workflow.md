@@ -119,6 +119,8 @@ Start shallow. Stay shallow for obvious bounded findings. A completed Task may e
 - Failed review reopens only affected downstream work.
 - Retry/dispatch budgets stop repeated non-progress.
 - Upstream rework invalidates stale Product Acceptance and living-knowledge reports.
+- A passed Wave review releases its execution claim; later workflow gates consume the exact reviewed history.
+- Explicit user cancellation uses `loom_cancel`, preserves completed work and evidence, and permits a fresh authorized workflow. It does not turn unfinished gates into passes or undo already-running external tools. `loom_work_release` is not an abort operation.
 
 ## Navigation
 

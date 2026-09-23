@@ -3,7 +3,12 @@ import { mkdir, mkdtemp, readFile, rename, rm, symlink, writeFile } from "node:f
 import { join } from "node:path"
 import { tmpdir } from "node:os"
 import { fileURLToPath } from "node:url"
-import { consumeDispatchGrant, createProjectStorage, createTransactionalStorage, ensureRuntimeStateVersion, findUsableDispatchGrant, importLegacyPluginStorage, issueDispatchGrant, migrateLegacySessionState, resolveRuntimeIdentity, sessionBoundToOq, sessionBoundToStep, sessionBoundToWorkflow } from "./runtime"
+import { RUNTIME_STATE_VERSION, consumeDispatchGrant, createProjectStorage, createTransactionalStorage, ensureRuntimeStateVersion, findUsableDispatchGrant, importLegacyPluginStorage, issueDispatchGrant, migrateLegacySessionState, resolveRuntimeIdentity, sessionBoundToOq, sessionBoundToStep, sessionBoundToWorkflow } from "./runtime"
+
+// These identity fixtures intentionally model the pre-upgrade v1 store.
+// Schema transformation/replay is tested separately above and at the plugin boundary.
+const migrateBaselineLegacySessionState: typeof migrateLegacySessionState = (raw, scoped, runtime, input, options) =>
+  migrateLegacySessionState(raw, scoped, runtime, input, { ...options, targetVersion: 1 })
 
 class MemoryStorage {
   values = new Map<string, unknown>()
@@ -250,7 +255,7 @@ describe("Loom runtime upgrade ledger", () => {
       await mkdir(project, { recursive: true })
       const runtime = await resolveRuntimeIdentity(project, legacy as any)
       const storage = await createTransactionalStorage(runtime)
-      await ensureRuntimeStateVersion(storage, runtime)
+      await ensureRuntimeStateVersion(storage, runtime, { targetVersion: 1 })
       await storage.set(`installation/projects/${runtime.projectId}`, { projectId: runtime.projectId })
 
       await expect(
@@ -296,7 +301,7 @@ describe("Loom runtime upgrade ledger", () => {
       await mkdir(project, { recursive: true })
       const runtime = await resolveRuntimeIdentity(project, legacy as any)
       const storage = await createTransactionalStorage(runtime)
-      await ensureRuntimeStateVersion(storage, runtime)
+      await ensureRuntimeStateVersion(storage, runtime, { targetVersion: 1 })
       const projectKey = `project/${runtime.projectId}/format`
       await storage.set(projectKey, { version: 1 })
 
@@ -326,7 +331,7 @@ describe("Loom runtime upgrade ledger", () => {
       await mkdir(project, { recursive: true })
       const runtime = await resolveRuntimeIdentity(project, legacy as any)
       const storage = await createTransactionalStorage(runtime)
-      await ensureRuntimeStateVersion(storage, runtime)
+      await ensureRuntimeStateVersion(storage, runtime, { targetVersion: 1 })
       await storage.set("installation/payload", { version: 1 })
 
       let contextSeen: any
@@ -409,7 +414,7 @@ describe("Loom runtime upgrade ledger", () => {
       const runtimeB = await resolveRuntimeIdentity(b, legacy as any)
       const storage = await createTransactionalStorage(runtimeA)
 
-      await ensureRuntimeStateVersion(storage, runtimeA)
+      await ensureRuntimeStateVersion(storage, runtimeA, { targetVersion: 1 })
       for (const runtime of [runtimeA, runtimeB]) {
         await storage.set(`installation/projects/${runtime.projectId}`, { projectId: runtime.projectId })
         await storage.set(`project/${runtime.projectId}/format`, { version: 1 })
@@ -449,7 +454,7 @@ describe("Loom runtime upgrade ledger", () => {
       await mkdir(project, { recursive: true })
       const runtime = await resolveRuntimeIdentity(project, legacy as any)
       const storage = await createTransactionalStorage(runtime)
-      await ensureRuntimeStateVersion(storage, runtime)
+      await ensureRuntimeStateVersion(storage, runtime, { targetVersion: 1 })
       await storage.set(`installation/projects/${runtime.projectId}`, { projectId: runtime.projectId })
       await storage.set(`project/${runtime.projectId}/format`, { version: 1 })
 
@@ -475,7 +480,7 @@ describe("Loom runtime upgrade ledger", () => {
       const runtime = await resolveRuntimeIdentity(project, legacy as any)
       const storage = await createTransactionalStorage(runtime)
 
-      await ensureRuntimeStateVersion(storage, runtime)
+      await ensureRuntimeStateVersion(storage, runtime, { targetVersion: 1 })
       await storage.set(`installation/projects/${runtime.projectId}`, { projectId: runtime.projectId })
       await storage.set(`project/${runtime.projectId}/format`, { version: 1 })
 
@@ -1245,7 +1250,7 @@ describe("Loom runtime identity and scoped storage", () => {
       await raw.set("evidence-claim/workflow-a/task:a/c1", { id: "c1", workflowId: "workflow-a" })
       await raw.set("evidence-claim-id/c1", { workflowId: "workflow-a", stepId: "task:a" })
 
-      const result = await migrateLegacySessionState(raw as any, scoped, runtime, {
+      const result = await migrateBaselineLegacySessionState(raw as any, scoped, runtime, {
         sessionId: "legacy-session",
         sessionProjectId: "opencode-project-a",
         currentProjectId: "opencode-project-a",
@@ -1284,7 +1289,7 @@ describe("Loom runtime identity and scoped storage", () => {
         steps: [],
       })
 
-      const result = await migrateLegacySessionState(raw as any, scoped, runtime, {
+      const result = await migrateBaselineLegacySessionState(raw as any, scoped, runtime, {
         sessionId: "legacy-session",
         sessionProjectId: "opencode-project-a",
         currentProjectId: "opencode-project-a",
@@ -1326,7 +1331,7 @@ describe("Loom runtime identity and scoped storage", () => {
       })
       await legacy.set("budget/workflow-a", { totalDispatches: 2 })
 
-      const result = await migrateLegacySessionState(legacy as any, scoped, runtime, {
+      const result = await migrateBaselineLegacySessionState(legacy as any, scoped, runtime, {
         sessionId: "resumed-session",
         sessionProjectId: "opencode-project-a",
         currentProjectId: "opencode-project-a",
@@ -1382,7 +1387,7 @@ describe("Loom runtime identity and scoped storage", () => {
       })
 
       await expect(
-        migrateLegacySessionState(legacy as any, scoped, runtime, {
+        migrateBaselineLegacySessionState(legacy as any, scoped, runtime, {
           sessionId: "old-planner",
           sessionProjectId: "",
           currentProjectId: "opencode-project-a",
@@ -1395,7 +1400,7 @@ describe("Loom runtime identity and scoped storage", () => {
         projectId: runtime.projectId,
       })
 
-      const primary = await migrateLegacySessionState(legacy as any, scoped, runtime, {
+      const primary = await migrateBaselineLegacySessionState(legacy as any, scoped, runtime, {
         sessionId: "old-general",
         sessionProjectId: "opencode-project-a",
         currentProjectId: "opencode-project-a",
@@ -1407,7 +1412,7 @@ describe("Loom runtime identity and scoped storage", () => {
       })
       expect(primary.provenance).toBe("opencode-session-continuity")
 
-      const secondary = await migrateLegacySessionState(legacy as any, scoped, runtime, {
+      const secondary = await migrateBaselineLegacySessionState(legacy as any, scoped, runtime, {
         sessionId: "old-planner",
         sessionProjectId: "",
         currentProjectId: "opencode-project-a",
@@ -1455,7 +1460,7 @@ describe("Loom runtime identity and scoped storage", () => {
         steps: [],
       })
 
-      const primary = await migrateLegacySessionState(legacy as any, scoped, runtime, {
+      const primary = await migrateBaselineLegacySessionState(legacy as any, scoped, runtime, {
         sessionId,
         sessionProjectId: "opencode-project-a",
         currentProjectId: "opencode-project-a",
@@ -1489,7 +1494,7 @@ describe("Loom runtime identity and scoped storage", () => {
         title: "stale legacy work",
       })
 
-      const resumed = await migrateLegacySessionState(legacy as any, scoped, runtime, {
+      const resumed = await migrateBaselineLegacySessionState(legacy as any, scoped, runtime, {
         sessionId,
         sessionProjectId: "opencode-project-a",
         currentProjectId: "opencode-project-a",
@@ -1539,7 +1544,7 @@ describe("Loom runtime identity and scoped storage", () => {
         createdAt: "before-project-scoping",
         steps: [],
       })
-      await migrateLegacySessionState(legacy as any, scoped, runtime, {
+      await migrateBaselineLegacySessionState(legacy as any, scoped, runtime, {
         sessionId: "old-general",
         sessionProjectId: "opencode-project-a",
         currentProjectId: "opencode-project-a",
@@ -1560,7 +1565,7 @@ describe("Loom runtime identity and scoped storage", () => {
       })
 
       await expect(
-        migrateLegacySessionState(legacy as any, scoped, runtime, {
+        migrateBaselineLegacySessionState(legacy as any, scoped, runtime, {
           sessionId: "unrelated-session",
           sessionProjectId: "",
           currentProjectId: "opencode-project-a",
@@ -1601,7 +1606,7 @@ describe("Loom runtime identity and scoped storage", () => {
       })
 
       await expect(
-        migrateLegacySessionState(legacy as any, scoped, runtime, {
+        migrateBaselineLegacySessionState(legacy as any, scoped, runtime, {
           sessionId: "conflicting-session",
           sessionProjectId: "",
           currentProjectId: "opencode-project-a",
@@ -1631,7 +1636,7 @@ describe("Loom runtime identity and scoped storage", () => {
       })
 
       await expect(
-        migrateLegacySessionState(legacy as any, scoped, runtime, {
+        migrateBaselineLegacySessionState(legacy as any, scoped, runtime, {
           sessionId: "resumed-session",
           sessionProjectId: "",
           currentProjectId: "",
@@ -1664,7 +1669,7 @@ describe("Loom runtime identity and scoped storage", () => {
       })
 
       await expect(
-        migrateLegacySessionState(legacy as any, scoped, runtime, {
+        migrateBaselineLegacySessionState(legacy as any, scoped, runtime, {
           sessionId: "legacy-session",
           sessionProjectId: "opencode-project-a",
           currentProjectId: "opencode-project-a",
@@ -1700,7 +1705,7 @@ describe("Loom runtime identity and scoped storage", () => {
       })
 
       await expect(
-        migrateLegacySessionState(legacy as any, scoped, runtime, {
+        migrateBaselineLegacySessionState(legacy as any, scoped, runtime, {
           sessionId: "resumed-session",
           sessionProjectId: "opencode-project-a",
           currentProjectId: "opencode-project-a",
@@ -1726,7 +1731,7 @@ describe("Loom runtime identity and scoped storage", () => {
       await legacy.set("session-intent/resumed-session", "intent-a")
       await legacy.set("intent/intent-a", { id: "intent-a", state: "interviewing" })
 
-      const result = await migrateLegacySessionState(legacy as any, scoped, runtime, {
+      const result = await migrateBaselineLegacySessionState(legacy as any, scoped, runtime, {
         sessionId: "resumed-session",
         sessionProjectId: "opencode-project-a",
         currentProjectId: "opencode-project-a",
@@ -1782,7 +1787,7 @@ describe("Loom runtime identity and scoped storage", () => {
         steps: [],
       })
 
-      const result = await migrateLegacySessionState(legacy as any, scoped, runtime, {
+      const result = await migrateBaselineLegacySessionState(legacy as any, scoped, runtime, {
         sessionId: "resumed-session",
         sessionProjectId: "opencode-project-a",
         currentProjectId: "opencode-project-a",
@@ -1819,7 +1824,7 @@ describe("Loom runtime identity and scoped storage", () => {
       })
 
       await expect(
-        migrateLegacySessionState(raw as any, scoped, runtime, {
+        migrateBaselineLegacySessionState(raw as any, scoped, runtime, {
           sessionId: "legacy-session",
           sessionProjectId: "opencode-project-a",
           currentProjectId: "opencode-project-a",
@@ -2180,4 +2185,37 @@ describe("Loom runtime identity and scoped storage", () => {
     })
   })
 
+})
+
+
+describe("production workflow cancellation schema", () => {
+  test("v1 and draft v2 records survive admission fencing and both older writers are rejected", async () => {
+    await withRoots(async (root) => {
+      const project = join(root, "cancellation-upgrade")
+      await mkdir(project, { recursive: true })
+      const runtime = await resolveRuntimeIdentity(project, new MemoryStorage())
+      const raw = await createTransactionalStorage(runtime)
+      await ensureRuntimeStateVersion(raw, runtime, { targetVersion: 1 })
+      const old = createProjectStorage(raw, runtime.projectId, { expectedRuntimeVersion: 1 })
+      const history = { id: "before-upgrade", steps: [{ id: "review", status: "passed" }] }
+      await old.set("workflow/before-upgrade", history)
+      await ensureRuntimeStateVersion(raw, runtime, { targetVersion: 2 })
+      const draftV2 = createProjectStorage(raw, runtime.projectId, { expectedRuntimeVersion: 2 })
+      expect(await draftV2.get("workflow/before-upgrade")).toEqual(history)
+      const schema = await ensureRuntimeStateVersion(raw, runtime)
+      expect(schema.currentVersion).toBe(RUNTIME_STATE_VERSION)
+      expect(schema.lastUpgradeId).toBe("evidence-admission-v3")
+      await expect(draftV2.set("workflow/before-upgrade", { overwritten: true })).rejects.toThrow("does not match")
+      await expect(draftV2.get("workflow/before-upgrade")).rejects.toThrow("does not match")
+      await expect(old.set("workflow/before-upgrade", { overwritten: true })).rejects.toThrow("does not match")
+      await expect(old.get("workflow/before-upgrade")).rejects.toThrow("does not match")
+      const current = createProjectStorage(raw, runtime.projectId, { expectedRuntimeVersion: RUNTIME_STATE_VERSION })
+      expect(await current.get("workflow/before-upgrade")).toEqual(history)
+      const receipts = await raw.scan({ prefix: "installation/runtime-upgrades/" })
+      expect(receipts.entries).toHaveLength(2)
+      await ensureRuntimeStateVersion(raw, runtime)
+      expect(await raw.scan({ prefix: "installation/runtime-upgrades/" })).toEqual(receipts)
+      expect(await current.get("workflow/before-upgrade")).toEqual(history)
+    })
+  })
 })

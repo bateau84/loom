@@ -31,6 +31,15 @@ export type WorkPlanPhase = {
   waves: WorkPlanWave[]
 }
 
+export type WaveCompletion = {
+  workflowId: string
+  generation: number
+  taskIds: string[]
+  reviewedTaskIds: string[]
+  at: string
+  provenance: "implementation-review" | "legacy-reviewed-workflow"
+}
+
 export type WorkNode = {
   id: string
   logicalId: string
@@ -44,6 +53,7 @@ export type WorkNode = {
   supersededByGeneration?: number
   claimedByWorkflowId?: string
   claimedAt?: string
+  completion?: WaveCompletion
   createdAt: string
   updatedAt: string
 }
@@ -537,14 +547,23 @@ export function completeWaveForTasks(
   if (waveTasks.some((task) => task.status !== "complete")) {
     throw new Error("Wave cannot complete before every Task is complete.")
   }
-  if (waveTasks.some((task) => task.claimedByWorkflowId !== workflowId)) {
-    throw new Error("Wave cannot complete because one or more Tasks are not claimed by this workflow.")
+  // A replacement workflow may execute only the remaining Tasks. Previously
+  // completed, unclaimed Tasks stay historical inputs to the assembled review.
+  if (selected.some((task) => task!.claimedByWorkflowId !== workflowId) ||
+      waveTasks.some((task) => task.claimedByWorkflowId && task.claimedByWorkflowId !== workflowId)) {
+    throw new Error("Wave cannot complete because one or more Tasks have conflicting ownership.")
   }
 
+  wave.completion = {
+    workflowId, generation, taskIds: [...taskIds].sort(),
+    reviewedTaskIds: waveTasks.map((task) => task.logicalId).sort(),
+    at: now, provenance: "implementation-review",
+  }
   wave.status = "complete"
   delete wave.claimedByWorkflowId
   delete wave.claimedAt
   for (const task of waveTasks) {
+    if (task.claimedByWorkflowId !== workflowId) continue
     delete task.claimedByWorkflowId
     delete task.claimedAt
     task.updatedAt = now
@@ -573,7 +592,30 @@ export function reopenWaveForTasks(
   const waveId = [...parentIds][0]!
   const wave = activeNodes(hierarchy).find((node) => node.id === waveId && node.type === "wave")
   if (!wave || wave.status !== "complete") return hierarchy
+  assertCompletedWaveForTasks(hierarchy, workflowId, generation, taskIds)
 
+  // Reopening invalidates the whole assembled Wave receipt, not just the
+  // Tasks this (possibly partial-recovery) workflow executed. Admission of a
+  // downstream Task depended on that whole Wave having passed review.
+  const dependentIds = new Set(activeNodes(hierarchy)
+    .filter((node) => node.type === "task" && node.parentId === wave.id)
+    .map((node) => node.logicalId))
+  let changed = true
+  while (changed) {
+    changed = false
+    for (const task of activeNodes(hierarchy).filter((node) => node.type === "task")) {
+      if (!dependentIds.has(task.logicalId) && task.dependsOn?.some((id) => dependentIds.has(id))) {
+        dependentIds.add(task.logicalId)
+        changed = true
+      }
+    }
+  }
+  if (activeNodes(hierarchy).some((node) => node.type === "task" && node.parentId !== wave.id &&
+      dependentIds.has(node.logicalId) && (node.status === "complete" || node.claimedByWorkflowId))) {
+    throw new Error("Cannot reopen a Wave already consumed by downstream work; cancel/replan the affected work explicitly.")
+  }
+
+  delete wave.completion
   wave.claimedByWorkflowId = workflowId
   wave.claimedAt = now
   for (const task of selected) {
@@ -603,6 +645,56 @@ export function completeObjective(hierarchy: WorkHierarchy, generation: number, 
     hierarchy.updatedAt = now
   }
   return hierarchy
+}
+
+/** Validate reviewed history without resurrecting an execution claim. */
+export function assertCompletedWaveForTasks(
+  hierarchy: WorkHierarchy,
+  workflowId: string,
+  generation: number,
+  taskIds: string[],
+) {
+  assertWorkGeneration(hierarchy, generation)
+  const tasks = activeTaskMap(hierarchy)
+  const selected = taskIds.map((id) => tasks.get(id))
+  if (!taskIds.length || new Set(taskIds).size !== taskIds.length || selected.some((task) => !task)) {
+    throw new Error("Completed Wave references invalid Tasks.")
+  }
+  const parents = new Set(selected.map((task) => task!.parentId))
+  const wave = parents.size === 1
+    ? activeNodes(hierarchy).find((node) => node.id === selected[0]!.parentId && node.type === "wave")
+    : undefined
+  if (!wave || wave.status !== "complete" || wave.claimedByWorkflowId) {
+    throw new Error("Workflow has no unclaimed completed Wave history.")
+  }
+  const all = activeNodes(hierarchy).filter((node) => node.type === "task" && node.parentId === wave.id)
+  const receipt = wave.completion
+  if (!receipt || receipt.workflowId !== workflowId || receipt.generation !== generation ||
+      JSON.stringify([...receipt.taskIds].sort()) !== JSON.stringify([...taskIds].sort()) ||
+      JSON.stringify([...receipt.reviewedTaskIds].sort()) !== JSON.stringify(all.map((task) => task.logicalId).sort()) ||
+      all.some((task) => task.status !== "complete" || task.claimedByWorkflowId)) {
+    throw new Error("Completed Wave history does not prove this workflow's implementation review.")
+  }
+  return wave
+}
+
+/** Cancellation releases only this workflow's claims, including stale generations. */
+export function releaseCancelledWorkflowClaims(hierarchy: WorkHierarchy, workflowId: string, now: string) {
+  const released: string[] = []
+  for (const node of hierarchy.nodes) {
+    if (node.claimedByWorkflowId !== workflowId) continue
+    delete node.claimedByWorkflowId
+    delete node.claimedAt
+    // Completion/evidence records are never rewritten by cancellation.
+    if (node.status !== "complete") node.updatedAt = now
+    released.push(node.id)
+  }
+  if (released.length) {
+    recomputeRollup(hierarchy, now)
+    hierarchy.version++
+    hierarchy.updatedAt = now
+  }
+  return released
 }
 
 export function assertWaveClaimForTasks(

@@ -71,7 +71,7 @@ export type WorkflowProjectionV1 = {
   }
   anchor?: string
   executionStage?: string
-  status: "active" | "blocked" | "failed" | "complete"
+  status: "active" | "blocked" | "failed" | "complete" | "cancelled"
   currentSteps: StepSummary[]
   runnableSteps: StepSummary[]
   hierarchyProgress?: {
@@ -241,6 +241,7 @@ function summary(step: Step): StepSummary {
 }
 
 function workflowStatus(workflow: Workflow) {
+  if (workflow.cancellation) return "cancelled" as const
   if (workflow.steps.some((step) => step.status === "failed")) return "failed" as const
   const pending = workflow.steps.filter((step) => step.status === "pending")
   if (pending.length === 0) return "complete" as const
@@ -371,6 +372,7 @@ async function workflowProjection(
   const recentActivityAt = latestTimestamp(
     [
       workflow.createdAt,
+      workflow.cancellation?.at,
       work?.updatedAt,
       knowledge?.recordedAt,
       ...scenarios.map((scenario) => scenario.recordedAt),
@@ -468,7 +470,7 @@ export async function buildProjectSnapshot(
   )
   const requiredWorkflows = allWorkflows.filter(
     (workflow) =>
-      workflowStatus(workflow) !== "complete" ||
+      !["complete", "cancelled"].includes(workflowStatus(workflow)) ||
       claimedWorkflowIds.has(workflow.id),
   )
   const requiredWorkflowIds = new Set(requiredWorkflows.map((workflow) => workflow.id))
