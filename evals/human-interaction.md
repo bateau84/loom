@@ -100,7 +100,7 @@ Use a fresh artifact directory and record the checkout SHA for each run. Inspect
 
 ### Grading correction after artifact inspection
 
-The subsequent Critic readiness fix strengthens General itself: a known blocker cause is atomic with its blocked check and outranks incidental non-events under tight reply budgets; blocked/pending state cannot become an invented attempt; handover suggestions cannot become required work unless established by scope or verification authority.
+The subsequent Critic readiness fix strengthens General itself: a known blocker cause is atomic with its blocked check and outranks incidental non-events under tight reply budgets; blocked/pending state cannot become an invented attempt; handover suggestions cannot become required work unless established by scope or verification authority. After the first focused readiness run exposed one residual HUMAN-03 false obligation, the handover rule was narrowed further: hypothetical or unknown extra required checks are omitted unless the source establishes that they exist; optional recommendations must stay explicitly optional.
 
 Reviewer follow-up closed two additional false-green paths. HUMAN-CAUSE-UNKNOWN-01 now rejects turning a merely blocked required verification into an attempted/run/failed verification action. HUMAN-03 now distinguishes the established required sequence (restore authorized test-service access → run required startup verification → obtain the independent Reviewer verdict) from optional extra verification ideas; optional suggestions may be offered, but they cannot be presented as established remaining obligations. Both changes are judge-only: their target prompts are unchanged.
 
