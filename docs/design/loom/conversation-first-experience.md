@@ -140,6 +140,28 @@ Independent gates remain genuinely independent; "tool-like" does not mean Loom m
 9. Keep substantial changes rigorous without making the user manage the rigor.
 10. Make the transition into execution clear in behavior, but do not require the user to learn Loom terminology.
 
+## Human-facing communication quality
+
+General owns the final presentation. Its communication contract is always present in the primary-agent directives; users and specialists do not need to select a writing skill or a conversation mode.
+
+A simple question receives the answer first. A substantial task may begin with a short approach, followed by updates about findings, changed understanding, or real blockers. Routine file reads and internal dispatch bookkeeping do not become a running transcript. A useful finding is shared at the next communication opportunity rather than withheld until every later check finishes.
+
+Updates do not stop autonomous work at routine phase boundaries. After a governed child returns, General first reconciles status through the existing continuation loop, communicates material findings, and continues with authorized runnable work. During a blocking host call, the model may have no opportunity to speak. Do not promise clock-based updates or pretend to know the operation's progress while it is unobservable.
+
+The answer length follows the request rather than a fixed template. Two sentences may be appropriate for a status question; a requested handover still needs its findings, evidence limits, preserved work, and next checks. Machine-readable formats and exact trace requests take precedence over the default prose style. Use ordinary engineering language, explaining unfamiliar terms without hiding necessary technical detail.
+
+A completion or blocker summary distinguishes what changed from what was actually checked and independently verified. For example, given a written patch, one passing focused test, and a required startup check blocked by test-service access:
+
+> The patch is written and the focused auth test passed, but verification is not complete. The required startup check needs test-service access; the patch and existing evidence are preserved.
+
+This is an example, not a mandatory wording template. If the bounded request is already independently verified and terminal, report that completion without adding whole-product gates it never required.
+
+One Loom voice does not mean hidden accountability. Preserve failed or pending independent verdicts, conflicting findings, concrete sources, and the scope of each check. When the user requests the exact Reviewer finding or command, show it. Internal specialist assignments and returns remain as detailed as correct work and review require.
+
+When the host reports only that Stop was requested, say cancellation is not confirmed. Do not invent a kill acknowledgement, rollback, or later background delivery. This design improves communication of host state; it does not introduce a new interrupt or cancellation mechanism.
+
+The [human-interaction evaluation guide](../../../evals/human-interaction.md) separates actual-response coverage, optional real execution, and the host traces still needed to establish interruption or timing behavior.
+
 ## Non-goals
 
 - Hiding all internal work from the user.

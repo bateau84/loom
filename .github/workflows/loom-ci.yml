@@ -11,71 +11,120 @@ permissions:
 jobs:
   conformance:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           persist-credentials: false
       - name: Smoke test pinned eval-runner action/runtime pair
-        uses: bateau84/opencode-eval-runner@e2022f1075e34fe7be2a33eae3c9460f3f5c7263
+        uses: bateau84/opencode-eval-runner@b17532ce4b9efb2a0151dca34268439056e775c9
         with:
-          opencode-image: ghcr.io/bateau84/opencode-eval-runner@sha256:3e5f95ce54fee127230c5bf84a7f09124a2236dfca544269e6547c8f79e8ad5d
+          opencode-image: ghcr.io/bateau84/opencode-eval-runner@sha256:f206d32bb0a5b39ce2080c5eed1e956a344ee86d362840538345202c4abc370c
           copilot-image: ghcr.io/bateau84/opencode-eval-runner@sha256:8def0aa1885b0e60b36a1434c2725667b1b9555def31426f08dd7e2a87dc02c5
           prepare-opencode: true
           prepare-copilot: true
           command: |
             opencode-eval-runner --help
             docker image inspect "$OPENCODE_EVAL_RUNNER_OPENCODE_IMAGE" >/dev/null
+            docker run --rm --entrypoint opencode "$OPENCODE_EVAL_RUNNER_OPENCODE_IMAGE" --version | grep -F "2.0.15"
             docker image inspect "$OPENCODE_EVAL_RUNNER_COPILOT_IMAGE" >/dev/null
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
           bun-version: 1.4.2
       - run: bun install --frozen-lockfile
 
-      - name: Verify real Loom plugin activation in pinned eval runner
-        timeout-minutes: 2
+      - name: Verify real Loom plugin activation and rejection in pinned eval runner
         run: |
           set -euo pipefail
-          image="ghcr.io/bateau84/opencode-eval-runner@sha256:3e5f95ce54fee127230c5bf84a7f09124a2236dfca544269e6547c8f79e8ad5d"
-          docker run --rm -i \
+          image="ghcr.io/bateau84/opencode-eval-runner@sha256:f206d32bb0a5b39ce2080c5eed1e956a344ee86d362840538345202c4abc370c"
+          workspace="$RUNNER_TEMP/loom-runtime-workspace"
+          runtime="$RUNNER_TEMP/loom-preflight-runtime"
+          rm -rf "$workspace" "$runtime"
+          mkdir -p "$workspace/.opencode/agents" "$runtime"
+          cp agents/general.md "$workspace/.opencode/agents/general.md"
+          printf '%s\n' '{"$schema":"https://opencode.ai/config.json","default_agent":"general"}' > "$workspace/opencode.json"
+
+          # Execute a mounted file: python3 - with a heredoc silently did no
+          # work when Docker stdin was closed. Require emitted proof as well
+          # as a successful exit; the script checks activation and rejection.
+          # Both writable roots belong to the invoking non-root UID, rather
+          # than assuming the image and hosted runner use the same identity.
+          docker run --rm \
+            --user "$(id -u):$(id -g)" \
             --workdir /workspace \
-            --tmpfs /workspace:rw,mode=1777 \
+            --volume "$workspace:/workspace:rw" \
+            --volume "$runtime:/tmp/runtime:rw" \
             --volume "$PWD/node_modules:/workspace/node_modules:ro" \
             --volume "$PWD:/seed/opencode-config:ro" \
             --entrypoint python3 \
-            "$image" - <<'PY'
-          import json
-          import shutil
-          import sys
-          from pathlib import Path
-
-          # Create fixture files as the container's unprivileged user, not the
-          # host runner UID. The checkout and dependency mounts remain read-only.
-          agents = Path("/workspace/.opencode/agents")
-          agents.mkdir(parents=True)
-          shutil.copyfile("/seed/opencode-config/agents/general.md", agents / "general.md")
-          Path("/workspace/opencode.json").write_text(json.dumps({
-              "$schema": "https://opencode.ai/config.json",
-              "default_agent": "general",
-          }), encoding="utf-8")
-          sys.path.insert(0, "/opt/opencode-eval-runner")
-          from container.invoke import prepare_opencode_env, verify_expected_plugin
-
-          env = prepare_opencode_env()
-          result = verify_expected_plugin(
-              env,
-              "general",
-              "openai/preflight-no-inference",
-              "loom",
-              30,
-          )
-          assert result["plugin"]["id"] == "loom", result
-          assert result["plugin"]["state"]["status"] == "active", result
-          assert result["verification"] == "plugin-entrypoint+activation-barrier+plugin-inventory", result
-          print("PASS real Loom plugin activation")
-          PY
+            "$image" /seed/opencode-config/scripts/verify_runner_plugin.py \
+            | tee "$RUNNER_TEMP/loom-plugin-preflight.log"
+          grep -Fxq 'PASS real Loom plugin activation' "$RUNNER_TEMP/loom-plugin-preflight.log"
+          grep -Fxq 'PASS missing plugin rejected' "$RUNNER_TEMP/loom-plugin-preflight.log"
 
       - name: Install OpenCode V2 for zero-inference host integration
-        run: npm install --global @opencode/cli@2.0.12
+        run: |
+          npm install --global @opencode/cli@2.0.15
+          opencode --version | grep -F "2.0.15"
+
+      - name: Verify eval DB sanitizer against a fresh OpenCode 2.0.15 database
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/opencode-fresh-db"
+          rm -rf "$root"
+          mkdir -p "$root/home" "$root/config" "$root/data" "$root/cache" "$root/state"
+          db="$root/opencode.db"
+
+          HOME="$root/home" \
+          XDG_CONFIG_HOME="$root/config" \
+          XDG_DATA_HOME="$root/data" \
+          XDG_CACHE_HOME="$root/cache" \
+          XDG_STATE_HOME="$root/state" \
+          OPENCODE_DB="$db" \
+          OPENCODE_DISABLE_AUTOUPDATE=1 \
+            opencode debug agents >/dev/null
+
+          test -s "$db"
+          OPENCODE_FRESH_DB="$db" python3 - <<'PY'
+          import importlib.util
+          import os
+          from pathlib import Path
+          import sqlite3
+          import tempfile
+
+          module_path = Path("scripts/run-evals.py").resolve()
+          spec = importlib.util.spec_from_file_location("loom_run_evals_fresh_db", module_path)
+          assert spec and spec.loader
+          run_evals = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(run_evals)
+
+          source = Path(os.environ["OPENCODE_FRESH_DB"])
+          with sqlite3.connect(source) as db:
+              source_tables = {
+                  row[0]
+                  for row in db.execute(
+                      "SELECT name FROM sqlite_master WHERE type = 'table'"
+                  )
+              }
+          assert "credential" in source_tables, source_tables
+          assert "session_v2" in source_tables, source_tables
+
+          with tempfile.TemporaryDirectory() as tmp:
+              destination = Path(tmp) / "sanitized.db"
+              run_evals.sanitize_database_seed(source, destination)
+              with sqlite3.connect(destination) as db:
+                  tables = {
+                      row[0]
+                      for row in db.execute(
+                          "SELECT name FROM sqlite_master WHERE type = 'table'"
+                      )
+                  }
+                  credentials = db.execute("SELECT COUNT(*) FROM credential").fetchone()[0]
+              assert "credential" in tables, tables
+              assert "session_v2" in tables, tables
+              assert credentials == 0, credentials
+          PY
+
       - run: bun run integration:opencode
       - run: bun run test
       - run: bun run typecheck
