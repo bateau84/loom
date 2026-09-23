@@ -1490,5 +1490,29 @@ class ConversationCompositionTests(unittest.TestCase):
         self.assertTrue((requirements / "br-020-conversation-is-primary-interface.md").is_file())
 
 
+class ConversationalFeedbackCostTests(unittest.TestCase):
+    def test_handoff_and_observed_impact_probes_do_not_install_subagents(self):
+        import shutil
+        expected = {
+            "CONVERSATION-02-HANDOFF": "conversation-response",
+            "AUTO-ORCHESTRATION-03": "role-decision",
+        }
+        cases = {case["id"]: case for case in RUN_EVALS.load_cases()}
+        for case_id, execution in expected.items():
+            with self.subTest(case=case_id):
+                case = cases[case_id]
+                self.assertEqual(case["execution"], execution)
+                self.assertEqual(RUN_EVALS.case_workspace_mode(case), "ro")
+                temp, target, _ = RUN_EVALS.setup_projects(case)
+                try:
+                    agents = target / ".opencode" / "agents"
+                    self.assertEqual(sorted(p.name for p in agents.iterdir()), ["general.md"])
+                    wrapper = (agents / "general.md").read_text()
+                    self.assertIn('action: "*"', wrapper)
+                    self.assertIn('effect: deny', wrapper)
+                finally:
+                    shutil.rmtree(temp, ignore_errors=True)
+
+
 if __name__ == "__main__":
     unittest.main()
