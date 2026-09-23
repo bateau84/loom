@@ -43,7 +43,7 @@ class HumanInteractionWiringTests(unittest.TestCase):
         cases = RUNNER.load_cases([REGRESSION_SUITE])
         self.assertEqual({case["id"] for case in cases}, {
             "HUMAN-CAUSE-01", "HUMAN-CAUSE-UNKNOWN-01", "HUMAN-TRACE-01", "HUMAN-JSON-01",
-            "HUMAN-JSON-OBSERVED-01",
+            "HUMAN-JSON-OBSERVED-01", "HUMAN-BLOCKER-PRIORITY-01",
         })
         default_ids = {case["id"] for case in RUNNER.load_cases()}
         for case in cases:
@@ -78,6 +78,18 @@ class HumanInteractionWiringTests(unittest.TestCase):
         for case in (handover, unknown):
             for grading in [case["trap"], *case["expectations"], *case["must_not"]]:
                 self.assertNotIn(grading, case["prompt"])
+
+    def test_status_contract_pins_critic_readiness_fixes(self):
+        source = (ROOT / "agents/general.md").read_text()
+        self.assertIn("affected check and any supplied immediate cause as one atomic fact", source)
+        self.assertIn("Omit unrequested non-events such as non-deployment before dropping a known cause", source)
+        self.assertIn("`blocked` or `pending` does not establish that a check was attempted", source)
+        self.assertIn("additional prudent checks may be suggested only when clearly labeled optional", source)
+
+        regressions = {case["id"]: case for case in RUNNER.load_cases([REGRESSION_SUITE])}
+        priority = regressions["HUMAN-BLOCKER-PRIORITY-01"]
+        self.assertIn("staging gateway denies every currently authorized verification identity", priority["prompt"])
+        self.assertTrue(any("gateway-denial cause" in rule for rule in priority["must_not"]))
 
     def test_response_projects_keep_the_production_contract_but_not_grading_metadata(self):
         source_body = RUNNER.strip_frontmatter((ROOT / "agents/general.md").read_text())

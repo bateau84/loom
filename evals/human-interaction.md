@@ -73,7 +73,7 @@ These model runs consume provider budget. Do not enable them in ordinary CI or s
 
 ## Focused status and attribution regressions
 
-`human-interaction-regressions.json` contains five opt-in, tool-denied response cases. They test transfer to other scenarios and guard against errors introduced by more explicit reporting:
+`human-interaction-regressions.json` contains six opt-in, tool-denied response cases. They test transfer to other scenarios and guard against errors introduced by more explicit reporting:
 
 | Case | Distinguishing behavior |
 | --- | --- |
@@ -82,6 +82,7 @@ These model runs consume provider budget. Do not enable them in ordinary CI or s
 | HUMAN-TRACE-01 | A requested exact trace retains its independent producer despite a separate Worker success. |
 | HUMAN-JSON-01 | Artifact facts stay out of passed-check lists; out-of-scope deployment is not remaining work; queued review is not an invented capability block. |
 | HUMAN-JSON-OBSERVED-01 | A genuine executed existence check is valid narrow evidence, and deployment remains required when explicitly in accepted scope. |
+| HUMAN-BLOCKER-PRIORITY-01 | Under a two-sentence limit, a required blocked check keeps its supplied immediate cause ahead of pending-review or non-deployment trivia. |
 
 The regression suite is excluded from default selection, including bare `--all`. Explicitly load it alongside the default suite. This six-case matrix is available for broader status/evidence verification, not required for every fixture edit. It is not the historical seven-case matrix and does not measure the removed scenario:
 
@@ -98,6 +99,8 @@ bun run eval:live -- \
 Use a fresh artifact directory and record the checkout SHA for each run. Inspect the actual answers even when their judge reports PASS: a valid JSON shape does not establish correct evidence categories. A failed result stays failed; a justified judge disagreement must be recorded separately rather than overwriting the raw artifact. These fixtures contain scenario facts, not reference answers or target-visible scoring rules. The wiring checks do not themselves establish semantic reliability.
 
 ### Grading correction after artifact inspection
+
+The subsequent Critic readiness fix strengthens General itself: a known blocker cause is atomic with its blocked check and outranks incidental non-events under tight reply budgets; blocked/pending state cannot become an invented attempt; handover suggestions cannot become required work unless established by scope or verification authority.
 
 Reviewer follow-up closed two additional false-green paths. HUMAN-CAUSE-UNKNOWN-01 now rejects turning a merely blocked required verification into an attempted/run/failed verification action. HUMAN-03 now distinguishes the established required sequence (restore authorized test-service access → run required startup verification → obtain the independent Reviewer verdict) from optional extra verification ideas; optional suggestions may be offered, but they cannot be presented as established remaining obligations. Both changes are judge-only: their target prompts are unchanged.
 
@@ -140,21 +143,21 @@ tar -czf /tmp/loom-human-interaction-fact-selection.tar.gz \
   -C .loom-evals human-interaction-fact-selection
 ```
 
-### Focused Reviewer-finding spot check
+### Focused readiness spot check
 
-If model-backed confirmation of these two grading corrections is needed, run only the affected cases rather than the full matrix:
+The Critic readiness findings are intentionally tested with only three cases: the two tightened judge contracts plus a new blocker-priority regression that exercises the known failure class without restoring either deleted HUMAN-02 fixture.
 
 ```sh
 bun run eval:live -- \
   --suite evals/human-interaction.json \
   --suite evals/human-interaction-regressions.json \
-  --cases HUMAN-03,HUMAN-CAUSE-UNKNOWN-01 \
+  --cases HUMAN-03,HUMAN-CAUSE-UNKNOWN-01,HUMAN-BLOCKER-PRIORITY-01 \
   --iterations 3 --parallel 3 \
-  --artifact-dir .loom-evals/human-interaction-reviewer-findings \
+  --artifact-dir .loom-evals/human-interaction-readiness \
   --model PROVIDER/MODEL
 ```
 
-This is six target responses plus six judge calls. Inspect the actual answers and preserve raw results. A deterministic wiring PASS does not substitute for semantic model evidence, and historical results keep their original grading contract.
+This is nine target responses plus nine judge calls. Inspect every answer, including passes. HUMAN-BLOCKER-PRIORITY-01 is new evidence for the concrete-cause priority rule; it does not rewrite or resurrect the deleted HUMAN-02 results. A deterministic wiring PASS does not substitute for semantic model evidence, and historical results keep their original grading contract.
 
 ## Evidence limits
 
