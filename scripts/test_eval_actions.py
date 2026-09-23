@@ -87,6 +87,59 @@ class WorkflowCredentialTests(unittest.TestCase):
         self.assertIn('args+=(--env OPENCODE_API_KEY)', workflow)
 
 
+class DatabaseSeedTests(unittest.TestCase):
+    def test_sanitizer_accepts_fresh_v2_session_schema(self):
+        import sqlite3
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "source.db"
+            destination = root / "sanitized.db"
+
+            with sqlite3.connect(source) as db:
+                db.execute("CREATE TABLE credential (provider TEXT, data TEXT)")
+                db.execute("CREATE TABLE session_v2 (id TEXT PRIMARY KEY)")
+                db.execute(
+                    "INSERT INTO credential(provider, data) VALUES (?, ?)",
+                    ("openai", json.dumps({"type": "oauth", "refresh": "secret-value"})),
+                )
+                db.commit()
+
+            result = RUN_EVALS.sanitize_database_seed(source, destination)
+            self.assertEqual(result, destination)
+            with sqlite3.connect(destination) as db:
+                self.assertEqual(
+                    db.execute("SELECT provider, data FROM credential").fetchall(),
+                    [("openai", json.dumps({"type": "oauth", "refresh": "secret-value"}))],
+                )
+                tables = {
+                    row[0]
+                    for row in db.execute(
+                        "SELECT name FROM sqlite_master WHERE type = 'table'"
+                    )
+                }
+                self.assertIn("session_v2", tables)
+
+    def test_sanitizer_keeps_legacy_session_schema_compatible(self):
+        import sqlite3
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "source.db"
+            destination = root / "sanitized.db"
+
+            with sqlite3.connect(source) as db:
+                db.execute("CREATE TABLE credential (provider TEXT, data TEXT)")
+                db.execute("CREATE TABLE session (id TEXT PRIMARY KEY)")
+                db.commit()
+
+            self.assertEqual(
+                RUN_EVALS.sanitize_database_seed(source, destination),
+                destination,
+            )
+
+
+
 class RuntimeEvalProjectTests(unittest.TestCase):
     def test_runtime_project_keeps_loom_out_of_project_plugin_config(self):
         case = next(
