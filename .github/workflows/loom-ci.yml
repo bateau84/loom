@@ -32,24 +32,31 @@ jobs:
       - run: bun install --frozen-lockfile
 
       - name: Verify real Loom plugin activation in pinned eval runner
+        timeout-minutes: 2
         run: |
           set -euo pipefail
           image="ghcr.io/bateau84/opencode-eval-runner@sha256:3e5f95ce54fee127230c5bf84a7f09124a2236dfca544269e6547c8f79e8ad5d"
-          workspace="$RUNNER_TEMP/loom-runtime-workspace"
-          rm -rf "$workspace"
-          mkdir -p "$workspace/.opencode/agents"
-          cp agents/general.md "$workspace/.opencode/agents/general.md"
-          printf '%s\n' '{"$schema":"https://opencode.ai/config.json","default_agent":"general"}' > "$workspace/opencode.json"
-
           docker run --rm -i \
             --workdir /workspace \
-            --volume "$workspace:/workspace:rw" \
+            --tmpfs /workspace:rw,mode=1777 \
             --volume "$PWD/node_modules:/workspace/node_modules:ro" \
             --volume "$PWD:/seed/opencode-config:ro" \
             --entrypoint python3 \
             "$image" - <<'PY'
+          import json
+          import shutil
           import sys
+          from pathlib import Path
 
+          # Create fixture files as the container's unprivileged user, not the
+          # host runner UID. The checkout and dependency mounts remain read-only.
+          agents = Path("/workspace/.opencode/agents")
+          agents.mkdir(parents=True)
+          shutil.copyfile("/seed/opencode-config/agents/general.md", agents / "general.md")
+          Path("/workspace/opencode.json").write_text(json.dumps({
+              "$schema": "https://opencode.ai/config.json",
+              "default_agent": "general",
+          }), encoding="utf-8")
           sys.path.insert(0, "/opt/opencode-eval-runner")
           from container.invoke import prepare_opencode_env, verify_expected_plugin
 

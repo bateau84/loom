@@ -36,6 +36,8 @@ export const DASHBOARD_CONTEXT_ITEMS = 24
 export const DASHBOARD_CONTEXT_STEPS = 100
 export const DASHBOARD_CONTEXT_TEXT = 600
 
+const hiddenControls = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f\u202a-\u202e\u2066-\u2069]/g
+
 const sensitiveKeys = new Set(["apikey", "api_key", "api-key", "token", "password", "secret", "authorization", "proxy-authorization"])
 
 /** Read one quoted token, including JSON escapes and YAML doubled single quotes. */
@@ -76,6 +78,7 @@ function redactAssignments(value: string, depth = 0) {
       while (index < value.length && /[a-z0-9_-]/i.test(value[index])) index++
       key = value.slice(start, index)
     } else { index++; continue }
+    key = key.replace(hiddenControls, "")
     if (!sensitiveKeys.has(key.toLowerCase())) {
       if (quote) {
         // Logs may contain JSON serialized inside a quoted string. Do not expose its
@@ -97,7 +100,10 @@ function redactAssignments(value: string, depth = 0) {
     let end = start
     if (value[start] === '"' || value[start] === "'") end = quotedToken(value, start).end
     else if (value[start] === "|" || value[start] === ">") end = value.length
-    else while (end < value.length && !/[\r\n,;}\]]/.test(value[end])) end++
+    else {
+      const boundary = /^(?:proxy-)?authorization$/i.test(key) ? /[\r\n]/ : /[\r\n,;}\]]/
+      while (end < value.length && !boundary.test(value[end])) end++
+    }
     parts.push(value.slice(offset, start), "[REDACTED]")
     offset = end; index = end
   }
@@ -108,7 +114,7 @@ function redactAssignments(value: string, depth = 0) {
 export function dashboardText(value: string | undefined): DashboardText {
   if (!value) return { text: "Description not recorded", truncated: false }
   if (value.length > 16_000) return { text: "Long description omitted. Inspect it in Loom.", truncated: true }
-  const cleaned = redactCommand(redactAssignments(value
+  const cleaned = redactCommand(redactAssignments(value.replace(hiddenControls, "")
     .replace(/-----BEGIN [^-]*PRIVATE KEY-----[\s\S]*?(?:-----END [^-]*PRIVATE KEY-----|$)/g, "[PRIVATE KEY REDACTED]"))
     .replace(/(authorization\s*:\s*(?:bearer|basic)\s+)[^\s]+/gi, "$1[REDACTED]")
     .replace(/(https?:\/\/)[^\s/@]+:[^\s/@]+@/gi, "$1[REDACTED]@")

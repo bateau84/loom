@@ -15,6 +15,9 @@ export const authorizationSamples = [
   '{"Authorization":"Bearer REVIEW_SENTINEL',
   '"Proxy-Authorization" = "Basic REVIEW_SENTINEL"',
   'Recorded headers: ' + JSON.stringify(JSON.stringify({ Authorization: "Bearer REVIEW_SENTINEL" })),
+  'Authorization: Digest username="someone", response="REVIEW_SENTINEL"',
+  'authorization\u202e: Bearer REVIEW_SENTINEL',
+  String.raw`{"Author\u202Eization":"Bearer REVIEW_SENTINEL"}`,
 ]
 
 export function reviewFixture(root: string, mode = "normal", sample = 0) {
