@@ -68,7 +68,68 @@ jobs:
           PY
 
       - name: Install OpenCode V2 for zero-inference host integration
-        run: npm install --global @opencode/cli@2.0.12
+        run: |
+          npm install --global @opencode/cli@2.0.15
+          opencode --version | grep -F "2.0.15"
+
+      - name: Verify eval DB sanitizer against a fresh OpenCode 2.0.15 database
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/opencode-fresh-db"
+          rm -rf "$root"
+          mkdir -p "$root/home" "$root/config" "$root/data" "$root/cache" "$root/state"
+          db="$root/opencode.db"
+
+          HOME="$root/home" \
+          XDG_CONFIG_HOME="$root/config" \
+          XDG_DATA_HOME="$root/data" \
+          XDG_CACHE_HOME="$root/cache" \
+          XDG_STATE_HOME="$root/state" \
+          OPENCODE_DB="$db" \
+          OPENCODE_DISABLE_AUTOUPDATE=1 \
+            opencode debug agents >/dev/null
+
+          test -s "$db"
+          OPENCODE_FRESH_DB="$db" python3 - <<'PY'
+          import importlib.util
+          import os
+          from pathlib import Path
+          import sqlite3
+          import tempfile
+
+          module_path = Path("scripts/run-evals.py").resolve()
+          spec = importlib.util.spec_from_file_location("loom_run_evals_fresh_db", module_path)
+          assert spec and spec.loader
+          run_evals = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(run_evals)
+
+          source = Path(os.environ["OPENCODE_FRESH_DB"])
+          with sqlite3.connect(source) as db:
+              source_tables = {
+                  row[0]
+                  for row in db.execute(
+                      "SELECT name FROM sqlite_master WHERE type = 'table'"
+                  )
+              }
+          assert "credential" in source_tables, source_tables
+          assert "session_v2" in source_tables, source_tables
+
+          with tempfile.TemporaryDirectory() as tmp:
+              destination = Path(tmp) / "sanitized.db"
+              run_evals.sanitize_database_seed(source, destination)
+              with sqlite3.connect(destination) as db:
+                  tables = {
+                      row[0]
+                      for row in db.execute(
+                          "SELECT name FROM sqlite_master WHERE type = 'table'"
+                      )
+                  }
+                  credentials = db.execute("SELECT COUNT(*) FROM credential").fetchone()[0]
+              assert "credential" in tables, tables
+              assert "session_v2" in tables, tables
+              assert credentials == 0, credentials
+          PY
+
       - run: bun run integration:opencode
       - run: bun run test
       - run: bun run typecheck
