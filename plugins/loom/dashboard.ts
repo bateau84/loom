@@ -676,6 +676,27 @@ function aggregateWork(
   }
 }
 
+type WorkflowCandidate = { workflow: WorkflowProjectionV1; record: PublisherRecord }
+
+/** Missing optional context is not contradictory context. Never normalize real disagreements. */
+function compatibleContextCandidates(candidates: WorkflowCandidate[]): WorkflowCandidate[] | undefined {
+  const rich = candidates.filter(({ workflow }) => workflow.context !== undefined)
+  if (!rich.length || rich.length === candidates.length) return undefined
+  const commonDigests = new Set<string>()
+  for (const { workflow } of candidates) {
+    const { stateDigest, context, ...common } = workflow
+    if (context !== undefined && context?.version !== 1) return undefined
+    // The compatibility exception requires intact complete payloads on both sides.
+    const body = context === undefined ? common : { ...common, context }
+    if (projectionDigest(body) !== stateDigest) return undefined
+    commonDigests.add(projectionDigest(common))
+  }
+  if (commonDigests.size !== 1) return undefined
+  if (new Set(rich.map(({ workflow }) => workflow.stateDigest)).size !== 1) return undefined
+  // Select one whole context-bearing snapshot, not fields from different publishers.
+  return rich
+}
+
 function aggregateWorkflow(
   records: PublisherRecord[],
   projectId: string,
@@ -691,8 +712,12 @@ function aggregateWorkflow(
   if (values.length === 0) return undefined
   const highest = Math.max(...values.map((value) => value.workflow.workflowRevision))
   const candidates = values.filter((value) => value.workflow.workflowRevision === highest)
-  const conflict = new Set(candidates.map((value) => value.workflow.stateDigest)).size > 1
-  const sourceFreshness = candidates.some((value) => live(value.record, nowMs))
+  const sameDigest = new Set(candidates.map((value) => value.workflow.stateDigest)).size === 1
+  const compatible = sameDigest ? candidates : compatibleContextCandidates(candidates)
+  const conflict = compatible === undefined
+  const sources = compatible ?? candidates
+  // A live legacy publisher cannot make context supplied only by stale sources live.
+  const sourceFreshness = sources.some((value) => live(value.record, nowMs))
     ? "live" as const
     : "stale-source" as const
   const participants = values
@@ -718,7 +743,7 @@ function aggregateWorkflow(
     }
   }
 
-  const chosen = candidates.find((value) => live(value.record, nowMs)) ?? candidates[0]
+  const chosen = sources.find((value) => live(value.record, nowMs)) ?? sources[0]
   return {
     projectId,
     workflowId,

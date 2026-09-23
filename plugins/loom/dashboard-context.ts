@@ -36,14 +36,32 @@ export const DASHBOARD_CONTEXT_ITEMS = 24
 export const DASHBOARD_CONTEXT_STEPS = 100
 export const DASHBOARD_CONTEXT_TEXT = 600
 
+/** Linear scanning avoids ambiguous repeated regex branches on hostile escape sequences. */
+function redactQuotedAssignments(value: string) {
+  const prefix = /((?:["']?(?:api[_-]?key|token|password|secret)["']?)\s*[:=]\s*)(["'])/gi
+  let result = ""
+  let offset = 0
+  let match: RegExpExecArray | null
+  while ((match = prefix.exec(value)) !== null) {
+    let end = prefix.lastIndex
+    while (end < value.length) {
+      if (value[end] === "\\") { end += 2; continue }
+      if (value[end++] === match[2]) break
+    }
+    end = Math.min(end, value.length)
+    result += value.slice(offset, match.index) + match[1] + "[REDACTED]"
+    offset = end
+    prefix.lastIndex = end
+  }
+  return result + value.slice(offset)
+}
+
 /** Defense in depth for authored summaries, not a guarantee that arbitrary text is secret-free. */
 export function dashboardText(value: string | undefined): DashboardText {
   if (!value) return { text: "Description not recorded", truncated: false }
-  // Do not run regexes over an unbounded transcript accidentally saved as a summary.
   if (value.length > 16_000) return { text: "Long description omitted. Inspect it in Loom.", truncated: true }
-  const cleaned = redactCommand(value
-    .replace(/-----BEGIN [^-]*PRIVATE KEY-----[\s\S]*?(?:-----END [^-]*PRIVATE KEY-----|$)/g, "[PRIVATE KEY REDACTED]")
-    .replace(/((?:["']?(?:api[_-]?key|token|password|secret)["']?)\s*[:=]\s*)(["'])(?:\\.|[\s\S])*?\2/gi, "$1[REDACTED]")
+  const cleaned = redactCommand(redactQuotedAssignments(value
+    .replace(/-----BEGIN [^-]*PRIVATE KEY-----[\s\S]*?(?:-----END [^-]*PRIVATE KEY-----|$)/g, "[PRIVATE KEY REDACTED]"))
     .replace(/(authorization\s*:\s*(?:bearer|basic)\s+)[^\s]+/gi, "$1[REDACTED]")
     .replace(/(https?:\/\/)[^\s/@]+:[^\s/@]+@/gi, "$1[REDACTED]@")
     .replace(/\b(?:gh[pousr]_[A-Za-z0-9_]{16,}|github_pat_[A-Za-z0-9_]{16,}|sk-[A-Za-z0-9_-]{16,})\b/g, "[REDACTED]"))
@@ -60,7 +78,6 @@ function stepContext(step: Step): DashboardStepContext {
   return {
     id: step.id, agent: step.agent, kind: step.kind, status: step.status,
     ...(step.task?.title ? { label: dashboardText(step.task.title).text } : {}),
-    // Reported prose is not a substitute for an observed test or causal proof.
     ...(step.status === "failed" && step.summary ? { reportedResult: dashboardText(step.summary) } : {}),
   }
 }
@@ -72,10 +89,9 @@ export function buildDashboardWorkflowContext(
   questionScanLimited = false,
 ): DashboardWorkflowContext {
   const nonClosed = questions.filter((q) => q.workflowId === workflow.id && (q.status === "open" || q.status === "answered"))
-    .sort((a, b) => Number(b.blocking) - Number(a.blocking) || a.status.localeCompare(b.status) || a.id.localeCompare(b.id))
+    .sort((a, b) => Number(b.blocking) - Number(a.blocking) || Number(a.status === "answered") - Number(b.status === "answered") || a.id.localeCompare(b.id))
   const verification = (workflow.verification ?? []).filter((item) => item.status === "open")
     .sort((a, b) => a.id.localeCompare(b.id))
-  // Include reported failures before pending/completed steps when the bounded view fills.
   const steps = workflow.steps.slice().sort((a, b) => Number(b.status === "failed") - Number(a.status === "failed"))
   return {
     version: 1,

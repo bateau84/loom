@@ -32,14 +32,16 @@ Only questions whose workflowId matches the workflow are included. The existing
 question scan is capped at 1000; reaching that bound conservatively marks the count
 as a lower bound even when exactly 1000 may exist. Closing a question excludes it;
 answering without completing its consumer reconciliation retains it as answered.
-No answer/evidence bodies, observation logs, shell output, hidden prompts, or
-OpenCode transcripts are added. Per-agent session titles and live activity are not
-available and must not be inferred from sorted membership or runnable steps.
+Blocking questions come first, then open before answered questions within that
+priority. No answer/evidence bodies, observation logs, shell output, hidden prompts,
+or OpenCode transcripts are added. Per-agent session titles and live activity are
+not available and must not be inferred from sorted membership or runnable steps.
 
 Each text preview is at most 600 Unicode code points. Text over 16000 UTF-16 code
 units is omitted rather than scanned unboundedly. Recognized credential assignments,
 quoted credential values, authorization values, URL credentials, common token forms
-and private-key blocks are redacted before truncation. Control/bidirectional-format
+and private-key blocks are redacted before truncation. Quoted credential values use
+linear scanning, including escapes and unterminated quotes. Control/bidirectional-format
 characters are removed. This is defense in depth, not a guarantee that arbitrary
 prose is secret-free; authored operational summaries must not contain secrets.
 The UI always escapes text and marks shortened descriptions and limited lists.
@@ -47,15 +49,36 @@ The UI always escapes text and marks shortened descriptions and limited lists.
 ## Consistency and upgrade behavior
 
 Context participates in stateDigest. Aggregation must not field-merge context from
-another revision, choose a same-revision conflict winner, or replace stale latest
-state with a live lower revision. A mixed old/new publisher set can therefore show
-a conservative same-revision conflict because the presentation payload differs.
+another revision, choose a true same-revision conflict winner, or replace stale
+latest state with a live lower revision.
 
-**After upgrading, restart all OpenCode + Loom processes publishing the affected
-workflow, and restart the dashboard.** Do not delete workflow history to resolve
-this presentation-version difference. Old snapshots alone still render with
-readable labels and honest counts-only guidance; malformed or unknown optional
-context versions degrade that detail section without inventing missing information.
+A missing optional context object on a legacy publisher is not contradictory
+context. At the same highest workflow revision, the narrow compatibility rule is:
+
+1. There must be both legacy snapshots with no context and context-bearing snapshots
+   using exactly supported context version 1.
+2. Every complete payload must recompute to its own recorded stateDigest.
+3. Removing only context and stateDigest from each payload must produce identical
+   canonical common fields. No differing workflow field is ignored.
+4. All context-bearing complete payload digests must agree with each other.
+5. Choose one whole context-bearing snapshot; never merge fields from publishers.
+   Its source freshness comes only from publishers carrying that complete snapshot.
+
+Failure of any condition remains a visible consistency conflict, with no winner.
+This rule does not apply to unknown versions, corrupted digests, different common
+fields, different readable details, or different revisions. A live legacy publisher
+cannot make details supplied only by stale publishers appear live. All participants
+and their own liveness remain inspectable.
+
+This prevents old snapshot files left behind by a process restart from causing a
+permanent false conflict solely because this optional field was introduced. No
+workflow revision bump or deletion of workflow history is needed for that case.
+
+**After upgrading, restart the dashboard and OpenCode + Loom processes to produce
+and display readable context.** Old snapshots alone still render with honest
+counts-only guidance. Malformed or unknown optional context versions degrade that
+detail section without inventing missing information. A genuine conflict is not
+assumed resolved merely because a process restarted.
 
 Legacy activeSessionId is retained in the old wire shape for compatibility but is
 not trusted as activity evidence by the new UI. Coordinator identity is a membership
@@ -74,8 +97,10 @@ storage. Questions/checks are resolved through Loom, not the observation surface
 ## Verification
 
 Tests cover production record-to-projection-to-browser behavior, digest coverage,
-mixed-publisher conflicts, foreign-workflow exclusion, exact coordinator identity,
-text/list/scan bounds, safe text rendering, unknown/legacy context, name collisions,
-generation isolation, translated stages, and IDs hidden by default but reachable
-with a keyboard. Fault-injected projections test presentation recovery only; they
-are not represented as evidence that the production publisher emits those faults.
+compatible legacy snapshots, real mixed-publisher conflicts, corrupt digests, unknown
+versions, stale context with live legacy publication, higher-revision precedence,
+foreign-workflow exclusion, exact coordinator identity, text/list/scan bounds,
+safe text rendering, unknown/legacy context, name collisions, generation isolation,
+translated stages, and IDs hidden by default but reachable with a keyboard.
+Fault-injected projections test presentation recovery only; they are not evidence
+that the production publisher emits those faults.

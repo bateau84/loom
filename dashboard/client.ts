@@ -288,7 +288,7 @@ export const dashboardScript = `
   function workflowWarnings(w) {
     const p = resolved(w);
     let result = '';
-    if (w.sourceFreshness === 'stale-source') result += '<div class="callout" data-tone="stale"><strong>Latest-known state · stale source</strong><div class="notice">The publishers carrying revision ' + esc(w.workflowRevision) + ' are stale/offline. A live lower-revision publisher does not replace this snapshot. Last meaningful activity: ' + time(p?.recentActivityAt) + '.</div></div>';
+    if (w.sourceFreshness === 'stale-source') result += '<div class="callout" data-tone="stale"><strong>Latest-known state · stale source</strong><div class="notice">The publishers supplying the displayed snapshot are stale/offline. Other live publishers may report an older revision or lack these readable details; they do not make this snapshot current. Last meaningful activity: ' + time(p?.recentActivityAt) + '.</div></div>';
     if (p?.status === 'blocked' || p?.status === 'failed') result += '<div class="callout" data-tone="' + (p.status === 'failed' ? 'danger' : 'warn') + '"><strong>' + (p.status === 'failed' ? 'Workflow reports failure' : 'Workflow is blocked') + '</strong><div class="notice">Inspect the workflow’s reported results, questions and required checks. An open-item count alone does not establish the cause.</div></div>';
     return result;
   }
@@ -307,7 +307,7 @@ export const dashboardScript = `
     setHeading('Workflow · ' + projectName(project), titleFor(project, w), '<div class="meta">Latest recorded workflow state · revision ' + esc(w.workflowRevision) + '</div>', badges(w));
     if (w.consistency === 'conflict') {
       const candidates = arr(w.conflictCandidates).map((candidate, index) => '<div class="row"><div class="name">Report ' + (index + 1) + '</div><div>Reported status: ' + esc(candidate.status) + '</div>' + technical(project.projectId + ':' + w.workflowId + ':candidate:' + index, [['State digest', candidate.stateDigest]]) + '</div>').join('');
-      main.innerHTML = '<div class="callout" data-tone="danger"><strong>Consistency conflict</strong><div class="notice">Publishers report different Loom-authoritative state for the same highest workflow revision. No winner is selected; state-specific fields are withheld until the conflict resolves. During an upgrade, restart all participating Loom processes before expecting the reports to agree.</div></div>' + panel('Conflicting snapshots', '<div class="list">' + candidates + '</div>') + '<div class="section">' + publisherDetails(project, w, true) + '</div>' + workflowTechnical(project, w);
+      main.innerHTML = '<div class="callout" data-tone="danger"><strong>Consistency conflict</strong><div class="notice">Publishers report different or incompatible Loom-authoritative state for the same highest workflow revision. No winner is selected; state-specific fields are withheld until the conflict resolves. Inspect the participating publishers in Loom; restarting alone is not proof of resolution.</div></div>' + panel('Conflicting snapshots', '<div class="list">' + candidates + '</div>') + '<div class="section">' + publisherDetails(project, w, true) + '</div>' + workflowTechnical(project, w);
       return;
     }
     if (!p) { main.innerHTML = empty('Workflow state unavailable.', 'No resolved workflow projection is available. Refresh to retry; no successful or failed state is inferred.') + workflowTechnical(project, w); return; }

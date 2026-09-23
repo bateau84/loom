@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { aggregateFleet, buildProjectSnapshot, projectionDigest, type ProjectSnapshotV1 } from "../plugins/loom/dashboard"
+import { aggregateFleet, buildProjectSnapshot, projectionDigest, type ProjectSnapshotV1, type WorkflowProjectionV1 } from "../plugins/loom/dashboard"
 import { buildDashboardWorkflowContext, dashboardText } from "../plugins/loom/dashboard-context"
 import { dashboardReadability } from "./readability"
 import { readableFixture, readableIds } from "./readability-fixture"
@@ -11,6 +11,17 @@ const labels = new Function("resolved", "arr", dashboardReadability + "; return 
 function record(snapshot: ProjectSnapshotV1) {
   return { snapshot, manifest: { schemaVersion: 1 as const, installationId: snapshot.installationId, instanceId: snapshot.instanceId,
     startedAt: snapshot.generatedAt, generatedAt: snapshot.generatedAt, leaseExpiresAt: snapshot.leaseExpiresAt, projects: [snapshot.projectId] } }
+}
+function redigest(workflow: WorkflowProjectionV1) {
+  const { stateDigest: _, ...body } = workflow
+  workflow.stateDigest = projectionDigest(body)
+}
+function legacySnapshot(snapshot: ProjectSnapshotV1) {
+  const old = structuredClone(snapshot)
+  delete old.workflows[0].context
+  redigest(old.workflows[0])
+  old.instanceId = "legacy-publisher"
+  return old
 }
 async function projected() {
   const f = readableFixture("/tmp/loom-readability-no-io")
@@ -33,7 +44,7 @@ describe("readable dashboard projection and labels", () => {
     const { stateDigest, ...body } = p
     expect(stateDigest).toBe(projectionDigest(body))
   })
-  test("readable text participates in the digest and mixed same-revision publishers have no winner", async () => {
+  test("readable text is digest-covered; actual disagreement conflicts while absent legacy context is compatible", async () => {
     const { snapshot, storage, runtime, question } = await projected()
     question.question = "A different unresolved choice"
     const next = await buildProjectSnapshot(storage, runtime, 2)
@@ -41,12 +52,50 @@ describe("readable dashboard projection and labels", () => {
     next.instanceId = "new-publisher"
     const combined = aggregateFleet([record(snapshot), record(next)]).projects[0].workflows[0]
     expect(combined.consistency).toBe("conflict"); expect(combined.projection).toBeUndefined()
-    const old = structuredClone(snapshot)
-    delete old.workflows[0].context
-    const { stateDigest: _, ...body } = old.workflows[0]
-    old.workflows[0].stateDigest = projectionDigest(body); old.instanceId = "legacy-publisher"
+    const old = legacySnapshot(snapshot)
     expect(aggregateFleet([record(old)]).projects[0].workflows[0].consistency).toBe("ok")
-    expect(aggregateFleet([record(old), record(snapshot)]).projects[0].workflows[0].consistency).toBe("conflict")
+    const mixed = aggregateFleet([record(old), record(snapshot)]).projects[0].workflows[0]
+    expect(mixed.consistency).toBe("ok")
+    expect(mixed.projection).toBe(snapshot.workflows[0])
+    expect(mixed.projection?.stateDigest).toBe(snapshot.workflows[0].stateDigest)
+    expect(mixed.participants).toHaveLength(2)
+  })
+  test("legacy compatibility never hides core differences, corrupt digests, unknown versions or conflicting readable details", async () => {
+    const { snapshot } = await projected()
+    const old = legacySnapshot(snapshot)
+    const changedCore = structuredClone(snapshot)
+    changedCore.workflows[0].status = "failed"; redigest(changedCore.workflows[0])
+    const corrupt = structuredClone(snapshot)
+    corrupt.workflows[0].context!.questions[0].description.text = "Corrupted without a new digest"
+    const unsupported = structuredClone(snapshot)
+    ;(unsupported.workflows[0].context as any).version = 99
+    redigest(unsupported.workflows[0])
+    for (const candidate of [changedCore, corrupt, unsupported]) {
+      const result = aggregateFleet([record(old), record(candidate)]).projects[0].workflows[0]
+      expect(result.consistency).toBe("conflict"); expect(result.projection).toBeUndefined()
+    }
+    const disputed = structuredClone(snapshot)
+    disputed.instanceId = "another-rich-publisher"
+    disputed.workflows[0].context!.questions[0].description.text = "Different recorded question"
+    redigest(disputed.workflows[0])
+    const result = aggregateFleet([record(old), record(snapshot), record(disputed)]).projects[0].workflows[0]
+    expect(result.consistency).toBe("conflict"); expect(result.projection).toBeUndefined()
+  })
+  test("a live legacy source cannot make stale readable details live or replace a higher revision", async () => {
+    const { snapshot } = await projected()
+    const old = legacySnapshot(snapshot)
+    old.leaseExpiresAt = "2026-09-23T12:20:00.000Z"
+    snapshot.leaseExpiresAt = "2026-09-23T12:00:00.000Z"
+    const at = new Date("2026-09-23T12:10:00.000Z")
+    const mixed = aggregateFleet([record(old), record(snapshot)], at).projects[0].workflows[0]
+    expect(mixed.consistency).toBe("ok")
+    expect(mixed.sourceFreshness).toBe("stale-source")
+    expect(mixed.projection).toBe(snapshot.workflows[0])
+    expect(mixed.participants.find((p) => p.instanceId === old.instanceId)?.live).toBe(true)
+    old.workflows[0].workflowRevision += 1; redigest(old.workflows[0])
+    const newer = aggregateFleet([record(old), record(snapshot)], at).projects[0].workflows[0]
+    expect(newer.workflowRevision).toBe(old.workflows[0].workflowRevision)
+    expect(newer.projection?.context).toBeUndefined()
   })
   test("only explicit same-workflow membership names the coordinator; unrelated questions stay out", async () => {
     const { storage, runtime, question } = await projected()

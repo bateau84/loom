@@ -150,7 +150,7 @@ WorkflowProjectionV1 {
   }
   anchor?: string
   executionStage?: string
-  status: "active" | "blocked" | "failed" | "complete"
+  status: "active" | "blocked" | "failed" | "complete" | "cancelled"
 
   currentSteps: StepSummary[]
   runnableSteps: StepSummary[]
@@ -186,12 +186,15 @@ WorkflowProjectionV1 {
   participatingSessionIds: string[]
   activeAgent?: string
   activeSessionId?: string
+  context?: DashboardWorkflowContext
 }
 ```
 
-`stateDigest` is SHA-256 over canonical UTF-8 JSON of the normalized Loom-authoritative workflow projection. Canonical JSON uses recursively lexically sorted object keys and preserves array order. The digest excludes publisher identity, `generation`, publication timestamps/lease, and OpenCode enrichment, but includes all projected Loom-authoritative workflow fields.
+`stateDigest` is SHA-256 over canonical UTF-8 JSON of the normalized Loom-authoritative workflow projection. Canonical JSON uses recursively lexically sorted object keys and preserves array order. The digest excludes publisher identity, `generation`, publication timestamps/lease, and OpenCode enrichment, but includes all projected Loom-authoritative workflow fields, including optional readable context when present.
 
-This lets the aggregator detect two publishers claiming the same `workflowRevision` with incompatible authoritative state.
+The optional bounded `DashboardWorkflowContext` and its narrow legacy-compatibility rules are defined in [Dashboard Readable Context](dashboard-readable-context.md). Missing context is unavailable, not an empty question/check list. That specification distinguishes compatible absence of a new optional field from genuinely incompatible same-revision state.
+
+The current publisher derives `currentSteps`, `runnableSteps`, `executionStage` and `activeAgent` from dispatch eligibility. They do not prove that an agent is executing. The legacy `activeSessionId` field is an alphabetically selected participating-session locator, not activity evidence. Exact coordinator membership may be provided in readable context; per-agent activity and OpenCode titles remain unavailable without a separate evidence source.
 
 The projection MUST preserve explicit instance/project/session/workflow identity. OpenCode-derived data is nested under `enrichment` and is never mixed into the Loom-authoritative workflow object.
 
@@ -235,13 +238,14 @@ For one workflow:
 
 - lower `workflowRevision` is a lagging participant view;
 - highest observed valid revision is the latest-known display candidate;
-- if all publishers carrying that highest revision have expired leases, the candidate is retained as latest-known but marked `stale-source`;
+- if all publishers supplying that displayed complete snapshot have expired leases, the snapshot is retained as latest-known but marked `stale-source`;
 - a live publisher at a lower revision is shown as live-but-lagging and does not replace a higher latest-known revision;
-- same highest revision with different `stateDigest` is a consistency conflict and is surfaced visibly with no inferred winner;
+- same highest revision with different `stateDigest` is a consistency conflict with no inferred winner, except for the explicitly verified compatible-absence rule in [Dashboard Readable Context](dashboard-readable-context.md);
+- that exception requires intact full digests, identical common fields and agreeing supported readable context; it selects a whole snapshot and never makes stale readable details live merely because a legacy publisher is live;
 - participant liveness and workflow-state freshness are separate display dimensions;
 - per-instance `generation` is never used to order different publishers.
 
-For one projected Objective/work hierarchy, apply the same rule using `workVersion` and its Objective `stateDigest`. Workflow and work-hierarchy freshness are independent: a current workflow projection cannot be used to overwrite a newer work hierarchy, or vice versa.
+For one projected Objective/work hierarchy, apply the original same-version agreement rule using `workVersion` and its Objective `stateDigest`; the optional workflow-context exception does not apply. Workflow and work-hierarchy freshness are independent: a current workflow projection cannot be used to overwrite a newer work hierarchy, or vice versa.
 
 ## Optional OpenCode enrichment
 
@@ -273,8 +277,10 @@ Enrichment joins through explicit OpenCode session identity, is read-only, toler
 
 ## Privacy
 
-The default projection excludes credentials, raw hidden prompts, unrestricted tool output, and full transcripts. Output/transcript previews are opt-in presentation data.
+The default projection excludes credentials, raw hidden prompts, unrestricted tool output, and full transcripts. Output/transcript previews are opt-in presentation data. Readable workflow summaries are bounded authored operational context with recognized-credential redaction, not unrestricted output previews. Their exact fields and limits are defined in [Dashboard Readable Context](dashboard-readable-context.md); arbitrary authored prose must not contain secrets.
 
 ## Conformance evidence
 
 Tests must cover two concurrent projects with identical local names, a projected Objective → Phase → Wave → Task tree whose ancestor completion remains independent of workflow completion, workflow-to-work-scope links, competing work-hierarchy publishers ordered by `workVersion` with same-version digest conflict detection, same workflow reported by multiple publishers, bounded-history truncation flags, atomic generation replacement, stale lease expiry, a stale highest-revision publisher beside a live lower-revision publisher, same-revision disagreement, projection write failure not blocking Loom, disabled vs unavailable enrichment, missing-vs-explicit-zero telemetry, and an observation surface with no mutation operation.
+
+Readable-context tests additionally cover complete digest verification at the legacy boundary, true common-field/context conflicts, unknown versions, corrupt payloads, independent source freshness, bounded/redacted descriptions, exact name/owner resolution, and production publisher-to-browser behavior.
