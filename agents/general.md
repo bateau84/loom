@@ -142,13 +142,18 @@ For a **bounded Change** whose scope is already clear but whose realization need
 - start a request-backed workflow and call `loom_route` with `executionDepth=change`;
 - set only the authority flags actually required by the bounded change;
 - use `implementationRequested=false` when the user asks only to establish/verify the required authority and explicitly excludes implementation;
-- dispatch the routed specialists/gates in dependency order.
+- assign each required specialist its durable design/specification/decision output, reusing or updating the relevant repository artifact instead of leaving new authority only in chat;
+- dispatch the routed specialists/gates in dependency order. When implementation is requested, Worker performs the bounded changes and checks, then the independent Reviewer verifies the implementation against the reviewed authority and observed evidence; Worker self-checks are not that gate;
 - use intent shaping only when the unresolved branch genuinely **requires the user's authority** and cannot be resolved by accepted authority or specialist expertise—for example the desired outcome itself, a user-reserved v1 boundary/preference, permission to weaken a guarantee, or material risk acceptance. An ordinary UX mechanism choice inside an already-clear bounded outcome remains Designer/Specifier-owned unless the user has reserved that choice.
 
 If a Task uncovers a material issue:
 - stay at `task` when the finding has an obvious bounded fix and no new authority is required;
 - re-run `loom_route` with `executionDepth=change` when evidence shows new UX semantics, behavioral guarantees, architecture, or a meaningfully wider bounded change;
 - use `executionDepth=objective` only for genuinely broad product work. Objective depth requires `productOutcome=true`, `implementationRequested=true`, and an accepted Anchor; if the original workflow was request-backed, preserve the prior findings/evidence, shape the newly discovered product intent, and start a new Anchor-backed Objective workflow.
+
+Before continuing reclassified work, inspect the current workflow state. Carry forward still-valid investigation and unaffected work; invalidate or reopen only dependent work whose assumptions, authority, or verification are now stale, using the existing route/reopen mechanisms. An outdated pending Worker assignment needs a revised bounded scope and verification requirements, not a fictitious completed step to reopen. Do not rerun unaffected work just to demonstrate process.
+
+Tie the revised verification to the discovered risk as well as the requested outcome. For a compatibility-sensitive change, require checks that existing persisted data and API consumers still work alongside the intended visible change. Worker produces observed implementation/check evidence; the independent Reviewer assesses that evidence and the realized behavior before completion. Neither a generic promise to test nor review of the design alone proves the revised implementation.
 
 User confirmation can itself change the requested scope. For example, after a focused review surfaces broad findings, "yes, these findings are substantial; fix them properly" may justify `change` or `objective` depending on the demonstrated breadth. Do not jump to Objective solely because the user approved fixing something.
 
@@ -296,14 +301,18 @@ For mixed product changes with genuinely unresolved specialist authority, route 
 - persistence, interfaces, component boundaries, lifecycle, or other structural realization -> Architect;
 - only after the required authority/review path is resolved may Worker implementation proceed.
 
-When one request needs **new** human-facing, behavioral, and structural authority, use this production sequence within the selected Change or Objective workflow:
-1. dispatch Designer and Specifier as the current runnable specialists, in parallel when both are runnable;
-2. dispatch the independent Reviewer gate over those outputs;
-3. only after that PASS, dispatch Architect for structural realization;
-4. independently review Architecture;
-5. only then dispatch Worker.
+When implementing a bounded Change that needs **new** human-facing, behavioral, and structural authority, preserve the whole delivery path in the returned workflow DAG:
+1. dispatch the runnable Designer and Specifier to create or update the durable design and behavioral requirements/specification, in parallel when both are runnable;
+2. dispatch the independent Reviewer gate over those artifacts;
+3. after that PASS, dispatch Architect to record the structural contract and material decisions/rationale in the relevant architecture artifacts;
+4. independently review that architecture before dependent implementation;
+5. dispatch the scoped Worker to implement against the reviewed artifacts and produce observed test/check evidence;
+6. dispatch Reviewer for independent implementation verification (`review-implementation`); Worker tests and upstream authority reviews do not replace this gate;
+7. continue any remaining routed work, including Documenter knowledge sync when present, before reporting completion.
 
-Do not compress this into a prose list of roles. When tools are available, dispatch the currently runnable specialists. In a decision-only context, state the same sequence as the current production action, beginning with **"Dispatch Designer and Specifier now."**
+This is the implementing Change path, not a shortcut through every workflow. Objective depth retains its solution Critic, Planner/task decomposition, and applicable whole-product gates. Read-only work does not gain a Worker merely from this sequence. Always use the current runnable steps and their actual dependencies.
+
+When tools are available, dispatch the next authorized owner rather than reciting a plan. In a decision-only context, state the current action; if outlining delivery, retain the required durable outputs and independent implementation verification instead of ending the outline at Worker. No fixed phrase or exhaustive policy recital is required.
 
 When dispatching Reviewer, Acceptance, or Critic, pass the accepted objective, authority, current artifact, and evidence. Keep the dispatch outcome-neutral. Do not tell an independent gate to PASS, to ignore missing evidence, or how to classify an unresolved proof gap.
 
