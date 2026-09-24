@@ -248,6 +248,25 @@ describe("Loom persistent work hierarchy", () => {
       verification: [],
     }
     expect(() => validateWorkPlan(unauthorizedDefer)).toThrow("requires dispositionAuthorityRef")
+
+    const unownedRisk = plan()
+    unownedRisk.riskBoundaries = [{
+      id: "risk-unowned",
+      title: "Unowned risk",
+      description: "A material risk must have executable ownership.",
+      taskIds: [],
+    }]
+    expect(() => validateWorkPlan(unownedRisk)).toThrow("requires at least one owning Task")
+
+    const unownedAcceptance = plan()
+    unownedAcceptance.acceptanceCoverage[0].taskIds = []
+    expect(() => validateWorkPlan(unownedAcceptance)).toThrow("requires at least one owning Task")
+
+    const nonCrossTaskRelationship = plan()
+    nonCrossTaskRelationship.relationships[0].taskIds = ["a"]
+    expect(() => validateWorkPlan(nonCrossTaskRelationship)).toThrow(
+      "must reference at least two Tasks",
+    )
   })
 
   test("rejects a persistent Wave that exceeds the executable Task-plan limit", () => {
@@ -575,6 +594,47 @@ describe("Loom persistent work hierarchy", () => {
 
     completeObjective(work, work.generation, now)
     expect(work.objectiveStatus).toBe("complete")
+  })
+
+  test("refuses Objective completion while a mandatory Plan obligation remains blocked", () => {
+    const blocked = plan()
+    blocked.obligations[0] = {
+      ...blocked.obligations[0],
+      disposition: "blocked",
+      taskIds: [],
+      verification: [],
+    }
+
+    const work = createWorkHierarchy("docs/anchors/product/anchor.md", "wf-1", now)
+    materializeWorkPlan(work, "wf-1", blocked, now)
+    claimWorkflowWave(work, "wf-1", work.generation, [task("a"), task("b", ["a"])], false, now)
+    syncWorkTaskStatuses(
+      work,
+      "wf-1",
+      work.generation,
+      [
+        { taskId: "a", complete: true },
+        { taskId: "b", complete: true },
+      ],
+      now,
+    )
+    completeWaveForTasks(work, "wf-1", work.generation, ["a", "b"], now)
+
+    claimWorkflowWave(work, "wf-2", work.generation, [task("c")], true, now)
+    syncWorkTaskStatuses(
+      work,
+      "wf-2",
+      work.generation,
+      [{ taskId: "c", complete: true }],
+      now,
+    )
+    completeWaveForTasks(work, "wf-2", work.generation, ["c"], now)
+
+    expect(workTree(work).phases[0].status).toBe("complete")
+    expect(() => completeObjective(work, work.generation, now)).toThrow(
+      "Plan obligations remain blocked: obl-product",
+    )
+    expect(work.objectiveStatus).toBe("active")
   })
 
   test("exposes only dependency-eligible waves", () => {

@@ -278,6 +278,67 @@ describe("Loom dashboard projection", () => {
     })
   })
 
+  test("legacy superseded Task OQ retains its historical origin after rich-Plan adoption", async () => {
+    const root = await fixture()
+    const { storage, runtime } = await populated(root)
+    const current = work()
+    const legacyTask = structuredClone(
+      current.nodes.find((node) => node.type === "task" && node.logicalId === "build")!,
+    )
+    legacyTask.status = "superseded"
+    delete legacyTask.claimedByWorkflowId
+    delete legacyTask.claimedAt
+
+    const phase = structuredClone(current.nodes.find((node) => node.type === "phase")!)
+    const wave = structuredClone(current.nodes.find((node) => node.type === "wave")!)
+    const task = structuredClone(current.nodes.find((node) => node.type === "task")!)
+    phase.id = "phase:2:build"
+    phase.generation = 2
+    wave.id = "wave:2:build/runtime"
+    wave.generation = 2
+    wave.parentId = phase.id
+    task.id = "task:2:build"
+    task.generation = 2
+    task.parentId = wave.id
+
+    current.generation = 2
+    current.nodes = [legacyTask, phase, wave, task]
+    current.plans = [{
+      ...structuredClone(current.plans![0]),
+      generation: 2,
+      revision: 1,
+      amendments: [],
+    }]
+    await storage.set("work/objective", current)
+    await storage.set("oq/workflow-a/OQ-1", {
+      id: "OQ-1", workflowId: "workflow-a", question: "What did the legacy Task require?",
+      raisedByAgent: "worker", raisedByStepId: "task:build", requiredAuthority: "architect",
+      blocking: false, consumerStepIds: ["task:build"], evidence: [], status: "open",
+      work: {
+        objectiveId: current.objectiveId,
+        generation: 1,
+        taskId: "build",
+      },
+      reconciliations: {}, createdAt: "2026-09-21T12:01:00.000Z",
+    })
+
+    const snapshot = await buildProjectSnapshot(
+      storage,
+      runtime,
+      9,
+      {},
+      new Date("2026-09-21T12:12:00.000Z"),
+    )
+    expect(snapshot.workObjectives[0].generation).toBe(2)
+    expect(snapshot.workflows[0].context?.questions[0]).toMatchObject({
+      work: { generation: 1, taskId: "build" },
+      origin: {
+        taskTitle: { text: "Build runtime", truncated: false },
+        taskObjective: { text: "Build it", truncated: false },
+      },
+    })
+  })
+
   test("recent activity includes OQ, verification and budget semantic changes", async () => {
     const root = await fixture()
     const { storage, runtime } = await populated(root)

@@ -196,8 +196,7 @@ export function buildDashboardWorkflowContext(
             (node) =>
               node.generation === question.work!.generation &&
               node.type === "task" &&
-              node.logicalId === question.work!.taskId &&
-              node.status !== "superseded",
+              node.logicalId === question.work!.taskId,
           )
           if (legacyTask) {
             origin = {

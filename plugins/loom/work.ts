@@ -525,11 +525,15 @@ export function validateWorkPlan(input: WorkPlanDefinition): WorkPlanDefinition 
     const id = normalizedId(risk.id, "risk boundary")
     if (riskIds.has(id)) throw new Error(`Duplicate risk boundary id: ${id}`)
     riskIds.add(id)
+    const taskRefs = normalizeReferencedTaskIds(risk.taskIds, taskIds, `Risk boundary ${id}`)
+    if (taskRefs.length === 0) {
+      throw new Error(`Risk boundary ${id} requires at least one owning Task.`)
+    }
     return {
       id,
       title: nonEmpty(risk.title, `Risk boundary ${id} title`),
       description: nonEmpty(risk.description, `Risk boundary ${id} description`),
-      taskIds: normalizeReferencedTaskIds(risk.taskIds, taskIds, `Risk boundary ${id}`),
+      taskIds: taskRefs,
     }
   })
 
@@ -541,25 +545,39 @@ export function validateWorkPlan(input: WorkPlanDefinition): WorkPlanDefinition 
     const id = normalizedId(coverage.id, "acceptance coverage")
     if (acceptanceIds.has(id)) throw new Error(`Duplicate acceptance coverage id: ${id}`)
     acceptanceIds.add(id)
+    const taskRefs = normalizeReferencedTaskIds(
+      coverage.taskIds,
+      taskIds,
+      `Acceptance coverage ${id}`,
+    )
+    if (taskRefs.length === 0) {
+      throw new Error(`Acceptance coverage ${id} requires at least one owning Task.`)
+    }
     return {
       id,
       title: nonEmpty(coverage.title, `Acceptance coverage ${id} title`),
       criterion: nonEmpty(coverage.criterion, `Acceptance coverage ${id} criterion`),
-      taskIds: normalizeReferencedTaskIds(coverage.taskIds, taskIds, `Acceptance coverage ${id}`),
+      taskIds: taskRefs,
     }
   })
 
   if (input.relationships.length > MAX_WORK_RELATIONSHIPS) {
     throw new Error(`Plan relationships exceed maximum of ${MAX_WORK_RELATIONSHIPS}.`)
   }
-  const relationships = input.relationships.map((relationship, index) => ({
-    summary: nonEmpty(relationship.summary, `Relationship ${index + 1} summary`),
-    taskIds: normalizeReferencedTaskIds(
+  const relationships = input.relationships.map((relationship, index) => {
+    const taskRefs = normalizeReferencedTaskIds(
       relationship.taskIds,
       taskIds,
       `Relationship ${index + 1}`,
-    ),
-  }))
+    )
+    if (taskRefs.length < 2) {
+      throw new Error(`Relationship ${index + 1} must reference at least two Tasks.`)
+    }
+    return {
+      summary: nonEmpty(relationship.summary, `Relationship ${index + 1} summary`),
+      taskIds: taskRefs,
+    }
+  })
 
   if (input.correctionRouting.length > MAX_WORK_CORRECTION_ROUTES) {
     throw new Error(`Plan correction routes exceed maximum of ${MAX_WORK_CORRECTION_ROUTES}.`)
@@ -2032,6 +2050,14 @@ export function completeObjective(hierarchy: WorkHierarchy, generation: number, 
   if (phases.length === 0) throw new Error("Objective has no active work plan.")
   if (phases.some((phase) => phase.status !== "complete")) {
     throw new Error("Objective cannot complete while active Phases remain incomplete.")
+  }
+
+  const blockedObligations =
+    currentPlan(hierarchy)?.obligations.filter((obligation) => obligation.disposition === "blocked") ?? []
+  if (blockedObligations.length > 0) {
+    throw new Error(
+      `Objective cannot complete while Plan obligations remain blocked: ${blockedObligations.map((obligation) => obligation.id).join(", ")}.`,
+    )
   }
 
   if (hierarchy.objectiveStatus !== "complete") {
