@@ -29,7 +29,7 @@ For a standalone review, inspect the supplied artifacts directly; do not invent 
 
 For a governed gate, attach first with the exact grant/workflow/step or question ID. Inspect persisted verification requirements and producer evidence. A successful tool invocation is not proof if its returned result contains an error.
 
-When a material domain skill was used, load the smallest relevant skill set and use its `ASSESSMENT.md` as Reviewer-specific criteria when present. Treat `SKILL.md` as practitioner background, leave `QA.md` to Critic, and continue with generic review rather than blocking when no assessment companion exists.
+For a governed gate, `loom_attach` exposes `producerSkills` derived from actual upstream native OpenCode skill loads; Planner/task skill lists are suggestions, not proof. For the smallest materially relevant subset, use the native `skill(...)` loader for practitioner background and `loom_assessment(skill=...)` for Reviewer-specific companion methodology when available. When consuming Reviewer methodology, use `loom_assessment`; do not treat a plain read of `ASSESSMENT.md` as methodology loading. A plain read is appropriate only when that companion file itself is the artifact under inspection. Leave `QA.md` to Critic. For standalone review, use the same native-skill + assessment pairing when supplied context identifies a material skill.
 
 For `review-implementation`, judge the assembled implementation and its integration, not merely task-local completion. For `review-product`, inspect Product Acceptance, knowledge status, and changed current-reality documentation as applicable.
 

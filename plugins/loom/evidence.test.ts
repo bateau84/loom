@@ -4,6 +4,7 @@ import {
   observationsSupportKind,
   redactCommand,
   safeInputSummary,
+  safeResultSummary,
   type EvidenceObservation,
 } from "./evidence"
 
@@ -30,6 +31,15 @@ describe("Loom evidence ledger", () => {
     expect(safeInputSummary("bash", { command: "go test ./..." })).toEqual({ command: "go test ./..." })
     expect(safeInputSummary("read", { filePath: "src/main.go", content: "secret" })).toEqual({
       path: "src/main.go",
+    })
+    expect(safeInputSummary("skill", { name: "software-engineering" })).toEqual({ skill: "software-engineering", methodology: "practitioner" })
+    expect(safeInputSummary("loom_assessment", { skill: "software-engineering" })).toEqual({ skill: "software-engineering", methodology: "assessment", path: "skills/software-engineering/ASSESSMENT.md" })
+    expect(safeInputSummary("loom_qa", { skill: "software-engineering" })).toEqual({ skill: "software-engineering", methodology: "qa", path: "skills/software-engineering/QA.md" })
+    expect(safeResultSummary("skill", {
+      metadata: { metadata: { directory: "/workspace/.opencode/skills/software-engineering" } },
+    })).toEqual({ skillDirectory: "/workspace/.opencode/skills/software-engineering" })
+    expect(safeResultSummary("skill", "Base directory for this skill: /tmp/skills/software-engineering\n")).toEqual({
+      skillDirectory: "/tmp/skills/software-engineering",
     })
   })
 

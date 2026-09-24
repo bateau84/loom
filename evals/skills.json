@@ -25,7 +25,11 @@
       "tools": {
         "requires": [
           "skill",
-          "read"
+          "read",
+          "loom_assessment"
+        ],
+        "forbids": [
+          "loom_qa"
         ]
       },
       "actions": {
@@ -36,9 +40,9 @@
             "equals": "golang-concurrency"
           },
           {
-            "tool": "read",
-            "arg": "filePath",
-            "ends_with": "skills/golang-concurrency/ASSESSMENT.md"
+            "tool": "loom_assessment",
+            "arg": "skill",
+            "equals": "golang-concurrency"
           },
           {
             "tool": "read",
@@ -47,6 +51,11 @@
           }
         ],
         "forbids": [
+          {
+            "tool": "loom_qa",
+            "arg": "skill",
+            "equals": "golang-concurrency"
+          },
           {
             "tool": "read",
             "arg": "filePath",
@@ -84,7 +93,11 @@
       "tools": {
         "requires": [
           "skill",
-          "read"
+          "read",
+          "loom_assessment"
+        ],
+        "forbids": [
+          "loom_qa"
         ]
       },
       "actions": {
@@ -95,9 +108,9 @@
             "equals": "architectural-design"
           },
           {
-            "tool": "read",
-            "arg": "filePath",
-            "ends_with": "skills/architectural-design/ASSESSMENT.md"
+            "tool": "loom_assessment",
+            "arg": "skill",
+            "equals": "architectural-design"
           },
           {
             "tool": "read",
@@ -106,6 +119,11 @@
           }
         ],
         "forbids": [
+          {
+            "tool": "loom_qa",
+            "arg": "skill",
+            "equals": "architectural-design"
+          },
           {
             "tool": "read",
             "arg": "filePath",
@@ -143,7 +161,11 @@
       "tools": {
         "requires": [
           "skill",
-          "read"
+          "read",
+          "loom_assessment"
+        ],
+        "forbids": [
+          "loom_qa"
         ]
       },
       "actions": {
@@ -154,9 +176,9 @@
             "equals": "skill-authoring"
           },
           {
-            "tool": "read",
-            "arg": "filePath",
-            "ends_with": "skills/skill-authoring/ASSESSMENT.md"
+            "tool": "loom_assessment",
+            "arg": "skill",
+            "equals": "skill-authoring"
           },
           {
             "tool": "read",
@@ -165,6 +187,11 @@
           }
         ],
         "forbids": [
+          {
+            "tool": "loom_qa",
+            "arg": "skill",
+            "equals": "skill-authoring"
+          },
           {
             "tool": "read",
             "arg": "filePath",
@@ -276,6 +303,161 @@
         {
           "path": "ephemeral-reports/critic/payment-outage.md",
           "content": "---\ntype: report critic\ntitle: Payment Outage Incident Review\ndescription: Final incident review retained to satisfy the repository's audit-history requirement.\ntags: [report, critic, incident, audit]\n---\n\n# Payment Outage Incident Review\n\nVerdict: Incident closed after corrective action.\n\nThis raw review is explicitly required to remain available as durable audit history. Its wording and verdict must be preserved exactly; retention does not make it architecture, requirements, or approval authority.\n"
+        }
+      ]
+    },
+    {
+      "id": "SKILL-SOFTWARE-ENGINEERING-REVIEW-01",
+      "agent": "reviewer",
+      "skill": "software-engineering",
+      "execution": "runtime",
+      "requirements": [
+        "BR-006",
+        "BR-007"
+      ],
+      "prompt": "Review implementation.ts as a bounded implementation review. The producer used the repository's software-engineering baseline. Identify concrete defects in proportionality, failure handling, and testability without redesigning the whole component.",
+      "trap": "Treat the generic engineering baseline as vague style advice and skip its Reviewer companion methodology.",
+      "expectations": [
+        "Uses the software-engineering Reviewer methodology rather than generic style preference.",
+        "Flags the unnecessary forwarding abstraction and the swallowed error as concrete maintenance/correctness risks.",
+        "Keeps the review bounded to the supplied implementation and does not invent new product or architecture requirements."
+      ],
+      "must_not": [
+        "Must not substitute Critic QA methodology for normal Reviewer assessment.",
+        "Must not approve solely because the implementation is short."
+      ],
+      "tools": {
+        "requires": [
+          "skill",
+          "loom_assessment",
+          "read"
+        ],
+        "forbids": [
+          "loom_qa"
+        ]
+      },
+      "actions": {
+        "requires": [
+          {
+            "tool": "skill",
+            "arg": "name",
+            "equals": "software-engineering"
+          },
+          {
+            "tool": "loom_assessment",
+            "arg": "skill",
+            "equals": "software-engineering"
+          },
+          {
+            "tool": "read",
+            "arg": "filePath",
+            "ends_with": "implementation.ts"
+          }
+        ],
+        "forbids": [
+          {
+            "tool": "loom_qa",
+            "arg": "skill",
+            "equals": "software-engineering"
+          },
+          {
+            "tool": "read",
+            "arg": "filePath",
+            "ends_with": "skills/software-engineering/QA.md"
+          },
+          {
+            "tool": "read",
+            "arg": "filePath",
+            "ends_with": "skills/software-engineering/ASSESSMENT.md"
+          }
+        ]
+      },
+      "fixture_files": [
+        {
+          "path": "implementation.ts",
+          "content": "export class StoreAdapter {\n  constructor(private readonly inner: { save(v: string): Promise<void> }) {}\n  async save(v: string) {\n    try {\n      await this.inner.save(v)\n      return true\n    } catch {\n      return true\n    }\n  }\n}\n\nexport class SaveService {\n  constructor(private readonly store: StoreAdapter) {}\n  save(v: string) { return this.store.save(v) }\n}\n"
+        }
+      ]
+    },
+    {
+      "id": "SKILL-SOFTWARE-ENGINEERING-QA-01",
+      "agent": "critic",
+      "skill": "software-engineering",
+      "execution": "runtime",
+      "requirements": [
+        "BR-006",
+        "BR-007"
+      ],
+      "prompt": "A competent producer and Reviewer already accepted the implementation in implementation.ts after confirming direct call sites and unit tests. Perform a QA pass for residual software-engineering false confidence. registry.json is part of the supplied product context.",
+      "trap": "Repeat normal code review and miss a hidden consumer that makes an apparently safe deletion globally wrong.",
+      "expectations": [
+        "Uses the software-engineering QA methodology rather than repeating normal Reviewer criteria.",
+        "Finds that registry.json still names SaveLegacy, so deleting it based only on direct call-site search can break a registration/runtime path.",
+        "Treats the hidden consumer as a concrete residual integration risk rather than demanding speculative redesign."
+      ],
+      "must_not": [
+        "Must not use Reviewer ASSESSMENT methodology as the Critic contract.",
+        "Must not claim the direct call-site search proves deletion is globally safe."
+      ],
+      "tools": {
+        "requires": [
+          "skill",
+          "loom_qa",
+          "read"
+        ],
+        "forbids": [
+          "loom_assessment"
+        ]
+      },
+      "actions": {
+        "requires": [
+          {
+            "tool": "skill",
+            "arg": "name",
+            "equals": "software-engineering"
+          },
+          {
+            "tool": "loom_qa",
+            "arg": "skill",
+            "equals": "software-engineering"
+          },
+          {
+            "tool": "read",
+            "arg": "filePath",
+            "ends_with": "implementation.ts"
+          },
+          {
+            "tool": "read",
+            "arg": "filePath",
+            "ends_with": "registry.json"
+          }
+        ],
+        "forbids": [
+          {
+            "tool": "loom_assessment",
+            "arg": "skill",
+            "equals": "software-engineering"
+          },
+          {
+            "tool": "read",
+            "arg": "filePath",
+            "ends_with": "skills/software-engineering/ASSESSMENT.md"
+          },
+          {
+            "tool": "read",
+            "arg": "filePath",
+            "ends_with": "skills/software-engineering/QA.md"
+          }
+        ]
+      },
+      "fixture_files": [
+        {
+          "path": "implementation.ts",
+          "content": "export function Save(value: string) { return value }\n// SaveLegacy was removed after direct call-site search found no callers.\n"
+        },
+        {
+          "path": "registry.json",
+          "content": "{ \"handlers\": [\"Save\", \"SaveLegacy\"] }\n"
         }
       ]
     }

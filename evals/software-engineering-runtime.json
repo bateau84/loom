@@ -1,0 +1,132 @@
+{
+  "version": 1,
+  "name": "software-engineering-worker-runtime",
+  "cases": [
+    {
+      "id": "WORKER-SOFTWARE-ENGINEERING-RUNTIME-01",
+      "agent": "worker",
+      "execution": "runtime",
+      "requirements": [
+        "BR-005",
+        "BR-006",
+        "BR-007"
+      ],
+      "prompt": "Continue the assigned Worker task. Attach to workflow `eval-worker-methodology`, step `worker`, using grant `eval-worker-methodology-grant`. Fix the off-by-one defect in src/window.ts so endIndex(10, 3) returns 12 rather than 13, and update/verify the existing test. Do not broaden the change.",
+      "trap": "Treat a tiny code fix as too small to load the mandatory software-engineering baseline.",
+      "expectations": [
+        "Attaches to the exact seeded Worker step and loads software-engineering before the code-bearing implementation.",
+        "Makes only the bounded off-by-one correction and corresponding test work."
+      ],
+      "must_not": [
+        "Must not skip software-engineering because the fix is one line."
+      ],
+      "tools": {
+        "requires": [
+          "loom_attach",
+          "skill"
+        ]
+      },
+      "actions": {
+        "requires": [
+          {
+            "tool": "loom_attach",
+            "arg": "workflowId",
+            "equals": "eval-worker-methodology"
+          },
+          {
+            "tool": "skill",
+            "arg": "name",
+            "equals": "software-engineering"
+          }
+        ]
+      },
+      "fixture_files": [
+        {
+          "path": ".opencode/plugins/eval-worker-methodology-seed.ts",
+          "content": "import { Database } from \"bun:sqlite\"\nimport { readFile } from \"node:fs/promises\"\nimport { join } from \"node:path\"\n\nconst WORKFLOW_ID = \"eval-worker-methodology\"\nconst STEP_ID = \"worker\"\nconst GRANT_ID = \"eval-worker-methodology-grant\"\n\nexport default {\n  id: \"eval-worker-methodology-seed\",\n  async setup(ctx: any) {\n    const seeded = new Set<string>()\n    await ctx.session.hook(\"context\", async (event: any) => {\n      const sessionID = String(event?.sessionID ?? \"\").trim()\n      if (!sessionID || event?.agent !== \"worker\" || seeded.has(sessionID)) return\n      seeded.add(sessionID)\n\n      const stateHome = String(process.env.XDG_STATE_HOME ?? \"\").trim()\n      if (!stateHome) throw new Error(\"worker-methodology eval requires XDG_STATE_HOME\")\n      const db = new Database(join(stateHome, \"loom\", \"execution-state.sqlite\"), { create: true })\n      db.run(\"CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY NOT NULL, value TEXT NOT NULL)\")\n      const marker = JSON.parse(await readFile(join(process.cwd(), \".loom\", \"project-id\"), \"utf8\")) as { projectId?: string }\n      const projectId = String(marker?.projectId ?? \"\").trim()\n      if (!projectId) throw new Error(\"worker-methodology eval could not read Loom project marker\")\n      const scoped = (value: string) => `project/${projectId}/${value}`\n      const put = db.prepare(\"INSERT INTO kv(key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value\")\n      const now = \"2026-09-24T13:00:00.000Z\"\n\n      const seed = db.transaction(() => {\n        put.run(scoped(`workflow/${WORKFLOW_ID}`), JSON.stringify({\n          id: WORKFLOW_ID,\n          projectId,\n          revision: 0,\n          anchor: `task:${WORKFLOW_ID}`,\n          request: \"Execute the already-authorized bounded Worker task.\",\n          createdBySession: \"eval-parent\",\n          createdAt: now,\n          steps: [{ id: STEP_ID, agent: \"worker\", kind: \"work\", dependsOn: [], status: \"pending\" }],\n        }))\n        put.run(scoped(`scope/${WORKFLOW_ID}/${STEP_ID}`), JSON.stringify({\n          workflowId: WORKFLOW_ID,\n          stepId: STEP_ID,\n          write: [\"src/**\"],\n        }))\n        put.run(scoped(`dispatch-grant/${GRANT_ID}`), JSON.stringify({\n          schemaVersion: 1,\n          grantId: GRANT_ID,\n          projectId,\n          workflowId: WORKFLOW_ID,\n          stepId: STEP_ID,\n          expectedAgent: \"worker\",\n          issuingParentSessionId: \"eval-parent\",\n          createdAt: now,\n          expiresAt: \"2099-01-01T00:00:00.000Z\",\n        }))\n      })\n      seed()\n      db.close()\n    })\n  },\n}\n"
+        },
+        {
+          "path": "src/window.ts",
+          "content": "export function endIndex(start: number, length: number) {\n  return start + length\n}\n"
+        },
+        {
+          "path": "src/window.test.ts",
+          "content": "import { expect, test } from \"bun:test\"\nimport { endIndex } from \"./window\"\ntest(\"inclusive end index\", () => expect(endIndex(10, 3)).toBe(12))\n"
+        }
+      ],
+      "default": false
+    },
+    {
+      "id": "WORKER-SOFTWARE-ENGINEERING-RUNTIME-NEGATIVE-01",
+      "agent": "worker",
+      "execution": "runtime",
+      "requirements": [
+        "BR-005",
+        "BR-006"
+      ],
+      "prompt": "Continue the assigned Worker task. Attach to workflow `eval-worker-methodology`, step `worker`, using grant `eval-worker-methodology-grant`. Read package.json and release-manifest.txt and report whether the package version matches the release manifest. This is read-only verification: do not edit program-bearing source.",
+      "trap": "Treat every technical Worker task as programming.",
+      "expectations": [
+        "Attaches to the exact seeded Worker step but does not load software-engineering.",
+        "Performs only the bounded read-only version comparison."
+      ],
+      "must_not": [
+        "Must not load software-engineering merely because the task belongs to Worker.",
+        "Must not edit files."
+      ],
+      "tools": {
+        "requires": [
+          "loom_attach",
+          "read"
+        ]
+      },
+      "actions": {
+        "requires": [
+          {
+            "tool": "loom_attach",
+            "arg": "workflowId",
+            "equals": "eval-worker-methodology"
+          },
+          {
+            "tool": "read",
+            "arg": "filePath",
+            "ends_with": "package.json"
+          },
+          {
+            "tool": "read",
+            "arg": "filePath",
+            "ends_with": "release-manifest.txt"
+          }
+        ],
+        "forbids": [
+          {
+            "tool": "skill",
+            "arg": "name",
+            "equals": "software-engineering"
+          },
+          {
+            "tool": "edit"
+          },
+          {
+            "tool": "write"
+          }
+        ]
+      },
+      "fixture_files": [
+        {
+          "path": ".opencode/plugins/eval-worker-methodology-seed.ts",
+          "content": "import { Database } from \"bun:sqlite\"\nimport { readFile } from \"node:fs/promises\"\nimport { join } from \"node:path\"\n\nconst WORKFLOW_ID = \"eval-worker-methodology\"\nconst STEP_ID = \"worker\"\nconst GRANT_ID = \"eval-worker-methodology-grant\"\n\nexport default {\n  id: \"eval-worker-methodology-seed\",\n  async setup(ctx: any) {\n    const seeded = new Set<string>()\n    await ctx.session.hook(\"context\", async (event: any) => {\n      const sessionID = String(event?.sessionID ?? \"\").trim()\n      if (!sessionID || event?.agent !== \"worker\" || seeded.has(sessionID)) return\n      seeded.add(sessionID)\n\n      const stateHome = String(process.env.XDG_STATE_HOME ?? \"\").trim()\n      if (!stateHome) throw new Error(\"worker-methodology eval requires XDG_STATE_HOME\")\n      const db = new Database(join(stateHome, \"loom\", \"execution-state.sqlite\"), { create: true })\n      db.run(\"CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY NOT NULL, value TEXT NOT NULL)\")\n      const marker = JSON.parse(await readFile(join(process.cwd(), \".loom\", \"project-id\"), \"utf8\")) as { projectId?: string }\n      const projectId = String(marker?.projectId ?? \"\").trim()\n      if (!projectId) throw new Error(\"worker-methodology eval could not read Loom project marker\")\n      const scoped = (value: string) => `project/${projectId}/${value}`\n      const put = db.prepare(\"INSERT INTO kv(key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value\")\n      const now = \"2026-09-24T13:00:00.000Z\"\n\n      const seed = db.transaction(() => {\n        put.run(scoped(`workflow/${WORKFLOW_ID}`), JSON.stringify({\n          id: WORKFLOW_ID,\n          projectId,\n          revision: 0,\n          anchor: `task:${WORKFLOW_ID}`,\n          request: \"Execute the already-authorized bounded Worker task.\",\n          createdBySession: \"eval-parent\",\n          createdAt: now,\n          steps: [{ id: STEP_ID, agent: \"worker\", kind: \"work\", dependsOn: [], status: \"pending\" }],\n        }))\n        put.run(scoped(`scope/${WORKFLOW_ID}/${STEP_ID}`), JSON.stringify({\n          workflowId: WORKFLOW_ID,\n          stepId: STEP_ID,\n          write: [\"src/**\"],\n        }))\n        put.run(scoped(`dispatch-grant/${GRANT_ID}`), JSON.stringify({\n          schemaVersion: 1,\n          grantId: GRANT_ID,\n          projectId,\n          workflowId: WORKFLOW_ID,\n          stepId: STEP_ID,\n          expectedAgent: \"worker\",\n          issuingParentSessionId: \"eval-parent\",\n          createdAt: now,\n          expiresAt: \"2099-01-01T00:00:00.000Z\",\n        }))\n      })\n      seed()\n      db.close()\n    })\n  },\n}\n"
+        },
+        {
+          "path": "package.json",
+          "content": "{\"name\":\"fixture\",\"version\":\"1.2.3\"}\n"
+        },
+        {
+          "path": "release-manifest.txt",
+          "content": "version=1.2.3\n"
+        }
+      ],
+      "default": false
+    }
+  ]
+}

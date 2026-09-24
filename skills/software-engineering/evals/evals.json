@@ -1,0 +1,26 @@
+{
+  "skill": "software-engineering",
+  "version": "1.0.0",
+  "shape": 1,
+  "cases": [
+    {
+      "id": "SoftwareEngineering-01",
+      "name": "small-feature-resists-speculative-architecture",
+      "trap": "A small storage change attracts speculative repository/service/factory layers, leaves an obsolete path beside the replacement, and accepts tests that mock away the behavior under test.",
+      "prompt": "Implement this bounded change in a small in-process key/value store. The existing Store module owns persistence behind a small public API. Add SaveIfAbsent(key, value) with accepted behavior: the first call stores the value and returns (true, nil); a later call for the same key leaves the original value unchanged and returns (false, nil); storage failures must be returned to the caller. A teammate suggests adding Repository, SaveService, StrategyFactory, and a backend interface now because we may support other databases later. There is also a SaveLegacy path that repository search confirms has no callers and is superseded by this change. Describe the implementation approach and tests you would make.",
+      "expectations": [
+        "Keeps the change inside the existing Store boundary instead of adding speculative repository/service/factory layers for hypothetical future backends.",
+        "Treats the existing Store as a deep module: the public API stays small while duplicate-detection and persistence details remain hidden inside it.",
+        "Removes the confirmed-unused SaveLegacy path once the replacement is in place rather than retaining dead implementation for possible future use.",
+        "Surfaces storage errors unchanged or with useful context rather than converting them into false duplicate/success outcomes.",
+        "Tests real Store behavior with real input: first insert, duplicate insert preserving the original value, and a genuine storage-error path without mocking SaveIfAbsent itself or hand-injecting its expected output.",
+        "Does not add logging, metrics, tracing, feature flags, compatibility scaffolding, or extensibility merely to make the change look production-grade."
+      ],
+      "negative_expectations": [
+        "Must not introduce future-backend abstractions that the accepted change does not require.",
+        "Must not retain SaveLegacy merely 'for later' after its lack of callers is established.",
+        "Must not accept a green test that bypasses the Store behavior under test or weakens the duplicate-preservation assertion."
+      ]
+    }
+  ]
+}
