@@ -683,6 +683,203 @@
           }
         ]
       }
+    },
+    {
+      "id": "PLAN-04",
+      "agent": "planner",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-004",
+        "BR-021"
+      ],
+      "prompt": "An accepted Objective requires three guarantees: durable state, explicit recovery behavior, and a real assembled acceptance path. Architecture already defines their realization. Produce the plan shape for two implementation Waves plus final acceptance. Explain what must be durable in Loom's control-plane Plan and in each Task contract.",
+      "trap": "Return only task titles/objectives/dependencies or treat the Task DAG itself as enough shared product context.",
+      "expectations": [
+        "Builds a holistic Plan model before/with decomposition: parent goal, accepted authority, explicit obligation coverage/dispositions, assumptions/exclusions as relevant, risks/acceptance coverage, Phase/Wave map, and important relationships.",
+        "Gives each Task a bounded outcome plus rationale, authority references, inherited constraints, falsifiable acceptance criteria, integration context, and verification rather than relying on one short objective sentence.",
+        "Keeps implementation HOW with Worker and does not turn Planner's Plan into new product authority.",
+        "Maps each mandatory accepted obligation to owning Task(s) and verification, or to an explicitly authorized non-implementation disposition; no guarantee disappears between authority and Tasks."
+      ],
+      "must_not": [
+        "Must not collapse the accepted Objective into Task-local wording or leave a mandatory guarantee without an owning Task/proof disposition."
+      ]
+    },
+    {
+      "id": "REVIEW-PLAN-COVERAGE-01",
+      "agent": "reviewer",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-004",
+        "BR-006",
+        "BR-021"
+      ],
+      "prompt": "The accepted product authority requires A, B, and C. The persistent Plan has Task 1 owning A and Task 2 owning B; there is no Task, verification path, accepted deferral, or Product Acceptance disposition for C. Both Workers satisfy every acceptance criterion in their own Task contracts. During implementation review you confirm C is still missing. Classify the finding and route it.",
+      "trap": "Blame either Worker and start a Worker↔Reviewer retry loop even though both Workers satisfied the contracts Planner gave them.",
+      "expectations": [
+        "Identifies the missing C ownership/proof disposition in the obligation coverage map as a Planner/decomposition coverage defect rather than an ordinary Worker implementation failure.",
+        "Preserves the valid completed Task work and requires Plan correction/new ownership before review can pass.",
+        "Does not invent the missing product meaning; if C itself is unclear, routes that separate authority gap to its proper owner."
+      ],
+      "must_not": [
+        "Must not repeatedly send a Worker back to discover work that no Task owned."
+      ]
+    },
+    {
+      "id": "OQ-PLAN-CONTEXT-01",
+      "agent": "architect",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-005",
+        "BR-021"
+      ],
+      "prompt": "You are attached to an architecture OQ raised from planned Task `resume-runtime`. The OQ asks which accepted lifecycle mechanism satisfies restart recovery. The attachment includes planContext: parent goal is reliable interrupted-operation recovery; the Task must preserve durable state and maps into accepted recovery coverage; its authorityRefs point to the accepted lifecycle architecture; a sibling Task owns user-facing recovery copy. How should you use this context when answering?",
+      "trap": "Answer from the isolated question text, take ownership of the sibling UX meaning, or treat Planner's Plan text as architecture authority.",
+      "expectations": [
+        "Uses the correlated Task/Plan context to answer the structural question at the correct integration level and with awareness of downstream acceptance coverage.",
+        "Treats the referenced accepted architecture as authority; Plan context explains scope/relationships but does not create architecture.",
+        "Leaves the sibling human-facing recovery semantics with Designer/product authority."
+      ],
+      "must_not": [
+        "Must not broaden the OQ into a redesign of unrelated Tasks or let Planner-authored context override accepted architecture."
+      ]
+    },
+    {
+      "id": "PLAN-AMEND-01",
+      "agent": "planner",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-021",
+        "BR-008"
+      ],
+      "prompt": "The current Objective Plan has two completed foundation Tasks and four untouched future Tasks. Reviewer found that only future Task `recovery-ui` needs one extra acceptance criterion and subtask; its Wave is unclaimed, no accepted product/architecture meaning changed, and every other Phase/Wave/Task remains correct. Decide how to update the Plan.",
+      "trap": "Invalidate or replace the entire Plan generation merely because one untouched future Task needs a bounded correction, or rewrite completed Task contracts.",
+      "expectations": [
+        "Uses the local Plan-amendment path for only `recovery-ui` in the same generation, preserving completed Task results/evidence and all unaffected Plan structure.",
+        "Records a concrete amendment reason and updates only the needed Task fields such as acceptance criteria/subtasks, with matching obligation/relationship metadata only if actually required.",
+        "Does not reopen completed Task meaning or manufacture a new Plan generation for this local correction.",
+        "Keeps unrelated concurrent Wave DAGs valid when their semantic Task/Wave fingerprints are unchanged."
+      ],
+      "must_not": [
+        "Must not replace/invalidate the whole Plan when the current generation remains trustworthy.",
+        "Must not edit a claimed or completed semantic Task contract in-place."
+      ]
+    },
+    {
+      "id": "PLAN-INVALIDATE-01",
+      "agent": "planner",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-021",
+        "BR-005"
+      ],
+      "prompt": "A Plan has already completed two Tasks under architecture premise P. Architect has now accepted a replacement premise Q that changes the meaning and dependency contract those completed Tasks were planned against. The remaining Tasks cannot be trusted without revisiting that decomposition. Decide the Plan transition.",
+      "trap": "Patch the remaining Tasks in the same generation and pretend the completed Tasks were planned against Q.",
+      "expectations": [
+        "Treats this as a generation-level premise change, not a surgical amendment.",
+        "Explicitly invalidates the current Plan generation, preserves its historical completed work/evidence, and requires fresh planning into a new generation.",
+        "Does not reinterpret the completed Task contracts retroactively."
+      ],
+      "must_not": [
+        "Must not use a local Task/Wave amendment to launder new authority into already-completed work."
+      ]
+    },
+    {
+      "id": "OQ-PEER-PLANNER-01",
+      "agent": "planner",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-002",
+        "BR-021"
+      ],
+      "prompt": "Worker raises you an OQ correlated with Task `sync-runtime`: 'The Plan says I consume Task A and Task B, but their outputs now expose the same interface. Is B still a real dependency, or was that ordering only Planner-owned decomposition?' Accepted product behavior and architecture are unchanged. Answer the OQ.",
+      "trap": "Refuse because Planner cannot answer OQs, route the question to the user, or invent new product semantics.",
+      "expectations": [
+        "Answers the dependency/decomposition question directly because it is Planner-owned execution structure.",
+        "Uses the correlated Plan/Task context and current accepted authority to decide whether B remains a real dependency.",
+        "Keeps product/design/behavior/architecture meaning outside Planner authority and raises a separate authority OQ only if the answer actually depends on unresolved meaning."
+      ],
+      "must_not": [
+        "Must not claim Planner is ineligible to answer an OQ."
+      ]
+    },
+    {
+      "id": "OQ-REVIEWER-NOT-GATE-01",
+      "agent": "reviewer",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-002",
+        "BR-006",
+        "BR-021"
+      ],
+      "prompt": "Architect raises Reviewer an OQ during implementation: 'Does the current recorded evidence prove that the migration test exercised the failure path, or only the happy path?' You can inspect the supplied evidence and answer. No implementation-review gate has been dispatched to you yet. What does your OQ response mean?",
+      "trap": "Treat the OQ answer as an implementation-review PASS/FAIL verdict or refuse because Reviewer must never answer OQs.",
+      "expectations": [
+        "Answers the narrow evidence/conformance question within Reviewer expertise.",
+        "Explicitly keeps the OQ response separate from an independent review gate; it neither PASSes nor FAILs implementation review.",
+        "A later required Reviewer gate remains fresh and independently evaluates the whole assigned outcome."
+      ],
+      "must_not": [
+        "Must not convert an advisory OQ response into the workflow's review verdict."
+      ]
+    },
+    {
+      "id": "UPGRADE-HOLISTIC-PLAN-01",
+      "agent": "general",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-021",
+        "BR-008"
+      ],
+      "prompt": "The resumed Objective predates holistic Plan snapshots. `loom_upgrade_status` reports `holistic-plan-adoption-v1` as `deferred`, with the current Wave claimed by an active Worker workflow. The current Worker has an admitted Task contract and is making valid progress. Decide how to adopt the new Plan model.",
+      "trap": "Reopen Planner immediately, rewrite the running Worker's contract, cancel valid work merely to migrate representation, or ignore the compatibility action forever.",
+      "expectations": [
+        "Preserves the currently admitted Worker/Wave contract and lets that Wave reach normal implementation review rather than mutating semantics underneath it.",
+        "Uses the next natural Objective planning boundary for adoption and dispatches a fresh Planner there.",
+        "Treats the upgrade action as Objective-scoped and state-derived rather than something this chat manually acknowledges as complete."
+      ],
+      "must_not": [
+        "Must not reopen reviewed/completed steps solely to migrate Plan representation.",
+        "Must not manufacture rich Plan fields from the legacy Task DAG."
+      ]
+    },
+    {
+      "id": "UPGRADE-HOLISTIC-PLAN-02",
+      "agent": "planner",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-021",
+        "BR-005"
+      ],
+      "prompt": "You attach at a fresh Objective planning boundary and `loom_attach` includes pending upgrade action `holistic-plan-adoption-v1`. The old generation has completed Tasks with durable evidence plus remaining legacy Tasks, but no holistic Plan snapshot. Explain how you construct the replacement rich Plan.",
+      "trap": "Copy the old Task DAG into new rich fields by inference, rerun all completed work by default, or treat old Planner wording as product authority.",
+      "expectations": [
+        "Reconstructs the Plan from accepted product/design/behavior/architecture authority, using the legacy hierarchy only as execution history/context.",
+        "Preserves completed work/evidence as historical truth and marks obligations already satisfied only where durable evidence actually proves them.",
+        "Creates rich remaining Task contracts, obligation coverage, risks, integration and acceptance coverage without inventing missing semantics; executable Product Acceptance scenarios remain owned by Acceptance.",
+        "Understands that successful rich Plan materialization satisfies the state-derived upgrade action automatically."
+      ],
+      "must_not": [
+        "Must not require a separate acknowledgement or upgrade-complete tool.",
+        "Must not reinterpret completed legacy Tasks as having semantic contracts they never had."
+      ]
+    },
+    {
+      "id": "OQ-PLAN-REVISION-01",
+      "agent": "architect",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-021"
+      ],
+      "prompt": "An OQ was raised from Task `runtime-recovery` under Plan generation 2 revision 3. Planner later amended the same generation to revision 4 and changed that Task's future checklist/integration context. Your OQ attachment explicitly gives you the historical revision-3 planContext. Which context governs your answer?",
+      "trap": "Silently answer from the latest revision 4 because it is newer, losing the context that caused the OQ.",
+      "expectations": [
+        "Uses the OQ-correlated generation 2 revision 3 context to understand why the question arose and what Task contract the raiser was operating under.",
+        "May note relevant newer accepted authority if independently applicable, but does not rewrite the OQ origin merely because the Plan later changed.",
+        "Treats Plan revision identity as context provenance, not as architecture authority."
+      ],
+      "must_not": [
+        "Must not substitute the current Plan revision for the explicitly correlated historical revision without reconciliation."
+      ]
     }
   ]
 }

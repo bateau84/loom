@@ -32,6 +32,9 @@ Loom state remains authoritative in the control plane. Optional OpenCode databas
 14. Missing, disabled, or unavailable telemetry is represented as unknown/unavailable and MUST NOT be rendered as a healthy zero or inferred success.
 15. Background refresh preserves the user's current selection, filter/sort context, and keyboard focus when that target still exists; disappearance has a predictable fallback rather than an arbitrary focus jump.
 16. Fleet → Project → Workflow → optional Session detail forms a complete navigable path with a clear return path and persistent project/workflow identity; the dashboard has no navigation dead end that requires restarting it.
+17. The Project work map can show the current holistic Plan's goal/revision, Phase/Wave intent, rich Task acceptance/checklist/integration context, obligation/risk/Product Acceptance coverage, and amendment/invalidation state.
+18. An unresolved OQ correlated with a Plan generation/Task exposes that origin in the dashboard, including a route back to the relevant project/work map or originating workflow.
+19. Rich Plan/OQ detail remains read-only, bounded, redacted, and subordinate to Loom control-plane authority.
 
 ## Design and architectural realization
 

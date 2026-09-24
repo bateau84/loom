@@ -2,9 +2,16 @@ import type { Workflow } from "./workflow"
 
 export type OQAuthority =
   | "user"
+  | "general"
   | "designer"
   | "specifier"
   | "architect"
+  | "reviewer"
+  | "critic"
+  | "acceptance"
+  | "planner"
+  | "documenter"
+  | "worker"
   | "research"
   | "diagnostic"
 
@@ -33,10 +40,20 @@ export type OpenQuestion = {
   question: string
   raisedByAgent: string
   raisedByStepId: string
+  /** Present when this OQ was raised by the responder while handling another OQ. */
+  parentQuestionId?: string
   requiredAuthority: OQAuthority
   blocking: boolean
   consumerStepIds: string[]
   evidence: string[]
+  /** Stable correlation to the plan context that existed when this question was raised. */
+  work?: {
+    objectiveId: string
+    generation: number
+    /** Immutable Plan revision that existed when the OQ was raised. */
+    revision?: number
+    taskId?: string
+  }
   status: OQStatus
   answer?: OQAnswer
   reconciliations: Record<string, OQReconciliation>
@@ -55,10 +72,17 @@ export type RaiseQuestionInput = {
   question: string
   raisedByAgent: string
   raisedByStepId: string
+  parentQuestionId?: string
   requiredAuthority: OQAuthority
   blocking: boolean
   consumerStepIds?: string[]
   evidence?: string[]
+  work?: {
+    objectiveId: string
+    generation: number
+    revision?: number
+    taskId?: string
+  }
   now: string
 }
 
@@ -67,18 +91,27 @@ function stepAgent(workflow: Workflow, stepId: string) {
 }
 
 export function raiseQuestion(input: RaiseQuestionInput): OpenQuestion {
-  if (["reviewer", "critic"].includes(String(input.requiredAuthority))) {
-    throw new Error("Reviewer and Critic are independent gates, not OQ answer authorities.")
-  }
-
-  const owner = stepAgent(input.workflow, input.raisedByStepId)
-  if (!owner) throw new Error("Raising step not found.")
-  if (owner !== input.raisedByAgent) {
-    throw new Error(`Step ${input.raisedByStepId} belongs to ${owner}, not ${input.raisedByAgent}.`)
+  const coordinatorRaise = input.raisedByAgent === "general" && input.raisedByStepId === "general"
+  const nestedRaise = Boolean(input.parentQuestionId)
+  if (!coordinatorRaise && !nestedRaise) {
+    const owner = stepAgent(input.workflow, input.raisedByStepId)
+    if (!owner) throw new Error("Raising step not found.")
+    if (owner !== input.raisedByAgent) {
+      throw new Error(`Step ${input.raisedByStepId} belongs to ${owner}, not ${input.raisedByAgent}.`)
+    }
   }
 
   const consumers = new Set(input.consumerStepIds ?? [])
-  if (input.blocking) consumers.add(input.raisedByStepId)
+  if (input.blocking) {
+    if ((coordinatorRaise || nestedRaise) && consumers.size === 0) {
+      throw new Error(
+        nestedRaise
+          ? "A blocking nested OQ must inherit or name at least one affected consumer step."
+          : "A blocking General OQ must name at least one affected consumer step.",
+      )
+    }
+    if (!coordinatorRaise && !nestedRaise) consumers.add(input.raisedByStepId)
+  }
 
   for (const stepId of consumers) {
     if (!stepAgent(input.workflow, stepId)) {
@@ -92,10 +125,12 @@ export function raiseQuestion(input: RaiseQuestionInput): OpenQuestion {
     question: input.question,
     raisedByAgent: input.raisedByAgent,
     raisedByStepId: input.raisedByStepId,
+    ...(input.parentQuestionId ? { parentQuestionId: input.parentQuestionId } : {}),
     requiredAuthority: input.requiredAuthority,
     blocking: input.blocking,
     consumerStepIds: [...consumers],
     evidence: input.evidence ?? [],
+    ...(input.work ? { work: input.work } : {}),
     status: "open",
     reconciliations: {},
     createdAt: input.now,
@@ -118,7 +153,7 @@ export function answerQuestion(
     }
   } else {
     if (source !== "agent" || actor !== question.requiredAuthority) {
-      throw new Error(`Question requires ${question.requiredAuthority} authority.`)
+      throw new Error(`Question requires ${question.requiredAuthority} as the answering role.`)
     }
   }
 

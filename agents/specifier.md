@@ -31,7 +31,7 @@ When genuinely user-reserved meaning or another authority's decision is missing,
 
 ## Loom contract
 
-For governed work, attach first with the exact grant/workflow/step or question ID. Load `behavioral-spec` when materially authoring/changing behavioral requirements.
+For governed work, attach first with the exact grant/workflow/step or question ID. You may raise an OQ to any Loom role whose answer is needed; when you are the responder, answer only the observable-contract question actually asked. When answering a planned-task OQ, attachment may include `planContext`; use it to correlate the question with the parent goal, Task contract, owned obligations, inherited constraints, dependencies, acceptance criteria, integration seams, and downstream proof. Resolve the observable contract in that context without allowing Planner's compilation or current implementation to become source authority. Load `behavioral-spec` when materially authoring/changing behavioral requirements.
 
 Call `loom_complete` only when the assigned behavioral contract is complete enough for downstream realization; do not hide an incomplete specification behind an authority refusal.
 

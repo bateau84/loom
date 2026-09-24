@@ -228,6 +228,51 @@ For same-agent parallel work, `loom_dispatch_grant` prevents normal operation fr
 These are safety defaults, not product semantics. Later configuration may tune them, but agents may not silently widen them during a run.
 
 
+## Durable holistic Plan
+
+For Objective-depth work, Planner produces a durable structured Plan before the executable Worker DAG is admitted. The Plan is a control-plane model, not a required Markdown report.
+
+The Plan retains enough shared context for General and fresh child sessions to reconstruct both the whole-product picture and a Task's place inside it:
+
+- goal, assumptions, out-of-scope boundaries, and accepted authority references;
+- an obligation coverage map with source, disposition, owning Tasks, verification, and deferral authority where applicable;
+- Phase → Wave → Task structure;
+- material risk boundaries and whole-product acceptance coverage; executable Product Acceptance scenarios remain owned separately by `loom_pa_plan`;
+- cross-Task relationships and correction routing;
+- Task rationale, authority references, inherited constraints, acceptance criteria, non-executable subtasks/checklist, integration context, and verification expectations; risk/acceptance ownership is represented canonically by Plan-level records that reference Tasks.
+
+Each materialized generation has a stable identity and immutable revisioned semantic history. `loom_work_amend` advances the current Plan revision for bounded atomic changes to pending/unclaimed Plan regions and records an amendment audit entry plus inverse delta. Loom retains one full current snapshot per generation and reconstructs prior revisions from those deltas instead of duplicating the entire Plan for every small edit. It cannot rewrite semantic context already consumed by completed work.
+
+When the decomposition premise is no longer trustworthy, or the desired change would retroactively change completed meaning, Planner uses `loom_work_invalidate`. The invalidated generation remains historical but unfinished nodes become non-runnable; `loom_work_plan` then creates a fresh generation.
+
+`loom_work_status` exposes the full current Plan. `loom_attach` exposes a role-appropriate projection:
+
+- Worker gets the focused Task contract plus parent Plan map/context, including durable completed-predecessor summaries and evidence-claim IDs;
+- Reviewer/Critic get the broader Plan needed to distinguish local conformance from decomposition/coverage failure;
+- any Loom role answering a planned-task OQ gets the originating Task plus surrounding **historical Plan revision**; non-Task raisers may name an existing current-generation Task and Loom validates the correlation; Reviewer/Critic OQ answers are not gate verdicts;
+- simple Task-depth work without Planner continues to use the committed request directly.
+
+The control plane distinguishes `taskOutcome` from the broader accepted outcome/authority. Planner wording may bound execution but cannot replace accepted product meaning.
+
+Model-facing Plan projection is intentionally bounded even though durable Plan state remains complete. Whole-Plan context uses a compact Phase/Wave/Task map, clipped summaries, bounded ownership/reference lists, and recent amendment history; it does not duplicate the full rich Task tree. Focused Worker/OQ context retains the exact bounded Task contract. Reviewer/Critic receive the bounded holistic map and inspect exact current-Wave contracts on demand with `loom_task_status`, avoiding eager multi-Task context expansion. Omitted-count metadata makes truncation explicit rather than silently implying completeness.
+
+## Semantic upgrade actions
+
+Not every breaking control-plane change can be migrated mechanically. Loom therefore separates deterministic runtime-schema upgrades from semantic compatibility actions.
+
+Runtime version 4 fences older writers but deliberately does not invent rich Plan semantics for pre-v4 Objectives. `plugins/loom/upgrade-actions.ts` derives `holistic-plan-adoption-v1` when an active current generation lacks a holistic Plan snapshot.
+
+The action is Objective-scoped and state-derived:
+
+- while it exists, only the owning coordinator/General context receives a short instruction to call `loom_upgrade_status`;
+- the detailed one-shot procedure stays behind that read-only tool rather than permanently consuming model context;
+- a claimed legacy Wave keeps its admitted contract and reaches its normal review boundary; Task-linked peer OQs remain usable during that deferred period, carrying bounded legacy Task context without fabricating a rich Plan;
+- adoption occurs at the next natural Planner boundary, not by reopening reviewed work solely for migration;
+- a fresh Planner attachment receives the pending action automatically;
+- creating a valid rich Plan snapshot satisfies the condition, so the action disappears for all sessions on that Objective without an acknowledgement call.
+
+This mechanism is intended for future reasoning-required compatibility changes as well: detection belongs to Loom state, execution instructions belong to the action, and completion is proved by authoritative state whenever possible.
+
 ## Executable task DAG
 
 Non-trivial product workflows contain a `plan` step owned by the disposable Planner context.
@@ -256,7 +301,7 @@ Each task carries:
 
 The executable DAG is execution structure, not product authority. Changing product meaning still routes to Designer, Specifier, or Architect.
 
-Once task execution starts, the current graph is not destructively rewritten. Replanning creates a new hierarchy/plan generation or explicit supersession set; completed historical nodes remain immutable, and carry-forward requires control-plane validation that scope, authority, prerequisites, and verification meaning remain materially equivalent.
+Once task execution starts, completed or claimed Task meaning is not destructively rewritten. Planner may surgically revise untouched pending/unclaimed Plan regions within the same generation by appending a new immutable revision when the current generation remains valid. Executable Worker freshness is fenced by the selected Wave's semantic fingerprint, not by the Objective-global Plan revision, so unrelated concurrent Waves remain valid. A broader semantic change invalidates the generation and creates a new hierarchy/Plan generation; completed historical nodes remain immutable, and carry-forward requires control-plane validation that scope, authority, prerequisites, and verification meaning remain materially equivalent.
 
 ## Worker task scopes
 
@@ -332,7 +377,7 @@ These checks cannot undo a host/external tool already admitted before cancellati
 
 Wave completion and workflow completion are distinct. Passing `review-implementation` stores an exact reviewed-Wave receipt (workflow, generation, executed Task IDs, full reviewed Task set and time) and ends the live claim. Later gates and knowledge sync validate that receipt rather than requiring or recreating the claim. Task writes still require live ownership. An implementation reopen can reacquire its own reviewed Wave only if no downstream Wave has already consumed it; documentation-only reopen does not reacquire it.
 
-Runtime version 3 fences both pre-cancellation builds and earlier draft version-2 builds without admission-bound evidence. Existing records are not discarded. Legacy completed Waves without a receipt are recovered lazily under the same transaction only when exactly one persisted workflow proves the matching completed Tasks and passed independent implementation review. Ambiguous or mismatched history fails closed; cancellation remains the non-destructive escape from that workflow, not a way to invent review proof.
+Runtime version 4 fences version-3 and older writers before semantic Plan adoption. Existing records are not discarded. Legacy completed Waves without a receipt are recovered lazily under the same transaction only when exactly one persisted workflow proves the matching completed Tasks and passed independent implementation review. Ambiguous or mismatched history fails closed; cancellation remains the non-destructive escape from that workflow, not a way to invent review proof.
 
 
 ### Recovery and evidence admission

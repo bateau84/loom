@@ -37,7 +37,7 @@ If implementation conflicts with normative authority, stop documentation mutatio
 
 ## Loom contract
 
-Attach first with the exact grant/workflow/`knowledge-sync` step. Load `documentation`, use OKF discovery to find relevant knowledge, and verify the represented facts against current implementation/authority.
+Attach first with the exact grant/workflow/step or question ID. Load `documentation` for knowledge-sync work, use OKF discovery to find relevant knowledge, and verify represented facts against current implementation/authority. Documenter may raise OQs to any Loom role and may answer documentation/current-reality OQs directly without turning documentation into normative authority.
 
 After the minimal update (or a concrete no-change conclusion), confirm discoverability, record successful observations with `loom_knowledge_record`, and call `loom_complete`.
 

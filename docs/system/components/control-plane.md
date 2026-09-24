@@ -24,6 +24,7 @@ The Loom plugin exposes tools for:
 - living-knowledge sync;
 - learning/heuristics;
 - budget and scope inspection;
+- state-derived upgrade compatibility inspection through `loom_upgrade_status`;
 - bounded read-only project inspection;
 - explicit ephemeral-report promotion into durable `docs/reports/**`.
 
@@ -40,6 +41,7 @@ The Loom plugin exposes tools for:
 - `plugins/loom/recovery-code.ts` — restricted single-call Code Mode recovery for cancelled children.
 - `plugins/loom/evidence-admission.ts` / `evidence.ts` — operation origin, attachment/attempt checks, historical observations and proof claims.
 - `plugins/loom/work.ts` — Objective → Phase → Wave → Task hierarchy, live claims and reviewed-Wave receipts.
+- `plugins/loom/upgrade-actions.ts` — state-derived semantic compatibility actions and minimal conditional model notification.
 - `plugins/loom/tasks.ts` — bounded implementation DAG validation.
 - `plugins/loom/oq.ts` — shared questions.
 - `plugins/loom/budget.ts` — dispatch/retry limits.
@@ -59,6 +61,8 @@ Loom now:
 6. binds OpenCode sessions to workflows only through Loom-controlled start/dispatch/attach transitions.
 
 OpenCode plugin storage is used only as the legacy import source during bounded migration. Execution state is still not product authority.
+
+Runtime-schema migrations and semantic upgrade actions are separate. Deterministic storage changes run transactionally in the runtime upgrade ledger. Reasoning-required compatibility work is detected from authoritative state and exposed only while pending; successful state transition removes the action automatically for all sessions in that scope.
 
 ## OpenCode tool presentation
 

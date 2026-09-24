@@ -200,26 +200,53 @@ describe("Loom sidebar snapshot", () => {
       ],
     }
 
+    const richTask = (id: string, title: string, objective: string, dependsOn: string[]) => ({
+      id,
+      title,
+      objective,
+      rationale: `${title} is required by the accepted Objective.`,
+      dependsOn,
+      authorityRefs: [workflow.anchor],
+      constraints: [],
+      acceptanceCriteria: [`${title} completes its accepted contribution.`],
+      subtasks: [],
+      integration: [],
+      verify: ["go test ./..."],
+    })
+    const a = richTask("a", "Task A", "Build A", [])
+    const b = richTask("b", "Task B", "Build B", ["a"])
+
     const work = createWorkHierarchy(workflow.anchor, workflow.id, "now")
     materializeWorkPlan(
       work,
       workflow.id,
-      [
-        {
-          id: "core",
-          title: "Core",
-          waves: [
-            {
-              id: "foundation",
-              title: "Foundation",
-              tasks: [
-                { id: "a", title: "Task A", objective: "Build A", dependsOn: [] },
-                { id: "b", title: "Task B", objective: "Build B", dependsOn: ["a"] },
-              ],
-            },
-          ],
-        },
-      ],
+      {
+        goal: "Deliver the accepted Objective.",
+        assumptions: [],
+        outOfScope: [],
+        authorityRefs: [workflow.anchor],
+        obligations: [],
+        riskBoundaries: [],
+        acceptanceCoverage: [],
+        relationships: [],
+        correctionRouting: [],
+        phases: [
+          {
+            id: "core",
+            title: "Core",
+            objective: "Build the core test capability.",
+            waves: [
+              {
+                id: "foundation",
+                title: "Foundation",
+                objective: "Complete the foundation Tasks together.",
+                constraints: [],
+                tasks: [a, b],
+              },
+            ],
+          },
+        ],
+      },
       "now",
     )
     claimWorkflowWave(
@@ -227,24 +254,8 @@ describe("Loom sidebar snapshot", () => {
       workflow.id,
       work.generation,
       [
-        {
-          id: "a",
-          title: "Task A",
-          objective: "Build A",
-          dependsOn: [],
-          write: ["internal/a/**"],
-          skills: ["golang"],
-          verify: ["go test ./..."],
-        },
-        {
-          id: "b",
-          title: "Task B",
-          objective: "Build B",
-          dependsOn: ["a"],
-          write: ["internal/b/**"],
-          skills: ["golang"],
-          verify: ["go test ./..."],
-        },
+        { ...a, write: ["internal/a/**"], skills: ["golang"] },
+        { ...b, write: ["internal/b/**"], skills: ["golang"] },
       ],
       false,
       "claim",
@@ -257,13 +268,28 @@ describe("Loom sidebar snapshot", () => {
       "later",
     )
 
-    const snapshot = buildSidebarSnapshot(workflow, [], work)
+    const snapshot = buildSidebarSnapshot(workflow, [{
+      id: "OQ-B",
+      workflowId: workflow.id,
+      question: "Does Task B need a different integration seam?",
+      raisedByAgent: "planner",
+      raisedByStepId: "plan",
+      requiredAuthority: "architect",
+      blocking: false,
+      consumerStepIds: [],
+      evidence: [],
+      work: { objectiveId: work.objectiveId, generation: work.generation, taskId: "b" },
+      status: "open",
+      reconciliations: {},
+      createdAt: "now",
+    }], work)
+    expect(snapshot.work?.plan).toMatchObject({ revision: 1, goal: "Deliver the accepted Objective." })
     expect(snapshot.work?.objective.progress).toEqual({ finished: 1, total: 2 })
     expect(snapshot.work?.phases[0].title).toBe("Core")
     expect(snapshot.work?.phases[0].waves[0].title).toBe("Foundation")
     expect(snapshot.work?.phases[0].waves[0].tasks).toEqual([
-      { id: "a", title: "Task A", status: "complete" },
-      { id: "b", title: "Task B", status: "runnable" },
+      { id: "a", title: "Task A", objective: "Build A", status: "complete" },
+      { id: "b", title: "Task B", objective: "Build B", openQuestions: 1, status: "runnable" },
     ])
   })
 

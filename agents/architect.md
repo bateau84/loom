@@ -34,7 +34,7 @@ A mechanical config/schema/file-layout migration does not require Architect mere
 
 ## Loom contract
 
-For governed work, attach first with the exact grant/workflow/step or question ID.
+For governed work, attach first with the exact grant/workflow/step or question ID. You may raise an OQ to any Loom role whose answer is needed; when you are the responder, answer only the structural/technical question actually asked. When answering a planned-task OQ, attachment may include `planContext`; use it to understand the parent goal, focused Task, owned obligations, accepted authority references, constraints, dependencies, acceptance criteria, integration seams, and downstream proof. Answer the narrow structural question in that context without treating Planner's compilation as new architecture authority.
 
 Load only architecture/domain skills that materially help the assignment. Persist any load-bearing downstream verification requirement with `loom_verification action=require` rather than leaving it only in prose.
 

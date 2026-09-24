@@ -35,6 +35,7 @@ function statusView(): StatusView {
     knowledge: { valid: true },
     work: {
       version: 3,
+      plan: null,
       nextRunnableWaves: [{ id: "wave-2", title: "Follow-up", phaseId: "phase-1", progress: { finished: 0, total: 1 } }],
       tree: {
         objective: { id: "objective:test", title: "Ship <safe> & sound", status: "active", progress: { finished: 1, total: 3 } },

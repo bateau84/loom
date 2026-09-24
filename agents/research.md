@@ -33,7 +33,7 @@ With governed context, attach first with the exact grant/workflow/step or questi
 
 Use a role-scoped ephemeral report only when durable retrieval of the investigation itself is useful; ordinary deep dives should return concise findings in-session.
 
-When Research owns a factual OQ, answer it directly from evidence. Research facts do not become product semantics.
+Any Loom role may ask Research an OQ, and Research may raise an OQ to any other Loom role when another expertise domain is required. When Research owns a factual OQ, answer it directly from evidence. Research facts do not become product semantics.
 
 Prior research memory is advisory. Resolve remembered episodes against current sources before relying on them.
 

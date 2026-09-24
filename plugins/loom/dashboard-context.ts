@@ -1,5 +1,6 @@
 import { redactCommand } from "./evidence"
 import type { OpenQuestion } from "./oq"
+import { workPlanContext, type WorkHierarchy } from "./work"
 import type { Step, Workflow } from "./workflow"
 
 export type DashboardText = { text: string; truncated: boolean }
@@ -20,6 +21,19 @@ export type DashboardWorkflowContext = {
     status: "open" | "answered"
     requiredAuthority: string
     blocking: boolean
+    parentQuestionId?: string
+    work?: {
+      objectiveId: string
+      generation: number
+      revision?: number
+      taskId?: string
+    }
+    origin?: {
+      phaseTitle?: DashboardText
+      waveTitle?: DashboardText
+      taskTitle?: DashboardText
+      taskObjective?: DashboardText
+    }
   }>
   verification: Array<{
     id: string
@@ -140,6 +154,7 @@ export function buildDashboardWorkflowContext(
   questions: OpenQuestion[],
   participatingSessionIds: string[],
   questionScanLimited = false,
+  work?: WorkHierarchy,
 ): DashboardWorkflowContext {
   const nonClosed = questions.filter((q) => q.workflowId === workflow.id && (q.status === "open" || q.status === "answered"))
     .sort((a, b) => Number(b.blocking) - Number(a.blocking) || Number(a.status === "answered") - Number(b.status === "answered") || a.id.localeCompare(b.id))
@@ -151,13 +166,60 @@ export function buildDashboardWorkflowContext(
     ...(workflow.request ? { request: dashboardText(workflow.request) } : {}),
     ...(participatingSessionIds.includes(workflow.createdBySession) ? { coordinatorSessionId: workflow.createdBySession } : {}),
     steps: steps.slice(0, DASHBOARD_CONTEXT_STEPS).map(stepContext),
-    questions: nonClosed.slice(0, DASHBOARD_CONTEXT_ITEMS).map((question) => ({
-      id: question.id,
-      description: dashboardText(question.question),
-      status: question.status as "open" | "answered",
-      requiredAuthority: question.requiredAuthority,
-      blocking: question.blocking,
-    })),
+    questions: nonClosed.slice(0, DASHBOARD_CONTEXT_ITEMS).map((question) => {
+      let origin: DashboardWorkflowContext["questions"][number]["origin"]
+      if (question.work && work?.objectiveId === question.work.objectiveId) {
+        const context = workPlanContext(
+          work,
+          question.work.taskId,
+          "focused",
+          question.work.generation,
+          question.work.revision,
+        )
+        if (context?.focus) {
+          origin = {
+            ...(context.focus.phase?.title
+              ? { phaseTitle: dashboardText(context.focus.phase.title) }
+              : {}),
+            ...(context.focus.wave?.title
+              ? { waveTitle: dashboardText(context.focus.wave.title) }
+              : {}),
+            ...(context.focus.task?.title
+              ? { taskTitle: dashboardText(context.focus.task.title) }
+              : {}),
+            ...(context.focus.task?.objective
+              ? { taskObjective: dashboardText(context.focus.task.objective) }
+              : {}),
+          }
+        } else if (question.work.taskId) {
+          const legacyTask = work.nodes.find(
+            (node) =>
+              node.generation === question.work!.generation &&
+              node.type === "task" &&
+              node.logicalId === question.work!.taskId &&
+              node.status !== "superseded",
+          )
+          if (legacyTask) {
+            origin = {
+              taskTitle: dashboardText(legacyTask.title),
+              ...(legacyTask.objective
+                ? { taskObjective: dashboardText(legacyTask.objective) }
+                : {}),
+            }
+          }
+        }
+      }
+      return {
+        id: question.id,
+        description: dashboardText(question.question),
+        status: question.status as "open" | "answered",
+        requiredAuthority: question.requiredAuthority,
+        blocking: question.blocking,
+        ...(question.parentQuestionId ? { parentQuestionId: question.parentQuestionId } : {}),
+        ...(question.work ? { work: question.work } : {}),
+        ...(origin && Object.keys(origin).length > 0 ? { origin } : {}),
+      }
+    }),
     verification: verification.slice(0, DASHBOARD_CONTEXT_ITEMS).map((item) => {
       const before = workflow.steps.find((step) => step.id === item.beforeStepId)
       return {
