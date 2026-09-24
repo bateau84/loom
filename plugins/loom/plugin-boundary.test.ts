@@ -505,6 +505,11 @@ describe("Loom registered plugin boundary", () => {
         "general-session",
       )
       expect(scoped.error).toBeUndefined()
+      expect(scoped).toMatchObject({
+        acceptedOutcome: "docs/anchors/test/anchor.md",
+        scopeSemantics: "mutation-boundary-only",
+      })
+      expect(scoped.scopeNote).toContain("Delegate the accepted outcome separately")
 
       const workerGrant = await call(
         "dispatch_grant",
@@ -524,10 +529,11 @@ describe("Loom registered plugin boundary", () => {
         attached: true,
         workflowId,
         stepId: "worker",
+        acceptedOutcome: "docs/anchors/test/anchor.md",
         write: ["src/**"],
         scopeSemantics: "mutation-boundary-only",
       })
-      expect(attachedWorker.scopeNote).toContain("limits mutation only")
+      expect(attachedWorker.scopeNote).toContain("acceptedOutcome is the completion target")
 
       const workerStatus = await call(
         "status",
@@ -1000,12 +1006,15 @@ Verdict: FAIL
       )
       expect(unscoped.error).toContain("no declared write scope")
 
-      expect((await h.call(
+      const scope = await h.call(
         "task_scope",
         { workflowId, stepId: "worker", write: ["src/**"] },
         "general",
         "scope-before-grant-general",
-      )).error).toBeUndefined()
+      )
+      expect(scope.error).toBeUndefined()
+      expect(scope.acceptedOutcome).toBe("Apply one bounded implementation change.")
+      expect(scope.scopeSemantics).toBe("mutation-boundary-only")
 
       const scoped = await h.call(
         "dispatch_grant",

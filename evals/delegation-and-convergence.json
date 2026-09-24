@@ -494,7 +494,7 @@
       "trap": "Treat the exhausted automatic budget as a permanent dead end, ask the user to restart or restate already-known work, create replacement workflow state, or stop after granting capacity instead of launching the existing Worker.",
       "expectations": [
         "Uses the already-known workflow `eval-budget-continuation` and existing `worker` step as the recovery target rather than asking the user to repeat identifiers or starting replacement work.",
-        "Uses the user-authorized continuation path on workflow `eval-budget-continuation`, step `worker`, with the exact latest user message as confirmation; the tool result must succeed.",
+        "Uses the user-authorized continuation path on workflow `eval-budget-continuation`, step `worker`, and the tool result succeeds. `loom_budget_continue` mechanically enforces that `confirmation` exactly matches the latest observed user message, so a successful result is authoritative proof of that provenance; do not infer a mismatch from rendered quoting.",
         "After continuation, rechecks Loom status, issues a fresh exact dispatch grant for the same Worker step, and actually dispatches Worker. The Worker result must be consistent with attaching to that same workflow/step; a child attachment failure is not a successful recovery.",
         "Preserves the existing workflow/task identity and does not claim the work was already complete merely because quota was extended."
       ],
@@ -581,7 +581,7 @@
       "trap": "Treat the exhausted automatic budget as a permanent dead end, literally create a duplicate Worker task just because I phrased the workaround that way, create replacement workflow state, or stop after granting capacity instead of launching the existing Worker.",
       "expectations": [
         "Uses the already-known workflow `eval-budget-continuation` and existing `worker` step as the recovery target rather than asking the user to repeat identifiers or starting replacement work.",
-        "Uses the user-authorized continuation path on workflow `eval-budget-continuation`, step `worker`, with the exact latest user message as confirmation; the tool result must succeed.",
+        "Uses the user-authorized continuation path on workflow `eval-budget-continuation`, step `worker`, and the tool result succeeds. `loom_budget_continue` mechanically enforces that `confirmation` exactly matches the latest observed user message, so a successful result is authoritative proof of that provenance; do not infer a mismatch from rendered quoting.",
         "After continuation, rechecks Loom status, issues a fresh exact dispatch grant for the same Worker step, and actually dispatches Worker. The Worker result must be consistent with attaching to that same workflow/step; a child attachment failure is not a successful recovery.",
         "Preserves the existing workflow/task identity and does not claim the work was already complete merely because quota was extended."
       ],
