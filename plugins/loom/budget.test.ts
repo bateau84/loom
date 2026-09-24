@@ -199,8 +199,8 @@ describe("Loom progress and dispatch budgets", () => {
       agent: "critic",
       stepKind: "gate",
     })
-    expect(grant.previousLimit).toBe(DEFAULT_LIMITS.maxDispatchesPerStep)
-    expect(grant.newLimit).toBe(DEFAULT_LIMITS.maxDispatchesPerStep + 1)
+    expect(grant.previousLimit).toBe(DEFAULT_LIMITS.maxCriticDispatchesPerStep)
+    expect(grant.newLimit).toBe(DEFAULT_LIMITS.maxCriticDispatchesPerStep + 1)
     expect(
       recordDispatch({
         state,
@@ -294,8 +294,8 @@ describe("Loom progress and dispatch budgets", () => {
       key,
       agent: "architect",
     })
-    expect(grant.previousLimit).toBe(DEFAULT_LIMITS.maxCriticDispatchesPerStep)
-    expect(grant.newLimit).toBe(DEFAULT_LIMITS.maxCriticDispatchesPerStep + 1)
+    expect(grant.previousLimit).toBe(DEFAULT_LIMITS.maxDispatchesPerStep)
+    expect(grant.newLimit).toBe(DEFAULT_LIMITS.maxDispatchesPerStep + 1)
     expect(
       recordDispatch({
         state,
