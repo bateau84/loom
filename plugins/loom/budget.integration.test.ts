@@ -19,7 +19,7 @@ import type { Workflow } from "./workflow"
 type RegisteredTool = {
   name: string
   options?: { namespace?: string; codemode?: boolean; permission?: string }
-  execute: (input: unknown, tool: { agent: string; sessionID: string }) => Promise<any>
+  execute: (input: unknown, tool: { agent: string; sessionID: string; messageID?: string }) => Promise<any>
 }
 
 describe("Loom budget recovery plugin integration", () => {
@@ -35,6 +35,7 @@ describe("Loom budget recovery plugin integration", () => {
     try {
       const legacyValues = new Map<string, unknown>()
       const registeredTools = new Map<string, RegisteredTool>()
+      let contextHook: ((event: any) => Promise<void> | void) | undefined
       let evaluatePermission:
         | ((event: {
             agent: string
@@ -116,7 +117,9 @@ describe("Loom budget recovery plugin integration", () => {
             id: sessionID,
             projectID: opencodeProjectId,
           }),
-          hook: async () => {},
+          hook: async (name: string, hook: (event: any) => Promise<void> | void) => {
+            if (name === "context") contextHook = hook
+          },
         },
       }
 
@@ -173,9 +176,15 @@ describe("Loom budget recovery plugin integration", () => {
       await storage.set(budgetKey, budget)
 
       const grantTool = registeredTools.get("budget_grant")
+      const continuationTool = registeredTools.get("budget_continue")
+      const budgetStatusTool = registeredTools.get("budget_status")
       const dispatchGrantTool = registeredTools.get("dispatch_grant")
+      const attachTool = registeredTools.get("attach")
       expect(grantTool).toBeDefined()
+      expect(continuationTool).toBeDefined()
+      expect(budgetStatusTool).toBeDefined()
       expect(dispatchGrantTool).toBeDefined()
+      expect(attachTool).toBeDefined()
       expect(evaluatePermission).toBeDefined()
 
       const grantResult = await grantTool!.execute(
@@ -219,6 +228,14 @@ describe("Loom budget recovery plugin integration", () => {
       const persistedAfterDispatch = await storage.get(budgetKey) as BudgetState
       expect(persistedAfterDispatch.byKey[dispatchKey]).toBe(3)
 
+      const deniedDispatchGrant = await dispatchGrantTool!.execute(
+        { workflowId, stepId },
+        { agent: "general", sessionID },
+      )
+      expect(deniedDispatchGrant.content).not.toContain("## Error")
+      const deniedGrantMatch = deniedDispatchGrant.content.match(/\*\*Grant ID:\*\*\s+`([^`]+)`/)
+      expect(deniedGrantMatch).not.toBeNull()
+
       const deniedEvent = {
         agent: "general",
         action: "subagent",
@@ -231,6 +248,100 @@ describe("Loom budget recovery plugin integration", () => {
       await evaluatePermission!(deniedEvent)
       expect(deniedEvent.effect).toBe("deny")
       expect(deniedEvent.message).toContain("dispatch limit 3 reached")
+      expect((await storage.get(`dispatch-grant/${deniedGrantMatch![1]}`) as any).admittedAt).toBeDefined()
+
+      expect(contextHook).toBeDefined()
+      await contextHook!({
+        sessionID,
+        system: [],
+        messages: [{
+          id: "user-budget-continuation-1",
+          role: "user",
+          content: [{ type: "text", text: "keep going with the existing Critic" }],
+        }],
+      })
+
+      const mismatchedConfirmation = await continuationTool!.execute(
+        {
+          workflowId,
+          stepId,
+          reason: "The user explicitly wants the unfinished governed work to continue.",
+          confirmation: "give it ten more attempts",
+        },
+        { agent: "general", sessionID, messageID: "assistant-budget-mismatch" },
+      )
+      expect(mismatchedConfirmation.content).toContain("match the latest observed user message")
+
+      const continuationResult = await continuationTool!.execute(
+        {
+          workflowId,
+          stepId,
+          reason: "The user explicitly wants the unfinished governed work to continue.",
+          confirmation: "keep going with the existing Critic",
+        },
+        { agent: "general", sessionID, messageID: "assistant-budget-continuation" },
+      )
+      expect(continuationResult.content).not.toContain('"error"')
+
+      const persistedAfterContinuation = await storage.get(budgetKey) as BudgetState
+      expect(persistedAfterContinuation.continuations).toHaveLength(1)
+      expect(persistedAfterContinuation.byKey[dispatchKey]).toBe(3)
+      expect(await storage.get(
+        `budget-continuation-user-message/${encodeURIComponent(sessionID)}/${encodeURIComponent("user-budget-continuation-1")}`,
+      )).toMatchObject({
+        workflowId,
+        userMessageId: "user-budget-continuation-1",
+      })
+
+      const continuedStatus = await budgetStatusTool!.execute(
+        { workflowId },
+        { agent: "general", sessionID },
+      )
+      expect(continuedStatus.content).toContain("**Max Total Dispatches:** 41")
+
+      const resumedGrant = await dispatchGrantTool!.execute(
+        { workflowId, stepId },
+        { agent: "general", sessionID },
+      )
+      expect(resumedGrant.content).not.toContain("## Error")
+      const grantMatch = resumedGrant.content.match(/\*\*Grant ID:\*\*\s+`([^`]+)`/)
+      expect(grantMatch).not.toBeNull()
+
+      const resumedEvent = {
+        agent: "general",
+        action: "subagent",
+        resources: ["critic"],
+        sessionID,
+        source: { messageID: "message-5", id: "dispatch-5" },
+        effect: "allow",
+        message: "",
+      }
+      await evaluatePermission!(resumedEvent)
+      expect(resumedEvent.effect).not.toBe("deny")
+
+      const attached = await attachTool!.execute(
+        { workflowId, stepId, grantId: grantMatch![1] },
+        { agent: "critic", sessionID: "critic-resumed-session" },
+      )
+      expect(attached.content).not.toContain("## Error")
+
+      const persistedAfterResume = await storage.get(budgetKey) as BudgetState
+      expect(persistedAfterResume.byKey[dispatchKey]).toBe(4)
+      expect(persistedAfterResume.continuations?.[0]?.usedDispatches).toBe(1)
+      expect(persistedAfterResume.continuations?.[0]?.authorizationUserMessageId).toBe(
+        "user-budget-continuation-1",
+      )
+
+      const reusedUserTurn = await continuationTool!.execute(
+        {
+          workflowId,
+          stepId,
+          reason: "The same user turn must not mint another exceptional retry.",
+          confirmation: "keep going with the existing Critic",
+        },
+        { agent: "general", sessionID, messageID: "assistant-budget-reuse" },
+      )
+      expect(reusedUserTurn.content).toContain("already authorized")
     } finally {
       if (previousState === undefined) delete process.env.XDG_STATE_HOME
       else process.env.XDG_STATE_HOME = previousState

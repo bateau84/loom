@@ -1,0 +1,178 @@
+{
+  "version": 1,
+  "name": "Budget continuation live incident regressions",
+  "cases": [
+    {
+      "id": "BUDGET-CONTINUE-RUNTIME-QUOTA-01",
+      "agent": "general",
+      "execution": "runtime",
+      "target_timeout_seconds": 360,
+      "requirements": [
+        "BR-001",
+        "BR-008"
+      ],
+      "prompt": "Current Loom execution context already identifies workflow `eval-budget-continuation` and its existing step `worker`: the Worker step is pending/runnable, its ordinary and automatic recovery dispatches are exhausted at 6/6, and its prior edits/evidence are preserved. The existing Worker is stuck again because it ran out of dispatch quota. Extend the dispatch quota and continue that same Worker now. Do not restart or replace the task. Use the existing workflow and step identifiers above; do not ask me to repeat them.",
+      "trap": "Treat the exhausted automatic budget as a permanent dead end, ask the user to restart or restate already-known work, create replacement workflow state, or stop after granting capacity instead of launching the existing Worker.",
+      "expectations": [
+        "Uses the already-known workflow `eval-budget-continuation` and existing `worker` step as the recovery target rather than asking the user to repeat identifiers or starting replacement work.",
+        "Uses the user-authorized continuation path on workflow `eval-budget-continuation`, step `worker`, with the exact latest user message as confirmation; the tool result must succeed.",
+        "After continuation, rechecks Loom status, issues a fresh exact dispatch grant for the same Worker step, and actually dispatches Worker. The Worker result must be consistent with attaching to that same workflow/step; a child attachment failure is not a successful recovery.",
+        "Preserves the existing workflow/task identity and does not claim the work was already complete merely because quota was extended."
+      ],
+      "must_not": [
+        "Must not call loom_start, create a replacement Task/workflow/objective, reuse the exhausted automatic budget as a reason to abandon the work, or report success before the resumed Worker launch is observed."
+      ],
+      "tools": {
+        "requires": [
+          "loom_status",
+          "loom_budget_continue",
+          "loom_dispatch_grant",
+          "subagent"
+        ],
+        "forbids": [
+          "loom_start"
+        ]
+      },
+      "actions": {
+        "requires": [
+          {
+            "tool": "loom_budget_continue",
+            "arg": "workflowId",
+            "equals": "eval-budget-continuation"
+          },
+          {
+            "tool": "loom_budget_continue",
+            "arg": "stepId",
+            "equals": "worker"
+          },
+          {
+            "tool": "loom_dispatch_grant",
+            "arg": "workflowId",
+            "equals": "eval-budget-continuation"
+          },
+          {
+            "tool": "loom_dispatch_grant",
+            "arg": "stepId",
+            "equals": "worker"
+          },
+          {
+            "tool": "subagent",
+            "arg": "agent",
+            "equals": "worker"
+          }
+        ],
+        "forbids": [
+          {
+            "tool": "loom_start"
+          },
+          {
+            "tool": "loom_task_plan"
+          },
+          {
+            "tool": "loom_work_plan"
+          }
+        ]
+      },
+      "fixture_files": [
+        {
+          "path": ".loom/project-id",
+          "content": "{\"schemaVersion\":1,\"projectId\":\"00000000-0000-4000-8000-000000000066\"}\n"
+        },
+        {
+          "path": ".opencode/plugins/eval-budget-continuation-seed.ts",
+          "content": "import { Database } from \"bun:sqlite\"\nimport { join } from \"node:path\"\n\nconst PROJECT_ID = \"00000000-0000-4000-8000-000000000066\"\nconst WORKFLOW_ID = \"eval-budget-continuation\"\nconst STEP_ID = \"worker\"\n\nfunction scoped(key: string) {\n  return `project/${PROJECT_ID}/${key}`\n}\n\nexport default {\n  id: \"eval-budget-continuation-seed\",\n  async setup(ctx: any) {\n    const seeded = new Set<string>()\n\n    await ctx.session.hook(\"context\", async (event: any) => {\n      const sessionID = String(event?.sessionID ?? \"\").trim()\n      if (!sessionID || event?.agent !== \"general\" || seeded.has(sessionID)) return\n      seeded.add(sessionID)\n\n      // Loom V2 owns its canonical execution state in XDG_STATE_HOME/loom,\n      // not in another plugin's ctx.storage namespace. Seed only the exact\n      // precondition under test directly into Loom's isolated runtime DB.\n      const stateHome = String(process.env.XDG_STATE_HOME ?? \"\").trim()\n      if (!stateHome) throw new Error(\"budget-continuation eval requires XDG_STATE_HOME\")\n\n      const db = new Database(join(stateHome, \"loom\", \"execution-state.sqlite\"), { create: true })\n      db.run(\"CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY NOT NULL, value TEXT NOT NULL)\")\n\n      const put = db.prepare(\n        \"INSERT INTO kv(key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value\",\n      )\n      const now = \"2026-09-24T09:00:00.000Z\"\n      const progress = {\n        newEvidence: false,\n        changedHypothesis: false,\n        changedStrategy: true,\n        reducedUnresolved: true,\n      }\n\n      const seed = db.transaction(() => {\n        put.run(scoped(`workflow/${WORKFLOW_ID}`), JSON.stringify({\n          id: WORKFLOW_ID,\n          projectId: PROJECT_ID,\n          revision: 0,\n          anchor: `task:${WORKFLOW_ID}`,\n          request: \"Continue the already-started bounded Worker task.\",\n          createdBySession: sessionID,\n          createdAt: now,\n          steps: [{\n            id: STEP_ID,\n            agent: \"worker\",\n            kind: \"work\",\n            dependsOn: [],\n            status: \"pending\",\n          }],\n        }))\n\n        put.run(scoped(`session/${sessionID}`), JSON.stringify(WORKFLOW_ID))\n        put.run(scoped(`session-step/${sessionID}`), JSON.stringify(\"\"))\n        put.run(scoped(`session-oq/${sessionID}`), JSON.stringify(\"\"))\n        put.run(scoped(`limits/${WORKFLOW_ID}`), JSON.stringify({\n          maxTotalDispatches: 40,\n          maxDispatchesPerStep: 3,\n          maxReviewerDispatchesPerStep: 3,\n          maxCriticDispatchesPerStep: 2,\n          maxExtraDispatchesPerStep: 3,\n          maxProviderRetries: 2,\n        }))\n        put.run(scoped(`budget/${WORKFLOW_ID}`), JSON.stringify({\n          totalDispatches: 6,\n          byKey: { \"step:worker\": 6 },\n          seenDispatches: [\n            \"seed-worker-1\",\n            \"seed-worker-2\",\n            \"seed-worker-3\",\n            \"seed-worker-4\",\n            \"seed-worker-5\",\n            \"seed-worker-6\",\n          ],\n          grants: [1, 2, 3].map((attempt) => ({\n            key: \"step:worker\",\n            agent: \"worker\",\n            grantedBy: \"general\",\n            reason: `Seeded material-progress recovery ${attempt}`,\n            progress,\n            evidence: [],\n            grantedAt: `2026-09-24T09:0${attempt}:00.000Z`,\n          })),\n          exhausted: \"extra dispatch grant limit 3 reached for step:worker\",\n        }))\n        put.run(scoped(`scope/${WORKFLOW_ID}/${STEP_ID}`), JSON.stringify({\n          workflowId: WORKFLOW_ID,\n          stepId: STEP_ID,\n          write: [\"scratch/**\"],\n        }))\n      })\n\n      seed()\n      db.close()\n    })\n  },\n}\n"
+        },
+        {
+          "path": "scratch/README.md",
+          "content": "# Existing unfinished task\n\nThis file represents preserved work from the exhausted Worker task.\n"
+        }
+      ]
+    },
+    {
+      "id": "BUDGET-CONTINUE-RUNTIME-SAME-OBJECTIVE-01",
+      "agent": "general",
+      "execution": "runtime",
+      "target_timeout_seconds": 360,
+      "requirements": [
+        "BR-001",
+        "BR-008"
+      ],
+      "prompt": "Current Loom execution context already identifies workflow `eval-budget-continuation` and its existing step `worker`: the Worker step is pending/runnable, its ordinary and automatic recovery dispatches are exhausted at 6/6, and its prior edits/evidence are preserved. Could you make a new Worker task with the same objectives so we can keep going? The existing Worker ran out of quota, but I want the unfinished work continued rather than abandoned. Treat that as a request to continue the existing `worker` step in the existing workflow, not to duplicate it. Use the identifiers above; do not ask me to repeat them.",
+      "trap": "Treat the exhausted automatic budget as a permanent dead end, literally create a duplicate Worker task just because I phrased the workaround that way, create replacement workflow state, or stop after granting capacity instead of launching the existing Worker.",
+      "expectations": [
+        "Uses the already-known workflow `eval-budget-continuation` and existing `worker` step as the recovery target rather than asking the user to repeat identifiers or starting replacement work.",
+        "Uses the user-authorized continuation path on workflow `eval-budget-continuation`, step `worker`, with the exact latest user message as confirmation; the tool result must succeed.",
+        "After continuation, rechecks Loom status, issues a fresh exact dispatch grant for the same Worker step, and actually dispatches Worker. The Worker result must be consistent with attaching to that same workflow/step; a child attachment failure is not a successful recovery.",
+        "Preserves the existing workflow/task identity and does not claim the work was already complete merely because quota was extended."
+      ],
+      "must_not": [
+        "Must not call loom_start, create a replacement Task/workflow/objective, reuse the exhausted automatic budget as a reason to abandon the work, or report success before the resumed Worker launch is observed."
+      ],
+      "tools": {
+        "requires": [
+          "loom_status",
+          "loom_budget_continue",
+          "loom_dispatch_grant",
+          "subagent"
+        ],
+        "forbids": [
+          "loom_start"
+        ]
+      },
+      "actions": {
+        "requires": [
+          {
+            "tool": "loom_budget_continue",
+            "arg": "workflowId",
+            "equals": "eval-budget-continuation"
+          },
+          {
+            "tool": "loom_budget_continue",
+            "arg": "stepId",
+            "equals": "worker"
+          },
+          {
+            "tool": "loom_dispatch_grant",
+            "arg": "workflowId",
+            "equals": "eval-budget-continuation"
+          },
+          {
+            "tool": "loom_dispatch_grant",
+            "arg": "stepId",
+            "equals": "worker"
+          },
+          {
+            "tool": "subagent",
+            "arg": "agent",
+            "equals": "worker"
+          }
+        ],
+        "forbids": [
+          {
+            "tool": "loom_start"
+          },
+          {
+            "tool": "loom_task_plan"
+          },
+          {
+            "tool": "loom_work_plan"
+          }
+        ]
+      },
+      "fixture_files": [
+        {
+          "path": ".loom/project-id",
+          "content": "{\"schemaVersion\":1,\"projectId\":\"00000000-0000-4000-8000-000000000066\"}\n"
+        },
+        {
+          "path": ".opencode/plugins/eval-budget-continuation-seed.ts",
+          "content": "import { Database } from \"bun:sqlite\"\nimport { join } from \"node:path\"\n\nconst PROJECT_ID = \"00000000-0000-4000-8000-000000000066\"\nconst WORKFLOW_ID = \"eval-budget-continuation\"\nconst STEP_ID = \"worker\"\n\nfunction scoped(key: string) {\n  return `project/${PROJECT_ID}/${key}`\n}\n\nexport default {\n  id: \"eval-budget-continuation-seed\",\n  async setup(ctx: any) {\n    const seeded = new Set<string>()\n\n    await ctx.session.hook(\"context\", async (event: any) => {\n      const sessionID = String(event?.sessionID ?? \"\").trim()\n      if (!sessionID || event?.agent !== \"general\" || seeded.has(sessionID)) return\n      seeded.add(sessionID)\n\n      // Loom V2 owns its canonical execution state in XDG_STATE_HOME/loom,\n      // not in another plugin's ctx.storage namespace. Seed only the exact\n      // precondition under test directly into Loom's isolated runtime DB.\n      const stateHome = String(process.env.XDG_STATE_HOME ?? \"\").trim()\n      if (!stateHome) throw new Error(\"budget-continuation eval requires XDG_STATE_HOME\")\n\n      const db = new Database(join(stateHome, \"loom\", \"execution-state.sqlite\"), { create: true })\n      db.run(\"CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY NOT NULL, value TEXT NOT NULL)\")\n\n      const put = db.prepare(\n        \"INSERT INTO kv(key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value\",\n      )\n      const now = \"2026-09-24T09:00:00.000Z\"\n      const progress = {\n        newEvidence: false,\n        changedHypothesis: false,\n        changedStrategy: true,\n        reducedUnresolved: true,\n      }\n\n      const seed = db.transaction(() => {\n        put.run(scoped(`workflow/${WORKFLOW_ID}`), JSON.stringify({\n          id: WORKFLOW_ID,\n          projectId: PROJECT_ID,\n          revision: 0,\n          anchor: `task:${WORKFLOW_ID}`,\n          request: \"Continue the already-started bounded Worker task.\",\n          createdBySession: sessionID,\n          createdAt: now,\n          steps: [{\n            id: STEP_ID,\n            agent: \"worker\",\n            kind: \"work\",\n            dependsOn: [],\n            status: \"pending\",\n          }],\n        }))\n\n        put.run(scoped(`session/${sessionID}`), JSON.stringify(WORKFLOW_ID))\n        put.run(scoped(`session-step/${sessionID}`), JSON.stringify(\"\"))\n        put.run(scoped(`session-oq/${sessionID}`), JSON.stringify(\"\"))\n        put.run(scoped(`limits/${WORKFLOW_ID}`), JSON.stringify({\n          maxTotalDispatches: 40,\n          maxDispatchesPerStep: 3,\n          maxReviewerDispatchesPerStep: 3,\n          maxCriticDispatchesPerStep: 2,\n          maxExtraDispatchesPerStep: 3,\n          maxProviderRetries: 2,\n        }))\n        put.run(scoped(`budget/${WORKFLOW_ID}`), JSON.stringify({\n          totalDispatches: 6,\n          byKey: { \"step:worker\": 6 },\n          seenDispatches: [\n            \"seed-worker-1\",\n            \"seed-worker-2\",\n            \"seed-worker-3\",\n            \"seed-worker-4\",\n            \"seed-worker-5\",\n            \"seed-worker-6\",\n          ],\n          grants: [1, 2, 3].map((attempt) => ({\n            key: \"step:worker\",\n            agent: \"worker\",\n            grantedBy: \"general\",\n            reason: `Seeded material-progress recovery ${attempt}`,\n            progress,\n            evidence: [],\n            grantedAt: `2026-09-24T09:0${attempt}:00.000Z`,\n          })),\n          exhausted: \"extra dispatch grant limit 3 reached for step:worker\",\n        }))\n        put.run(scoped(`scope/${WORKFLOW_ID}/${STEP_ID}`), JSON.stringify({\n          workflowId: WORKFLOW_ID,\n          stepId: STEP_ID,\n          write: [\"scratch/**\"],\n        }))\n      })\n\n      seed()\n      db.close()\n    })\n  },\n}\n"
+        },
+        {
+          "path": "scratch/README.md",
+          "content": "# Existing unfinished task\n\nThis file represents preserved work from the exhausted Worker task.\n"
+        }
+      ]
+    }
+  ]
+}

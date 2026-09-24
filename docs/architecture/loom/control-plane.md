@@ -212,11 +212,18 @@ Initial defaults:
 - ordinary step dispatches: 3;
 - Reviewer dispatches per gate: 3;
 - Critic dispatches per gate: 2;
+- automatic material-progress grants per target: 3;
 - provider retries after the initial request: 2.
 
 Permission hooks count authorized subagent dispatches using stable tool-call identity where available. A dispatch that exceeds its bound is denied.
 
-Reopening failed work requires at least one explicit progress dimension: new evidence, changed hypothesis, changed strategy, or reduced unresolved work. The reopen reason is persisted.
+Reopening failed work requires at least one explicit progress dimension: new evidence, changed hypothesis, changed strategy, or reduced unresolved work. The reopen reason is persisted. `loom_budget_grant` uses the same progress rule and remains bounded by the automatic per-target grant cap.
+
+Automatic exhaustion is a resumable control-plane boundary, not permanent abandonment of the accepted work. When the user explicitly asks Loom to continue, General may call `loom_budget_continue` for the exact exhausted runnable step or agent-owned OQ. The tool accepts exactly one exceptional target-reserved dispatch. Before granting it, Loom compares `confirmation` with the latest observed user message in that General session and records that user-message ID; the same user message cannot authorize another continuation. Other runnable targets cannot spend the credit. The continuation preserves dispatch history, evidence, scopes, workflow identity, verification requirements, and downstream independent gates. It does not require a fabricated progress signal for that single attempt and does not create a replacement Task or workflow.
+
+User-authorized continuation is distinct from autonomous retry and does not waive the progress governor for later attempts. A later retry still requires material progress through the ordinary grant path when that capacity remains, or a fresh explicit user message after automatic recovery is exhausted. Agents cannot self-extend, silently widen limits, batch several no-progress retries from one user turn, turn incomplete work into PASS, or use continuation to waive evidence/authority requirements. After continuation, General rechecks status, issues the normal exact dispatch grant, and sends a fresh child context to the same owner/step.
+
+For same-agent parallel work, `loom_dispatch_grant` prevents normal operation from creating grants for **different** unadmitted targets of the same role; the first target must be launched/admitted before a grant is issued for its sibling. Multiple grants for the same exact target remain valid because they share one budget identity and are used by lifecycle recovery for independent child attachments. The subagent permission hook independently resolves the charged target from the exact usable dispatch grant rather than from runnable-step ordering. If legacy/corrupt state nevertheless contains usable grants for more than one target of the same agent, it fails closed as ambiguous. When a subagent launch is admitted, that exact grant leaves the target-selection pool while remaining consumable by the launched child, so General can issue the next same-agent target grant and retain real parallel execution without confusing budget identity.
 
 These are safety defaults, not product semantics. Later configuration may tune them, but agents may not silently widen them during a run.
 

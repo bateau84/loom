@@ -1,6 +1,6 @@
 import { captureEvidenceAdmission, observationCallKey, persistEvidenceObservation, sessionAttachmentKey, type EvidenceAdmission } from "./evidence-admission"
 import type * as OpenCodePlugin from "@opencode/plugin"
-import { RUNTIME_STATE_VERSION, consumeDispatchGrantLocked, createProjectStorage, createTransactionalStorage, ensureRuntimeStateVersion, findUsableDispatchGrant, importLegacyPluginStorage, issueDispatchGrantLocked, migrateLegacySessionState, resolveRuntimeIdentity, sessionBoundToOq, sessionBoundToStep, sessionBoundToWorkflow, withRuntimeAdvisoryLock, withRuntimeLock, withRuntimeLocks, type LoomRuntimeIdentity } from "./runtime"
+import { RUNTIME_STATE_VERSION, admitDispatchGrantLocked, consumeDispatchGrantLocked, createProjectStorage, createTransactionalStorage, ensureRuntimeStateVersion, findUsableDispatchGrant, importLegacyPluginStorage, issueDispatchGrantLocked, migrateLegacySessionState, resolveRuntimeIdentity, sessionBoundToOq, sessionBoundToStep, sessionBoundToWorkflow, withRuntimeAdvisoryLock, withRuntimeLock, withRuntimeLocks, type LoomRuntimeIdentity } from "./runtime"
 import { LoomRpc } from "./rpc"
 import { assertLoomToolAdmission, assertCancelledChildToolAdmission, cancelWorkflow, ensureCompletedWaveHistory, workflowBindingTerminal, type CancelWorkflowInput } from "./lifecycle"
 import { buildSidebarSnapshot } from "./sidebar"
@@ -60,6 +60,8 @@ import {
 } from "./evidence"
 import {
   DEFAULT_LIMITS,
+  continueWorkflowDispatchBudget,
+  effectiveTotalDispatchLimit,
   grantWorkflowDispatchBudget,
   hasMaterialProgress,
   newBudgetState,
@@ -169,6 +171,58 @@ function intentKey(id: string) {
 
 function sessionIntentKey(sessionID: string) {
   return `session-intent/${sessionID}`
+}
+
+type ObservedUserMessage = {
+  messageId: string
+  text: string
+  observedAt: string
+}
+
+function sessionUserMessageKey(sessionID: string) {
+  return `session-user-message/${sessionID}`
+}
+
+function continuationAuthorizationUseKey(sessionID: string, userMessageId: string) {
+  return `budget-continuation-user-message/${encodeURIComponent(sessionID)}/${encodeURIComponent(userMessageId)}`
+}
+
+function latestObservedUserMessage(messages: unknown): Omit<ObservedUserMessage, "observedAt"> | undefined {
+  if (!Array.isArray(messages)) return undefined
+
+  for (let index = messages.length - 1; index >= 0; index--) {
+    const message = messages[index] as any
+    const role = message?.role ?? message?.info?.role
+    if (role !== "user") continue
+
+    const messageId = String(message?.id ?? message?.messageID ?? message?.info?.id ?? "").trim()
+    const content = message?.content ?? message?.parts
+    const parts = Array.isArray(content) ? content : []
+    const text = typeof content === "string"
+      ? content.trim()
+      : parts
+          .filter((part) => part?.type === "text" && typeof part?.text === "string")
+          .map((part) => String(part.text))
+          .join("\n")
+          .trim()
+
+    const controlMessage =
+      message?.synthetic === true ||
+      message?.metadata?.compaction_continue === true ||
+      parts.some(
+        (part) =>
+          part?.type === "compaction" ||
+          part?.synthetic === true ||
+          part?.metadata?.compaction_continue === true,
+      ) ||
+      text === "Continue if you have next steps, or stop and ask for clarification if you are unsure how to proceed." ||
+      text === "What did we do so far?"
+
+    if (controlMessage) continue
+    if (messageId && text) return { messageId, text }
+  }
+
+  return undefined
 }
 
 async function readIntent(ctx: any, id: string): Promise<IntentSession | undefined> {
@@ -2912,7 +2966,13 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           }
           const limits = await readLimits(ctx, workflowId)
           const state = await readBudget(ctx, workflowId)
-          return { content: renderToolOutput({ limits, state }) }
+          return {
+            content: renderToolOutput({
+              limits,
+              state,
+              effective: { maxTotalDispatches: effectiveTotalDispatchLimit(state, limits) },
+            }),
+          }
         },
       })
 
@@ -3024,8 +3084,164 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               grant: mutation.result.grant,
               workflowDispatches: {
                 used: mutation.state.totalDispatches,
-                limit: mutation.limits.maxTotalDispatches,
+                limit: effectiveTotalDispatchLimit(mutation.state, mutation.limits),
               },
+            }),
+          }
+        },
+      })
+
+
+      addLoomTool({
+        name: "budget_continue",
+        description:
+          "Immediately continue one exhausted exact target when the user explicitly asks Loom to keep going. When workflowId and stepId/questionId are already known from current context, use them directly rather than asking the user to repeat them. The confirmation must exactly match the latest observed user message and that user message is single-use. General only; preserves attempts, evidence, workflow identity, independent gates, and automatic grant history.",
+        input: {
+          type: "object",
+          properties: {
+            workflowId: { type: "string" },
+            stepId: { type: "string" },
+            questionId: { type: "string" },
+            reason: { type: "string" },
+            confirmation: {
+              type: "string",
+              description: "Exact latest user message authorizing one more bounded dispatch.",
+            },
+          },
+          required: ["workflowId", "reason", "confirmation"],
+          additionalProperties: false,
+        },
+        options: { namespace: "loom", codemode: false },
+        execute: async (input, tool) => {
+          if (tool.agent !== "general") {
+            return {
+              content: renderToolOutput({
+                error: "Only general may record user-authorized Loom budget continuation.",
+              }),
+            }
+          }
+
+          const value = input as {
+            workflowId: string
+            stepId?: string
+            questionId?: string
+            reason: string
+            confirmation: string
+          }
+
+          const observedUserMessage = (await ctx.storage.get(
+            sessionUserMessageKey(tool.sessionID),
+          )) as ObservedUserMessage | undefined
+          if (!observedUserMessage) {
+            return {
+              content: renderToolOutput({
+                error: "No current observed user message is available to authorize budget continuation.",
+              }),
+            }
+          }
+          if (value.confirmation.trim() !== observedUserMessage.text.trim()) {
+            return {
+              content: renderToolOutput({
+                error: "Budget continuation confirmation must match the latest observed user message exactly.",
+                authorizationUserMessageId: observedUserMessage.messageId,
+              }),
+            }
+          }
+
+          if (!(await readBoundWorkflow(ctx, tool.sessionID, value.workflowId, ensureLegacySession))) {
+            return { content: renderToolOutput({ error: "Workflow not found or current session is not bound to it." }) }
+          }
+
+          const authorizationUseKey = continuationAuthorizationUseKey(
+            tool.sessionID,
+            observedUserMessage.messageId,
+          )
+          const mutation = await withRuntimeLocks(runtime, [
+            { aggregate: "workflow", resourceIdentity: value.workflowId },
+            {
+              aggregate: "budget-continuation-user-message",
+              resourceIdentity: `${tool.sessionID}:${observedUserMessage.messageId}`,
+            },
+          ], async () => {
+            if (await ctx.storage.get(authorizationUseKey)) {
+              const state = await readBudget(ctx, value.workflowId)
+              return {
+                state,
+                result: {
+                  allowed: false as const,
+                  reason: "This observed user message has already authorized a Loom budget continuation.",
+                  state,
+                },
+              }
+            }
+
+            const workflow = await readBoundWorkflow(
+              ctx,
+              tool.sessionID,
+              value.workflowId,
+              ensureLegacySession,
+            )
+            if (!workflow) throw new Error("Workflow not found or current session is not bound to it.")
+
+            const questions = await readQuestions(ctx, value.workflowId)
+            const limits = await readLimits(ctx, value.workflowId)
+            const state = await readBudget(ctx, value.workflowId)
+            const result = continueWorkflowDispatchBudget({
+              state,
+              limits,
+              workflow,
+              questions,
+              stepId: value.stepId,
+              questionId: value.questionId,
+              grantedBy: tool.agent,
+              reason: value.reason,
+              confirmation: value.confirmation,
+              authorizationUserMessageId: observedUserMessage.messageId,
+              now: new Date().toISOString(),
+            })
+
+            if (result.allowed) {
+              await ctx.storage.set(budgetKey(value.workflowId), state)
+              await ctx.storage.set(authorizationUseKey, {
+                workflowId: value.workflowId,
+                target: result.target,
+                userMessageId: observedUserMessage.messageId,
+                confirmation: observedUserMessage.text,
+                usedAt: new Date().toISOString(),
+              })
+              await bumpWorkflowRevisionLocked(ctx, runtime, value.workflowId)
+            }
+            return { state, result }
+          })
+
+          if (!mutation.result.allowed) {
+            return {
+              content: renderToolOutput({
+                error: mutation.result.reason,
+                target: {
+                  stepId: value.stepId,
+                  questionId: value.questionId,
+                },
+              }),
+            }
+          }
+
+          return {
+            content: renderToolOutput({
+              continued: true,
+              target: mutation.result.target,
+              used: mutation.state.byKey[mutation.result.target.key] ?? 0,
+              requestedDispatches: mutation.result.continuation.requestedDispatches,
+              stepDispatches: {
+                previousLimit: mutation.result.previousStepLimit,
+                newLimit: mutation.result.newStepLimit,
+              },
+              workflowDispatches: {
+                used: mutation.state.totalDispatches,
+                previousLimit: mutation.result.previousWorkflowLimit,
+                newLimit: mutation.result.newWorkflowLimit,
+              },
+              continuation: mutation.result.continuation,
             }),
           }
         },
@@ -3586,6 +3802,57 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 ) {
                   throw new Error("OQ dispatch target changed before grant issuance.")
                 }
+              }
+
+              // Prevent General from accidentally creating the fail-closed
+              // ambiguity that the permission hook must defend against.
+              // Multiple grants for the same exact target remain valid because
+              // they carry the same budget identity and lifecycle recovery uses
+              // them for independent child attachments. A different outstanding
+              // target for the same role must be launched/admitted first.
+              const currentQuestions = await readQuestions(ctx, value.workflowId)
+              const outstanding: Array<{
+                kind: "step" | "question"
+                id: string
+                grant: NonNullable<Awaited<ReturnType<typeof findUsableDispatchGrant>>>
+              }> = []
+
+              for (const step of runnable(current).filter((candidate) => candidate.agent === expectedAgent)) {
+                const existing = await findUsableDispatchGrant(ctx.storage as any, runtime, {
+                  workflowId: value.workflowId,
+                  stepId: step.id,
+                  expectedAgent,
+                  issuingParentSessionId: tool.sessionID,
+                })
+                if (existing) outstanding.push({ kind: "step", id: step.id, grant: existing })
+              }
+
+              for (const question of currentQuestions.filter(
+                (candidate) =>
+                  candidate.status !== "closed" &&
+                  !candidate.answer &&
+                  candidate.requiredAuthority === expectedAgent,
+              )) {
+                const existing = await findUsableDispatchGrant(ctx.storage as any, runtime, {
+                  workflowId: value.workflowId,
+                  oqId: question.id,
+                  expectedAgent,
+                  issuingParentSessionId: tool.sessionID,
+                })
+                if (existing) outstanding.push({ kind: "question", id: question.id, grant: existing })
+              }
+
+              const requestedKind = value.stepId ? "step" : "question"
+              const requestedId = value.stepId ?? value.questionId!
+              const conflicting = outstanding.filter(
+                (candidate) => candidate.kind !== requestedKind || candidate.id !== requestedId,
+              )
+
+              if (conflicting.length > 0) {
+                const existing = conflicting[0]
+                throw new Error(
+                  `An unadmitted ${expectedAgent} dispatch grant already targets ${existing.kind} ${existing.id}. Dispatch/admit that target before issuing a grant for another same-agent target.`,
+                )
               }
 
               const created = await issueDispatchGrantLocked(ctx.storage as any, runtime, {
@@ -4295,19 +4562,62 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       }
 
       const questions = await readQuestions(ctx, workflow.id)
-      const openQuestion = questions.find(
+      const runnableSteps = runnable(workflow).filter((step) => step.agent === target)
+      const openQuestions = questions.filter(
         (question) =>
           question.status !== "closed" &&
           !question.answer &&
           question.requiredAuthority === target,
       )
-      const runnableStep = runnable(workflow).find((step) => step.agent === target)
 
-      if (!runnableStep && !openQuestion) {
+      if (runnableSteps.length === 0 && openQuestions.length === 0) {
         event.effect = "deny"
         event.message = `Agent ${target} is not runnable and has no unanswered OQ. Inspect loom_status.`
         return
       }
+
+      const grantedTargets: Array<
+        | { kind: "step"; step: (typeof runnableSteps)[number]; grant: NonNullable<Awaited<ReturnType<typeof findUsableDispatchGrant>>> }
+        | { kind: "question"; question: (typeof openQuestions)[number]; grant: NonNullable<Awaited<ReturnType<typeof findUsableDispatchGrant>>> }
+      > = []
+
+      for (const step of runnableSteps) {
+        const grant = await findUsableDispatchGrant(ctx.storage as any, runtime, {
+          workflowId: workflow.id,
+          stepId: step.id,
+          expectedAgent: target,
+          issuingParentSessionId: event.sessionID,
+        })
+        if (grant) grantedTargets.push({ kind: "step", step, grant })
+      }
+
+      for (const question of openQuestions) {
+        const grant = await findUsableDispatchGrant(ctx.storage as any, runtime, {
+          workflowId: workflow.id,
+          oqId: question.id,
+          expectedAgent: target,
+          issuingParentSessionId: event.sessionID,
+        })
+        if (grant) grantedTargets.push({ kind: "question", question, grant })
+      }
+
+      if (grantedTargets.length === 0) {
+        event.effect = "deny"
+        event.message =
+          `Issue loom_dispatch_grant for exactly one runnable ${target} step/OQ immediately before dispatch, then pass that grantId to the child.`
+        return
+      }
+
+      if (grantedTargets.length > 1) {
+        event.effect = "deny"
+        event.message =
+          `Multiple usable dispatch grants exist for ${target}; the dispatch target is ambiguous. Dispatch one exact granted target at a time.`
+        return
+      }
+
+      const grantedTarget = grantedTargets[0]
+      const runnableStep = grantedTarget.kind === "step" ? grantedTarget.step : undefined
+      const openQuestion = grantedTarget.kind === "question" ? grantedTarget.question : undefined
 
       if (target === "worker" && runnableStep) {
         const scope = (await ctx.storage.get(scopeKey(workflow.id, runnableStep.id))) as TaskScope | undefined
@@ -4316,18 +4626,6 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           event.message = `Worker step ${runnableStep.id} has no declared write scope. Call loom_task_scope first.`
           return
         }
-      }
-
-      const pendingGrant = await findUsableDispatchGrant(ctx.storage as any, runtime, {
-        workflowId: workflow.id,
-        ...(runnableStep ? { stepId: runnableStep.id } : { oqId: openQuestion!.id }),
-        expectedAgent: target,
-        issuingParentSessionId: event.sessionID,
-      })
-      if (!pendingGrant) {
-        event.effect = "deny"
-        event.message = `Issue loom_dispatch_grant for the exact ${runnableStep ? `step ${runnableStep.id}` : `OQ ${openQuestion!.id}`} before dispatching ${target}, and pass its grantId to the child.`
-        return
       }
 
       const dispatchID = [
@@ -4340,6 +4638,28 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       const recorded = await withRuntimeLock(runtime, "workflow", workflow.id, async () => {
         const limits = await readLimits(ctx, workflow.id)
         const budget = await readBudget(ctx, workflow.id)
+        try {
+          // Admission consumes the exact launch credential even when the
+          // budget later denies this launch. That prevents a failed
+          // pre-continuation grant from becoming stale authority after the
+          // budget is extended.
+          await admitDispatchGrantLocked(ctx.storage as any, runtime, {
+            grantId: grantedTarget.grant.grantId,
+            workflowId: workflow.id,
+            ...(runnableStep ? { stepId: runnableStep.id } : { oqId: openQuestion!.id }),
+            expectedAgent: target,
+            issuingParentSessionId: event.sessionID,
+            dispatchId: dispatchID,
+          })
+        } catch (error) {
+          return {
+            allowed: false as const,
+            duplicate: false as const,
+            reason: `Dispatch grant admission failed: ${error instanceof Error ? error.message : String(error)}`,
+            state: budget,
+          }
+        }
+
         const result = recordDispatch({ state: budget, limits, dispatchID, key, agent: target })
         if (result.allowed) {
           await ctx.storage.set(budgetKey(workflow.id), budget)
@@ -4350,12 +4670,24 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       })
 
       if (!recorded.allowed) {
+        const reason = recorded.reason ?? "Unknown dispatch denial."
         event.effect = "deny"
-        event.message = `Loom execution budget exhausted: ${recorded.reason}`
+        event.message = reason.startsWith("Dispatch grant admission failed:")
+          ? `${reason} Issue a fresh exact loom_dispatch_grant before retrying.`
+          : `Loom execution budget exhausted: ${reason}. Preserve this workflow and target. A fresh explicit user message may authorize one exact-target dispatch through loom_budget_continue; do not duplicate the task or workflow.`
       }
     })
 
-    await ctx.session.hook("context", (event) => {
+    await ctx.session.hook("context", async (event) => {
+      const raw = event as any
+      const sessionID = typeof raw.sessionID === "string" ? raw.sessionID : ""
+      const latestUser = latestObservedUserMessage(raw.messages)
+      if (sessionID && latestUser) {
+        await ctx.storage.set(sessionUserMessageKey(sessionID), {
+          ...latestUser,
+          observedAt: new Date().toISOString(),
+        } satisfies ObservedUserMessage)
+      }
       event.system.push({ type: "text", text: LOOM_NATIVE_TOOL_GUIDANCE })
     })
 

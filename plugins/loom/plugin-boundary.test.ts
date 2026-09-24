@@ -219,7 +219,7 @@ describe("Loom registered plugin boundary", () => {
   })
 
   test("session context tells Code Mode models to call native Loom tools directly", async () => {
-    const { sessionHooks, restore } = await harness()
+    const { sessionHooks, durableStorage, restore } = await harness()
     try {
       const hook = sessionHooks.get("context")
       expect(hook).toBeDefined()
@@ -235,6 +235,46 @@ describe("Loom registered plugin boundary", () => {
       expect(event.system[0]?.text).toContain("stable workflow dashboard URL")
       expect(event.system[0]?.text).toContain("Desktop browser preview is optional")
       expect(event.system[0]?.text).toContain("do not invoke tools.browser.preview")
+
+      await hook!({
+        sessionID: "authorization-session",
+        system: [],
+        messages: [{
+          id: "real-user-message",
+          role: "user",
+          content: [{ type: "text", text: "keep going with the existing worker" }],
+        }],
+      })
+      expect(await durableStorage.get("session-user-message/authorization-session")).toMatchObject({
+        messageId: "real-user-message",
+        text: "keep going with the existing worker",
+      })
+
+      await hook!({
+        sessionID: "authorization-session",
+        system: [],
+        messages: [
+          {
+            id: "real-user-message",
+            role: "user",
+            content: [{ type: "text", text: "keep going with the existing worker" }],
+          },
+          {
+            id: "synthetic-compaction-continue",
+            role: "user",
+            content: [{
+              type: "text",
+              text: "Continue if you have next steps, or stop and ask for clarification if you are unsure how to proceed.",
+              synthetic: true,
+              metadata: { compaction_continue: true },
+            }],
+          },
+        ],
+      })
+      expect(await durableStorage.get("session-user-message/authorization-session")).toMatchObject({
+        messageId: "real-user-message",
+        text: "keep going with the existing worker",
+      })
     } finally {
       restore()
     }
@@ -1695,6 +1735,186 @@ Verdict: FAIL
 
 // Exercise the real registered tools, durable SQLite state and grant attachments.
 // External OKF discovery is represented by a host observation fixture only.
+
+describe("dispatch grant target resolution", () => {
+  test("uses exact same-agent grants, admits launches, and fails closed on true ambiguity", async () => {
+    const h = await harness()
+    try {
+      const started = await h.call(
+        "start",
+        { request: "Exercise exact same-agent dispatch targeting." },
+        "general",
+        "parent",
+      )
+      const workflowId = started.workflowId as string
+      expect((await h.call("route", {
+        humanFacing: false,
+        behavioral: false,
+        structural: false,
+        externalUnknown: false,
+        diagnostic: false,
+        productOutcome: true,
+        implementationRequested: true,
+        executionDepth: "task",
+      }, "general", "parent")).error).toBeUndefined()
+
+      const workflow: any = await h.durableStorage.get(`workflow/${workflowId}`)
+      workflow.steps = [
+        {
+          id: "worker-a",
+          agent: "worker",
+          kind: "work",
+          dependsOn: [],
+          status: "pending",
+        },
+        {
+          id: "worker-b",
+          agent: "worker",
+          kind: "work",
+          dependsOn: [],
+          status: "pending",
+        },
+        {
+          id: "review-implementation",
+          agent: "reviewer",
+          kind: "gate",
+          dependsOn: ["worker-a", "worker-b"],
+          status: "pending",
+        },
+      ]
+      await h.durableStorage.set(`workflow/${workflowId}`, workflow)
+      await h.durableStorage.set(`scope/${workflowId}/worker-a`, {
+        workflowId,
+        stepId: "worker-a",
+        write: ["src/a/**"],
+      })
+      await h.durableStorage.set(`scope/${workflowId}/worker-b`, {
+        workflowId,
+        stepId: "worker-b",
+        write: ["src/b/**"],
+      })
+
+      const evaluate = h.permissionHooks.get("evaluate")
+      expect(evaluate).toBeDefined()
+
+      // Only B has an exact grant. Runnable ordering must not charge A.
+      const grantB = await h.call(
+        "dispatch_grant",
+        { workflowId, stepId: "worker-b" },
+        "general",
+        "parent",
+      )
+      expect(grantB.error).toBeUndefined()
+
+      // A different same-agent target is refused before it can create the
+      // fail-closed ambiguity defended against below.
+      const prematureA = await h.call(
+        "dispatch_grant",
+        { workflowId, stepId: "worker-a" },
+        "general",
+        "parent",
+      )
+      expect(prematureA.error).toContain("unadmitted worker dispatch grant already targets step worker-b")
+
+      const dispatchB: any = {
+        agent: "general",
+        action: "subagent",
+        resources: ["worker"],
+        sessionID: "parent",
+        source: { messageID: "same-agent-message-b", id: "same-agent-dispatch-b" },
+        effect: "allow",
+        message: "",
+      }
+      await evaluate!(dispatchB)
+      expect(dispatchB.effect).not.toBe("deny")
+
+      const afterB: any = await h.durableStorage.get(`budget/${workflowId}`)
+      expect(afterB.byKey["step:worker-b"]).toBe(1)
+      expect(afterB.byKey["step:worker-a"]).toBeUndefined()
+
+      const storedB: any = await h.durableStorage.get(`dispatch-grant/${grantB.grantId}`)
+      expect(storedB.admittedAt).toBeDefined()
+      expect(storedB.admittedDispatchId).toContain("same-agent-dispatch-b")
+
+      // An admitted B grant leaves the target-selection pool but remains
+      // consumable by B's child. A can therefore launch in parallel.
+      const grantA = await h.call(
+        "dispatch_grant",
+        { workflowId, stepId: "worker-a" },
+        "general",
+        "parent",
+      )
+      expect(grantA.error).toBeUndefined()
+
+      const dispatchA: any = {
+        agent: "general",
+        action: "subagent",
+        resources: ["worker"],
+        sessionID: "parent",
+        source: { messageID: "same-agent-message-a", id: "same-agent-dispatch-a" },
+        effect: "allow",
+        message: "",
+      }
+      await evaluate!(dispatchA)
+      expect(dispatchA.effect).not.toBe("deny")
+
+      const afterA: any = await h.durableStorage.get(`budget/${workflowId}`)
+      expect(afterA.byKey["step:worker-a"]).toBe(1)
+      expect(afterA.byKey["step:worker-b"]).toBe(1)
+
+      expect((await h.call(
+        "attach",
+        { workflowId, stepId: "worker-b", grantId: grantB.grantId },
+        "worker",
+        "worker-b-child",
+      )).attached).toBe(true)
+      expect((await h.call(
+        "attach",
+        { workflowId, stepId: "worker-a", grantId: grantA.grantId },
+        "worker",
+        "worker-a-child",
+      )).attached).toBe(true)
+
+      // Normal tool use cannot create two unadmitted same-agent grants.
+      // Seed a legacy/corrupt second grant directly to prove the permission
+      // hook still fails closed if such state is encountered after upgrade.
+      const grantA2 = await h.call(
+        "dispatch_grant",
+        { workflowId, stepId: "worker-a" },
+        "general",
+        "parent",
+      )
+      expect(grantA2.error).toBeUndefined()
+      const storedA2: any = await h.durableStorage.get(`dispatch-grant/${grantA2.grantId}`)
+      const legacyGrantB = {
+        ...storedA2,
+        grantId: "legacy-ambiguous-worker-b",
+        stepId: "worker-b",
+      }
+      await h.durableStorage.set("dispatch-grant/legacy-ambiguous-worker-b", legacyGrantB)
+
+      const ambiguous: any = {
+        agent: "general",
+        action: "subagent",
+        resources: ["worker"],
+        sessionID: "parent",
+        source: { messageID: "same-agent-message-ambiguous", id: "same-agent-dispatch-ambiguous" },
+        effect: "allow",
+        message: "",
+      }
+      await evaluate!(ambiguous)
+      expect(ambiguous.effect).toBe("deny")
+      expect(ambiguous.message).toContain("Multiple usable dispatch grants")
+
+      const afterAmbiguous: any = await h.durableStorage.get(`budget/${workflowId}`)
+      expect(afterAmbiguous.byKey["step:worker-a"]).toBe(1)
+      expect(afterAmbiguous.byKey["step:worker-b"]).toBe(1)
+    } finally {
+      h.restore()
+    }
+  })
+})
+
 async function waveLifecycleFixture(workLevel: "wave" | "objective" = "wave") {
   const h = await harness()
   try {
@@ -2079,7 +2299,7 @@ describe("cancellation replay and grant boundaries", () => {
       await h.call("cancel", cancellationRequest(h.workflowId), "general", "parent")
       await h.call("start", { request: "Replacement" }, "general", "parent")
       const before = await h.workflow()
-      for (const name of ["dispatch_grant", "oq_raise", "oq_answer", "oq_reconcile", "oq_reopen", "knowledge_record", "pa_plan", "pa_result", "task_scope", "reopen", "work_release", "task_plan", "work_plan", "budget_grant"]) {
+      for (const name of ["dispatch_grant", "oq_raise", "oq_answer", "oq_reconcile", "oq_reopen", "knowledge_record", "pa_plan", "pa_result", "task_scope", "reopen", "work_release", "task_plan", "work_plan", "budget_grant", "budget_continue"]) {
         const result = await h.call(name, { workflowId: h.workflowId }, "general", "parent")
         expect(result.error).toContain("cancelled")
       }

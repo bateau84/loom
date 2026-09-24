@@ -157,6 +157,23 @@ bun run eval:live -- \
 
 The runtime iterations still execute sequentially; unrelated role-decision/skill cases may use the ordinary parallel budget.
 
+### Budget-continuation incident regression
+
+The live budget-continuation suite seeds an already-existing unfinished Worker whose ordinary and automatic recovery dispatches are exhausted, then sends the same kinds of user requests that exposed the production deadlock. The seed is setup only: recovery itself must use the production Loom tools and a real Worker subagent attachment.
+
+Run both conversational forms three times on the normal Loom model:
+
+```bash
+bun run eval:live -- \
+  --cases BUDGET-CONTINUE-RUNTIME-QUOTA-01,BUDGET-CONTINUE-RUNTIME-SAME-OBJECTIVE-01 \
+  --iterations 3 \
+  --parallel 1 \
+  --network host \
+  --model openai/gpt-5.6-luna
+```
+
+A valid run must observe `loom_budget_continue -> loom_status -> loom_dispatch_grant -> Worker dispatch -> loom_attach` against the seeded workflow `eval-budget-continuation`. Starting a replacement workflow/task, stopping after the budget mutation, or merely describing the intended recovery fails the case.
+
 To intentionally stress concurrent runtime execution, opt in explicitly:
 
 ```bash

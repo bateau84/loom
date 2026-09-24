@@ -27,11 +27,26 @@ export type BudgetGrant = {
   grantedAt: string
 }
 
+export type BudgetContinuation = {
+  key: string
+  agent: string
+  grantedBy: string
+  reason: string
+  confirmation: string
+  authorizationUserMessageId: string
+  requestedDispatches: number
+  stepLimitIncrease: number
+  workflowLimitIncrease: number
+  usedDispatches?: number
+  grantedAt: string
+}
+
 export type BudgetState = {
   totalDispatches: number
   byKey: Record<string, number>
   seenDispatches: string[]
   grants?: BudgetGrant[]
+  continuations?: BudgetContinuation[]
   exhausted?: string
 }
 
@@ -63,13 +78,65 @@ function grantsForKey(state: BudgetState, key: string) {
   return (state.grants ?? []).filter((grant) => grant.key === key).length
 }
 
+function continuationStepIncreaseForKey(state: BudgetState, key: string) {
+  return (state.continuations ?? [])
+    .filter((continuation) => continuation.key === key)
+    .reduce((total, continuation) => total + continuation.stepLimitIncrease, 0)
+}
+
+function automaticStepLimit(state: BudgetState, key: string, agent: string, limits: ExecutionLimits) {
+  return baseStepLimit(agent, limits) + grantsForKey(state, key)
+}
+
+function continuationUsedForKey(state: BudgetState, key: string) {
+  return (state.continuations ?? [])
+    .filter((continuation) => continuation.key === key)
+    .reduce((total, continuation) => total + Math.min(
+      continuation.requestedDispatches,
+      continuation.usedDispatches ?? 0,
+    ), 0)
+}
+
+function continuationRemainingForKey(state: BudgetState, key: string) {
+  return (state.continuations ?? [])
+    .filter((continuation) => continuation.key === key)
+    .reduce(
+      (total, continuation) =>
+        total + Math.max(0, continuation.requestedDispatches - (continuation.usedDispatches ?? 0)),
+      0,
+    )
+}
+
+function totalContinuationRemaining(state: BudgetState) {
+  return (state.continuations ?? []).reduce(
+    (total, continuation) =>
+      total + Math.max(0, continuation.requestedDispatches - (continuation.usedDispatches ?? 0)),
+    0,
+  )
+}
+
+function consumeContinuationDispatch(state: BudgetState, key: string) {
+  for (const continuation of state.continuations ?? []) {
+    if (continuation.key !== key) continue
+    const used = continuation.usedDispatches ?? 0
+    if (used >= continuation.requestedDispatches) continue
+    continuation.usedDispatches = used + 1
+    return true
+  }
+  return false
+}
+
+export function effectiveTotalDispatchLimit(state: BudgetState, limits: ExecutionLimits) {
+  return Math.max(limits.maxTotalDispatches, state.totalDispatches) + totalContinuationRemaining(state)
+}
+
 export function effectiveStepLimit(
   state: BudgetState,
   key: string,
   agent: string,
   limits: ExecutionLimits,
 ) {
-  return baseStepLimit(agent, limits) + grantsForKey(state, key)
+  return automaticStepLimit(state, key, agent, limits) + continuationStepIncreaseForKey(state, key)
 }
 
 export function recordDispatch(input: {
@@ -85,16 +152,29 @@ export function recordDispatch(input: {
     return { allowed: true, duplicate: true, state }
   }
 
-  if (state.totalDispatches >= limits.maxTotalDispatches) {
-    state.exhausted = `total dispatch limit ${limits.maxTotalDispatches} reached`
+  const current = state.byKey[key] ?? 0
+  const continuationUsed = continuationUsedForKey(state, key)
+  const automaticUsed = Math.max(0, current - continuationUsed)
+  const automaticMax = automaticStepLimit(state, key, agent, limits)
+  const max = effectiveStepLimit(state, key, agent, limits)
+  const stepNeedsContinuation = automaticUsed >= automaticMax
+  const workflowNeedsContinuation = state.totalDispatches >= limits.maxTotalDispatches
+  const needsContinuation = stepNeedsContinuation || workflowNeedsContinuation
+
+  if (needsContinuation && continuationRemainingForKey(state, key) <= 0) {
+    state.exhausted = workflowNeedsContinuation
+      ? `total dispatch limit ${limits.maxTotalDispatches} reached; no user-authorized continuation capacity remains for ${key}`
+      : `dispatch limit ${automaticMax} reached for ${key}`
     return { allowed: false, duplicate: false, reason: state.exhausted, state }
   }
 
-  const current = state.byKey[key] ?? 0
-  const max = effectiveStepLimit(state, key, agent, limits)
-
   if (current >= max) {
     state.exhausted = `dispatch limit ${max} reached for ${key}`
+    return { allowed: false, duplicate: false, reason: state.exhausted, state }
+  }
+
+  if (needsContinuation && !consumeContinuationDispatch(state, key)) {
+    state.exhausted = `user-authorized continuation capacity exhausted for ${key}`
     return { allowed: false, duplicate: false, reason: state.exhausted, state }
   }
 
@@ -132,8 +212,8 @@ export function grantExtraDispatch(input: {
   now: string
 }): ExtraDispatchGrantResult {
   const { state, limits, key, agent, grantedBy, reason, progress, evidence = [], now } = input
-  const used = state.byKey[key] ?? 0
-  const currentLimit = effectiveStepLimit(state, key, agent, limits)
+  const used = Math.max(0, (state.byKey[key] ?? 0) - continuationUsedForKey(state, key))
+  const currentLimit = automaticStepLimit(state, key, agent, limits)
   const grants = grantsForKey(state, key)
 
   if (!reason.trim()) {
@@ -149,8 +229,19 @@ export function grantExtraDispatch(input: {
     }
   }
 
-  if (state.totalDispatches >= limits.maxTotalDispatches) {
-    state.exhausted = `total dispatch limit ${limits.maxTotalDispatches} reached`
+  if (continuationRemainingForKey(state, key) > 0) {
+    return {
+      allowed: false,
+      reason: `Target still has user-authorized continuation capacity available.`,
+      state,
+    }
+  }
+
+  if (
+    state.totalDispatches >= limits.maxTotalDispatches &&
+    continuationRemainingForKey(state, key) <= 0
+  ) {
+    state.exhausted = `total dispatch limit ${limits.maxTotalDispatches} reached for ${key}`
     return { allowed: false, reason: state.exhausted, state }
   }
 
@@ -350,6 +441,156 @@ export function grantWorkflowDispatchBudget(input: {
     grant: result.grant,
     previousLimit: result.previousLimit,
     newLimit: result.newLimit,
+    state,
+  }
+}
+
+
+export type WorkflowBudgetContinuationResult =
+  | {
+      allowed: true
+      target: BudgetGrantTarget
+      continuation: BudgetContinuation
+      previousStepLimit: number
+      newStepLimit: number
+      previousWorkflowLimit: number
+      newWorkflowLimit: number
+      state: BudgetState
+    }
+  | {
+      allowed: false
+      reason: string
+      state: BudgetState
+    }
+
+export function continueWorkflowDispatchBudget(input: {
+  state: BudgetState
+  limits: ExecutionLimits
+  workflow: Workflow
+  questions: OpenQuestion[]
+  stepId?: string
+  questionId?: string
+  grantedBy: string
+  reason: string
+  confirmation: string
+  authorizationUserMessageId: string
+  now: string
+}): WorkflowBudgetContinuationResult {
+  const {
+    state,
+    limits,
+    workflow,
+    questions,
+    stepId,
+    questionId,
+    grantedBy,
+    reason,
+    confirmation,
+    authorizationUserMessageId,
+    now,
+  } = input
+
+  if (grantedBy !== "general") {
+    return {
+      allowed: false,
+      reason: "Only general may record user-authorized Loom budget continuation.",
+      state,
+    }
+  }
+
+  if (!reason.trim()) {
+    return { allowed: false, reason: "Budget continuation requires a concrete reason.", state }
+  }
+
+  if (!confirmation.trim()) {
+    return {
+      allowed: false,
+      reason: "Budget continuation requires the exact explicit user instruction authorizing more work.",
+      state,
+    }
+  }
+
+  if (!authorizationUserMessageId.trim()) {
+    return {
+      allowed: false,
+      reason: "Budget continuation requires observed user-message provenance.",
+      state,
+    }
+  }
+
+  if ((state.continuations ?? []).some((item) => item.authorizationUserMessageId === authorizationUserMessageId)) {
+    return {
+      allowed: false,
+      reason: "This user message has already authorized a Loom budget continuation.",
+      state,
+    }
+  }
+
+  const resolved = resolveBudgetGrantTarget({ workflow, questions, stepId, questionId })
+  if (!resolved.target) {
+    return { allowed: false, reason: resolved.reason, state }
+  }
+
+  const target = resolved.target
+  const previousStepLimit = effectiveStepLimit(state, target.key, target.agent, limits)
+  const previousWorkflowLimit = effectiveTotalDispatchLimit(state, limits)
+  const targetUsed = state.byKey[target.key] ?? 0
+  const targetAutomaticUsed = Math.max(0, targetUsed - continuationUsedForKey(state, target.key))
+  const automaticMax = automaticStepLimit(state, target.key, target.agent, limits)
+  const existingContinuation = continuationRemainingForKey(state, target.key)
+  const stepBlocked = targetAutomaticUsed >= automaticMax
+  const workflowBlocked = state.totalDispatches >= limits.maxTotalDispatches
+
+  if (existingContinuation > 0) {
+    return {
+      allowed: false,
+      reason: `Target already has ${existingContinuation} user-authorized continuation dispatch(es) available.`,
+      state,
+    }
+  }
+
+  if (!stepBlocked && !workflowBlocked) {
+    return {
+      allowed: false,
+      reason:
+        `Target still has dispatch capacity: step ${targetAutomaticUsed}/${automaticMax} automatic dispatches used, workflow ${state.totalDispatches}/${limits.maxTotalDispatches} used.`,
+      state,
+    }
+  }
+
+  // A user continuation is one exact-target exceptional dispatch. It does not
+  // waive BR-008's progress requirement for later retries: another no-progress
+  // attempt requires a fresh user message, while material progress continues
+  // through the ordinary progress-grant path when that capacity remains.
+  const requestedDispatches = 1
+  const stepLimitIncrease = 1
+  const workflowLimitIncrease = 1
+  const continuation: BudgetContinuation = {
+    key: target.key,
+    agent: target.agent,
+    grantedBy,
+    reason: reason.trim(),
+    confirmation: confirmation.trim(),
+    authorizationUserMessageId: authorizationUserMessageId.trim(),
+    requestedDispatches,
+    stepLimitIncrease,
+    workflowLimitIncrease,
+    usedDispatches: 0,
+    grantedAt: now,
+  }
+
+  if (!state.continuations) state.continuations = []
+  state.continuations.push(continuation)
+  delete state.exhausted
+
+  return {
+    allowed: true,
+    target,
+    continuation,
+    previousStepLimit,
+    newStepLimit: previousStepLimit + stepLimitIncrease,
+    previousWorkflowLimit,
+    newWorkflowLimit: previousWorkflowLimit + workflowLimitIncrease,
     state,
   }
 }

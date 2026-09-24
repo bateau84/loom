@@ -314,8 +314,9 @@ For **objective-depth** accepted Anchor-backed product work:
 5. use `workLevel=objective` only when the workflow can legitimately close the whole Objective (for example, a one-Wave Objective or the final remaining Wave);
 6. dispatch only steps shown runnable by `loom_status`;
 7. call `loom_dispatch_grant` for the exact runnable step or unanswered OQ immediately before dispatch;
-8. pass the returned `grantId`, workflow ID, and exact step/OQ ID to the child; the child must consume that grant with `loom_attach` before workflow access;
-9. after returns, inspect `loom_status` and continue automatically.
+8. when multiple runnable targets share the same agent role, issue and dispatch **one exact grant at a time**; after that launch is admitted, its grant leaves the selection pool, so you may issue the next exact same-agent grant and still run independent children in parallel. Do not leave multiple unadmitted usable grants for that role outstanding, because Loom fails closed rather than guessing which target a generic subagent launch meant;
+9. pass the returned `grantId`, workflow ID, and exact step/OQ ID to the child; the child must consume that grant with `loom_attach` before workflow access;
+10. after returns, inspect `loom_status` and continue automatically.
 
 A completed Wave workflow is not Objective completion. If `loom_work_status` shows remaining dependency-eligible Waves, start the next workflow on the same accepted Anchor and continue without asking the user.
 
@@ -393,15 +394,19 @@ For either target:
 - give a concrete reason;
 - record the exact progress dimensions that changed: new evidence, changed hypothesis, changed strategy, or reduced unresolved work.
 
-For **Critic** targets, a grant additionally requires **new material evidence**. A changed strategy, changed hypothesis, or reduced unresolved set alone does not justify another Critic dispatch. Pass concrete evidence references in `evidence` so the exceptional Critic retry records what justified it.
+For **Critic** targets, an automatic progress grant additionally requires **new material evidence**. A changed strategy, changed hypothesis, or reduced unresolved set alone does not justify another automatic Critic dispatch. Pass concrete evidence references in `evidence` so the exceptional Critic retry records what justified it.
 
 This applies to work steps, gates, and agent-owned OQ authority dispatches, including Reviewer, Critic, Designer validation, Acceptance, and other agent-owned work.
 
-A budget grant adds capacity; it is not the attachment credential. Still obtain the exact `loom_dispatch_grant` and pass its returned `grantId` to the child. A budget grant permits exactly one additional dispatch. It does not reset prior attempts or the workflow-wide budget. Do not grant budget for an unchanged retry, and do not pre-grant budget while capacity remains. Agents do not extend their own budget; General owns the grant.
+A budget grant adds capacity; it is not the attachment credential. Still obtain the exact `loom_dispatch_grant` and pass its returned `grantId` to the child. A progress grant permits exactly one additional dispatch. It does not reset prior attempts or silently widen the configured automatic-recovery cap. Do not grant budget for an unchanged retry, and do not pre-grant budget while capacity remains. Agents do not extend their own budget; General owns the grant.
 
 Inspect the grant result before claiming capacity or dispatching. An attempted call, even with transport status completed, can return an operation error. If the workflow is missing or the session is not bound, preserve the supplied identity and report the exact lookup/binding gap; this does not establish that restarting or replacing the workflow is required. Do not invent a new workflow, attachment, or successful recovery. After a successful grant, recheck current runnable state and use the exact dispatch grant for the authorized next attempt. Carry the specific new material evidence that justified the retry into the child's handoff, not only into the budget request; capacity and attachment identifiers do not replace evidence. Keep the independent verdict open.
 
-If the per-target extra-grant cap or workflow-wide dispatch cap is exhausted, preserve completed work and report the real execution boundary instead of bypassing it.
+When a target is budget-blocked and the **user explicitly asks Loom to continue**, call `loom_budget_continue` for that exact existing `stepId` or `questionId`. If the current conversation/context already contains the workflow ID and exact target ID, **use them immediately**; do not ask the user to repeat them and do not call status merely to rediscover identifiers you already have. If the identifiers are genuinely absent, inspect `loom_status` once. Pass the exact latest user message as `confirmation` and a concrete unfinished-work reason. Loom binds that confirmation to the latest observed user-message ID and permits exactly **one** target-reserved exceptional dispatch. The same user message cannot be reused to mint another continuation. User continuation does not require inventing a material-progress signal for that one attempt.
+
+Inspect the continuation result before claiming capacity. After success, call `loom_status`, obtain the exact `loom_dispatch_grant`, and continue the same owner/step with a fresh child context. Preserve previous attempts, evidence, scopes, verification requirements, and independent gates. If another retry is needed afterward, use the ordinary material-progress grant path when it is still available; otherwise a fresh explicit user continuation is required. **Do not batch no-progress retries, reuse one user turn, or create a duplicate Task/workflow/objective merely to escape an exhausted dispatch counter.**
+
+If the automatic cap is exhausted and no user continuation has been authorized, preserve completed work and report the real resumable boundary. Ask only whether the user wants to continue; do not imply that the work must be restarted or abandoned.
 
 
 ## Build task graph

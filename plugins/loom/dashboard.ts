@@ -3,7 +3,7 @@ import { chmod, mkdir, open, readFile, readdir, rename, unlink } from "node:fs/p
 import { basename, dirname, isAbsolute, join } from "node:path"
 import { homedir } from "node:os"
 import { acceptanceReadiness, type AcceptancePlan } from "./acceptance"
-import type { BudgetState, ExecutionLimits } from "./budget"
+import { effectiveTotalDispatchLimit, type BudgetState, type ExecutionLimits } from "./budget"
 import { buildDashboardWorkflowContext, type DashboardWorkflowContext } from "./dashboard-context"
 import type { KnowledgeReport } from "./knowledge"
 import type { OpenQuestion } from "./oq"
@@ -390,6 +390,7 @@ async function workflowProjection(
         requirement.proof?.provedAt,
       ]),
       ...(budget?.grants ?? []).map((grant) => grant.grantedAt),
+      ...(budget?.continuations ?? []).map((continuation) => continuation.grantedAt),
     ],
     workflow.createdAt,
   )
@@ -409,7 +410,9 @@ async function workflowProjection(
     ).length,
     budget: {
       ...(budget ? { used: budget.totalDispatches } : {}),
-      ...(limits ? { limit: limits.maxTotalDispatches } : {}),
+      ...(limits
+        ? { limit: budget ? effectiveTotalDispatchLimit(budget, limits) : limits.maxTotalDispatches }
+        : {}),
       exhausted: Boolean(budget?.exhausted),
     },
     ...(acceptance
