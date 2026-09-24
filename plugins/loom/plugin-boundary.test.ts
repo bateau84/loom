@@ -1806,6 +1806,25 @@ describe("dispatch grant target resolution", () => {
       )
       expect(grantB.error).toBeUndefined()
 
+      // Duplicate grant requests for the same target are idempotent, while a
+      // second same-agent target is refused before it can create an ambiguity.
+      const grantBAgain = await h.call(
+        "dispatch_grant",
+        { workflowId, stepId: "worker-b" },
+        "general",
+        "parent",
+      )
+      expect(grantBAgain.error).toBeUndefined()
+      expect(grantBAgain.grantId).toBe(grantB.grantId)
+
+      const prematureA = await h.call(
+        "dispatch_grant",
+        { workflowId, stepId: "worker-a" },
+        "general",
+        "parent",
+      )
+      expect(prematureA.error).toContain("unadmitted worker dispatch grant already targets step worker-b")
+
       const dispatchB: any = {
         agent: "general",
         action: "subagent",
@@ -1865,22 +1884,23 @@ describe("dispatch grant target resolution", () => {
         "worker-a-child",
       )).attached).toBe(true)
 
-      // Two new, unadmitted grants for the same role are genuinely ambiguous.
-      // The permission hook must fail closed instead of guessing.
+      // Normal tool use cannot create two unadmitted same-agent grants.
+      // Seed a legacy/corrupt second grant directly to prove the permission
+      // hook still fails closed if such state is encountered after upgrade.
       const grantA2 = await h.call(
         "dispatch_grant",
         { workflowId, stepId: "worker-a" },
         "general",
         "parent",
       )
-      const grantB2 = await h.call(
-        "dispatch_grant",
-        { workflowId, stepId: "worker-b" },
-        "general",
-        "parent",
-      )
       expect(grantA2.error).toBeUndefined()
-      expect(grantB2.error).toBeUndefined()
+      const storedA2: any = await h.durableStorage.get(`dispatch-grant/${grantA2.grantId}`)
+      const legacyGrantB = {
+        ...storedA2,
+        grantId: "legacy-ambiguous-worker-b",
+        stepId: "worker-b",
+      }
+      await h.durableStorage.set("dispatch-grant/legacy-ambiguous-worker-b", legacyGrantB)
 
       const ambiguous: any = {
         agent: "general",

@@ -3804,6 +3804,63 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 }
               }
 
+              // Prevent General from accidentally creating the fail-closed
+              // ambiguity that the permission hook must defend against. A
+              // same-target request is idempotent; a different outstanding
+              // target for the same role must be launched/admitted first.
+              const currentQuestions = await readQuestions(ctx, value.workflowId)
+              const outstanding: Array<{
+                kind: "step" | "question"
+                id: string
+                grant: NonNullable<Awaited<ReturnType<typeof findUsableDispatchGrant>>>
+              }> = []
+
+              for (const step of runnable(current).filter((candidate) => candidate.agent === expectedAgent)) {
+                const existing = await findUsableDispatchGrant(ctx.storage as any, runtime, {
+                  workflowId: value.workflowId,
+                  stepId: step.id,
+                  expectedAgent,
+                  issuingParentSessionId: tool.sessionID,
+                })
+                if (existing) outstanding.push({ kind: "step", id: step.id, grant: existing })
+              }
+
+              for (const question of currentQuestions.filter(
+                (candidate) =>
+                  candidate.status !== "closed" &&
+                  !candidate.answer &&
+                  candidate.requiredAuthority === expectedAgent,
+              )) {
+                const existing = await findUsableDispatchGrant(ctx.storage as any, runtime, {
+                  workflowId: value.workflowId,
+                  oqId: question.id,
+                  expectedAgent,
+                  issuingParentSessionId: tool.sessionID,
+                })
+                if (existing) outstanding.push({ kind: "question", id: question.id, grant: existing })
+              }
+
+              const requestedKind = value.stepId ? "step" : "question"
+              const requestedId = value.stepId ?? value.questionId!
+              const matching = outstanding.filter(
+                (candidate) => candidate.kind === requestedKind && candidate.id === requestedId,
+              )
+
+              if (outstanding.length > 1) {
+                throw new Error(
+                  `Multiple unadmitted dispatch grants already exist for ${expectedAgent}; allow them to expire or cancel/recover the workflow before issuing another grant.`,
+                )
+              }
+              if (matching.length === 1 && outstanding.length === 1) {
+                return matching[0].grant
+              }
+              if (outstanding.length === 1) {
+                const existing = outstanding[0]
+                throw new Error(
+                  `An unadmitted ${expectedAgent} dispatch grant already targets ${existing.kind} ${existing.id}. Dispatch/admit that target before issuing another same-agent grant.`,
+                )
+              }
+
               const created = await issueDispatchGrantLocked(ctx.storage as any, runtime, {
                 workflowId: value.workflowId,
                 ...(value.stepId ? { stepId: value.stepId } : { oqId: value.questionId! }),
