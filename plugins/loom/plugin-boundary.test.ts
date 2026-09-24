@@ -219,7 +219,7 @@ describe("Loom registered plugin boundary", () => {
   })
 
   test("session context tells Code Mode models to call native Loom tools directly", async () => {
-    const { sessionHooks, restore } = await harness()
+    const { sessionHooks, durableStorage, restore } = await harness()
     try {
       const hook = sessionHooks.get("context")
       expect(hook).toBeDefined()
@@ -235,6 +235,46 @@ describe("Loom registered plugin boundary", () => {
       expect(event.system[0]?.text).toContain("stable workflow dashboard URL")
       expect(event.system[0]?.text).toContain("Desktop browser preview is optional")
       expect(event.system[0]?.text).toContain("do not invoke tools.browser.preview")
+
+      await hook!({
+        sessionID: "authorization-session",
+        system: [],
+        messages: [{
+          id: "real-user-message",
+          role: "user",
+          content: [{ type: "text", text: "keep going with the existing worker" }],
+        }],
+      })
+      expect(await durableStorage.get("session-user-message/authorization-session")).toMatchObject({
+        messageId: "real-user-message",
+        text: "keep going with the existing worker",
+      })
+
+      await hook!({
+        sessionID: "authorization-session",
+        system: [],
+        messages: [
+          {
+            id: "real-user-message",
+            role: "user",
+            content: [{ type: "text", text: "keep going with the existing worker" }],
+          },
+          {
+            id: "synthetic-compaction-continue",
+            role: "user",
+            content: [{
+              type: "text",
+              text: "Continue if you have next steps, or stop and ask for clarification if you are unsure how to proceed.",
+              synthetic: true,
+              metadata: { compaction_continue: true },
+            }],
+          },
+        ],
+      })
+      expect(await durableStorage.get("session-user-message/authorization-session")).toMatchObject({
+        messageId: "real-user-message",
+        text: "keep going with the existing worker",
+      })
     } finally {
       restore()
     }

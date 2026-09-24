@@ -193,16 +193,28 @@ function latestObservedUserMessage(messages: unknown): Omit<ObservedUserMessage,
 
     const messageId = String(message?.id ?? message?.messageID ?? message?.info?.id ?? "").trim()
     const content = message?.content ?? message?.parts
+    const parts = Array.isArray(content) ? content : []
     const text = typeof content === "string"
       ? content.trim()
-      : Array.isArray(content)
-        ? content
-            .filter((part) => part?.type === "text" && typeof part?.text === "string")
-            .map((part) => String(part.text))
-            .join("\n")
-            .trim()
-        : ""
+      : parts
+          .filter((part) => part?.type === "text" && typeof part?.text === "string")
+          .map((part) => String(part.text))
+          .join("\n")
+          .trim()
 
+    const controlMessage =
+      message?.synthetic === true ||
+      message?.metadata?.compaction_continue === true ||
+      parts.some(
+        (part) =>
+          part?.type === "compaction" ||
+          part?.synthetic === true ||
+          part?.metadata?.compaction_continue === true,
+      ) ||
+      text === "Continue if you have next steps, or stop and ask for clarification if you are unsure how to proceed." ||
+      text === "What did we do so far?"
+
+    if (controlMessage) continue
     if (messageId && text) return { messageId, text }
   }
 
