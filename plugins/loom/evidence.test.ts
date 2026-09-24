@@ -31,6 +31,9 @@ describe("Loom evidence ledger", () => {
     expect(safeInputSummary("read", { filePath: "src/main.go", content: "secret" })).toEqual({
       path: "src/main.go",
     })
+    expect(safeInputSummary("skill", { name: "software-engineering" })).toEqual({ skill: "software-engineering", methodology: "practitioner" })
+    expect(safeInputSummary("loom_assessment", { skill: "software-engineering" })).toEqual({ skill: "software-engineering", methodology: "assessment", path: "skills/software-engineering/ASSESSMENT.md" })
+    expect(safeInputSummary("loom_qa", { skill: "software-engineering" })).toEqual({ skill: "software-engineering", methodology: "qa", path: "skills/software-engineering/QA.md" })
   })
 
   test("test claim needs an observed test command", () => {

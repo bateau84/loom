@@ -13,7 +13,7 @@ export function workflowBindingTerminal(workflow: Workflow) {
 const readTools = new Set([
   "find", "grep", "select", "stats", "status", "work_status", "task_status", "scope_status",
   "oq_list", "evidence_list", "evidence_observations", "knowledge_status", "pa_status",
-  "budget_status", "intent_status", "learn_query", "learn_get",
+  "budget_status", "intent_status", "learn_query", "learn_get", "assessment", "qa",
 ])
 
 function loomToolLeaf(name: string) {

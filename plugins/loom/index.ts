@@ -106,6 +106,7 @@ import {
   resetAcceptance,
   type AcceptancePlan,
 } from "./acceptance"
+import { loadSkillCompanion, type SkillCompanionKind } from "./methodology"
 import { taskStepId, validateTaskPlan, type TaskSpec } from "./tasks"
 import {
   assertWaveClaimForTasks,
@@ -659,6 +660,57 @@ async function stepObservations(ctx: any, workflowId: string, stepId: string): P
 
 async function stepClaims(ctx: any, workflowId: string, stepId: string): Promise<EvidenceClaim[]> {
   return scanValues<EvidenceClaim>(ctx, claimPrefix(workflowId, stepId))
+}
+
+type ObservedProducerSkill = { skill: string; stepIds: string[] }
+
+function upstreamDependencyStepIds(workflow: Workflow, targetStepId: string) {
+  const seen = new Set<string>()
+  const visit = (stepId: string) => {
+    const step = workflow.steps.find((candidate) => candidate.id === stepId)
+    if (!step) return
+    for (const dependency of step.dependsOn) {
+      if (seen.has(dependency)) continue
+      seen.add(dependency)
+      visit(dependency)
+    }
+  }
+  visit(targetStepId)
+  return seen
+}
+
+async function observedProducerSkills(ctx: any, workflow: Workflow, targetStepId: string): Promise<ObservedProducerSkill[]> {
+  const upstream = upstreamDependencyStepIds(workflow, targetStepId)
+  const bySkill = new Map<string, Set<string>>()
+  for (const step of workflow.steps) {
+    if (!upstream.has(step.id) || step.agent === "reviewer" || step.agent === "critic") continue
+    const observations = await stepObservations(ctx, workflow.id, step.id)
+    for (const observation of observations) {
+      if (
+        observation.status !== "completed" ||
+        observation.methodology !== "practitioner" ||
+        !observation.skill ||
+        observation.admission?.attempt !== (step.attempt ?? 0)
+      ) continue
+      const steps = bySkill.get(observation.skill) ?? new Set<string>()
+      steps.add(step.id)
+      bySkill.set(observation.skill, steps)
+    }
+  }
+  return [...bySkill.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([skill, stepIds]) => ({ skill, stepIds: [...stepIds] }))
+}
+
+async function attachedMethodologyContext(ctx: any, sessionID: string, agent: string) {
+  const workflowId = (await ctx.storage.get(sessionKey(sessionID))) as string | undefined
+  const stepId = (await ctx.storage.get(sessionStepKey(sessionID))) as string | undefined
+  if (!workflowId || !stepId) return undefined
+  const workflow = await readWorkflow(ctx, workflowId)
+  if (!workflow) return undefined
+  const step = workflow.steps.find((candidate) => candidate.id === stepId)
+  if (!step || step.agent !== agent || !(await exactStepBinding(ctx, sessionID, workflowId, stepId))) return undefined
+  return { workflowId, stepId, producerSkills: await observedProducerSkills(ctx, workflow, stepId) }
 }
 
 async function bindSessionEvidence(ctx: any, sessionID: string, workflowId: string, stepId: string) {
@@ -1311,6 +1363,91 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             return { content: renderToolOutput({ error: error instanceof Error ? error.message : String(error) }) }
           }
         },
+      })
+
+      const loadMethodologyForRole = async (
+        kind: SkillCompanionKind,
+        expectedAgent: "reviewer" | "critic",
+        input: unknown,
+        tool: { agent: string; sessionID: string },
+      ) => {
+        const toolName = kind === "assessment" ? "assessment" : "qa"
+        if (tool.agent !== expectedAgent) {
+          return { content: renderToolOutput({ error: `loom_${toolName} is reserved for ${expectedAgent}.` }) }
+        }
+        const skill = String((input as { skill?: string } | undefined)?.skill ?? "").trim()
+        if (!skill) return { content: renderToolOutput({ error: "Skill is required." }) }
+
+        try {
+          const attached = await attachedMethodologyContext(ctx, tool.sessionID, tool.agent)
+          if (attached && !attached.producerSkills.some((entry) => entry.skill === skill)) {
+            return {
+              content: renderToolOutput({
+                error: `Skill ${skill} was not observed in upstream producer work for this gate.`,
+                producerSkills: attached.producerSkills,
+              }),
+            }
+          }
+
+          const companion = await loadSkillCompanion(skill, kind)
+          if (companion.available) {
+            const admission = await captureEvidenceAdmission(ctx.storage as any, runtime, tool.sessionID, tool.agent)
+            await persistEvidenceObservation(
+              ctx.storage as any,
+              runtime,
+              {
+                id: crypto.randomUUID(),
+                sessionID: tool.sessionID,
+                agent: tool.agent,
+                tool: kind === "assessment" ? "loom_assessment" : "loom_qa",
+                status: "completed",
+                observedAt: new Date().toISOString(),
+                skill: companion.skill,
+                methodology: kind,
+                path: companion.path,
+                resultDigest: await digest({
+                  skill: companion.skill,
+                  methodology: kind,
+                  path: companion.path,
+                  sha256: companion.sha256,
+                }),
+              },
+              admission,
+            )
+          }
+
+          return { content: renderToolOutput({ ...companion, ...(attached ?? {}) }) }
+        } catch (error) {
+          return { content: renderToolOutput({ error: error instanceof Error ? error.message : String(error) }) }
+        }
+      }
+
+      addLoomTool({
+        name: "assessment",
+        description:
+          "Return a skill's Reviewer ASSESSMENT.md companion. This does not replace OpenCode's native skill loader; attached gates may request only skills actually observed upstream.",
+        input: {
+          type: "object",
+          properties: { skill: { type: "string" } },
+          required: ["skill"],
+          additionalProperties: false,
+        },
+        options: { namespace: "loom", codemode: false },
+        execute: async (input, tool) => loadMethodologyForRole("assessment", "reviewer", input, tool),
+      })
+
+      addLoomTool({
+        name: "qa",
+        description:
+          "Return a skill's Critic QA.md companion. This does not replace OpenCode's native skill loader; attached gates may request only skills actually observed upstream.",
+        input: {
+          type: "object",
+          properties: { skill: { type: "string" } },
+          required: ["skill"],
+          additionalProperties: false,
+        },
+        options: { namespace: "loom", codemode: false },
+        execute: async (input, tool) => loadMethodologyForRole("qa", "critic", input, tool),
       })
 
       addLoomTool({
@@ -4079,6 +4216,12 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             return { content: renderToolOutput({ error: error instanceof Error ? error.message : String(error) }) }
           }
 
+          let producerSkills: ObservedProducerSkill[] | undefined
+          if (value.stepId && (tool.agent === "reviewer" || tool.agent === "critic")) {
+            const current = await readWorkflow(ctx, value.workflowId)
+            if (current) producerSkills = await observedProducerSkills(ctx, current, value.stepId)
+          }
+
           return {
             content: renderToolOutput({
               attached: true,
@@ -4094,6 +4237,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                   : "Write scope limits mutation only; acceptedAuthority identifies the governing source. Read that authority as needed, prove the assigned outcome beyond the write list, and request scope extension when another load-bearing write is required.",
               } : {}),
               ...(task ? { task } : {}),
+              ...(producerSkills ? { producerSkills } : {}),
             }),
           }
         },

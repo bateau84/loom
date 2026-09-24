@@ -19,6 +19,8 @@ export type EvidenceObservation = {
   path?: string
   destination?: string
   reason?: string
+  skill?: string
+  methodology?: "practitioner" | "assessment" | "qa"
   reportPromotion?: {
     id: string
     source: string
@@ -69,11 +71,22 @@ export function safeInputSummary(tool: string, input: unknown) {
 
   const value = input as Record<string, unknown>
 
+  if (tool === "skill") {
+    const skill = typeof value.name === "string" ? value.name : typeof value.id === "string" ? value.id : undefined
+    if (skill) return { skill: skill.slice(0, 200), methodology: "practitioner" as const }
+  }
+
   if ((tool === "bash" || tool === "shell") && typeof value.command === "string") {
     return { command: redactCommand(value.command).slice(0, 1000) }
   }
 
   const loomTool = tool.replace(/^loom[._]/, "")
+  if ((loomTool === "assessment" || loomTool === "qa") && typeof value.skill === "string") {
+    const skill = value.skill.slice(0, 200)
+    const methodology = loomTool === "assessment" ? "assessment" as const : "qa" as const
+    const filename = methodology === "assessment" ? "ASSESSMENT.md" : "QA.md"
+    return { skill, methodology, path: `skills/${skill}/${filename}` }
+  }
   if (loomTool === "report_promote") {
     return {
       ...(typeof value.source === "string" ? { path: value.source.slice(0, 1000) } : {}),
