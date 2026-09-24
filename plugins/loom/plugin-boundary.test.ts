@@ -1737,7 +1737,7 @@ Verdict: FAIL
 // External OKF discovery is represented by a host observation fixture only.
 
 describe("dispatch grant target resolution", () => {
-  test("charges the exact granted Worker when multiple Worker steps are runnable and fails closed on ambiguity", async () => {
+  test("uses exact same-agent grants, admits launches, and fails closed on true ambiguity", async () => {
     const h = await harness()
     try {
       const started = await h.call(
@@ -1794,6 +1794,10 @@ describe("dispatch grant target resolution", () => {
         write: ["src/b/**"],
       })
 
+      const evaluate = h.permissionHooks.get("evaluate")
+      expect(evaluate).toBeDefined()
+
+      // Only B has an exact grant. Runnable ordering must not charge A.
       const grantB = await h.call(
         "dispatch_grant",
         { workflowId, stepId: "worker-b" },
@@ -1802,8 +1806,6 @@ describe("dispatch grant target resolution", () => {
       )
       expect(grantB.error).toBeUndefined()
 
-      const evaluate = h.permissionHooks.get("evaluate")
-      expect(evaluate).toBeDefined()
       const dispatchB: any = {
         agent: "general",
         action: "subagent",
@@ -1820,6 +1822,12 @@ describe("dispatch grant target resolution", () => {
       expect(afterB.byKey["step:worker-b"]).toBe(1)
       expect(afterB.byKey["step:worker-a"]).toBeUndefined()
 
+      const storedB: any = await h.durableStorage.get(`dispatch-grant/${grantB.grantId}`)
+      expect(storedB.admittedAt).toBeDefined()
+      expect(storedB.admittedDispatchId).toContain("same-agent-dispatch-b")
+
+      // An admitted B grant leaves the target-selection pool but remains
+      // consumable by B's child. A can therefore launch in parallel.
       const grantA = await h.call(
         "dispatch_grant",
         { workflowId, stepId: "worker-a" },
@@ -1827,6 +1835,52 @@ describe("dispatch grant target resolution", () => {
         "parent",
       )
       expect(grantA.error).toBeUndefined()
+
+      const dispatchA: any = {
+        agent: "general",
+        action: "subagent",
+        resources: ["worker"],
+        sessionID: "parent",
+        source: { messageID: "same-agent-message-a", id: "same-agent-dispatch-a" },
+        effect: "allow",
+        message: "",
+      }
+      await evaluate!(dispatchA)
+      expect(dispatchA.effect).not.toBe("deny")
+
+      const afterA: any = await h.durableStorage.get(`budget/${workflowId}`)
+      expect(afterA.byKey["step:worker-a"]).toBe(1)
+      expect(afterA.byKey["step:worker-b"]).toBe(1)
+
+      expect((await h.call(
+        "attach",
+        { workflowId, stepId: "worker-b", grantId: grantB.grantId },
+        "worker",
+        "worker-b-child",
+      )).attached).toBe(true)
+      expect((await h.call(
+        "attach",
+        { workflowId, stepId: "worker-a", grantId: grantA.grantId },
+        "worker",
+        "worker-a-child",
+      )).attached).toBe(true)
+
+      // Two new, unadmitted grants for the same role are genuinely ambiguous.
+      // The permission hook must fail closed instead of guessing.
+      const grantA2 = await h.call(
+        "dispatch_grant",
+        { workflowId, stepId: "worker-a" },
+        "general",
+        "parent",
+      )
+      const grantB2 = await h.call(
+        "dispatch_grant",
+        { workflowId, stepId: "worker-b" },
+        "general",
+        "parent",
+      )
+      expect(grantA2.error).toBeUndefined()
+      expect(grantB2.error).toBeUndefined()
 
       const ambiguous: any = {
         agent: "general",
@@ -1840,6 +1894,10 @@ describe("dispatch grant target resolution", () => {
       await evaluate!(ambiguous)
       expect(ambiguous.effect).toBe("deny")
       expect(ambiguous.message).toContain("Multiple usable dispatch grants")
+
+      const afterAmbiguous: any = await h.durableStorage.get(`budget/${workflowId}`)
+      expect(afterAmbiguous.byKey["step:worker-a"]).toBe(1)
+      expect(afterAmbiguous.byKey["step:worker-b"]).toBe(1)
     } finally {
       h.restore()
     }

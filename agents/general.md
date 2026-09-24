@@ -314,7 +314,7 @@ For **objective-depth** accepted Anchor-backed product work:
 5. use `workLevel=objective` only when the workflow can legitimately close the whole Objective (for example, a one-Wave Objective or the final remaining Wave);
 6. dispatch only steps shown runnable by `loom_status`;
 7. call `loom_dispatch_grant` for the exact runnable step or unanswered OQ immediately before dispatch;
-8. when multiple runnable targets share the same agent role, issue and dispatch **one exact grant at a time**; do not leave multiple usable grants for that role outstanding, because Loom fails closed rather than guessing which same-agent target a generic subagent launch meant;
+8. when multiple runnable targets share the same agent role, issue and dispatch **one exact grant at a time**; after that launch is admitted, its grant leaves the selection pool, so you may issue the next exact same-agent grant and still run independent children in parallel. Do not leave multiple unadmitted usable grants for that role outstanding, because Loom fails closed rather than guessing which target a generic subagent launch meant;
 9. pass the returned `grantId`, workflow ID, and exact step/OQ ID to the child; the child must consume that grant with `loom_attach` before workflow access;
 10. after returns, inspect `loom_status` and continue automatically.
 

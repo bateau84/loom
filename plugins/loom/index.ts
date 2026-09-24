@@ -1,6 +1,6 @@
 import { captureEvidenceAdmission, observationCallKey, persistEvidenceObservation, sessionAttachmentKey, type EvidenceAdmission } from "./evidence-admission"
 import type * as OpenCodePlugin from "@opencode/plugin"
-import { RUNTIME_STATE_VERSION, consumeDispatchGrantLocked, createProjectStorage, createTransactionalStorage, ensureRuntimeStateVersion, findUsableDispatchGrant, importLegacyPluginStorage, issueDispatchGrantLocked, migrateLegacySessionState, resolveRuntimeIdentity, sessionBoundToOq, sessionBoundToStep, sessionBoundToWorkflow, withRuntimeAdvisoryLock, withRuntimeLock, withRuntimeLocks, type LoomRuntimeIdentity } from "./runtime"
+import { RUNTIME_STATE_VERSION, admitDispatchGrantLocked, consumeDispatchGrantLocked, createProjectStorage, createTransactionalStorage, ensureRuntimeStateVersion, findUsableDispatchGrant, importLegacyPluginStorage, issueDispatchGrantLocked, migrateLegacySessionState, resolveRuntimeIdentity, sessionBoundToOq, sessionBoundToStep, sessionBoundToWorkflow, withRuntimeAdvisoryLock, withRuntimeLock, withRuntimeLocks, type LoomRuntimeIdentity } from "./runtime"
 import { LoomRpc } from "./rpc"
 import { assertLoomToolAdmission, assertCancelledChildToolAdmission, cancelWorkflow, ensureCompletedWaveHistory, workflowBindingTerminal, type CancelWorkflowInput } from "./lifecycle"
 import { buildSidebarSnapshot } from "./sidebar"
@@ -181,6 +181,10 @@ type ObservedUserMessage = {
 
 function sessionUserMessageKey(sessionID: string) {
   return `session-user-message/${sessionID}`
+}
+
+function continuationAuthorizationUseKey(sessionID: string, userMessageId: string) {
+  return `budget-continuation-user-message/${encodeURIComponent(sessionID)}/${encodeURIComponent(userMessageId)}`
 }
 
 function latestObservedUserMessage(messages: unknown): Omit<ObservedUserMessage, "observedAt"> | undefined {
@@ -3148,7 +3152,29 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             return { content: renderToolOutput({ error: "Workflow not found or current session is not bound to it." }) }
           }
 
-          const mutation = await withRuntimeLock(runtime, "workflow", value.workflowId, async () => {
+          const authorizationUseKey = continuationAuthorizationUseKey(
+            tool.sessionID,
+            observedUserMessage.messageId,
+          )
+          const mutation = await withRuntimeLocks(runtime, [
+            { aggregate: "workflow", resourceIdentity: value.workflowId },
+            {
+              aggregate: "budget-continuation-user-message",
+              resourceIdentity: `${tool.sessionID}:${observedUserMessage.messageId}`,
+            },
+          ], async () => {
+            if (await ctx.storage.get(authorizationUseKey)) {
+              const state = await readBudget(ctx, value.workflowId)
+              return {
+                state,
+                result: {
+                  allowed: false as const,
+                  reason: "This observed user message has already authorized a Loom budget continuation.",
+                  state,
+                },
+              }
+            }
+
             const workflow = await readBoundWorkflow(
               ctx,
               tool.sessionID,
@@ -3176,6 +3202,13 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
             if (result.allowed) {
               await ctx.storage.set(budgetKey(value.workflowId), state)
+              await ctx.storage.set(authorizationUseKey, {
+                workflowId: value.workflowId,
+                target: result.target,
+                userMessageId: observedUserMessage.messageId,
+                confirmation: observedUserMessage.text,
+                usedAt: new Date().toISOString(),
+              })
               await bumpWorkflowRevisionLocked(ctx, runtime, value.workflowId)
             }
             return { state, result }
@@ -4493,8 +4526,8 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       }
 
       const grantedTargets: Array<
-        | { kind: "step"; step: (typeof runnableSteps)[number] }
-        | { kind: "question"; question: (typeof openQuestions)[number] }
+        | { kind: "step"; step: (typeof runnableSteps)[number]; grant: NonNullable<Awaited<ReturnType<typeof findUsableDispatchGrant>>> }
+        | { kind: "question"; question: (typeof openQuestions)[number]; grant: NonNullable<Awaited<ReturnType<typeof findUsableDispatchGrant>>> }
       > = []
 
       for (const step of runnableSteps) {
@@ -4504,7 +4537,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           expectedAgent: target,
           issuingParentSessionId: event.sessionID,
         })
-        if (grant) grantedTargets.push({ kind: "step", step })
+        if (grant) grantedTargets.push({ kind: "step", step, grant })
       }
 
       for (const question of openQuestions) {
@@ -4514,7 +4547,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           expectedAgent: target,
           issuingParentSessionId: event.sessionID,
         })
-        if (grant) grantedTargets.push({ kind: "question", question })
+        if (grant) grantedTargets.push({ kind: "question", question, grant })
       }
 
       if (grantedTargets.length === 0) {
@@ -4556,6 +4589,23 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         const budget = await readBudget(ctx, workflow.id)
         const result = recordDispatch({ state: budget, limits, dispatchID, key, agent: target })
         if (result.allowed) {
+          try {
+            await admitDispatchGrantLocked(ctx.storage as any, runtime, {
+              grantId: grantedTarget.grant.grantId,
+              workflowId: workflow.id,
+              ...(runnableStep ? { stepId: runnableStep.id } : { oqId: openQuestion!.id }),
+              expectedAgent: target,
+              issuingParentSessionId: event.sessionID,
+              dispatchId: dispatchID,
+            })
+          } catch (error) {
+            return {
+              allowed: false as const,
+              duplicate: false as const,
+              reason: `Dispatch grant admission failed: ${error instanceof Error ? error.message : String(error)}`,
+              state: budget,
+            }
+          }
           await ctx.storage.set(budgetKey(workflow.id), budget)
           await bumpWorkflowRevisionLocked(ctx, runtime, workflow.id)
           dashboardPublisher.trigger()
@@ -4565,7 +4615,9 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
       if (!recorded.allowed) {
         event.effect = "deny"
-        event.message = `Loom execution budget exhausted: ${recorded.reason}. Preserve this workflow and target. A fresh explicit user message may authorize one exact-target dispatch through loom_budget_continue; do not duplicate the task or workflow.`
+        event.message = recorded.reason.startsWith("Dispatch grant admission failed:")
+          ? `${recorded.reason} Issue a fresh exact loom_dispatch_grant before retrying.`
+          : `Loom execution budget exhausted: ${recorded.reason}. Preserve this workflow and target. A fresh explicit user message may authorize one exact-target dispatch through loom_budget_continue; do not duplicate the task or workflow.`
       }
     })
 

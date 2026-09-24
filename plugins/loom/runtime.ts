@@ -1842,6 +1842,8 @@ export type DispatchGrantV1 = {
   issuingParentSessionId: string
   createdAt: string
   expiresAt: string
+  admittedAt?: string
+  admittedDispatchId?: string
   consumedAt?: string
   consumingSessionId?: string
   revokedAt?: string
@@ -1971,6 +1973,7 @@ export async function findUsableDispatchGrant(
       if (
         grant?.schemaVersion === 1 &&
         grant.projectId === runtime.projectId &&
+        !grant.admittedAt &&
         !grant.consumedAt &&
         !grant.revokedAt &&
         Date.parse(grant.expiresAt) > now &&
@@ -1982,6 +1985,45 @@ export async function findUsableDispatchGrant(
     after = page.next
   } while (after)
   return undefined
+}
+
+
+type AdmitDispatchGrantInput = {
+  grantId: string
+  workflowId: string
+  stepId?: string
+  oqId?: string
+  expectedAgent: string
+  issuingParentSessionId: string
+  dispatchId: string
+  now?: Date
+}
+
+export async function admitDispatchGrantLocked(
+  storage: RawStorage,
+  runtime: LoomRuntimeIdentity,
+  input: AdmitDispatchGrantInput,
+): Promise<DispatchGrantV1> {
+  await assertGrantWorkflowActive(storage, input.workflowId)
+  const grant = (await storage.get(dispatchGrantKey(input.grantId))) as DispatchGrantV1 | undefined
+  if (!grant || grant.schemaVersion !== 1) throw new Error("Dispatch grant not found.")
+  if (grant.projectId !== runtime.projectId) throw new Error("Dispatch grant belongs to another project.")
+  if (!grantMatchesSelector(grant, input)) throw new Error("Dispatch grant scope changed before dispatch.")
+  if (grant.revokedAt) throw new Error("Dispatch grant has been revoked.")
+  if (grant.consumedAt) throw new Error("Dispatch grant has already been consumed.")
+  if (grant.admittedAt) throw new Error("Dispatch grant has already admitted a subagent launch.")
+  if (!input.dispatchId.trim()) throw new Error("Dispatch admission requires a dispatch ID.")
+
+  const now = input.now ?? new Date()
+  if (Date.parse(grant.expiresAt) <= now.getTime()) throw new Error("Dispatch grant has expired.")
+
+  const admitted: DispatchGrantV1 = {
+    ...grant,
+    admittedAt: now.toISOString(),
+    admittedDispatchId: input.dispatchId,
+  }
+  await storage.set(dispatchGrantKey(grant.grantId), admitted)
+  return admitted
 }
 
 type ConsumeDispatchGrantInput = {

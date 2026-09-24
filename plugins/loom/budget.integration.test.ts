@@ -277,6 +277,12 @@ describe("Loom budget recovery plugin integration", () => {
       const persistedAfterContinuation = await storage.get(budgetKey) as BudgetState
       expect(persistedAfterContinuation.continuations).toHaveLength(1)
       expect(persistedAfterContinuation.byKey[dispatchKey]).toBe(3)
+      expect(await storage.get(
+        `budget-continuation-user-message/${encodeURIComponent(sessionID)}/${encodeURIComponent("user-budget-continuation-1")}`,
+      )).toMatchObject({
+        workflowId,
+        userMessageId: "user-budget-continuation-1",
+      })
 
       const continuedStatus = await budgetStatusTool!.execute(
         { workflowId },
