@@ -348,6 +348,25 @@ describe("Loom registered plugin boundary", () => {
             createdAt: "old",
             updatedAt: "old",
           },
+          {
+            id: "task:1:completed",
+            logicalId: "completed",
+            type: "task",
+            title: "Completed legacy task",
+            objective: "Preserve completed legacy work",
+            status: "complete",
+            generation: 1,
+            parentId: "wave:1:legacy/wave",
+            dependsOn: [],
+            result: {
+              workflowId: "legacy-reviewed-workflow",
+              summary: "Completed legacy behavior is already proven.",
+              evidenceClaimIds: ["claim-legacy-complete"],
+              completedAt: "before-holistic-plan",
+            },
+            createdAt: "old",
+            updatedAt: "old",
+          },
         ],
         createdAt: "old",
         updatedAt: "old",
@@ -415,22 +434,88 @@ describe("Loom registered plugin boundary", () => {
         objectiveId,
       }])
 
-      work.plans = [{
-        generation: 1,
-        revision: 1,
-        amendments: [],
+      const adoptedTask = {
+        id: "remaining",
+        title: "Remaining rich-plan work",
+        objective: "Finish the remaining accepted Objective.",
+        rationale: "This is the remaining implementation contribution after preserved legacy work.",
+        dependsOn: [],
+        authorityRefs: [workflow.anchor],
+        constraints: ["Preserve the already-proven legacy behavior."],
+        acceptanceCriteria: ["The remaining Objective behavior is complete."],
+        subtasks: [],
+        integration: ["Compose with the preserved completed legacy behavior."],
+        verify: ["Run the assembled Objective acceptance path."],
+      }
+      const adopted = await h.call("work_plan", {
+        workflowId,
+        expectedVersion: work.version,
+        replaceReason: "Adopt holistic Plan semantics at the safe planning boundary.",
         goal: "Deliver the accepted Objective.",
         assumptions: [],
         outOfScope: [],
         authorityRefs: [workflow.anchor],
-        obligations: [],
-        riskBoundaries: [],
-        acceptanceCoverage: [],
+        obligations: [
+          {
+            id: "legacy-complete",
+            sourceRef: workflow.anchor,
+            statement: "Preserve the already-proven legacy behavior.",
+            disposition: "already-satisfied",
+            taskIds: [],
+            verification: ["claim-legacy-complete"],
+          },
+          {
+            id: "remaining",
+            sourceRef: workflow.anchor,
+            statement: "Finish the remaining accepted Objective behavior.",
+            disposition: "implement",
+            taskIds: ["remaining"],
+            verification: ["Run the assembled Objective acceptance path."],
+          },
+        ],
+        riskBoundaries: [{
+          id: "remaining-integration",
+          title: "Legacy integration boundary",
+          description: "Remaining work must preserve and compose with completed legacy behavior.",
+          taskIds: ["remaining"],
+        }],
+        acceptanceCoverage: [{
+          id: "objective-acceptance",
+          title: "Accepted Objective",
+          criterion: "The assembled Objective works with preserved legacy behavior.",
+          taskIds: ["remaining"],
+        }],
         relationships: [],
-        correctionRouting: [],
-        phases: [],
-      }]
-      await h.durableStorage.set(`work/${encodeURIComponent(objectiveId)}`, work)
+        correctionRouting: [{
+          condition: "Remaining decomposition is incomplete",
+          routeTo: "planner",
+          taskId: "remaining",
+        }],
+        phases: [{
+          id: "remaining",
+          title: "Remaining work",
+          objective: "Finish the remaining Objective.",
+          waves: [{
+            id: "delivery",
+            title: "Delivery",
+            objective: "Deliver the remaining implementation contribution.",
+            constraints: ["Do not rerun already-proven legacy work solely for migration."],
+            tasks: [adoptedTask],
+          }],
+        }],
+      }, "planner", plannerSession)
+      expect(adopted.error).toBeUndefined()
+      expect(adopted.generation).toBe(2)
+
+      const adoptedWork: any = await h.durableStorage.get(`work/${encodeURIComponent(objectiveId)}`)
+      expect(adoptedWork.plans.at(-1)).toMatchObject({ generation: 2, revision: 1 })
+      expect(adoptedWork.nodes.find((node: any) => node.id === "task:1:completed")).toMatchObject({
+        status: "complete",
+        result: {
+          workflowId: "legacy-reviewed-workflow",
+          evidenceClaimIds: ["claim-legacy-complete"],
+        },
+      })
 
       const afterGeneral = { sessionID: generalSession, system: [] as Array<{ type: string; text: string }> }
       await context(afterGeneral)

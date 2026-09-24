@@ -207,7 +207,7 @@ export type WorkHierarchy = {
   generation: number
   workflowIds: string[]
   nodes: WorkNode[]
-  /** Immutable semantic Plan snapshots, retaining every revision within each generation. */
+  /** Current semantic Plan snapshot per generation plus bounded inverse deltas for prior revisions. */
   plans?: WorkPlanSnapshot[]
   createdAt: string
   updatedAt: string

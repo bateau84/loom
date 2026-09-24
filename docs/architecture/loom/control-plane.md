@@ -260,7 +260,7 @@ Model-facing Plan projection is intentionally bounded even though durable Plan s
 
 Not every breaking control-plane change can be migrated mechanically. Loom therefore separates deterministic runtime-schema upgrades from semantic compatibility actions.
 
-Runtime version 4 fences older writers but deliberately does not invent rich Plan semantics for pre-v4 Objectives. `plugins/loom/upgrade-actions.ts` derives `holistic-plan-adoption-v1` when an active current generation lacks a holistic Plan snapshot.
+Runtime version 4 fences older writers but deliberately does not invent rich Plan semantics for pre-v4 Objectives. `plugins/loom/upgrade-actions.ts` derives `holistic-plan-adoption-v1` when an active current generation lacks a holistic Plan snapshot and still has claimed or unfinished implementation work. A legacy Objective whose implementation work is already complete is not reopened solely to migrate Plan representation while its remaining final documentation/acceptance gates finish.
 
 The action is Objective-scoped and state-derived:
 

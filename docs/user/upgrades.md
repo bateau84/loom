@@ -54,7 +54,7 @@ If a future migration cannot prove ownership safely, Loom stops rather than merg
 
 Runtime version 4 adds the first semantic compatibility action: `holistic-plan-adoption-v1`.
 
-An active Objective created before holistic Plan snapshots is detected when its current generation exists but has no rich Plan snapshot. Loom does **not** synthesize rationale, acceptance criteria, risks, integration semantics, or authority mappings from the legacy Task DAG.
+An active Objective created before holistic Plan snapshots is detected when its current generation exists, has no rich Plan snapshot, and still has claimed or unfinished implementation work. A legacy Objective whose implementation work is already complete is not reopened or nagged solely to migrate representation while its remaining final documentation/acceptance gates finish. Loom does **not** synthesize rationale, acceptance criteria, risks, integration semantics, or authority mappings from the legacy Task DAG.
 
 Instead:
 
