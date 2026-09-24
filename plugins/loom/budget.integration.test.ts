@@ -233,6 +233,8 @@ describe("Loom budget recovery plugin integration", () => {
         { agent: "general", sessionID },
       )
       expect(deniedDispatchGrant.content).not.toContain("## Error")
+      const deniedGrantMatch = deniedDispatchGrant.content.match(/\*\*Grant ID:\*\*\s+`([^`]+)`/)
+      expect(deniedGrantMatch).not.toBeNull()
 
       const deniedEvent = {
         agent: "general",
@@ -246,6 +248,7 @@ describe("Loom budget recovery plugin integration", () => {
       await evaluatePermission!(deniedEvent)
       expect(deniedEvent.effect).toBe("deny")
       expect(deniedEvent.message).toContain("dispatch limit 3 reached")
+      expect((await storage.get(`dispatch-grant/${deniedGrantMatch![1]}`) as any).admittedAt).toBeDefined()
 
       expect(contextHook).toBeDefined()
       await contextHook!({

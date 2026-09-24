@@ -4587,25 +4587,30 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       const recorded = await withRuntimeLock(runtime, "workflow", workflow.id, async () => {
         const limits = await readLimits(ctx, workflow.id)
         const budget = await readBudget(ctx, workflow.id)
+        try {
+          // Admission consumes the exact launch credential even when the
+          // budget later denies this launch. That prevents a failed
+          // pre-continuation grant from becoming stale authority after the
+          // budget is extended.
+          await admitDispatchGrantLocked(ctx.storage as any, runtime, {
+            grantId: grantedTarget.grant.grantId,
+            workflowId: workflow.id,
+            ...(runnableStep ? { stepId: runnableStep.id } : { oqId: openQuestion!.id }),
+            expectedAgent: target,
+            issuingParentSessionId: event.sessionID,
+            dispatchId: dispatchID,
+          })
+        } catch (error) {
+          return {
+            allowed: false as const,
+            duplicate: false as const,
+            reason: `Dispatch grant admission failed: ${error instanceof Error ? error.message : String(error)}`,
+            state: budget,
+          }
+        }
+
         const result = recordDispatch({ state: budget, limits, dispatchID, key, agent: target })
         if (result.allowed) {
-          try {
-            await admitDispatchGrantLocked(ctx.storage as any, runtime, {
-              grantId: grantedTarget.grant.grantId,
-              workflowId: workflow.id,
-              ...(runnableStep ? { stepId: runnableStep.id } : { oqId: openQuestion!.id }),
-              expectedAgent: target,
-              issuingParentSessionId: event.sessionID,
-              dispatchId: dispatchID,
-            })
-          } catch (error) {
-            return {
-              allowed: false as const,
-              duplicate: false as const,
-              reason: `Dispatch grant admission failed: ${error instanceof Error ? error.message : String(error)}`,
-              state: budget,
-            }
-          }
           await ctx.storage.set(budgetKey(workflow.id), budget)
           await bumpWorkflowRevisionLocked(ctx, runtime, workflow.id)
           dashboardPublisher.trigger()
@@ -4614,10 +4619,11 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       })
 
       if (!recorded.allowed) {
+        const reason = recorded.reason ?? "Unknown dispatch denial."
         event.effect = "deny"
-        event.message = recorded.reason.startsWith("Dispatch grant admission failed:")
-          ? `${recorded.reason} Issue a fresh exact loom_dispatch_grant before retrying.`
-          : `Loom execution budget exhausted: ${recorded.reason}. Preserve this workflow and target. A fresh explicit user message may authorize one exact-target dispatch through loom_budget_continue; do not duplicate the task or workflow.`
+        event.message = reason.startsWith("Dispatch grant admission failed:")
+          ? `${reason} Issue a fresh exact loom_dispatch_grant before retrying.`
+          : `Loom execution budget exhausted: ${reason}. Preserve this workflow and target. A fresh explicit user message may authorize one exact-target dispatch through loom_budget_continue; do not duplicate the task or workflow.`
       }
     })
 
