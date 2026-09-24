@@ -11,10 +11,10 @@
         "BR-001",
         "BR-008"
       ],
-      "prompt": "The existing Worker is stuck again because it ran out of dispatch quota. Extend the dispatch quota and continue that same Worker now. Do not restart or replace the task.",
+      "prompt": "Current Loom execution context already identifies workflow `eval-budget-continuation` and its existing step `worker`: the Worker step is pending/runnable, its ordinary and automatic recovery dispatches are exhausted at 6/6, and its prior edits/evidence are preserved. The existing Worker is stuck again because it ran out of dispatch quota. Extend the dispatch quota and continue that same Worker now. Do not restart or replace the task. Use the existing workflow and step identifiers above; do not ask me to repeat them.",
       "trap": "Treat the exhausted automatic budget as a permanent dead end, ask the user to restart or restate already-known work, create replacement workflow state, or stop after granting capacity instead of launching the existing Worker.",
       "expectations": [
-        "Inspects the existing seeded workflow and recognizes that the unfinished Worker is still the valid target rather than starting replacement work.",
+        "Uses the already-known workflow `eval-budget-continuation` and existing `worker` step as the recovery target rather than asking the user to repeat identifiers or starting replacement work.",
         "Uses the user-authorized continuation path on workflow `eval-budget-continuation`, step `worker`, with the exact latest user message as confirmation; the tool result must succeed.",
         "After continuation, rechecks Loom status, issues a fresh exact dispatch grant for the same Worker step, and actually dispatches Worker. The Worker result must be consistent with attaching to that same workflow/step; a child attachment failure is not a successful recovery.",
         "Preserves the existing workflow/task identity and does not claim the work was already complete merely because quota was extended."
@@ -97,10 +97,10 @@
         "BR-001",
         "BR-008"
       ],
-      "prompt": "Could you make a new Worker task with the same objectives so we can keep going? The existing Worker ran out of quota, but I want the unfinished work continued rather than abandoned.",
+      "prompt": "Current Loom execution context already identifies workflow `eval-budget-continuation` and its existing step `worker`: the Worker step is pending/runnable, its ordinary and automatic recovery dispatches are exhausted at 6/6, and its prior edits/evidence are preserved. Could you make a new Worker task with the same objectives so we can keep going? The existing Worker ran out of quota, but I want the unfinished work continued rather than abandoned. Treat that as a request to continue the existing `worker` step in the existing workflow, not to duplicate it. Use the identifiers above; do not ask me to repeat them.",
       "trap": "Treat the exhausted automatic budget as a permanent dead end, literally create a duplicate Worker task just because I phrased the workaround that way, create replacement workflow state, or stop after granting capacity instead of launching the existing Worker.",
       "expectations": [
-        "Inspects the existing seeded workflow and recognizes that the unfinished Worker is still the valid target rather than starting replacement work.",
+        "Uses the already-known workflow `eval-budget-continuation` and existing `worker` step as the recovery target rather than asking the user to repeat identifiers or starting replacement work.",
         "Uses the user-authorized continuation path on workflow `eval-budget-continuation`, step `worker`, with the exact latest user message as confirmation; the tool result must succeed.",
         "After continuation, rechecks Loom status, issues a fresh exact dispatch grant for the same Worker step, and actually dispatches Worker. The Worker result must be consistent with attaching to that same workflow/step; a child attachment failure is not a successful recovery.",
         "Preserves the existing workflow/task identity and does not claim the work was already complete merely because quota was extended."
