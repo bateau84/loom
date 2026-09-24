@@ -87,6 +87,15 @@ function automaticStepLimit(state: BudgetState, key: string, agent: string, limi
   return baseStepLimit(agent, limits) + grantsForKey(state, key)
 }
 
+function continuationUsedForKey(state: BudgetState, key: string) {
+  return (state.continuations ?? [])
+    .filter((continuation) => continuation.key === key)
+    .reduce((total, continuation) => total + Math.min(
+      continuation.requestedDispatches,
+      continuation.usedDispatches ?? 0,
+    ), 0)
+}
+
 function continuationRemainingForKey(state: BudgetState, key: string) {
   return (state.continuations ?? [])
     .filter((continuation) => continuation.key === key)
@@ -143,9 +152,11 @@ export function recordDispatch(input: {
   }
 
   const current = state.byKey[key] ?? 0
+  const continuationUsed = continuationUsedForKey(state, key)
+  const automaticUsed = Math.max(0, current - continuationUsed)
   const automaticMax = automaticStepLimit(state, key, agent, limits)
   const max = effectiveStepLimit(state, key, agent, limits)
-  const stepNeedsContinuation = current >= automaticMax
+  const stepNeedsContinuation = automaticUsed >= automaticMax
   const workflowNeedsContinuation = state.totalDispatches >= limits.maxTotalDispatches
   const needsContinuation = stepNeedsContinuation || workflowNeedsContinuation
 
@@ -200,8 +211,8 @@ export function grantExtraDispatch(input: {
   now: string
 }): ExtraDispatchGrantResult {
   const { state, limits, key, agent, grantedBy, reason, progress, evidence = [], now } = input
-  const used = state.byKey[key] ?? 0
-  const currentLimit = effectiveStepLimit(state, key, agent, limits)
+  const used = Math.max(0, (state.byKey[key] ?? 0) - continuationUsedForKey(state, key))
+  const currentLimit = automaticStepLimit(state, key, agent, limits)
   const grants = grantsForKey(state, key)
 
   if (!reason.trim()) {
@@ -213,6 +224,14 @@ export function grantExtraDispatch(input: {
       allowed: false,
       reason:
         "Budget grant requires material progress: new evidence, changed hypothesis, changed strategy, or reduced unresolved work.",
+      state,
+    }
+  }
+
+  if (continuationRemainingForKey(state, key) > 0) {
+    return {
+      allowed: false,
+      reason: `Target still has user-authorized continuation capacity available.`,
       state,
     }
   }
@@ -507,9 +526,10 @@ export function continueWorkflowDispatchBudget(input: {
   const previousStepLimit = effectiveStepLimit(state, target.key, target.agent, limits)
   const previousWorkflowLimit = effectiveTotalDispatchLimit(state, limits)
   const targetUsed = state.byKey[target.key] ?? 0
+  const targetAutomaticUsed = Math.max(0, targetUsed - continuationUsedForKey(state, target.key))
   const automaticMax = automaticStepLimit(state, target.key, target.agent, limits)
   const existingContinuation = continuationRemainingForKey(state, target.key)
-  const stepBlocked = targetUsed >= automaticMax
+  const stepBlocked = targetAutomaticUsed >= automaticMax
   const workflowBlocked = state.totalDispatches >= limits.maxTotalDispatches
 
   if (existingContinuation > 0) {
@@ -524,7 +544,7 @@ export function continueWorkflowDispatchBudget(input: {
     return {
       allowed: false,
       reason:
-        `Target still has dispatch capacity: step ${targetUsed}/${automaticMax}, workflow ${state.totalDispatches}/${limits.maxTotalDispatches} used.`,
+        `Target still has dispatch capacity: step ${targetAutomaticUsed}/${automaticMax} automatic dispatches used, workflow ${state.totalDispatches}/${limits.maxTotalDispatches} used.`,
       state,
     }
   }

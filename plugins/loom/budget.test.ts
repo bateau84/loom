@@ -837,6 +837,94 @@ describe("Loom progress and dispatch budgets", () => {
     expect(state.byKey[keyB]).toBeUndefined()
   })
 
+  test("automatic progress grants remain usable after consumed user continuation", () => {
+    const workflow = {
+      id: "wf-auto-after-continuation",
+      projectId: "project-test",
+      revision: 0,
+      anchor: "docs/anchors/test/anchor.md",
+      createdBySession: "session",
+      createdAt: "now",
+      steps: [
+        {
+          id: "worker",
+          agent: "worker",
+          kind: "work" as const,
+          dependsOn: [],
+          status: "pending" as const,
+        },
+      ],
+    }
+    const state = newBudgetState()
+    const key = "step:worker"
+
+    for (const id of ["d1", "d2", "d3"]) {
+      expect(
+        recordDispatch({
+          state,
+          limits: DEFAULT_LIMITS,
+          dispatchID: id,
+          key,
+          agent: "worker",
+        }).allowed,
+      ).toBe(true)
+    }
+
+    const continuation = continueWorkflowDispatchBudget({
+      state,
+      limits: DEFAULT_LIMITS,
+      workflow,
+      questions: [],
+      stepId: "worker",
+      grantedBy: "general",
+      reason: "The user wants one more attempt despite no material progress yet.",
+      confirmation: "give it one more try",
+      additionalDispatches: 1,
+      now: "continued",
+    })
+    expect(continuation.allowed).toBe(true)
+    expect(
+      recordDispatch({
+        state,
+        limits: DEFAULT_LIMITS,
+        dispatchID: "continued-1",
+        key,
+        agent: "worker",
+      }).allowed,
+    ).toBe(true)
+    expect(state.continuations?.[0]?.usedDispatches).toBe(1)
+
+    const progressGrant = grantWorkflowDispatchBudget({
+      state,
+      limits: DEFAULT_LIMITS,
+      workflow,
+      questions: [],
+      stepId: "worker",
+      grantedBy: "general",
+      reason: "A changed strategy now justifies an automatic bounded retry.",
+      progress: {
+        newEvidence: false,
+        changedHypothesis: false,
+        changedStrategy: true,
+        reducedUnresolved: false,
+      },
+      now: "material-progress",
+    })
+    expect(progressGrant.allowed).toBe(true)
+
+    expect(
+      recordDispatch({
+        state,
+        limits: DEFAULT_LIMITS,
+        dispatchID: "automatic-after-continuation",
+        key,
+        agent: "worker",
+      }).allowed,
+    ).toBe(true)
+    expect(state.byKey[key]).toBe(5)
+    expect(state.continuations?.[0]?.usedDispatches).toBe(1)
+  })
+
   test("reopen requires a material progress dimension", () => {
     expect(
       hasMaterialProgress({
