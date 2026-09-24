@@ -47,7 +47,7 @@ Top-level suites are grouped by **behavioral topic**, not by the historical bug 
 - `verification.json` — evidence, Reviewer/Critic, diagnosis, acceptance, planning, memory, and verification integrity.
 - `skills.json` — production-role skill loading and companion-method behavior.
 
-Execution cost is case metadata, not suite taxonomy. A case may set `"default": false` to stay opt-in while remaining in its natural topic suite. Explicit `--suite` selection includes all cases in that suite; ordinary discovery excludes opt-in cases.
+Execution cost is case metadata, not suite taxonomy. A case may set `"default": false` to stay opt-in while remaining in its natural topic suite. Explicit `--suite` selection includes all cases in that suite, and explicit `--cases` selection opts into the named cases even without `--suite`; ordinary/default discovery excludes opt-in cases.
 
 ## Case shape
 
@@ -387,7 +387,7 @@ Harness/provider failure is non-evidence. It must not be counted as behavioral P
 
 `CONVERSATION-02` covers research routing. `CONVERSATION-02-SYNTH` supplies a mock Research brief for synthesis, trade-offs, and source preservation. Neither invokes a Research model. The reference check counts distinct supplied URLs, not repetitions or invented references; the semantic judge still checks the comparison.
 
-Every top-level suite remains discoverable and schema-validated. Both suites and individual cases may set `"default": false`. Ordinary discovery excludes opt-in suites/cases; explicit `--suite` selection includes every case in that suite. Omitted `default` means true; malformed metadata fails rather than silently spending inference.
+Every top-level suite remains discoverable and schema-validated. Both suites and individual cases may set `"default": false`. Ordinary discovery excludes opt-in suites/cases; explicit `--suite` includes every case in that suite, while explicit `--cases` opts into exactly the named cases. `--all` without an explicit suite remains bounded to the default corpus. Omitted `default` means true; malformed metadata fails rather than silently spending inference.
 
 Real nested research is opt-in:
 

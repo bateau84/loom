@@ -1533,7 +1533,7 @@ class ConversationCompositionTests(unittest.TestCase):
         index = (RUN_EVALS.ROOT / "docs" / "architecture" / "loom" / "index.md").read_text()
         self.assertIn("decisions/conversation-primary-agent.md", index)
 
-    def test_default_excludes_opt_in_cases_but_explicit_suite_includes_them(self):
+    def test_default_excludes_opt_in_cases_but_explicit_selection_can_include_them(self):
         cases = RUN_EVALS.load_cases()
         ids = {case["id"] for case in cases}
         self.assertIn("CONVERSATION-02", ids)
@@ -1541,10 +1541,19 @@ class ConversationCompositionTests(unittest.TestCase):
         self.assertIn("PROP-RUNTIME-01", ids)
         self.assertNotIn("CONVERSATION-02-LIVE", ids)
         self.assertNotIn("HUMAN-RUNTIME-01", ids)
-        explicit = RUN_EVALS.load_cases([RUN_EVALS.ROOT / "evals" / "conversation.json"])
-        explicit_ids = {case["id"] for case in explicit}
-        self.assertIn("CONVERSATION-02-LIVE", explicit_ids)
-        self.assertIn("HUMAN-RUNTIME-01", explicit_ids)
+        self.assertNotIn("BUDGET-CONTINUE-RUNTIME-QUOTA-01", ids)
+
+        explicit_suite = RUN_EVALS.load_cases([RUN_EVALS.ROOT / "evals" / "conversation.json"])
+        explicit_suite_ids = {case["id"] for case in explicit_suite}
+        self.assertIn("CONVERSATION-02-LIVE", explicit_suite_ids)
+        self.assertIn("HUMAN-RUNTIME-01", explicit_suite_ids)
+
+        explicit_cases = RUN_EVALS.load_cases(include_opt_in=True)
+        explicit_case_ids = {case["id"] for case in explicit_cases}
+        self.assertIn("HUMAN-RUNTIME-01", explicit_case_ids)
+        self.assertIn("BUDGET-CONTINUE-RUNTIME-QUOTA-01", explicit_case_ids)
+        self.assertIn("BUDGET-CONTINUE-RUNTIME-SAME-OBJECTIVE-01", explicit_case_ids)
+
         self.assertEqual(RUN_EVALS.load_cases([]), [])
         self.assertIn("conversation.json", [path.name for path in RUN_EVALS.behavioral_eval_files(RUN_EVALS.ROOT / "evals")])
 
@@ -1562,6 +1571,10 @@ class ConversationCompositionTests(unittest.TestCase):
             }))
             with patch.object(RUN_EVALS, "ROOT", root):
                 self.assertEqual([case["id"] for case in RUN_EVALS.load_cases()], ["ordinary"])
+                self.assertEqual(
+                    {case["id"] for case in RUN_EVALS.load_cases(include_opt_in=True)},
+                    {"ordinary", "costly"},
+                )
                 self.assertEqual(
                     {case["id"] for case in RUN_EVALS.load_cases([target])},
                     {"ordinary", "costly"},
