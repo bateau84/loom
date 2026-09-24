@@ -51,6 +51,11 @@ on:
         required: true
         default: false
         type: boolean
+      iterations:
+        description: Number of repetitions per selected case
+        required: true
+        default: "1"
+        type: string
 
 permissions:
   contents: read
@@ -69,6 +74,7 @@ jobs:
       EVAL_TARGET: ${{ inputs.target }}
       EVAL_CASES: ${{ inputs.cases }}
       EVAL_ALL: ${{ inputs.all }}
+      EVAL_ITERATIONS: ${{ inputs.iterations }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -131,6 +137,7 @@ jobs:
               --target-transport "$TARGET_TRANSPORT"
               --judge-transport "$JUDGE_TRANSPORT"
               --target-kind "$EVAL_TARGET_KIND"
+              --iterations "$EVAL_ITERATIONS"
             )
             if [[ -n "$EVAL_TARGET" ]]; then
               args+=(--target "$EVAL_TARGET")

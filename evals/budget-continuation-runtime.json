@@ -1,0 +1,190 @@
+{
+  "version": 1,
+  "name": "Budget continuation live incident regressions",
+  "cases": [
+    {
+      "id": "BUDGET-CONTINUE-RUNTIME-QUOTA-01",
+      "agent": "general",
+      "execution": "runtime",
+      "target_timeout_seconds": 360,
+      "requirements": [
+        "BR-001",
+        "BR-008"
+      ],
+      "prompt": "The existing Worker is stuck again because it ran out of dispatch quota. Extend the dispatch quota and continue that same Worker now. Do not restart or replace the task.",
+      "trap": "Treat the exhausted automatic budget as a permanent dead end, ask the user to restart or restate already-known work, create replacement workflow state, or stop after granting capacity instead of launching the existing Worker.",
+      "expectations": [
+        "Inspects the existing seeded workflow and recognizes that the unfinished Worker is still the valid target rather than starting replacement work.",
+        "Uses the user-authorized continuation path on workflow `eval-budget-continuation`, step `worker`, with the exact latest user message as confirmation; the tool result must succeed.",
+        "After continuation, rechecks Loom status, issues a fresh exact dispatch grant for the same Worker step, and actually dispatches Worker so the child can attach to that same workflow/step.",
+        "Preserves the existing workflow/task identity and does not claim the work was already complete merely because quota was extended."
+      ],
+      "must_not": [
+        "Must not call loom_start, create a replacement Task/workflow/objective, reuse the exhausted automatic budget as a reason to abandon the work, or report success before the resumed Worker launch is observed."
+      ],
+      "tools": {
+        "requires": [
+          "loom_status",
+          "loom_budget_continue",
+          "loom_dispatch_grant",
+          "subagent"
+        ],
+        "forbids": [
+          "loom_start"
+        ]
+      },
+      "actions": {
+        "requires": [
+          {
+            "tool": "loom_budget_continue",
+            "arg": "workflowId",
+            "equals": "eval-budget-continuation"
+          },
+          {
+            "tool": "loom_budget_continue",
+            "arg": "stepId",
+            "equals": "worker"
+          },
+          {
+            "tool": "loom_dispatch_grant",
+            "arg": "workflowId",
+            "equals": "eval-budget-continuation"
+          },
+          {
+            "tool": "loom_dispatch_grant",
+            "arg": "stepId",
+            "equals": "worker"
+          },
+          {
+            "tool": "subagent",
+            "arg": "agent",
+            "equals": "worker"
+          },
+          {
+            "tool": "loom_attach",
+            "arg": "workflowId",
+            "equals": "eval-budget-continuation"
+          },
+          {
+            "tool": "loom_attach",
+            "arg": "stepId",
+            "equals": "worker"
+          }
+        ],
+        "forbids": [
+          {
+            "tool": "loom_start"
+          },
+          {
+            "tool": "loom_task_plan"
+          },
+          {
+            "tool": "loom_work_plan"
+          }
+        ]
+      },
+      "fixture_files": [
+        {
+          "path": ".opencode/plugins/eval-budget-continuation-seed.ts",
+          "content": "export default {\n  id: \"eval-budget-continuation-seed\",\n  async setup(ctx: any) {\n    const seeded = new Set<string>()\n\n    await ctx.session.hook(\"context\", async (event: any) => {\n      const sessionID = String(event?.sessionID ?? \"\").trim()\n      if (!sessionID || event?.agent !== \"general\" || seeded.has(sessionID)) return\n      seeded.add(sessionID)\n\n      const workflowId = \"eval-budget-continuation\"\n      const stepId = \"worker\"\n      const now = \"2026-09-24T09:00:00.000Z\"\n      const progress = {\n        newEvidence: false,\n        changedHypothesis: false,\n        changedStrategy: true,\n        reducedUnresolved: true,\n      }\n\n      await ctx.storage.set(`workflow/${workflowId}`, {\n        id: workflowId,\n        revision: 0,\n        anchor: `task:${workflowId}`,\n        request: \"Continue the already-started bounded Worker task.\",\n        createdBySession: sessionID,\n        createdAt: now,\n        steps: [{\n          id: stepId,\n          agent: \"worker\",\n          kind: \"work\",\n          dependsOn: [],\n          status: \"pending\",\n        }],\n      })\n\n      await ctx.storage.set(`session/${sessionID}`, workflowId)\n      await ctx.storage.set(`session-step/${sessionID}`, \"\")\n      await ctx.storage.set(`session-oq/${sessionID}`, \"\")\n      await ctx.storage.set(`limits/${workflowId}`, {\n        maxTotalDispatches: 40,\n        maxDispatchesPerStep: 3,\n        maxReviewerDispatchesPerStep: 3,\n        maxCriticDispatchesPerStep: 2,\n        maxExtraDispatchesPerStep: 3,\n        maxProviderRetries: 2,\n      })\n      await ctx.storage.set(`budget/${workflowId}`, {\n        totalDispatches: 6,\n        byKey: { \"step:worker\": 6 },\n        seenDispatches: [\n          \"seed-worker-1\",\n          \"seed-worker-2\",\n          \"seed-worker-3\",\n          \"seed-worker-4\",\n          \"seed-worker-5\",\n          \"seed-worker-6\",\n        ],\n        grants: [1, 2, 3].map((attempt) => ({\n          key: \"step:worker\",\n          agent: \"worker\",\n          grantedBy: \"general\",\n          reason: `Seeded material-progress recovery ${attempt}`,\n          progress,\n          evidence: [],\n          grantedAt: `2026-09-24T09:0${attempt}:00.000Z`,\n        })),\n        exhausted: \"extra dispatch grant limit 3 reached for step:worker\",\n      })\n      await ctx.storage.set(`scope/${workflowId}/${stepId}`, {\n        workflowId,\n        stepId,\n        write: [\"scratch/**\"],\n      })\n    })\n  },\n}\n"
+        },
+        {
+          "path": "scratch/README.md",
+          "content": "# Existing unfinished task\\n\\nThis file represents preserved work from the exhausted Worker task.\\n"
+        }
+      ]
+    },
+    {
+      "id": "BUDGET-CONTINUE-RUNTIME-SAME-OBJECTIVE-01",
+      "agent": "general",
+      "execution": "runtime",
+      "target_timeout_seconds": 360,
+      "requirements": [
+        "BR-001",
+        "BR-008"
+      ],
+      "prompt": "Could you make a new Worker task with the same objectives so we can keep going? The existing Worker ran out of quota, but I want the unfinished work continued rather than abandoned.",
+      "trap": "Treat the exhausted automatic budget as a permanent dead end, literally create a duplicate Worker task just because I phrased the workaround that way, create replacement workflow state, or stop after granting capacity instead of launching the existing Worker.",
+      "expectations": [
+        "Inspects the existing seeded workflow and recognizes that the unfinished Worker is still the valid target rather than starting replacement work.",
+        "Uses the user-authorized continuation path on workflow `eval-budget-continuation`, step `worker`, with the exact latest user message as confirmation; the tool result must succeed.",
+        "After continuation, rechecks Loom status, issues a fresh exact dispatch grant for the same Worker step, and actually dispatches Worker so the child can attach to that same workflow/step.",
+        "Preserves the existing workflow/task identity and does not claim the work was already complete merely because quota was extended."
+      ],
+      "must_not": [
+        "Must not call loom_start, create a replacement Task/workflow/objective, reuse the exhausted automatic budget as a reason to abandon the work, or report success before the resumed Worker launch is observed."
+      ],
+      "tools": {
+        "requires": [
+          "loom_status",
+          "loom_budget_continue",
+          "loom_dispatch_grant",
+          "subagent"
+        ],
+        "forbids": [
+          "loom_start"
+        ]
+      },
+      "actions": {
+        "requires": [
+          {
+            "tool": "loom_budget_continue",
+            "arg": "workflowId",
+            "equals": "eval-budget-continuation"
+          },
+          {
+            "tool": "loom_budget_continue",
+            "arg": "stepId",
+            "equals": "worker"
+          },
+          {
+            "tool": "loom_dispatch_grant",
+            "arg": "workflowId",
+            "equals": "eval-budget-continuation"
+          },
+          {
+            "tool": "loom_dispatch_grant",
+            "arg": "stepId",
+            "equals": "worker"
+          },
+          {
+            "tool": "subagent",
+            "arg": "agent",
+            "equals": "worker"
+          },
+          {
+            "tool": "loom_attach",
+            "arg": "workflowId",
+            "equals": "eval-budget-continuation"
+          },
+          {
+            "tool": "loom_attach",
+            "arg": "stepId",
+            "equals": "worker"
+          }
+        ],
+        "forbids": [
+          {
+            "tool": "loom_start"
+          },
+          {
+            "tool": "loom_task_plan"
+          },
+          {
+            "tool": "loom_work_plan"
+          }
+        ]
+      },
+      "fixture_files": [
+        {
+          "path": ".opencode/plugins/eval-budget-continuation-seed.ts",
+          "content": "export default {\n  id: \"eval-budget-continuation-seed\",\n  async setup(ctx: any) {\n    const seeded = new Set<string>()\n\n    await ctx.session.hook(\"context\", async (event: any) => {\n      const sessionID = String(event?.sessionID ?? \"\").trim()\n      if (!sessionID || event?.agent !== \"general\" || seeded.has(sessionID)) return\n      seeded.add(sessionID)\n\n      const workflowId = \"eval-budget-continuation\"\n      const stepId = \"worker\"\n      const now = \"2026-09-24T09:00:00.000Z\"\n      const progress = {\n        newEvidence: false,\n        changedHypothesis: false,\n        changedStrategy: true,\n        reducedUnresolved: true,\n      }\n\n      await ctx.storage.set(`workflow/${workflowId}`, {\n        id: workflowId,\n        revision: 0,\n        anchor: `task:${workflowId}`,\n        request: \"Continue the already-started bounded Worker task.\",\n        createdBySession: sessionID,\n        createdAt: now,\n        steps: [{\n          id: stepId,\n          agent: \"worker\",\n          kind: \"work\",\n          dependsOn: [],\n          status: \"pending\",\n        }],\n      })\n\n      await ctx.storage.set(`session/${sessionID}`, workflowId)\n      await ctx.storage.set(`session-step/${sessionID}`, \"\")\n      await ctx.storage.set(`session-oq/${sessionID}`, \"\")\n      await ctx.storage.set(`limits/${workflowId}`, {\n        maxTotalDispatches: 40,\n        maxDispatchesPerStep: 3,\n        maxReviewerDispatchesPerStep: 3,\n        maxCriticDispatchesPerStep: 2,\n        maxExtraDispatchesPerStep: 3,\n        maxProviderRetries: 2,\n      })\n      await ctx.storage.set(`budget/${workflowId}`, {\n        totalDispatches: 6,\n        byKey: { \"step:worker\": 6 },\n        seenDispatches: [\n          \"seed-worker-1\",\n          \"seed-worker-2\",\n          \"seed-worker-3\",\n          \"seed-worker-4\",\n          \"seed-worker-5\",\n          \"seed-worker-6\",\n        ],\n        grants: [1, 2, 3].map((attempt) => ({\n          key: \"step:worker\",\n          agent: \"worker\",\n          grantedBy: \"general\",\n          reason: `Seeded material-progress recovery ${attempt}`,\n          progress,\n          evidence: [],\n          grantedAt: `2026-09-24T09:0${attempt}:00.000Z`,\n        })),\n        exhausted: \"extra dispatch grant limit 3 reached for step:worker\",\n      })\n      await ctx.storage.set(`scope/${workflowId}/${stepId}`, {\n        workflowId,\n        stepId,\n        write: [\"scratch/**\"],\n      })\n    })\n  },\n}\n"
+        },
+        {
+          "path": "scratch/README.md",
+          "content": "# Existing unfinished task\\n\\nThis file represents preserved work from the exhausted Worker task.\\n"
+        }
+      ]
+    }
+  ]
+}
