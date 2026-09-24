@@ -3045,9 +3045,10 @@ describe("Skill methodology evidence lifecycle", () => {
       await h.call("route",{humanFacing:false,behavioral:false,structural:false,externalUnknown:false,diagnostic:false,productOutcome:false,implementationRequested:true,executionDepth:"task"},"general","skill-general")
       await h.call("task_scope",{workflowId,stepId:"worker",write:["src/**"]},"general","skill-general")
       const wg=await h.call("dispatch_grant",{workflowId,stepId:"worker"},"general","skill-general"); expect((await h.call("attach",{grantId:wg.grantId,workflowId,stepId:"worker"},"worker","skill-worker")).attached).toBe(true)
-      const ev={tool:"skill",callID:"skill-load",messageID:"worker-message",sessionID:"skill-worker",agent:"worker",input:{name:"software-engineering"}}; await h.toolHooks.get("execute.before")!(ev); await h.toolHooks.get("execute.after")!({...ev,status:"completed",result:"loaded"})
+      const skillResult={metadata:{metadata:{directory:`${process.cwd()}/skills/software-engineering`}}}; const ev={tool:"skill",callID:"skill-load",messageID:"worker-message",sessionID:"skill-worker",agent:"worker",input:{name:"software-engineering"}}; await h.toolHooks.get("execute.before")!(ev); await h.toolHooks.get("execute.after")!({...ev,status:"completed",result:skillResult})
       expect((await h.call("complete",{workflowId,stepId:"worker",summary:"done"},"worker","skill-worker")).error).toBeUndefined()
       const rg=await h.call("dispatch_grant",{workflowId,stepId:"review-implementation"},"general","skill-general"); const attached=await h.call("attach",{grantId:rg.grantId,workflowId,stepId:"review-implementation"},"reviewer","skill-reviewer"); expect(attached.producerSkills).toEqual([{skill:"software-engineering",stepIds:["worker"]}])
+      const reviewerSkill={tool:"skill",callID:"reviewer-skill-load",messageID:"reviewer-message",sessionID:"skill-reviewer",agent:"reviewer",input:{name:"software-engineering"}}; await h.toolHooks.get("execute.before")!(reviewerSkill); await h.toolHooks.get("execute.after")!({...reviewerSkill,status:"completed",result:skillResult})
       const assessment=await h.callObserved("assessment",{skill:"software-engineering"},"reviewer","skill-reviewer","assessment-load"); expect(assessment.available).toBe(true); expect(assessment.content).toContain("## Review criteria")
       expect((await h.call("assessment",{skill:"golang-concurrency"},"reviewer","skill-reviewer")).error).toContain("not observed")
       expect((await h.call("qa",{skill:"software-engineering"},"reviewer","skill-reviewer")).error).toContain("reserved for critic")
@@ -3056,11 +3057,13 @@ describe("Skill methodology evidence lifecycle", () => {
       const bound=await h.durableStorage.scan({prefix:`evidence-step/${workflowId}/review-implementation/`}); const records=await Promise.all(bound.entries.map(async(entry:any)=>h.durableStorage.get(`evidence/${entry.value}`))); expect(records).toContainEqual(expect.objectContaining({tool:"loom_assessment",skill:"software-engineering",methodology:"assessment",workflowId,stepId:"review-implementation",status:"completed"}))
     } finally { h.restore() }
   })
-  test("Critic QA loader is role-specific for standalone QA", async () => { const h=await harness(); try { const qa=await h.callObserved("qa",{skill:"software-engineering"},"critic","standalone-critic","qa-load"); expect(qa.available).toBe(true); expect(qa.content).toContain("## QA criteria"); expect((await h.call("assessment",{skill:"software-engineering"},"critic","standalone-critic")).error).toContain("reserved for reviewer") } finally { h.restore() } })
-  test("unavailable or rejected companions do not create successful methodology evidence", async () => { const h=await harness(); try {
-    const missing=await h.callObserved("qa",{skill:"does-not-exist"},"critic","standalone-critic","qa-missing"); expect(missing.available).toBe(false)
+  test("Critic QA loader is role-specific for standalone QA", async () => { const h=await harness(); try {
+    const skillResult={metadata:{metadata:{directory:`${process.cwd()}/skills/software-engineering`}}}; const nativeSkill={tool:"skill",callID:"critic-skill-load",messageID:"critic-message",sessionID:"standalone-critic",agent:"critic",input:{name:"software-engineering"}}; await h.toolHooks.get("execute.before")!(nativeSkill); await h.toolHooks.get("execute.after")!({...nativeSkill,status:"completed",result:skillResult})
+    const qa=await h.callObserved("qa",{skill:"software-engineering"},"critic","standalone-critic","qa-load"); expect(qa.available).toBe(true); expect(qa.content).toContain("## QA criteria"); expect((await h.call("assessment",{skill:"software-engineering"},"critic","standalone-critic")).error).toContain("reserved for reviewer")
+  } finally { h.restore() } })
+  test("rejected companions do not create successful methodology evidence", async () => { const h=await harness(); try {
     await h.callObserved("assessment",{skill:"software-engineering"},"critic","standalone-critic","assessment-rejected")
     const page=await h.durableStorage.scan({prefix:"evidence-session/standalone-critic/"}); const records=await Promise.all(page.entries.map(async(entry:any)=>h.durableStorage.get(`evidence/${entry.value}`)))
-    expect(records.filter((record:any)=>record?.methodology==="qa"||record?.methodology==="assessment")).toHaveLength(0)
+    expect(records.filter((record:any)=>record?.methodology==="assessment")).toHaveLength(0)
   } finally { h.restore() } })
 })

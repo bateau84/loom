@@ -1,11 +1,8 @@
 import { createHash } from "node:crypto"
 import { readFile } from "node:fs/promises"
-import { dirname, resolve } from "node:path"
-import { fileURLToPath } from "node:url"
+import { basename, resolve } from "node:path"
 
 export type SkillCompanionKind = "assessment" | "qa"
-
-const SKILLS_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../../skills")
 
 function companionName(kind: SkillCompanionKind) {
   return kind === "assessment" ? "ASSESSMENT.md" : "QA.md"
@@ -19,11 +16,20 @@ export function validateSkillName(skill: string) {
   return normalized
 }
 
-export async function loadSkillCompanion(skill: string, kind: SkillCompanionKind) {
+export async function loadSkillCompanion(
+  skill: string,
+  kind: SkillCompanionKind,
+  skillDirectory: string,
+) {
   const normalized = validateSkillName(skill)
+  const root = resolve(skillDirectory)
+  if (basename(root) !== normalized) {
+    throw new Error(`Native skill directory does not match requested skill ${normalized}.`)
+  }
+
   const filename = companionName(kind)
   const path = `skills/${normalized}/${filename}`
-  const absolute = resolve(SKILLS_ROOT, normalized, filename)
+  const absolute = resolve(root, filename)
 
   try {
     const content = await readFile(absolute, "utf8")

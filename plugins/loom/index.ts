@@ -18,7 +18,7 @@ import {
 import { createDashboardPublisher } from "./dashboard"
 
 export const LOOM_NATIVE_TOOL_GUIDANCE =
-  "Loom control-plane tools are available through two equivalent OpenCode surfaces: native loom_* tools and Code Mode mirrors under tools.loom.code.*. Use either surface directly according to the active tool paradigm. If using Code Mode, search for Loom tools and invoke the returned tools.loom.code.* signatures; do not fall back to shell/filesystem discovery for Loom commands. Interactive status is dashboard-first and does not depend on model prose: the Loom sidebar exposes a stable workflow dashboard URL, while loom_status may also return presentation metadata. Desktop browser preview is optional metadata only; do not invoke tools.browser.preview merely because presentation metadata exists."
+  "Loom control-plane tools are available through two equivalent OpenCode surfaces: native loom_* tools and Code Mode mirrors under tools.loom.code.*. Use either surface directly according to the active tool paradigm. If using Code Mode, search for Loom tools and invoke the returned tools.loom.code.* signatures; do not fall back to shell/filesystem discovery for Loom commands. Reviewer/Critic methodology uses a two-part contract: load practitioner guidance with OpenCode's native skill tool, then consume the role companion through loom_assessment or loom_qa; a plain ASSESSMENT.md/QA.md read is artifact inspection, not methodology loading. Interactive status is dashboard-first and does not depend on model prose: the Loom sidebar exposes a stable workflow dashboard URL, while loom_status may also return presentation metadata. Desktop browser preview is optional metadata only; do not invoke tools.browser.preview merely because presentation metadata exists."
 import {
   assertWorkflowNotCancelled,
   WorkflowCancelledError,
@@ -54,6 +54,7 @@ import {
   observationsSupportKind,
   observationMatchesStep,
   safeInputSummary,
+  safeResultSummary,
   type EvidenceClaim,
   type EvidenceKind,
   type EvidenceObservation,
@@ -711,6 +712,22 @@ async function attachedMethodologyContext(ctx: any, sessionID: string, agent: st
   const step = workflow.steps.find((candidate) => candidate.id === stepId)
   if (!step || step.agent !== agent || !(await exactStepBinding(ctx, sessionID, workflowId, stepId))) return undefined
   return { workflowId, stepId, producerSkills: await observedProducerSkills(ctx, workflow, stepId) }
+}
+
+async function currentSessionSkillDirectory(ctx: any, sessionID: string, skill: string) {
+  const observations = await sessionObservations(ctx, sessionID)
+  const loaded = observations
+    .filter(
+      (observation) =>
+        observation.tool === "skill" &&
+        observation.status === "completed" &&
+        observation.methodology === "practitioner" &&
+        observation.skill === skill &&
+        typeof observation.skillDirectory === "string" &&
+        observation.skillDirectory,
+    )
+    .sort((a, b) => b.observedAt.localeCompare(a.observedAt))[0]
+  return loaded?.skillDirectory
 }
 
 async function bindSessionEvidence(ctx: any, sessionID: string, workflowId: string, stepId: string) {
@@ -1389,7 +1406,16 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             }
           }
 
-          const companion = await loadSkillCompanion(skill, kind)
+          const skillDirectory = await currentSessionSkillDirectory(ctx, tool.sessionID, skill)
+          if (!skillDirectory) {
+            return {
+              content: renderToolOutput({
+                error: `Load ${skill} with OpenCode's native skill tool before loom_${toolName}.`,
+              }),
+            }
+          }
+
+          const companion = await loadSkillCompanion(skill, kind, skillDirectory)
           if (companion.available) {
             const admission = await captureEvidenceAdmission(ctx.storage as any, runtime, tool.sessionID, tool.agent)
             await persistEvidenceObservation(
@@ -1425,7 +1451,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       addLoomTool({
         name: "assessment",
         description:
-          "Return a skill's Reviewer ASSESSMENT.md companion. This does not replace OpenCode's native skill loader; attached gates may request only skills actually observed upstream.",
+          "Reviewer companion loader. After OpenCode's native skill load, call this to consume ASSESSMENT.md as Reviewer methodology. Works standalone and in attached gates; attached gates may request only skills actually observed upstream.",
         input: {
           type: "object",
           properties: { skill: { type: "string" } },
@@ -1439,7 +1465,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       addLoomTool({
         name: "qa",
         description:
-          "Return a skill's Critic QA.md companion. This does not replace OpenCode's native skill loader; attached gates may request only skills actually observed upstream.",
+          "Critic companion loader. After OpenCode's native skill load, call this to consume QA.md as Critic methodology. Works standalone and in attached gates; attached gates may request only skills actually observed upstream.",
         input: {
           type: "object",
           properties: { skill: { type: "string" } },
@@ -4998,6 +5024,8 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       }
 
       const summary = pending?.summary ?? safeInputSummary(tool, input)
+      const resultSummary =
+        raw.status === "completed" ? safeResultSummary(tool, raw.result ?? raw.output) : {}
       let reportPromotion: EvidenceObservation["reportPromotion"]
       const loomTool = tool.replace(/^loom[._]/, "")
       if (
@@ -5042,6 +5070,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         ...(raw.status === "completed" ? { resultDigest: await digest(raw.result) } : {}),
         ...(raw.status === "error" ? { error: String(raw.error?.message ?? raw.error ?? "tool error").slice(0, 1000) } : {}),
         ...summary,
+        ...resultSummary,
         ...(reportPromotion ? { reportPromotion } : {}),
         ...(!eventMatches && pending ? { unscopedReason: "input-changed" } : {}),
       }

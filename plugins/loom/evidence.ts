@@ -1,3 +1,4 @@
+import { isAbsolute } from "node:path"
 import type { EvidenceAdmission } from "./evidence-admission"
 import type { Workflow } from "./workflow"
 
@@ -20,6 +21,7 @@ export type EvidenceObservation = {
   destination?: string
   reason?: string
   skill?: string
+  skillDirectory?: string
   methodology?: "practitioner" | "assessment" | "qa"
   reportPromotion?: {
     id: string
@@ -102,6 +104,46 @@ export function safeInputSummary(tool: string, input: unknown) {
   }
 
   return {}
+}
+
+function resultDirectory(value: unknown): string | undefined {
+  if (typeof value === "string") {
+    const match = value.match(/Base directory for this skill:\s*([^\r\n]+)/)
+    const directory = match?.[1]?.trim()
+    return directory && isAbsolute(directory) ? directory : undefined
+  }
+  if (!value || typeof value !== "object") return undefined
+
+  const item = value as Record<string, any>
+  for (const candidate of [
+    item.directory,
+    item.metadata?.directory,
+    item.metadata?.metadata?.directory,
+    item.result?.directory,
+    item.result?.metadata?.directory,
+    item.result?.metadata?.metadata?.directory,
+  ]) {
+    if (typeof candidate === "string" && isAbsolute(candidate.trim())) return candidate.trim()
+  }
+
+  for (const candidate of [item.output, item.text]) {
+    const directory = resultDirectory(candidate)
+    if (directory) return directory
+  }
+
+  if (Array.isArray(item.content)) {
+    for (const part of item.content) {
+      const directory = resultDirectory(part?.text ?? part)
+      if (directory) return directory
+    }
+  }
+  return undefined
+}
+
+export function safeResultSummary(tool: string, result: unknown) {
+  if (tool !== "skill") return {}
+  const skillDirectory = resultDirectory(result)
+  return skillDirectory ? { skillDirectory: skillDirectory.slice(0, 2000) } : {}
 }
 
 function shellObservation(observation: EvidenceObservation) {
