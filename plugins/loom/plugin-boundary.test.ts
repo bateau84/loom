@@ -506,10 +506,11 @@ describe("Loom registered plugin boundary", () => {
       )
       expect(scoped.error).toBeUndefined()
       expect(scoped).toMatchObject({
-        acceptedOutcome: "docs/anchors/test/anchor.md",
+        acceptedAuthority: "docs/anchors/test/anchor.md",
         scopeSemantics: "mutation-boundary-only",
       })
-      expect(scoped.scopeNote).toContain("Delegate the accepted outcome separately")
+      expect(scoped.acceptedOutcome).toBeUndefined()
+      expect(scoped.scopeNote).toContain("acceptedAuthority identifies the governing source")
 
       const workerGrant = await call(
         "dispatch_grant",
@@ -529,11 +530,12 @@ describe("Loom registered plugin boundary", () => {
         attached: true,
         workflowId,
         stepId: "worker",
-        acceptedOutcome: "docs/anchors/test/anchor.md",
+        acceptedAuthority: "docs/anchors/test/anchor.md",
         write: ["src/**"],
         scopeSemantics: "mutation-boundary-only",
       })
-      expect(attachedWorker.scopeNote).toContain("acceptedOutcome is the completion target")
+      expect(attachedWorker.acceptedOutcome).toBeUndefined()
+      expect(attachedWorker.scopeNote).toContain("acceptedAuthority identifies the governing source")
 
       const workerStatus = await call(
         "status",
@@ -1014,6 +1016,7 @@ Verdict: FAIL
       )
       expect(scope.error).toBeUndefined()
       expect(scope.acceptedOutcome).toBe("Apply one bounded implementation change.")
+      expect(scope.acceptedAuthority).toMatch(/^task:/)
       expect(scope.scopeSemantics).toBe("mutation-boundary-only")
 
       const scoped = await h.call(

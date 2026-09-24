@@ -3775,9 +3775,10 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           return {
             content: renderToolOutput({
               scope,
-              acceptedOutcome: workflow.request ?? workflow.anchor,
+              ...(workflow.request ? { acceptedOutcome: workflow.request } : {}),
+              acceptedAuthority: workflow.anchor,
               scopeSemantics: "mutation-boundary-only",
-              scopeNote: "The write list limits mutation only. Delegate the accepted outcome separately; Worker owns read-only discovery of load-bearing consumers/enforcement/tests and must request scope extension before any additional write.",
+              scopeNote: "The write list limits mutation only. Delegate acceptedOutcome separately when present; acceptedAuthority identifies the governing source. Worker owns read-only discovery of load-bearing consumers/enforcement/tests and must request scope extension before any additional write.",
             }),
           }
         },
@@ -3997,6 +3998,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           let scope: TaskScope | undefined
           let task: TaskSpec | undefined
           let acceptedOutcome: string | undefined
+          let acceptedAuthority: string | undefined
 
           try {
             await withRuntimeLocks(runtime, resources, async () => {
@@ -4024,7 +4026,8 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 }
 
                 task = step.task
-                acceptedOutcome = step.task?.objective ?? workflow.request ?? workflow.anchor
+                acceptedOutcome = step.task?.objective ?? workflow.request
+                acceptedAuthority = workflow.anchor
                 if (tool.agent === "worker") {
                   scope = (await ctx.storage.get(scopeKey(value.workflowId, value.stepId))) as TaskScope | undefined
                   if (!scope) throw new Error("Worker step has no declared task scope.")
@@ -4082,10 +4085,13 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               workflowId: value.workflowId,
               ...(value.stepId ? { stepId: value.stepId } : { questionId: value.questionId }),
               ...(acceptedOutcome ? { acceptedOutcome } : {}),
+              ...(acceptedAuthority ? { acceptedAuthority } : {}),
               ...(scope ? {
                 write: scope.write,
                 scopeSemantics: "mutation-boundary-only",
-                scopeNote: "Write scope limits mutation only; acceptedOutcome is the completion target. Prove that outcome with read-only discovery beyond the write list and request scope extension when another load-bearing write is required.",
+                scopeNote: acceptedOutcome
+                  ? "Write scope limits mutation only; acceptedOutcome is the completion target and acceptedAuthority is its governing source. Prove the outcome with read-only discovery beyond the write list and request scope extension when another load-bearing write is required."
+                  : "Write scope limits mutation only; acceptedAuthority identifies the governing source. Read that authority as needed, prove the assigned outcome beyond the write list, and request scope extension when another load-bearing write is required.",
               } : {}),
               ...(task ? { task } : {}),
             }),
