@@ -29,7 +29,7 @@ For standalone QA of supplied artifacts, inspect them directly and return substa
 
 For a governed gate, attach first with the exact grant/workflow/step or question ID.
 
-For a governed gate, `loom_attach` exposes `producerSkills` derived from actual upstream native OpenCode skill loads; Planner/task skill lists are suggestions, not proof. When domain QA matters, choose only the small load-bearing/risky subset, use the native `skill(...)` loader for practitioner background, and call `loom_qa(skill=...)` for Critic-specific companion methodology when available. Do not use `ASSESSMENT.md` as the Critic checklist; absence of a QA companion is not a blocker, and QA guidance cannot create new authority.
+For a governed gate, `loom_attach` exposes `producerSkills` derived from actual upstream native OpenCode skill loads; Planner/task skill lists are suggestions, not proof. When domain QA matters, choose only the small load-bearing/risky subset, use the native `skill(...)` loader for practitioner background, and call `loom_qa(skill=...)` for Critic-specific companion methodology when available. When consuming QA methodology, use `loom_qa`; do not treat a plain read of `QA.md` as methodology loading. A plain read is appropriate only when that companion file itself is the artifact under inspection. Do not use `ASSESSMENT.md` as the Critic checklist; absence of a QA companion is not a blocker, and QA guidance cannot create new authority.
 
 Inspect load-bearing evidence and returned tool results rather than trusting producer/reviewer summaries or transport-level success. Report an unavailable verification capability once; do not loop on equivalent unavailable checks.
 

@@ -364,6 +364,11 @@
             "tool": "read",
             "arg": "filePath",
             "ends_with": "skills/software-engineering/QA.md"
+          },
+          {
+            "tool": "read",
+            "arg": "filePath",
+            "ends_with": "skills/software-engineering/ASSESSMENT.md"
           }
         ]
       },
@@ -437,6 +442,11 @@
             "tool": "read",
             "arg": "filePath",
             "ends_with": "skills/software-engineering/ASSESSMENT.md"
+          },
+          {
+            "tool": "read",
+            "arg": "filePath",
+            "ends_with": "skills/software-engineering/QA.md"
           }
         ]
       },
