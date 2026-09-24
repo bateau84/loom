@@ -1932,35 +1932,6 @@ export async function issueDispatchGrantLocked(
     createdAt: now.toISOString(),
     expiresAt: new Date(now.getTime() + ttlMs).toISOString(),
   }
-  // Keep exactly one live launch credential per workflow target. A newer
-  // grant supersedes any older unconsumed grant for the same step/OQ,
-  // including one whose host launch was admitted but whose child has not
-  // attached yet. This prevents delayed/stale children from racing a retry.
-  let after: string | undefined
-  do {
-    const page = await storage.scan({
-      prefix: "dispatch-grant/",
-      limit: 100,
-      ...(after ? { after } : {}),
-    })
-    for (const entry of page.entries ?? []) {
-      const existing = entry.value as DispatchGrantV1
-      if (
-        existing?.schemaVersion === 1 &&
-        existing.projectId === runtime.projectId &&
-        existing.workflowId === grant.workflowId &&
-        existing.stepId === grant.stepId &&
-        existing.oqId === grant.oqId &&
-        existing.expectedAgent === grant.expectedAgent &&
-        !existing.consumedAt &&
-        !existing.revokedAt
-      ) {
-        await storage.set(entry.key, { ...existing, revokedAt: now.toISOString() })
-      }
-    }
-    after = page.next
-  } while (after)
-
   await storage.set(dispatchGrantKey(grant.grantId), grant)
   return grant
 }
