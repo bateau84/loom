@@ -228,6 +228,12 @@ describe("Loom budget recovery plugin integration", () => {
       const persistedAfterDispatch = await storage.get(budgetKey) as BudgetState
       expect(persistedAfterDispatch.byKey[dispatchKey]).toBe(3)
 
+      const deniedDispatchGrant = await dispatchGrantTool!.execute(
+        { workflowId, stepId },
+        { agent: "general", sessionID },
+      )
+      expect(deniedDispatchGrant.content).not.toContain("## Error")
+
       const deniedEvent = {
         agent: "general",
         action: "subagent",
