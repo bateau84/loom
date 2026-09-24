@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, rename, rm, symlink, writeFile } from "node:f
 import { join } from "node:path"
 import { tmpdir } from "node:os"
 import { fileURLToPath } from "node:url"
-import { RUNTIME_STATE_VERSION, consumeDispatchGrant, createProjectStorage, createTransactionalStorage, ensureRuntimeStateVersion, findUsableDispatchGrant, importLegacyPluginStorage, issueDispatchGrant, migrateLegacySessionState, resolveRuntimeIdentity, sessionBoundToOq, sessionBoundToStep, sessionBoundToWorkflow } from "./runtime"
+import { RUNTIME_STATE_VERSION, admitDispatchGrantLocked, consumeDispatchGrant, createProjectStorage, createTransactionalStorage, ensureRuntimeStateVersion, findUsableDispatchGrant, importLegacyPluginStorage, issueDispatchGrant, migrateLegacySessionState, resolveRuntimeIdentity, sessionBoundToOq, sessionBoundToStep, sessionBoundToWorkflow } from "./runtime"
 
 // These identity fixtures intentionally model the pre-upgrade v1 store.
 // Schema transformation/replay is tested separately above and at the plugin boundary.
@@ -1075,6 +1075,73 @@ describe("Loom runtime identity and scoped storage", () => {
           now,
         }),
       ).rejects.toThrow("already been consumed")
+    })
+  })
+
+  test("new exact dispatch grant supersedes older unconsumed or admitted authority", async () => {
+    await withRoots(async (root) => {
+      const raw = new MemoryStorage()
+      const project = join(root, "project")
+      await mkdir(project, { recursive: true })
+      const runtime = await resolveRuntimeIdentity(project, raw as any)
+      const storage = createProjectStorage(raw as any, runtime.projectId)
+      const issuedAt = new Date("2026-09-21T12:00:00.000Z")
+
+      const first = await issueDispatchGrant(storage, runtime, {
+        workflowId: "workflow-a",
+        stepId: "task:a",
+        expectedAgent: "worker",
+        issuingParentSessionId: "general-session",
+        now: issuedAt,
+      })
+      await admitDispatchGrantLocked(storage as any, runtime, {
+        grantId: first.grantId,
+        workflowId: "workflow-a",
+        stepId: "task:a",
+        expectedAgent: "worker",
+        issuingParentSessionId: "general-session",
+        dispatchId: "launch-1",
+        now: issuedAt,
+      })
+
+      const second = await issueDispatchGrant(storage, runtime, {
+        workflowId: "workflow-a",
+        stepId: "task:a",
+        expectedAgent: "worker",
+        issuingParentSessionId: "general-session",
+        now: new Date(issuedAt.getTime() + 1000),
+      })
+
+      expect((await storage.get(`dispatch-grant/${first.grantId}`) as any).revokedAt).toBeDefined()
+      expect(
+        await findUsableDispatchGrant(storage, runtime, {
+          workflowId: "workflow-a",
+          stepId: "task:a",
+          expectedAgent: "worker",
+          issuingParentSessionId: "general-session",
+          now: new Date(issuedAt.getTime() + 1000),
+        }),
+      ).toMatchObject({ grantId: second.grantId })
+
+      await expect(
+        consumeDispatchGrant(storage, runtime, {
+          grantId: first.grantId,
+          workflowId: "workflow-a",
+          stepId: "task:a",
+          expectedAgent: "worker",
+          consumingSessionId: "delayed-child",
+          now: new Date(issuedAt.getTime() + 1000),
+        }),
+      ).rejects.toThrow("revoked")
+
+      expect((await consumeDispatchGrant(storage, runtime, {
+        grantId: second.grantId,
+        workflowId: "workflow-a",
+        stepId: "task:a",
+        expectedAgent: "worker",
+        consumingSessionId: "replacement-child",
+        now: new Date(issuedAt.getTime() + 1000),
+      })).consumingSessionId).toBe("replacement-child")
     })
   })
 
