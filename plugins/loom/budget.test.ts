@@ -68,7 +68,7 @@ describe("Loom progress and dispatch budgets", () => {
           limits: DEFAULT_LIMITS,
           dispatchID: id,
           key: "critic-final",
-          agent: "critic",
+          agent: "architect",
         }).allowed,
       ).toBe(true)
     }
@@ -242,10 +242,10 @@ describe("Loom progress and dispatch budgets", () => {
     const question = {
       id: "oq-1",
       workflowId: workflow.id,
-      question: "Which authority owns this correction?",
+      question: "Which structural owner handles this correction?",
       raisedByAgent: "worker",
       raisedByStepId: "worker",
-      requiredAuthority: "critic" as const,
+      requiredAuthority: "architect" as const,
       blocking: true,
       consumerStepIds: ["worker"],
       evidence: [],
@@ -256,14 +256,14 @@ describe("Loom progress and dispatch budgets", () => {
     const state = newBudgetState()
     const key = "oq:oq-1"
 
-    for (const id of ["oq-c1", "oq-c2"]) {
+    for (const id of ["oq-a1", "oq-a2", "oq-a3"]) {
       expect(
         recordDispatch({
           state,
           limits: DEFAULT_LIMITS,
           dispatchID: id,
           key,
-          agent: "critic",
+          agent: "architect",
         }).allowed,
       ).toBe(true)
     }
@@ -276,7 +276,7 @@ describe("Loom progress and dispatch budgets", () => {
       questionId: question.id,
       grantedBy: "general",
       reason: "New evidence makes another authority pass meaningful.",
-      evidence: ["evidence/oq-critic-correction"],
+      evidence: [],
       progress: {
         newEvidence: true,
         changedHypothesis: false,
@@ -292,26 +292,26 @@ describe("Loom progress and dispatch budgets", () => {
       kind: "question",
       id: question.id,
       key,
-      agent: "critic",
+      agent: "architect",
     })
-    expect(grant.previousLimit).toBe(DEFAULT_LIMITS.maxCriticDispatchesPerStep)
-    expect(grant.newLimit).toBe(DEFAULT_LIMITS.maxCriticDispatchesPerStep + 1)
+    expect(grant.previousLimit).toBe(DEFAULT_LIMITS.maxDispatchesPerStep)
+    expect(grant.newLimit).toBe(DEFAULT_LIMITS.maxDispatchesPerStep + 1)
     expect(
       recordDispatch({
         state,
         limits: DEFAULT_LIMITS,
-        dispatchID: "oq-c3",
+        dispatchID: "oq-a4",
         key,
-        agent: "critic",
+        agent: "architect",
       }).allowed,
     ).toBe(true)
     expect(
       recordDispatch({
         state,
         limits: DEFAULT_LIMITS,
-        dispatchID: "oq-c4",
+        dispatchID: "oq-a5",
         key,
-        agent: "critic",
+        agent: "architect",
       }).allowed,
     ).toBe(false)
   })

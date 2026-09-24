@@ -1,0 +1,25 @@
+{
+  "skill": "report-lifecycle",
+  "version": "1.0.0",
+  "shape": 1,
+  "cases": [
+    {
+      "id": "Report-01",
+      "name": "ephemeral-review-report-without-authority-elevation",
+      "trap": "Write the report straight into durable docs, omit OKF validation/profile fields, or describe persistence as making the verdict more authoritative.",
+      "prompt": "You are a Reviewer with a useful failed review that needs a file artifact for later workflow retrieval. The producer is reviewer. Explain the correct report lifecycle and provide the report-path/profile requirements. The report is operational evidence, not durable product documentation.",
+      "expectations": [
+        "Keeps the report under ephemeral-reports/reviewer rather than docs or another role namespace.",
+        "Requires the Loom OKF report profile with type report reviewer, non-empty title and description, and a non-empty string tags array.",
+        "Requires OKF validation before relying on discovery or handing the report off as a discoverable artifact.",
+        "Keeps the review verdict/evidence/uncertainty unchanged by persistence and does not elevate report authority.",
+        "Treats durable promotion as a separate General-owned retention decision rather than the default specialist action."
+      ],
+      "negative_expectations": [
+        "Must not put the report directly in docs/reports or authority-bearing documentation.",
+        "Must not describe OKF validity or persistence as semantic approval.",
+        "Must not have Reviewer or another specialist call the General-only promotion operation."
+      ]
+    }
+  ]
+}

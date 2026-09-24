@@ -170,16 +170,25 @@ def behavioral_eval_files(evals_root: Path) -> list[Path]:
     )
 
 
-def load_cases(suite_paths: list[Path] | None = None) -> list[dict[str, Any]]:
+def load_cases(
+    suite_paths: list[Path] | None = None,
+    *,
+    include_opt_in: bool = False,
+) -> list[dict[str, Any]]:
     cases: list[dict[str, Any]] = []
     paths = behavioral_eval_files(ROOT / "evals") if suite_paths is None else suite_paths
     for path in paths:
         data = json.loads(path.read_text(encoding="utf-8"))
         if "default" in data and type(data["default"]) is not bool:
             raise ValueError(f"{path}: suite default must be a boolean")
-        if suite_paths is None and data.get("default", True) is False:
+        if suite_paths is None and not include_opt_in and data.get("default", True) is False:
             continue
-        cases.extend(data["cases"])
+        for case in data["cases"]:
+            if "default" in case and type(case["default"]) is not bool:
+                raise ValueError(f"{path}: case {case.get('id', '<unknown>')} default must be a boolean")
+            if suite_paths is None and not include_opt_in and case.get("default", True) is False:
+                continue
+            cases.append(case)
     return cases
 
 
@@ -2225,12 +2234,13 @@ def main() -> int:
     parser.add_argument("--list", action="store_true")
     args = parser.parse_args()
 
+    selected_ids = {value.strip() for value in args.cases.split(",") if value.strip()}
     suite_paths = (
         [Path(value).resolve() for value in args.suite]
         if args.suite
         else None
     )
-    cases = load_cases(suite_paths)
+    cases = load_cases(suite_paths, include_opt_in=bool(selected_ids))
     cases.extend(load_skill_owned_cases(ROOT / "skills"))
 
     all_ids = [str(case["id"]) for case in cases]
@@ -2258,7 +2268,6 @@ def main() -> int:
     if args.runtime_parallel < 1:
         parser.error("--runtime-parallel must be >= 1")
 
-    selected_ids = {value.strip() for value in args.cases.split(",") if value.strip()}
     selected_targets = {value.strip() for value in args.target.split(",") if value.strip()}
     if not args.all and not selected_ids and not selected_targets and args.target_kind == "all":
         parser.error(

@@ -797,6 +797,16 @@ export function releaseWorkflowWave(
   return hierarchy
 }
 
+export function objectiveWorkLevel(hierarchy: WorkHierarchy): "wave" | "objective" {
+  const remainingWaves = activeNodes(hierarchy).filter(
+    (node) =>
+      node.type === "wave" &&
+      node.status !== "complete" &&
+      node.status !== "cancelled",
+  )
+  return remainingWaves.length > 1 ? "wave" : "objective"
+}
+
 export function validateWorkflowWave(
   hierarchy: WorkHierarchy,
   tasks: TaskSpec[],
@@ -865,15 +875,9 @@ export function validateWorkflowWave(
     }
   }
 
-  const activeWaves = activeNodes(hierarchy).filter(
-    (node) =>
-      node.type === "wave" &&
-      node.status !== "complete" &&
-      node.status !== "cancelled",
-  )
-  if (objectiveClosure && activeWaves.length > 1) {
+  if (objectiveClosure && objectiveWorkLevel(hierarchy) === "wave") {
     throw new Error(
-      "Objective-scoped workflow may execute only the final remaining Wave. Route earlier bounded work with workLevel=wave.",
+      "Objective-scoped workflow may execute only the final remaining Wave.",
     )
   }
 

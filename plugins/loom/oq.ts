@@ -7,8 +7,6 @@ export type OQAuthority =
   | "architect"
   | "research"
   | "diagnostic"
-  | "reviewer"
-  | "critic"
 
 export type OQDisposition = "incorporated" | "unaffected" | "explicitly-deferred"
 export type OQStatus = "open" | "answered" | "closed"
@@ -69,6 +67,10 @@ function stepAgent(workflow: Workflow, stepId: string) {
 }
 
 export function raiseQuestion(input: RaiseQuestionInput): OpenQuestion {
+  if (["reviewer", "critic"].includes(String(input.requiredAuthority))) {
+    throw new Error("Reviewer and Critic are independent gates, not OQ answer authorities.")
+  }
+
   const owner = stepAgent(input.workflow, input.raisedByStepId)
   if (!owner) throw new Error("Raising step not found.")
   if (owner !== input.raisedByAgent) {

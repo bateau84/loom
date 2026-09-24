@@ -1508,7 +1508,7 @@ class ActionAssertionTests(unittest.TestCase):
 
 class ConversationCompositionTests(unittest.TestCase):
     def test_newer_main_status_case_and_conversation_navigation_survive(self):
-        suite = json.loads((RUN_EVALS.ROOT / "evals" / "front-door.json").read_text())
+        suite = json.loads((RUN_EVALS.ROOT / "evals" / "intent-and-routing.json").read_text())
         cases = {case["id"]: case for case in suite["cases"]}
         self.assertTrue({"INTENT-01", "INTENT-02", "INTENT-03", "AUTONOMY-01", "AUTONOMY-02", "ROUTING-01", "OQ-ROUTE-01", "STATUS-PREVIEW-01"}.issubset(cases))
         status = cases["STATUS-PREVIEW-01"]
@@ -1533,17 +1533,29 @@ class ConversationCompositionTests(unittest.TestCase):
         index = (RUN_EVALS.ROOT / "docs" / "architecture" / "loom" / "index.md").read_text()
         self.assertIn("decisions/conversation-primary-agent.md", index)
 
-    def test_default_excludes_expensive_suite_but_explicit_selection_includes_it(self):
+    def test_default_excludes_opt_in_cases_but_explicit_selection_can_include_them(self):
         cases = RUN_EVALS.load_cases()
         ids = {case["id"] for case in cases}
         self.assertIn("CONVERSATION-02", ids)
         self.assertIn("CONVERSATION-02-SYNTH", ids)
         self.assertIn("PROP-RUNTIME-01", ids)
         self.assertNotIn("CONVERSATION-02-LIVE", ids)
-        explicit = RUN_EVALS.load_cases([RUN_EVALS.ROOT / "evals" / "live-integration.json"])
-        self.assertEqual([case["id"] for case in explicit], ["CONVERSATION-02-LIVE"])
+        self.assertNotIn("HUMAN-RUNTIME-01", ids)
+        self.assertNotIn("BUDGET-CONTINUE-RUNTIME-QUOTA-01", ids)
+
+        explicit_suite = RUN_EVALS.load_cases([RUN_EVALS.ROOT / "evals" / "conversation.json"])
+        explicit_suite_ids = {case["id"] for case in explicit_suite}
+        self.assertIn("CONVERSATION-02-LIVE", explicit_suite_ids)
+        self.assertIn("HUMAN-RUNTIME-01", explicit_suite_ids)
+
+        explicit_cases = RUN_EVALS.load_cases(include_opt_in=True)
+        explicit_case_ids = {case["id"] for case in explicit_cases}
+        self.assertIn("HUMAN-RUNTIME-01", explicit_case_ids)
+        self.assertIn("BUDGET-CONTINUE-RUNTIME-QUOTA-01", explicit_case_ids)
+        self.assertIn("BUDGET-CONTINUE-RUNTIME-SAME-OBJECTIVE-01", explicit_case_ids)
+
         self.assertEqual(RUN_EVALS.load_cases([]), [])
-        self.assertIn("live-integration.json", [path.name for path in RUN_EVALS.behavioral_eval_files(RUN_EVALS.ROOT / "evals")])
+        self.assertIn("conversation.json", [path.name for path in RUN_EVALS.behavioral_eval_files(RUN_EVALS.ROOT / "evals")])
 
     def test_default_metadata_is_generic_and_fails_closed(self):
         from unittest.mock import patch
@@ -1551,10 +1563,25 @@ class ConversationCompositionTests(unittest.TestCase):
             root = Path(tmp)
             (root / "evals").mkdir()
             target = root / "evals" / "arbitrary-name.json"
-            target.write_text(json.dumps({"default": False, "cases": [{"id": "costly"}]}))
+            target.write_text(json.dumps({
+                "cases": [
+                    {"id": "ordinary"},
+                    {"id": "costly", "default": False},
+                ],
+            }))
             with patch.object(RUN_EVALS, "ROOT", root):
-                self.assertEqual(RUN_EVALS.load_cases(), [])
-                self.assertEqual(RUN_EVALS.load_cases([target])[0]["id"], "costly")
+                self.assertEqual([case["id"] for case in RUN_EVALS.load_cases()], ["ordinary"])
+                self.assertEqual(
+                    {case["id"] for case in RUN_EVALS.load_cases(include_opt_in=True)},
+                    {"ordinary", "costly"},
+                )
+                self.assertEqual(
+                    {case["id"] for case in RUN_EVALS.load_cases([target])},
+                    {"ordinary", "costly"},
+                )
+                target.write_text(json.dumps({"cases": [{"id": "bad", "default": "false"}]}))
+                with self.assertRaises(ValueError):
+                    RUN_EVALS.load_cases()
                 target.write_text(json.dumps({"default": "false", "cases": []}))
                 with self.assertRaises(ValueError):
                     RUN_EVALS.load_cases()
@@ -1601,7 +1628,11 @@ class ConversationCompositionTests(unittest.TestCase):
         self.assertTrue(RUN_EVALS.action_matches({"tool": "subagent", "args": {"background": None}}, {"tool": "subagent", "arg": "background", "equals": None}))
 
     def test_nested_timeout_does_not_change_ordinary_defaults(self):
-        live = RUN_EVALS.load_cases([RUN_EVALS.ROOT / "evals" / "live-integration.json"])[0]
+        live = next(
+            case
+            for case in RUN_EVALS.load_cases([RUN_EVALS.ROOT / "evals" / "conversation.json"])
+            if case["id"] == "CONVERSATION-02-LIVE"
+        )
         self.assertEqual(RUN_EVALS.case_target_timeout_seconds(live, 240), 360)
         self.assertEqual(RUN_EVALS.case_target_container_timeout(live, 300, 360), 420)
         self.assertEqual(RUN_EVALS.case_target_timeout_seconds({}, 240), 240)
