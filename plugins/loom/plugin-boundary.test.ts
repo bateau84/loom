@@ -2079,7 +2079,7 @@ describe("cancellation replay and grant boundaries", () => {
       await h.call("cancel", cancellationRequest(h.workflowId), "general", "parent")
       await h.call("start", { request: "Replacement" }, "general", "parent")
       const before = await h.workflow()
-      for (const name of ["dispatch_grant", "oq_raise", "oq_answer", "oq_reconcile", "oq_reopen", "knowledge_record", "pa_plan", "pa_result", "task_scope", "reopen", "work_release", "task_plan", "work_plan", "budget_grant"]) {
+      for (const name of ["dispatch_grant", "oq_raise", "oq_answer", "oq_reconcile", "oq_reopen", "knowledge_record", "pa_plan", "pa_result", "task_scope", "reopen", "work_release", "task_plan", "work_plan", "budget_grant", "budget_continue"]) {
         const result = await h.call(name, { workflowId: h.workflowId }, "general", "parent")
         expect(result.error).toContain("cancelled")
       }

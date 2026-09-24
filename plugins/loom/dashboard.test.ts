@@ -194,6 +194,17 @@ describe("Loom dashboard projection", () => {
         evidence: ["obs-1"],
         grantedAt: "2026-09-21T12:08:00.000Z",
       }],
+      continuations: [{
+        key: "step:task:build",
+        agent: "worker",
+        grantedBy: "general",
+        reason: "user asked to continue unfinished work",
+        confirmation: "keep going",
+        requestedDispatches: 2,
+        stepLimitIncrease: 2,
+        workflowLimitIncrease: 2,
+        grantedAt: "2026-09-21T12:09:30.000Z",
+      }],
     })
 
     const snapshot = await buildProjectSnapshot(
@@ -203,7 +214,8 @@ describe("Loom dashboard projection", () => {
       {},
       new Date("2026-09-21T12:10:00.000Z"),
     )
-    expect(snapshot.workflows[0].recentActivityAt).toBe("2026-09-21T12:09:00.000Z")
+    expect(snapshot.workflows[0].recentActivityAt).toBe("2026-09-21T12:09:30.000Z")
+    expect(snapshot.workflows[0].budget.limit).toBe(42)
   })
 
   test("state digest is canonical across object key ordering", () => {

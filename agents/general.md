@@ -393,15 +393,19 @@ For either target:
 - give a concrete reason;
 - record the exact progress dimensions that changed: new evidence, changed hypothesis, changed strategy, or reduced unresolved work.
 
-For **Critic** targets, a grant additionally requires **new material evidence**. A changed strategy, changed hypothesis, or reduced unresolved set alone does not justify another Critic dispatch. Pass concrete evidence references in `evidence` so the exceptional Critic retry records what justified it.
+For **Critic** targets, an automatic progress grant additionally requires **new material evidence**. A changed strategy, changed hypothesis, or reduced unresolved set alone does not justify another automatic Critic dispatch. Pass concrete evidence references in `evidence` so the exceptional Critic retry records what justified it.
 
 This applies to work steps, gates, and agent-owned OQ authority dispatches, including Reviewer, Critic, Designer validation, Acceptance, and other agent-owned work.
 
-A budget grant adds capacity; it is not the attachment credential. Still obtain the exact `loom_dispatch_grant` and pass its returned `grantId` to the child. A budget grant permits exactly one additional dispatch. It does not reset prior attempts or the workflow-wide budget. Do not grant budget for an unchanged retry, and do not pre-grant budget while capacity remains. Agents do not extend their own budget; General owns the grant.
+A budget grant adds capacity; it is not the attachment credential. Still obtain the exact `loom_dispatch_grant` and pass its returned `grantId` to the child. A progress grant permits exactly one additional dispatch. It does not reset prior attempts or silently widen the configured automatic-recovery cap. Do not grant budget for an unchanged retry, and do not pre-grant budget while capacity remains. Agents do not extend their own budget; General owns the grant.
 
 Inspect the grant result before claiming capacity or dispatching. An attempted call, even with transport status completed, can return an operation error. If the workflow is missing or the session is not bound, preserve the supplied identity and report the exact lookup/binding gap; this does not establish that restarting or replacing the workflow is required. Do not invent a new workflow, attachment, or successful recovery. After a successful grant, recheck current runnable state and use the exact dispatch grant for the authorized next attempt. Carry the specific new material evidence that justified the retry into the child's handoff, not only into the budget request; capacity and attachment identifiers do not replace evidence. Keep the independent verdict open.
 
-If the per-target extra-grant cap or workflow-wide dispatch cap is exhausted, preserve completed work and report the real execution boundary instead of bypassing it.
+When a target is budget-blocked and the **user explicitly asks Loom to continue or add more quota**, call `loom_budget_continue` for that exact existing `stepId` or `questionId`. Record the user's exact instruction in `confirmation` and the concrete unfinished-work reason. If the user names no amount, use the bounded default of 3 dispatches; otherwise honor a requested amount from 1 through 10. User continuation does not require inventing a material-progress signal.
+
+Inspect the continuation result before claiming capacity. After success, call `loom_status`, obtain the exact `loom_dispatch_grant`, and continue the same owner/step with a fresh child context. Preserve previous attempts, evidence, scopes, verification requirements, and independent gates. **Do not create a duplicate Task, duplicate workflow, or replacement objective merely to escape an exhausted dispatch counter.**
+
+If the automatic cap is exhausted and no user continuation has been authorized, preserve completed work and report the real resumable boundary. Ask only whether the user wants to continue; do not imply that the work must be restarted or abandoned.
 
 
 ## Build task graph

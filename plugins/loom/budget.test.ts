@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import {
   DEFAULT_LIMITS,
+  continueWorkflowDispatchBudget,
   grantExtraDispatch,
   grantWorkflowDispatchBudget,
   hasMaterialProgress,
@@ -566,6 +567,180 @@ describe("Loom progress and dispatch budgets", () => {
         now: "later",
       }).allowed,
     ).toBe(false)
+  })
+
+  test("explicit user continuation resumes exhausted work after automatic grant cap", () => {
+    const workflow = {
+      id: "wf-user-continuation",
+      projectId: "project-test",
+      revision: 0,
+      anchor: "docs/anchors/test/anchor.md",
+      createdBySession: "session",
+      createdAt: "now",
+      steps: [
+        {
+          id: "worker",
+          agent: "worker",
+          kind: "work" as const,
+          dependsOn: [],
+          status: "pending" as const,
+        },
+      ],
+    }
+    const state = newBudgetState()
+    const limits = { ...DEFAULT_LIMITS, maxTotalDispatches: 6 }
+    const key = "step:worker"
+
+    expect(
+      continueWorkflowDispatchBudget({
+        state,
+        limits,
+        workflow,
+        questions: [],
+        stepId: "worker",
+        grantedBy: "general",
+        reason: "The user wants the unfinished implementation to continue.",
+        confirmation: "keep going",
+        additionalDispatches: 3,
+        now: "before-exhaustion",
+      }).allowed,
+    ).toBe(false)
+
+    for (const id of ["d1", "d2", "d3"]) {
+      expect(
+        recordDispatch({
+          state,
+          limits,
+          dispatchID: id,
+          key,
+          agent: "worker",
+        }).allowed,
+      ).toBe(true)
+    }
+
+    for (let attempt = 1; attempt <= DEFAULT_LIMITS.maxExtraDispatchesPerStep; attempt++) {
+      const grant = grantWorkflowDispatchBudget({
+        state,
+        limits,
+        workflow,
+        questions: [],
+        stepId: "worker",
+        grantedBy: "general",
+        reason: `Material progress ${attempt} left bounded implementation work.`,
+        progress: {
+          newEvidence: false,
+          changedHypothesis: false,
+          changedStrategy: true,
+          reducedUnresolved: true,
+        },
+        now: `grant-${attempt}`,
+      })
+      expect(grant.allowed).toBe(true)
+
+      expect(
+        recordDispatch({
+          state,
+          limits,
+          dispatchID: `extra-${attempt}`,
+          key,
+          agent: "worker",
+        }).allowed,
+      ).toBe(true)
+    }
+
+    expect(state.totalDispatches).toBe(6)
+    expect(state.byKey[key]).toBe(6)
+    expect(state.grants).toHaveLength(DEFAULT_LIMITS.maxExtraDispatchesPerStep)
+    expect(
+      recordDispatch({
+        state,
+        limits,
+        dispatchID: "blocked-before-user-continuation",
+        key,
+        agent: "worker",
+      }).allowed,
+    ).toBe(false)
+
+    expect(
+      continueWorkflowDispatchBudget({
+        state,
+        limits,
+        workflow,
+        questions: [],
+        stepId: "worker",
+        grantedBy: "worker",
+        reason: "Workers may not widen their own budget.",
+        confirmation: "keep going",
+        additionalDispatches: 3,
+        now: "unauthorized",
+      }).allowed,
+    ).toBe(false)
+
+    expect(
+      continueWorkflowDispatchBudget({
+        state,
+        limits,
+        workflow,
+        questions: [],
+        stepId: "worker",
+        grantedBy: "general",
+        reason: "The user wants the unfinished implementation to continue.",
+        confirmation: " ",
+        additionalDispatches: 3,
+        now: "missing-confirmation",
+      }).allowed,
+    ).toBe(false)
+
+    const continuation = continueWorkflowDispatchBudget({
+      state,
+      limits,
+      workflow,
+      questions: [],
+      stepId: "worker",
+      grantedBy: "general",
+      reason: "The required identity-safety fix is still unfinished.",
+      confirmation: "could you keep going and give that worker three more tries?",
+      additionalDispatches: 3,
+      now: "user-continuation",
+    })
+
+    expect(continuation.allowed).toBe(true)
+    if (!continuation.allowed) throw new Error(continuation.reason)
+    expect(continuation.previousStepLimit).toBe(6)
+    expect(continuation.newStepLimit).toBe(9)
+    expect(continuation.previousWorkflowLimit).toBe(6)
+    expect(continuation.newWorkflowLimit).toBe(9)
+    expect(continuation.continuation.confirmation).toBe(
+      "could you keep going and give that worker three more tries?",
+    )
+    expect(state.totalDispatches).toBe(6)
+    expect(state.byKey[key]).toBe(6)
+    expect(state.grants).toHaveLength(DEFAULT_LIMITS.maxExtraDispatchesPerStep)
+    expect(state.continuations).toHaveLength(1)
+
+    for (const id of ["continued-1", "continued-2", "continued-3"]) {
+      expect(
+        recordDispatch({
+          state,
+          limits,
+          dispatchID: id,
+          key,
+          agent: "worker",
+        }).allowed,
+      ).toBe(true)
+    }
+
+    expect(
+      recordDispatch({
+        state,
+        limits,
+        dispatchID: "blocked-after-user-continuation",
+        key,
+        agent: "worker",
+      }).allowed,
+    ).toBe(false)
+    expect(state.totalDispatches).toBe(9)
+    expect(state.byKey[key]).toBe(9)
   })
 
   test("reopen requires a material progress dimension", () => {

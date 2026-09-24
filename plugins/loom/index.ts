@@ -60,6 +60,8 @@ import {
 } from "./evidence"
 import {
   DEFAULT_LIMITS,
+  continueWorkflowDispatchBudget,
+  effectiveTotalDispatchLimit,
   grantWorkflowDispatchBudget,
   hasMaterialProgress,
   newBudgetState,
@@ -2912,7 +2914,13 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           }
           const limits = await readLimits(ctx, workflowId)
           const state = await readBudget(ctx, workflowId)
-          return { content: renderToolOutput({ limits, state }) }
+          return {
+            content: renderToolOutput({
+              limits,
+              state,
+              effective: { maxTotalDispatches: effectiveTotalDispatchLimit(state, limits) },
+            }),
+          }
         },
       })
 
@@ -3026,6 +3034,121 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 used: mutation.state.totalDispatches,
                 limit: mutation.limits.maxTotalDispatches,
               },
+            }),
+          }
+        },
+      })
+
+
+      addLoomTool({
+        name: "budget_continue",
+        description:
+          "Record an explicit user-authorized bounded continuation for an exhausted runnable workflow step or unanswered agent-owned OQ. General only. Preserves attempts, evidence, workflow identity, independent gates, and automatic grant history; no fabricated progress signal is required.",
+        input: {
+          type: "object",
+          properties: {
+            workflowId: { type: "string" },
+            stepId: { type: "string" },
+            questionId: { type: "string" },
+            reason: { type: "string" },
+            confirmation: {
+              type: "string",
+              description: "Exact explicit user instruction authorizing more bounded work.",
+            },
+            additionalDispatches: {
+              type: "number",
+              minimum: 1,
+              maximum: 10,
+              description: "Bounded dispatches to make available. Defaults to 3 when the user did not name a count.",
+            },
+          },
+          required: ["workflowId", "reason", "confirmation"],
+          additionalProperties: false,
+        },
+        options: { namespace: "loom", codemode: false },
+        execute: async (input, tool) => {
+          if (tool.agent !== "general") {
+            return {
+              content: renderToolOutput({
+                error: "Only general may record user-authorized Loom budget continuation.",
+              }),
+            }
+          }
+
+          const value = input as {
+            workflowId: string
+            stepId?: string
+            questionId?: string
+            reason: string
+            confirmation: string
+            additionalDispatches?: number
+          }
+
+          if (!(await readBoundWorkflow(ctx, tool.sessionID, value.workflowId, ensureLegacySession))) {
+            return { content: renderToolOutput({ error: "Workflow not found or current session is not bound to it." }) }
+          }
+
+          const mutation = await withRuntimeLock(runtime, "workflow", value.workflowId, async () => {
+            const workflow = await readBoundWorkflow(
+              ctx,
+              tool.sessionID,
+              value.workflowId,
+              ensureLegacySession,
+            )
+            if (!workflow) throw new Error("Workflow not found or current session is not bound to it.")
+
+            const questions = await readQuestions(ctx, value.workflowId)
+            const limits = await readLimits(ctx, value.workflowId)
+            const state = await readBudget(ctx, value.workflowId)
+            const result = continueWorkflowDispatchBudget({
+              state,
+              limits,
+              workflow,
+              questions,
+              stepId: value.stepId,
+              questionId: value.questionId,
+              grantedBy: tool.agent,
+              reason: value.reason,
+              confirmation: value.confirmation,
+              additionalDispatches: value.additionalDispatches ?? 3,
+              now: new Date().toISOString(),
+            })
+
+            if (result.allowed) {
+              await ctx.storage.set(budgetKey(value.workflowId), state)
+              await bumpWorkflowRevisionLocked(ctx, runtime, value.workflowId)
+            }
+            return { state, result }
+          })
+
+          if (!mutation.result.allowed) {
+            return {
+              content: renderToolOutput({
+                error: mutation.result.reason,
+                target: {
+                  stepId: value.stepId,
+                  questionId: value.questionId,
+                },
+              }),
+            }
+          }
+
+          return {
+            content: renderToolOutput({
+              continued: true,
+              target: mutation.result.target,
+              used: mutation.state.byKey[mutation.result.target.key] ?? 0,
+              requestedDispatches: mutation.result.continuation.requestedDispatches,
+              stepDispatches: {
+                previousLimit: mutation.result.previousStepLimit,
+                newLimit: mutation.result.newStepLimit,
+              },
+              workflowDispatches: {
+                used: mutation.state.totalDispatches,
+                previousLimit: mutation.result.previousWorkflowLimit,
+                newLimit: mutation.result.newWorkflowLimit,
+              },
+              continuation: mutation.result.continuation,
             }),
           }
         },
@@ -4351,7 +4474,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
       if (!recorded.allowed) {
         event.effect = "deny"
-        event.message = `Loom execution budget exhausted: ${recorded.reason}`
+        event.message = `Loom execution budget exhausted: ${recorded.reason}. Preserve this workflow and target. If the user explicitly authorizes more bounded work, General may use loom_budget_continue instead of duplicating the task or workflow.`
       }
     })
 

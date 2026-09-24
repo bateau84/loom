@@ -7,7 +7,7 @@ import {
   acceptanceReadiness,
   type AcceptancePlan,
 } from "./acceptance"
-import type { BudgetState, ExecutionLimits } from "./budget"
+import { effectiveTotalDispatchLimit, type BudgetState, type ExecutionLimits } from "./budget"
 import type { KnowledgeReport } from "./knowledge"
 import type { OpenQuestion } from "./oq"
 import type { LoomRuntimeIdentity } from "./runtime"
@@ -120,7 +120,7 @@ export function compactWorkflowState(
     verification: compactVerification(workflow),
     budget: {
       dispatches: budget.totalDispatches,
-      maxDispatches: limits.maxTotalDispatches,
+      maxDispatches: effectiveTotalDispatchLimit(budget, limits),
       ...(budget.exhausted ? { exhausted: budget.exhausted } : {}),
     },
     acceptance: acceptance ? acceptanceReadiness(acceptance) : null,

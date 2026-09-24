@@ -173,8 +173,10 @@ describe("Loom budget recovery plugin integration", () => {
       await storage.set(budgetKey, budget)
 
       const grantTool = registeredTools.get("budget_grant")
+      const continuationTool = registeredTools.get("budget_continue")
       const dispatchGrantTool = registeredTools.get("dispatch_grant")
       expect(grantTool).toBeDefined()
+      expect(continuationTool).toBeDefined()
       expect(dispatchGrantTool).toBeDefined()
       expect(evaluatePermission).toBeDefined()
 
@@ -231,6 +233,49 @@ describe("Loom budget recovery plugin integration", () => {
       await evaluatePermission!(deniedEvent)
       expect(deniedEvent.effect).toBe("deny")
       expect(deniedEvent.message).toContain("dispatch limit 3 reached")
+
+      const continuationResult = await continuationTool!.execute(
+        {
+          workflowId,
+          stepId,
+          reason: "The user explicitly wants the unfinished governed work to continue.",
+          confirmation: "keep going and give it two more attempts",
+          additionalDispatches: 2,
+        },
+        { agent: "general", sessionID },
+      )
+      expect(continuationResult.content).not.toContain('"error"')
+
+      const persistedAfterContinuation = await storage.get(budgetKey) as BudgetState
+      expect(persistedAfterContinuation.continuations).toHaveLength(1)
+      expect(persistedAfterContinuation.byKey[dispatchKey]).toBe(3)
+      expect(
+        recordDispatch({
+          state: persistedAfterContinuation,
+          limits: DEFAULT_LIMITS,
+          dispatchID: "critic-4-after-user-continuation",
+          key: dispatchKey,
+          agent: "critic",
+        }).allowed,
+      ).toBe(true)
+      expect(
+        recordDispatch({
+          state: persistedAfterContinuation,
+          limits: DEFAULT_LIMITS,
+          dispatchID: "critic-5-after-user-continuation",
+          key: dispatchKey,
+          agent: "critic",
+        }).allowed,
+      ).toBe(true)
+      expect(
+        recordDispatch({
+          state: persistedAfterContinuation,
+          limits: DEFAULT_LIMITS,
+          dispatchID: "critic-6-after-user-continuation",
+          key: dispatchKey,
+          agent: "critic",
+        }).allowed,
+      ).toBe(false)
     } finally {
       if (previousState === undefined) delete process.env.XDG_STATE_HOME
       else process.env.XDG_STATE_HOME = previousState

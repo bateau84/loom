@@ -27,11 +27,24 @@ export type BudgetGrant = {
   grantedAt: string
 }
 
+export type BudgetContinuation = {
+  key: string
+  agent: string
+  grantedBy: string
+  reason: string
+  confirmation: string
+  requestedDispatches: number
+  stepLimitIncrease: number
+  workflowLimitIncrease: number
+  grantedAt: string
+}
+
 export type BudgetState = {
   totalDispatches: number
   byKey: Record<string, number>
   seenDispatches: string[]
   grants?: BudgetGrant[]
+  continuations?: BudgetContinuation[]
   exhausted?: string
 }
 
@@ -63,13 +76,24 @@ function grantsForKey(state: BudgetState, key: string) {
   return (state.grants ?? []).filter((grant) => grant.key === key).length
 }
 
+function continuationStepIncreaseForKey(state: BudgetState, key: string) {
+  return (state.continuations ?? [])
+    .filter((continuation) => continuation.key === key)
+    .reduce((total, continuation) => total + continuation.stepLimitIncrease, 0)
+}
+
+export function effectiveTotalDispatchLimit(state: BudgetState, limits: ExecutionLimits) {
+  return limits.maxTotalDispatches + (state.continuations ?? [])
+    .reduce((total, continuation) => total + continuation.workflowLimitIncrease, 0)
+}
+
 export function effectiveStepLimit(
   state: BudgetState,
   key: string,
   agent: string,
   limits: ExecutionLimits,
 ) {
-  return baseStepLimit(agent, limits) + grantsForKey(state, key)
+  return baseStepLimit(agent, limits) + grantsForKey(state, key) + continuationStepIncreaseForKey(state, key)
 }
 
 export function recordDispatch(input: {
@@ -85,8 +109,9 @@ export function recordDispatch(input: {
     return { allowed: true, duplicate: true, state }
   }
 
-  if (state.totalDispatches >= limits.maxTotalDispatches) {
-    state.exhausted = `total dispatch limit ${limits.maxTotalDispatches} reached`
+  const totalLimit = effectiveTotalDispatchLimit(state, limits)
+  if (state.totalDispatches >= totalLimit) {
+    state.exhausted = `total dispatch limit ${totalLimit} reached`
     return { allowed: false, duplicate: false, reason: state.exhausted, state }
   }
 
@@ -149,8 +174,9 @@ export function grantExtraDispatch(input: {
     }
   }
 
-  if (state.totalDispatches >= limits.maxTotalDispatches) {
-    state.exhausted = `total dispatch limit ${limits.maxTotalDispatches} reached`
+  const totalLimit = effectiveTotalDispatchLimit(state, limits)
+  if (state.totalDispatches >= totalLimit) {
+    state.exhausted = `total dispatch limit ${totalLimit} reached`
     return { allowed: false, reason: state.exhausted, state }
   }
 
@@ -350,6 +376,133 @@ export function grantWorkflowDispatchBudget(input: {
     grant: result.grant,
     previousLimit: result.previousLimit,
     newLimit: result.newLimit,
+    state,
+  }
+}
+
+
+export type WorkflowBudgetContinuationResult =
+  | {
+      allowed: true
+      target: BudgetGrantTarget
+      continuation: BudgetContinuation
+      previousStepLimit: number
+      newStepLimit: number
+      previousWorkflowLimit: number
+      newWorkflowLimit: number
+      state: BudgetState
+    }
+  | {
+      allowed: false
+      reason: string
+      state: BudgetState
+    }
+
+export function continueWorkflowDispatchBudget(input: {
+  state: BudgetState
+  limits: ExecutionLimits
+  workflow: Workflow
+  questions: OpenQuestion[]
+  stepId?: string
+  questionId?: string
+  grantedBy: string
+  reason: string
+  confirmation: string
+  additionalDispatches: number
+  now: string
+}): WorkflowBudgetContinuationResult {
+  const {
+    state,
+    limits,
+    workflow,
+    questions,
+    stepId,
+    questionId,
+    grantedBy,
+    reason,
+    confirmation,
+    additionalDispatches,
+    now,
+  } = input
+
+  if (grantedBy !== "general") {
+    return {
+      allowed: false,
+      reason: "Only general may record user-authorized Loom budget continuation.",
+      state,
+    }
+  }
+
+  if (!reason.trim()) {
+    return { allowed: false, reason: "Budget continuation requires a concrete reason.", state }
+  }
+
+  if (!confirmation.trim()) {
+    return {
+      allowed: false,
+      reason: "Budget continuation requires the exact explicit user instruction authorizing more work.",
+      state,
+    }
+  }
+
+  if (!Number.isInteger(additionalDispatches) || additionalDispatches < 1 || additionalDispatches > 10) {
+    return {
+      allowed: false,
+      reason: "Budget continuation must add between 1 and 10 dispatches.",
+      state,
+    }
+  }
+
+  const resolved = resolveBudgetGrantTarget({ workflow, questions, stepId, questionId })
+  if (!resolved.target) {
+    return { allowed: false, reason: resolved.reason, state }
+  }
+
+  const target = resolved.target
+  const previousStepLimit = effectiveStepLimit(state, target.key, target.agent, limits)
+  const previousWorkflowLimit = effectiveTotalDispatchLimit(state, limits)
+  const targetUsed = state.byKey[target.key] ?? 0
+  const stepHeadroom = Math.max(0, previousStepLimit - targetUsed)
+  const workflowHeadroom = Math.max(0, previousWorkflowLimit - state.totalDispatches)
+
+  if (stepHeadroom > 0 && workflowHeadroom > 0) {
+    return {
+      allowed: false,
+      reason:
+        `Target still has dispatch capacity: step ${targetUsed}/${previousStepLimit}, workflow ${state.totalDispatches}/${previousWorkflowLimit} used.`,
+      state,
+    }
+  }
+
+  // Expand only the exhausted dimensions, and only enough to make the
+  // explicitly authorized bounded continuation usable without immediately
+  // colliding with the other budget dimension.
+  const stepLimitIncrease = Math.max(0, additionalDispatches - stepHeadroom)
+  const workflowLimitIncrease = Math.max(0, additionalDispatches - workflowHeadroom)
+  const continuation: BudgetContinuation = {
+    key: target.key,
+    agent: target.agent,
+    grantedBy,
+    reason: reason.trim(),
+    confirmation: confirmation.trim(),
+    requestedDispatches: additionalDispatches,
+    stepLimitIncrease,
+    workflowLimitIncrease,
+    grantedAt: now,
+  }
+
+  if (!state.continuations) state.continuations = []
+  state.continuations.push(continuation)
+  delete state.exhausted
+
+  return {
+    allowed: true,
+    target,
+    continuation,
+    previousStepLimit,
+    newStepLimit: previousStepLimit + stepLimitIncrease,
+    previousWorkflowLimit,
+    newWorkflowLimit: previousWorkflowLimit + workflowLimitIncrease,
     state,
   }
 }
