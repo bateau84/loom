@@ -3095,7 +3095,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       addLoomTool({
         name: "budget_continue",
         description:
-          "Record one explicit user-authorized dispatch for an exhausted runnable workflow step or unanswered agent-owned OQ. The confirmation must exactly match the latest observed user message and that user message is single-use. General only; preserves attempts, evidence, workflow identity, independent gates, and automatic grant history.",
+          "Immediately continue one exhausted exact target when the user explicitly asks Loom to keep going. When workflowId and stepId/questionId are already known from current context, use them directly rather than asking the user to repeat them. The confirmation must exactly match the latest observed user message and that user message is single-use. General only; preserves attempts, evidence, workflow identity, independent gates, and automatic grant history.",
         input: {
           type: "object",
           properties: {
