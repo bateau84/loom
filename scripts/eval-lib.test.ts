@@ -65,13 +65,19 @@ describe("behavioral eval utilities", () => {
 
 describe("conversation-first eval schema", () => {
   const root = new URL("..", import.meta.url).pathname
-  const fixture = () => loadSuite(new URL("../evals/front-door.json", import.meta.url).pathname)
-  test("accepts conversation responses and optional-suite metadata", () => {
+  const fixture = () => loadSuite(new URL("../evals/conversation.json", import.meta.url).pathname)
+  test("accepts conversation responses and suite/case opt-in metadata", () => {
     const suite = fixture()
     suite.default = false
+    suite.cases[0]!.default = false
     expect(validateSuite(suite, root)).toEqual([])
+
     ;(suite as any).default = "false"
-    expect(validateSuite(suite, root).some((error) => error.includes("default"))).toBe(true)
+    expect(validateSuite(suite, root).some((error) => error.includes("suite default"))).toBe(true)
+
+    suite.default = true
+    ;(suite.cases[0] as any).default = "false"
+    expect(validateSuite(suite, root).some((error) => error.includes("default must be a boolean"))).toBe(true)
   })
   test("accepts scalar equality and same-call argument conjunctions", () => {
     const suite = fixture()

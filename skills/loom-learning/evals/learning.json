@@ -1,0 +1,23 @@
+{
+  "skill": "loom-learning",
+  "version": "1.0.0",
+  "shape": 1,
+  "cases": [
+    {
+      "id": "Learning-01",
+      "name": "record-confirmed-reusable-lesson-without-memory-as-law",
+      "trap": "Store an unconfirmed theory as established learning, let semantic memory override current authority, or mark a heuristic validated from one correlated episode.",
+      "prompt": "A Diagnostic investigation has confirmed with observed evidence that a recurring 401 is caused by a stale issuer cache after provider rotation. The same mechanism is likely relevant to future incidents. Current accepted architecture remains authoritative. Explain how Loom should preserve this reusable lesson and how later agents should treat it.",
+      "expectations": [
+        "Specifies preserving the reusable lesson in canonical Loom learning with supporting evidence/provenance rather than relying only on conversational memory.",
+        "Treats a new heuristic at an evidence-appropriate provisional level unless independent support justifies stronger confidence.",
+        "Uses semantic indexing only as a recall aid and keeps canonical Loom state authoritative for the learning record.",
+        "States that current accepted authority and current direct evidence override recalled memory or heuristics."
+      ],
+      "negative_expectations": [
+        "Must not let one incident silently become a universal validated rule.",
+        "Must not let a semantic-memory hit override current accepted architecture."
+      ]
+    }
+  ]
+}

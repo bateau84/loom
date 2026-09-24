@@ -525,7 +525,9 @@ describe("Loom registered plugin boundary", () => {
         workflowId,
         stepId: "worker",
         write: ["src/**"],
+        scopeSemantics: "mutation-boundary-only",
       })
+      expect(attachedWorker.scopeNote).toContain("limits mutation only")
 
       const workerStatus = await call(
         "status",
@@ -960,6 +962,63 @@ Verdict: FAIL
     }
   })
 
+
+  test("Worker dispatch grant requires declared task scope", async () => {
+    const h = await harness()
+    try {
+      const started = await h.call(
+        "start",
+        { request: "Apply one bounded implementation change." },
+        "general",
+        "scope-before-grant-general",
+      )
+      expect(started.error).toBeUndefined()
+      const workflowId = String(started.workflowId)
+
+      const routed = await h.call(
+        "route",
+        {
+          humanFacing: false,
+          behavioral: false,
+          structural: false,
+          externalUnknown: false,
+          diagnostic: false,
+          productOutcome: false,
+          implementationRequested: true,
+          executionDepth: "task",
+        },
+        "general",
+        "scope-before-grant-general",
+      )
+      expect(routed.error).toBeUndefined()
+
+      const unscoped = await h.call(
+        "dispatch_grant",
+        { workflowId, stepId: "worker" },
+        "general",
+        "scope-before-grant-general",
+      )
+      expect(unscoped.error).toContain("no declared write scope")
+
+      expect((await h.call(
+        "task_scope",
+        { workflowId, stepId: "worker", write: ["src/**"] },
+        "general",
+        "scope-before-grant-general",
+      )).error).toBeUndefined()
+
+      const scoped = await h.call(
+        "dispatch_grant",
+        { workflowId, stepId: "worker" },
+        "general",
+        "scope-before-grant-general",
+      )
+      expect(scoped.error).toBeUndefined()
+      expect(scoped.expectedAgent).toBe("worker")
+    } finally {
+      h.restore()
+    }
+  })
 
   test("completed task implementation may escalate to Change and resets implementation work", async () => {
     const { call, restore } = await harness()
@@ -1968,6 +2027,178 @@ async function waveLifecycleFixture(workLevel: "wave" | "objective" = "wave") {
     throw error
   }
 }
+
+test("Planner keeps auto Objective routing Wave-scoped when multiple Waves remain", async () => {
+  const h = await harness()
+  try {
+    const { workflowId } = await h.call("start", { anchor: "docs/anchors/auto-wave/anchor.md" }, "general", "parent")
+    expect((await h.call("route", {
+      humanFacing: false,
+      behavioral: false,
+      structural: false,
+      externalUnknown: false,
+      diagnostic: false,
+      productOutcome: true,
+      implementationRequested: true,
+      executionDepth: "objective",
+    }, "general", "parent")).error).toBeUndefined()
+
+    let workflow = await h.durableStorage.get(`workflow/${workflowId}`) as any
+    expect(workflow.effects.workLevel).toBe("wave")
+    expect(workflow.effects.workLevelAuto).toBe(true)
+    expect(workflow.steps.some((step: any) => step.id === "product-acceptance")).toBe(false)
+
+    const attach = async (stepId: string, agent: string, sessionID: string) => {
+      const grant = await h.call("dispatch_grant", { workflowId, stepId }, "general", "parent")
+      expect(grant.error).toBeUndefined()
+      const result = await h.call("attach", { workflowId, stepId, grantId: grant.grantId }, agent, sessionID)
+      expect(result.error).toBeUndefined()
+      return sessionID
+    }
+
+    const critic = await attach("critic-solution", "critic", "critic-auto-wave")
+    expect((await h.call("complete", {
+      workflowId,
+      stepId: "critic-solution",
+      outcome: "pass",
+      summary: "Solution accepted for planning",
+    }, "critic", critic)).error).toBeUndefined()
+
+    const planner = await attach("plan", "planner", "planner-auto-wave")
+    const task = { id: "first-task", title: "First task", objective: "Build the first Wave", dependsOn: [] as string[] }
+    const second = { id: "second-task", title: "Second task", objective: "Build the second Wave", dependsOn: ["first-task"] }
+
+    expect((await h.call("work_plan", {
+      workflowId,
+      phases: [{
+        id: "delivery",
+        title: "Delivery",
+        waves: [
+          { id: "first", title: "First", tasks: [task] },
+          { id: "second", title: "Second", tasks: [second] },
+        ],
+      }],
+    }, "planner", planner)).error).toBeUndefined()
+
+    const before = await h.durableStorage.get(`workflow/${workflowId}`) as any
+    const planAttempt = before.steps.find((step: any) => step.id === "plan").attempt ?? 0
+
+    const result = await h.call("task_plan", {
+      workflowId,
+      tasks: [{
+        ...task,
+        write: ["src/first/**"],
+        skills: [],
+        verify: ["bun test"],
+      }],
+    }, "planner", planner)
+
+    expect(result.error).toBeUndefined()
+    expect(result.workLevel).toBe("wave")
+    expect(result.workLevelAuto).toBe(true)
+    expect(result.autoResolvedWorkLevel).toBe(false)
+
+    workflow = await h.durableStorage.get(`workflow/${workflowId}`) as any
+    expect(workflow.effects.workLevel).toBe("wave")
+    expect(workflow.steps.find((step: any) => step.id === "plan").attempt ?? 0).toBe(planAttempt)
+    expect(workflow.steps.some((step: any) => step.id === "product-acceptance")).toBe(false)
+    expect(workflow.steps.some((step: any) => step.id === "review-product")).toBe(false)
+    expect(workflow.steps.some((step: any) => step.id === "critic-final")).toBe(false)
+    expect(workflow.steps.some((step: any) => step.id === "knowledge-sync")).toBe(true)
+  } finally {
+    h.restore()
+  }
+})
+
+test("Planner upgrades auto Objective routing for the only remaining Wave", async () => {
+  const h = await harness()
+  try {
+    const { workflowId } = await h.call("start", { anchor: "docs/anchors/auto-objective/anchor.md" }, "general", "parent")
+    expect((await h.call("route", {
+      humanFacing: true,
+      behavioral: false,
+      structural: false,
+      externalUnknown: false,
+      diagnostic: false,
+      productOutcome: true,
+      implementationRequested: true,
+      executionDepth: "objective",
+    }, "general", "parent")).error).toBeUndefined()
+
+    const attach = async (stepId: string, agent: string, sessionID: string) => {
+      const grant = await h.call("dispatch_grant", { workflowId, stepId }, "general", "parent")
+      expect(grant.error).toBeUndefined()
+      const result = await h.call("attach", { workflowId, stepId, grantId: grant.grantId }, agent, sessionID)
+      expect(result.error).toBeUndefined()
+      return sessionID
+    }
+
+    const designer = await attach("designer", "designer", "designer-auto-objective")
+    expect((await h.call("complete", {
+      workflowId,
+      stepId: "designer",
+      summary: "Design complete",
+    }, "designer", designer)).error).toBeUndefined()
+
+    const reviewThink = await attach("review-think", "reviewer", "review-auto-objective")
+    expect((await h.call("complete", {
+      workflowId,
+      stepId: "review-think",
+      outcome: "pass",
+      summary: "Design reviewed",
+    }, "reviewer", reviewThink)).error).toBeUndefined()
+
+    const critic = await attach("critic-solution", "critic", "critic-auto-objective")
+    expect((await h.call("complete", {
+      workflowId,
+      stepId: "critic-solution",
+      outcome: "pass",
+      summary: "Solution accepted for planning",
+    }, "critic", critic)).error).toBeUndefined()
+
+    const planner = await attach("plan", "planner", "planner-auto-objective")
+    const task = { id: "only-task", title: "Only task", objective: "Build the product", dependsOn: [] as string[] }
+
+    expect((await h.call("work_plan", {
+      workflowId,
+      phases: [{
+        id: "delivery",
+        title: "Delivery",
+        waves: [{ id: "only", title: "Only", tasks: [task] }],
+      }],
+    }, "planner", planner)).error).toBeUndefined()
+
+    const before = await h.durableStorage.get(`workflow/${workflowId}`) as any
+    const planAttempt = before.steps.find((step: any) => step.id === "plan").attempt ?? 0
+    expect(before.effects.workLevel).toBe("wave")
+    expect(before.steps.some((step: any) => step.id === "product-acceptance")).toBe(false)
+
+    const result = await h.call("task_plan", {
+      workflowId,
+      tasks: [{
+        ...task,
+        write: ["src/product/**"],
+        skills: [],
+        verify: ["bun test"],
+      }],
+    }, "planner", planner)
+
+    expect(result.error).toBeUndefined()
+    expect(result.workLevel).toBe("objective")
+    expect(result.workLevelAuto).toBe(true)
+    expect(result.autoResolvedWorkLevel).toBe(true)
+
+    const workflow = await h.durableStorage.get(`workflow/${workflowId}`) as any
+    expect(workflow.effects.workLevel).toBe("objective")
+    expect(workflow.steps.find((step: any) => step.id === "plan").attempt ?? 0).toBe(planAttempt)
+    expect(workflow.steps.some((step: any) => step.id === "product-acceptance")).toBe(true)
+    expect(workflow.steps.some((step: any) => step.id === "designer-validation")).toBe(true)
+    expect(workflow.steps.some((step: any) => step.id === "review-product")).toBe(true)
+    expect(workflow.steps.some((step: any) => step.id === "critic-final")).toBe(true)
+  } finally {
+    h.restore()
+  }
+})
 
 const cancellationRequest = (workflowId: string) => ({
   workflowId, reason: "Replace the old plan without repeating completed work.",

@@ -45,6 +45,21 @@ describe("Loom shared OQ board", () => {
     expect(blockingQuestionsForStep([q], "specifier")).toHaveLength(1)
   })
 
+  test("Reviewer and Critic cannot become OQ answer authorities", () => {
+    for (const requiredAuthority of ["reviewer", "critic"] as const) {
+      expect(() => raiseQuestion({
+        id: `q-${requiredAuthority}`,
+        workflow: workflow(),
+        question: "Please approve this implementation choice.",
+        raisedByAgent: "specifier",
+        raisedByStepId: "specifier",
+        requiredAuthority: requiredAuthority as any,
+        blocking: true,
+        now: "now",
+      })).toThrow("independent gates")
+    }
+  })
+
   test("only required authority can answer", () => {
     const q = raiseQuestion({
       id: "q1",

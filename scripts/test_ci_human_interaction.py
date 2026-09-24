@@ -16,21 +16,27 @@ SPEC = importlib.util.spec_from_file_location("interaction_eval_runner", ROOT / 
 assert SPEC and SPEC.loader
 RUNNER = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(RUNNER)
-RESPONSE_SUITE = ROOT / "evals/human-interaction.json"
-LIVE_SUITE = ROOT / "evals/human-interaction-live.json"
-REGRESSION_SUITE = ROOT / "evals/human-interaction-regressions.json"
+CONVERSATION_SUITE = ROOT / "evals/conversation.json"
+DEFAULT_HUMAN_IDS = {
+    "HUMAN-01", "HUMAN-03", "HUMAN-04", "HUMAN-05", "HUMAN-06",
+    "HUMAN-07", "HUMAN-08", "HUMAN-09", "HUMAN-10",
+}
+EDGE_HUMAN_IDS = {
+    "HUMAN-CAUSE-01", "HUMAN-CAUSE-UNKNOWN-01", "HUMAN-TRACE-01",
+    "HUMAN-JSON-01", "HUMAN-JSON-OBSERVED-01", "HUMAN-BLOCKER-PRIORITY-01",
+}
+HUMAN_LIVE_ID = "HUMAN-RUNTIME-01"
 BR020 = ROOT / "docs/requirements/loom/br-020-conversation-is-primary-interface.md"
 
 
 class HumanInteractionWiringTests(unittest.TestCase):
     def test_actual_response_cases_are_in_default_suite_without_nested_inference(self):
-        cases = RUNNER.load_cases([RESPONSE_SUITE])
-        self.assertEqual({item["id"] for item in cases}, {
-            "HUMAN-01", "HUMAN-03", "HUMAN-04", "HUMAN-05", "HUMAN-06",
-            "HUMAN-07", "HUMAN-08", "HUMAN-09", "HUMAN-10",
-        })
+        all_cases = RUNNER.load_cases([CONVERSATION_SUITE])
+        cases = [case for case in all_cases if case["id"] in DEFAULT_HUMAN_IDS]
+        self.assertEqual({item["id"] for item in cases}, DEFAULT_HUMAN_IDS)
         default_ids = {item["id"] for item in RUNNER.load_cases()}
         for case in cases:
+            self.assertNotEqual(case.get("default"), False)
             self.assertIn(case["id"], default_ids)
             self.assertEqual(case["agent"], "general")
             self.assertEqual(case["execution"], "conversation-response")
@@ -39,14 +45,12 @@ class HumanInteractionWiringTests(unittest.TestCase):
             self.assertEqual(RUNNER.case_workspace_mode(case), "ro")
 
     def test_regression_cases_are_opt_in_without_nested_inference(self):
-        self.assertIs(json.loads(REGRESSION_SUITE.read_text())["default"], False)
-        cases = RUNNER.load_cases([REGRESSION_SUITE])
-        self.assertEqual({case["id"] for case in cases}, {
-            "HUMAN-CAUSE-01", "HUMAN-CAUSE-UNKNOWN-01", "HUMAN-TRACE-01", "HUMAN-JSON-01",
-            "HUMAN-JSON-OBSERVED-01", "HUMAN-BLOCKER-PRIORITY-01",
-        })
+        all_cases = RUNNER.load_cases([CONVERSATION_SUITE])
+        cases = [case for case in all_cases if case["id"] in EDGE_HUMAN_IDS]
+        self.assertEqual({case["id"] for case in cases}, EDGE_HUMAN_IDS)
         default_ids = {case["id"] for case in RUNNER.load_cases()}
         for case in cases:
+            self.assertIs(case.get("default"), False)
             self.assertNotIn(case["id"], default_ids)
             self.assertEqual(case["agent"], "general")
             self.assertEqual(case["execution"], "conversation-response")
@@ -62,8 +66,9 @@ class HumanInteractionWiringTests(unittest.TestCase):
         self.assertNotIn("paired short-status and detailed-report requests from identical evidence", requirement)
 
     def test_reviewer_false_green_boundaries_are_judge_only_and_explicit(self):
-        response = {case["id"]: case for case in RUNNER.load_cases([RESPONSE_SUITE])}
-        regressions = {case["id"]: case for case in RUNNER.load_cases([REGRESSION_SUITE])}
+        all_cases = {case["id"]: case for case in RUNNER.load_cases([CONVERSATION_SUITE])}
+        response = {case_id: all_cases[case_id] for case_id in DEFAULT_HUMAN_IDS}
+        regressions = {case_id: all_cases[case_id] for case_id in EDGE_HUMAN_IDS}
 
         handover = response["HUMAN-03"]
         handover_grading = [*handover["expectations"], *handover["must_not"]]
@@ -79,22 +84,50 @@ class HumanInteractionWiringTests(unittest.TestCase):
             for grading in [case["trap"], *case["expectations"], *case["must_not"]]:
                 self.assertNotIn(grading, case["prompt"])
 
-    def test_status_contract_pins_critic_readiness_fixes(self):
-        source = (ROOT / "agents/general.md").read_text()
-        self.assertIn("affected check and any supplied immediate cause as one atomic fact", source)
-        self.assertIn("Omit unrequested non-events such as non-deployment before dropping a known cause", source)
-        self.assertIn("`blocked` or `pending` does not establish that a check was attempted", source)
-        self.assertIn("Do not mention hypothetical or unknown extra required checks", source)
-        self.assertIn("Additional prudent checks may be suggested only when clearly labeled optional", source)
+    def test_status_contract_is_behaviorally_pinned_not_phrase_pinned(self):
+        all_cases = {case["id"]: case for case in RUNNER.load_cases([CONVERSATION_SUITE])}
+        response = {case_id: all_cases[case_id] for case_id in DEFAULT_HUMAN_IDS}
+        regressions = {case_id: all_cases[case_id] for case_id in EDGE_HUMAN_IDS}
 
-        regressions = {case["id"]: case for case in RUNNER.load_cases([REGRESSION_SUITE])}
         priority = regressions["HUMAN-BLOCKER-PRIORITY-01"]
-        self.assertIn("staging gateway denies every currently authorized verification identity", priority["prompt"])
+        self.assertIn("staging gateway", priority["prompt"].lower())
+        self.assertIn("verification identit", priority["prompt"].lower())
         self.assertTrue(any("gateway-denial cause" in rule for rule in priority["must_not"]))
+
+        unknown = regressions["HUMAN-CAUSE-UNKNOWN-01"]
+        unknown_rules = [*unknown["expectations"], *unknown["must_not"]]
+        self.assertTrue(any("blocked verification state into an attempted" in rule for rule in unknown_rules))
+        self.assertTrue(any("verification was attempted" in rule for rule in unknown_rules))
+
+        handover = response["HUMAN-03"]
+        handover_rules = [*handover["expectations"], *handover["must_not"]]
+        self.assertTrue(any("optional rather than required remaining work" in rule for rule in handover_rules))
+        self.assertTrue(any("unestablished check as required remaining work" in rule for rule in handover_rules))
+
+        for case in (priority, unknown, handover):
+            for grading in [case["trap"], *case["expectations"], *case["must_not"]]:
+                self.assertNotIn(grading, case["prompt"])
+
+    def test_human_prompts_do_not_use_benchmark_scaffolding(self):
+        synthetic_markers = (
+            "returned state:",
+            "returned work state:",
+            "current returned state:",
+            "latest host state supplied to loom:",
+            "returned investigation notes:",
+            "current workflow state:",
+        )
+        wanted = DEFAULT_HUMAN_IDS | EDGE_HUMAN_IDS | {HUMAN_LIVE_ID}
+        for case in [item for item in RUNNER.load_cases([CONVERSATION_SUITE]) if item["id"] in wanted]:
+            prompt = case["prompt"].lower()
+            with self.subTest(case=case["id"]):
+                for marker in synthetic_markers:
+                    self.assertNotIn(marker, prompt)
 
     def test_response_projects_keep_the_production_contract_but_not_grading_metadata(self):
         source_body = RUNNER.strip_frontmatter((ROOT / "agents/general.md").read_text())
-        for case in RUNNER.load_cases([RESPONSE_SUITE, REGRESSION_SUITE]):
+        wanted = DEFAULT_HUMAN_IDS | EDGE_HUMAN_IDS
+        for case in [item for item in RUNNER.load_cases([CONVERSATION_SUITE]) if item["id"] in wanted]:
             with self.subTest(case=case["id"]):
                 temporary, target, _ = RUNNER.setup_projects(case)
                 try:
@@ -113,9 +146,9 @@ class HumanInteractionWiringTests(unittest.TestCase):
                     shutil.rmtree(temporary)
 
     def test_live_case_is_opt_in_and_requires_both_real_commands(self):
-        self.assertFalse(json.loads(LIVE_SUITE.read_text())["default"])
-        self.assertNotIn("HUMAN-RUNTIME-01", {case["id"] for case in RUNNER.load_cases()})
-        case, = RUNNER.load_cases([LIVE_SUITE])
+        self.assertNotIn(HUMAN_LIVE_ID, {case["id"] for case in RUNNER.load_cases()})
+        case = next(case for case in RUNNER.load_cases([CONVERSATION_SUITE]) if case["id"] == HUMAN_LIVE_ID)
+        self.assertIs(case.get("default"), False)
         self.assertEqual(case["execution"], "runtime")
         groups = case["actions"]["any_of"]
         self.assertEqual(len(groups), 2)
@@ -125,7 +158,7 @@ class HumanInteractionWiringTests(unittest.TestCase):
         )
 
     def test_runtime_fixture_has_a_real_passing_check_and_failing_recovery_check(self):
-        case, = RUNNER.load_cases([LIVE_SUITE])
+        case = next(case for case in RUNNER.load_cases([CONVERSATION_SUITE]) if case["id"] == HUMAN_LIVE_ID)
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             for fixture in case["fixture_files"]:

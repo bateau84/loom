@@ -9,6 +9,7 @@ import {
   createWorkHierarchy,
   materializeWorkPlan,
   nextRunnableWaves,
+  objectiveWorkLevel,
   releaseWorkflowWave,
   reopenWaveForTasks,
   syncWorkTaskStatuses,
@@ -143,6 +144,28 @@ describe("Loom persistent work hierarchy", () => {
 
     const wave = validateWorkflowWave(work, [task("a"), task("b", ["a"])], false)
     expect(wave.logicalId).toBe("foundation")
+  })
+
+  test("derives bounded Wave scope until only one Wave remains", () => {
+    const work = createWorkHierarchy("docs/anchors/product/anchor.md", "wf-1", now)
+    materializeWorkPlan(work, "wf-1", plan(), now)
+
+    expect(objectiveWorkLevel(work)).toBe("wave")
+
+    claimWorkflowWave(work, "wf-1", work.generation, [task("a"), task("b", ["a"])], false, now)
+    syncWorkTaskStatuses(
+      work,
+      "wf-1",
+      work.generation,
+      [
+        { taskId: "a", complete: true },
+        { taskId: "b", complete: true },
+      ],
+      now,
+    )
+    completeWaveForTasks(work, "wf-1", work.generation, ["a", "b"], now)
+
+    expect(objectiveWorkLevel(work)).toBe("objective")
   })
 
   test("objective-scoped workflow may execute only the final remaining wave", () => {

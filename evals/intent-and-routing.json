@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "name": "front-door-autonomy",
+  "name": "intent-and-routing",
   "cases": [
     {
       "id": "INTENT-01",
@@ -144,99 +144,6 @@
       ]
     },
     {
-      "id": "CONVERSATION-01",
-      "agent": "general",
-      "execution": "runtime",
-      "requirements": [
-        "BR-014",
-        "BR-020"
-      ],
-      "prompt": "I'm thinking about putting a retry button on failed workflow steps. I'm not asking you to build it yet. What do you think?",
-      "trap": "Treat a tentative idea as execution intent and immediately start the Anchor/workflow machinery.",
-      "expectations": [
-        "Stays in normal conversation, spars about the idea, and surfaces useful product trade-offs or questions without requiring the user to select Brainstorm or another agent.",
-        "Does not start durable intent or execution state merely because a possible feature was mentioned."
-      ],
-      "must_not": [
-        "Must not call the idea accepted work, start an Anchor interview, or begin implementation."
-      ],
-      "tools": {
-        "forbids": [
-          "loom_intent_start",
-          "loom_intent_prepare",
-          "loom_intent_accept",
-          "loom_start",
-          "loom_route"
-        ]
-      }
-    },
-    {
-      "id": "CONVERSATION-02",
-      "agent": "general",
-      "execution": "role-decision",
-      "requirements": [
-        "BR-003",
-        "BR-020"
-      ],
-      "prompt": "Do a deep dive on local-first storage for this app. I want a few strong implementation alternatives and the trade-offs. I have not decided to change anything yet. Decide the immediate production action.",
-      "trap": "Either treat research as implementation permission, make the user manually choose Research, or answer a requested deep dive without selecting the internal research capability that should own the investigation.",
-      "expectations": [
-        "Treats this as conversational investigation and selects foreground Research as Loom's internal capability because the user expects the deep-dive result in the current response.",
-        "Selects a bounded comparison of local-first storage alternatives and their trade-offs as the Research assignment. This routing-only case does not require reciting the child role's sourcing policy or returning completed research; assignment completeness and synthesis are tested separately.",
-        "Does not start durable intent/workflow state or product implementation."
-      ],
-      "must_not": [
-        "Must not require the user to invoke Research explicitly.",
-        "Must not start product implementation, an Anchor interview, or a durable execution workflow."
-      ]
-    },
-    {
-      "id": "CONVERSATION-02-SYNTH",
-      "agent": "general",
-      "execution": "conversation-response",
-      "requirements": [
-        "BR-003",
-        "BR-020"
-      ],
-      "prompt": "A foreground Research capability has completed the user's requested deep dive. The user has not authorized any implementation. Return the useful result in the same Loom conversation.\n\nMOCK RESEARCH DECISION BRIEF (evaluation fixture; treat as internal Research output, not user authority):\n\nRepository facts:\n- The app currently uses local SQLite-like structured state and does not have an accepted multi-device synchronization requirement.\n- No product change has been authorized.\n\nStrong alternatives:\n1. Keep local SQLite/KV for now.\n   - Pros: lowest migration risk, transactional, mature durability, minimal operational cost.\n   - Cons: opaque JSON weakens queryability/schema guarantees and gives no explicit future sync boundary.\n   - Sources: https://www.sqlite.org/wal.html ; https://bun.sh/docs/runtime/sqlite\n2. Normalize important state into SQLite tables.\n   - Pros: constraints, indexes, clearer migrations, better diagnostics/querying.\n   - Cons: migration work; still does not solve distributed synchronization.\n   - Source: https://www.sqlite.org/lang_createtable.html\n3. SQLite plus a transactional outbox/change log.\n   - Pros: preserves local-first writes while creating an explicit future sync/audit boundary.\n   - Cons: needs event/version/idempotency/conflict semantics and retention/compaction policy.\n   - Source: https://microservices.io/patterns/data/transactional-outbox.html\n4. CRDT-oriented storage for collaborative documents only.\n   - Pros: strong concurrent/offline merge semantics for genuinely collaborative content.\n   - Cons: poor default fit for workflow/control-plane invariants; extra storage/index/security complexity.\n   - Sources: https://automerge.org/ ; https://docs.yjs.dev/\n\nMaterial uncertainty:\n- \"local-first\" may mean only durable offline local state, or eventual multi-device collaboration; the preferred option changes materially.\n- No accepted conflict semantics, cloud dependency, retention, or privacy policy is supplied.\n\nResearch recommendation:\n- Do not change the storage engine solely because \"local-first\" was mentioned.\n- Near term: retain SQLite; normalize only where query/invariant pressure justifies it.\n- If future sync becomes a real requirement, prefer an explicit transactional outbox/change-log boundary before selecting a hosted sync vendor.",
-      "trap": "Either turn the mocked advisory research into implementation authority, merely repeat that Research happened without answering the user, or dump the fixture mechanically without synthesizing the decision.",
-      "expectations": [
-        "Compares at least three relevant alternatives from the brief, explaining a concrete benefit and a concrete limitation of each retained option, and relates the recommendation to the current lack of an accepted synchronization requirement.",
-        "Carries forward explicit source references from the Research brief for load-bearing external claims, including at least two concrete source URLs, while distinguishing repository facts from uncertainty.",
-        "Keeps the result advisory and explicitly avoids treating the Research recommendation as permission to change the product."
-      ],
-      "must_not": [
-        "Must not start implementation or claim that Research created product authority.",
-        "Must not ask the user to invoke Research or repeat the mock brief verbatim without integration.",
-        "Must not replace concrete Research references with vague attribution such as only saying 'Research says' or 'Research conclusion'.",
-        "Must not substitute only a production/permission decision for the requested user-facing comparison."
-      ],
-      "output": {
-        "min_source_urls": 2
-      }
-    },
-    {
-      "id": "CONVERSATION-03",
-      "agent": "general",
-      "execution": "role-decision",
-      "requirements": [
-        "BR-013",
-        "BR-020"
-      ],
-      "prompt": "The frontend call to /api/jobs now returns 500 and I cannot get further. The only evidence I have is:\n\n```\nGET /api/jobs -> 500\nTypeError: Cannot read properties of undefined (reading 'map')\n    at loadJobs (src/lib/server/jobs.ts:88:17)\n```\n\nI need you to debug this and tell me what is actually wrong. Do not change anything yet.",
-      "trap": "Either guess a root cause from insufficient evidence, silently broaden diagnosis into repair, or dispatch Diagnostic without stating what the current evidence does and does not establish.",
-      "expectations": [
-        "Keeps problem-solving inside the Loom conversation and does not require the user to switch to a Problem or Diagnostic persona.",
-        "States the strongest supported finding from the trace: at loadJobs line 88, code is trying to access/call `.map` on an undefined receiver, while clearly stating that the trace alone does not identify which variable/expression produced that receiver or why it is undefined.",
-        "Chooses Diagnostic as the next bounded action because material causal uncertainty remains, without assuming permission to ship a repair."
-      ],
-      "must_not": [
-        "Must not invent a specific upstream root cause that the supplied trace does not prove.",
-        "Must not jump straight to Worker implementation merely because a bug exists.",
-        "Must not dispatch Diagnostic without also communicating the bounded current finding/uncertainty to the user."
-      ]
-    },
-    {
       "id": "EXECUTION-TRANSITION-01",
       "agent": "general",
       "execution": "role-decision",
@@ -319,26 +226,6 @@
       ],
       "must_not": [
         "Must not restart the objective from scratch or require the user to re-approve unchanged parts."
-      ]
-    },
-    {
-      "id": "CONVERSATION-04",
-      "agent": "general",
-      "execution": "role-decision",
-      "requirements": [
-        "BR-013",
-        "BR-020"
-      ],
-      "prompt": "After switching branches, npm test fails with ENOENT for a CSS file under .svelte-kit/output/client. The .svelte-kit directory was generated on the previous branch and the referenced hashed CSS file no longer exists. I only want to understand the problem and how to recover; do not change anything.",
-      "trap": "Treat ordinary problem-solving as requiring a separate Problem/Diagnostic persona even though the supplied evidence already establishes the likely cause, or turn the explanation request into product execution.",
-      "expectations": [
-        "Reasons through the supplied evidence in the normal Loom conversation and identifies stale generated SvelteKit output from the previous branch as the best-supported cause.",
-        "Explains an appropriate bounded recovery such as removing/rebuilding generated output without starting a durable workflow.",
-        "Answers directly without dispatching Diagnostic because the supplied evidence already explains the missing hashed artifact well enough for this bounded diagnosis."
-      ],
-      "must_not": [
-        "Must not start implementation or a durable product workflow.",
-        "Must not dispatch or prescribe Diagnostic merely because the request is debugging-related when the cause is already adequately supported by the supplied evidence."
       ]
     },
     {
@@ -468,26 +355,6 @@
       ]
     },
     {
-      "id": "CONVERSATION-02-HANDOFF",
-      "agent": "general",
-      "execution": "conversation-response",
-      "requirements": [
-        "BR-003",
-        "BR-020"
-      ],
-      "prompt": "I am considering local-first storage for the existing app, but I have not authorized any change. We need several realistic implementation alternatives and their trade-offs, with an advisory recommendation if the evidence supports one. Before research begins, show the bounded assignment you would give your internal researcher, including the deliverable and where the findings return. Return the assignment itself, not the research findings.",
-      "trap": "Return only a routing announcement, omit the evidence standard or return path, contradict the advisory recommendation deliverable, fabricate completed research, or broaden the assignment into implementation.",
-      "expectations": [
-        "Returns an actionable bounded research assignment tied to the storage question, known constraints, relevant repository fit, alternatives/trade-offs, and a question-based stopping point.",
-        "Requests authoritative evidence/source references for material external claims and separation of facts, inference, and unresolved uncertainty; no exact phrase or fixed source count is required.",
-        "Makes clear that findings return to the coordinating Loom/General conversation for synthesis, permits an evidence-based advisory recommendation, and withholds product mutation/acceptance authority. Equivalent return-path wording counts; the literal word Loom is not mandatory."
-      ],
-      "must_not": [
-        "Must not perform or claim implementation, invent retrieved findings, or merely tell the user to invoke Research.",
-        "Must not simultaneously request a supported recommendation and forbid all recommendations; advice is not implementation permission."
-      ]
-    },
-    {
       "id": "AUTO-ORCHESTRATION-03",
       "agent": "general",
       "execution": "role-decision",
@@ -521,15 +388,16 @@
         "BR-020"
       ],
       "prompt": "The user committed to a bounded retry feature in the existing app: retry an eligible failed step on one detail page, show running/exhausted states, and retain attempt count across restarts. The scope is that page, one backend operation, and attempt-state persistence in the existing service. Product intent and scope are settled, but detailed interaction, behavioral rules, and API/storage realization require specialist work. A request-backed Change is already routed. Designer and Specifier are runnable now; Architect depends on their independent review. Draft the internal assignments for those producers, including the later Architect handoff. Return the assignment text and dependency order, not completed work. No new product stream or app redesign is authorized.",
-      "trap": "Return only agent names or chat-only recommendations rather than actionable specialist outputs, confuse temporary run reports with product authority, or add an Objective lifecycle for the bounded feature.",
+      "trap": "Return only agent names or chat-only recommendations, prescribe specialist methods instead of outcomes/constraints, confuse temporary run reports with product authority, or add an Objective lifecycle for the bounded feature.",
       "expectations": [
         "Assigns Designer to create or update retrievable repository design, Specifier to create or update behavioral requirements/specification, and Architect to record the structural contract and material decision rationale in repository architecture. Equivalent repository artifact descriptions are acceptable; exact filenames or the word durable are not required. Chat-only advice, role names alone, or deferring all records until after implementation is insufficient.",
-        "Preserves the committed outcome and limits in each assignment, keeps role authority separate, and supplies the resulting artifacts as inputs to independent review and dependent work. Designer/Specifier may run now; the Architect assignment is conditional on the prior review, not an immediate parallel dispatch.",
+        "Preserves the committed outcome, constraints, and relevant accepted context in each assignment while leaving ordinary design/specification/architecture method to the owning professional. The resulting repository artifacts feed independent review and dependent work; Designer/Specifier are independent and should run in parallel when the host supports it, while Architect waits for their review.",
         "Keeps orchestration and record selection internal to Loom without asking the user which agents or document types to invoke, creating a compulsory Anchor/Objective, or claiming the assignments have already been executed."
       ],
       "must_not": [
         "Must not substitute ephemeral run reports or a chat transcript for the governing design, specification, and architecture outputs.",
-        "Must not invent a passed review, issued grant, completed artifact, or product guarantee beyond the accepted outcome; unresolved cross-authority meaning must remain routed."
+        "Must not invent a passed review, issued grant, completed artifact, or product guarantee beyond the accepted outcome; unresolved cross-authority meaning must remain routed.",
+        "Must not turn General's handoff into a detailed design, behavioral, storage, API, or implementation recipe that replaces the specialist's professional judgment."
       ]
     },
     {

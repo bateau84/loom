@@ -14,6 +14,7 @@ export type ActionAssertion = {
 
 export type EvalCase = {
   id: string
+  default?: boolean
   agent: string
   skill?: string
   execution: EvalExecution
@@ -70,6 +71,9 @@ export function validateSuite(suite: EvalSuite, repoRoot: string) {
     if (!item.id?.trim()) errors.push(`${label}: id is required`)
     else if (ids.has(item.id)) errors.push(`${label}: duplicate id`)
     else ids.add(item.id)
+    if (item.default !== undefined && typeof item.default !== "boolean") {
+      errors.push(`${label}: default must be a boolean when present`)
+    }
 
     if (!item.agent?.trim()) errors.push(`${label}: agent is required`)
     else if (!existsSync(join(repoRoot, "agents", `${item.agent}.md`))) {

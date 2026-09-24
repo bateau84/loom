@@ -27,6 +27,8 @@ export type Effects = {
   productOutcome: boolean
   implementationRequested?: boolean
   workLevel?: WorkLevel
+  /** Internal: workLevel was omitted by General and is resolved from persistent work after planning. */
+  workLevelAuto?: boolean
   executionDepth?: ExecutionDepth
 }
 

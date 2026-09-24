@@ -21,16 +21,33 @@ These prove rules implemented in code: workflow dependencies, OQ authority, evid
 
 Cases under `evals/*.json` attack model behavior with fresh context. A case normally targets an agent. Cases with a `skill` field target that skill through the named production agent and must observe the native skill load.
 
-Two execution modes exist:
+Three execution modes exist:
 
 - **runtime** — the target runs through real OpenCode with Loom's plugin and skills loaded. Tool assertions may be used. Use this when the runtime behavior itself matters.
 - **role-decision** — the target role is run in fresh context with mutation/subagent tools denied. It must state the production decision/action it would take. This isolates authority and judgment behavior without fabricating a workflow.
+- **conversation-response** — the target role answers supplied context with tools denied. This isolates user-facing communication, evidence selection, and format behavior without turning conversation into execution.
 
 Role-decision PASS is evidence about judgment/directive compliance. It is **not** evidence that the complete OpenCode workflow composes correctly.
 
 ### 3. Product dogfood
 
 YuHaul remains the full-system acceptance proof. Behavioral evals do not replace the real product build and later cold-session maintenance exercise required by BR-015.
+
+## Suite organization
+
+Top-level suites are grouped by **behavioral topic**, not by the historical bug or PR that introduced a case:
+
+- `conversation.json` — conversational boundaries, human-facing status/evidence/format behavior, and opt-in conversational runtime probes.
+- `intent-and-routing.json` — intent shaping, OQ routing, execution transitions, and orchestration entry decisions.
+- `delegation-and-convergence.json` — professional ownership, Worker/Reviewer convergence, scope recovery, and shared-method routing.
+- `agent-behavior.json` — cross-role behavioral edge cases that do not belong to one narrower topic.
+- `authority.json` — role authority boundaries.
+- `everyday.json` — ordinary representative engineering work.
+- `proportionality.json` — Task/Change/Objective depth and escalation.
+- `verification.json` — evidence, Reviewer/Critic, diagnosis, acceptance, planning, memory, and verification integrity.
+- `skills.json` — production-role skill loading and companion-method behavior.
+
+Execution cost is case metadata, not suite taxonomy. A case may set `"default": false` to stay opt-in while remaining in its natural topic suite. Explicit `--suite` selection includes all cases in that suite; ordinary discovery excludes opt-in cases.
 
 ## Case shape
 
@@ -159,12 +176,13 @@ The runtime iterations still execute sequentially; unrelated role-decision/skill
 
 ### Budget-continuation incident regression
 
-The live budget-continuation suite seeds an already-existing unfinished Worker whose ordinary and automatic recovery dispatches are exhausted, then sends the same kinds of user requests that exposed the production deadlock. The seed is setup only: recovery itself must use the production Loom tools and a real Worker subagent attachment.
+The budget-continuation cases seed an already-existing unfinished Worker whose ordinary and automatic recovery dispatches are exhausted, then send the same kinds of user requests that exposed the production deadlock. The seed is setup only: recovery itself must use the production Loom tools and a real Worker subagent attachment.
 
-Run both conversational forms three times on the normal Loom model:
+They live in `delegation-and-convergence.json` as case-level opt-ins. Run both conversational forms three times on the normal Loom model:
 
 ```bash
 bun run eval:live -- \
+  --suite evals/delegation-and-convergence.json \
   --cases BUDGET-CONTINUE-RUNTIME-QUOTA-01,BUDGET-CONTINUE-RUNTIME-SAME-OBJECTIVE-01 \
   --iterations 3 \
   --parallel 1 \
@@ -172,7 +190,7 @@ bun run eval:live -- \
   --model openai/gpt-5.6-luna
 ```
 
-A valid run must observe `loom_budget_continue -> loom_status -> loom_dispatch_grant -> Worker dispatch -> loom_attach` against the seeded workflow `eval-budget-continuation`. Starting a replacement workflow/task, stopping after the budget mutation, or merely describing the intended recovery fails the case.
+A valid run must observe `loom_budget_continue -> loom_status -> loom_dispatch_grant -> Worker dispatch -> loom_attach` against the seeded workflow `eval-budget-continuation`. Starting replacement work, stopping after budget mutation, or merely describing recovery fails the case.
 
 To intentionally stress concurrent runtime execution, opt in explicitly:
 
@@ -369,15 +387,15 @@ Harness/provider failure is non-evidence. It must not be counted as behavioral P
 
 `CONVERSATION-02` covers research routing. `CONVERSATION-02-SYNTH` supplies a mock Research brief for synthesis, trade-offs, and source preservation. Neither invokes a Research model. The reference check counts distinct supplied URLs, not repetitions or invented references; the semantic judge still checks the comparison.
 
-Every top-level suite remains discoverable and schema-validated. A suite with `"default": false` is excluded from default execution, including `--all`, `--target`, and ordinary case selection. Explicit `--suite` selection opts into it. Omitted `default` means true; malformed metadata fails rather than silently spending inference.
+Every top-level suite remains discoverable and schema-validated. Both suites and individual cases may set `"default": false`. Ordinary discovery excludes opt-in suites/cases; explicit `--suite` selection includes every case in that suite. Omitted `default` means true; malformed metadata fails rather than silently spending inference.
 
 Real nested research is opt-in:
 
 ```sh
-bun run eval:live -- --suite evals/live-integration.json --cases CONVERSATION-02-LIVE --iterations 1 --network host --model <model>
+bun run eval:live -- --suite evals/conversation.json --cases CONVERSATION-02-LIVE --iterations 1 --network host --model <model>
 ```
 
-That suite retains a 360-second target limit with at least 420 seconds for the outer container. Other cases keep the global defaults. Runtime cases remain serialized unless `--runtime-parallel` explicitly requests load testing; `--parallel` applies to non-runtime tests.
+That case retains a 360-second target limit with at least 420 seconds for the outer container. Other cases keep the global defaults. Runtime cases remain serialized unless `--runtime-parallel` explicitly requests load testing; `--parallel` applies to non-runtime tests.
 
 A mocked synthesis PASS proves only the response from supplied context. It does not prove that Research ran, that the mock describes the current repository, or that the complete runtime interaction passed. Record the tested revision and distinguish focused results from a full same-head suite run.
 
@@ -407,3 +425,15 @@ These probes run General plus the judge only, with tools denied. They test state
 assignments and continuation decisions, not actual file writes or end-to-end
 specialist execution. Runtime artifact creation and independent review need their
 own observed evidence; neither a mock PASS nor wording about documents proves them.
+
+## Delegation and convergence
+
+`delegation-and-convergence.json` groups the professional-work cases by the behavior they exercise: Worker outcome ownership, mutation-scope versus knowledge-scope, General outcome-not-method delegation, known-incomplete work not being sent to Reviewer, Reviewer finding convergence, multi-Wave continuation, cross-artifact correction ownership, narrow-scope recovery, and shared-method routing.
+
+The provider-expensive runtime cases live in the same topic suite with case-level `"default": false`. Run them explicitly when changing professional delegation, convergence, scope recovery, or shared-method routing contracts.
+
+`skills/agent-file-authoring/evals/professional-charter.json` uses baseline/candidate ablation to test whether the authoring skill actually produces slimmer professional charters without dropping hard authority, evidence, completion, scope, or review boundaries.
+
+`skills/report-lifecycle/evals/report-lifecycle.json` and `skills/loom-learning/evals/learning.json` ablate the shared cross-cutting methodologies that replaced repeated role-prompt procedure.
+
+Evals verify production behavior; they never create it. Every required behavior must have a production home in control-plane enforcement, an agent charter, or shared methodology that the production role actually loads.

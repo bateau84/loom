@@ -15,8 +15,8 @@ Do not promote a report merely because it is useful during the current workflow.
 
 ## Method
 
-1. Use OKF-MCP to locate and read the intended report. Do not recreate report discovery in Loom.
-2. Validate the source through OKF-MCP and require no validation errors. The Loom report profile is `type: report <producer>`, non-empty `title` and `description`, and a non-empty string `tags` array.
+1. Load `report-lifecycle`, then use OKF-MCP to locate and read the intended report. Do not recreate report discovery in Loom.
+2. Require the source to satisfy the shared ephemeral-report contract and have no OKF validation errors.
 3. Confirm the source lives under `ephemeral-reports/`, then decide whether the **report itself** has lasting documentary or audit value.
 4. If only a conclusion, requirement, design rule, architectural constraint, or user instruction is durable, route that knowledge to the role that owns the proper governed document instead of promoting the raw report.
 5. If the raw report deserves retention, choose a non-colliding destination under `docs/reports/<producer>/` matching the source producer namespace.

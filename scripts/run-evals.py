@@ -179,7 +179,12 @@ def load_cases(suite_paths: list[Path] | None = None) -> list[dict[str, Any]]:
             raise ValueError(f"{path}: suite default must be a boolean")
         if suite_paths is None and data.get("default", True) is False:
             continue
-        cases.extend(data["cases"])
+        for case in data["cases"]:
+            if "default" in case and type(case["default"]) is not bool:
+                raise ValueError(f"{path}: case {case.get('id', '<unknown>')} default must be a boolean")
+            if suite_paths is None and case.get("default", True) is False:
+                continue
+            cases.append(case)
     return cases
 
 

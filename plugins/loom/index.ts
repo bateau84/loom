@@ -117,6 +117,7 @@ import {
   createWorkHierarchy,
   materializeWorkPlan,
   nextRunnableWaves,
+  objectiveWorkLevel,
   objectiveIdForAnchor,
   releaseWorkflowWave,
   reopenWaveForTasks,
@@ -1483,7 +1484,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               type: "string",
               enum: ["objective", "wave"],
               description:
-                "Only meaningful for executionDepth=objective. Objective runs may close whole-product Product Acceptance; wave runs execute one bounded Wave.",
+                "Optional Objective-scope override. When omitted, Loom starts conservatively at Wave scope and resolves Wave vs Objective closure automatically from Planner's persistent work plan.",
             },
           },
           required: [
@@ -1554,12 +1555,19 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             }
           }
 
+          const autoWorkLevel =
+            resolvedDepth === "objective" &&
+            rawEffects.productOutcome &&
+            rawEffects.workLevel === undefined
           const effects: Effects = {
             ...rawEffects,
             executionDepth: resolvedDepth,
             ...(resolvedDepth === "objective" && rawEffects.productOutcome
-              ? { workLevel: rawEffects.workLevel ?? "objective" }
-              : { workLevel: undefined }),
+              ? {
+                  workLevel: rawEffects.workLevel ?? "wave",
+                  workLevelAuto: autoWorkLevel,
+                }
+              : { workLevel: undefined, workLevelAuto: undefined }),
           }
 
           const applyRouteMutation = () => {
@@ -2057,7 +2065,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       addLoomTool({
         name: "oq_raise",
         description:
-          "Raise a shared workflow question. Blocking questions automatically make the raising step a required consumer.",
+          "Raise a shared cross-authority workflow question. Use only for genuinely missing user/design/behavior/architecture/research/diagnostic authority; mutation-scope coordination returns to General directly. Reviewer and Critic are independent gates, not OQ answer authorities. Blocking questions automatically make the raising step a required consumer.",
         input: {
           type: "object",
           properties: {
@@ -2066,7 +2074,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             question: { type: "string" },
             requiredAuthority: {
               type: "string",
-              enum: ["user", "designer", "specifier", "architect", "research", "diagnostic", "reviewer", "critic"],
+              enum: ["user", "designer", "specifier", "architect", "research", "diagnostic"],
             },
             blocking: { type: "boolean" },
             consumerStepIds: { type: "array", items: { type: "string" } },
@@ -3586,6 +3594,42 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 if (!work) throw new Error("Persistent work hierarchy not found.")
 
                 assertWorkGeneration(work, workflow.work!.generation)
+
+                let autoResolvedWorkLevel = false
+                if (
+                  workflow.effects &&
+                  resolveExecutionDepth(workflow.effects) === "objective" &&
+                  workflow.effects.productOutcome &&
+                  workflow.effects.workLevelAuto
+                ) {
+                  const desiredWorkLevel = objectiveWorkLevel(work)
+                  if (workflow.effects.workLevel !== desiredWorkLevel) {
+                    const effects: Effects = { ...workflow.effects, workLevel: desiredWorkLevel }
+                    const currentById = new Map(workflow.steps.map((step) => [step.id, step]))
+                    const next = buildSteps(effects).map((step) => {
+                      const current = currentById.get(step.id)
+                      if (
+                        current &&
+                        current.agent === step.agent &&
+                        current.kind === step.kind &&
+                        JSON.stringify(current.dependsOn) === JSON.stringify(step.dependsOn)
+                      ) {
+                        return {
+                          ...step,
+                          status: current.status,
+                          attempt: current.attempt,
+                          ...(current.summary ? { summary: current.summary } : {}),
+                        }
+                      }
+                      return step
+                    })
+                    workflow.effects = effects
+                    workflow.steps = next
+                    reconcileVerificationAfterRoute(workflow)
+                    autoResolvedWorkLevel = true
+                  }
+                }
+
                 const steps = applyTaskPlan(workflow, tasks)
                 const wave = claimWorkflowWave(
                   work,
@@ -3616,7 +3660,14 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                   workflow.work!.generation,
                   tasks.map((task) => task.id),
                 )
-                return { work: persisted, wave, steps }
+                return {
+                  work: persisted,
+                  wave,
+                  steps,
+                  workLevel: workflow.effects?.workLevel ?? "objective",
+                  workLevelAuto: Boolean(workflow.effects?.workLevelAuto),
+                  autoResolvedWorkLevel,
+                }
               },
             )
             const steps = claimed.steps
@@ -3624,6 +3675,9 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               content: renderToolOutput({
                 wave: { id: claimed.wave.logicalId, title: claimed.wave.title },
                 generation: claimed.work.generation,
+                workLevel: claimed.workLevel,
+                workLevelAuto: claimed.workLevelAuto,
+                autoResolvedWorkLevel: claimed.autoResolvedWorkLevel,
                 tasks: steps.map((step) => ({
                   stepId: step.id,
                   task: step.task,
@@ -3670,7 +3724,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       addLoomTool({
         name: "task_scope",
         description:
-          "Declare the bounded writable surface for one Worker step. General only. Accepted authority documents cannot be delegated to Worker.",
+          "Declare the bounded writable surface for one Worker step. This limits mutation only; it is not an outcome or read/knowledge boundary. General only. Accepted authority documents cannot be delegated to Worker.",
         input: {
           type: "object",
           properties: {
@@ -3725,7 +3779,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       addLoomTool({
         name: "dispatch_grant",
         description:
-          "Issue one short-lived, single-use attachment grant for an exact runnable workflow step or unanswered OQ. General only; pass the returned grantId to the child session.",
+          "Issue one short-lived, single-use attachment grant for an exact runnable workflow step or unanswered OQ. General only; Worker steps require a declared task scope first. Pass the returned grantId to the child session.",
         input: {
           type: "object",
           properties: {
@@ -3789,6 +3843,16 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 }
                 if (!runnable(current).some((candidate) => candidate.id === value.stepId)) {
                   throw new Error("Step is no longer runnable.")
+                }
+                if (step.agent === "worker") {
+                  const scope = (await ctx.storage.get(
+                    scopeKey(value.workflowId, value.stepId),
+                  )) as TaskScope | undefined
+                  if (!scope) {
+                    throw new Error(
+                      `Worker step ${value.stepId} has no declared write scope. Call loom_task_scope first.`,
+                    )
+                  }
                 }
               } else {
                 const question = (await ctx.storage.get(
@@ -4008,7 +4072,11 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               attached: true,
               workflowId: value.workflowId,
               ...(value.stepId ? { stepId: value.stepId } : { questionId: value.questionId }),
-              ...(scope ? { write: scope.write } : {}),
+              ...(scope ? {
+                write: scope.write,
+                scopeSemantics: "mutation-boundary-only",
+                scopeNote: "Write scope limits mutation only; prove the end-to-end outcome with read-only discovery beyond it and request scope extension when another load-bearing write is required.",
+              } : {}),
               ...(task ? { task } : {}),
             }),
           }

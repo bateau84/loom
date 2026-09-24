@@ -39,6 +39,35 @@ Planner is an execution context, not a product authority or gate owner. Objectiv
 
 For Planner-driven product work, the control plane materializes Planner output into persistent Objective/Phase/Wave/Task work state plus the executable dependency DAG. Workflow state remains the bounded execution view over that work. A separate Plan document is not required unless the product itself needs one.
 
+## Professional autonomy
+
+Loom separates **hard governance** from **professional judgment**.
+
+The control plane owns non-negotiable boundaries: permissions, accepted authority, workflow state, mutation scopes, grants, evidence provenance, budgets, and independent gates. Those boundaries should be mechanically enforced where practical rather than duplicated as long prompt procedures.
+
+Agent directives are intentionally **slim professional charters**:
+
+- General delegates outcomes, constraints, authority, and evidence; ordinary specialist method belongs to the specialist.
+- Designer owns human-centered realization; Specifier observable semantics; Architect technical realization; Worker implementation; Diagnostic causal investigation; Research evidence strategy; Planner decomposition; Documenter knowledge representation; Acceptance scenario strategy; Reviewer independent conformance; Critic adversarial attack.
+- Authority boundaries constrain what a specialist may **decide or mutate**, not what it may **notice, inspect, or understand**. A mutation scope is not a knowledge scope.
+- Specialists own normal self-correction inside their domain and should prefer the smallest complete result that preserves unrelated valid behavior.
+- A producer cannot honestly complete while it knows a load-bearing part of its assigned outcome is unmet. It returns the precise scope/authority/capability boundary instead.
+- Reviewer is an independent gate, not the normal discovery loop. For a clear bounded Task after any required diagnosis/factual resolution, the healthy target is one competent Worker pass followed by one independent Reviewer pass; retries represent new evidence, not routine convergence.
+- Reviewer and Critic may identify or raise authority gaps, but they are **not OQ answer authorities** for producer realization. OQ answers come from user/design/behavior/architecture/research/diagnostic authority; mutation-scope coordination returns to General.
+
+Reusable detailed methodology belongs in skills. Coordinator prompts and agent charters should not micromanage that methodology or accumulate repository-specific incident rules. Cross-cutting mechanics that do not define a profession—such as ephemeral report formatting/validation and durable learning bookkeeping—belong in shared on-demand skills rather than repeated role prose.
+
+This model resembles delegation to experienced human professionals: **strict organizational and safety boundaries, broad judgment inside the role**.
+
+### Objective/Wave scoping
+
+Objective closure is a control-plane fact once Planner has materialized persistent work. When General omits the optional `workLevel` override, Objective routing begins conservatively at Wave scope so whole-product gates are not exposed before decomposition is known. At `loom_task_plan`, persistent work determines the real scope:
+
+- more than one active Wave remains → stay Wave-scoped;
+- exactly one active Wave remains → upgrade the workflow to Objective scope and add Product Acceptance, product review, Designer validation when applicable, and final Critic.
+
+The transition preserves matching upstream step state and attempt identity. General follows persistent work state rather than predicting this internal lifecycle flag.
+
 ## Fresh Context
 
 Authority and execution subagents run in fresh OpenCode child sessions.

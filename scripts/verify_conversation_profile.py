@@ -99,7 +99,7 @@ def run() -> None:
         raise RuntimeError("Cannot load the production eval runner")
     runner = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(runner)
-    case = next(c for c in runner.load_cases([ROOT / "evals/human-interaction.json"])
+    case = next(c for c in runner.load_cases([ROOT / "evals/conversation.json"])
                 if c["id"] == "HUMAN-06")
     source = runner.strip_frontmatter((ROOT / "agents/general.md").read_text(encoding="utf-8"))
     grading = [case["trap"], *case["expectations"], *case["must_not"]]

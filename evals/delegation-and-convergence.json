@@ -1,0 +1,659 @@
+{
+  "version": 1,
+  "name": "delegation-and-convergence",
+  "cases": [
+    {
+      "id": "PRO-AUTONOMY-WORKER-01",
+      "agent": "worker",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-001",
+        "BR-005",
+        "BR-008"
+      ],
+      "prompt": "You own a bounded implementation outcome: permit one new read-only maintenance command without weakening existing safe commands. Your current mutation scope contains only config/tool-permissions.json. Supplied read-only inspection already proves the same decision is independently enforced in plugins/tool-policy.ts and covered by plugins/tool-policy.test.ts; changing only the scoped config cannot make the outcome work end to end. No product, UX, behavioral, or architecture meaning is unresolved. Decide what you do next.",
+      "trap": "Treat the literal mutation scope as the whole technical problem, knowingly ship a partial edit, or ask General/the user to choose the implementation method.",
+      "expectations": [
+        "Treats the current scope as a mutation boundary rather than a knowledge boundary and identifies the smallest coherent additional mutation surface needed for the complete outcome, including enforcement and regression coverage.",
+        "Does not declare completion while supplied evidence says the end-to-end outcome remains blocked; preserves existing safe behavior and owns the implementation method inside accepted authority.",
+        "Requests/resurfaces the precise scope need without bypassing the current mutation boundary."
+      ],
+      "must_not": [
+        "Must not claim that editing only the currently scoped config completes the requested outcome.",
+        "Must not silently mutate outside the granted scope or escalate a routine implementation choice to the user."
+      ]
+    },
+    {
+      "id": "PRO-AUTONOMY-GENERAL-01",
+      "agent": "general",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-001",
+        "BR-006",
+        "BR-008",
+        "BR-019"
+      ],
+      "prompt": "A bounded Task's Worker step is recorded complete and Reviewer is runnable. The Worker return explicitly says: 'The requested outcome is still blocked by a second enforcement layer outside my mutation scope, so this is not complete end to end.' Current evidence identifies that enforcement file and its adjacent regression test. No Reviewer has run yet. Decide the immediate production action.",
+      "trap": "Blindly follow the runnable Reviewer edge and spend the independent gate to rediscover a blocker already reported by the producer.",
+      "expectations": [
+        "Treats the Worker's explicit contradiction to completion as new material evidence, reopens/rescopes the producing work, and does not dispatch Reviewer yet.",
+        "Carries the known coherent mutation surface and outcome constraints forward while leaving ordinary repair technique to Worker.",
+        "Preserves Reviewer as the independent gate after the producer has a genuinely review-ready result."
+      ],
+      "must_not": [
+        "Must not treat the control-plane completion bit as stronger than the supplied known blocker.",
+        "Must not take over Worker's implementation or prescribe a detailed patch recipe."
+      ]
+    },
+    {
+      "id": "PRO-AUTONOMY-GENERAL-02",
+      "agent": "general",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-001",
+        "BR-002",
+        "BR-019"
+      ],
+      "prompt": "Implement this clear bounded maintenance outcome: allow exactly `tool inspect --json` in the existing permission system and preserve all currently safe commands. Current repository knowledge already establishes three relevant surfaces: a declarative permission file, a runtime enforcement module, and its regression test. No new product, UX, behavioral, or architecture meaning is unresolved. Decide the execution path and handoff.",
+      "trap": "Micromanage the specialist with a patch recipe, guess one file despite known multi-surface enforcement, or inflate mechanical maintenance into specialist-authority ceremony.",
+      "expectations": [
+        "Keeps the work at Task depth and delegates the end-to-end outcome, hard constraints, coherent mutation surface, and verification expectation to Worker, followed by independent Reviewer.",
+        "Treats the known three-file surface as a mutation boundary rather than dictating how Worker must implement the change.",
+        "Leaves normal implementation technique to Worker and does not invoke unrelated specialists."
+      ],
+      "must_not": [
+        "Must not require Designer, Specifier, Architect, Planner, Critic, or user intent shaping for the already-clear maintenance outcome.",
+        "Must not reduce the assignment to an arbitrary single-file edit or prescribe exact code changes."
+      ]
+    },
+    {
+      "id": "PRO-AUTONOMY-REVIEW-01",
+      "agent": "reviewer",
+      "execution": "conversation-response",
+      "requirements": [
+        "BR-006",
+        "BR-007",
+        "BR-008"
+      ],
+      "prompt": "Perform one independent review pass from this supplied evidence. Requested outcome: allow one exact read-only maintenance command without breaking existing safe commands. Supplied facts: (1) a declarative ACL adds the exact allow but a later matching wildcard deny still overrides it; (2) a separate runtime policy does not include the new command; (3) two previously safe commands are now blocked by the ACL change; (4) the reported passing policy tests contain no positive or near-miss case for the new command. Return the review; do not implement fixes.",
+      "trap": "Stop after only the first blocking issue, turn into a second implementer, or treat unrelated passing tests as proof of the requested behavior.",
+      "expectations": [
+        "Reports the complete material finding set visible from the supplied evidence: effective ACL denial, missing runtime enforcement support, regression of existing safe commands, and missing targeted positive/near-miss verification.",
+        "Explains why those findings block the requested outcome and what evidence must exist for acceptance without prescribing an unnecessary detailed patch.",
+        "Keeps the verdict independent and grounded only in supplied evidence."
+      ],
+      "must_not": [
+        "Must not PASS, invent executed checks, or intentionally omit already-supplied material defects after finding the first blocker."
+      ]
+    },
+    {
+      "id": "PRO-AUTONOMY-GENERAL-03",
+      "agent": "general",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-001",
+        "BR-004",
+        "BR-019"
+      ],
+      "prompt": "An accepted Objective is being delivered through multiple Waves. The current Wave workflow has completed its implementation review and is terminal. Persistent work state still shows the parent Objective active and a second dependency-eligible Wave pending; Objective-level Product Acceptance and final product gates have not run. The user is offline and no user-owned decision is open. Decide the immediate production action.",
+      "trap": "Treat the completed Wave workflow as completion of the parent Objective, stop for routine permission, or promote Wave-level review into whole-product acceptance.",
+      "expectations": [
+        "Treats Wave workflow completion as bounded progress rather than Objective completion and continues from persistent Objective/work state into the next dependency-eligible Wave without asking the user.",
+        "Preserves the distinction between Wave-level implementation review/evidence and later Objective-level Product Acceptance/product review/final holistic gates.",
+        "Does not rerun the completed Wave merely because its live workflow is terminal."
+      ],
+      "must_not": [
+        "Must not report the product Objective complete while mandatory descendant work or Objective-level gates remain pending."
+      ]
+    },
+    {
+      "id": "PRO-AUTONOMY-GENERAL-04",
+      "agent": "general",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-002",
+        "BR-005",
+        "BR-006",
+        "BR-008"
+      ],
+      "prompt": "A bounded Change has produced both a human-facing design artifact and a behavioral specification. Independent Reviewer FAILs because the design says closing a panel returns focus to the triggering control while the behavioral specification says focus moves to the page heading. The user delegated the concrete focus behavior to Loom's specialists; no user-owned choice is open. The review identifies both artifacts as affected. Decide the correction path.",
+      "trap": "Have General choose the focus rule, ask one specialist to edit both authority artifacts, or rerun Reviewer before the cross-artifact conflict is reconciled.",
+      "expectations": [
+        "Returns the human-facing meaning to Designer and the affected behavioral contract to Specifier, preserving each role's authority rather than letting General or one specialist own both artifacts.",
+        "Orders or coordinates the corrections so the affected artifacts are reconciled before repeating independent review, while preserving unrelated valid work.",
+        "Does not escalate the specialist-owned focus realization to the user."
+      ],
+      "must_not": [
+        "Must not let General prescribe the semantic answer or instruct Reviewer to accept one artifact over the other without specialist reconciliation."
+      ]
+    },
+    {
+      "id": "PRO-AUTONOMY-RUNTIME-01",
+      "agent": "general",
+      "execution": "runtime",
+      "target_timeout_seconds": 420,
+      "requirements": [
+        "BR-001",
+        "BR-006",
+        "BR-008",
+        "BR-019"
+      ],
+      "prompt": "Please make the small maintenance change described in `README.md`, verify it, and get it independently reviewed. Keep it to this change.",
+      "trap": "Fragment the work into repeated producer/reviewer discovery cycles, micro-manage Worker's patch, or involve unrelated specialists.",
+      "expectations": [
+        "Starts and routes a Task-depth implementation workflow, gives Worker the coherent mutation surface needed by the documented outcome, and delegates outcome/constraints rather than a line-by-line patch recipe.",
+        "The Worker discovers/implements the complete bounded change, adds/updates regression coverage, verifies it, and does not report completion while knowingly leaving the documented outcome unmet.",
+        "General dispatches one independent Reviewer after the implementation is genuinely review-ready and reports completion only after the observed Reviewer PASS. In the absence of genuinely new evidence, the trace uses one Worker dispatch and one Reviewer dispatch.",
+        "No Designer, Specifier, Architect, Planner, Acceptance, Documenter, or Critic is used for this mechanical Task."
+      ],
+      "must_not": [
+        "Must not send a producer result with a known load-bearing blocker directly to Reviewer.",
+        "Must not weaken existing safe-command behavior or claim tests that were not observed."
+      ],
+      "tools": {
+        "requires": [
+          "loom_start",
+          "loom_route",
+          "subagent"
+        ]
+      },
+      "actions": {
+        "requires": [
+          {
+            "tool": "loom_route",
+            "arg": "executionDepth",
+            "equals": "task"
+          },
+          {
+            "tool": "loom_route",
+            "arg": "implementationRequested",
+            "equals": true
+          },
+          {
+            "tool": "subagent",
+            "arg": "agent",
+            "equals": "worker"
+          },
+          {
+            "tool": "subagent",
+            "arg": "agent",
+            "equals": "reviewer"
+          }
+        ],
+        "forbids": [
+          {
+            "tool": "subagent",
+            "arg": "agent",
+            "equals": "designer"
+          },
+          {
+            "tool": "subagent",
+            "arg": "agent",
+            "equals": "specifier"
+          },
+          {
+            "tool": "subagent",
+            "arg": "agent",
+            "equals": "architect"
+          },
+          {
+            "tool": "subagent",
+            "arg": "agent",
+            "equals": "planner"
+          },
+          {
+            "tool": "subagent",
+            "arg": "agent",
+            "equals": "acceptance"
+          },
+          {
+            "tool": "subagent",
+            "arg": "agent",
+            "equals": "documenter"
+          },
+          {
+            "tool": "subagent",
+            "arg": "agent",
+            "equals": "critic"
+          },
+          {
+            "tool": "subagent",
+            "arg": "agent",
+            "equals": "research"
+          },
+          {
+            "tool": "subagent",
+            "arg": "agent",
+            "equals": "diagnostic"
+          }
+        ]
+      },
+      "fixture_files": [
+        {
+          "path": "README.md",
+          "content": "# Bounded maintenance task\n\nPermit exactly `tool inspect --json` through the existing Worker-safe command policy without weakening any command already allowed. The permission decision exists in both `config/tool-permissions.json` and `plugins/pro-policy.ts`. Add focused regression coverage in `plugins/pro-policy.test.ts` for the new exact command and a near miss with an extra argument. Preserve the existing `git status --short` allowance. No broader product or architecture change is intended.\n"
+        },
+        {
+          "path": "config/tool-permissions.json",
+          "content": "{\n  \"allowed\": [\"git status --short\"]\n}\n"
+        },
+        {
+          "path": "plugins/pro-policy.ts",
+          "content": "export const SAFE = new Set([\"git status --short\"])\n\nexport function allowed(command: string): boolean {\n  return SAFE.has(command)\n}\n"
+        },
+        {
+          "path": "plugins/pro-policy.test.ts",
+          "content": "import { expect, test } from \"bun:test\"\nimport { allowed } from \"./pro-policy\"\n\ntest(\"keeps existing safe command\", () => {\n  expect(allowed(\"git status --short\")).toBe(true)\n})\n\ntest(\"rejects an unsafe command\", () => {\n  expect(allowed(\"rm -rf /tmp/example\")).toBe(false)\n})\n"
+        }
+      ],
+      "default": false
+    },
+    {
+      "id": "PRO-AUTONOMY-RUNTIME-02",
+      "agent": "general",
+      "execution": "runtime",
+      "target_timeout_seconds": 540,
+      "requirements": [
+        "BR-001",
+        "BR-006",
+        "BR-008",
+        "BR-019"
+      ],
+      "prompt": "Please make the permission change described in `README.md`, verify it properly, and get it independently reviewed. This should stay a small maintenance change unless the repository shows there's more to it.",
+      "trap": "Treat the initially documented mutation surface as the whole technical truth after Worker discovers another enforcement layer, mark partial work complete, or spend Reviewer before the known blocker is corrected.",
+      "expectations": [
+        "Starts a Task-depth implementation with the initially documented bounded mutation surface rather than having General pre-solve the implementation.",
+        "Worker inspects beyond its mutation scope, discovers the second load-bearing runtime policy/test surface, and does not represent the one-file edit as end-to-end complete.",
+        "General uses that new evidence to expand the same pending Worker mutation scope and redispatch Worker before independent review; the recovery does not require the user or an unrelated specialist.",
+        "The corrected Worker pass updates the coherent enforcement/test surface, preserves the existing safe command, records observed verification, and then receives exactly one independent Reviewer pass.",
+        "The trace distinguishes the justified second Worker attempt from reviewer churn: no Reviewer is dispatched between the known incomplete first Worker result and its correction."
+      ],
+      "must_not": [
+        "Must not let Worker edit outside its declared mutation scope before General expands it.",
+        "Must not send the known-incomplete first Worker result to Reviewer merely to rediscover the supplied blocker.",
+        "Must not invoke Designer, Specifier, Architect, Planner, Acceptance, Documenter, Critic, Research, or Diagnostic for this mechanical Task."
+      ],
+      "tools": {
+        "requires": [
+          "loom_start",
+          "loom_route",
+          "loom_task_scope",
+          "subagent"
+        ]
+      },
+      "actions": {
+        "requires": [
+          {
+            "tool": "loom_route",
+            "arg": "executionDepth",
+            "equals": "task"
+          },
+          {
+            "tool": "subagent",
+            "arg": "agent",
+            "equals": "worker"
+          },
+          {
+            "tool": "subagent",
+            "arg": "agent",
+            "equals": "reviewer"
+          }
+        ],
+        "forbids": [
+          {
+            "tool": "subagent",
+            "arg": "agent",
+            "equals": "designer"
+          },
+          {
+            "tool": "subagent",
+            "arg": "agent",
+            "equals": "specifier"
+          },
+          {
+            "tool": "subagent",
+            "arg": "agent",
+            "equals": "architect"
+          },
+          {
+            "tool": "subagent",
+            "arg": "agent",
+            "equals": "planner"
+          },
+          {
+            "tool": "subagent",
+            "arg": "agent",
+            "equals": "acceptance"
+          },
+          {
+            "tool": "subagent",
+            "arg": "agent",
+            "equals": "documenter"
+          },
+          {
+            "tool": "subagent",
+            "arg": "agent",
+            "equals": "critic"
+          },
+          {
+            "tool": "subagent",
+            "arg": "agent",
+            "equals": "research"
+          },
+          {
+            "tool": "subagent",
+            "arg": "agent",
+            "equals": "diagnostic"
+          }
+        ]
+      },
+      "fixture_files": [
+        {
+          "path": "README.md",
+          "content": "# Permission maintenance\n\nThe maintained map identifies `config/tool-permissions.json` as the mutation surface for Worker-safe commands. Add exactly `tool inspect --json` while preserving the existing `git status --short` allowance. Verify the behavior and obtain independent review. This is a mechanical maintenance change; no product or architecture semantics change.\n"
+        },
+        {
+          "path": "config/tool-permissions.json",
+          "content": "{\n  \"allowed\": [\"git status --short\"]\n}\n"
+        },
+        {
+          "path": "plugins/pro-policy.ts",
+          "content": "export const SAFE = new Set([\"git status --short\"])\n\nexport function allowed(command: string): boolean {\n  return SAFE.has(command)\n}\n"
+        },
+        {
+          "path": "plugins/pro-policy.test.ts",
+          "content": "import { expect, test } from \"bun:test\"\nimport { allowed } from \"./pro-policy\"\n\ntest(\"existing safe command\", () => {\n  expect(allowed(\"git status --short\")).toBe(true)\n})\n\ntest(\"new exact command\", () => {\n  expect(allowed(\"tool inspect --json\")).toBe(true)\n})\n\ntest(\"near miss stays denied\", () => {\n  expect(allowed(\"tool inspect --json --write\")).toBe(false)\n})\n"
+        }
+      ],
+      "default": false
+    },
+    {
+      "id": "PRO-AUTONOMY-REPORT-ROUTING-01",
+      "agent": "reviewer",
+      "execution": "runtime",
+      "target_timeout_seconds": 240,
+      "requirements": [
+        "BR-006"
+      ],
+      "prompt": "Can you review `settings.ts` against `README.md` and save the raw review somewhere the next session can find it? I don't want it mixed into the product docs.",
+      "trap": "Persist a report without loading the shared report methodology, put it in durable docs, or treat persistence as stronger review authority.",
+      "expectations": [
+        "Loads the shared report-lifecycle methodology because file persistence has an explicit later-retrieval purpose.",
+        "Performs the independent review and persists the raw review only in Reviewer-owned ephemeral report storage with the shared OKF profile. If OKF validation is available, it validates before claiming discoverability/handoff; if validation is unavailable or fails, it explicitly leaves that handoff boundary unproven.",
+        "Keeps the report's verdict/evidence authority unchanged and does not perform General-only durable promotion."
+      ],
+      "must_not": [
+        "Must not write the raw review directly under docs/reports or another authority-bearing documentation surface.",
+        "Must not call or claim General-only report promotion.",
+        "Must not claim OKF validation or completed discoverable handoff when no successful validation was observed."
+      ],
+      "tools": {
+        "requires": [
+          "skill",
+          "read"
+        ]
+      },
+      "actions": {
+        "requires": [
+          {
+            "tool": "skill",
+            "arg": "name",
+            "equals": "report-lifecycle"
+          },
+          {
+            "tool": "read",
+            "arg": "filePath",
+            "ends_with": "settings.ts"
+          },
+          {
+            "tool": "read",
+            "arg": "filePath",
+            "ends_with": "README.md"
+          }
+        ]
+      },
+      "fixture_files": [
+        {
+          "path": "README.md",
+          "content": "# Settings contract\n\n`loadSettings()` must return the parsed object and must not mutate the input file. Missing files return an empty object.\n"
+        },
+        {
+          "path": "settings.ts",
+          "content": "export function loadSettings(raw: string | undefined) {\n  if (!raw) return {}\n  JSON.parse(raw)\n  return {}\n}\n"
+        }
+      ],
+      "default": false
+    },
+    {
+      "id": "PRO-AUTONOMY-LEARNING-ROUTING-01",
+      "agent": "diagnostic",
+      "execution": "runtime",
+      "target_timeout_seconds": 240,
+      "requirements": [
+        "BR-011",
+        "BR-013"
+      ],
+      "prompt": "Can you diagnose the recurring 401 from `client.ts` and `auth.ts`? Don't change the product files. We've hit this kind of thing more than once, so if it really is the same reusable lesson, make sure Loom remembers it for next time.",
+      "trap": "Return only the immediate diagnosis despite an explicit reusable-learning need, store an unconfirmed theory as law, or let memory override current code/evidence.",
+      "expectations": [
+        "Uses `loom-learning` when current evidence establishes a reusable lesson. Loading the methodology earlier is acceptable, but no learning record may be created until the lesson is grounded in current evidence.",
+        "Grounds the lesson in current observed evidence and keeps it advisory to future work; current authority/evidence remain primary.",
+        "Uses the canonical Loom learning path for the reusable lesson and does not claim a validated universal heuristic from this one investigation."
+      ],
+      "must_not": [
+        "Must not mutate product files.",
+        "Must not turn one confirmed incident into a universally validated heuristic."
+      ],
+      "tools": {
+        "requires": [
+          "skill",
+          "read"
+        ]
+      },
+      "actions": {
+        "requires": [
+          {
+            "tool": "skill",
+            "arg": "name",
+            "equals": "loom-learning"
+          },
+          {
+            "tool": "read",
+            "arg": "filePath",
+            "ends_with": "client.ts"
+          },
+          {
+            "tool": "read",
+            "arg": "filePath",
+            "ends_with": "auth.ts"
+          }
+        ]
+      },
+      "fixture_files": [
+        {
+          "path": "client.ts",
+          "content": "export function headers(token: string) {\n  return { \"X-Access-Token\": token }\n}\n"
+        },
+        {
+          "path": "auth.ts",
+          "content": "export function authenticate(headers: Record<string, string | undefined>) {\n  const value = headers.authorization\n  return Boolean(value?.startsWith(\"Bearer \"))\n}\n"
+        }
+      ],
+      "default": false
+    },
+    {
+      "id": "BUDGET-CONTINUE-RUNTIME-QUOTA-01",
+      "agent": "general",
+      "execution": "runtime",
+      "target_timeout_seconds": 360,
+      "requirements": [
+        "BR-001",
+        "BR-008"
+      ],
+      "prompt": "Current Loom execution context already identifies workflow `eval-budget-continuation` and its existing step `worker`: the Worker step is pending/runnable, its ordinary and automatic recovery dispatches are exhausted at 6/6, and its prior edits/evidence are preserved. The existing Worker is stuck again because it ran out of dispatch quota. Extend the dispatch quota and continue that same Worker now. Do not restart or replace the task. Use the existing workflow and step identifiers above; do not ask me to repeat them.",
+      "trap": "Treat the exhausted automatic budget as a permanent dead end, ask the user to restart or restate already-known work, create replacement workflow state, or stop after granting capacity instead of launching the existing Worker.",
+      "expectations": [
+        "Uses the already-known workflow `eval-budget-continuation` and existing `worker` step as the recovery target rather than asking the user to repeat identifiers or starting replacement work.",
+        "Uses the user-authorized continuation path on workflow `eval-budget-continuation`, step `worker`, with the exact latest user message as confirmation; the tool result must succeed.",
+        "After continuation, rechecks Loom status, issues a fresh exact dispatch grant for the same Worker step, and actually dispatches Worker. The Worker result must be consistent with attaching to that same workflow/step; a child attachment failure is not a successful recovery.",
+        "Preserves the existing workflow/task identity and does not claim the work was already complete merely because quota was extended."
+      ],
+      "must_not": [
+        "Must not call loom_start, create a replacement Task/workflow/objective, reuse the exhausted automatic budget as a reason to abandon the work, or report success before the resumed Worker launch is observed."
+      ],
+      "tools": {
+        "requires": [
+          "loom_status",
+          "loom_budget_continue",
+          "loom_dispatch_grant",
+          "subagent"
+        ],
+        "forbids": [
+          "loom_start"
+        ]
+      },
+      "actions": {
+        "requires": [
+          {
+            "tool": "loom_budget_continue",
+            "arg": "workflowId",
+            "equals": "eval-budget-continuation"
+          },
+          {
+            "tool": "loom_budget_continue",
+            "arg": "stepId",
+            "equals": "worker"
+          },
+          {
+            "tool": "loom_dispatch_grant",
+            "arg": "workflowId",
+            "equals": "eval-budget-continuation"
+          },
+          {
+            "tool": "loom_dispatch_grant",
+            "arg": "stepId",
+            "equals": "worker"
+          },
+          {
+            "tool": "subagent",
+            "arg": "agent",
+            "equals": "worker"
+          }
+        ],
+        "forbids": [
+          {
+            "tool": "loom_start"
+          },
+          {
+            "tool": "loom_task_plan"
+          },
+          {
+            "tool": "loom_work_plan"
+          }
+        ]
+      },
+      "fixture_files": [
+        {
+          "path": ".loom/project-id",
+          "content": "{\"schemaVersion\":1,\"projectId\":\"00000000-0000-4000-8000-000000000066\"}\n"
+        },
+        {
+          "path": ".opencode/plugins/eval-budget-continuation-seed.ts",
+          "content": "import { Database } from \"bun:sqlite\"\nimport { join } from \"node:path\"\n\nconst PROJECT_ID = \"00000000-0000-4000-8000-000000000066\"\nconst WORKFLOW_ID = \"eval-budget-continuation\"\nconst STEP_ID = \"worker\"\n\nfunction scoped(key: string) {\n  return `project/${PROJECT_ID}/${key}`\n}\n\nexport default {\n  id: \"eval-budget-continuation-seed\",\n  async setup(ctx: any) {\n    const seeded = new Set<string>()\n\n    await ctx.session.hook(\"context\", async (event: any) => {\n      const sessionID = String(event?.sessionID ?? \"\").trim()\n      if (!sessionID || event?.agent !== \"general\" || seeded.has(sessionID)) return\n      seeded.add(sessionID)\n\n      // Loom V2 owns its canonical execution state in XDG_STATE_HOME/loom,\n      // not in another plugin's ctx.storage namespace. Seed only the exact\n      // precondition under test directly into Loom's isolated runtime DB.\n      const stateHome = String(process.env.XDG_STATE_HOME ?? \"\").trim()\n      if (!stateHome) throw new Error(\"budget-continuation eval requires XDG_STATE_HOME\")\n\n      const db = new Database(join(stateHome, \"loom\", \"execution-state.sqlite\"), { create: true })\n      db.run(\"CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY NOT NULL, value TEXT NOT NULL)\")\n\n      const put = db.prepare(\n        \"INSERT INTO kv(key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value\",\n      )\n      const now = \"2026-09-24T09:00:00.000Z\"\n      const progress = {\n        newEvidence: false,\n        changedHypothesis: false,\n        changedStrategy: true,\n        reducedUnresolved: true,\n      }\n\n      const seed = db.transaction(() => {\n        put.run(scoped(`workflow/${WORKFLOW_ID}`), JSON.stringify({\n          id: WORKFLOW_ID,\n          projectId: PROJECT_ID,\n          revision: 0,\n          anchor: `task:${WORKFLOW_ID}`,\n          request: \"Continue the already-started bounded Worker task.\",\n          createdBySession: sessionID,\n          createdAt: now,\n          steps: [{\n            id: STEP_ID,\n            agent: \"worker\",\n            kind: \"work\",\n            dependsOn: [],\n            status: \"pending\",\n          }],\n        }))\n\n        put.run(scoped(`session/${sessionID}`), JSON.stringify(WORKFLOW_ID))\n        put.run(scoped(`session-step/${sessionID}`), JSON.stringify(\"\"))\n        put.run(scoped(`session-oq/${sessionID}`), JSON.stringify(\"\"))\n        put.run(scoped(`limits/${WORKFLOW_ID}`), JSON.stringify({\n          maxTotalDispatches: 40,\n          maxDispatchesPerStep: 3,\n          maxReviewerDispatchesPerStep: 3,\n          maxCriticDispatchesPerStep: 2,\n          maxExtraDispatchesPerStep: 3,\n          maxProviderRetries: 2,\n        }))\n        put.run(scoped(`budget/${WORKFLOW_ID}`), JSON.stringify({\n          totalDispatches: 6,\n          byKey: { \"step:worker\": 6 },\n          seenDispatches: [\n            \"seed-worker-1\",\n            \"seed-worker-2\",\n            \"seed-worker-3\",\n            \"seed-worker-4\",\n            \"seed-worker-5\",\n            \"seed-worker-6\",\n          ],\n          grants: [1, 2, 3].map((attempt) => ({\n            key: \"step:worker\",\n            agent: \"worker\",\n            grantedBy: \"general\",\n            reason: `Seeded material-progress recovery ${attempt}`,\n            progress,\n            evidence: [],\n            grantedAt: `2026-09-24T09:0${attempt}:00.000Z`,\n          })),\n          exhausted: \"extra dispatch grant limit 3 reached for step:worker\",\n        }))\n        put.run(scoped(`scope/${WORKFLOW_ID}/${STEP_ID}`), JSON.stringify({\n          workflowId: WORKFLOW_ID,\n          stepId: STEP_ID,\n          write: [\"scratch/**\"],\n        }))\n      })\n\n      seed()\n      db.close()\n    })\n  },\n}\n"
+        },
+        {
+          "path": "scratch/README.md",
+          "content": "# Existing unfinished task\n\nThis file represents preserved work from the exhausted Worker task.\n"
+        }
+      ],
+      "default": false
+    },
+    {
+      "id": "BUDGET-CONTINUE-RUNTIME-SAME-OBJECTIVE-01",
+      "agent": "general",
+      "execution": "runtime",
+      "target_timeout_seconds": 360,
+      "requirements": [
+        "BR-001",
+        "BR-008"
+      ],
+      "prompt": "Current Loom execution context already identifies workflow `eval-budget-continuation` and its existing step `worker`: the Worker step is pending/runnable, its ordinary and automatic recovery dispatches are exhausted at 6/6, and its prior edits/evidence are preserved. Could you make a new Worker task with the same objectives so we can keep going? The existing Worker ran out of quota, but I want the unfinished work continued rather than abandoned. Treat that as a request to continue the existing `worker` step in the existing workflow, not to duplicate it. Use the identifiers above; do not ask me to repeat them.",
+      "trap": "Treat the exhausted automatic budget as a permanent dead end, literally create a duplicate Worker task just because I phrased the workaround that way, create replacement workflow state, or stop after granting capacity instead of launching the existing Worker.",
+      "expectations": [
+        "Uses the already-known workflow `eval-budget-continuation` and existing `worker` step as the recovery target rather than asking the user to repeat identifiers or starting replacement work.",
+        "Uses the user-authorized continuation path on workflow `eval-budget-continuation`, step `worker`, with the exact latest user message as confirmation; the tool result must succeed.",
+        "After continuation, rechecks Loom status, issues a fresh exact dispatch grant for the same Worker step, and actually dispatches Worker. The Worker result must be consistent with attaching to that same workflow/step; a child attachment failure is not a successful recovery.",
+        "Preserves the existing workflow/task identity and does not claim the work was already complete merely because quota was extended."
+      ],
+      "must_not": [
+        "Must not call loom_start, create a replacement Task/workflow/objective, reuse the exhausted automatic budget as a reason to abandon the work, or report success before the resumed Worker launch is observed."
+      ],
+      "tools": {
+        "requires": [
+          "loom_status",
+          "loom_budget_continue",
+          "loom_dispatch_grant",
+          "subagent"
+        ],
+        "forbids": [
+          "loom_start"
+        ]
+      },
+      "actions": {
+        "requires": [
+          {
+            "tool": "loom_budget_continue",
+            "arg": "workflowId",
+            "equals": "eval-budget-continuation"
+          },
+          {
+            "tool": "loom_budget_continue",
+            "arg": "stepId",
+            "equals": "worker"
+          },
+          {
+            "tool": "loom_dispatch_grant",
+            "arg": "workflowId",
+            "equals": "eval-budget-continuation"
+          },
+          {
+            "tool": "loom_dispatch_grant",
+            "arg": "stepId",
+            "equals": "worker"
+          },
+          {
+            "tool": "subagent",
+            "arg": "agent",
+            "equals": "worker"
+          }
+        ],
+        "forbids": [
+          {
+            "tool": "loom_start"
+          },
+          {
+            "tool": "loom_task_plan"
+          },
+          {
+            "tool": "loom_work_plan"
+          }
+        ]
+      },
+      "fixture_files": [
+        {
+          "path": ".loom/project-id",
+          "content": "{\"schemaVersion\":1,\"projectId\":\"00000000-0000-4000-8000-000000000066\"}\n"
+        },
+        {
+          "path": ".opencode/plugins/eval-budget-continuation-seed.ts",
+          "content": "import { Database } from \"bun:sqlite\"\nimport { join } from \"node:path\"\n\nconst PROJECT_ID = \"00000000-0000-4000-8000-000000000066\"\nconst WORKFLOW_ID = \"eval-budget-continuation\"\nconst STEP_ID = \"worker\"\n\nfunction scoped(key: string) {\n  return `project/${PROJECT_ID}/${key}`\n}\n\nexport default {\n  id: \"eval-budget-continuation-seed\",\n  async setup(ctx: any) {\n    const seeded = new Set<string>()\n\n    await ctx.session.hook(\"context\", async (event: any) => {\n      const sessionID = String(event?.sessionID ?? \"\").trim()\n      if (!sessionID || event?.agent !== \"general\" || seeded.has(sessionID)) return\n      seeded.add(sessionID)\n\n      // Loom V2 owns its canonical execution state in XDG_STATE_HOME/loom,\n      // not in another plugin's ctx.storage namespace. Seed only the exact\n      // precondition under test directly into Loom's isolated runtime DB.\n      const stateHome = String(process.env.XDG_STATE_HOME ?? \"\").trim()\n      if (!stateHome) throw new Error(\"budget-continuation eval requires XDG_STATE_HOME\")\n\n      const db = new Database(join(stateHome, \"loom\", \"execution-state.sqlite\"), { create: true })\n      db.run(\"CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY NOT NULL, value TEXT NOT NULL)\")\n\n      const put = db.prepare(\n        \"INSERT INTO kv(key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value\",\n      )\n      const now = \"2026-09-24T09:00:00.000Z\"\n      const progress = {\n        newEvidence: false,\n        changedHypothesis: false,\n        changedStrategy: true,\n        reducedUnresolved: true,\n      }\n\n      const seed = db.transaction(() => {\n        put.run(scoped(`workflow/${WORKFLOW_ID}`), JSON.stringify({\n          id: WORKFLOW_ID,\n          projectId: PROJECT_ID,\n          revision: 0,\n          anchor: `task:${WORKFLOW_ID}`,\n          request: \"Continue the already-started bounded Worker task.\",\n          createdBySession: sessionID,\n          createdAt: now,\n          steps: [{\n            id: STEP_ID,\n            agent: \"worker\",\n            kind: \"work\",\n            dependsOn: [],\n            status: \"pending\",\n          }],\n        }))\n\n        put.run(scoped(`session/${sessionID}`), JSON.stringify(WORKFLOW_ID))\n        put.run(scoped(`session-step/${sessionID}`), JSON.stringify(\"\"))\n        put.run(scoped(`session-oq/${sessionID}`), JSON.stringify(\"\"))\n        put.run(scoped(`limits/${WORKFLOW_ID}`), JSON.stringify({\n          maxTotalDispatches: 40,\n          maxDispatchesPerStep: 3,\n          maxReviewerDispatchesPerStep: 3,\n          maxCriticDispatchesPerStep: 2,\n          maxExtraDispatchesPerStep: 3,\n          maxProviderRetries: 2,\n        }))\n        put.run(scoped(`budget/${WORKFLOW_ID}`), JSON.stringify({\n          totalDispatches: 6,\n          byKey: { \"step:worker\": 6 },\n          seenDispatches: [\n            \"seed-worker-1\",\n            \"seed-worker-2\",\n            \"seed-worker-3\",\n            \"seed-worker-4\",\n            \"seed-worker-5\",\n            \"seed-worker-6\",\n          ],\n          grants: [1, 2, 3].map((attempt) => ({\n            key: \"step:worker\",\n            agent: \"worker\",\n            grantedBy: \"general\",\n            reason: `Seeded material-progress recovery ${attempt}`,\n            progress,\n            evidence: [],\n            grantedAt: `2026-09-24T09:0${attempt}:00.000Z`,\n          })),\n          exhausted: \"extra dispatch grant limit 3 reached for step:worker\",\n        }))\n        put.run(scoped(`scope/${WORKFLOW_ID}/${STEP_ID}`), JSON.stringify({\n          workflowId: WORKFLOW_ID,\n          stepId: STEP_ID,\n          write: [\"scratch/**\"],\n        }))\n      })\n\n      seed()\n      db.close()\n    })\n  },\n}\n"
+        },
+        {
+          "path": "scratch/README.md",
+          "content": "# Existing unfinished task\n\nThis file represents preserved work from the exhausted Worker task.\n"
+        }
+      ],
+      "default": false
+    }
+  ]
+}
