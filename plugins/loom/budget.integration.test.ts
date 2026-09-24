@@ -174,10 +174,14 @@ describe("Loom budget recovery plugin integration", () => {
 
       const grantTool = registeredTools.get("budget_grant")
       const continuationTool = registeredTools.get("budget_continue")
+      const budgetStatusTool = registeredTools.get("budget_status")
       const dispatchGrantTool = registeredTools.get("dispatch_grant")
+      const attachTool = registeredTools.get("attach")
       expect(grantTool).toBeDefined()
       expect(continuationTool).toBeDefined()
+      expect(budgetStatusTool).toBeDefined()
       expect(dispatchGrantTool).toBeDefined()
+      expect(attachTool).toBeDefined()
       expect(evaluatePermission).toBeDefined()
 
       const grantResult = await grantTool!.execute(
@@ -249,33 +253,42 @@ describe("Loom budget recovery plugin integration", () => {
       const persistedAfterContinuation = await storage.get(budgetKey) as BudgetState
       expect(persistedAfterContinuation.continuations).toHaveLength(1)
       expect(persistedAfterContinuation.byKey[dispatchKey]).toBe(3)
-      expect(
-        recordDispatch({
-          state: persistedAfterContinuation,
-          limits: DEFAULT_LIMITS,
-          dispatchID: "critic-4-after-user-continuation",
-          key: dispatchKey,
-          agent: "critic",
-        }).allowed,
-      ).toBe(true)
-      expect(
-        recordDispatch({
-          state: persistedAfterContinuation,
-          limits: DEFAULT_LIMITS,
-          dispatchID: "critic-5-after-user-continuation",
-          key: dispatchKey,
-          agent: "critic",
-        }).allowed,
-      ).toBe(true)
-      expect(
-        recordDispatch({
-          state: persistedAfterContinuation,
-          limits: DEFAULT_LIMITS,
-          dispatchID: "critic-6-after-user-continuation",
-          key: dispatchKey,
-          agent: "critic",
-        }).allowed,
-      ).toBe(false)
+
+      const continuedStatus = await budgetStatusTool!.execute(
+        { workflowId },
+        { agent: "general", sessionID },
+      )
+      expect(continuedStatus.content).toContain("**Max Total Dispatches:** 42")
+
+      const resumedGrant = await dispatchGrantTool!.execute(
+        { workflowId, stepId },
+        { agent: "general", sessionID },
+      )
+      expect(resumedGrant.content).not.toContain("## Error")
+      const grantMatch = resumedGrant.content.match(/\*\*Grant ID:\*\*\s+`([^`]+)`/)
+      expect(grantMatch).not.toBeNull()
+
+      const resumedEvent = {
+        agent: "general",
+        action: "subagent",
+        resources: ["critic"],
+        sessionID,
+        source: { messageID: "message-5", id: "dispatch-5" },
+        effect: "allow",
+        message: "",
+      }
+      await evaluatePermission!(resumedEvent)
+      expect(resumedEvent.effect).not.toBe("deny")
+
+      const attached = await attachTool!.execute(
+        { workflowId, stepId, grantId: grantMatch![1] },
+        { agent: "critic", sessionID: "critic-resumed-session" },
+      )
+      expect(attached.content).not.toContain("## Error")
+
+      const persistedAfterResume = await storage.get(budgetKey) as BudgetState
+      expect(persistedAfterResume.byKey[dispatchKey]).toBe(4)
+      expect(persistedAfterResume.continuations?.[0]?.usedDispatches).toBe(1)
     } finally {
       if (previousState === undefined) delete process.env.XDG_STATE_HOME
       else process.env.XDG_STATE_HOME = previousState

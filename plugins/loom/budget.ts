@@ -36,6 +36,7 @@ export type BudgetContinuation = {
   requestedDispatches: number
   stepLimitIncrease: number
   workflowLimitIncrease: number
+  usedDispatches?: number
   grantedAt: string
 }
 
@@ -82,9 +83,41 @@ function continuationStepIncreaseForKey(state: BudgetState, key: string) {
     .reduce((total, continuation) => total + continuation.stepLimitIncrease, 0)
 }
 
+function automaticStepLimit(state: BudgetState, key: string, agent: string, limits: ExecutionLimits) {
+  return baseStepLimit(agent, limits) + grantsForKey(state, key)
+}
+
+function continuationRemainingForKey(state: BudgetState, key: string) {
+  return (state.continuations ?? [])
+    .filter((continuation) => continuation.key === key)
+    .reduce(
+      (total, continuation) =>
+        total + Math.max(0, continuation.requestedDispatches - (continuation.usedDispatches ?? 0)),
+      0,
+    )
+}
+
+function totalContinuationRemaining(state: BudgetState) {
+  return (state.continuations ?? []).reduce(
+    (total, continuation) =>
+      total + Math.max(0, continuation.requestedDispatches - (continuation.usedDispatches ?? 0)),
+    0,
+  )
+}
+
+function consumeContinuationDispatch(state: BudgetState, key: string) {
+  for (const continuation of state.continuations ?? []) {
+    if (continuation.key !== key) continue
+    const used = continuation.usedDispatches ?? 0
+    if (used >= continuation.requestedDispatches) continue
+    continuation.usedDispatches = used + 1
+    return true
+  }
+  return false
+}
+
 export function effectiveTotalDispatchLimit(state: BudgetState, limits: ExecutionLimits) {
-  return limits.maxTotalDispatches + (state.continuations ?? [])
-    .reduce((total, continuation) => total + continuation.workflowLimitIncrease, 0)
+  return Math.max(limits.maxTotalDispatches, state.totalDispatches) + totalContinuationRemaining(state)
 }
 
 export function effectiveStepLimit(
@@ -93,7 +126,7 @@ export function effectiveStepLimit(
   agent: string,
   limits: ExecutionLimits,
 ) {
-  return baseStepLimit(agent, limits) + grantsForKey(state, key) + continuationStepIncreaseForKey(state, key)
+  return automaticStepLimit(state, key, agent, limits) + continuationStepIncreaseForKey(state, key)
 }
 
 export function recordDispatch(input: {
@@ -109,17 +142,27 @@ export function recordDispatch(input: {
     return { allowed: true, duplicate: true, state }
   }
 
-  const totalLimit = effectiveTotalDispatchLimit(state, limits)
-  if (state.totalDispatches >= totalLimit) {
-    state.exhausted = `total dispatch limit ${totalLimit} reached`
+  const current = state.byKey[key] ?? 0
+  const automaticMax = automaticStepLimit(state, key, agent, limits)
+  const max = effectiveStepLimit(state, key, agent, limits)
+  const stepNeedsContinuation = current >= automaticMax
+  const workflowNeedsContinuation = state.totalDispatches >= limits.maxTotalDispatches
+  const needsContinuation = stepNeedsContinuation || workflowNeedsContinuation
+
+  if (needsContinuation && continuationRemainingForKey(state, key) <= 0) {
+    state.exhausted = workflowNeedsContinuation
+      ? `total dispatch limit ${limits.maxTotalDispatches} reached; no user-authorized continuation capacity remains for ${key}`
+      : `dispatch limit ${automaticMax} reached for ${key}`
     return { allowed: false, duplicate: false, reason: state.exhausted, state }
   }
 
-  const current = state.byKey[key] ?? 0
-  const max = effectiveStepLimit(state, key, agent, limits)
-
   if (current >= max) {
     state.exhausted = `dispatch limit ${max} reached for ${key}`
+    return { allowed: false, duplicate: false, reason: state.exhausted, state }
+  }
+
+  if (needsContinuation && !consumeContinuationDispatch(state, key)) {
+    state.exhausted = `user-authorized continuation capacity exhausted for ${key}`
     return { allowed: false, duplicate: false, reason: state.exhausted, state }
   }
 
@@ -174,9 +217,11 @@ export function grantExtraDispatch(input: {
     }
   }
 
-  const totalLimit = effectiveTotalDispatchLimit(state, limits)
-  if (state.totalDispatches >= totalLimit) {
-    state.exhausted = `total dispatch limit ${totalLimit} reached`
+  if (
+    state.totalDispatches >= limits.maxTotalDispatches &&
+    continuationRemainingForKey(state, key) <= 0
+  ) {
+    state.exhausted = `total dispatch limit ${limits.maxTotalDispatches} reached for ${key}`
     return { allowed: false, reason: state.exhausted, state }
   }
 
@@ -462,23 +507,33 @@ export function continueWorkflowDispatchBudget(input: {
   const previousStepLimit = effectiveStepLimit(state, target.key, target.agent, limits)
   const previousWorkflowLimit = effectiveTotalDispatchLimit(state, limits)
   const targetUsed = state.byKey[target.key] ?? 0
-  const stepHeadroom = Math.max(0, previousStepLimit - targetUsed)
-  const workflowHeadroom = Math.max(0, previousWorkflowLimit - state.totalDispatches)
+  const automaticMax = automaticStepLimit(state, target.key, target.agent, limits)
+  const existingContinuation = continuationRemainingForKey(state, target.key)
+  const stepBlocked = targetUsed >= automaticMax
+  const workflowBlocked = state.totalDispatches >= limits.maxTotalDispatches
 
-  if (stepHeadroom > 0 && workflowHeadroom > 0) {
+  if (existingContinuation > 0) {
     return {
       allowed: false,
-      reason:
-        `Target still has dispatch capacity: step ${targetUsed}/${previousStepLimit}, workflow ${state.totalDispatches}/${previousWorkflowLimit} used.`,
+      reason: `Target already has ${existingContinuation} user-authorized continuation dispatch(es) available.`,
       state,
     }
   }
 
-  // Expand only the exhausted dimensions, and only enough to make the
-  // explicitly authorized bounded continuation usable without immediately
-  // colliding with the other budget dimension.
-  const stepLimitIncrease = Math.max(0, additionalDispatches - stepHeadroom)
-  const workflowLimitIncrease = Math.max(0, additionalDispatches - workflowHeadroom)
+  if (!stepBlocked && !workflowBlocked) {
+    return {
+      allowed: false,
+      reason:
+        `Target still has dispatch capacity: step ${targetUsed}/${automaticMax}, workflow ${state.totalDispatches}/${limits.maxTotalDispatches} used.`,
+      state,
+    }
+  }
+
+  // A user continuation is an exact-target credit. Each dispatch that would
+  // otherwise be blocked by the automatic step or workflow budget consumes
+  // one credit, so other runnable targets cannot spend this authorization.
+  const stepLimitIncrease = additionalDispatches
+  const workflowLimitIncrease = additionalDispatches
   const continuation: BudgetContinuation = {
     key: target.key,
     agent: target.agent,
@@ -488,6 +543,7 @@ export function continueWorkflowDispatchBudget(input: {
     requestedDispatches: additionalDispatches,
     stepLimitIncrease,
     workflowLimitIncrease,
+    usedDispatches: 0,
     grantedAt: now,
   }
 

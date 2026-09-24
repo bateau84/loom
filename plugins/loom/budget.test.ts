@@ -741,6 +741,100 @@ describe("Loom progress and dispatch budgets", () => {
     ).toBe(false)
     expect(state.totalDispatches).toBe(9)
     expect(state.byKey[key]).toBe(9)
+    expect(state.continuations?.[0]?.usedDispatches).toBe(3)
+  })
+
+  test("user continuation workflow capacity is reserved for the exact target", () => {
+    const workflow = {
+      id: "wf-target-reserved",
+      projectId: "project-test",
+      revision: 0,
+      anchor: "docs/anchors/test/anchor.md",
+      createdBySession: "session",
+      createdAt: "now",
+      steps: [
+        {
+          id: "worker-a",
+          agent: "worker",
+          kind: "work" as const,
+          dependsOn: [],
+          status: "pending" as const,
+        },
+        {
+          id: "worker-b",
+          agent: "worker",
+          kind: "work" as const,
+          dependsOn: [],
+          status: "pending" as const,
+        },
+      ],
+    }
+    const limits = { ...DEFAULT_LIMITS, maxTotalDispatches: 3 }
+    const state = newBudgetState()
+    const keyA = "step:worker-a"
+    const keyB = "step:worker-b"
+
+    for (const id of ["a1", "a2", "a3"]) {
+      expect(
+        recordDispatch({
+          state,
+          limits,
+          dispatchID: id,
+          key: keyA,
+          agent: "worker",
+        }).allowed,
+      ).toBe(true)
+    }
+
+    const continuation = continueWorkflowDispatchBudget({
+      state,
+      limits,
+      workflow,
+      questions: [],
+      stepId: "worker-a",
+      grantedBy: "general",
+      reason: "Worker A still has accepted unfinished work.",
+      confirmation: "give worker A two more dispatches",
+      additionalDispatches: 2,
+      now: "continued",
+    })
+    expect(continuation.allowed).toBe(true)
+
+    const wrongTarget = recordDispatch({
+      state,
+      limits,
+      dispatchID: "b1-blocked",
+      key: keyB,
+      agent: "worker",
+    })
+    expect(wrongTarget.allowed).toBe(false)
+    if (wrongTarget.allowed) throw new Error("worker-b unexpectedly consumed worker-a continuation")
+    expect(wrongTarget.reason).toContain("no user-authorized continuation capacity remains for step:worker-b")
+
+    for (const id of ["a4", "a5"]) {
+      expect(
+        recordDispatch({
+          state,
+          limits,
+          dispatchID: id,
+          key: keyA,
+          agent: "worker",
+        }).allowed,
+      ).toBe(true)
+    }
+
+    const exhaustedA = recordDispatch({
+      state,
+      limits,
+      dispatchID: "a6-blocked",
+      key: keyA,
+      agent: "worker",
+    })
+    expect(exhaustedA.allowed).toBe(false)
+    expect(state.continuations?.[0]?.usedDispatches).toBe(2)
+    expect(state.totalDispatches).toBe(5)
+    expect(state.byKey[keyA]).toBe(5)
+    expect(state.byKey[keyB]).toBeUndefined()
   })
 
   test("reopen requires a material progress dimension", () => {

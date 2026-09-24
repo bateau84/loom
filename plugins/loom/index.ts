@@ -3032,7 +3032,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               grant: mutation.result.grant,
               workflowDispatches: {
                 used: mutation.state.totalDispatches,
-                limit: mutation.limits.maxTotalDispatches,
+                limit: effectiveTotalDispatchLimit(mutation.state, mutation.limits),
               },
             }),
           }
