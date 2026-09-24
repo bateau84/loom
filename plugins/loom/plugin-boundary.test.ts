@@ -1695,6 +1695,117 @@ Verdict: FAIL
 
 // Exercise the real registered tools, durable SQLite state and grant attachments.
 // External OKF discovery is represented by a host observation fixture only.
+
+describe("dispatch grant target resolution", () => {
+  test("charges the exact granted Worker when multiple Worker steps are runnable and fails closed on ambiguity", async () => {
+    const h = await harness()
+    try {
+      const started = await h.call(
+        "start",
+        { request: "Exercise exact same-agent dispatch targeting." },
+        "general",
+        "parent",
+      )
+      const workflowId = started.workflowId as string
+      expect((await h.call("route", {
+        humanFacing: false,
+        behavioral: false,
+        structural: false,
+        externalUnknown: false,
+        diagnostic: false,
+        productOutcome: true,
+        implementationRequested: true,
+        executionDepth: "task",
+      }, "general", "parent")).error).toBeUndefined()
+
+      const workflow: any = await h.durableStorage.get(`workflow/${workflowId}`)
+      workflow.steps = [
+        {
+          id: "worker-a",
+          agent: "worker",
+          kind: "work",
+          dependsOn: [],
+          status: "pending",
+        },
+        {
+          id: "worker-b",
+          agent: "worker",
+          kind: "work",
+          dependsOn: [],
+          status: "pending",
+        },
+        {
+          id: "review-implementation",
+          agent: "reviewer",
+          kind: "gate",
+          dependsOn: ["worker-a", "worker-b"],
+          status: "pending",
+        },
+      ]
+      await h.durableStorage.set(`workflow/${workflowId}`, workflow)
+      await h.durableStorage.set(`scope/${workflowId}/worker-a`, {
+        workflowId,
+        stepId: "worker-a",
+        write: ["src/a/**"],
+      })
+      await h.durableStorage.set(`scope/${workflowId}/worker-b`, {
+        workflowId,
+        stepId: "worker-b",
+        write: ["src/b/**"],
+      })
+
+      const grantB = await h.call(
+        "dispatch_grant",
+        { workflowId, stepId: "worker-b" },
+        "general",
+        "parent",
+      )
+      expect(grantB.error).toBeUndefined()
+
+      const evaluate = h.permissionHooks.get("evaluate")
+      expect(evaluate).toBeDefined()
+      const dispatchB: any = {
+        agent: "general",
+        action: "subagent",
+        resources: ["worker"],
+        sessionID: "parent",
+        source: { messageID: "same-agent-message-b", id: "same-agent-dispatch-b" },
+        effect: "allow",
+        message: "",
+      }
+      await evaluate!(dispatchB)
+      expect(dispatchB.effect).not.toBe("deny")
+
+      const afterB: any = await h.durableStorage.get(`budget/${workflowId}`)
+      expect(afterB.byKey["step:worker-b"]).toBe(1)
+      expect(afterB.byKey["step:worker-a"]).toBeUndefined()
+
+      const grantA = await h.call(
+        "dispatch_grant",
+        { workflowId, stepId: "worker-a" },
+        "general",
+        "parent",
+      )
+      expect(grantA.error).toBeUndefined()
+
+      const ambiguous: any = {
+        agent: "general",
+        action: "subagent",
+        resources: ["worker"],
+        sessionID: "parent",
+        source: { messageID: "same-agent-message-ambiguous", id: "same-agent-dispatch-ambiguous" },
+        effect: "allow",
+        message: "",
+      }
+      await evaluate!(ambiguous)
+      expect(ambiguous.effect).toBe("deny")
+      expect(ambiguous.message).toContain("Multiple usable dispatch grants")
+    } finally {
+      h.restore()
+    }
+  })
+})
+
 async function waveLifecycleFixture(workLevel: "wave" | "objective" = "wave") {
   const h = await harness()
   try {

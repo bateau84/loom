@@ -33,6 +33,7 @@ export type BudgetContinuation = {
   grantedBy: string
   reason: string
   confirmation: string
+  authorizationUserMessageId: string
   requestedDispatches: number
   stepLimitIncrease: number
   workflowLimitIncrease: number
@@ -472,7 +473,7 @@ export function continueWorkflowDispatchBudget(input: {
   grantedBy: string
   reason: string
   confirmation: string
-  additionalDispatches: number
+  authorizationUserMessageId: string
   now: string
 }): WorkflowBudgetContinuationResult {
   const {
@@ -485,7 +486,7 @@ export function continueWorkflowDispatchBudget(input: {
     grantedBy,
     reason,
     confirmation,
-    additionalDispatches,
+    authorizationUserMessageId,
     now,
   } = input
 
@@ -509,10 +510,18 @@ export function continueWorkflowDispatchBudget(input: {
     }
   }
 
-  if (!Number.isInteger(additionalDispatches) || additionalDispatches < 1 || additionalDispatches > 10) {
+  if (!authorizationUserMessageId.trim()) {
     return {
       allowed: false,
-      reason: "Budget continuation must add between 1 and 10 dispatches.",
+      reason: "Budget continuation requires observed user-message provenance.",
+      state,
+    }
+  }
+
+  if ((state.continuations ?? []).some((item) => item.authorizationUserMessageId === authorizationUserMessageId)) {
+    return {
+      allowed: false,
+      reason: "This user message has already authorized a Loom budget continuation.",
       state,
     }
   }
@@ -549,18 +558,21 @@ export function continueWorkflowDispatchBudget(input: {
     }
   }
 
-  // A user continuation is an exact-target credit. Each dispatch that would
-  // otherwise be blocked by the automatic step or workflow budget consumes
-  // one credit, so other runnable targets cannot spend this authorization.
-  const stepLimitIncrease = additionalDispatches
-  const workflowLimitIncrease = additionalDispatches
+  // A user continuation is one exact-target exceptional dispatch. It does not
+  // waive BR-008's progress requirement for later retries: another no-progress
+  // attempt requires a fresh user message, while material progress continues
+  // through the ordinary progress-grant path when that capacity remains.
+  const requestedDispatches = 1
+  const stepLimitIncrease = 1
+  const workflowLimitIncrease = 1
   const continuation: BudgetContinuation = {
     key: target.key,
     agent: target.agent,
     grantedBy,
     reason: reason.trim(),
     confirmation: confirmation.trim(),
-    requestedDispatches: additionalDispatches,
+    authorizationUserMessageId: authorizationUserMessageId.trim(),
+    requestedDispatches,
     stepLimitIncrease,
     workflowLimitIncrease,
     usedDispatches: 0,

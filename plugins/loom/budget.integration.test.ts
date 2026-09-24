@@ -19,7 +19,7 @@ import type { Workflow } from "./workflow"
 type RegisteredTool = {
   name: string
   options?: { namespace?: string; codemode?: boolean; permission?: string }
-  execute: (input: unknown, tool: { agent: string; sessionID: string }) => Promise<any>
+  execute: (input: unknown, tool: { agent: string; sessionID: string; messageID?: string }) => Promise<any>
 }
 
 describe("Loom budget recovery plugin integration", () => {
@@ -35,6 +35,7 @@ describe("Loom budget recovery plugin integration", () => {
     try {
       const legacyValues = new Map<string, unknown>()
       const registeredTools = new Map<string, RegisteredTool>()
+      let contextHook: ((event: any) => Promise<void> | void) | undefined
       let evaluatePermission:
         | ((event: {
             agent: string
@@ -116,7 +117,9 @@ describe("Loom budget recovery plugin integration", () => {
             id: sessionID,
             projectID: opencodeProjectId,
           }),
-          hook: async () => {},
+          hook: async (name: string, hook: (event: any) => Promise<void> | void) => {
+            if (name === "context") contextHook = hook
+          },
         },
       }
 
@@ -238,15 +241,36 @@ describe("Loom budget recovery plugin integration", () => {
       expect(deniedEvent.effect).toBe("deny")
       expect(deniedEvent.message).toContain("dispatch limit 3 reached")
 
+      expect(contextHook).toBeDefined()
+      await contextHook!({
+        sessionID,
+        system: [],
+        messages: [{
+          id: "user-budget-continuation-1",
+          role: "user",
+          content: [{ type: "text", text: "keep going with the existing Critic" }],
+        }],
+      })
+
+      const mismatchedConfirmation = await continuationTool!.execute(
+        {
+          workflowId,
+          stepId,
+          reason: "The user explicitly wants the unfinished governed work to continue.",
+          confirmation: "give it ten more attempts",
+        },
+        { agent: "general", sessionID, messageID: "assistant-budget-mismatch" },
+      )
+      expect(mismatchedConfirmation.content).toContain("match the latest observed user message")
+
       const continuationResult = await continuationTool!.execute(
         {
           workflowId,
           stepId,
           reason: "The user explicitly wants the unfinished governed work to continue.",
-          confirmation: "keep going and give it two more attempts",
-          additionalDispatches: 2,
+          confirmation: "keep going with the existing Critic",
         },
-        { agent: "general", sessionID },
+        { agent: "general", sessionID, messageID: "assistant-budget-continuation" },
       )
       expect(continuationResult.content).not.toContain('"error"')
 
@@ -258,7 +282,7 @@ describe("Loom budget recovery plugin integration", () => {
         { workflowId },
         { agent: "general", sessionID },
       )
-      expect(continuedStatus.content).toContain("**Max Total Dispatches:** 42")
+      expect(continuedStatus.content).toContain("**Max Total Dispatches:** 41")
 
       const resumedGrant = await dispatchGrantTool!.execute(
         { workflowId, stepId },
@@ -289,6 +313,20 @@ describe("Loom budget recovery plugin integration", () => {
       const persistedAfterResume = await storage.get(budgetKey) as BudgetState
       expect(persistedAfterResume.byKey[dispatchKey]).toBe(4)
       expect(persistedAfterResume.continuations?.[0]?.usedDispatches).toBe(1)
+      expect(persistedAfterResume.continuations?.[0]?.authorizationUserMessageId).toBe(
+        "user-budget-continuation-1",
+      )
+
+      const reusedUserTurn = await continuationTool!.execute(
+        {
+          workflowId,
+          stepId,
+          reason: "The same user turn must not mint another exceptional retry.",
+          confirmation: "keep going with the existing Critic",
+        },
+        { agent: "general", sessionID, messageID: "assistant-budget-reuse" },
+      )
+      expect(reusedUserTurn.content).toContain("already authorized")
     } finally {
       if (previousState === undefined) delete process.env.XDG_STATE_HOME
       else process.env.XDG_STATE_HOME = previousState

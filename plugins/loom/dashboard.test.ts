@@ -200,9 +200,10 @@ describe("Loom dashboard projection", () => {
         grantedBy: "general",
         reason: "user asked to continue unfinished work",
         confirmation: "keep going",
-        requestedDispatches: 2,
-        stepLimitIncrease: 2,
-        workflowLimitIncrease: 2,
+        authorizationUserMessageId: "user-dashboard-continuation",
+        requestedDispatches: 1,
+        stepLimitIncrease: 1,
+        workflowLimitIncrease: 1,
         grantedAt: "2026-09-21T12:09:30.000Z",
       }],
     })
@@ -215,7 +216,7 @@ describe("Loom dashboard projection", () => {
       new Date("2026-09-21T12:10:00.000Z"),
     )
     expect(snapshot.workflows[0].recentActivityAt).toBe("2026-09-21T12:09:30.000Z")
-    expect(snapshot.workflows[0].budget.limit).toBe(42)
+    expect(snapshot.workflows[0].budget.limit).toBe(41)
   })
 
   test("state digest is canonical across object key ordering", () => {
