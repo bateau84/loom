@@ -3805,8 +3805,10 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               }
 
               // Prevent General from accidentally creating the fail-closed
-              // ambiguity that the permission hook must defend against. A
-              // same-target request is idempotent; a different outstanding
+              // ambiguity that the permission hook must defend against.
+              // Multiple grants for the same exact target remain valid because
+              // they carry the same budget identity and lifecycle recovery uses
+              // them for independent child attachments. A different outstanding
               // target for the same role must be launched/admitted first.
               const currentQuestions = await readQuestions(ctx, value.workflowId)
               const outstanding: Array<{
@@ -3842,22 +3844,14 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
               const requestedKind = value.stepId ? "step" : "question"
               const requestedId = value.stepId ?? value.questionId!
-              const matching = outstanding.filter(
-                (candidate) => candidate.kind === requestedKind && candidate.id === requestedId,
+              const conflicting = outstanding.filter(
+                (candidate) => candidate.kind !== requestedKind || candidate.id !== requestedId,
               )
 
-              if (outstanding.length > 1) {
+              if (conflicting.length > 0) {
+                const existing = conflicting[0]
                 throw new Error(
-                  `Multiple unadmitted dispatch grants already exist for ${expectedAgent}; allow them to expire or cancel/recover the workflow before issuing another grant.`,
-                )
-              }
-              if (matching.length === 1 && outstanding.length === 1) {
-                return matching[0].grant
-              }
-              if (outstanding.length === 1) {
-                const existing = outstanding[0]
-                throw new Error(
-                  `An unadmitted ${expectedAgent} dispatch grant already targets ${existing.kind} ${existing.id}. Dispatch/admit that target before issuing another same-agent grant.`,
+                  `An unadmitted ${expectedAgent} dispatch grant already targets ${existing.kind} ${existing.id}. Dispatch/admit that target before issuing a grant for another same-agent target.`,
                 )
               }
 

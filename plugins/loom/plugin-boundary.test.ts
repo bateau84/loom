@@ -1806,17 +1806,8 @@ describe("dispatch grant target resolution", () => {
       )
       expect(grantB.error).toBeUndefined()
 
-      // Duplicate grant requests for the same target are idempotent, while a
-      // second same-agent target is refused before it can create an ambiguity.
-      const grantBAgain = await h.call(
-        "dispatch_grant",
-        { workflowId, stepId: "worker-b" },
-        "general",
-        "parent",
-      )
-      expect(grantBAgain.error).toBeUndefined()
-      expect(grantBAgain.grantId).toBe(grantB.grantId)
-
+      // A different same-agent target is refused before it can create the
+      // fail-closed ambiguity defended against below.
       const prematureA = await h.call(
         "dispatch_grant",
         { workflowId, stepId: "worker-a" },
