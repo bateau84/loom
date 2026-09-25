@@ -2540,6 +2540,58 @@ test("Reviewer attachment keeps exact Wave contracts on-demand instead of inject
   }
 })
 
+test("legacy Objective can dispatch an independent Plan assessment through Reviewer OQ", async () => {
+  const h = await waveLifecycleFixture()
+  try {
+    const legacy = await h.workflow()
+    legacy.steps = legacy.steps
+      .filter((step: any) => step.id !== "review-plan")
+      .map((step: any) =>
+        step.id.startsWith("task:")
+          ? { ...step, dependsOn: step.dependsOn.map((dependency: string) => dependency === "review-plan" ? "plan" : dependency) }
+          : step
+      )
+    await h.durableStorage.set(`workflow/${h.workflowId}`, legacy)
+
+    const raised = await h.call("oq_raise", {
+      workflowId: h.workflowId,
+      question: "Independently assess the current persisted Plan and executable Wave contracts before further implementation.",
+      responder: "reviewer",
+      blocking: false,
+    }, "general", "parent")
+    expect(raised.error).toBeUndefined()
+
+    const grant = await h.call("dispatch_grant", {
+      workflowId: h.workflowId,
+      questionId: raised.question.id,
+    }, "general", "parent")
+    expect(grant.error).toBeUndefined()
+
+    const reviewer = "legacy-plan-assessment-reviewer"
+    const attached = await h.call("attach", {
+      workflowId: h.workflowId,
+      questionId: raised.question.id,
+      grantId: grant.grantId,
+    }, "reviewer", reviewer)
+    expect(attached.error).toBeUndefined()
+    expect(attached.planContext).toBeDefined()
+
+    expect((await h.call("oq_answer", {
+      workflowId: h.workflowId,
+      questionId: raised.question.id,
+      answer: "Assessment complete: repair the identified Plan defects before execution.",
+      source: "agent",
+    }, "reviewer", reviewer)).error).toBeUndefined()
+
+    const after = await h.workflow()
+    expect(after.cancellation).toBeUndefined()
+    expect(after.steps.some((step: any) => step.id === "worker")).toBe(false)
+    expect(after.steps.some((step: any) => step.id.startsWith("task:"))).toBe(true)
+  } finally {
+    h.restore()
+  }
+})
+
 test("Planner keeps auto Objective routing Wave-scoped when multiple Waves remain", async () => {
   const h = await harness()
   try {
