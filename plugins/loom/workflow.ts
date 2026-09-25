@@ -93,6 +93,10 @@ export type Workflow = {
     taskPlanRevision?: number
     /** Semantic fingerprint of this workflow's exact Task/Wave contracts. */
     taskPlanFingerprint?: string
+    /** Exact holistic Plan revision independently accepted by review-plan. */
+    reviewedPlanRevision?: number
+    /** Whole-Plan semantic fingerprint independently accepted by review-plan. */
+    reviewedPlanFingerprint?: string
   }
   steps: Step[]
   verification?: VerificationRequirement[]
@@ -238,13 +242,9 @@ function gate(id: string, agent: string, dependsOn: string[] = []): Step {
 
 export function resolveExecutionDepth(effects: Effects): ExecutionDepth {
   const requested = effects.executionDepth ?? (effects.productOutcome ? "objective" : "change")
-  const implementationRequested = effects.implementationRequested ?? true
 
   if (requested === "objective" && !effects.productOutcome) {
     throw new Error("Objective execution depth requires productOutcome=true.")
-  }
-  if (requested === "objective" && !implementationRequested) {
-    throw new Error("Objective execution depth requires implementationRequested=true.")
   }
 
   // Task depth is intentionally shallow. If the route says new user-facing,
@@ -262,6 +262,16 @@ export function resolveExecutionDepth(effects: Effects): ExecutionDepth {
 
 export function executionDepthRank(depth: ExecutionDepth) {
   return depth === "task" ? 0 : depth === "change" ? 1 : 2
+}
+
+export function planningOnlyObjective(effects: Effects | undefined) {
+  if (!effects) return false
+  const depth = effects.executionDepth ?? (effects.productOutcome ? "objective" : "change")
+  return (
+    depth === "objective" &&
+    effects.productOutcome &&
+    effects.implementationRequested === false
+  )
 }
 
 export function buildSteps(effects: Effects): Step[] {
@@ -349,14 +359,20 @@ export function buildSteps(effects: Effects): Step[] {
     return steps
   }
 
-  // Objective depth preserves the full product lifecycle. Planner first
-  // compiles the persistent semantic Plan plus one executable Wave DAG.
-  // Reviewer then independently checks that Plan/DAG before any Wave claim
-  // or Worker can become runnable.
+  // Objective depth preserves whole-Objective planning. Planner always
+  // persists the semantic Plan and Reviewer independently checks it.
+  // Implementation workflows additionally compile one executable Wave DAG;
+  // planning-only workflows stop after the reviewed semantic Plan.
   steps.push(gate("critic-solution", "critic", lastThink))
   lastThink = ["critic-solution"]
   steps.push(work("plan", "planner", lastThink))
   steps.push(gate("review-plan", "reviewer", ["plan"]))
+
+  // Planning-only Objective work terminates after the durable holistic Plan
+  // receives independent review. It creates no Worker DAG, claims no Wave,
+  // and does not imply that the Objective or product is complete.
+  if (planningOnlyObjective(effects)) return steps
+
   steps.push(gate("review-implementation", "reviewer", ["review-plan"]))
 
   if (effects.productOutcome || effects.structural) {

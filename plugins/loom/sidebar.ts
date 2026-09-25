@@ -1,5 +1,5 @@
 import type { OpenQuestion } from "./oq"
-import { plannedTaskSteps, runnable, type Workflow } from "./workflow"
+import { plannedTaskSteps, planningOnlyObjective, runnable, type Workflow } from "./workflow"
 import { workPlanContext, workTree, type WorkHierarchy } from "./work"
 import type {
   LoomSidebarSnapshot,
@@ -103,6 +103,7 @@ export function buildSidebarSnapshot(
     active: true,
     workflowId: workflow.id,
     state,
+    ...(planningOnlyObjective(workflow.effects) ? { planningOnly: true } : {}),
     progress: {
       finished: finished.length,
       total: workflow.steps.length,

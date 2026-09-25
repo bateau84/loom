@@ -8,9 +8,9 @@ Reviewer-only domain contract. It does not create Loom authority, product meanin
 - Dependencies reflect real semantic/build/integration order and avoid artificial serialization.
 - Parallel tasks have non-overlapping write surfaces or an explicit ordering dependency.
 - Integration work and cross-boundary verification have clear ownership.
-- A Task's executable write scope is sufficient for every implementation, integration, documentation, and verification obligation it owns; otherwise that responsibility is explicitly assigned elsewhere.
+- When executable Tasks have been compiled, a Task's write scope is sufficient for every implementation, integration, documentation, and verification obligation it owns; otherwise that responsibility is explicitly assigned elsewhere. In an explicitly planning-only review, executable scopes are intentionally deferred and their absence is not a defect, but the semantic Task contract must be clear enough to compile a bounded scope later without inventing new product meaning.
 - Every accepted obligation assigned to a Task is represented by its outcome, constraints, acceptance criteria, integration contract, or explicit proof path rather than merely appearing in an ownership map.
-- Acceptance criteria are falsifiable and sufficient to prove the Task's stated outcome; a Task must be executable as written without silently requiring mutation outside its allowed surface.
+- Acceptance criteria are falsifiable and sufficient to prove the Task's stated outcome. When an executable scope exists, the Task can be executed without silently requiring mutation outside that surface; in planning-only mode, its semantic contract is specific enough for a later Planner to derive that bounded executable surface without inventing new meaning.
 - Cross-Task responsibilities are not left ownerless between Task boundaries.
 - Authority artifacts remain inputs, never Worker write scope.
 - Each task can state an objective and verification expectation without duplicating sibling work.

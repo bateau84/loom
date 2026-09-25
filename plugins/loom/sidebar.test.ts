@@ -115,6 +115,82 @@ describe("Loom sidebar snapshot", () => {
     expect(snapshot.openVerification).toBe(1)
   })
 
+  test("marks completed planning-only workflows without implying Objective completion", () => {
+    const workflow: Workflow = {
+      id: "wf-plan-only",
+      projectId: "project-test",
+      revision: 0,
+      anchor: "docs/anchors/leash-v1/anchor.md",
+      createdBySession: "session-1",
+      createdAt: "now",
+      effects: {
+        humanFacing: false,
+        behavioral: false,
+        structural: false,
+        externalUnknown: false,
+        diagnostic: false,
+        productOutcome: true,
+        implementationRequested: false,
+        executionDepth: "objective",
+        workLevel: "objective",
+        workLevelAuto: false,
+      },
+      work: { objectiveId: "objective:docs/anchors/leash-v1/anchor.md", generation: 1 },
+      steps: [
+        { id: "critic-solution", agent: "critic", kind: "gate", dependsOn: [], status: "passed" },
+        { id: "plan", agent: "planner", kind: "work", dependsOn: ["critic-solution"], status: "complete" },
+        { id: "review-plan", agent: "reviewer", kind: "gate", dependsOn: ["plan"], status: "passed" },
+      ],
+    }
+    const work = createWorkHierarchy(workflow.anchor, workflow.id, "now")
+    materializeWorkPlan(
+      work,
+      workflow.id,
+      {
+        goal: "Plan the accepted Objective without implementing it.",
+        assumptions: [],
+        outOfScope: [],
+        authorityRefs: [workflow.anchor],
+        obligations: [],
+        riskBoundaries: [],
+        acceptanceCoverage: [],
+        relationships: [],
+        correctionRouting: [],
+        phases: [{
+          id: "core",
+          title: "Core",
+          objective: "Plan the core capability.",
+          waves: [{
+            id: "wave",
+            title: "Wave",
+            objective: "Plan the delivery wave.",
+            constraints: [],
+            tasks: [{
+              id: "a",
+              title: "Task A",
+              objective: "Deliver A later.",
+              rationale: "Required by the Objective.",
+              dependsOn: [],
+              authorityRefs: [workflow.anchor],
+              constraints: [],
+              acceptanceCriteria: ["A is delivered."],
+              subtasks: [],
+              integration: [],
+              verify: ["Verify A."],
+            }],
+          }],
+        }],
+      },
+      "now",
+    )
+
+    const snapshot = buildSidebarSnapshot(workflow, [], work)
+    expect(snapshot.state).toBe("complete")
+    expect(snapshot.planningOnly).toBe(true)
+    expect(snapshot.work?.objective.status).toBe("active")
+    expect(snapshot.work?.phases[0].waves[0].tasks[0].status).toBe("pending")
+  })
+
   test("returns an idle snapshot without a workflow", () => {
     expect(buildSidebarSnapshot()).toEqual({
       active: false,

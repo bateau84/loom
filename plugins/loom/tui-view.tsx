@@ -78,6 +78,7 @@ function LoomSidebar(props: { sessionID?: string }) {
         <text fg={context.theme.text.base}>Loom</text>
         <text>
           {snapshot()!.state} · {snapshot()!.progress.finished}/{snapshot()!.progress.total}
+          {snapshot()!.planningOnly ? " · planning only" : ""}
         </text>
         <Show when={snapshot()!.statusUrl}>
           <text>Dashboard: {snapshot()!.statusUrl}</text>

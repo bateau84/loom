@@ -126,6 +126,24 @@
       "must_not": [
         "Must not manufacture documentation churn just to show activity."
       ]
+    },
+    {
+      "id": "AUDIT-SPECIFIER-ORDINARY-SEMANTICS-01",
+      "agent": "specifier",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-002",
+        "BR-020"
+      ],
+      "prompt": "Accepted product authority: a local personal notes tool stores named notes durably, `list` returns stored notes in stable creation order, empty state succeeds, storage failures are explicit, and no network/external database is allowed. The user explicitly delegates ordinary behavioral realization to Specifier and reserves no naming/list-format preference. The accepted authority does not spell out duplicate-name behavior, exact-vs-normalized names, or whether list items include note contents. Produce the concrete observable contract needed for downstream planning. Do not choose storage/API implementation.",
+      "trap": "Treat ordinary underspecified observable semantics as automatically user-owned and bounce duplicate/name/list-shape choices back to General or the user instead of exercising delegated Specifier judgment.",
+      "expectations": [
+        "Selects and documents one coherent falsifiable contract for the missing ordinary behavior, including duplicate-name handling, name treatment, and what list returns, while staying within the accepted local notes capability.",
+        "Distinguishes that delegated behavioral proposal from structural realization and does not ask General/the user to choose these routine details merely because multiple reasonable options exist."
+      ],
+      "must_not": [
+        "Must not prescribe storage schema/API mechanism, weaken the accepted durability/local-only guarantees, or manufacture a user-owned choice without evidence that product capability, scope, risk, or a reserved preference changes."
+      ]
     }
   ]
 }

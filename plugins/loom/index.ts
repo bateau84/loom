@@ -36,6 +36,7 @@ import {
   applyTaskPlan,
   buildSteps,
   executableTaskPlanFingerprint,
+  planningOnlyObjective,
   resolveExecutionDepth,
   executionDepthRank,
   plannedTaskSteps,
@@ -148,6 +149,7 @@ import {
   reopenWaveForTasks,
   syncWorkTaskStatuses,
   workPlanContext,
+  workPlanSemanticFingerprint,
   taskSemanticFingerprintAtRevision,
   validateWorkflowWave,
   workflowTaskSemanticFingerprint,
@@ -925,7 +927,8 @@ type PlanReviewBinding = {
   workflowId: string
   generation: number
   revision: number
-  executableFingerprint: string
+  planFingerprint: string
+  executableFingerprint?: string
   attempt: number
 }
 
@@ -2264,18 +2267,18 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             productOutcome: {
               type: "boolean",
               description:
-                "True when the request delivers a product outcome. Objective depth requires this to be true.",
+                "True when the request is scoped to an accepted product Objective or its delivery. Objective depth requires this to be true; with implementationRequested=false the requested workflow outcome may be the reviewed holistic Plan rather than delivered implementation.",
             },
             implementationRequested: {
               type: "boolean",
               description:
-                "True when this request is authorized to mutate/implement. False for inspect, test, diagnose, verify, or review-only work.",
+                "True when this workflow is authorized to compile and execute product implementation/Worker work. False for inspect, test, diagnose, verify, review-only work, or an Objective request whose desired outcome is a reviewed holistic Plan without implementation.",
             },
             executionDepth: {
               type: "string",
               enum: ["task", "change", "objective"],
               description:
-                "Proportional workflow depth. task = smallest bounded path; change = earned specialist/architecture authority plus direct implementation/review; objective = full product lifecycle. Start shallow and escalate only on material evidence.",
+                "Proportional workflow depth. task = smallest bounded path; change = earned specialist/architecture authority plus direct implementation/review; objective = whole-Objective governance, ending at reviewed planning when implementationRequested=false or continuing through delivery when true. Start shallow and escalate only on material evidence.",
             },
             workLevel: {
               type: "string",
@@ -2352,18 +2355,31 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             }
           }
 
+          const planningOnly =
+            resolvedDepth === "objective" &&
+            rawEffects.productOutcome &&
+            rawEffects.implementationRequested === false
           const autoWorkLevel =
             resolvedDepth === "objective" &&
             rawEffects.productOutcome &&
+            !planningOnly &&
             rawEffects.workLevel === undefined
           const effects: Effects = {
             ...rawEffects,
             executionDepth: resolvedDepth,
             ...(resolvedDepth === "objective" && rawEffects.productOutcome
-              ? {
-                  workLevel: rawEffects.workLevel ?? "wave",
-                  workLevelAuto: autoWorkLevel,
-                }
+              ? planningOnly
+                ? {
+                    // Planning-only means the whole Objective Plan is the
+                    // requested outcome; execution Wave selection happens only
+                    // in a later implementation workflow.
+                    workLevel: "objective",
+                    workLevelAuto: false,
+                  }
+                : {
+                    workLevel: rawEffects.workLevel ?? "wave",
+                    workLevelAuto: autoWorkLevel,
+                  }
               : { workLevel: undefined, workLevelAuto: undefined }),
           }
 
@@ -2611,12 +2627,37 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             }
           }
 
-          if (stepId === "plan" && plannedTaskSteps(workflow).length === 0) {
-            return { content: renderToolOutput({ error: "Planning step cannot complete before a validated task graph exists." }) }
+          const planningOnly = planningOnlyObjective(workflow.effects)
+          const plannedTasks = plannedTaskSteps(workflow)
+          if (planningOnly && plannedTasks.length > 0) {
+            return {
+              content: renderToolOutput({
+                error:
+                  "Planning-only Objective workflows may not contain an executable Worker DAG. Start a later implementation workflow to compile executable Tasks.",
+              }),
+            }
           }
-          if ((stepId === "plan" || stepId === "review-plan") && workflow.work) {
+          if (stepId === "plan" && plannedTasks.length === 0) {
+            if (!planningOnly) {
+              return { content: renderToolOutput({ error: "Planning step cannot complete before a validated task graph exists." }) }
+            }
+            if (!workflow.work) {
+              return { content: renderToolOutput({ error: "Planning-only Objective cannot complete before a persistent holistic Plan exists." }) }
+            }
             const work = await readWork(ctx, workflow.work.objectiveId)
-            const taskIds = plannedTaskSteps(workflow).map((taskStep) => taskStep.task!.id)
+            const plan = work
+              ? workPlanContext(work, undefined, "focused", workflow.work.generation)
+              : null
+            if (!plan) {
+              return { content: renderToolOutput({ error: "Planning-only Objective cannot complete before a persistent holistic Plan exists." }) }
+            }
+            if (plan.invalidated) {
+              return { content: renderToolOutput({ error: "Planning-only Objective cannot complete from an invalidated Plan. Create a fresh Plan generation first." }) }
+            }
+          }
+          if ((stepId === "plan" || stepId === "review-plan") && workflow.work && plannedTasks.length > 0) {
+            const work = await readWork(ctx, workflow.work.objectiveId)
+            const taskIds = plannedTasks.map((taskStep) => taskStep.task!.id)
             const currentFingerprint = work
               ? workflowTaskSemanticFingerprint(work, taskIds, workflow.work.generation)
               : undefined
@@ -2675,6 +2716,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             }
 
             const reviewedWave = workflow.steps.some((candidate) => candidate.id === "review-implementation" && candidate.status === "passed")
+            let acceptedPlanReview: PlanReviewBinding | undefined
 
             if (stepId === "review-plan") {
               if (!workflow.work) throw new Error("Plan review requires a persistent Objective Plan.")
@@ -2683,24 +2725,45 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               const currentPlan = currentWork
                 ? workPlanContext(currentWork, undefined, "focused", workflow.work.generation)
                 : null
+              if (currentPlan?.invalidated) {
+                throw new Error("Plan review cannot PASS or FAIL an invalidated Plan. Create a fresh Plan generation first.")
+              }
+              const planFingerprint = currentWork
+                ? workPlanSemanticFingerprint(currentWork, workflow.work.generation)
+                : undefined
               const executableFingerprint = executableTaskPlanFingerprint(workflow)
               const currentReviewStep = workflow.steps.find((candidate) => candidate.id === "review-plan")
+              const executableRequired = !planningOnlyObjective(workflow.effects)
               if (
                 !binding ||
                 binding.workflowId !== workflow.id ||
                 binding.generation !== workflow.work.generation ||
                 binding.revision !== currentPlan?.revision ||
+                !planFingerprint ||
+                binding.planFingerprint !== planFingerprint ||
                 binding.attempt !== (currentReviewStep?.attempt ?? 0) ||
-                !executableFingerprint ||
-                binding.executableFingerprint !== executableFingerprint
+                (executableRequired &&
+                  (!executableFingerprint || binding.executableFingerprint !== executableFingerprint)) ||
+                (!executableRequired &&
+                  (executableFingerprint !== undefined || binding.executableFingerprint !== undefined))
               ) {
                 throw new Error(
                   "Plan review attempt, Plan, or executable Task DAG changed after Reviewer attachment. Attach a fresh review-plan attempt before recording a verdict.",
                 )
               }
+              acceptedPlanReview = binding
             }
 
             finishStep(workflow, stepId, tool.agent, resolvedOutcome, summary)
+            if (
+              stepId === "review-plan" &&
+              resolvedOutcome === "pass" &&
+              workflow.work &&
+              acceptedPlanReview
+            ) {
+              workflow.work.reviewedPlanRevision = acceptedPlanReview.revision
+              workflow.work.reviewedPlanFingerprint = acceptedPlanReview.planFingerprint
+            }
             evidenceBound = await bindSessionEvidence(ctx, tool.sessionID, workflowId, stepId)
             const completedTaskClaims =
               step.task && step.status === "complete"
@@ -2908,6 +2971,10 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
               reset = reopenFrom(workflow, stepId)
               resetVerificationAfterReopen(workflow, reset)
+              if (workflow.work && reset.includes("review-plan")) {
+                delete workflow.work.reviewedPlanRevision
+                delete workflow.work.reviewedPlanFingerprint
+              }
 
               if (reset.includes("product-acceptance")) {
                 const acceptance = (await ctx.storage.get(acceptanceKey(workflowId))) as AcceptancePlan | undefined
@@ -5489,6 +5556,14 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           const value = input as { workflowId: string; tasks: TaskSpec[] }
           const workflow = await readBoundWorkflow(ctx, tool.sessionID, value.workflowId, ensureLegacySession)
           if (!workflow) return { content: renderToolOutput({ error: "Workflow not found." }) }
+          if (planningOnlyObjective(workflow.effects)) {
+            return {
+              content: renderToolOutput({
+                error:
+                  "Planning-only Objective workflows do not compile executable Worker Tasks. Complete and review the persistent holistic Plan; start a later implementation workflow to call loom_task_plan.",
+              }),
+            }
+          }
 
           const planStep = workflow.steps.find((step) => step.id === "plan")
           if (!planStep) return { content: renderToolOutput({ error: "Workflow has no planning step." }) }
@@ -5639,7 +5714,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       addLoomTool({
         name: "task_status",
         description:
-          "Inspect planned Worker Task contracts and runtime status. Pass taskId to retrieve one exact Task without loading the whole Wave; omit it only when the whole current Wave is materially needed.",
+          "Inspect exact Task contracts and runtime status. Executable workflows return compiled Worker Tasks. Planning-only Objectives may retrieve one exact semantic Plan Task by taskId before executable scopes exist; use planContext for the bounded Plan map.",
         input: {
           type: "object",
           properties: {
@@ -5658,6 +5733,40 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           const tasks = taskId
             ? allTasks.filter((step) => step.task?.id === taskId)
             : allTasks
+
+          if (tasks.length === 0 && planningOnlyObjective(workflow.effects)) {
+            if (!taskId) {
+              return {
+                content: renderToolOutput({
+                  error:
+                    "Planning-only Objective has no executable Wave corpus. Use attached planContext to choose a Task, then pass taskId for its exact semantic contract.",
+                }),
+              }
+            }
+            if (!workflow.work) {
+              return { content: renderToolOutput({ error: "Persistent Objective Plan not found." }) }
+            }
+            const work = await readWork(ctx, workflow.work.objectiveId)
+            const context = work
+              ? workPlanContext(work, taskId, "focused", workflow.work.generation)
+              : null
+            if (!context?.focus?.task) {
+              return { content: renderToolOutput({ error: `Planned Task ${taskId} not found.` }) }
+            }
+            return {
+              content: renderToolOutput({
+                tasks: [{
+                  status: context.focus.status ?? "pending",
+                  runnable: false,
+                  dependsOn: context.focus.task.dependsOn,
+                  task: context.focus.task,
+                  executable: false,
+                  scopeStatus: "deferred-until-implementation",
+                }],
+              }),
+            }
+          }
+
           if (taskId && tasks.length === 0) {
             return { content: renderToolOutput({ error: `Planned Task ${taskId} not found.` }) }
           }
@@ -5670,6 +5779,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 runnable: runnableIDs.has(step.id),
                 dependsOn: step.dependsOn,
                 task: step.task,
+                executable: true,
               })),
             }),
           }
@@ -5979,6 +6089,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           let acceptedOutcome: string | undefined
           let acceptedAuthority: string | undefined
           let planContext: ReturnType<typeof workPlanContext> | undefined
+          let planFingerprint: string | undefined
           let legacyTaskContext:
             | {
                 taskId: string
@@ -6042,6 +6153,9 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                       tool.agent === "reviewer" || tool.agent === "critic" ? "full" : "focused",
                       workflow.work.generation,
                     ) ?? undefined
+                  if (value.stepId === "review-plan") {
+                    planFingerprint = workPlanSemanticFingerprint(work, workflow.work.generation)
+                  }
                   if (tool.agent === "planner") {
                     const pending = objectiveUpgradeActions(work)
                     if (pending.length > 0) upgradeActions = pending
@@ -6156,15 +6270,23 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               await ctx.storage.set(sessionStepKey(tool.sessionID), value.stepId ?? "")
               await ctx.storage.set(sessionOqKey(tool.sessionID), value.questionId ?? "")
               if (value.stepId === "review-plan" && planContext) {
+                const planningOnly = planningOnlyObjective(workflow.effects)
                 const executableFingerprint = executableTaskPlanFingerprint(workflow)
-                if (!executableFingerprint) {
-                  throw new Error("Plan review requires a compiled executable Task DAG.")
+                if (!planFingerprint) {
+                  throw new Error("Plan review requires a current persistent Plan fingerprint.")
+                }
+                if (!planningOnly && !executableFingerprint) {
+                  throw new Error("Execution Plan review requires a compiled executable Task DAG.")
+                }
+                if (planningOnly && executableFingerprint) {
+                  throw new Error("Planning-only Objective review must not contain an executable Worker DAG.")
                 }
                 await ctx.storage.set(sessionPlanReviewKey(tool.sessionID), {
                   workflowId: value.workflowId,
                   generation: planContext.generation,
                   revision: planContext.revision,
-                  executableFingerprint,
+                  planFingerprint,
+                  ...(executableFingerprint ? { executableFingerprint } : {}),
                   attempt: stepAttempt ?? 0,
                 } satisfies PlanReviewBinding)
               } else {

@@ -19,6 +19,7 @@ import {
   validateWorkflowWave,
   workTree,
   workPlanContext,
+  workPlanSemanticFingerprint,
   workflowTaskSemanticFingerprint,
   type WorkPlanDefinition,
 } from "./work"
@@ -541,6 +542,26 @@ describe("Loom persistent work hierarchy", () => {
       by: "planner",
       reason: "Cannot invalidate under a live claim",
     }, "later")).toThrow("cannot be amended")
+  })
+
+  test("whole-Plan fingerprint changes when the current Plan is invalidated", () => {
+    const work = createWorkHierarchy("docs/anchors/product/anchor.md", "workflow-plan-fingerprint", now)
+    materializeWorkPlan(work, "workflow-plan-fingerprint", plan(), now)
+    const before = workPlanContext(work, undefined, "full")
+    const beforeFingerprint = workPlanSemanticFingerprint(work)
+    expect(before?.revision).toBe(1)
+    expect(beforeFingerprint).toBeDefined()
+
+    invalidateWorkPlan(work, {
+      expectedVersion: work.version,
+      reason: "New evidence invalidates the decomposition.",
+      by: "planner",
+    }, "2026-09-21T01:00:00Z")
+
+    const after = workPlanContext(work, undefined, "full")
+    expect(after?.revision).toBe(1)
+    expect(after?.invalidated).toBeDefined()
+    expect(workPlanSemanticFingerprint(work)).not.toBe(beforeFingerprint)
   })
 
   test("invalidates a Plan explicitly and permits a fresh generation", () => {

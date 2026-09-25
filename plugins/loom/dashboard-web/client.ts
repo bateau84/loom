@@ -140,6 +140,7 @@ export const dashboardScript = `
     const p = resolved(w);
     const label = displayState(w);
     return badge(label, tone(w), true) +
+      (p?.planningOnly === true ? badge("planning only", "neutral") : "") +
       (w.sourceFreshness === "stale-source" && label !== "stale/offline" ? badge("stale/offline", "stale", true) : "") +
       (p?.budget?.exhausted === true ? badge("budget exhausted", "warn") : "");
   }

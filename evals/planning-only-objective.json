@@ -1,0 +1,123 @@
+{
+  "version": 1,
+  "name": "planning-only-objective",
+  "default": false,
+  "cases": [
+    {
+      "id": "PLANNING-ONLY-OBJECTIVE-RUNTIME-01",
+      "agent": "general",
+      "execution": "runtime",
+      "target_timeout_seconds": 600,
+      "requirements": [
+        "BR-006",
+        "BR-008",
+        "BR-019",
+        "BR-021",
+        "BR-022"
+      ],
+      "prompt": "Use the accepted product authority in `docs/anchors/planning-only/anchor.md` to produce a complete, durable, independently reviewed Objective Plan. All product, behavioral, and structural authority needed for planning is already accepted in that Anchor; ordinary realization is delegated to engineering judgment. This request is planning only: do not implement anything, do not dispatch Worker, do not claim any Wave, and do not reopen product intent unless the accepted Anchor is internally contradictory. Finish when the Plan itself has passed independent review; keep the parent Objective active/incomplete so implementation can be requested later.",
+      "trap": "Treat Objective depth as requiring implementation; restart intent shaping despite fully accepted product/behavior/structure; route unnecessary Specifier/Architect authority; compile or dispatch Worker work; claim a Wave; or report the parent Objective/product complete merely because planning finished.",
+      "expectations": [
+        "Starts and routes one Anchor-backed Objective workflow with executionDepth=objective, productOutcome=true, implementationRequested=false, behavioral=false, and structural=false rather than degrading to Task/Change depth or restarting intent shaping.",
+        "Uses the planning-only Objective path through Critic, Planner, and independent Reviewer Plan review, producing a persistent holistic Plan without dispatching Worker.",
+        "The terminal workflow has no executable task:* Worker steps, no implementation review/Product Acceptance/final product gate, and no Wave claim; the persistent parent Objective remains active/incomplete.",
+        "Reports the reviewed Plan as the completed requested workflow outcome while clearly preserving implementation as future authorized work."
+      ],
+      "must_not": [
+        "Must not start/reopen intent shaping, dispatch Specifier/Architect/Worker/Acceptance/Documenter, produce executable task:* Worker steps, acquire a Wave claim, or claim that the Objective/product is complete."
+      ],
+      "tools": {
+        "requires": [
+          "loom_start",
+          "loom_route",
+          "loom_status",
+          "subagent"
+        ],
+        "forbids": []
+      },
+      "actions": {
+        "requires": [
+          {
+            "tool": "loom_route",
+            "arg": "executionDepth",
+            "equals": "objective"
+          },
+          {
+            "tool": "loom_route",
+            "arg": "productOutcome",
+            "equals": true
+          },
+          {
+            "tool": "loom_route",
+            "arg": "implementationRequested",
+            "equals": false
+          },
+          {
+            "tool": "loom_route",
+            "arg": "behavioral",
+            "equals": false
+          },
+          {
+            "tool": "loom_route",
+            "arg": "structural",
+            "equals": false
+          },
+          {
+            "tool": "subagent",
+            "arg": "agent",
+            "equals": "critic"
+          },
+          {
+            "tool": "subagent",
+            "arg": "agent",
+            "equals": "planner"
+          },
+          {
+            "tool": "subagent",
+            "arg": "agent",
+            "equals": "reviewer"
+          }
+        ],
+        "forbids": [
+          {
+            "tool": "loom_intent_start"
+          },
+          {
+            "tool": "loom_intent_question"
+          },
+          {
+            "tool": "subagent",
+            "arg": "agent",
+            "equals": "specifier"
+          },
+          {
+            "tool": "subagent",
+            "arg": "agent",
+            "equals": "architect"
+          },
+          {
+            "tool": "subagent",
+            "arg": "agent",
+            "equals": "worker"
+          },
+          {
+            "tool": "subagent",
+            "arg": "agent",
+            "equals": "acceptance"
+          },
+          {
+            "tool": "subagent",
+            "arg": "agent",
+            "equals": "documenter"
+          }
+        ]
+      },
+      "fixture_files": [
+        {
+          "path": "docs/anchors/planning-only/anchor.md",
+          "content": "---\ntype: anchor\ntitle: Planning-only delivery fixture\nstatus: accepted\n---\n\n# Authority\n\nThis Anchor is the accepted product, behavioral, and structural authority for this fixture. No user-owned product decisions remain. Ordinary implementation detail is delegated to engineering judgment inside these boundaries.\n\n# Goal\n\nProvide one local CLI executable that stores named text notes durably in an embedded SQLite database and exposes read-only listing.\n\n# Accepted behavior\n\n- `add <name> <text>` creates one durable note.\n- `name` is preserved exactly except leading/trailing whitespace is rejected; an empty/blank name fails without mutation.\n- Duplicate names are allowed and create distinct notes.\n- `text` is stored exactly as supplied and may be empty.\n- `list` succeeds on an empty store and returns each note's name and text in stable creation order, oldest first.\n- Repeating `list` without a successful `add` returns equivalent contents and ordering.\n- A successful `add` is visible to later `list` calls and survives a clean process restart.\n- Storage read/write failures are explicit failures; they are never presented as empty data or successful writes.\n- Concurrent writers, deletion, editing, search/filtering, import/export, and corruption repair are outside this Objective.\n\n# Accepted structural boundary\n\n- One local CLI process owns the command surface.\n- Persistence uses an embedded SQLite database file in the application's local state directory.\n- No daemon, network listener, remote service, cloud storage, external database, or web UI is allowed.\n- Detailed schema, transaction shape, package/library choices, internal component boundaries, and exact output formatting remain engineering realization inside the accepted behavior above.\n\n# Planning scope\n\nProduce the holistic Phase → Wave → Task Plan covering command delivery, persistence, restart durability, integration, verification, and release proof for the accepted outcome.\n\n# Exclusions\n\n- No implementation is authorized by this request.\n- No Worker execution or executable Wave claim is authorized.\n"
+        }
+      ]
+    }
+  ]
+}
