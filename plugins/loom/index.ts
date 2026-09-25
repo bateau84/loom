@@ -5513,6 +5513,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           let scope: TaskScope | undefined
           let task: TaskSpec | undefined
           let taskOutcome: string | undefined
+          let stepAttempt: number | undefined
           let acceptedOutcome: string | undefined
           let acceptedAuthority: string | undefined
           let planContext: ReturnType<typeof workPlanContext> | undefined
@@ -5561,6 +5562,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
                 task = step.task
                 taskOutcome = step.task?.objective
+                stepAttempt = step.attempt ?? 0
                 acceptedOutcome = workflow.request
                 acceptedAuthority = workflow.anchor
 
@@ -5701,7 +5703,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                   generation: planContext.generation,
                   revision: planContext.revision,
                   executableFingerprint,
-                  attempt: step.attempt ?? 0,
+                  attempt: stepAttempt ?? 0,
                 } satisfies PlanReviewBinding)
               } else {
                 await ctx.storage.set(sessionPlanReviewKey(tool.sessionID), null)
