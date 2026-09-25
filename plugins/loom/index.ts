@@ -133,6 +133,7 @@ import {
   syncWorkTaskStatuses,
   workPlanContext,
   taskSemanticFingerprintAtRevision,
+  validateWorkflowWave,
   workflowTaskSemanticFingerprint,
   workTree,
   type WorkHierarchy,
@@ -2131,7 +2132,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           if (stepId === "plan" && plannedTaskSteps(workflow).length === 0) {
             return { content: renderToolOutput({ error: "Planning step cannot complete before a validated task graph exists." }) }
           }
-          if (stepId === "plan" && workflow.work) {
+          if ((stepId === "plan" || stepId === "review-plan") && workflow.work) {
             const work = await readWork(ctx, workflow.work.objectiveId)
             const taskIds = plannedTaskSteps(workflow).map((taskStep) => taskStep.task!.id)
             const currentFingerprint = work
@@ -2144,7 +2145,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               return {
                 content: renderToolOutput({
                   error:
-                    "Executable Task DAG is stale against the current semantic Task/Wave contract. Re-run loom_task_plan before completing planning.",
+                    "Executable Task DAG is stale against the current semantic Task/Wave contract. Re-run loom_task_plan before completing planning or Plan review.",
                 }),
               }
             }
@@ -2204,17 +2205,40 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               if (!work) throw new Error("Persistent work hierarchy not found.")
 
               assertWorkGeneration(work, workflow.work.generation)
-              const taskIds = plannedTaskSteps(workflow).map((taskStep) => taskStep.task!.id)
+              const taskSteps = plannedTaskSteps(workflow)
+              const taskIds = taskSteps.map((taskStep) => taskStep.task!.id)
               const now = new Date().toISOString()
+              const hasPlanReview = workflow.steps.some((candidate) => candidate.id === "review-plan")
+              const preExecutionPlanStep =
+                hasPlanReview && (stepId === "plan" || stepId === "review-plan")
+
+              if (
+                stepId === "review-plan" &&
+                resolvedOutcome === "pass" &&
+                taskIds.length > 0
+              ) {
+                // The executable DAG exists before review so Reviewer can inspect
+                // exact write/verification scopes, but execution authority begins
+                // only after independent Plan review passes.
+                claimWorkflowWave(
+                  work,
+                  workflow.id,
+                  workflow.work.generation,
+                  taskSteps.map((taskStep) => taskStep.task!),
+                  (workflow.effects?.workLevel ?? "objective") === "objective",
+                  now,
+                )
+              }
+
               if (taskIds.length > 0 && reviewedWave) {
                 // Wave review ended the execution lease. Later gates/documentation
                 // consume its receipt; they must not re-sync or reclaim Tasks.
                 await ensureCompletedWaveHistory(ctx.storage as any, work, workflow)
-              } else if (taskIds.length > 0) {
+              } else if (taskIds.length > 0 && !preExecutionPlanStep) {
                 assertWaveClaimForTasks(work, workflow.id, workflow.work.generation, taskIds)
                 syncWorkTaskStatuses(
                   work, workflow.id, workflow.work.generation,
-                  plannedTaskSteps(workflow).map((taskStep) => ({
+                  taskSteps.map((taskStep) => ({
                     taskId: taskStep.task!.id,
                     complete: taskStep.status === "complete",
                     ...(taskStep.id === stepId && taskStep.status === "complete"
@@ -2359,8 +2383,14 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 const taskIds = plannedTaskSteps(workflow).map((taskStep) => taskStep.task!.id)
                 if (taskIds.length > 0) {
                   const reviewed = workflow.steps.some((candidate) => candidate.id === "review-implementation" && candidate.status === "passed")
+                  const hasPlanReview = workflow.steps.some((candidate) => candidate.id === "review-plan")
+                  const planReviewed =
+                    !hasPlanReview ||
+                    workflow.steps.some((candidate) => candidate.id === "review-plan" && candidate.status === "passed")
                   if (reviewed) await ensureCompletedWaveHistory(ctx.storage as any, work, workflow)
-                  else assertWaveClaimForTasks(work, workflow.id, workflow.work.generation, taskIds)
+                  else if (planReviewed) {
+                    assertWaveClaimForTasks(work, workflow.id, workflow.work.generation, taskIds)
+                  }
                 }
               }
 
@@ -2390,15 +2420,44 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               )
 
               if (work && workflow.work) {
-                const taskIds = plannedTaskSteps(workflow).map((taskStep) => taskStep.task!.id)
-                if (reset.includes("review-implementation") && taskIds.length > 0) {
+                const taskSteps = plannedTaskSteps(workflow)
+                const taskIds = taskSteps.map((taskStep) => taskStep.task!.id)
+                const hasPlanReview = workflow.steps.some((candidate) => candidate.id === "review-plan")
+                const planReviewedAfterReset =
+                  !hasPlanReview ||
+                  workflow.steps.some((candidate) => candidate.id === "review-plan" && candidate.status === "passed")
+                const taskExecutionStarted = taskSteps.some((taskStep) => taskStep.status === "complete")
+
+                // Reopening planning after a passed Plan review but before Worker
+                // execution releases the mechanically acquired Wave claim so
+                // Planner can safely amend/recompile the unconsumed contract.
+                if (
+                  hasPlanReview &&
+                  reset.includes("review-plan") &&
+                  taskIds.length > 0 &&
+                  !taskExecutionStarted
+                ) {
+                  try {
+                    assertWaveClaimForTasks(work, workflow.id, workflow.work.generation, taskIds)
+                    releaseWorkflowWave(work, workflow.id, workflow.work.generation, taskIds, now)
+                  } catch {
+                    // A failed Plan review has no claim by design.
+                  }
+                } else if (reset.includes("review-implementation") && taskIds.length > 0) {
                   reopenWaveForTasks(work, workflow.id, workflow.work.generation, taskIds, now)
                 }
+
                 // Documentation-only reopening does not resurrect the Wave lease.
-                if (taskIds.length > 0 && !workflow.steps.some((candidate) => candidate.id === "review-implementation" && candidate.status === "passed")) {
+                // Before Plan review passes there is intentionally no Wave claim
+                // and therefore no runtime Task status to synchronize.
+                if (
+                  taskIds.length > 0 &&
+                  planReviewedAfterReset &&
+                  !workflow.steps.some((candidate) => candidate.id === "review-implementation" && candidate.status === "passed")
+                ) {
                   syncWorkTaskStatuses(
                     work, workflow.id, workflow.work.generation,
-                    plannedTaskSteps(workflow).map((taskStep) => ({ taskId: taskStep.task!.id, complete: taskStep.status === "complete" })),
+                    taskSteps.map((taskStep) => ({ taskId: taskStep.task!.id, complete: taskStep.status === "complete" })),
                     now,
                   )
                 }
@@ -4869,7 +4928,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       addLoomTool({
         name: "task_plan",
         description:
-          "Create the bounded Worker DAG for exactly one remaining runnable Wave. Planner only. Executable Task semantics must match the persistent rich Task contracts; this step adds immutable write scopes and skill recommendations.",
+          "Compile the bounded Worker DAG for exactly one remaining runnable Wave. Planner only. Executable Task semantics must match the persistent rich Task contracts; this adds immutable write scopes and skill recommendations. New workflows do not claim or authorize the Wave until independent review-plan passes.",
         input: {
           type: "object",
           properties: {
@@ -4992,14 +5051,21 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                   tasks.map((task) => task.id),
                   workflow.work!.generation,
                 )
-                const wave = claimWorkflowWave(
-                  work,
-                  workflow.id,
-                  workflow.work!.generation,
-                  tasks,
-                  (workflow.effects?.workLevel ?? "objective") === "objective",
-                  new Date().toISOString(),
-                )
+                const hasPlanReview = workflow.steps.some((step) => step.id === "review-plan")
+                const wave = hasPlanReview
+                  ? validateWorkflowWave(
+                      work,
+                      tasks,
+                      (workflow.effects?.workLevel ?? "objective") === "objective",
+                    )
+                  : claimWorkflowWave(
+                      work,
+                      workflow.id,
+                      workflow.work!.generation,
+                      tasks,
+                      (workflow.effects?.workLevel ?? "objective") === "objective",
+                      new Date().toISOString(),
+                    )
 
                 for (const step of steps) {
                   const scope: TaskScope = {
@@ -5014,17 +5080,28 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 await persistWorkflowMutationLocked(ctx, runtime, workflow)
 
                 const persisted = await readWork(ctx, work.objectiveId)
-                if (!persisted) throw new Error("Persistent work hierarchy disappeared after claim.")
-                assertWaveClaimForTasks(
-                  persisted,
-                  workflow.id,
-                  workflow.work!.generation,
-                  tasks.map((task) => task.id),
-                )
+                if (!persisted) throw new Error("Persistent work hierarchy disappeared after task-plan compilation.")
+                if (hasPlanReview) {
+                  validateWorkflowWave(
+                    persisted,
+                    tasks,
+                    (workflow.effects?.workLevel ?? "objective") === "objective",
+                  )
+                } else {
+                  // Compatibility for already-running workflows created before
+                  // review-plan existed: preserve their historical immediate claim.
+                  assertWaveClaimForTasks(
+                    persisted,
+                    workflow.id,
+                    workflow.work!.generation,
+                    tasks.map((task) => task.id),
+                  )
+                }
                 return {
                   work: persisted,
                   wave,
                   steps,
+                  planReviewRequired: hasPlanReview,
                   workLevel: workflow.effects?.workLevel ?? "objective",
                   workLevelAuto: Boolean(workflow.effects?.workLevelAuto),
                   autoResolvedWorkLevel,
@@ -5036,6 +5113,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               content: renderToolOutput({
                 wave: { id: claimed.wave.logicalId, title: claimed.wave.title },
                 generation: claimed.work.generation,
+                planReviewRequired: claimed.planReviewRequired,
                 workLevel: claimed.workLevel,
                 workLevelAuto: claimed.workLevelAuto,
                 autoResolvedWorkLevel: claimed.autoResolvedWorkLevel,
