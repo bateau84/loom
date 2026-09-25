@@ -12,7 +12,11 @@ import {
   type StatusView,
 } from "./status-view"
 import type { LoomRuntimeIdentity } from "./runtime"
-import { publishDashboardEndpoint, resolveDashboardBaseUrl } from "./dashboard-endpoint"
+import {
+  DEFAULT_DASHBOARD_PORT,
+  publishDashboardEndpoint,
+  resolveDashboardBaseUrl,
+} from "./dashboard-endpoint"
 
 const roots: string[] = []
 
@@ -175,7 +179,7 @@ describe("interactive Loom status presentation", () => {
     } as LoomRuntimeIdentity
 
     expect(await dashboardWorkflowUrl(runtime, "wf/status")).toBe(
-      "http://127.0.0.1:4318/#/project/project%20a/workflow/wf%2Fstatus",
+      `http://127.0.0.1:${DEFAULT_DASHBOARD_PORT}/#/project/project%20a/workflow/wf%2Fstatus`,
     )
 
     const lease = await publishDashboardEndpoint(runtime.stateRoot, "http://127.0.0.1:4999", 1_000)
@@ -187,7 +191,7 @@ describe("interactive Loom status presentation", () => {
         runtime.stateRoot,
         new Date(Date.parse(lease.leaseExpiresAt) + 1),
       ),
-    ).toBe("http://127.0.0.1:4318")
+    ).toBe(`http://127.0.0.1:${DEFAULT_DASHBOARD_PORT}`)
   })
 
   test("writes the artifact under the private Loom runtime root", async () => {
@@ -205,7 +209,9 @@ describe("interactive Loom status presentation", () => {
     const artifact = await writeStatusArtifact(runtime, statusView())
     expect(artifact.path).toStartWith(join(root, "artifacts", "installation-a", "project-a", "workflow-status"))
     expect(artifact.uri).toStartWith("file://")
-    expect(artifact.webUrl).toMatch(/^http:\/\/127\.0\.0\.1:4318\/status\/installation-a\/project-a\/workflow-[a-f0-9]{20}\.html$/)
+    expect(artifact.webUrl).toMatch(
+      new RegExp(`^http://127\\.0\\.0\\.1:${DEFAULT_DASHBOARD_PORT}/status/installation-a/project-a/workflow-[a-f0-9]{20}\\.html$`),
+    )
     expect(await readFile(artifact.path, "utf8")).toContain("Loom workflow status")
 
     if (process.platform !== "win32") {

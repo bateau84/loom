@@ -305,7 +305,7 @@ export function renderStatusMarkdown(view: StatusView, artifact?: StatusArtifact
       "### Presentation",
       `- **Open:** [Interactive workflow status](${artifact.webUrl})`,
       `- **Local artifact:** ${markdownCode(fileURLToPath(artifact.uri))}`,
-      "- **Web UI:** the HTTP link is the normal presentation path. Start the read-only Loom dashboard if it is not already running.",
+      "- **Web UI:** the HTTP link is the normal presentation path. Loom starts the read-only dashboard with OpenCode by default; `bun run dashboard` remains available for foreground/debug use.",
       "- **Desktop:** native OpenCode browser preview is optional metadata only and is not required for normal status viewing.",
     )
   }

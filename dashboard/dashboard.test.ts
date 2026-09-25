@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test"
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
-import { createDashboardHandler } from "./server"
+import { createDashboardHandler, startDashboardServer } from "./server"
 import { dashboardHtml } from "./ui"
 
 const roots: string[] = []
@@ -19,6 +19,29 @@ describe("Loom external dashboard", () => {
     const response = await handler(new Request("http://localhost/api/fleet"))
     expect(response.status).toBe(200)
     expect(await response.json()).toMatchObject({ projects: [] })
+  })
+
+  test("starts a real local server with a Loom-specific health identity", async () => {
+    const root = await mkdtemp(join(tmpdir(), "loom-dashboard-server-"))
+    roots.push(root)
+    const dashboard = await startDashboardServer({
+      runtimeRoot: root,
+      stateRoot: join(root, "state"),
+      port: 0,
+      unref: true,
+    })
+
+    try {
+      const response = await fetch(`http://127.0.0.1:${dashboard.port}/health`)
+      expect(response.status).toBe(200)
+      expect(await response.json()).toEqual({
+        status: "ok",
+        service: "loom-dashboard",
+        mode: "read-only",
+      })
+    } finally {
+      dashboard.stop()
+    }
   })
 
   test("rejects mutation methods at the observation boundary", async () => {
