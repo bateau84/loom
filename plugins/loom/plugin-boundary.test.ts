@@ -2472,6 +2472,18 @@ async function waveLifecycleFixture(
     const workflow = () => h.durableStorage.get(`workflow/${workflowId}`) as Promise<any>
     const workKey = `work/${encodeURIComponent((await workflow()).work.objectiveId)}`
     const work = () => h.durableStorage.get(workKey) as Promise<any>
+
+    const beforePlanReview = await work()
+    expect(beforePlanReview.nodes.find((node: any) => node.type === "wave" && node.logicalId === "first").claimedByWorkflowId).toBeUndefined()
+    expect((await h.call("dispatch_grant", {
+      workflowId,
+      stepId: "task:one",
+    }, "general", "parent")).error).toContain("not currently runnable")
+
+    expect((await finish("review-plan", "reviewer", "pass")).error).toBeUndefined()
+    const afterPlanReview = await work()
+    expect(afterPlanReview.nodes.find((node: any) => node.type === "wave" && node.logicalId === "first").claimedByWorkflowId).toBe(workflowId)
+
     const finishKnowledge = async () => {
       const child = await attach("knowledge-sync", "documenter")
       const oldIds = new Set((await h.call("evidence_observations", { detail: true }, "documenter", child)).observations.map((item: any) => item.id))
@@ -2944,10 +2956,8 @@ test("reopened Planner can surgically amend a current Task and must refresh the 
       reducedUnresolved: false,
     }, "general", "parent")).error).toBeUndefined()
 
-    expect((await h.call("work_release", {
-      workflowId: h.workflowId,
-      reason: "Release the Wave while Planner repairs its Task contract.",
-    }, "general", "parent")).released).toBe(true)
+    const releasedWork = await h.work()
+    expect(releasedWork.nodes.find((node: any) => node.type === "wave" && node.logicalId === "first").claimedByWorkflowId).toBeUndefined()
 
     const planGrant = await h.call("dispatch_grant", {
       workflowId: h.workflowId,
@@ -3001,6 +3011,24 @@ test("reopened Planner can surgically amend a current Task and must refresh the 
       stepId: "plan",
       summary: "Refreshed executable Task DAG from Plan revision 2.",
     }, "planner", planner)).error).toBeUndefined()
+
+    const reviewGrant = await h.call("dispatch_grant", {
+      workflowId: h.workflowId,
+      stepId: "review-plan",
+    }, "general", "parent")
+    expect(reviewGrant.error).toBeUndefined()
+    const reviewer = "reviewer-replan"
+    expect((await h.call("attach", {
+      workflowId: h.workflowId,
+      stepId: "review-plan",
+      grantId: reviewGrant.grantId,
+    }, "reviewer", reviewer)).attached).toBe(true)
+    expect((await h.call("complete", {
+      workflowId: h.workflowId,
+      stepId: "review-plan",
+      outcome: "pass",
+      summary: "Revised Plan and executable DAG are ready.",
+    }, "reviewer", reviewer)).error).toBeUndefined()
 
     const refreshedGrant = await h.call("dispatch_grant", {
       workflowId: h.workflowId,
