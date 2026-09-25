@@ -1436,7 +1436,11 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       if (!executionKey) {
         throw new Error("Write blocked: Loom could not establish a stable tool-call identity for write locking.")
       }
-      if (activeGitWriteCalls.has(executionKey)) return
+      if (activeGitWriteCalls.has(executionKey)) {
+        throw new Error(
+          "Write blocked: this tool-call identity is already performing a mutation. Try again later.",
+        )
+      }
 
       const acquired = await tryAcquireRuntimeLocks(
         runtime,
