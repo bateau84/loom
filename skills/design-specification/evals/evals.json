@@ -1,0 +1,45 @@
+{
+  "skill": "design-specification",
+  "version": "1.0.0",
+  "shape": 1,
+  "cases": [
+    {
+      "id": "DesignSpec-01",
+      "name": "async-form-complete-state-and-recovery",
+      "trap": "The handoff describes fields and happy-path submission but leaves loading/error/retry/progress preservation/focus/accessibility for implementation to invent, or hides behavior in visual language.",
+      "prompt": "Produce the implementation-ready human-facing design handoff for an account import form. Accepted intent: the user selects a local export file, starts import, and on success can tell how many records were imported. Invalid files must be explained without losing the selected file if retry is possible. The import may take several seconds and may fail due to a temporary service error. The user must be able to retry without re-selecting the file when the prior attempt did not invalidate it. Web surface, responsive down to mobile width. Do not choose backend API/protocol/storage.",
+      "expectations": [
+        "Defines the user/task flow with entry, submit, loading/progress, validation failure, temporary failure/retry, and success exit rather than only the happy path.",
+        "Specifies trigger -> observable response -> resulting state for material actions, including what controls remain available/disabled during import.",
+        "States what user progress/context is preserved across invalid-file and temporary-service failure, including when the selected file remains available for retry.",
+        "Specifies relevant focus/keyboard/accessibility behavior for error presentation and dynamic success/progress feedback rather than leaving accessibility as generic advice.",
+        "Addresses mobile/responsive interaction behavior where form layout or error/progress presentation changes, without choosing backend realization.",
+        "Keeps behavioral semantics understandable without relying on colors/mockups and separates visual semantics from behavior."
+      ],
+      "negative_expectations": [
+        "Must not leave retry, focus destination, or file-preservation behavior to implementation.",
+        "Must not say only 'show an error' or 'show a spinner' with no resulting-state/recovery semantics.",
+        "Must not prescribe REST endpoints, upload storage, job queues, or server architecture."
+      ]
+    },
+    {
+      "id": "DesignSpec-02",
+      "name": "destructive-bulk-action-with-interruption",
+      "trap": "The design jumps to a confirmation dialog and table layout but omits selection continuity, partial/failed action semantics, keyboard/focus behavior, mobile/touch adaptation, and the capability gap if atomic bulk behavior is not accepted.",
+      "prompt": "Produce an implementation-ready human-facing design handoff for bulk deletion in a record-management web app. Accepted product meaning: users may select multiple records and request deletion; records that are not permitted to be deleted must not be removed and the user must be told which requested records were not deleted. The product does not promise atomic all-or-nothing deletion or undo. Users may select dozens of records, use keyboard or touch, and may navigate away before acting. Do not invent backend transaction semantics.",
+      "expectations": [
+        "Defines selection, review/request, result, and re-entry/abandonment behavior without assuming atomic all-or-nothing semantics or undo.",
+        "Makes the mixed-result state explicit: users can tell which records were deleted and which were not, while remaining truthful about unspecified backend ordering/atomicity.",
+        "Specifies selection-state continuity when users navigate/return or cancel before acting to the extent design can decide without inventing product guarantees.",
+        "Integrates keyboard/focus semantics and touch/mobile alternatives for selection and destructive action rather than designing only mouse/desktop interaction.",
+        "Records the destructive-action safeguard/rationale and distinguishes design choice from backend semantics.",
+        "Leaves structural deletion protocol/transaction realization to Architect and raises any capability dependency instead of masking it with UI."
+      ],
+      "negative_expectations": [
+        "Must not promise atomic deletion, rollback, or undo when product authority does not.",
+        "Must not reduce mixed results to a generic success/failure toast.",
+        "Must not make hover-only or mouse-only controls the sole mobile/touch path."
+      ]
+    }
+  ]
+}

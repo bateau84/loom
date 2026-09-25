@@ -22,7 +22,7 @@ Because the native skill tool injects `SKILL.md` while resolving that directory,
 
 | Loom role | Core skills |
 | --- | --- |
-| Designer | design-specification; design-validation for realized experience; surface/design skills as needed |
+| Designer | user-story and design-scenario when useful; design-specification; design-validation for realized experience; surface/design skills as needed |
 | Specifier | behavioral-spec; behavioral-requirement, quality-scenario, and obligation-contract as needed |
 | Architect | architectural-design; architectural-decision; architectural-spec |
 | Planner | risk-driven-planning; work-decomposition |

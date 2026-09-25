@@ -1,0 +1,43 @@
+{
+  "skill": "design-scenario",
+  "version": "1.0.0",
+  "shape": 1,
+  "cases": [
+    {
+      "id": "SC-01",
+      "name": "interrupted-delete-recovery",
+      "trap": "The scenario is happy-path-only or prescribes a confirmation modal/undo toast rather than describing the human situation, failure/edge condition, and observable recovery outcome.",
+      "prompt": "Create a Design Scenario from this accepted human-facing intent: a user managing personal tasks can accidentally delete a task and the accepted product capability allows recovery for at least 30 seconds in the same running session. Recovery restores the same task and displayed position and must not rewrite unrelated task history. The interface mechanism is deliberately open. Produce the durable SC content.",
+      "expectations": [
+        "Provides concrete context and a human goal around accidental deletion and regaining control, without assuming a particular modal/toast/button interaction.",
+        "Describes a human-visible journey/situation from deletion through noticing the mistake and attempting recovery within the accepted same-session window.",
+        "Includes a meaningful edge/failure condition, such as discovering the mistake near/after the recovery window or interruption before recovery, without inventing unsupported cross-restart recovery.",
+        "Defines observable outcome including restoration of the same task/position when recovery is available and truthful behavior when it is not.",
+        "Keeps backend/storage mechanics out and traces the scenario to accepted human-facing authority."
+      ],
+      "negative_expectations": [
+        "Must not require a confirmation dialog or undo toast as the only valid design.",
+        "Must not invent cross-restart or permanent-retention behavior.",
+        "Must not stop at a happy-path 'user deletes then restores task' narrative with no edge/failure condition."
+      ]
+    },
+    {
+      "id": "SC-02",
+      "name": "deep-link-and-interruption-context",
+      "trap": "The scenario simply lists UI steps and ignores that the person arrives mid-flow with incomplete context and may be interrupted, so downstream design never has to solve orientation/re-entry.",
+      "prompt": "Create a Design Scenario for this accepted product need: an engineer receives a deep link in chat to a failed deployment while handling several incidents. Opening the link must let them determine which service failed and whether the failure still needs action. They may switch away and return several minutes later. The product already exposes deployment status/history, but navigation/layout are not fixed. Produce the durable SC content.",
+      "expectations": [
+        "Makes the deep-link arrival and incident-pressure/multi-tasking context explicit because it materially affects orientation and continuity.",
+        "States the engineer's goal before interface steps: identify the failed service and whether action is still needed.",
+        "Describes a human-visible end-to-end situation without choosing a sidebar/page/modal structure.",
+        "Includes interruption/re-entry as a meaningful edge condition and requires the returning engineer to reconstruct current deployment context/status rather than relying on memory.",
+        "Defines observable outcome in terms of confidently identifying current failure/action state, not merely that a page loaded."
+      ],
+      "negative_expectations": [
+        "Must not prescribe a particular page/sidebar/navigation component.",
+        "Must not omit interruption/re-entry despite it being part of the accepted context.",
+        "Must not define success as HTTP/page-load success."
+      ]
+    }
+  ]
+}
