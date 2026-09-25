@@ -895,15 +895,50 @@ async function observedProducerSkills(ctx: any, workflow: Workflow, targetStepId
   return observedSkillsForStepIds(ctx, workflow, upstreamDependencyStepIds(workflow, targetStepId))
 }
 
+async function observedQuestionProducerSkills(
+  ctx: any,
+  workflow: Workflow,
+  question: OpenQuestion,
+): Promise<ObservedProducerSkill[]> {
+  if (!question.work) return []
+  if (
+    question.work.taskId &&
+    workflow.steps.some((step) => step.id === taskStepId(question.work!.taskId!))
+  ) {
+    return observedProducerSkills(ctx, workflow, taskStepId(question.work.taskId))
+  }
+  if (workflow.steps.some((step) => step.id === "plan")) {
+    return observedSkillsForStepIds(ctx, workflow, new Set(["plan"]))
+  }
+  return []
+}
+
 async function attachedMethodologyContext(ctx: any, sessionID: string, agent: string) {
   const workflowId = (await ctx.storage.get(sessionKey(sessionID))) as string | undefined
-  const stepId = (await ctx.storage.get(sessionStepKey(sessionID))) as string | undefined
-  if (!workflowId || !stepId) return undefined
+  if (!workflowId) return undefined
   const workflow = await readWorkflow(ctx, workflowId)
   if (!workflow) return undefined
-  const step = workflow.steps.find((candidate) => candidate.id === stepId)
-  if (!step || step.agent !== agent || !(await exactStepBinding(ctx, sessionID, workflowId, stepId))) return undefined
-  return { workflowId, stepId, producerSkills: await observedProducerSkills(ctx, workflow, stepId) }
+
+  const stepId = (await ctx.storage.get(sessionStepKey(sessionID))) as string | undefined
+  if (stepId) {
+    const step = workflow.steps.find((candidate) => candidate.id === stepId)
+    if (!step || step.agent !== agent || !(await exactStepBinding(ctx, sessionID, workflowId, stepId))) return undefined
+    return { workflowId, stepId, producerSkills: await observedProducerSkills(ctx, workflow, stepId) }
+  }
+
+  const questionId = (await ctx.storage.get(sessionOqKey(sessionID))) as string | undefined
+  if (!questionId || !(await exactOqBinding(ctx, sessionID, workflowId, questionId))) return undefined
+  const question = (await ctx.storage.get(oqKey(workflowId, questionId))) as OpenQuestion | undefined
+  if (
+    !question ||
+    question.status === "closed" ||
+    question.requiredAuthority !== agent
+  ) return undefined
+  return {
+    workflowId,
+    questionId,
+    producerSkills: await observedQuestionProducerSkills(ctx, workflow, question),
+  }
 }
 
 async function currentSessionSkillDirectory(ctx: any, sessionID: string, skill: string) {
@@ -5727,15 +5762,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 oqKey(value.workflowId, value.questionId),
               )) as OpenQuestion | undefined
               if (question?.work) {
-                if (question.work.taskId && current.steps.some((step) => step.id === taskStepId(question.work!.taskId!))) {
-                  producerSkills = await observedProducerSkills(
-                    ctx,
-                    current,
-                    taskStepId(question.work.taskId),
-                  )
-                } else if (current.steps.some((step) => step.id === "plan")) {
-                  producerSkills = await observedSkillsForStepIds(ctx, current, new Set(["plan"]))
-                }
+                producerSkills = await observedQuestionProducerSkills(ctx, current, question)
               }
             }
           }
