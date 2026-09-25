@@ -64,6 +64,8 @@ It does **not** delete your code or working-directory files.
 
 Loom retains evidence and completed durable work results. Active work cannot be deleted; cancel it first. If a workflow owns durable completed-Wave review history, Loom keeps that workflow record rather than destroying required provenance.
 
+If the browser loses the response after you confirm deletion, Loom reports that the result could not be confirmed rather than claiming failure. Retry the same cleanup: already-completed deletion is idempotent and returns success.
+
 ## Refresh and projection state
 
 The UI refreshes from Loom's bounded operational projection. Missing data is not treated as zero or success.

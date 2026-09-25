@@ -93,7 +93,8 @@ The interaction must:
 5. remove the deleted workflows from normal Loom views immediately after success;
 6. remove stale workflow/session/control-plane bindings so the deleted attempts cannot interfere with later routing;
 7. refuse deletion of active work;
-8. refuse deletion when a durable completed-Wave review receipt still depends on that workflow record.
+8. refuse deletion when a durable completed-Wave review receipt still depends on that workflow record;
+9. treat an interrupted/uncertain browser response as unknown rather than failed, and allow a safe retry without duplicating cleanup.
 
 Deletion is intentionally different from cancellation:
 

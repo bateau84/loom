@@ -150,7 +150,9 @@ Cleanup failure is fail-closed:
 - no success is reported unless the canonical transaction completes;
 - revision/work-binding changes force the user to refresh and retry;
 - active work is rejected rather than implicitly cancelled;
-- durable completed-Wave provenance blocks deletion.
+- durable completed-Wave provenance blocks deletion;
+- the HTTP server bounds request bodies before JSON/control processing;
+- a completed tombstone makes a repeated delete idempotent, so an uncertain browser response can be retried safely without recreating or re-deleting state.
 
 ## Security and privacy
 
