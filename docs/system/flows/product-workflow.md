@@ -97,6 +97,7 @@ fuzzy/new product intent when needed
   -> Reviewer
   -> Critic solution attack
   -> Planner
+  -> Reviewer Plan review
   -> bounded task:* Workers
   -> Reviewer implementation review
   -> Product Acceptance
@@ -116,7 +117,8 @@ Start shallow. Stay shallow for obvious bounded findings. A completed Task may e
 ## Recovery
 
 - Missing meaning routes through OQs to the correct authority.
-- Failed review reopens only affected downstream work.
+- Failed Plan review leaves the Wave unclaimed and reopens only the affected Planner work for bounded amendment/recompilation.
+- Failed implementation/product review reopens only affected downstream work.
 - Retry/dispatch budgets stop repeated non-progress.
 - Upstream rework invalidates stale Product Acceptance and living-knowledge reports.
 - A passed Wave review releases its execution claim; later workflow gates consume the exact reviewed history.

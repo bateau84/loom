@@ -2472,6 +2472,18 @@ async function waveLifecycleFixture(
     const workflow = () => h.durableStorage.get(`workflow/${workflowId}`) as Promise<any>
     const workKey = `work/${encodeURIComponent((await workflow()).work.objectiveId)}`
     const work = () => h.durableStorage.get(workKey) as Promise<any>
+
+    const beforePlanReview = await work()
+    expect(beforePlanReview.nodes.find((node: any) => node.type === "wave" && node.logicalId === "first").claimedByWorkflowId).toBeUndefined()
+    expect((await h.call("dispatch_grant", {
+      workflowId,
+      stepId: "task:one",
+    }, "general", "parent")).error).toContain("not currently runnable")
+
+    expect((await finish("review-plan", "reviewer", "pass")).error).toBeUndefined()
+    const afterPlanReview = await work()
+    expect(afterPlanReview.nodes.find((node: any) => node.type === "wave" && node.logicalId === "first").claimedByWorkflowId).toBe(workflowId)
+
     const finishKnowledge = async () => {
       const child = await attach("knowledge-sync", "documenter")
       const oldIds = new Set((await h.call("evidence_observations", { detail: true }, "documenter", child)).observations.map((item: any) => item.id))
@@ -2523,6 +2535,100 @@ test("Reviewer attachment keeps exact Wave contracts on-demand instead of inject
       objective: "Build one",
       acceptanceCriteria: ["One completes its accepted contribution."],
     })
+  } finally {
+    h.restore()
+  }
+})
+
+test("legacy Objective can dispatch an independent Plan assessment through Reviewer OQ", async () => {
+  const h = await waveLifecycleFixture()
+  try {
+    const legacy = await h.workflow()
+    legacy.steps = legacy.steps
+      .filter((step: any) => step.id !== "review-plan")
+      .map((step: any) =>
+        step.id.startsWith("task:")
+          ? { ...step, dependsOn: step.dependsOn.map((dependency: string) => dependency === "review-plan" ? "plan" : dependency) }
+          : step
+      )
+    await h.durableStorage.set(`workflow/${h.workflowId}`, legacy)
+
+    for (const skill of ["risk-driven-planning", "work-decomposition"]) {
+      const id = `legacy-plan-skill-${skill}`
+      await h.durableStorage.set(`evidence/${id}`, {
+        id,
+        tool: "skill",
+        status: "completed",
+        methodology: "practitioner",
+        skill,
+        observedAt: "2026-09-25T07:00:00.000Z",
+        admission: { attempt: legacy.steps.find((step: any) => step.id === "plan")?.attempt ?? 0 },
+      })
+      await h.durableStorage.set(`evidence-step/${h.workflowId}/plan/${id}`, id)
+    }
+
+    const raised = await h.call("oq_raise", {
+      workflowId: h.workflowId,
+      question: "Independently assess the current persisted Plan and executable Wave contracts before further implementation.",
+      responder: "reviewer",
+      blocking: false,
+    }, "general", "parent")
+    expect(raised.error).toBeUndefined()
+
+    const grant = await h.call("dispatch_grant", {
+      workflowId: h.workflowId,
+      questionId: raised.question.id,
+    }, "general", "parent")
+    expect(grant.error).toBeUndefined()
+
+    const reviewer = "legacy-plan-assessment-reviewer"
+    const attached = await h.call("attach", {
+      workflowId: h.workflowId,
+      questionId: raised.question.id,
+      grantId: grant.grantId,
+    }, "reviewer", reviewer)
+    expect(attached.error).toBeUndefined()
+    expect(attached.planContext).toBeDefined()
+    expect(attached.producerSkills).toEqual([
+      { skill: "risk-driven-planning", stepIds: ["plan"] },
+      { skill: "work-decomposition", stepIds: ["plan"] },
+    ])
+
+    for (const skill of ["risk-driven-planning", "work-decomposition"]) {
+      const event = {
+        tool: "skill",
+        callID: `legacy-reviewer-${skill}`,
+        messageID: `legacy-reviewer-${skill}-message`,
+        sessionID: reviewer,
+        agent: "reviewer",
+        input: { name: skill },
+      }
+      const result = { metadata: { metadata: { directory: `${process.cwd()}/skills/${skill}` } } }
+      await h.toolHooks.get("execute.before")!(event)
+      await h.toolHooks.get("execute.after")!({ ...event, status: "completed", result })
+      const assessment = await h.callObserved(
+        "assessment",
+        { skill },
+        "reviewer",
+        reviewer,
+        `legacy-assessment-${skill}`,
+      )
+      expect(assessment.error).toBeUndefined()
+      expect(assessment.available).toBe(true)
+      expect(assessment.producerSkills).toEqual(attached.producerSkills)
+    }
+
+    expect((await h.call("oq_answer", {
+      workflowId: h.workflowId,
+      questionId: raised.question.id,
+      answer: "Assessment complete: repair the identified Plan defects before execution.",
+      source: "agent",
+    }, "reviewer", reviewer)).error).toBeUndefined()
+
+    const after = await h.workflow()
+    expect(after.cancellation).toBeUndefined()
+    expect(after.steps.some((step: any) => step.id === "worker")).toBe(false)
+    expect(after.steps.some((step: any) => step.id.startsWith("task:"))).toBe(true)
   } finally {
     h.restore()
   }
@@ -2931,6 +3037,31 @@ test("Planner OQ may amend untouched future work without staling the active Wave
   }
 })
 
+test("reopening Plan after Worker execution does not release the consumed Wave claim", async () => {
+  const h = await waveLifecycleFixture()
+  try {
+    expect((await h.finish("task:one", "worker")).error).toBeUndefined()
+
+    expect((await h.call("reopen", {
+      workflowId: h.workflowId,
+      stepId: "plan",
+      reason: "New evidence requires reassessing the consumed Plan.",
+      newEvidence: true,
+      changedHypothesis: false,
+      changedStrategy: false,
+      reducedUnresolved: false,
+    }, "general", "parent")).error).toBeUndefined()
+
+    const work = await h.work()
+    expect(
+      work.nodes.find((node: any) => node.type === "wave" && node.logicalId === "first")
+        .claimedByWorkflowId,
+    ).toBe(h.workflowId)
+  } finally {
+    h.restore()
+  }
+})
+
 test("reopened Planner can surgically amend a current Task and must refresh the executable DAG", async () => {
   const h = await waveLifecycleFixture()
   try {
@@ -2944,10 +3075,8 @@ test("reopened Planner can surgically amend a current Task and must refresh the 
       reducedUnresolved: false,
     }, "general", "parent")).error).toBeUndefined()
 
-    expect((await h.call("work_release", {
-      workflowId: h.workflowId,
-      reason: "Release the Wave while Planner repairs its Task contract.",
-    }, "general", "parent")).released).toBe(true)
+    const releasedWork = await h.work()
+    expect(releasedWork.nodes.find((node: any) => node.type === "wave" && node.logicalId === "first").claimedByWorkflowId).toBeUndefined()
 
     const planGrant = await h.call("dispatch_grant", {
       workflowId: h.workflowId,
@@ -3001,6 +3130,24 @@ test("reopened Planner can surgically amend a current Task and must refresh the 
       stepId: "plan",
       summary: "Refreshed executable Task DAG from Plan revision 2.",
     }, "planner", planner)).error).toBeUndefined()
+
+    const reviewGrant = await h.call("dispatch_grant", {
+      workflowId: h.workflowId,
+      stepId: "review-plan",
+    }, "general", "parent")
+    expect(reviewGrant.error).toBeUndefined()
+    const reviewer = "reviewer-replan"
+    expect((await h.call("attach", {
+      workflowId: h.workflowId,
+      stepId: "review-plan",
+      grantId: reviewGrant.grantId,
+    }, "reviewer", reviewer)).attached).toBe(true)
+    expect((await h.call("complete", {
+      workflowId: h.workflowId,
+      stepId: "review-plan",
+      outcome: "pass",
+      summary: "Revised Plan and executable DAG are ready.",
+    }, "reviewer", reviewer)).error).toBeUndefined()
 
     const refreshedGrant = await h.call("dispatch_grant", {
       workflowId: h.workflowId,
@@ -3759,6 +3906,419 @@ describe("re-review proof-history attacks", () => {
 })
 
 describe("Skill methodology evidence lifecycle", () => {
+  test("Plan review verdict is fenced to the exact reviewed Plan revision", async () => {
+    const h = await harness()
+    try {
+      const started = await h.call("start", { anchor: "docs/anchors/plan-review-revision/anchor.md" }, "general", "plan-review-revision-general")
+      const workflowId = String(started.workflowId)
+      expect((await h.call("route", {
+        humanFacing: false,
+        behavioral: false,
+        structural: false,
+        externalUnknown: false,
+        diagnostic: false,
+        productOutcome: true,
+        implementationRequested: true,
+        executionDepth: "objective",
+        workLevel: "wave",
+      }, "general", "plan-review-revision-general")).error).toBeUndefined()
+
+      const attach = async (stepId: string, agent: string, sessionID: string) => {
+        const grant = await h.call("dispatch_grant", { workflowId, stepId }, "general", "plan-review-revision-general")
+        expect(grant.error).toBeUndefined()
+        const attached = await h.call("attach", { workflowId, stepId, grantId: grant.grantId }, agent, sessionID)
+        expect(attached.error).toBeUndefined()
+        return attached
+      }
+
+      await attach("critic-solution", "critic", "plan-review-revision-critic")
+      expect((await h.call("complete", {
+        workflowId,
+        stepId: "critic-solution",
+        outcome: "pass",
+        summary: "Solution ready for planning",
+      }, "critic", "plan-review-revision-critic")).error).toBeUndefined()
+
+      await attach("plan", "planner", "plan-review-revision-planner")
+      const first = richPlanTask("first-task", "First task", "Build first")
+      const future = richPlanTask("future-task", "Future task", "Build future", ["first-task"])
+      expect((await h.call("work_plan", richWorkPlanInput(workflowId, [{
+        id: "core",
+        title: "Core",
+        waves: [
+          { id: "first", title: "First", tasks: [first] },
+          { id: "future", title: "Future", tasks: [future] },
+        ],
+      }]), "planner", "plan-review-revision-planner")).error).toBeUndefined()
+      expect((await h.call("task_plan", {
+        workflowId,
+        tasks: [{ ...first, write: ["src/first/**"], skills: [] }],
+      }, "planner", "plan-review-revision-planner")).error).toBeUndefined()
+      expect((await h.call("complete", {
+        workflowId,
+        stepId: "plan",
+        summary: "Revision 1 compiled",
+      }, "planner", "plan-review-revision-planner")).error).toBeUndefined()
+
+      const firstReviewer = "plan-review-revision-reviewer-1"
+      const firstAttach = await attach("review-plan", "reviewer", firstReviewer)
+      expect(firstAttach.planContext.revision).toBe(1)
+
+      const raised = await h.call("oq_raise", {
+        workflowId,
+        question: "Clarify the future Wave checklist without changing the current Wave.",
+        responder: "planner",
+        blocking: false,
+      }, "general", "plan-review-revision-general")
+      expect(raised.error).toBeUndefined()
+      const plannerGrant = await h.call("dispatch_grant", {
+        workflowId,
+        questionId: raised.question.id,
+      }, "general", "plan-review-revision-general")
+      expect(plannerGrant.error).toBeUndefined()
+      const oqPlanner = "plan-review-revision-oq-planner"
+      expect((await h.call("attach", {
+        workflowId,
+        questionId: raised.question.id,
+        grantId: plannerGrant.grantId,
+      }, "planner", oqPlanner)).error).toBeUndefined()
+
+      const objectiveId = (await h.durableStorage.get(`workflow/${workflowId}`) as any).work.objectiveId
+      const before = await h.durableStorage.get(`work/${encodeURIComponent(objectiveId)}`) as any
+      const amended = await h.call("work_amend", {
+        workflowId,
+        questionId: raised.question.id,
+        expectedVersion: before.version,
+        reason: "Clarify untouched future work while the current Wave is under review.",
+        operations: [{
+          action: "patch-task",
+          taskId: "future-task",
+          patch: { subtasks: ["Exercise the future recovery path"] },
+        }],
+      }, "planner", oqPlanner)
+      expect(amended.error).toBeUndefined()
+      expect(amended.revision).toBe(2)
+      expect(amended.taskPlanRefreshRequired).toBe(false)
+
+      const staleVerdict = await h.call("complete", {
+        workflowId,
+        stepId: "review-plan",
+        outcome: "pass",
+        summary: "Verdict based on revision 1",
+      }, "reviewer", firstReviewer)
+      expect(staleVerdict.error).toContain("changed after Reviewer attachment")
+
+      const freshReviewer = "plan-review-revision-reviewer-2"
+      const freshAttach = await attach("review-plan", "reviewer", freshReviewer)
+      expect(freshAttach.planContext.revision).toBe(2)
+      expect((await h.call("complete", {
+        workflowId,
+        stepId: "review-plan",
+        outcome: "pass",
+        summary: "Revision 2 independently reviewed",
+      }, "reviewer", freshReviewer)).error).toBeUndefined()
+    } finally {
+      h.restore()
+    }
+  })
+
+  test("Plan review verdict is fenced to the exact executable Task DAG", async () => {
+    const h = await harness()
+    try {
+      const started = await h.call("start", { anchor: "docs/anchors/plan-review-dag/anchor.md" }, "general", "plan-review-dag-general")
+      const workflowId = String(started.workflowId)
+      expect((await h.call("route", {
+        humanFacing: false,
+        behavioral: false,
+        structural: false,
+        externalUnknown: false,
+        diagnostic: false,
+        productOutcome: true,
+        implementationRequested: true,
+        executionDepth: "objective",
+        workLevel: "wave",
+      }, "general", "plan-review-dag-general")).error).toBeUndefined()
+
+      const attach = async (stepId: string, agent: string, sessionID: string) => {
+        const grant = await h.call("dispatch_grant", { workflowId, stepId }, "general", "plan-review-dag-general")
+        expect(grant.error).toBeUndefined()
+        const attached = await h.call("attach", { workflowId, stepId, grantId: grant.grantId }, agent, sessionID)
+        expect(attached.error).toBeUndefined()
+        return attached
+      }
+
+      await attach("critic-solution", "critic", "plan-review-dag-critic")
+      expect((await h.call("complete", {
+        workflowId,
+        stepId: "critic-solution",
+        outcome: "pass",
+        summary: "Solution ready for planning",
+      }, "critic", "plan-review-dag-critic")).error).toBeUndefined()
+
+      await attach("plan", "planner", "plan-review-dag-planner-1")
+      const task = richPlanTask("scope-task", "Scope task", "Build the bounded scope")
+      expect((await h.call("work_plan", richWorkPlanInput(workflowId, [{
+        id: "core",
+        title: "Core",
+        waves: [{ id: "first", title: "First", tasks: [task] }],
+      }]), "planner", "plan-review-dag-planner-1")).error).toBeUndefined()
+      expect((await h.call("task_plan", {
+        workflowId,
+        tasks: [{ ...task, write: ["src/narrow/**"], skills: [] }],
+      }, "planner", "plan-review-dag-planner-1")).error).toBeUndefined()
+      expect((await h.call("complete", {
+        workflowId,
+        stepId: "plan",
+        summary: "Executable scope compiled",
+      }, "planner", "plan-review-dag-planner-1")).error).toBeUndefined()
+
+      const staleReviewer = "plan-review-dag-reviewer-1"
+      expect((await attach("review-plan", "reviewer", staleReviewer)).planContext.revision).toBe(1)
+
+      expect((await h.call("reopen", {
+        workflowId,
+        stepId: "plan",
+        reason: "Executable write scope needs correction without changing semantic Plan meaning.",
+        newEvidence: true,
+        changedHypothesis: false,
+        changedStrategy: true,
+        reducedUnresolved: false,
+      }, "general", "plan-review-dag-general")).error).toBeUndefined()
+
+      await attach("plan", "planner", "plan-review-dag-planner-2")
+      expect((await h.call("task_plan", {
+        workflowId,
+        tasks: [{ ...task, write: ["src/correct/**"], skills: [] }],
+      }, "planner", "plan-review-dag-planner-2")).error).toBeUndefined()
+      expect((await h.call("complete", {
+        workflowId,
+        stepId: "plan",
+        summary: "Corrected executable scope compiled",
+      }, "planner", "plan-review-dag-planner-2")).error).toBeUndefined()
+
+      const staleVerdict = await h.call("complete", {
+        workflowId,
+        stepId: "review-plan",
+        outcome: "pass",
+        summary: "Verdict from the old executable scope",
+      }, "reviewer", staleReviewer)
+      expect(staleVerdict.error).toContain("changed after Reviewer attachment")
+
+      const freshReviewer = "plan-review-dag-reviewer-2"
+      await attach("review-plan", "reviewer", freshReviewer)
+      const exact = await h.call("task_status", {
+        workflowId,
+        taskId: "scope-task",
+      }, "reviewer", freshReviewer)
+      expect(exact.tasks[0].task.write).toEqual(["src/correct/**"])
+      expect((await h.call("complete", {
+        workflowId,
+        stepId: "review-plan",
+        outcome: "pass",
+        summary: "Corrected executable scope independently reviewed",
+      }, "reviewer", freshReviewer)).error).toBeUndefined()
+    } finally {
+      h.restore()
+    }
+  })
+
+  test("reopening Plan invalidates an attached Plan-review attempt even when content is unchanged", async () => {
+    const h = await harness()
+    try {
+      const started = await h.call("start", { anchor: "docs/anchors/plan-review-attempt/anchor.md" }, "general", "plan-review-attempt-general")
+      const workflowId = String(started.workflowId)
+      expect((await h.call("route", {
+        humanFacing: false,
+        behavioral: false,
+        structural: false,
+        externalUnknown: false,
+        diagnostic: false,
+        productOutcome: true,
+        implementationRequested: true,
+        executionDepth: "objective",
+        workLevel: "wave",
+      }, "general", "plan-review-attempt-general")).error).toBeUndefined()
+
+      const attach = async (stepId: string, agent: string, sessionID: string) => {
+        const grant = await h.call("dispatch_grant", { workflowId, stepId }, "general", "plan-review-attempt-general")
+        expect(grant.error).toBeUndefined()
+        const attached = await h.call("attach", { workflowId, stepId, grantId: grant.grantId }, agent, sessionID)
+        expect(attached.error).toBeUndefined()
+        return attached
+      }
+
+      await attach("critic-solution", "critic", "plan-review-attempt-critic")
+      expect((await h.call("complete", {
+        workflowId,
+        stepId: "critic-solution",
+        outcome: "pass",
+        summary: "Solution ready for planning",
+      }, "critic", "plan-review-attempt-critic")).error).toBeUndefined()
+
+      const task = richPlanTask("attempt-task", "Attempt task", "Build the bounded task")
+      await attach("plan", "planner", "plan-review-attempt-planner-1")
+      expect((await h.call("work_plan", richWorkPlanInput(workflowId, [{
+        id: "core",
+        title: "Core",
+        waves: [{ id: "first", title: "First", tasks: [task] }],
+      }]), "planner", "plan-review-attempt-planner-1")).error).toBeUndefined()
+      expect((await h.call("task_plan", {
+        workflowId,
+        tasks: [{ ...task, write: ["src/**"], skills: [] }],
+      }, "planner", "plan-review-attempt-planner-1")).error).toBeUndefined()
+      expect((await h.call("complete", {
+        workflowId,
+        stepId: "plan",
+        summary: "Plan compiled",
+      }, "planner", "plan-review-attempt-planner-1")).error).toBeUndefined()
+
+      const staleReviewer = "plan-review-attempt-reviewer-1"
+      await attach("review-plan", "reviewer", staleReviewer)
+
+      expect((await h.call("reopen", {
+        workflowId,
+        stepId: "plan",
+        reason: "Re-evaluate the same Plan with fresh review evidence.",
+        newEvidence: true,
+        changedHypothesis: false,
+        changedStrategy: false,
+        reducedUnresolved: false,
+      }, "general", "plan-review-attempt-general")).error).toBeUndefined()
+
+      await attach("plan", "planner", "plan-review-attempt-planner-2")
+      expect((await h.call("task_plan", {
+        workflowId,
+        tasks: [{ ...task, write: ["src/**"], skills: [] }],
+      }, "planner", "plan-review-attempt-planner-2")).error).toBeUndefined()
+      expect((await h.call("complete", {
+        workflowId,
+        stepId: "plan",
+        summary: "Same Plan recompiled",
+      }, "planner", "plan-review-attempt-planner-2")).error).toBeUndefined()
+
+      const staleVerdict = await h.call("complete", {
+        workflowId,
+        stepId: "review-plan",
+        outcome: "pass",
+        summary: "Old attachment must not satisfy the reopened review.",
+      }, "reviewer", staleReviewer)
+      expect(staleVerdict.error).toContain("Plan review attempt")
+
+      const freshReviewer = "plan-review-attempt-reviewer-2"
+      await attach("review-plan", "reviewer", freshReviewer)
+      expect((await h.call("complete", {
+        workflowId,
+        stepId: "review-plan",
+        outcome: "pass",
+        summary: "Fresh review attempt passed.",
+      }, "reviewer", freshReviewer)).error).toBeUndefined()
+    } finally {
+      h.restore()
+    }
+  })
+
+  test("Plan review inherits Planner methodology and can load its assessments", async () => {
+    const h = await harness()
+    try {
+      const started = await h.call("start", { anchor: "docs/anchors/plan-review-skills/anchor.md" }, "general", "plan-review-general")
+      const workflowId = String(started.workflowId)
+      expect((await h.call("route", {
+        humanFacing: false,
+        behavioral: false,
+        structural: false,
+        externalUnknown: false,
+        diagnostic: false,
+        productOutcome: true,
+        implementationRequested: true,
+        executionDepth: "objective",
+        workLevel: "wave",
+      }, "general", "plan-review-general")).error).toBeUndefined()
+
+      const attach = async (stepId: string, agent: string, sessionID: string) => {
+        const grant = await h.call("dispatch_grant", { workflowId, stepId }, "general", "plan-review-general")
+        expect(grant.error).toBeUndefined()
+        const attached = await h.call("attach", { workflowId, stepId, grantId: grant.grantId }, agent, sessionID)
+        expect(attached.error).toBeUndefined()
+        return attached
+      }
+
+      await attach("critic-solution", "critic", "plan-review-critic")
+      expect((await h.call("complete", {
+        workflowId,
+        stepId: "critic-solution",
+        outcome: "pass",
+        summary: "Solution ready for planning",
+      }, "critic", "plan-review-critic")).error).toBeUndefined()
+
+      await attach("plan", "planner", "plan-review-planner")
+      for (const skill of ["risk-driven-planning", "work-decomposition"]) {
+        const event = {
+          tool: "skill",
+          callID: `planner-${skill}`,
+          messageID: `planner-${skill}-message`,
+          sessionID: "plan-review-planner",
+          agent: "planner",
+          input: { name: skill },
+        }
+        const result = { metadata: { metadata: { directory: `${process.cwd()}/skills/${skill}` } } }
+        await h.toolHooks.get("execute.before")!(event)
+        await h.toolHooks.get("execute.after")!({ ...event, status: "completed", result })
+      }
+
+      const task = richPlanTask("reviewed-task", "Reviewed task", "Deliver the reviewed task")
+      expect((await h.call("work_plan", richWorkPlanInput(workflowId, [{
+        id: "core",
+        title: "Core",
+        waves: [{ id: "first", title: "First", tasks: [task] }],
+      }]), "planner", "plan-review-planner")).error).toBeUndefined()
+      expect((await h.call("task_plan", {
+        workflowId,
+        tasks: [{ ...task, write: ["src/**"], skills: [] }],
+      }, "planner", "plan-review-planner")).error).toBeUndefined()
+      expect((await h.call("complete", {
+        workflowId,
+        stepId: "plan",
+        summary: "Plan compiled for independent review",
+      }, "planner", "plan-review-planner")).error).toBeUndefined()
+
+      const attached = await attach("review-plan", "reviewer", "plan-review-reviewer")
+      expect(attached.producerSkills).toEqual([
+        { skill: "risk-driven-planning", stepIds: ["plan"] },
+        { skill: "work-decomposition", stepIds: ["plan"] },
+      ])
+
+      for (const skill of ["risk-driven-planning", "work-decomposition"]) {
+        const event = {
+          tool: "skill",
+          callID: `reviewer-${skill}`,
+          messageID: `reviewer-${skill}-message`,
+          sessionID: "plan-review-reviewer",
+          agent: "reviewer",
+          input: { name: skill },
+        }
+        const result = { metadata: { metadata: { directory: `${process.cwd()}/skills/${skill}` } } }
+        await h.toolHooks.get("execute.before")!(event)
+        await h.toolHooks.get("execute.after")!({ ...event, status: "completed", result })
+        const assessment = await h.callObserved("assessment", { skill }, "reviewer", "plan-review-reviewer", `assessment-${skill}`)
+        expect(assessment.available).toBe(true)
+      }
+
+      const exact = await h.call("task_status", {
+        workflowId,
+        taskId: "reviewed-task",
+      }, "reviewer", "plan-review-reviewer")
+      expect(exact.tasks[0].task.write).toEqual(["src/**"])
+      expect((await h.call("complete", {
+        workflowId,
+        stepId: "review-plan",
+        outcome: "pass",
+        summary: "Plan and executable scope independently reviewed",
+      }, "reviewer", "plan-review-reviewer")).error).toBeUndefined()
+    } finally {
+      h.restore()
+    }
+  })
+
   test("producer skill loads become Reviewer facts and assessment evidence", async () => {
     const h=await harness(); try {
       const started=await h.call("start",{anchor:"docs/anchors/skill-evidence/anchor.md"},"general","skill-general"); const workflowId=String(started.workflowId)

@@ -249,6 +249,7 @@ When the decomposition premise is no longer trustworthy, or the desired change w
 
 - Worker gets the focused Task contract plus parent Plan map/context, including durable completed-predecessor summaries and evidence-claim IDs;
 - Reviewer/Critic get the broader Plan needed to distinguish local conformance from decomposition/coverage failure;
+- Reviewer/Critic Plan-assessment OQs on older workflows also receive the observed Planner methodology facts when available, so the same domain assessments can be applied without turning the OQ into a gate verdict;
 - any Loom role answering a planned-task OQ gets the originating Task plus surrounding **historical Plan revision**; non-Task raisers may name an existing current-generation Task and Loom validates the correlation; Reviewer/Critic OQ answers are not gate verdicts;
 - simple Task-depth work without Planner continues to use the committed request directly.
 
@@ -279,6 +280,8 @@ Non-trivial product workflows contain a `plan` step owned by the disposable Plan
 
 Planner registers a bounded task graph for the current work scope. For Planner-driven product work, the graph is also materialized under the persistent Objective/Phase/Wave/Task hierarchy described in [Hierarchical Work Model](work-hierarchy.md). Planner does not own or redefine Objective meaning.
 
+For new Objective workflows, compiling the executable DAG does **not** claim the Wave. The Planner completes `plan`, then an independent Reviewer-owned `review-plan` gate inspects the persisted holistic Plan together with the exact executable Task contracts, including write scopes and verification expectations. Reviewer attachment records the exact review attempt, Plan generation/revision, and executable Task-DAG fingerprint, including mutation scopes; completion rejects a verdict if the review was reopened or either the Plan or executable DAG changed after attachment. Only a PASS causes the control plane to claim the selected Wave and make its Worker Tasks runnable. FAIL leaves the Wave unclaimed so Planner can amend/recompile the unconsumed Plan safely. Pre-`review-plan` in-flight workflows retain their historical claim behavior for compatibility; an independent assessment can be obtained through a Reviewer OQ without treating that answer as a gate verdict.
+
 V1 validation requires:
 - at least one task and no more than 24;
 - stable unique task IDs;
@@ -288,7 +291,7 @@ V1 validation requires:
 - no Worker authority over accepted Anchor, design, requirements, or architecture;
 - no parallel tasks with potentially overlapping write surfaces unless dependency ordering makes them sequential.
 
-Accepted tasks become real workflow nodes named `task:<id>`.
+Accepted tasks become real workflow nodes named `task:<id>`. In reviewed Objective workflows those nodes depend on `review-plan`, so merely compiling them cannot authorize Worker execution.
 
 Each task carries:
 - objective;

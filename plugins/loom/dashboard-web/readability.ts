@@ -5,6 +5,7 @@ export const dashboardReadability = `
     designer: 'Design the experience', specifier: 'Define the behavior',
     architect: 'Design the architecture', worker: 'Implement the change',
     plan: 'Plan the work', 'knowledge-sync': 'Update project documentation',
+    'review-plan': 'Review the execution plan',
     'review-task': 'Review the work', 'review-think': 'Review the proposed solution',
     'review-architecture': 'Review the architecture', 'review-implementation': 'Review implementation',
     'product-acceptance': 'Check the product against its goals',

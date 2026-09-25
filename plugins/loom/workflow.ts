@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto"
 import { taskStepId, type TaskSpec } from "./tasks"
 import type { EvidenceKind } from "./evidence"
 
@@ -348,11 +349,15 @@ export function buildSteps(effects: Effects): Step[] {
     return steps
   }
 
-  // Objective depth preserves the full product lifecycle.
+  // Objective depth preserves the full product lifecycle. Planner first
+  // compiles the persistent semantic Plan plus one executable Wave DAG.
+  // Reviewer then independently checks that Plan/DAG before any Wave claim
+  // or Worker can become runnable.
   steps.push(gate("critic-solution", "critic", lastThink))
   lastThink = ["critic-solution"]
   steps.push(work("plan", "planner", lastThink))
-  steps.push(gate("review-implementation", "reviewer", ["plan"]))
+  steps.push(gate("review-plan", "reviewer", ["plan"]))
+  steps.push(gate("review-implementation", "reviewer", ["review-plan"]))
 
   if (effects.productOutcome || effects.structural) {
     steps.push(work("knowledge-sync", "documenter", ["review-implementation"]))
@@ -468,6 +473,18 @@ export function plannedTaskSteps(workflow: Workflow) {
   return workflow.steps.filter((step) => step.id.startsWith("task:") && step.task)
 }
 
+export function executableTaskPlanFingerprint(workflow: Workflow) {
+  const tasks = plannedTaskSteps(workflow)
+    .map((step) => ({
+      stepId: step.id,
+      dependsOn: [...step.dependsOn],
+      task: step.task,
+    }))
+    .sort((a, b) => a.stepId.localeCompare(b.stepId))
+  if (tasks.length === 0) return undefined
+  return createHash("sha256").update(JSON.stringify(tasks)).digest("hex")
+}
+
 export function applyTaskPlan(workflow: Workflow, tasks: TaskSpec[]) {
   const plan = workflow.steps.find((step) => step.id === "plan")
   if (!plan) throw new Error("Workflow has no planning step.")
@@ -478,22 +495,28 @@ export function applyTaskPlan(workflow: Workflow, tasks: TaskSpec[]) {
     throw new Error("Task graph cannot change after task execution has started.")
   }
 
+  // New Objective workflows place an independent Plan review between
+  // planning and execution. Legacy/in-flight workflows may not have that
+  // gate yet, so retain their historical dependency on plan.
+  const executionGateId = workflow.steps.some((step) => step.id === "review-plan")
+    ? "review-plan"
+    : "plan"
   const taskSteps: Step[] = tasks.map((task) => ({
     id: taskStepId(task.id),
     agent: "worker",
     kind: "work",
-    dependsOn: ["plan", ...task.dependsOn.map(taskStepId)],
+    dependsOn: [executionGateId, ...task.dependsOn.map(taskStepId)],
     status: "pending",
     task,
     attempt: (existing.find((step) => step.id === taskStepId(task.id))?.attempt ?? -1) + 1,
   }))
 
   const withoutTasks = workflow.steps.filter((step) => !step.id.startsWith("task:"))
-  const planIndex = withoutTasks.findIndex((step) => step.id === "plan")
+  const insertionIndex = withoutTasks.findIndex((step) => step.id === executionGateId)
   workflow.steps = [
-    ...withoutTasks.slice(0, planIndex + 1),
+    ...withoutTasks.slice(0, insertionIndex + 1),
     ...taskSteps,
-    ...withoutTasks.slice(planIndex + 1),
+    ...withoutTasks.slice(insertionIndex + 1),
   ]
 
   const review = workflow.steps.find((step) => step.id === "review-implementation")

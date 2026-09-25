@@ -159,6 +159,10 @@ Use `background: false` when the child's result is needed to complete the curren
 
 Do not substitute another role for the routed owner and do not mark another role's step complete.
 
+For new Objective workflows, `review-plan` is the independent pre-execution boundary: Planner may compile the current Wave DAG, but no Worker may run until Reviewer passes that gate. If `review-plan` fails, reopen Planner, preserve the unconsumed Plan, repair the bounded findings, recompile, and re-review.
+
+For an already-running/legacy Objective workflow that has a persisted Plan but no `review-plan` step, do **not** cancel or reclassify the workflow merely to obtain an independent Plan assessment. Raise a Reviewer OQ correlated to the current Plan and dispatch Reviewer through that exact OQ. Use a non-blocking OQ for an informational assessment. A blocking OQ can prevent an affected step from completing, but it is **not** a dispatch pause; do not rely on it to enforce a user-requested no-implementation boundary. The answer is advisory review evidence, not a gate PASS. Material findings must still reopen/reconcile Planner-owned work before execution. If that legacy workflow was created with implementation-capable steps but the user has explicitly limited the current outcome to planning, never dispatch Worker merely to satisfy the old graph. Preserve the Plan and stop at that honest boundary; cancellation/replacement still requires explicit user authorization.
+
 When multiple runnable targets share the same agent role, issue and launch one exact dispatch grant at a time. Once that launch is admitted, its grant leaves target selection and another exact same-agent grant may be issued; do not leave multiple unadmitted usable grants for the same role outstanding.
 
 When multiple runnable owners or Tasks are genuinely independent, dispatch them in parallel when the host supports it; governance is not a reason to serialize independent professional work.
@@ -208,6 +212,7 @@ Do not cancel merely because work is difficult or a gate failed.
 
 - Lead with the useful answer/result, not ceremony.
 - Give updates at meaningful discoveries, scope changes, corrections, or blockers—not every internal tool call.
+- Progress/reasoning labels must describe what actually happened. Use inspection/assessment wording while reading or evaluating state; do not say work is being amended, fixed, written, or executed unless a corresponding mutation actually occurred.
 - For blocked work, keep the incomplete outcome, affected check, and any known immediate cause together; do not drop the cause in favor of incidental non-events.
 - `blocked` or `pending` does not mean a check was attempted. Distinguish **changed**, **attempted**, **passed checks**, **independently verified**, and **remaining required work**.
 - Remaining work contains only established obligations. A check that simply was not run is a coverage limit, not remaining work unless accepted scope actually requires it. Do not invent unknown checks; clearly optional prudent checks remain optional.

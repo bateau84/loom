@@ -30,6 +30,7 @@ import {
   addVerificationRequirement,
   applyTaskPlan,
   buildSteps,
+  executableTaskPlanFingerprint,
   resolveExecutionDepth,
   executionDepthRank,
   plannedTaskSteps,
@@ -133,6 +134,7 @@ import {
   syncWorkTaskStatuses,
   workPlanContext,
   taskSemanticFingerprintAtRevision,
+  validateWorkflowWave,
   workflowTaskSemanticFingerprint,
   workTree,
   type WorkHierarchy,
@@ -509,6 +511,18 @@ function sessionOqKey(sessionID: string) {
   return `session-oq/${sessionID}`
 }
 
+function sessionPlanReviewKey(sessionID: string) {
+  return `session-plan-review/${encodeURIComponent(sessionID)}`
+}
+
+type PlanReviewBinding = {
+  workflowId: string
+  generation: number
+  revision: number
+  executableFingerprint: string
+  attempt: number
+}
+
 function budgetKey(workflowId: string) {
   return `budget/${workflowId}`
 }
@@ -851,11 +865,14 @@ function upstreamDependencyStepIds(workflow: Workflow, targetStepId: string) {
   return seen
 }
 
-async function observedProducerSkills(ctx: any, workflow: Workflow, targetStepId: string): Promise<ObservedProducerSkill[]> {
-  const upstream = upstreamDependencyStepIds(workflow, targetStepId)
+async function observedSkillsForStepIds(
+  ctx: any,
+  workflow: Workflow,
+  stepIds: Set<string>,
+): Promise<ObservedProducerSkill[]> {
   const bySkill = new Map<string, Set<string>>()
   for (const step of workflow.steps) {
-    if (!upstream.has(step.id) || step.agent === "reviewer" || step.agent === "critic") continue
+    if (!stepIds.has(step.id) || step.agent === "reviewer" || step.agent === "critic") continue
     const observations = await stepObservations(ctx, workflow.id, step.id)
     for (const observation of observations) {
       if (
@@ -871,18 +888,57 @@ async function observedProducerSkills(ctx: any, workflow: Workflow, targetStepId
   }
   return [...bySkill.entries()]
     .sort(([a], [b]) => a.localeCompare(b))
-    .map(([skill, stepIds]) => ({ skill, stepIds: [...stepIds] }))
+    .map(([skill, producerStepIds]) => ({ skill, stepIds: [...producerStepIds] }))
+}
+
+async function observedProducerSkills(ctx: any, workflow: Workflow, targetStepId: string): Promise<ObservedProducerSkill[]> {
+  return observedSkillsForStepIds(ctx, workflow, upstreamDependencyStepIds(workflow, targetStepId))
+}
+
+async function observedQuestionProducerSkills(
+  ctx: any,
+  workflow: Workflow,
+  question: OpenQuestion,
+): Promise<ObservedProducerSkill[]> {
+  if (!question.work) return []
+  if (
+    question.work.taskId &&
+    workflow.steps.some((step) => step.id === taskStepId(question.work!.taskId!))
+  ) {
+    return observedProducerSkills(ctx, workflow, taskStepId(question.work.taskId))
+  }
+  if (workflow.steps.some((step) => step.id === "plan")) {
+    return observedSkillsForStepIds(ctx, workflow, new Set(["plan"]))
+  }
+  return []
 }
 
 async function attachedMethodologyContext(ctx: any, sessionID: string, agent: string) {
   const workflowId = (await ctx.storage.get(sessionKey(sessionID))) as string | undefined
-  const stepId = (await ctx.storage.get(sessionStepKey(sessionID))) as string | undefined
-  if (!workflowId || !stepId) return undefined
+  if (!workflowId) return undefined
   const workflow = await readWorkflow(ctx, workflowId)
   if (!workflow) return undefined
-  const step = workflow.steps.find((candidate) => candidate.id === stepId)
-  if (!step || step.agent !== agent || !(await exactStepBinding(ctx, sessionID, workflowId, stepId))) return undefined
-  return { workflowId, stepId, producerSkills: await observedProducerSkills(ctx, workflow, stepId) }
+
+  const stepId = (await ctx.storage.get(sessionStepKey(sessionID))) as string | undefined
+  if (stepId) {
+    const step = workflow.steps.find((candidate) => candidate.id === stepId)
+    if (!step || step.agent !== agent || !(await exactStepBinding(ctx, sessionID, workflowId, stepId))) return undefined
+    return { workflowId, stepId, producerSkills: await observedProducerSkills(ctx, workflow, stepId) }
+  }
+
+  const questionId = (await ctx.storage.get(sessionOqKey(sessionID))) as string | undefined
+  if (!questionId || !(await exactOqBinding(ctx, sessionID, workflowId, questionId))) return undefined
+  const question = (await ctx.storage.get(oqKey(workflowId, questionId))) as OpenQuestion | undefined
+  if (
+    !question ||
+    question.status === "closed" ||
+    question.requiredAuthority !== agent
+  ) return undefined
+  return {
+    workflowId,
+    questionId,
+    producerSkills: await observedQuestionProducerSkills(ctx, workflow, question),
+  }
 }
 
 async function currentSessionSkillDirectory(ctx: any, sessionID: string, skill: string) {
@@ -2131,7 +2187,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           if (stepId === "plan" && plannedTaskSteps(workflow).length === 0) {
             return { content: renderToolOutput({ error: "Planning step cannot complete before a validated task graph exists." }) }
           }
-          if (stepId === "plan" && workflow.work) {
+          if ((stepId === "plan" || stepId === "review-plan") && workflow.work) {
             const work = await readWork(ctx, workflow.work.objectiveId)
             const taskIds = plannedTaskSteps(workflow).map((taskStep) => taskStep.task!.id)
             const currentFingerprint = work
@@ -2144,7 +2200,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               return {
                 content: renderToolOutput({
                   error:
-                    "Executable Task DAG is stale against the current semantic Task/Wave contract. Re-run loom_task_plan before completing planning.",
+                    "Executable Task DAG is stale against the current semantic Task/Wave contract. Re-run loom_task_plan before completing planning or Plan review.",
                 }),
               }
             }
@@ -2192,6 +2248,31 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             }
 
             const reviewedWave = workflow.steps.some((candidate) => candidate.id === "review-implementation" && candidate.status === "passed")
+
+            if (stepId === "review-plan") {
+              if (!workflow.work) throw new Error("Plan review requires a persistent Objective Plan.")
+              const binding = (await ctx.storage.get(sessionPlanReviewKey(tool.sessionID))) as PlanReviewBinding | undefined
+              const currentWork = await readWork(ctx, workflow.work.objectiveId)
+              const currentPlan = currentWork
+                ? workPlanContext(currentWork, undefined, "focused", workflow.work.generation)
+                : null
+              const executableFingerprint = executableTaskPlanFingerprint(workflow)
+              const currentReviewStep = workflow.steps.find((candidate) => candidate.id === "review-plan")
+              if (
+                !binding ||
+                binding.workflowId !== workflow.id ||
+                binding.generation !== workflow.work.generation ||
+                binding.revision !== currentPlan?.revision ||
+                binding.attempt !== (currentReviewStep?.attempt ?? 0) ||
+                !executableFingerprint ||
+                binding.executableFingerprint !== executableFingerprint
+              ) {
+                throw new Error(
+                  "Plan review attempt, Plan, or executable Task DAG changed after Reviewer attachment. Attach a fresh review-plan attempt before recording a verdict.",
+                )
+              }
+            }
+
             finishStep(workflow, stepId, tool.agent, resolvedOutcome, summary)
             evidenceBound = await bindSessionEvidence(ctx, tool.sessionID, workflowId, stepId)
             const completedTaskClaims =
@@ -2204,17 +2285,40 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               if (!work) throw new Error("Persistent work hierarchy not found.")
 
               assertWorkGeneration(work, workflow.work.generation)
-              const taskIds = plannedTaskSteps(workflow).map((taskStep) => taskStep.task!.id)
+              const taskSteps = plannedTaskSteps(workflow)
+              const taskIds = taskSteps.map((taskStep) => taskStep.task!.id)
               const now = new Date().toISOString()
+              const hasPlanReview = workflow.steps.some((candidate) => candidate.id === "review-plan")
+              const preExecutionPlanStep =
+                hasPlanReview && (stepId === "plan" || stepId === "review-plan")
+
+              if (
+                stepId === "review-plan" &&
+                resolvedOutcome === "pass" &&
+                taskIds.length > 0
+              ) {
+                // The executable DAG exists before review so Reviewer can inspect
+                // exact write/verification scopes, but execution authority begins
+                // only after independent Plan review passes.
+                claimWorkflowWave(
+                  work,
+                  workflow.id,
+                  workflow.work.generation,
+                  taskSteps.map((taskStep) => taskStep.task!),
+                  (workflow.effects?.workLevel ?? "objective") === "objective",
+                  now,
+                )
+              }
+
               if (taskIds.length > 0 && reviewedWave) {
                 // Wave review ended the execution lease. Later gates/documentation
                 // consume its receipt; they must not re-sync or reclaim Tasks.
                 await ensureCompletedWaveHistory(ctx.storage as any, work, workflow)
-              } else if (taskIds.length > 0) {
+              } else if (taskIds.length > 0 && !preExecutionPlanStep) {
                 assertWaveClaimForTasks(work, workflow.id, workflow.work.generation, taskIds)
                 syncWorkTaskStatuses(
                   work, workflow.id, workflow.work.generation,
-                  plannedTaskSteps(workflow).map((taskStep) => ({
+                  taskSteps.map((taskStep) => ({
                     taskId: taskStep.task!.id,
                     complete: taskStep.status === "complete",
                     ...(taskStep.id === stepId && taskStep.status === "complete"
@@ -2348,6 +2452,8 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
           try {
             let reset: string[] = []
+            let hadPlanReviewClaim = false
+            let hadTaskExecution = false
             const commitReopen = async () => {
               await validateWorkflowMutationLocked(ctx, runtime, workflow)
 
@@ -2356,11 +2462,20 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 work = await readWork(ctx, workflow.work.objectiveId)
                 if (!work) throw new Error("Persistent work hierarchy not found.")
                 assertWorkGeneration(work, workflow.work.generation)
-                const taskIds = plannedTaskSteps(workflow).map((taskStep) => taskStep.task!.id)
+                const currentTaskSteps = plannedTaskSteps(workflow)
+                const taskIds = currentTaskSteps.map((taskStep) => taskStep.task!.id)
+                hadTaskExecution = currentTaskSteps.some((taskStep) => taskStep.status === "complete")
                 if (taskIds.length > 0) {
                   const reviewed = workflow.steps.some((candidate) => candidate.id === "review-implementation" && candidate.status === "passed")
+                  const hasPlanReview = workflow.steps.some((candidate) => candidate.id === "review-plan")
+                  const planReviewed =
+                    !hasPlanReview ||
+                    workflow.steps.some((candidate) => candidate.id === "review-plan" && candidate.status === "passed")
                   if (reviewed) await ensureCompletedWaveHistory(ctx.storage as any, work, workflow)
-                  else assertWaveClaimForTasks(work, workflow.id, workflow.work.generation, taskIds)
+                  else if (planReviewed) {
+                    assertWaveClaimForTasks(work, workflow.id, workflow.work.generation, taskIds)
+                    hadPlanReviewClaim = hasPlanReview
+                  }
                 }
               }
 
@@ -2390,15 +2505,38 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               )
 
               if (work && workflow.work) {
-                const taskIds = plannedTaskSteps(workflow).map((taskStep) => taskStep.task!.id)
-                if (reset.includes("review-implementation") && taskIds.length > 0) {
+                const taskSteps = plannedTaskSteps(workflow)
+                const taskIds = taskSteps.map((taskStep) => taskStep.task!.id)
+                const hasPlanReview = workflow.steps.some((candidate) => candidate.id === "review-plan")
+                const planReviewedAfterReset =
+                  !hasPlanReview ||
+                  workflow.steps.some((candidate) => candidate.id === "review-plan" && candidate.status === "passed")
+
+                // Reopening planning after a passed Plan review but before Worker
+                // execution releases the mechanically acquired Wave claim so
+                // Planner can safely amend/recompile the unconsumed contract.
+                if (
+                  hadPlanReviewClaim &&
+                  reset.includes("review-plan") &&
+                  taskIds.length > 0 &&
+                  !hadTaskExecution
+                ) {
+                  releaseWorkflowWave(work, workflow.id, workflow.work.generation, taskIds, now)
+                } else if (reset.includes("review-implementation") && taskIds.length > 0) {
                   reopenWaveForTasks(work, workflow.id, workflow.work.generation, taskIds, now)
                 }
+
                 // Documentation-only reopening does not resurrect the Wave lease.
-                if (taskIds.length > 0 && !workflow.steps.some((candidate) => candidate.id === "review-implementation" && candidate.status === "passed")) {
+                // Before Plan review passes there is intentionally no Wave claim
+                // and therefore no runtime Task status to synchronize.
+                if (
+                  taskIds.length > 0 &&
+                  planReviewedAfterReset &&
+                  !workflow.steps.some((candidate) => candidate.id === "review-implementation" && candidate.status === "passed")
+                ) {
                   syncWorkTaskStatuses(
                     work, workflow.id, workflow.work.generation,
-                    plannedTaskSteps(workflow).map((taskStep) => ({ taskId: taskStep.task!.id, complete: taskStep.status === "complete" })),
+                    taskSteps.map((taskStep) => ({ taskId: taskStep.task!.id, complete: taskStep.status === "complete" })),
                     now,
                   )
                 }
@@ -4869,7 +5007,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       addLoomTool({
         name: "task_plan",
         description:
-          "Create the bounded Worker DAG for exactly one remaining runnable Wave. Planner only. Executable Task semantics must match the persistent rich Task contracts; this step adds immutable write scopes and skill recommendations.",
+          "Compile the bounded Worker DAG for exactly one remaining runnable Wave. Planner only. Executable Task semantics must match the persistent rich Task contracts; this adds immutable write scopes and skill recommendations. New workflows do not claim or authorize the Wave until independent review-plan passes.",
         input: {
           type: "object",
           properties: {
@@ -4992,14 +5130,21 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                   tasks.map((task) => task.id),
                   workflow.work!.generation,
                 )
-                const wave = claimWorkflowWave(
-                  work,
-                  workflow.id,
-                  workflow.work!.generation,
-                  tasks,
-                  (workflow.effects?.workLevel ?? "objective") === "objective",
-                  new Date().toISOString(),
-                )
+                const hasPlanReview = workflow.steps.some((step) => step.id === "review-plan")
+                const wave = hasPlanReview
+                  ? validateWorkflowWave(
+                      work,
+                      tasks,
+                      (workflow.effects?.workLevel ?? "objective") === "objective",
+                    )
+                  : claimWorkflowWave(
+                      work,
+                      workflow.id,
+                      workflow.work!.generation,
+                      tasks,
+                      (workflow.effects?.workLevel ?? "objective") === "objective",
+                      new Date().toISOString(),
+                    )
 
                 for (const step of steps) {
                   const scope: TaskScope = {
@@ -5014,17 +5159,28 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 await persistWorkflowMutationLocked(ctx, runtime, workflow)
 
                 const persisted = await readWork(ctx, work.objectiveId)
-                if (!persisted) throw new Error("Persistent work hierarchy disappeared after claim.")
-                assertWaveClaimForTasks(
-                  persisted,
-                  workflow.id,
-                  workflow.work!.generation,
-                  tasks.map((task) => task.id),
-                )
+                if (!persisted) throw new Error("Persistent work hierarchy disappeared after task-plan compilation.")
+                if (hasPlanReview) {
+                  validateWorkflowWave(
+                    persisted,
+                    tasks,
+                    (workflow.effects?.workLevel ?? "objective") === "objective",
+                  )
+                } else {
+                  // Compatibility for already-running workflows created before
+                  // review-plan existed: preserve their historical immediate claim.
+                  assertWaveClaimForTasks(
+                    persisted,
+                    workflow.id,
+                    workflow.work!.generation,
+                    tasks.map((task) => task.id),
+                  )
+                }
                 return {
                   work: persisted,
                   wave,
                   steps,
+                  planReviewRequired: hasPlanReview,
                   workLevel: workflow.effects?.workLevel ?? "objective",
                   workLevelAuto: Boolean(workflow.effects?.workLevelAuto),
                   autoResolvedWorkLevel,
@@ -5036,6 +5192,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               content: renderToolOutput({
                 wave: { id: claimed.wave.logicalId, title: claimed.wave.title },
                 generation: claimed.work.generation,
+                planReviewRequired: claimed.planReviewRequired,
                 workLevel: claimed.workLevel,
                 workLevelAuto: claimed.workLevelAuto,
                 autoResolvedWorkLevel: claimed.autoResolvedWorkLevel,
@@ -5391,6 +5548,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           let scope: TaskScope | undefined
           let task: TaskSpec | undefined
           let taskOutcome: string | undefined
+          let stepAttempt: number | undefined
           let acceptedOutcome: string | undefined
           let acceptedAuthority: string | undefined
           let planContext: ReturnType<typeof workPlanContext> | undefined
@@ -5439,6 +5597,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
                 task = step.task
                 taskOutcome = step.task?.objective
+                stepAttempt = step.attempt ?? 0
                 acceptedOutcome = workflow.request
                 acceptedAuthority = workflow.anchor
 
@@ -5569,6 +5728,21 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               await ctx.storage.set(sessionAttachmentKey(tool.sessionID), crypto.randomUUID())
               await ctx.storage.set(sessionStepKey(tool.sessionID), value.stepId ?? "")
               await ctx.storage.set(sessionOqKey(tool.sessionID), value.questionId ?? "")
+              if (value.stepId === "review-plan" && planContext) {
+                const executableFingerprint = executableTaskPlanFingerprint(workflow)
+                if (!executableFingerprint) {
+                  throw new Error("Plan review requires a compiled executable Task DAG.")
+                }
+                await ctx.storage.set(sessionPlanReviewKey(tool.sessionID), {
+                  workflowId: value.workflowId,
+                  generation: planContext.generation,
+                  revision: planContext.revision,
+                  executableFingerprint,
+                  attempt: stepAttempt ?? 0,
+                } satisfies PlanReviewBinding)
+              } else {
+                await ctx.storage.set(sessionPlanReviewKey(tool.sessionID), null)
+              }
               await bumpWorkflowRevisionLocked(ctx, runtime, value.workflowId)
               if (previousBinding && previousBinding !== value.workflowId) {
                 await bumpWorkflowRevisionLocked(ctx, runtime, previousBinding, true)
@@ -5579,9 +5753,18 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           }
 
           let producerSkills: ObservedProducerSkill[] | undefined
-          if (value.stepId && (tool.agent === "reviewer" || tool.agent === "critic")) {
+          if (tool.agent === "reviewer" || tool.agent === "critic") {
             const current = await readWorkflow(ctx, value.workflowId)
-            if (current) producerSkills = await observedProducerSkills(ctx, current, value.stepId)
+            if (current && value.stepId) {
+              producerSkills = await observedProducerSkills(ctx, current, value.stepId)
+            } else if (current && value.questionId) {
+              const question = (await ctx.storage.get(
+                oqKey(value.workflowId, value.questionId),
+              )) as OpenQuestion | undefined
+              if (question?.work) {
+                producerSkills = await observedQuestionProducerSkills(ctx, current, question)
+              }
+            }
           }
 
           return {
