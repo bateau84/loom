@@ -1,0 +1,44 @@
+{
+  "skill": "architectural-decision",
+  "version": "1.0.0",
+  "shape": 1,
+  "cases": [
+    {
+      "id": "Decision-01",
+      "name": "local-durable-state-choice",
+      "trap": "The answer jumps directly to a favorite database and retrofits weak alternatives afterward, without showing why the choice is the least complex complete option or what evidence could invalidate it.",
+      "prompt": "Make one architecture decision for a local Go CLI/runtime that needs durable state. Accepted constraints: one machine, one writer process at a time, less than 100 MB of state, crash-safe multi-record updates are required, reads/writes are modest, no external service or operator-managed database is allowed, and the repository already depends on SQLite for unrelated metadata. The decision is only the durable-state mechanism for this new runtime state. Choose and document the decision; do not design the whole runtime.",
+      "expectations": [
+        "States the bounded decision question, accepted constraints, and the drivers that actually distinguish the options.",
+        "Treats reuse of the existing SQLite dependency as the simplest viable baseline rather than assuming a new abstraction or service is necessary.",
+        "Develops at least two genuinely viable alternatives before choosing, with symmetric discussion of mechanism, crash/transaction behavior, operational burden, compatibility, maintenance, and relevant failure modes.",
+        "Rejects any option that cannot satisfy crash-safe multi-record updates or the no-external-service constraint for a concrete reason, rather than using preference or popularity.",
+        "Records meaningful consequences, reversibility/migration implications, and why each serious rejected option loses.",
+        "Defines concrete confirmation/falsification evidence and a plausible premise change that would force reconsideration of the decision."
+      ],
+      "negative_expectations": [
+        "Must not present a one-line 'SQLite is obvious' choice with token alternatives.",
+        "Must not introduce a network database or daemon despite the explicit operating constraint.",
+        "Must not make the decision unfalsifiable by describing only benefits and no conditions under which it should be revisited."
+      ]
+    },
+    {
+      "id": "Decision-02",
+      "name": "freshness-fence-vs-watcher",
+      "trap": "The answer accepts filesystem watching as correctness despite known missed events, or adds an eager invalidation service without first testing whether a small query-time correctness fence satisfies the invariant.",
+      "prompt": "Make one architecture decision for configuration freshness. Accepted invariant: a query that begins after a local configuration change is observable on disk must not return a result derived from the old configuration. Filesystem notifications are available but may be dropped or delayed. Configuration is under 1 MB, local filesystem only, and the service handles about 10 queries/second. Eventual consistency is not acceptable for this invariant. Choose the freshness mechanism; the rest of the architecture is already settled.",
+      "expectations": [
+        "Identifies watcher-only invalidation as insufficient for the accepted correctness invariant because missed/delayed notifications can produce stale query results.",
+        "Establishes a small query-time validation/fingerprint/freshness fence as a serious minimum-sufficient option and compares it against at least one other viable realization such as watcher-assisted validation or eager reverse invalidation.",
+        "Compares viable options on correctness, query overhead, failure modes, operational complexity, stale-state detectability, and coupling before selecting.",
+        "Chooses a mechanism that makes correctness independent of reliable notification delivery and explains the consequence of that choice.",
+        "States what measurement or changed scale/config-size premise would make the selected mechanism worth reconsidering."
+      ],
+      "negative_expectations": [
+        "Must not rely on filesystem watcher delivery alone for correctness.",
+        "Must not add a dedicated invalidation daemon merely to avoid a small local query-time check unless a named constraint requires it.",
+        "Must not invent weaker eventual-consistency semantics to make an easier option viable."
+      ]
+    }
+  ]
+}

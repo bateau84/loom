@@ -1,0 +1,45 @@
+{
+  "skill": "architectural-design",
+  "version": "1.0.0",
+  "shape": 1,
+  "cases": [
+    {
+      "id": "Design-01",
+      "name": "durable-local-work-recovery",
+      "trap": "The design sounds plausible but skips explicit ownership/invariants and crash-interleaving analysis, or introduces a queue/service that the accepted single-host system does not need.",
+      "prompt": "Design the architecture for a local single-host agent runtime. Accepted obligations: (1) Submit succeeds only after a job is durably accepted. (2) The process may crash at any instruction boundary. (3) After restart, accepted unfinished work becomes available for continuation without reconstructing already durable upstream state. (4) The same logical job must never execute concurrently twice. (5) Cancellation after an external effect has started is not specified and must remain unresolved rather than being invented. Current constraints: one process normally runs at a time, SQLite is already used by the product for durable metadata, total durable work is well below 100 MB, and no external broker/service is required by product authority. Produce the structural design and rationale, not code or field-level schemas.",
+      "expectations": [
+        "Maps the accepted obligations to explicit responsibilities/boundaries and names durable state ownership plus the lifecycle needed for accepted, runnable/in-progress, and restart recovery states without inventing cancellation semantics.",
+        "Starts from the existing/local minimum-sufficient baseline and does not introduce an external broker, daemon, or new persistence system unless it identifies a concrete accepted obligation or demonstrated risk that SQLite-based realization cannot satisfy.",
+        "Develops at least two genuinely viable structural alternatives before selecting one, treating them with comparable attention to mechanism, benefits, costs, and failure modes rather than using ceremonial straw options.",
+        "Defines load-bearing invariants such as durable acceptance-before-success and no concurrent duplicate execution, and ties each to a responsible component/boundary, enforcement mechanism, and falsification/verification point.",
+        "Covers crash/interruption cases including crash after durable acceptance but before scheduling, crash while work is marked in progress, stale in-progress ownership on restart, and assembled recovery behavior rather than only the happy path.",
+        "Leaves the unspecified post-effect cancellation meaning as an explicit semantic gap while continuing the independent structural design that does not depend on choosing it."
+      ],
+      "negative_expectations": [
+        "Must not silently choose what cancellation means after an external effect has started.",
+        "Must not treat SQLite reuse or an external queue as self-justifying without comparing real alternatives and their failure behavior.",
+        "Must not claim the design is complete while leaving restart ownership or duplicate-execution prevention as an implementation detail."
+      ]
+    },
+    {
+      "id": "Design-02",
+      "name": "credential-use-trust-boundary",
+      "trap": "The design says credentials are 'secure' but never reconstructs authority/data flow across the trust boundary, leaves disclosure or effect-ordering unenforced, or overbuilds a new security service without proving the need.",
+      "prompt": "Design the architecture for credentialed tool execution in a local agent harness. Accepted obligations: the model may request a protected operation; secret material must never become model-visible; authorization must succeed before the protected effect starts; explicit denial means the protected effect does not occur; evidence must link the authorization result to the attempted operation; the tool/provider process may fail or crash. Product authority does not define timeout/indeterminate-authorization semantics. The system is local-first and single-host. Choose the least complex complete structural realization and explain it without defining concrete API fields.",
+      "expectations": [
+        "Identifies the secret, authorization decision, attempted operation, and evidence as distinct assets and makes the model/tool/provider/credential authority trust boundaries explicit.",
+        "Defines data, control, authority, and evidence flow so secret material can reach only the component that needs it while the model receives no credential-bearing representation.",
+        "Makes authorization-before-effect and denial-means-no-effect concrete invariants with a responsible enforcement boundary and a verification/falsification point.",
+        "Analyzes realistic failure paths such as crash/failure before authorization, between authorization and effect start, and during the protected operation, while refusing to invent timeout/indeterminate semantics that accepted authority has not settled.",
+        "Considers at least two viable realizations and chooses the least complex one that preserves the obligations, explicitly justifying any new process/broker/isolation boundary rather than treating more isolation as automatically better.",
+        "Defines downstream proof against the real composed boundary, including evidence that secrets are absent from model-visible context and that a denied operation cannot cross the effect-start fence."
+      ],
+      "negative_expectations": [
+        "Must not claim non-disclosure merely because the prompt or API omits a password field while leaving another model-visible path for the credential.",
+        "Must not invent timeout, retry, or indeterminate-authorization product semantics.",
+        "Must not add a separate credential microservice solely because it sounds more secure if the same obligations can be enforced with a smaller local boundary."
+      ]
+    }
+  ]
+}

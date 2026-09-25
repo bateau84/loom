@@ -1,0 +1,45 @@
+{
+  "skill": "architectural-spec",
+  "version": "1.0.0",
+  "shape": 1,
+  "cases": [
+    {
+      "id": "Spec-01",
+      "name": "idempotent-submit-contract",
+      "trap": "The spec is precise on HTTP happy-path fields but leaves atomicity, ambiguous timeouts, duplicate semantics, and caller-safe retry behavior underspecified, allowing two conforming implementations to disagree.",
+      "prompt": "Write the implementation-facing specification for an already accepted SubmitJob interface. Parent architecture has fixed HTTP+JSON and these semantics: the client supplies an idempotency key; the server durably creates the logical job before acknowledging success; retrying the same key with the same semantic request returns the same logical job; the same key with a different semantic request is rejected; a client may retry after a timeout because it cannot know whether the prior request committed. Do not change those semantics or introduce a new protocol family. Specify the contract closely enough for an independent client and server implementation to interoperate.",
+      "expectations": [
+        "Defines exact operation/path/method, request and response fields/types/requiredness, identifiers, validation rules, and error representation needed for independent client/server implementation.",
+        "Defines the atomicity boundary between idempotency-key claim, durable job creation, and success acknowledgement so a crash cannot create two logical jobs or acknowledge before durability.",
+        "Defines same-key/same-semantic-request replay versus same-key/different-request conflict precisely, including how semantic equality or a stable request identity is determined without leaving it to each implementation.",
+        "Defines caller-safe behavior after transport timeout/uncertain response and makes retry/idempotency guarantees precise rather than treating timeout as ordinary failure.",
+        "Defines ordering/concurrency behavior for simultaneous requests using the same idempotency key and what result losing contenders observe.",
+        "Separates normative contract from examples and names conformance evidence that exercises retries, crashes/uncertain responses, conflicts, and real client/server composition."
+      ],
+      "negative_expectations": [
+        "Must not stop at a JSON schema and 200/400 examples while leaving duplicate/concurrent/timeout behavior implicit.",
+        "Must not invent a second queue, store, or protocol mechanism outside the settled parent architecture.",
+        "Must not allow two implementations to choose incompatible meanings for same-request comparison while both claiming conformance."
+      ]
+    },
+    {
+      "id": "Spec-02",
+      "name": "mixed-version-event-envelope",
+      "trap": "The spec defines an event JSON shape but omits evolution rules, unknown-field/type behavior, and mixed-version/restart semantics, so rolling upgrades can produce mutually incompatible conforming implementations.",
+      "prompt": "Write an exact specification for a persisted JSON event envelope after the architecture decision is already settled. Required semantics: every event has a stable event ID, event type, schema version, creation time, and typed payload; versions N and N+1 may run at the same time during rolling upgrade; consumers must preserve compatibility for one minor version; unknown optional fields must not break an older consumer; an unknown event type must not be silently treated as a known type; persisted events must remain readable after restart and across that supported mixed-version window. Choose the exact structural contract but do not introduce a new transport or storage mechanism.",
+      "expectations": [
+        "Defines exact envelope fields, types, requiredness, timestamp/version representation, payload discrimination, validation, and error handling.",
+        "Defines forward/backward compatibility rules for unknown optional fields, unknown required meaning, unknown event types, and supported schema-version ranges.",
+        "Defines how N and N+1 producers/consumers interact during the supported mixed-version window, including what may be emitted before all consumers understand it.",
+        "Defines persisted-event read behavior after restart and how unsupported/invalid historical events are represented or rejected without silent reinterpretation.",
+        "States extension/evolution rules clearly enough that two independent producers/consumers make compatible choices instead of inventing their own conventions.",
+        "Defines conformance evidence covering mixed versions, unknown fields/types, restart/persistence, malformed envelopes, and representative real producer/consumer composition."
+      ],
+      "negative_expectations": [
+        "Must not specify only the happy-path JSON object and leave compatibility as 'clients should handle versions appropriately'.",
+        "Must not silently discard or coerce an unknown event type into a known/default type.",
+        "Must not create a new message bus, persistence engine, or migration service that the parent architecture did not authorize."
+      ]
+    }
+  ]
+}
