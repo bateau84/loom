@@ -2553,6 +2553,20 @@ test("legacy Objective can dispatch an independent Plan assessment through Revie
       )
     await h.durableStorage.set(`workflow/${h.workflowId}`, legacy)
 
+    for (const skill of ["risk-driven-planning", "work-decomposition"]) {
+      const id = `legacy-plan-skill-${skill}`
+      await h.durableStorage.set(`evidence/${id}`, {
+        id,
+        tool: "skill",
+        status: "completed",
+        methodology: "practitioner",
+        skill,
+        observedAt: "2026-09-25T07:00:00.000Z",
+        admission: { attempt: legacy.steps.find((step: any) => step.id === "plan")?.attempt ?? 0 },
+      })
+      await h.durableStorage.set(`evidence-step/${h.workflowId}/plan/${id}`, id)
+    }
+
     const raised = await h.call("oq_raise", {
       workflowId: h.workflowId,
       question: "Independently assess the current persisted Plan and executable Wave contracts before further implementation.",
@@ -2575,6 +2589,10 @@ test("legacy Objective can dispatch an independent Plan assessment through Revie
     }, "reviewer", reviewer)
     expect(attached.error).toBeUndefined()
     expect(attached.planContext).toBeDefined()
+    expect(attached.producerSkills).toEqual([
+      { skill: "risk-driven-planning", stepIds: ["plan"] },
+      { skill: "work-decomposition", stepIds: ["plan"] },
+    ])
 
     expect((await h.call("oq_answer", {
       workflowId: h.workflowId,
