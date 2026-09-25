@@ -189,6 +189,278 @@ export function isAllowedWorkerShell(command: string) {
   return safePatterns.some((pattern) => pattern.test(parsed.command))
 }
 
+
+function splitShellWords(command: string) {
+  const words: string[] = []
+  let current = ""
+  let quote: "single" | "double" | undefined
+
+  for (const character of command) {
+    if (quote === "single") {
+      if (character === "'") quote = undefined
+      else current += character
+      continue
+    }
+    if (quote === "double") {
+      if (character === '"') quote = undefined
+      else current += character
+      continue
+    }
+    if (character === "'") {
+      quote = "single"
+      continue
+    }
+    if (character === '"') {
+      quote = "double"
+      continue
+    }
+    if (/\s/.test(character)) {
+      if (current) {
+        words.push(current)
+        current = ""
+      }
+      continue
+    }
+    current += character
+  }
+
+  if (quote) return undefined
+  if (current) words.push(current)
+  return words
+}
+
+function parsedCommandWords(command: string) {
+  const normalized = command.trim()
+  if (!normalized || hasForbiddenShellSyntax(normalized)) return undefined
+
+  const parsed = parseEnvironmentPrefix(normalized)
+  if (!parsed || !parsed.command || !environmentAllowed(parsed.assignments)) return undefined
+  return splitShellWords(parsed.command)
+}
+
+function safeProjectRelativePath(path: string) {
+  const normalized = path.replaceAll("\\", "/").replace(/^\.\//, "")
+  if (!normalized || normalized === "." || normalized.startsWith("/")) return false
+  if (normalized.split("/").includes("..")) return false
+  if (/[*?\[\]{}]/.test(normalized)) return false
+  return true
+}
+
+export function scopedGitAddTargets(command: string) {
+  const words = parsedCommandWords(command)
+  if (!words || words[0] !== "git" || words[1] !== "add") return undefined
+
+  const targets: string[] = []
+  for (const word of words.slice(2)) {
+    if (word === "--") continue
+    if (word.startsWith("-") || !safeProjectRelativePath(word)) return undefined
+    targets.push(word)
+  }
+  return targets.length > 0 ? targets : undefined
+}
+
+export function isGitAuthoringShellCommand(command: string) {
+  return /^git (?:add|commit)(?:\s|$)/.test(command.trim())
+}
+
+export function isAllowedGitCommit(command: string) {
+  const words = parsedCommandWords(command)
+  if (!words || words[0] !== "git" || words[1] !== "commit") return false
+
+  let hasCommitIntent = false
+  for (let index = 2; index < words.length; index += 1) {
+    const word = words[index]
+    if (word === "-m" || word === "--message") {
+      const message = words[index + 1]
+      if (!message) return false
+      hasCommitIntent = true
+      index += 1
+      continue
+    }
+    if (word === "--signoff" || word === "-s") {
+      continue
+    }
+    return false
+  }
+
+  return hasCommitIntent
+}
+
+function workerExecutionAllowed(command: string) {
+  const words = parsedCommandWords(command)
+  if (!words) return false
+
+  if (words[0] === "go" && words[1] === "run") {
+    const target = words[2]
+    if (!target) return false
+    if (target === ".") return true
+    return target.startsWith("./") && !target.split("/").includes("..")
+  }
+
+  if (/^python3?$/.test(words[0] ?? "")) {
+    if (words[1] === "-m") {
+      const module = words[2]
+      if (!module || ["pip", "ensurepip", "venv"].includes(module)) return false
+      return /^[A-Za-z0-9_.-]+$/.test(module)
+    }
+    const script = words[1]
+    return Boolean(script && script.endsWith(".py") && safeProjectRelativePath(script))
+  }
+
+  return false
+}
+
+function githubInspectionAllowed(command: string) {
+  const words = parsedCommandWords(command)
+  if (!words || words[0] !== "gh") return false
+
+  if (words[1] === "pr") {
+    return ["view", "checks", "status", "diff"].includes(words[2] ?? "")
+  }
+  if (words[1] === "run") {
+    return ["list", "view", "watch"].includes(words[2] ?? "")
+  }
+  if (words[1] === "workflow") {
+    return ["list", "view"].includes(words[2] ?? "")
+  }
+  return false
+}
+
+export function diagnosticShellResourcesAllowed(resources: readonly string[]) {
+  if (resources.length === 0) return false
+  return resources.every(
+    (command) =>
+      isAllowedWorkerShell(command) ||
+      githubInspectionAllowed(command),
+  )
+}
+
+export function diagnosticExecutionShellResourcesAllowed(resources: readonly string[]) {
+  if (resources.length === 0) return false
+  return resources.every(
+    (command) =>
+      diagnosticShellResourcesAllowed([command]) ||
+      workerExecutionAllowed(command),
+  )
+}
+
+function safeGitRef(value: string) {
+  if (!/^[A-Za-z0-9._/-]+$/.test(value)) return false
+  if (value.startsWith("-") || value.startsWith("/") || value.endsWith("/")) return false
+  return !value.split("/").includes("..")
+}
+
+function workerDeliveryAllowed(command: string) {
+  const words = parsedCommandWords(command)
+  if (!words) return false
+
+  if (isAllowedGitCommit(command)) return true
+
+  if (words[0] === "git" && words[1] === "fetch") {
+    const args = words.slice(2)
+    const refs = args.filter((word) => !["--prune", "--tags", "--no-tags"].includes(word))
+    if (refs.length === 0) return true
+    if (refs[0] !== "origin") return false
+    return refs.slice(1).every(safeGitRef)
+  }
+
+  if (words[0] === "git" && words[1] === "rebase") {
+    const args = words.slice(2)
+    if (args.length === 1 && ["--continue", "--abort", "--skip"].includes(args[0])) return true
+    return args.length === 1 && safeGitRef(args[0])
+  }
+
+  if (words[0] === "git" && words[1] === "push") {
+    const args = words.slice(2)
+    const positional = args.filter(
+      (word) => !["-u", "--set-upstream", "--force-with-lease"].includes(word),
+    )
+    if (positional.some((word) => word.startsWith("-"))) return false
+    return positional.length === 2 && positional[0] === "origin" && positional[1] === "HEAD"
+  }
+
+  if (words[0] === "gh" && words[1] === "pr") {
+    const action = words[2] ?? ""
+    const args = words.slice(3)
+    const forbiddenPrOptions = new Set([
+      "--repo",
+      "-R",
+      "--body-file",
+      "-F",
+      "--template",
+      "-T",
+      "--recover",
+      "--web",
+    ])
+    if (
+      args.some((word) =>
+        forbiddenPrOptions.has(word) ||
+        [...forbiddenPrOptions].some((option) => word.startsWith(option + "="))
+      )
+    ) return false
+
+    if (action === "create") {
+      if (args.some((word) => word === "--head" || word.startsWith("--head="))) return false
+      return true
+    }
+
+    if (action === "edit") {
+      return args.length === 0 || args[0]?.startsWith("-") === true
+    }
+
+    return ["view", "checks", "status", "diff"].includes(action)
+  }
+
+  if (words[0] === "gh" && words[1] === "run") {
+    return ["list", "view", "watch"].includes(words[2] ?? "")
+  }
+
+  if (words[0] === "gh" && words[1] === "workflow") {
+    return ["list", "view"].includes(words[2] ?? "")
+  }
+
+  return false
+}
+
+export function workerShellResourcesAllowed(
+  resources: readonly string[],
+  writeScope: string[] = [],
+) {
+  if (resources.length === 0) return false
+
+  return resources.every((command) => {
+    if (
+      diagnosticShellResourcesAllowed([command]) ||
+      workerExecutionAllowed(command) ||
+      workerDeliveryAllowed(command)
+    ) return true
+
+    const gofmtTargets = scopedGofmtWriteTargets(command)
+    if (
+      gofmtTargets &&
+      writeScope.length > 0 &&
+      resourcesWithinScope(gofmtTargets, writeScope)
+    ) return true
+
+    const targets = scopedGitAddTargets(command)
+    if (!targets || writeScope.length === 0) return false
+    return resourcesWithinScope(targets, writeScope)
+  })
+}
+
+export function authorGitShellResourcesAllowed(
+  resources: readonly string[],
+  writeScope: string[],
+) {
+  if (resources.length === 0 || writeScope.length === 0) return false
+
+  return resources.every((command) => {
+    if (isAllowedGitCommit(command)) return true
+    const targets = scopedGitAddTargets(command)
+    return Boolean(targets && resourcesWithinScope(targets, writeScope))
+  })
+}
+
 function safeRelativeGoFile(path: string) {
   const normalized = path.replaceAll("\\", "/").replace(/^\.\//, "")
   if (!normalized || normalized.startsWith("/")) return false

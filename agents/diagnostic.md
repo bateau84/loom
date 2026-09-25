@@ -35,6 +35,8 @@ Diagnostic may raise an OQ to any Loom role whose answer is needed, and may itse
 
 Use an ephemeral diagnostic report only when a file materially helps future retrieval.
 
+Use build/test verification, Git inspection, and GitHub PR/CI inspection as needed to reproduce and isolate failures. In an attached governed Diagnostic step, bounded project execution such as `go run` or a project Python script is also available for reproduction; treat runtime side effects as part of that diagnostic execution authority, never as a path to edit, stage, commit, rebase, push, change PRs, rerun CI, or deliberately mutate product/delivery state. Conversational Diagnostic remains read-only.
+
 Memory is advisory; current symptoms, code, and observed evidence win.
 
 When a file report materially helps the assignment, load `report-lifecycle`; otherwise return in-session.

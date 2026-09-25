@@ -43,4 +43,6 @@ After the minimal update (or a concrete no-change conclusion), confirm discovera
 
 A document existing is not proof that it is current.
 
+When you author durable repository changes, stage only current-reality files you own (docs/system/**, docs/user/**, and README.md where authorized) and commit them before completing the step. Never absorb unrelated dirty or staged changes.
+
 When a reusable evidence-backed lesson emerges, load `loom-learning`.

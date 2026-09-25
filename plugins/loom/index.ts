@@ -1,3 +1,5 @@
+import { execFile } from "node:child_process"
+import { promisify } from "node:util"
 import { captureEvidenceAdmission, observationCallKey, persistEvidenceObservation, sessionAttachmentKey, type EvidenceAdmission } from "./evidence-admission"
 import type * as OpenCodePlugin from "@opencode/plugin"
 import { RUNTIME_STATE_VERSION, admitDispatchGrantLocked, consumeDispatchGrantLocked, createProjectStorage, createTransactionalStorage, ensureRuntimeStateVersion, findUsableDispatchGrant, importLegacyPluginStorage, issueDispatchGrantLocked, migrateLegacySessionState, resolveRuntimeIdentity, sessionBoundToOq, sessionBoundToStep, sessionBoundToWorkflow, withRuntimeAdvisoryLock, withRuntimeLock, withRuntimeLocks, type LoomRuntimeIdentity } from "./runtime"
@@ -23,7 +25,7 @@ import {
 } from "./upgrade-actions"
 
 export const LOOM_NATIVE_TOOL_GUIDANCE =
-  "Loom control-plane tools are available through two equivalent OpenCode surfaces: native loom_* tools and Code Mode mirrors under tools.loom.code.*. Use either surface directly according to the active tool paradigm. If using Code Mode, search for Loom tools and invoke the returned tools.loom.code.* signatures; do not fall back to shell/filesystem discovery for Loom commands. Reviewer/Critic methodology uses a two-part contract: load practitioner guidance with OpenCode's native skill tool, then consume the role companion through loom_assessment or loom_qa; a plain ASSESSMENT.md/QA.md read is artifact inspection, not methodology loading. Interactive status is dashboard-first and does not depend on model prose: the Loom sidebar exposes a stable workflow dashboard URL, while loom_status may also return presentation metadata. Desktop browser preview is optional metadata only; do not invoke tools.browser.preview merely because presentation metadata exists."
+  "Loom control-plane tools are available through two equivalent OpenCode surfaces: native loom_* tools and Code Mode mirrors under tools.loom.code.*. Use either surface directly according to the active tool paradigm. If using Code Mode, search for Loom tools and invoke the returned tools.loom.code.* signatures; do not fall back to shell/filesystem discovery for Loom commands. Reviewer/Critic methodology uses a two-part contract: load practitioner guidance with OpenCode's native skill tool, then consume the role companion through loom_assessment or loom_qa; a plain ASSESSMENT.md/QA.md read is artifact inspection, not methodology loading. Interactive status is dashboard-first and does not depend on model prose: the Loom sidebar exposes a stable workflow dashboard URL, while loom_status may also return presentation metadata. Desktop browser preview is optional metadata only; do not invoke tools.browser.preview merely because presentation metadata exists. When a role owns a repository commit, load git-commit-discipline before committing so the commit remains coherent and reviewable."
 import {
   assertWorkflowNotCancelled,
   WorkflowCancelledError,
@@ -78,7 +80,17 @@ import {
   type ProgressSignal,
 } from "./budget"
 import { resourceMatchesScope, resourcesWithinScope, validateWriteScope, type TaskScope } from "./scope"
-import { shellResourcesAllowed } from "./shell"
+import {
+  authorGitShellResourcesAllowed,
+  diagnosticExecutionShellResourcesAllowed,
+  diagnosticShellResourcesAllowed,
+  isAllowedGitCommit,
+  isGitAuthoringShellCommand,
+  scopedGitAddTargets,
+  scopedGofmtWriteTargets,
+  shellResourcesAllowed,
+  workerShellResourcesAllowed,
+} from "./shell"
 import { prepareReportPromotion, publishPreparedReport, reconcilePendingReportPromotion, type ReportPromotionInput, type ReportPromotionRecord } from "./reports"
 import {
   findPaths,
@@ -181,6 +193,285 @@ const reportProducerAgents = new Set([
   "research",
   "diagnostic",
 ])
+
+const execFileAsync = promisify(execFile)
+
+const durableAuthorGitScopes: Record<string, string[]> = {
+  general: ["docs/anchors/**"],
+  designer: ["docs/design/**"],
+  specifier: ["docs/requirements/**"],
+  architect: ["docs/architecture/**", "docs/dependencies/**"],
+  documenter: ["docs/system/**", "docs/user/**", "README.md"],
+}
+
+type GitSessionBaseline = {
+  schemaVersion: 1
+  attachmentId?: string
+  capturedAt: string
+  available: boolean
+  dirtyPaths: string[]
+}
+
+function gitSessionBaselineKey(sessionID: string) {
+  return `git-session-baseline/${encodeURIComponent(sessionID)}`
+}
+
+type GitSessionOwnership = {
+  schemaVersion: 1
+  attachmentId?: string
+  paths: string[]
+}
+
+function gitSessionOwnershipKey(sessionID: string) {
+  return `git-session-ownership/${encodeURIComponent(sessionID)}`
+}
+
+function normalizeRepoPath(value: string) {
+  return value.replaceAll("\\", "/").replace(/^\.\//, "").replace(/\/$/, "")
+}
+
+function gitTargetCoversPath(target: string, path: string) {
+  const normalizedTarget = normalizeRepoPath(target).replace(/\/\.$/, "")
+  const normalizedPath = normalizeRepoPath(path)
+  return (
+    normalizedPath === normalizedTarget ||
+    normalizedPath.startsWith(normalizedTarget + "/")
+  )
+}
+
+async function gitCommandPaths(projectDirectory: string, args: string[]) {
+  const { stdout } = await execFileAsync("git", args, {
+    cwd: projectDirectory,
+    encoding: "utf8",
+  })
+  return String(stdout).split("\0").filter(Boolean).map(normalizeRepoPath)
+}
+
+async function projectDirtyPaths(projectDirectory: string) {
+  const [unstaged, staged, untracked] = await Promise.all([
+    gitCommandPaths(projectDirectory, ["diff", "--no-renames", "--name-only", "-z"]),
+    gitCommandPaths(projectDirectory, ["diff", "--cached", "--no-renames", "--name-only", "-z"]),
+    gitCommandPaths(projectDirectory, ["ls-files", "--others", "--exclude-standard", "-z"]),
+  ])
+  return [...new Set([...unstaged, ...staged, ...untracked])].sort()
+}
+
+async function ensureGitSessionBaseline(
+  ctx: any,
+  sessionID: string,
+  projectDirectory: string,
+): Promise<GitSessionBaseline> {
+  const key = gitSessionBaselineKey(sessionID)
+  const attachmentId = (await ctx.storage.get(
+    sessionAttachmentKey(sessionID),
+  )) as string | undefined
+  const existing = (await ctx.storage.get(key)) as GitSessionBaseline | undefined
+  if (
+    existing?.schemaVersion === 1 &&
+    existing.attachmentId === attachmentId
+  ) return existing
+
+  let baseline: GitSessionBaseline
+  try {
+    baseline = {
+      schemaVersion: 1,
+      ...(attachmentId ? { attachmentId } : {}),
+      capturedAt: new Date().toISOString(),
+      available: true,
+      dirtyPaths: await projectDirtyPaths(projectDirectory),
+    }
+  } catch {
+    baseline = {
+      schemaVersion: 1,
+      ...(attachmentId ? { attachmentId } : {}),
+      capturedAt: new Date().toISOString(),
+      available: false,
+      dirtyPaths: [],
+    }
+  }
+  await ctx.storage.set(key, baseline)
+  return baseline
+}
+
+async function gitSessionOwnership(
+  ctx: any,
+  sessionID: string,
+): Promise<GitSessionOwnership> {
+  const key = gitSessionOwnershipKey(sessionID)
+  const attachmentId = (await ctx.storage.get(
+    sessionAttachmentKey(sessionID),
+  )) as string | undefined
+  const existing = (await ctx.storage.get(key)) as GitSessionOwnership | undefined
+  if (
+    existing?.schemaVersion === 1 &&
+    existing.attachmentId === attachmentId
+  ) return existing
+
+  const ownership: GitSessionOwnership = {
+    schemaVersion: 1,
+    ...(attachmentId ? { attachmentId } : {}),
+    paths: [],
+  }
+  await ctx.storage.set(key, ownership)
+  return ownership
+}
+
+async function recordGitSessionOwnership(
+  ctx: any,
+  sessionID: string,
+  paths: readonly string[],
+) {
+  if (paths.length === 0) return
+  const ownership = await gitSessionOwnership(ctx, sessionID)
+  ownership.paths = [
+    ...new Set([
+      ...ownership.paths,
+      ...paths.map(normalizeRepoPath),
+    ]),
+  ].sort()
+  await ctx.storage.set(gitSessionOwnershipKey(sessionID), ownership)
+}
+
+function projectRelativeMutationPath(projectDirectory: string, value: string) {
+  const normalized = value.replaceAll("\\", "/").replace(/^\.\//, "")
+  const project = projectDirectory.replaceAll("\\", "/").replace(/\/$/, "")
+  if (normalized === project) return undefined
+  if (normalized.startsWith(project + "/")) return normalized.slice(project.length + 1)
+  if (normalized.startsWith("/")) return undefined
+  return normalizeRepoPath(normalized)
+}
+
+function patchMutationPaths(input: unknown) {
+  const patchText =
+    input && typeof input === "object" && typeof (input as any).patchText === "string"
+      ? String((input as any).patchText)
+      : ""
+  if (!patchText) return []
+
+  const paths: string[] = []
+  for (const line of patchText.split(/\r?\n/)) {
+    const match = line.match(/^\*\*\* (?:Add|Update|Delete) File: (.+)$/)
+    if (match?.[1]) paths.push(normalizeRepoPath(match[1].trim()))
+    const move = line.match(/^\*\*\* Move to: (.+)$/)
+    if (move?.[1]) paths.push(normalizeRepoPath(move[1].trim()))
+  }
+  return [...new Set(paths.filter(Boolean))]
+}
+
+function successfulMutationPaths(
+  tool: string,
+  input: unknown,
+  projectDirectory: string,
+) {
+  if (!input || typeof input !== "object") return []
+
+  if (tool === "edit" || tool === "write") {
+    const summary = safeInputSummary(tool, input)
+    const path =
+      typeof summary.path === "string"
+        ? projectRelativeMutationPath(projectDirectory, summary.path)
+        : undefined
+    return path ? [path] : []
+  }
+
+  if (tool === "patch" || tool === "apply_patch") {
+    return patchMutationPaths(input)
+  }
+
+  if (tool === "shell" || tool === "bash") {
+    const command = (input as any).command
+    return typeof command === "string"
+      ? (scopedGofmtWriteTargets(command) ?? [])
+      : []
+  }
+
+  return []
+}
+
+function baselineTargetConflicts(
+  baseline: GitSessionBaseline,
+  targets: readonly string[],
+) {
+  if (!baseline.available) return []
+  return baseline.dirtyPaths.filter((path) =>
+    targets.some((target) => gitTargetCoversPath(target, path)),
+  )
+}
+
+async function stagedGitPaths(projectDirectory: string) {
+  return gitCommandPaths(
+    projectDirectory,
+    ["diff", "--cached", "--no-renames", "--name-only", "-z"],
+  )
+}
+
+async function commitScopeError(
+  ctx: any,
+  sessionID: string,
+  projectDirectory: string,
+  writeScope: string[],
+  requireExplicitOwnership = true,
+) {
+  try {
+    const [baseline, ownership, staged] = await Promise.all([
+      ensureGitSessionBaseline(ctx, sessionID, projectDirectory),
+      gitSessionOwnership(ctx, sessionID),
+      stagedGitPaths(projectDirectory),
+    ])
+    if (staged.length === 0) return "Git commit denied: no staged repository changes."
+    const outside = staged.filter((path) => !resourcesWithinScope([path], writeScope))
+    if (outside.length > 0) {
+      return `Git commit denied: staged changes outside the current role/task write scope: ${outside.join(", ")}`
+    }
+    const preExisting = baseline.available
+      ? staged.filter((path) => baseline.dirtyPaths.includes(normalizeRepoPath(path)))
+      : []
+    if (preExisting.length > 0) {
+      return `Git commit denied: staged changes pre-date this role attachment and are not owned by this session: ${preExisting.join(", ")}`
+    }
+    if (requireExplicitOwnership) {
+      const unowned = staged.filter(
+        (path) => !ownership.paths.includes(normalizeRepoPath(path)),
+      )
+      if (unowned.length > 0) {
+        return `Git commit denied: staged paths were not authored by this role/session: ${unowned.join(", ")}`
+      }
+    }
+    return undefined
+  } catch (error) {
+    return `Git commit denied: Loom could not verify the staged change scope: ${error instanceof Error ? error.message : String(error)}`
+  }
+}
+
+async function uncommittedOwnedChangesError(
+  ctx: any,
+  sessionID: string,
+  projectDirectory: string,
+  writeScope: string[],
+) {
+  const baseline = await ensureGitSessionBaseline(ctx, sessionID, projectDirectory)
+  if (!baseline.available) return undefined
+
+  let dirty: string[]
+  try {
+    dirty = await projectDirtyPaths(projectDirectory)
+  } catch (error) {
+    return `Cannot verify repository completion state: ${error instanceof Error ? error.message : String(error)}`
+  }
+
+  const newlyDirtyOwned = dirty.filter(
+    (path) =>
+      !baseline.dirtyPaths.includes(path) &&
+      resourcesWithinScope([path], writeScope),
+  )
+  if (newlyDirtyOwned.length === 0) return undefined
+
+  return (
+    "Cannot complete while this role has new uncommitted changes in its owned scope: " +
+    newlyDirtyOwned.join(", ") +
+    ". Commit only these owned changes before completing."
+  )
+}
 
 function intentKey(id: string) {
   return `intent/${id}`
@@ -2182,6 +2473,27 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           const resolvedOutcome = outcome ?? (step.kind === "work" ? "complete" : undefined)
           if (!resolvedOutcome) {
             return { content: renderToolOutput({ error: "Gate step requires outcome pass or fail." }) }
+          }
+
+          if (resolvedOutcome === "complete") {
+            let ownedWriteScope = durableAuthorGitScopes[tool.agent]
+            if (tool.agent === "worker") {
+              const workerScope = (await ctx.storage.get(
+                scopeKey(workflowId, stepId),
+              )) as TaskScope | undefined
+              ownedWriteScope = workerScope?.write
+            }
+            if (ownedWriteScope?.length) {
+              const repositoryError = await uncommittedOwnedChangesError(
+                ctx,
+                tool.sessionID,
+                ctx.location.directory,
+                ownedWriteScope,
+              )
+              if (repositoryError) {
+                return { content: renderToolOutput({ error: repositoryError }) }
+              }
+            }
           }
 
           if (stepId === "plan" && plannedTaskSteps(workflow).length === 0) {
@@ -5752,6 +6064,13 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             return { content: renderToolOutput({ error: error instanceof Error ? error.message : String(error) }) }
           }
 
+          if (
+            value.stepId &&
+            (tool.agent === "worker" || Boolean(durableAuthorGitScopes[tool.agent]))
+          ) {
+            await ensureGitSessionBaseline(ctx, tool.sessionID, ctx.location.directory)
+          }
+
           let producerSkills: ObservedProducerSkill[] | undefined
           if (tool.agent === "reviewer" || tool.agent === "critic") {
             const current = await readWorkflow(ctx, value.workflowId)
@@ -6171,6 +6490,51 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
     const evaluatePermission = async (event: any) => {
       const delegationAction = event.action === "subagent"
+      if (event.action === "edit") {
+        let writeScope = durableAuthorGitScopes[String(event.agent ?? "")]
+        if (event.agent === "worker") {
+          const workflowId = (await ctx.storage.get(sessionKey(event.sessionID))) as string | undefined
+          const stepId = (await ctx.storage.get(sessionStepKey(event.sessionID))) as string | undefined
+          if (workflowId && stepId) {
+            const scope = (await ctx.storage.get(
+              scopeKey(workflowId, stepId),
+            )) as TaskScope | undefined
+            writeScope = scope?.write
+          }
+        }
+
+        if (writeScope?.length) {
+          const baseline = await ensureGitSessionBaseline(
+            ctx,
+            event.sessionID,
+            ctx.location.directory,
+          )
+          const ownership = await gitSessionOwnership(ctx, event.sessionID)
+          let currentDirty: string[] = []
+          if (baseline.available) {
+            try {
+              currentDirty = await projectDirtyPaths(ctx.location.directory)
+            } catch {
+              currentDirty = []
+            }
+          }
+          const conflicts = event.resources.filter((resource: string) => {
+            const path = normalizeRepoPath(resource)
+            return (
+              baseline.dirtyPaths.includes(path) ||
+              (currentDirty.includes(path) && !ownership.paths.includes(path))
+            )
+          })
+          if (conflicts.length > 0) {
+            event.effect = "deny"
+            event.message =
+              "Edit denied: these files contain changes not owned by this role/session: " +
+              conflicts.join(", ")
+            return
+          }
+        }
+      }
+
       if (event.action === "edit" || event.action === "shell" || delegationAction) {
         await ensureLegacyCancellationBoundary(event.sessionID)
       }
@@ -6231,6 +6595,120 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         return
       }
 
+      if (event.action === "shell") {
+        const authorScope = durableAuthorGitScopes[String(event.agent ?? "")]
+        const gitAuthoring = event.resources.some((resource: string) =>
+          isGitAuthoringShellCommand(resource),
+        )
+        if (authorScope && gitAuthoring) {
+          if (event.agent !== "general") {
+            const workflowId = (await ctx.storage.get(
+              sessionKey(event.sessionID),
+            )) as string | undefined
+            const stepId = (await ctx.storage.get(
+              sessionStepKey(event.sessionID),
+            )) as string | undefined
+            if (
+              !workflowId ||
+              !stepId ||
+              !(await exactStepBinding(
+                ctx,
+                event.sessionID,
+                workflowId,
+                stepId,
+              ))
+            ) {
+              event.effect = "deny"
+              event.message =
+                "Git authoring requires the role's exact attached Loom workflow step."
+              return
+            }
+          }
+
+          if (!authorGitShellResourcesAllowed(event.resources, authorScope)) {
+            event.effect = "deny"
+            event.message =
+              "Git authoring is limited to explicit files inside this role's durable write scope; broad staging and other Git mutations remain blocked."
+            return
+          }
+          const baseline = await ensureGitSessionBaseline(
+            ctx,
+            event.sessionID,
+            ctx.location.directory,
+          )
+          const addTargets = event.resources.flatMap(
+            (resource: string) => scopedGitAddTargets(resource) ?? [],
+          )
+          const ownership = await gitSessionOwnership(ctx, event.sessionID)
+          if (
+            event.agent !== "general" &&
+            addTargets.some(
+              (target: string) =>
+                !ownership.paths.includes(normalizeRepoPath(target)),
+            )
+          ) {
+            event.effect = "deny"
+            event.message =
+              "Git staging denied: stage only files authored by this role/session."
+            return
+          }
+          const conflicts = baselineTargetConflicts(baseline, addTargets)
+          if (conflicts.length > 0) {
+            event.effect = "deny"
+            event.message =
+              "Git staging denied: these paths include changes that pre-date this role/session: " +
+              conflicts.join(", ")
+            return
+          }
+          if (event.resources.some((resource: string) => isAllowedGitCommit(resource))) {
+            const error = await commitScopeError(
+              ctx,
+              event.sessionID,
+              ctx.location.directory,
+              authorScope,
+              event.agent !== "general",
+            )
+            if (error) {
+              event.effect = "deny"
+              event.message = error
+              return
+            }
+          }
+          event.effect = "allow"
+          return
+        }
+      }
+
+      if (event.agent === "diagnostic" && event.action === "shell") {
+        if (diagnosticShellResourcesAllowed(event.resources)) {
+          event.effect = "allow"
+          return
+        }
+
+        const workflowId = (await ctx.storage.get(
+          sessionKey(event.sessionID),
+        )) as string | undefined
+        const stepId = (await ctx.storage.get(
+          sessionStepKey(event.sessionID),
+        )) as string | undefined
+        const attached =
+          Boolean(workflowId && stepId) &&
+          await exactStepBinding(ctx, event.sessionID, workflowId!, stepId!)
+
+        if (
+          attached &&
+          diagnosticExecutionShellResourcesAllowed(event.resources)
+        ) {
+          event.effect = "allow"
+          return
+        }
+
+        event.effect = "deny"
+        event.message =
+          "Conversational Diagnostic shell is read-only. Arbitrary project execution is available only after attachment to a governed Diagnostic step; repository and delivery mutation remain denied."
+        return
+      }
+
       if (
         (event.agent === "research" || event.agent === "diagnostic") &&
         (event.action === "shell" || event.action === "edit")
@@ -6265,29 +6743,81 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       if (event.agent === "worker" && event.action === "shell") {
         const workflowId = (await ctx.storage.get(sessionKey(event.sessionID))) as string | undefined
         const stepId = (await ctx.storage.get(sessionStepKey(event.sessionID))) as string | undefined
+        if (!workflowId || !stepId) {
+          event.effect = "deny"
+          event.message = "Worker must call loom_attach before using shell execution."
+          return
+        }
 
-        if (workflowId && stepId) {
-          try {
-            await assertWorkerWorkClaim(ctx, workflowId, stepId)
-          } catch (error) {
+        try {
+          await assertWorkerWorkClaim(ctx, workflowId, stepId)
+        } catch (error) {
+          event.effect = "deny"
+          event.message = error instanceof Error ? error.message : String(error)
+          return
+        }
+
+        const scope = (await ctx.storage.get(scopeKey(workflowId, stepId))) as TaskScope | undefined
+        if (!workerShellResourcesAllowed(event.resources, scope?.write ?? [])) {
+          event.effect = "deny"
+          event.message =
+            "Worker shell is limited to inspection, build/test/run, scoped Git staging/commit, safe rebase/push, PR delivery, and CI inspection for the attached task."
+          return
+        }
+
+        const baseline = await ensureGitSessionBaseline(
+          ctx,
+          event.sessionID,
+          ctx.location.directory,
+        )
+        const addTargets = event.resources.flatMap(
+          (resource: string) => scopedGitAddTargets(resource) ?? [],
+        )
+        const gofmtTargets = event.resources.flatMap(
+          (resource: string) => scopedGofmtWriteTargets(resource) ?? [],
+        )
+        const ownership = await gitSessionOwnership(ctx, event.sessionID)
+        if (
+          addTargets.some(
+            (target: string) =>
+              !ownership.paths.includes(normalizeRepoPath(target)),
+          )
+        ) {
+          event.effect = "deny"
+          event.message =
+            "Worker Git staging denied: stage only files authored by this task/session."
+          return
+        }
+        const mutationTargets = [...addTargets, ...gofmtTargets]
+        const mutationConflicts = baselineTargetConflicts(baseline, mutationTargets)
+        if (mutationConflicts.length > 0) {
+          event.effect = "deny"
+          event.message =
+            "Worker mutation denied: these paths include changes that pre-date this task attachment: " +
+            mutationConflicts.join(", ")
+          return
+        }
+
+        if (event.resources.some((resource: string) => isAllowedGitCommit(resource))) {
+          if (!scope) {
             event.effect = "deny"
-            event.message = error instanceof Error ? error.message : String(error)
+            event.message = "Worker Git commit requires a declared Loom task write scope."
+            return
+          }
+          const error = await commitScopeError(
+            ctx,
+            event.sessionID,
+            ctx.location.directory,
+            scope.write,
+          )
+          if (error) {
+            event.effect = "deny"
+            event.message = error
             return
           }
         }
 
-        if (shellResourcesAllowed(event.resources)) return
-
-        const scope =
-          workflowId && stepId
-            ? ((await ctx.storage.get(scopeKey(workflowId, stepId))) as TaskScope | undefined)
-            : undefined
-
-        if (!scope || !shellResourcesAllowed(event.resources, scope.write)) {
-          event.effect = "deny"
-          event.message =
-            "Worker shell is limited to Loom's inspection/verification commands plus explicitly supported scope-aware mutations inside the task write scope."
-        }
+        event.effect = "allow"
         return
       }
 
@@ -6318,6 +6848,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         if (!resourcesWithinScope(event.resources, scope.write)) {
           event.effect = "deny"
           event.message = "Worker edit is outside the declared Loom task scope."
+          return
         }
         return
       }
@@ -6697,6 +7228,55 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       const input = raw.input
       const inputDigest = input === undefined ? undefined : await digest(input)
       const eventMatches = Boolean(pending) && inputDigest === pending!.inputDigest
+
+      if (
+        raw.status === "completed" &&
+        raw.agent &&
+        eventMatches &&
+        pending?.admission
+      ) {
+        const admission = pending.admission
+        const sessionID = String(raw.sessionID)
+        const currentWorkflowId = await ctx.storage.get(sessionKey(sessionID))
+        const currentStepId = await ctx.storage.get(sessionStepKey(sessionID))
+        const currentAttachmentId = await ctx.storage.get(
+          sessionAttachmentKey(sessionID),
+        )
+        const currentWorkflow =
+          currentWorkflowId === admission.workflowId
+            ? await readWorkflow(ctx, admission.workflowId)
+            : undefined
+        const currentStep = currentWorkflow?.steps.find(
+          (step) => step.id === admission.stepId,
+        )
+        const sameExecutionAuthority =
+          currentWorkflowId === admission.workflowId &&
+          currentStepId === admission.stepId &&
+          currentAttachmentId === admission.attachmentId &&
+          raw.agent === admission.agent &&
+          (currentStep?.attempt ?? 0) === admission.attempt
+
+        if (sameExecutionAuthority) {
+          let writeScope = durableAuthorGitScopes[String(raw.agent)]
+          if (raw.agent === "worker") {
+            const scope = (await ctx.storage.get(
+              scopeKey(admission.workflowId, admission.stepId),
+            )) as TaskScope | undefined
+            writeScope = scope?.write
+          }
+
+          if (writeScope?.length) {
+            const owned = successfulMutationPaths(
+              tool,
+              input,
+              ctx.location.directory,
+            ).filter((path) => resourcesWithinScope([path], writeScope!))
+            if (owned.length > 0) {
+              await recordGitSessionOwnership(ctx, sessionID, owned)
+            }
+          }
+        }
+      }
 
       if (tool.toLowerCase().includes("synabun") && /(?:^|_)remember$/i.test(tool)) {
         const episodeId = episodeIdFromRememberInput(input)

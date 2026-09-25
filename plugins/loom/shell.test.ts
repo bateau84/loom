@@ -1,5 +1,15 @@
 import { describe, expect, test } from "bun:test"
-import { isAllowedWorkerShell, scopedGofmtWriteTargets, shellResourcesAllowed } from "./shell"
+import {
+  authorGitShellResourcesAllowed,
+  diagnosticExecutionShellResourcesAllowed,
+  diagnosticShellResourcesAllowed,
+  isAllowedGitCommit,
+  isAllowedWorkerShell,
+  scopedGitAddTargets,
+  scopedGofmtWriteTargets,
+  shellResourcesAllowed,
+  workerShellResourcesAllowed,
+} from "./shell"
 
 describe("Loom Worker shell policy", () => {
   test("allows common inspection and verification commands", () => {
@@ -192,4 +202,104 @@ describe("Loom Worker shell policy", () => {
     expect(shellResourcesAllowed(["git status --short", "go test ./..."])).toBe(true)
     expect(shellResourcesAllowed(["git status --short", "rm -rf src"])).toBe(false)
   })
+
+  test("lets Diagnostic execute bounded project code and inspect PR/CI state without delivery mutation", () => {
+    for (const command of [
+      "go test ./...",
+      "go build ./...",
+      "pytest -q",
+      "python3 -m pytest -q",
+      "gh pr checks 123",
+      "gh run view 456 --log-failed",
+      "gh run watch 456",
+    ]) {
+      expect(diagnosticShellResourcesAllowed([command])).toBe(true)
+    }
+
+    expect(
+      diagnosticExecutionShellResourcesAllowed([
+        "go run ./cmd/debug",
+        "python scripts/reproduce.py --case timeout",
+        "gh run view 456 --log-failed",
+      ]),
+    ).toBe(true)
+
+    for (const command of [
+      "go run ./cmd/debug",
+      "python scripts/reproduce.py --case timeout",
+      "python3 -m app.debug",
+      "python -c 'open(\"x\", \"w\").write(\"y\")'",
+      "python -m pip install requests",
+      "git commit -m 'diagnostic write'",
+      "gh run rerun 456 --failed",
+      "gh pr create --title change --body change",
+    ]) {
+      expect(diagnosticShellResourcesAllowed([command])).toBe(false)
+    }
+  })
+
+  test("lets Worker own the normal bounded delivery lifecycle", () => {
+    const scope = ["src/**", "cmd/**"]
+
+    for (const command of [
+      "go run ./cmd/app",
+      "python scripts/reproduce.py",
+      "git fetch origin main",
+      "git rebase origin/main",
+      "git rebase --continue",
+      "git push origin HEAD",
+      "git push --force-with-lease origin HEAD",
+      "gh pr create --title 'Fix runtime' --body 'Bounded change'",
+      "gh pr edit --body 'Updated'",
+    ]) {
+      expect(workerShellResourcesAllowed([command], scope)).toBe(true)
+    }
+
+    expect(workerShellResourcesAllowed(["gofmt -w src/runtime.go"], scope)).toBe(true)
+    expect(workerShellResourcesAllowed(["git add src/runtime.ts cmd/app/main.go"], scope)).toBe(true)
+    expect(workerShellResourcesAllowed(["git add docs/requirements/runtime.md"], scope)).toBe(false)
+    expect(workerShellResourcesAllowed(["git add ."], scope)).toBe(false)
+    expect(workerShellResourcesAllowed(["git commit -m 'fix: runtime'"], scope)).toBe(true)
+    expect(workerShellResourcesAllowed(["git commit -a -m 'fix: runtime'"], scope)).toBe(false)
+    expect(workerShellResourcesAllowed(["git commit --amend --no-edit"], scope)).toBe(false)
+    expect(workerShellResourcesAllowed(["git commit --no-verify -m 'fix: runtime'"], scope)).toBe(false)
+    expect(workerShellResourcesAllowed(["git push --force origin HEAD"], scope)).toBe(false)
+    expect(workerShellResourcesAllowed(["git push origin :main"], scope)).toBe(false)
+    expect(workerShellResourcesAllowed(["git push origin main"], scope)).toBe(false)
+    expect(workerShellResourcesAllowed(["git fetch ext::helper"], scope)).toBe(false)
+    expect(workerShellResourcesAllowed(["git rebase --exec 'touch pwn' origin/main"], scope)).toBe(false)
+    expect(workerShellResourcesAllowed(["git rebase --strategy=ours origin/main"], scope)).toBe(false)
+    expect(workerShellResourcesAllowed(["gh pr edit 123 --body 'other PR'"], scope)).toBe(false)
+    expect(workerShellResourcesAllowed(["gh pr create --head other --title x --body y"], scope)).toBe(false)
+    expect(workerShellResourcesAllowed(["gh pr create --repo other/repo --title x --body y"], scope)).toBe(false)
+    expect(workerShellResourcesAllowed(["gh pr create --body-file /etc/passwd --title x"], scope)).toBe(false)
+    expect(workerShellResourcesAllowed(["gh pr create --template ../../secret.md --title x"], scope)).toBe(false)
+    expect(workerShellResourcesAllowed(["gh pr edit --body-file /etc/passwd"], scope)).toBe(false)
+    expect(workerShellResourcesAllowed(["gh run rerun 456 --failed"], scope)).toBe(false)
+    expect(workerShellResourcesAllowed(["gh pr merge 123"], scope)).toBe(false)
+  })
+
+  test("lets durable artifact authors stage and commit only their owned files", () => {
+    const designScope = ["docs/design/**"]
+
+    expect(authorGitShellResourcesAllowed(["git add docs/design/runtime.md"], designScope)).toBe(true)
+    expect(authorGitShellResourcesAllowed(["git add -- docs/design/runtime.md"], designScope)).toBe(true)
+    expect(authorGitShellResourcesAllowed(["git commit -m 'docs(design): runtime'"], designScope)).toBe(true)
+    expect(authorGitShellResourcesAllowed(["git add docs/requirements/runtime.md"], designScope)).toBe(false)
+    expect(authorGitShellResourcesAllowed(["git add ."], designScope)).toBe(false)
+    expect(authorGitShellResourcesAllowed(["git commit -a -m 'docs: all'"], designScope)).toBe(false)
+    expect(authorGitShellResourcesAllowed(["git rebase main"], designScope)).toBe(false)
+
+    expect(scopedGitAddTargets("git add docs/design/a.md docs/design/b.md")).toEqual([
+      "docs/design/a.md",
+      "docs/design/b.md",
+    ])
+    expect(scopedGitAddTargets("git add ../outside.md")).toBeUndefined()
+    expect(isAllowedGitCommit("git commit -m 'docs: update'")).toBe(true)
+    expect(isAllowedGitCommit("git commit --amend --no-edit")).toBe(false)
+    expect(isAllowedGitCommit("git commit --no-verify -m 'docs: update'")).toBe(false)
+    expect(isAllowedGitCommit("git commit -a -m 'all'")).toBe(false)
+  })
+
+
 })
