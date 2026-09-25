@@ -5,7 +5,7 @@ import { execFile } from "node:child_process"
 import { promisify } from "node:util"
 import { captureEvidenceAdmission, observationCallKey, persistEvidenceObservation, sessionAttachmentKey, type EvidenceAdmission } from "./evidence-admission"
 import type * as OpenCodePlugin from "@opencode/plugin"
-import { RUNTIME_STATE_VERSION, admitDispatchGrantLocked, consumeDispatchGrantLocked, createProjectStorage, createTransactionalStorage, ensureRuntimeStateVersion, findUsableDispatchGrant, importLegacyPluginStorage, issueDispatchGrantLocked, migrateLegacySessionState, resolveRuntimeIdentity, sessionBoundToOq, sessionBoundToStep, sessionBoundToWorkflow, withRuntimeAdvisoryLock, withRuntimeLock, withRuntimeLocks, type LoomRuntimeIdentity } from "./runtime"
+import { RUNTIME_STATE_VERSION, admitDispatchGrantLocked, consumeDispatchGrantLocked, createProjectStorage, createTransactionalStorage, ensureRuntimeStateVersion, findUsableDispatchGrant, importLegacyPluginStorage, issueDispatchGrantLocked, migrateLegacySessionState, resolveRuntimeIdentity, sessionBoundToOq, sessionBoundToStep, sessionBoundToWorkflow, tryAcquireRuntimeLocks, withRuntimeAdvisoryLock, withRuntimeLock, withRuntimeLocks, type LoomRuntimeIdentity } from "./runtime"
 import { LoomRpc } from "./rpc"
 import { assertLoomToolAdmission, assertCancelledChildToolAdmission, cancelWorkflow, ensureCompletedWaveHistory, workflowBindingTerminal, type CancelWorkflowInput } from "./lifecycle"
 import { buildSidebarSnapshot } from "./sidebar"
@@ -209,18 +209,6 @@ const durableAuthorGitScopes: Record<string, string[]> = {
   documenter: ["docs/system/**", "docs/user/**", "README.md"],
 }
 
-type GitSessionBaseline = {
-  schemaVersion: 1
-  attachmentId?: string
-  capturedAt: string
-  available: boolean
-  dirtyPaths: string[]
-}
-
-function gitSessionBaselineKey(sessionID: string) {
-  return `git-session-baseline/${encodeURIComponent(sessionID)}`
-}
-
 type GitSessionOwnership = {
   schemaVersion: 2
   attachmentId?: string
@@ -296,21 +284,31 @@ async function stagedFingerprint(projectDirectory: string, value: string) {
     : "missing"
 }
 
-function gitTargetCoversPath(target: string, path: string) {
-  const normalizedTarget = normalizeRepoPath(target).replace(/\/\.$/, "")
-  const normalizedPath = normalizeRepoPath(path)
-  return (
-    normalizedPath === normalizedTarget ||
-    normalizedPath.startsWith(normalizedTarget + "/")
-  )
-}
-
 async function gitCommandPaths(projectDirectory: string, args: string[]) {
   const { stdout } = await execFileAsync("git", args, {
     cwd: projectDirectory,
     encoding: "utf8",
   })
   return String(stdout).split("\0").filter(Boolean).map(normalizeRepoPath)
+}
+
+async function projectHasGitWorktree(projectDirectory: string) {
+  try {
+    const { stdout } = await execFileAsync(
+      "git",
+      ["rev-parse", "--is-inside-work-tree"],
+      { cwd: projectDirectory, encoding: "utf8" },
+    )
+    return String(stdout).trim() === "true"
+  } catch (error: any) {
+    const detail = [
+      error?.message,
+      error?.stderr,
+      error?.stdout,
+    ].filter(Boolean).join("\n")
+    if (/not a git repository/i.test(detail)) return false
+    throw error
+  }
 }
 
 async function projectDirtyPaths(projectDirectory: string) {
@@ -322,41 +320,39 @@ async function projectDirtyPaths(projectDirectory: string) {
   return [...new Set([...unstaged, ...staged, ...untracked])].sort()
 }
 
-async function ensureGitSessionBaseline(
-  ctx: any,
-  sessionID: string,
+function toolMutationLockPaths(
+  tool: string,
+  input: unknown,
   projectDirectory: string,
-): Promise<GitSessionBaseline> {
-  const key = gitSessionBaselineKey(sessionID)
-  const attachmentId = (await ctx.storage.get(
-    sessionAttachmentKey(sessionID),
-  )) as string | undefined
-  const existing = (await ctx.storage.get(key)) as GitSessionBaseline | undefined
-  if (
-    existing?.schemaVersion === 1 &&
-    existing.attachmentId === attachmentId
-  ) return existing
-
-  let baseline: GitSessionBaseline
-  try {
-    baseline = {
-      schemaVersion: 1,
-      ...(attachmentId ? { attachmentId } : {}),
-      capturedAt: new Date().toISOString(),
-      available: true,
-      dirtyPaths: await projectDirtyPaths(projectDirectory),
-    }
-  } catch {
-    baseline = {
-      schemaVersion: 1,
-      ...(attachmentId ? { attachmentId } : {}),
-      capturedAt: new Date().toISOString(),
-      available: false,
-      dirtyPaths: [],
+) {
+  const paths = successfulMutationPaths(tool, input, projectDirectory)
+  if ((tool === "shell" || tool === "bash") && input && typeof input === "object") {
+    const command = (input as any).command
+    if (typeof command === "string") {
+      paths.push(...(scopedGitAddTargets(command) ?? []))
     }
   }
-  await ctx.storage.set(key, baseline)
-  return baseline
+  return [...new Set(paths.map(safeOwnedRepoPath))].sort()
+}
+
+function toolNeedsGitIndexLock(tool: string, input: unknown) {
+  if ((tool !== "shell" && tool !== "bash") || !input || typeof input !== "object") {
+    return false
+  }
+  const command = (input as any).command
+  if (typeof command !== "string") return false
+  return Boolean(scopedGitAddTargets(command)) || isAllowedGitCommit(command)
+}
+
+function writeLockError(paths: readonly string[]) {
+  if (paths.length === 1) {
+    return `Write blocked: ${paths[0]} is locked for write by another agent. Try again later.`
+  }
+  return (
+    "Write blocked: these files are locked for write by another agent: " +
+    paths.join(", ") +
+    ". Try again later."
+  )
 }
 
 async function gitSessionOwnership(
@@ -494,16 +490,6 @@ function successfulMutationPaths(
   return []
 }
 
-function baselineTargetConflicts(
-  baseline: GitSessionBaseline,
-  targets: readonly string[],
-) {
-  if (!baseline.available) return []
-  return baseline.dirtyPaths.filter((path) =>
-    targets.some((target) => gitTargetCoversPath(target, path)),
-  )
-}
-
 async function stagedGitPaths(projectDirectory: string) {
   return gitCommandPaths(
     projectDirectory,
@@ -519,8 +505,7 @@ async function commitScopeError(
   requireExplicitOwnership = true,
 ) {
   try {
-    const [baseline, ownership, staged] = await Promise.all([
-      ensureGitSessionBaseline(ctx, sessionID, projectDirectory),
+    const [ownership, staged] = await Promise.all([
       gitSessionOwnership(ctx, sessionID),
       stagedGitPaths(projectDirectory),
     ])
@@ -528,12 +513,6 @@ async function commitScopeError(
     const outside = staged.filter((path) => !resourcesWithinScope([path], writeScope))
     if (outside.length > 0) {
       return `Git commit denied: staged changes outside the current role/task write scope: ${outside.join(", ")}`
-    }
-    const preExisting = baseline.available
-      ? staged.filter((path) => baseline.dirtyPaths.includes(normalizeRepoPath(path)))
-      : []
-    if (preExisting.length > 0) {
-      return `Git commit denied: staged changes pre-date this role attachment and are not owned by this session: ${preExisting.join(", ")}`
     }
     if (requireExplicitOwnership) {
       const unowned = staged.filter(
@@ -560,33 +539,46 @@ async function commitScopeError(
   }
 }
 
-async function uncommittedOwnedChangesError(
+async function ownedChangesCompletionError(
   ctx: any,
   sessionID: string,
   projectDirectory: string,
   writeScope: string[],
 ) {
-  const baseline = await ensureGitSessionBaseline(ctx, sessionID, projectDirectory)
-  if (!baseline.available) return undefined
-
   let dirty: string[]
   try {
+    if (!await projectHasGitWorktree(projectDirectory)) return undefined
     dirty = await projectDirtyPaths(projectDirectory)
   } catch (error) {
     return `Cannot verify repository completion state: ${error instanceof Error ? error.message : String(error)}`
   }
 
-  const newlyDirtyOwned = dirty.filter(
-    (path) =>
-      !baseline.dirtyPaths.includes(path) &&
-      resourcesWithinScope([path], writeScope),
+  const ownership = await gitSessionOwnership(ctx, sessionID)
+  const ownedScoped = ownership.paths.filter((path) =>
+    resourcesWithinScope([path], writeScope),
   )
-  if (newlyDirtyOwned.length === 0) return undefined
+  const changed = await changedOwnedPaths(
+    ownership,
+    projectDirectory,
+    ownedScoped,
+  )
+  if (changed.length > 0) {
+    return (
+      "Cannot complete because files changed after this role's last admitted mutation: " +
+      changed.join(", ") +
+      ". Re-read the current files and revalidate the task outcome before completing."
+    )
+  }
+
+  const dirtyOwned = dirty.filter((path) =>
+    ownedScoped.includes(normalizeRepoPath(path)),
+  )
+  if (dirtyOwned.length === 0) return undefined
 
   return (
-    "Cannot complete while this role has new uncommitted changes in its owned scope: " +
-    newlyDirtyOwned.join(", ") +
-    ". Commit only these owned changes before completing."
+    "Cannot complete while this role has uncommitted changes from its admitted mutations: " +
+    dirtyOwned.join(", ") +
+    ". Commit only these scoped changes before completing."
   )
 }
 
@@ -1442,6 +1434,124 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       summary?: ReturnType<typeof safeInputSummary>
       admission?: EvidenceAdmission
     }>()
+    const activeGitWriteCalls = new Map<
+      string,
+      { paths: string[]; release: () => Promise<void> }
+    >()
+
+    const acquireGitWriteLocks = async (
+      raw: any,
+      paths: readonly string[],
+      lockGitIndex: boolean,
+    ) => {
+      const normalized = [...new Set(paths.map(safeOwnedRepoPath))].sort()
+      if (normalized.length === 0 && !lockGitIndex) return
+      const executionKey = observationCallKey(raw)
+      if (!executionKey) {
+        throw new Error("Write blocked: Loom could not establish a stable tool-call identity for write locking.")
+      }
+      if (activeGitWriteCalls.has(executionKey)) return
+
+      const acquired = await tryAcquireRuntimeLocks(
+        runtime,
+        [
+          ...normalized.map((path) => ({
+            aggregate: "file-write",
+            resourceIdentity: path,
+          })),
+          ...(lockGitIndex
+            ? [{
+                aggregate: "git-index",
+                resourceIdentity: "__repository_index__",
+              }]
+            : []),
+        ],
+      )
+      if ("busyResource" in acquired) {
+        if (acquired.busyResource === "__repository_index__") {
+          throw new Error(
+            "Git operation blocked: repository index is locked by another agent. Try again later.",
+          )
+        }
+        throw new Error(writeLockError([acquired.busyResource]))
+      }
+
+      activeGitWriteCalls.set(executionKey, {
+        paths: normalized,
+        release: acquired.release,
+      })
+    }
+
+    const releaseGitWriteLocks = async (raw: any) => {
+      const executionKey = observationCallKey(raw)
+      if (!executionKey) return
+      const active = activeGitWriteCalls.get(executionKey)
+      if (!active) return
+      await active.release()
+      activeGitWriteCalls.delete(executionKey)
+    }
+
+    const revalidateGitMutationUnderLock = async (raw: any) => {
+      const tool = String(raw.tool ?? "")
+      if ((tool !== "shell" && tool !== "bash") || !raw.input || typeof raw.input !== "object") {
+        return
+      }
+      const command = (raw.input as any).command
+      if (typeof command !== "string") return
+
+      const addTargets = scopedGitAddTargets(command) ?? []
+      if (addTargets.length > 0) {
+        const ownership = await gitSessionOwnership(ctx, String(raw.sessionID))
+        const unowned = addTargets.filter(
+          (target) => !ownership.paths.includes(normalizeRepoPath(target)),
+        )
+        if (unowned.length > 0) {
+          throw new Error(
+            "Git staging denied: stage only files changed by this role/task session.",
+          )
+        }
+        const changed = await changedOwnedPaths(
+          ownership,
+          ctx.location.directory,
+          addTargets,
+        )
+        if (changed.length > 0) {
+          throw new Error(
+            "Git staging denied: these files changed after this role/task's last admitted mutation: " +
+            changed.join(", "),
+          )
+        }
+      }
+
+      if (!isAllowedGitCommit(command)) return
+
+      let writeScope: string[] | undefined =
+        durableAuthorGitScopes[String(raw.agent ?? "")]
+      if (raw.agent === "worker") {
+        const workflowId = (await ctx.storage.get(
+          sessionKey(String(raw.sessionID)),
+        )) as string | undefined
+        const stepId = (await ctx.storage.get(
+          sessionStepKey(String(raw.sessionID)),
+        )) as string | undefined
+        if (workflowId && stepId) {
+          const scope = (await ctx.storage.get(
+            scopeKey(workflowId, stepId),
+          )) as TaskScope | undefined
+          writeScope = scope?.write
+        }
+      }
+
+      if (!writeScope?.length) return
+      const error = await commitScopeError(
+        ctx,
+        String(raw.sessionID),
+        ctx.location.directory,
+        writeScope,
+        true,
+      )
+      if (error) throw new Error(error)
+    }
     const legacyCheckedSessions = new Set<string>()
     const ensureLegacySession = async (sessionID: string) => {
       if (legacyCheckedSessions.has(sessionID)) return
@@ -2615,7 +2725,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               ownedWriteScope = workerScope?.write
             }
             if (ownedWriteScope?.length) {
-              const repositoryError = await uncommittedOwnedChangesError(
+              const repositoryError = await ownedChangesCompletionError(
                 ctx,
                 tool.sessionID,
                 ctx.location.directory,
@@ -6301,13 +6411,6 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             return { content: renderToolOutput({ error: error instanceof Error ? error.message : String(error) }) }
           }
 
-          if (
-            value.stepId &&
-            (tool.agent === "worker" || Boolean(durableAuthorGitScopes[tool.agent]))
-          ) {
-            await ensureGitSessionBaseline(ctx, tool.sessionID, ctx.location.directory)
-          }
-
           let producerSkills: ObservedProducerSkill[] | undefined
           if (tool.agent === "reviewer" || tool.agent === "critic") {
             const current = await readWorkflow(ctx, value.workflowId)
@@ -6727,62 +6830,6 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
     const evaluatePermission = async (event: any) => {
       const delegationAction = event.action === "subagent"
-      if (event.action === "edit") {
-        let writeScope: string[] | undefined = durableAuthorGitScopes[String(event.agent ?? "")]
-        if (event.agent === "worker") {
-          const workflowId = (await ctx.storage.get(sessionKey(event.sessionID))) as string | undefined
-          const stepId = (await ctx.storage.get(sessionStepKey(event.sessionID))) as string | undefined
-          if (workflowId && stepId) {
-            const scope = (await ctx.storage.get(
-              scopeKey(workflowId, stepId),
-            )) as TaskScope | undefined
-            writeScope = scope?.write
-          }
-        }
-
-        if (writeScope?.length) {
-          const baseline = await ensureGitSessionBaseline(
-            ctx,
-            event.sessionID,
-            ctx.location.directory,
-          )
-          const ownership = await gitSessionOwnership(ctx, event.sessionID)
-          let currentDirty: string[] = []
-          if (baseline.available) {
-            try {
-              currentDirty = await projectDirtyPaths(ctx.location.directory)
-            } catch {
-              currentDirty = []
-            }
-          }
-          const ownedResources = event.resources.filter((resource: string) =>
-            ownership.paths.includes(normalizeRepoPath(resource)),
-          )
-          const contentChanged = new Set(
-            await changedOwnedPaths(
-              ownership,
-              ctx.location.directory,
-              ownedResources,
-            ),
-          )
-          const conflicts = event.resources.filter((resource: string) => {
-            const path = normalizeRepoPath(resource)
-            return (
-              baseline.dirtyPaths.includes(path) ||
-              (currentDirty.includes(path) && !ownership.paths.includes(path)) ||
-              contentChanged.has(path)
-            )
-          })
-          if (conflicts.length > 0) {
-            event.effect = "deny"
-            event.message =
-              "Edit denied: these files contain changes not owned by this role/session: " +
-              conflicts.join(", ")
-            return
-          }
-        }
-      }
-
       if (event.action === "edit" || event.action === "shell" || delegationAction) {
         await ensureLegacyCancellationBoundary(event.sessionID)
       }
@@ -6879,11 +6926,6 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               "Git authoring is limited to explicit files inside this role's durable write scope; broad staging and other Git mutations remain blocked."
             return
           }
-          const baseline = await ensureGitSessionBaseline(
-            ctx,
-            event.sessionID,
-            ctx.location.directory,
-          )
           const addTargets = event.resources.flatMap(
             (resource: string) => scopedGitAddTargets(resource) ?? [],
           )
@@ -6909,14 +6951,6 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             event.message =
               "Git staging denied: these files changed after this role's last admitted mutation: " +
               changed.join(", ")
-            return
-          }
-          const conflicts = baselineTargetConflicts(baseline, addTargets)
-          if (conflicts.length > 0) {
-            event.effect = "deny"
-            event.message =
-              "Git staging denied: these paths include changes that pre-date this role/session: " +
-              conflicts.join(", ")
             return
           }
           if (event.resources.some((resource: string) => isAllowedGitCommit(resource))) {
@@ -7024,16 +7058,8 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           return
         }
 
-        const baseline = await ensureGitSessionBaseline(
-          ctx,
-          event.sessionID,
-          ctx.location.directory,
-        )
         const addTargets = event.resources.flatMap(
           (resource: string) => scopedGitAddTargets(resource) ?? [],
-        )
-        const gofmtTargets = event.resources.flatMap(
-          (resource: string) => scopedGofmtWriteTargets(resource) ?? [],
         )
         const ownership = await gitSessionOwnership(ctx, event.sessionID)
         if (
@@ -7051,7 +7077,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         const changedOwned = await changedOwnedPaths(
           ownership,
           ctx.location.directory,
-          [...addTargets, ...gofmtTargets].filter((target) =>
+          addTargets.filter((target: string) =>
             ownership.paths.includes(normalizeRepoPath(target)),
           ),
         )
@@ -7060,36 +7086,6 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           event.message =
             "Worker mutation denied: these files changed after this task's last admitted mutation: " +
             changedOwned.join(", ")
-          return
-        }
-
-        let currentDirty: string[] = []
-        if (baseline.available) {
-          try {
-            currentDirty = await projectDirtyPaths(ctx.location.directory)
-          } catch {
-            currentDirty = []
-          }
-        }
-        const unownedDirtyGofmt = gofmtTargets.filter((target: string) => {
-          const path = normalizeRepoPath(target)
-          return currentDirty.includes(path) && !ownership.paths.includes(path)
-        })
-        if (unownedDirtyGofmt.length > 0) {
-          event.effect = "deny"
-          event.message =
-            "Worker formatting denied: these files contain changes not owned by this task/session: " +
-            unownedDirtyGofmt.join(", ")
-          return
-        }
-
-        const mutationTargets = [...addTargets, ...gofmtTargets]
-        const mutationConflicts = baselineTargetConflicts(baseline, mutationTargets)
-        if (mutationConflicts.length > 0) {
-          event.effect = "deny"
-          event.message =
-            "Worker mutation denied: these paths include changes that pre-date this task attachment: " +
-            mutationConflicts.join(", ")
           return
         }
 
@@ -7361,6 +7357,13 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         await ensureLegacyCancellationBoundary(String(raw.sessionID))
         await assertCancelledChildToolAdmission(ctx.storage as any, tool, raw.input, String(raw.sessionID))
       }
+      const mutationLockPaths = toolMutationLockPaths(
+        tool,
+        raw.input,
+        ctx.location.directory,
+      )
+      const lockGitIndex = toolNeedsGitIndexLock(tool, raw.input)
+
       if (tool === "question") {
         const sessionID = String(raw.sessionID ?? "").trim()
         if (!sessionID) {
@@ -7413,12 +7416,25 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           },
         )
       }
-      if (skipLoomEvidence(tool)) return
       const key = observationCallKey(raw)
+      const mutationNeedsLock = mutationLockPaths.length > 0 || lockGitIndex
+      if (mutationNeedsLock && !key) {
+        throw new Error(
+          "Write blocked: Loom could not establish a stable tool-call identity for write locking.",
+        )
+      }
+      if (skipLoomEvidence(tool)) return
       if (!key) return
-      // A duplicate in-flight identifier is ambiguous, not a newer authority.
+      // A duplicate in-flight identifier is ambiguous. Read-only evidence may
+      // remain passive, but a second mutation must fail closed rather than
+      // sharing the first call's lock identity.
       if (pendingObservations.has(key)) {
         pendingObservations.get(key)!.ambiguous = true
+        if (mutationNeedsLock) {
+          throw new Error(
+            "Write blocked: this tool-call identity is already performing a mutation. Try again later.",
+          )
+        }
         return
       }
       // Reserve the key before awaiting storage so concurrent before events do
@@ -7433,6 +7449,17 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       pending.inputDigest = raw.input === undefined ? undefined : await digest(raw.input)
       pending.summary = safeInputSummary(tool, raw.input)
       pending.ready = true
+
+      if (mutationNeedsLock) {
+        try {
+          await acquireGitWriteLocks(raw, mutationLockPaths, lockGitIndex)
+          if (lockGitIndex) await revalidateGitMutationUnderLock(raw)
+        } catch (error) {
+          await releaseGitWriteLocks(raw)
+          pendingObservations.delete(key)
+          throw error
+        }
+      }
     })
 
     await ctx.tool.hook("execute.after", async (event) => {
@@ -7440,6 +7467,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       const tool = String(raw.tool ?? "")
       if (!tool) return
 
+      try {
       if (tool === "question" && raw.sessionID) {
         const sessionID = String(raw.sessionID)
         const input = toolHookInput(raw)
@@ -7717,6 +7745,9 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       }
 
       await persistEvidenceObservation(ctx.storage as any, runtime, observation, pending?.admission)
+      } finally {
+        await releaseGitWriteLocks(raw)
+      }
     })
   },
 }

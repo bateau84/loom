@@ -293,7 +293,7 @@ V1 validation requires:
 - at least one verification expectation per task;
 - bounded project-relative write scopes;
 - no Worker authority over accepted Anchor, design, requirements, or architecture;
-- no parallel tasks with potentially overlapping write surfaces unless dependency ordering makes them sequential.
+- bounded write scopes may overlap; scope grants authorization while runtime path locks serialize actual file mutations.
 
 Accepted tasks become real workflow nodes named `task:<id>`. In reviewed Objective workflows those nodes depend on `review-plan`, so merely compiling them cannot authorize Worker execution.
 
@@ -321,6 +321,10 @@ Repository-wide wildcards and accepted authority roots (`docs/anchors`, `docs/de
 The Worker child session must attach to the exact currently runnable workflow step before editing. Attachment returns the task envelope for planned work.
 
 For every Worker edit permission evaluation, Loom checks the requested resource paths against the attached task scope and denies any edit outside that scope.
+
+A write scope is authorization, not exclusive historical ownership. A file may already contain uncommitted changes, and several runnable tasks may hold overlapping write scopes. Loom does not deny an otherwise valid write merely because the file is dirty or was last changed by another session.
+
+Actual mutation is serialized separately. Edit/write/apply-patch operations and bounded file-mutating shell operations acquire a short-lived project-scoped path lock for the duration of the tool call. If another live Loom agent is already writing the same path, the later writer is rejected with a retryable "locked for write by another agent" error. The OS-backed lock is released when the tool returns and is released automatically if the owning process exits. Git staging and commit provenance remains stricter: a role may stage and commit only paths admitted through its own successful scoped mutation, so a dirty file becomes eligible for delivery after that role actually edits it.
 
 This V1 boundary governs OpenCode edit/write/apply-patch permissions. Arbitrary shell side effects are not path-contained by Loom and remain separately restricted through the Worker shell policy.
 

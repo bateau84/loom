@@ -116,28 +116,6 @@ function transitiveDependencies(tasks: TaskSpec[]) {
   return memo
 }
 
-function literalPrefix(pattern: string) {
-  const normalized = pattern.replaceAll("\\", "/").replace(/^\.\//, "")
-  const wildcard = normalized.search(/[?*[{]/)
-  const prefix = (wildcard >= 0 ? normalized.slice(0, wildcard) : normalized)
-    .replace(/\/+$/, "")
-  return prefix
-}
-
-function nested(a: string, b: string) {
-  return a === b || a.startsWith(b + "/") || b.startsWith(a + "/")
-}
-
-export function writeScopesMayOverlap(left: string[], right: string[]) {
-  return left.some((a) =>
-    right.some((b) => {
-      const ap = literalPrefix(a)
-      const bp = literalPrefix(b)
-      return Boolean(ap && bp && nested(ap, bp))
-    }),
-  )
-}
-
 export function validateTaskPlan(inputs: TaskSpec[]) {
   if (inputs.length === 0) throw new Error("Task plan must contain at least one task.")
   if (inputs.length > MAX_TASKS) throw new Error(`Task plan exceeds V1 maximum of ${MAX_TASKS} tasks.`)
@@ -146,25 +124,10 @@ export function validateTaskPlan(inputs: TaskSpec[]) {
   const ids = tasks.map((task) => task.id)
   if (new Set(ids).size !== ids.length) throw new Error("Task ids must be unique.")
 
-  const dependencies = transitiveDependencies(tasks)
-
-  for (let i = 0; i < tasks.length; i++) {
-    for (let j = i + 1; j < tasks.length; j++) {
-      const a = tasks[i]
-      const b = tasks[j]
-      if (!writeScopesMayOverlap(a.write, b.write)) continue
-
-      const ordered =
-        dependencies.get(a.id)!.has(b.id) ||
-        dependencies.get(b.id)!.has(a.id)
-
-      if (!ordered) {
-        throw new Error(
-          `Tasks ${a.id} and ${b.id} have overlapping write scopes but no dependency ordering.`,
-        )
-      }
-    }
-  }
+  // Dependency validation remains semantic. Overlapping write scopes are
+  // allowed because task scope is authorization, not an exclusive file claim.
+  // Runtime file-write locks serialize actual mutations.
+  transitiveDependencies(tasks)
 
   return tasks
 }
