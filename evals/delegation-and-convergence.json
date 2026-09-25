@@ -680,7 +680,8 @@
         "requires": [
           "loom_oq_raise",
           "loom_dispatch_grant",
-          "subagent"
+          "subagent",
+          "loom_assessment"
         ],
         "forbids": [
           "loom_start",
@@ -705,6 +706,16 @@
             "tool": "subagent",
             "arg": "agent",
             "equals": "reviewer"
+          },
+          {
+            "tool": "loom_assessment",
+            "arg": "skill",
+            "equals": "risk-driven-planning"
+          },
+          {
+            "tool": "loom_assessment",
+            "arg": "skill",
+            "equals": "work-decomposition"
           }
         ],
         "forbids": [
