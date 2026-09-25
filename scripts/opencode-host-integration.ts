@@ -1731,6 +1731,7 @@ async function waitForSessionToolPart(
   handle: ServerHandle,
   sessionID: string,
   toolName: string,
+  predicate?: (part: any) => boolean,
   timeoutMs = 15_000,
 ) {
   const deadline = Date.now() + timeoutMs
@@ -1760,7 +1761,8 @@ async function waitForSessionToolPart(
             : []
         const part = [...parts].reverse().find((candidate: any) =>
           candidate?.type === "tool" &&
-          String(candidate?.tool ?? candidate?.name ?? "") === toolName
+          String(candidate?.tool ?? candidate?.name ?? "") === toolName &&
+          (!predicate || predicate(candidate))
         )
         if (part) return part
       }
@@ -2104,13 +2106,26 @@ try {
     async () => restartFixture.storage.get(restartBlockedKey),
     20_000,
   )
-  const restartQuestion2 = await waitForSessionToolPart(restartedServer, restartSession.id, "question")
+  const expectedRestartHeader = mock.state.budgetQuestion.questions[0].header
+  const restartQuestion2 = await waitForSessionToolPart(
+    restartedServer,
+    restartSession.id,
+    "question",
+    (part) => {
+      const input = part?.state?.input ?? part?.input
+      return (
+        part?.state?.status !== "error" &&
+        input?.questions?.[0]?.header === expectedRestartHeader
+      )
+    },
+    20_000,
+  )
   const restartInput2 = restartQuestion2?.state?.input ?? restartQuestion2?.input
-  if (
-    restartQuestion2?.state?.status === "error" ||
-    restartInput2?.questions?.[0]?.header !== mock.state.budgetQuestion.questions[0].header
-  ) {
-    throw new Error("Restarted OpenCode host did not render the reclaimed canonical budget question")
+  if (restartInput2?.questions?.[0]?.header !== expectedRestartHeader) {
+    throw new Error(
+      "Restarted OpenCode host did not render the reclaimed canonical budget question: " +
+      JSON.stringify(restartQuestion2),
+    )
   }
   void restartPrompt2
   const unrelatedSession = await jsonRequestAny(
