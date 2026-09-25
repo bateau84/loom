@@ -872,6 +872,15 @@ function plannedTask(snapshot: WorkPlanSnapshot | undefined, taskId: string) {
     .find((task) => task.id === taskId)
 }
 
+export function workPlanSemanticFingerprint(
+  hierarchy: WorkHierarchy,
+  generation = hierarchy.generation,
+) {
+  const snapshot = planSnapshot(hierarchy, generation)
+  if (!snapshot) return undefined
+  return createHash("sha256").update(JSON.stringify(snapshot)).digest("hex")
+}
+
 const PLAN_CONTEXT_TEXT_LIMIT = 320
 const PLAN_CONTEXT_LIST_LIMIT = 4
 const PLAN_CONTEXT_DEPENDENT_LIMIT = 24

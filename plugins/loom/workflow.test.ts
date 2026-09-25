@@ -514,7 +514,7 @@ describe("Loom routing DAG", () => {
     expect(runnable(w).map((step) => step.id)).toEqual(["review-task"])
   })
 
-  test("objective depth rejects non-product and read-only combinations", () => {
+  test("objective depth rejects non-product work but supports planning-only product outcomes", () => {
     expect(() => buildSteps({
       humanFacing: false,
       behavioral: false,
@@ -526,7 +526,7 @@ describe("Loom routing DAG", () => {
       executionDepth: "objective",
     })).toThrow("Objective execution depth requires productOutcome=true.")
 
-    expect(() => buildSteps({
+    const planningOnly = workflow(buildSteps({
       humanFacing: false,
       behavioral: false,
       structural: false,
@@ -535,7 +535,17 @@ describe("Loom routing DAG", () => {
       productOutcome: true,
       implementationRequested: false,
       executionDepth: "objective",
-    })).toThrow("Objective execution depth requires implementationRequested=true.")
+    }))
+
+    expect(planningOnly.steps.map((step) => step.id)).toEqual([
+      "critic-solution",
+      "plan",
+      "review-plan",
+    ])
+    expect(planningOnly.steps.some((step) => step.agent === "worker")).toBe(false)
+    expect(planningOnly.steps.some((step) => step.id === "review-implementation")).toBe(false)
+    expect(planningOnly.steps.some((step) => step.id === "product-acceptance")).toBe(false)
+    expect(planningOnly.steps.some((step) => step.id === "critic-final")).toBe(false)
   })
 
   test("changed dependencies invalidate a previously satisfied gate", () => {

@@ -85,6 +85,22 @@ A Change may therefore start directly as a request-backed workflow; it does not 
 
 For broad product work, multi-part feature delivery, or work that benefits from decomposition and whole-product acceptance:
 
+When the requested outcome is **planning only**, stop at independent Plan review:
+
+```text
+accepted Anchor
+  -> required Research / Designer / Specifier / Architect as earned
+  -> Critic solution attack
+  -> Planner persists holistic Plan
+  -> Reviewer Plan review
+  -> planning workflow complete
+     parent Objective remains active; this workflow adds no Wave claim or Workers
+```
+
+A later explicit implementation request starts a fresh workflow against that same Objective/Plan and compiles the first dependency-eligible Wave.
+
+For full delivery:
+
 ```text
 fuzzy/new product intent when needed
   -> focused grilling
@@ -112,7 +128,7 @@ fuzzy/new product intent when needed
 
 > The workflow must be cheaper and simpler than the work it coordinates.
 
-Start shallow. Stay shallow for obvious bounded findings. A completed Task may escalate Task -> Change when later evidence earns additional authority; completed discovery evidence is preserved while widened implementation/review work is reopened. Change -> Objective is reserved for broad product delivery and requires an accepted Anchor, `productOutcome=true`, and implementation authority. A request is never promoted merely because it *might* uncover something substantial.
+Start shallow. Stay shallow for obvious bounded findings. A completed Task may escalate Task -> Change when later evidence earns additional authority; completed discovery evidence is preserved while widened implementation/review work is reopened. Change -> Objective is reserved for broad accepted product scope and requires an accepted Anchor plus `productOutcome=true`. Implementation workflows also require implementation authority; an explicitly planning-only Objective uses `implementationRequested=false` and terminates after reviewed planning without creating execution authority. A request is never promoted merely because it *might* uncover something substantial.
 
 ## Recovery
 

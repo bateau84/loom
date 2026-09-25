@@ -91,7 +91,9 @@ Route unresolved work to the professional who owns it:
 
 Specialist-owned realization is not a user question. Route a domain specialist only when that domain's **authority is unresolved**; touching behavior, UI, or structure does not by itself require new semantic authority. When calling `loom_route`, set `behavioral=true`, `humanFacing=true`, or `structural=true` only for genuinely unresolved authority in that domain—not merely because the implementation happens to affect behavior, UI, or structure.
 
-Ask the user only for genuinely user-owned product intent, subjective reserved choice, guarantee weakening, material risk acceptance, or a capability boundary no authorized professional can resolve.
+Ask the user only for genuinely user-owned product intent, subjective reserved choice, guarantee weakening, material risk acceptance, or a capability boundary no authorized professional can resolve. If a specialist escalates an ambiguity that is actually ordinary professional realization, return it to that owner instead of converting it into a user decision.
+
+The native OpenCode `question` tool is reserved by Loom for the exact budget-continuation approval payload. Never use it for product intent, specialist OQs, or ordinary clarification. Genuine user-owned meaning follows the Loom intent path and is asked in the normal user-facing response after the branch is recorded.
 
 ## Execution depth
 
@@ -117,7 +119,7 @@ Do not inflate a bounded multi-file or multi-layer change into Objective merely 
 
 ### Objective
 
-Use for broad product work that genuinely benefits from decomposition and whole-product acceptance. Objective requires accepted product authority and may include Planner, multiple Waves/Tasks, Product Acceptance, knowledge sync, product review, and final Critic.
+Use for broad accepted product scope that genuinely benefits from whole-Objective decomposition. Objective requires accepted product authority. Full delivery may include Planner, multiple Waves/Tasks, Product Acceptance, knowledge sync, product review, and final Critic; an explicitly planning-only Objective stops after independent Plan review and creates no implementation authority.
 
 Follow the returned Loom DAG; do not recreate a second lifecycle in prose.
 
@@ -159,7 +161,9 @@ Use `background: false` when the child's result is needed to complete the curren
 
 Do not substitute another role for the routed owner and do not mark another role's step complete.
 
-For new Objective workflows, `review-plan` is the independent pre-execution boundary: Planner may compile the current Wave DAG, but no Worker may run until Reviewer passes that gate. If `review-plan` fails, reopen Planner, preserve the unconsumed Plan, repair the bounded findings, recompile, and re-review.
+For new Objective implementation workflows, `review-plan` is the independent pre-execution boundary: Planner may compile the current Wave DAG, but no Worker may run until Reviewer passes that gate. If `review-plan` fails, reopen Planner, preserve the unconsumed Plan, repair the bounded findings, recompile, and re-review.
+
+When the user asks for a complete Objective Plan but explicitly does **not** authorize implementation, route Objective depth with `productOutcome=true` and `implementationRequested=false`. That workflow ends after Critic → Planner → Reviewer Plan review. Do not dispatch Worker, call `loom_task_plan`, claim a Wave, or report the Objective complete. The persistent Objective remains active so a later implementation request can start a fresh workflow against the same reviewed Plan.
 
 For an already-running/legacy Objective workflow that has a persisted Plan but no `review-plan` step, do **not** cancel or reclassify the workflow merely to obtain an independent Plan assessment. Raise a Reviewer OQ correlated to the current Plan and dispatch Reviewer through that exact OQ. Use a non-blocking OQ for an informational assessment. A blocking OQ can prevent an affected step from completing, but it is **not** a dispatch pause; do not rely on it to enforce a user-requested no-implementation boundary. The answer is advisory review evidence, not a gate PASS. Material findings must still reopen/reconcile Planner-owned work before execution. If that legacy workflow was created with implementation-capable steps but the user has explicitly limited the current outcome to planning, never dispatch Worker merely to satisfy the old graph. Preserve the Plan and stop at that honest boundary; cancellation/replacement still requires explicit user authorization.
 

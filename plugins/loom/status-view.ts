@@ -11,7 +11,7 @@ import { effectiveTotalDispatchLimit, type BudgetState, type ExecutionLimits } f
 import type { KnowledgeReport } from "./knowledge"
 import type { OpenQuestion } from "./oq"
 import type { LoomRuntimeIdentity } from "./runtime"
-import { runnable, type Workflow } from "./workflow"
+import { planningOnlyObjective, runnable, type Workflow } from "./workflow"
 import {
   nextRunnableWaves,
   workPlanContext,
@@ -93,6 +93,7 @@ export function compactWorkflowState(
   return {
     workflowId: workflow.id,
     state,
+    ...(planningOnlyObjective(workflow.effects) ? { planningOnly: true } : {}),
     ...(workflow.cancellation ? { cancellation: { at: workflow.cancellation.at, reason: clippedSummary(workflow.cancellation.reason) } } : {}),
     progress: {
       finished: finished.length,
@@ -259,6 +260,9 @@ export function renderStatusMarkdown(view: StatusView, artifact?: StatusArtifact
 
   if (view.cancellation) {
     lines.push(`- **Cancelled:** ${clippedSummary(view.cancellation.reason)}. Completed work is preserved; unfinished checks are not passes. A replacement workflow may now start.`)
+  }
+  if (view.planningOnly) {
+    lines.push("- **Mode:** planning only · this workflow does not execute or advance implementation, and does not complete the Objective")
   }
   if (view.work) {
     const objective = view.work.tree.objective
@@ -496,6 +500,7 @@ ul { margin: 0; padding-left: 22px; }
   </header>
 
   ${view.cancellation ? `<section class="panel" aria-label="Cancellation"><h2>Workflow cancelled</h2><p>${esc(view.cancellation.reason)}</p><p>Completed work is preserved. Unfinished checks are not passes. Start a new workflow to continue.</p></section>` : ""}
+  ${view.planningOnly ? `<section class="panel" aria-label="Planning-only workflow"><h2>Planning only</h2><p>Workflow completion means the holistic Plan was reviewed. This workflow does not execute or advance implementation and does not complete the parent Objective; existing implementation state is preserved.</p></section>` : ""}
   <section class="cards" aria-label="Workflow summary">
     <div class="card"><strong>${esc(view.progress.finished)}/${esc(view.progress.total)}</strong><span>Workflow steps</span></div>
     <div class="card"><strong>${esc(taskProgress)}</strong><span>Objective tasks</span></div>

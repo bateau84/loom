@@ -28,5 +28,6 @@ tags: [requirements, loom, index]
 - [BR-019 — Keep Workflow Ceremony Proportional](br-019-keep-workflow-ceremony-proportional.md)
 - [BR-020 — Conversation Is Loom's Primary Interface](br-020-conversation-is-primary-interface.md)
 - [BR-021 — Preserve Holistic Plan Context Across Handoffs](br-021-preserve-holistic-plan-context.md)
+- [BR-022 — Support Planning-Only Objective Completion](br-022-support-planning-only-objective-completion.md)
 
 Each requirement is its own OKF document so relationships, dependencies, retrieval, and future supersession remain explicit and machine-discoverable.

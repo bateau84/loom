@@ -85,6 +85,21 @@ describe("interactive Loom status presentation", () => {
     expect(output).not.toContain("Finished task")
   })
 
+  test("planning-only status says workflow completion is not Objective completion", () => {
+    const view = statusView()
+    view.state = "complete"
+    view.planningOnly = true
+    view.now = []
+    view.upcoming = []
+    const markdown = renderStatusMarkdown(view)
+    expect(markdown).toContain("Mode:** planning only")
+    expect(markdown).toContain("does not execute or advance implementation, and does not complete the Objective")
+
+    const html = renderStatusHtml(view)
+    expect(html).toContain("Planning only")
+    expect(html).toContain("existing implementation state is preserved")
+  })
+
   test("provides a structured presentation handoff for JSON and metadata paths", () => {
     const presentation = statusPresentation({
       path: "/tmp/loom-status.html",

@@ -1,0 +1,97 @@
+{
+  "version": 1,
+  "name": "planning-only-objective",
+  "default": false,
+  "cases": [
+    {
+      "id": "PLANNING-ONLY-OBJECTIVE-RUNTIME-01",
+      "agent": "general",
+      "execution": "runtime",
+      "target_timeout_seconds": 720,
+      "requirements": [
+        "BR-006",
+        "BR-008",
+        "BR-019",
+        "BR-021",
+        "BR-022"
+      ],
+      "prompt": "Use the accepted product authority in `docs/anchors/planning-only/anchor.md` to produce a complete, durable, independently reviewed Objective Plan. This request is planning only: do not implement anything, do not dispatch Worker, and do not claim any Wave. Finish when the Plan itself has passed independent review; keep the parent Objective active/incomplete so implementation can be requested later.",
+      "trap": "Treat Objective depth as requiring implementation, compile or dispatch Worker work despite the explicit boundary, claim a Wave, or report the parent Objective/product complete merely because planning finished.",
+      "expectations": [
+        "Starts and routes one Anchor-backed Objective workflow with productOutcome=true and implementationRequested=false rather than degrading to Task/Change depth.",
+        "Uses the Objective planning path through any genuinely earned Specifier/Architect authority, then Critic, Planner, and independent Reviewer Plan review, producing a persistent holistic Plan without dispatching Worker.",
+        "The terminal workflow has no executable task:* Worker steps, no implementation review/Product Acceptance/final product gate, and no Wave claim; the persistent parent Objective remains active/incomplete.",
+        "Reports the reviewed Plan as the completed requested workflow outcome while clearly preserving implementation as future authorized work."
+      ],
+      "must_not": [
+        "Must not produce executable task:* Worker steps, a Wave claim, Worker dispatch, or a claim that the Objective/product is complete. A rejected child attempt to compile execution is not itself a product-state violation if Loom remains non-executable."
+      ],
+      "tools": {
+        "requires": [
+          "loom_start",
+          "loom_route",
+          "loom_status",
+          "subagent"
+        ],
+        "forbids": []
+      },
+      "actions": {
+        "requires": [
+          {
+            "tool": "loom_route",
+            "arg": "executionDepth",
+            "equals": "objective"
+          },
+          {
+            "tool": "loom_route",
+            "arg": "productOutcome",
+            "equals": true
+          },
+          {
+            "tool": "loom_route",
+            "arg": "implementationRequested",
+            "equals": false
+          },
+          {
+            "tool": "subagent",
+            "arg": "agent",
+            "equals": "critic"
+          },
+          {
+            "tool": "subagent",
+            "arg": "agent",
+            "equals": "planner"
+          },
+          {
+            "tool": "subagent",
+            "arg": "agent",
+            "equals": "reviewer"
+          }
+        ],
+        "forbids": [
+          {
+            "tool": "subagent",
+            "arg": "agent",
+            "equals": "worker"
+          },
+          {
+            "tool": "subagent",
+            "arg": "agent",
+            "equals": "acceptance"
+          },
+          {
+            "tool": "subagent",
+            "arg": "agent",
+            "equals": "documenter"
+          }
+        ]
+      },
+      "fixture_files": [
+        {
+          "path": "docs/anchors/planning-only/anchor.md",
+          "content": "---\ntype: anchor\ntitle: Planning-only delivery fixture\nstatus: accepted\n---\n\n# Goal\n\nProvide a small local service that stores named notes durably and exposes a read-only list command.\n\n# Success\n\n- Durable note storage survives process restart.\n- The list command returns notes in stable creation order.\n- The implementation remains local-only; no network service or external database is introduced.\n\n# Scope\n\nPlan the persistence boundary, command surface, verification, integration, and release proof needed to deliver this outcome.\n\n# Exclusions\n\n- No implementation is authorized by this request.\n- No cloud service, remote database, or web UI.\n"
+        }
+      ]
+    }
+  ]
+}

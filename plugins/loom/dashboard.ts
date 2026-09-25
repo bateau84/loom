@@ -13,7 +13,7 @@ import {
 import type { KnowledgeReport } from "./knowledge"
 import type { OpenQuestion } from "./oq"
 import type { LoomRuntimeIdentity, RawStorage } from "./runtime"
-import { runnable, type Step, type Workflow } from "./workflow"
+import { planningOnlyObjective, runnable, type Step, type Workflow } from "./workflow"
 import type { WorkHierarchy, WorkNode, WorkNodeStatus } from "./work"
 
 export const DASHBOARD_SCHEMA_VERSION = 1
@@ -159,6 +159,7 @@ export type WorkflowProjectionV1 = {
   anchor?: string
   executionStage?: string
   status: "active" | "blocked" | "failed" | "complete" | "cancelled"
+  planningOnly?: boolean
   currentSteps: StepSummary[]
   runnableSteps: StepSummary[]
   hierarchyProgress?: {
@@ -701,6 +702,7 @@ async function workflowProjection(
     anchor: workflow.anchor,
     ...(ready[0] ? { executionStage: `${ready[0].agent}:${ready[0].id}` } : {}),
     status: workflowStatus(workflow),
+    ...(planningOnlyObjective(workflow.effects) ? { planningOnly: true } : {}),
     currentSteps: ready.map(summary),
     runnableSteps: ready.map(summary),
     ...(work ? { hierarchyProgress: hierarchyProgress(work) } : {}),

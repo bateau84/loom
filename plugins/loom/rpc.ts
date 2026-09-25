@@ -51,6 +51,7 @@ export type LoomSidebarSnapshot = {
   active: boolean
   workflowId: string
   state: LoomSidebarState
+  planningOnly?: boolean
   progress: {
     finished: number
     total: number
@@ -111,6 +112,7 @@ export const LoomRpc = {
           active: { type: "boolean" },
           workflowId: { type: "string" },
           state: { type: "string", enum: ["idle", "active", "blocked", "complete", "cancelled"] },
+          planningOnly: { type: "boolean" },
           progress: {
             type: "object",
             properties: {

@@ -237,6 +237,48 @@ describe("Loom dashboard projection", () => {
     expect(snapshot.workObjectives[0].stateDigest).toHaveLength(64)
   })
 
+  test("planning-only workflow projection stays distinct from active Objective delivery", async () => {
+    const root = await fixture()
+    const { storage, runtime } = await populated(root)
+    const planned = workflow(4)
+    planned.effects = {
+      humanFacing: false,
+      behavioral: false,
+      structural: false,
+      externalUnknown: false,
+      diagnostic: false,
+      productOutcome: true,
+      implementationRequested: false,
+      executionDepth: "objective",
+      workLevel: "objective",
+      workLevelAuto: false,
+    }
+    planned.steps = [
+      { id: "critic-solution", agent: "critic", kind: "gate", dependsOn: [], status: "passed" },
+      { id: "plan", agent: "planner", kind: "work", dependsOn: ["critic-solution"], status: "complete" },
+      { id: "review-plan", agent: "reviewer", kind: "gate", dependsOn: ["plan"], status: "passed" },
+    ]
+    await storage.set("workflow/workflow-a", planned)
+    const plannedWork = work()
+    for (const node of plannedWork.nodes) {
+      if (node.type === "wave" || node.type === "task") {
+        node.status = "pending"
+        delete node.claimedByWorkflowId
+        delete node.claimedAt
+      }
+    }
+    plannedWork.objectiveStatus = "active"
+    await storage.set("work/objective", plannedWork)
+
+    const snapshot = await buildProjectSnapshot(storage, runtime, 8, {}, new Date("2026-09-21T12:10:00.000Z"))
+    expect(snapshot.workflows[0]).toMatchObject({
+      workflowId: "workflow-a",
+      status: "complete",
+      planningOnly: true,
+    })
+    expect(snapshot.workObjectives[0].status).toBe("active")
+  })
+
   test("historical OQ projection retains the exact amended Plan origin", async () => {
     const root = await fixture()
     const { storage, runtime } = await populated(root)
