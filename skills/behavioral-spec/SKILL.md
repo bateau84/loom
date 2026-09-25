@@ -51,4 +51,6 @@ docs/requirements/<anchor-slug>/
 
 Use independent BR/QS/OC numbering. The bundle index is navigation and relationship context, not a replacement for the artifacts.
 
+Existing flat BR/OC bundles remain valid until an intentional migration updates them and their references; do not move legacy artifacts merely to satisfy the new-work layout.
+
 Load the artifact-specific skill before authoring each artifact type.
