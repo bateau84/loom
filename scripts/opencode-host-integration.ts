@@ -304,7 +304,7 @@ function subagentAction(
   if (supported.has("background")) args.background = false
   if (supported.has("description")) args.description = description
 
-  const missing = required.filter((key) => args[key] === undefined)
+  const missing = required.filter((key: string) => args[key] === undefined)
   if (missing.length) {
     throw new Error(`Real Loom subagent tool has unsupported required arguments: ${missing.join(", ")}`)
   }
@@ -809,10 +809,10 @@ async function startMockProvider() {
           subagentTool?.input_schema ??
           subagentTool?.inputSchema
       }
-      const requestToolNames = new Set(
+      const requestToolNames = new Set<string>(
         requestTools
           .map((item: any) => String(item?.function?.name ?? item?.name ?? ""))
-          .filter(Boolean),
+          .filter((name: string) => Boolean(name)),
       )
       if (state.tuiBudgetPhase >= 6 && state.tuiBudgetPhase <= 7 && state.tuiBudgetRouting.length < 20) {
         state.tuiBudgetRouting.push({
