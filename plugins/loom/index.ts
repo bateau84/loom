@@ -6949,7 +6949,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             currentDirty = []
           }
         }
-        const unownedDirtyGofmt = gofmtTargets.filter((target) => {
+        const unownedDirtyGofmt = gofmtTargets.filter((target: string) => {
           const path = normalizeRepoPath(target)
           return currentDirty.includes(path) && !ownership.paths.includes(path)
         })
