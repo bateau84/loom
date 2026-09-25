@@ -670,8 +670,8 @@
       "expectations": [
         "Keeps the existing workflow `eval-legacy-plan-review` and its persistent Plan intact; no replacement workflow, route reclassification, cancellation, or Worker execution occurs.",
         "Raises a Reviewer-owned OQ on the existing workflow for an independent Plan assessment and issues an exact dispatch grant for that OQ.",
-        "Actually dispatches Reviewer through the OQ. Reviewer attaches to that same workflow/question, receives Plan context plus the Planner's observed `risk-driven-planning` / `work-decomposition` methodology facts, applies the relevant review assessments, and returns an assessment answer rather than a gate verdict.",
-        "The response distinguishes this legacy advisory assessment from a formal `review-plan` PASS and does not claim implementation occurred."
+        "Actually dispatches Reviewer through the exact OQ and instructs Reviewer to use the applicable Plan-review methodology before assessing. The returned child result/OQ answer is a substantive independent Plan assessment rather than a gate verdict.",
+        "After Reviewer returns, rechecks the existing workflow/OQ state and preserves the distinction between this legacy advisory assessment and a formal `review-plan` PASS; it does not claim implementation occurred."
       ],
       "must_not": [
         "Must not call loom_start, loom_route, loom_cancel, loom_task_plan, or dispatch a Worker merely to make Reviewer reachable."
@@ -681,7 +681,7 @@
           "loom_oq_raise",
           "loom_dispatch_grant",
           "subagent",
-          "loom_assessment"
+          "loom_oq_list"
         ],
         "forbids": [
           "loom_start",
@@ -708,14 +708,14 @@
             "equals": "reviewer"
           },
           {
-            "tool": "loom_assessment",
-            "arg": "skill",
-            "equals": "risk-driven-planning"
+            "tool": "subagent",
+            "arg": "prompt",
+            "contains": "Load the applicable Reviewer methodology"
           },
           {
-            "tool": "loom_assessment",
-            "arg": "skill",
-            "equals": "work-decomposition"
+            "tool": "loom_oq_list",
+            "arg": "workflowId",
+            "equals": "eval-legacy-plan-review"
           }
         ],
         "forbids": [
