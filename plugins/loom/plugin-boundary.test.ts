@@ -2127,6 +2127,20 @@ Verdict: FAIL
 
       // Restore the exact content produced by the admitted Worker mutation.
       await writeFile(join(h.root, "src", "owned.ts"), "owned\n")
+      await chmod(join(h.root, "src", "owned.ts"), 0o755)
+
+      const foreignModeStage: any = {
+        agent: "worker",
+        action: "shell",
+        resources: ["git add src/owned.ts"],
+        sessionID: "git-ownership-worker",
+        effect: "ask",
+      }
+      await evaluate!(foreignModeStage)
+      expect(foreignModeStage.effect).toBe("deny")
+      expect(foreignModeStage.message).toContain("changed after this task")
+
+      await chmod(join(h.root, "src", "owned.ts"), 0o644)
 
       const incomplete = await h.call(
         "complete",

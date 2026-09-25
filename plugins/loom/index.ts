@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto"
-import { readFile } from "node:fs/promises"
+import { lstat, readFile, readlink } from "node:fs/promises"
 import { join } from "node:path"
 import { execFile } from "node:child_process"
 import { promisify } from "node:util"
@@ -249,9 +249,32 @@ function safeOwnedRepoPath(value: string) {
 
 async function worktreeFingerprint(projectDirectory: string, value: string) {
   const path = safeOwnedRepoPath(value)
+  const absolute = join(projectDirectory, path)
   try {
-    const bytes = await readFile(join(projectDirectory, path))
-    return createHash("sha256").update(bytes).digest("hex")
+    const info = await lstat(absolute)
+    const hash = createHash("sha256")
+    if (info.isSymbolicLink()) {
+      return hash
+        .update("symlink\0")
+        .update(String(info.mode))
+        .update("\0")
+        .update(await readlink(absolute))
+        .digest("hex")
+    }
+    if (info.isFile()) {
+      return hash
+        .update("file\0")
+        .update(String(info.mode))
+        .update("\0")
+        .update(await readFile(absolute))
+        .digest("hex")
+    }
+    return hash
+      .update("other\0")
+      .update(String(info.mode))
+      .update("\0")
+      .update(String(info.size))
+      .digest("hex")
   } catch (error: any) {
     if (error?.code === "ENOENT") return "missing"
     throw error
