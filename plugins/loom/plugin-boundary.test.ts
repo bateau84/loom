@@ -3964,7 +3964,7 @@ describe("Skill methodology evidence lifecycle", () => {
         outcome: "pass",
         summary: "Verdict based on revision 1",
       }, "reviewer", firstReviewer)
-      expect(staleVerdict.error).toContain("Plan changed after Reviewer attachment")
+      expect(staleVerdict.error).toContain("Plan or executable Task DAG changed after Reviewer attachment")
 
       const freshReviewer = "plan-review-revision-reviewer-2"
       const freshAttach = await attach("review-plan", "reviewer", freshReviewer)
