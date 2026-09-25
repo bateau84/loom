@@ -346,12 +346,12 @@ function toolNeedsGitIndexLock(tool: string, input: unknown) {
 
 function writeLockError(paths: readonly string[]) {
   if (paths.length === 1) {
-    return `Write blocked: ${paths[0]} is locked for write by another agent. Try again later.`
+    return `Write blocked: ${paths[0]} is locked for write by another agent. Try again later and re-read the file before retrying.`
   }
   return (
     "Write blocked: these files are locked for write by another agent: " +
     paths.join(", ") +
-    ". Try again later."
+    ". Try again later and re-read the files before retrying."
   )
 }
 
@@ -539,7 +539,7 @@ async function commitScopeError(
   }
 }
 
-async function ownedChangesCompletionError(
+async function uncommittedOwnedChangesError(
   ctx: any,
   sessionID: string,
   projectDirectory: string,
@@ -554,24 +554,10 @@ async function ownedChangesCompletionError(
   }
 
   const ownership = await gitSessionOwnership(ctx, sessionID)
-  const ownedScoped = ownership.paths.filter((path) =>
-    resourcesWithinScope([path], writeScope),
-  )
-  const changed = await changedOwnedPaths(
-    ownership,
-    projectDirectory,
-    ownedScoped,
-  )
-  if (changed.length > 0) {
-    return (
-      "Cannot complete because files changed after this role's last admitted mutation: " +
-      changed.join(", ") +
-      ". Re-read the current files and revalidate the task outcome before completing."
-    )
-  }
-
-  const dirtyOwned = dirty.filter((path) =>
-    ownedScoped.includes(normalizeRepoPath(path)),
+  const dirtyOwned = dirty.filter(
+    (path) =>
+      ownership.paths.includes(normalizeRepoPath(path)) &&
+      resourcesWithinScope([path], writeScope),
   )
   if (dirtyOwned.length === 0) return undefined
 
@@ -2725,7 +2711,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               ownedWriteScope = workerScope?.write
             }
             if (ownedWriteScope?.length) {
-              const repositoryError = await ownedChangesCompletionError(
+              const repositoryError = await uncommittedOwnedChangesError(
                 ctx,
                 tool.sessionID,
                 ctx.location.directory,
