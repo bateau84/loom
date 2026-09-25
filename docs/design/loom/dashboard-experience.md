@@ -159,7 +159,7 @@ Designer validation should cover:
 
 1. developer switches among several working directories and resumes a recent session;
 2. one session contains several workflows and their relationship is immediately clear;
-3. four failed restart workflows are selected and deleted in one cleanup action;
+3. four failed restart workflows are deleted in one confirmed cleanup action;
 4. active workflow deletion is unavailable/refused;
 5. project files remain unchanged after workflow cleanup;
 6. stale projection and consistency conflict remain understandable;
