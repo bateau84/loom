@@ -44,7 +44,7 @@ Build the persistent Plan with `loom_work_plan` as structured control-plane stat
 
 The Plan is not a prose report and does not create product authority. Its semantic fields must faithfully compile already accepted authority. Plan acceptance coverage expresses what accepted outcomes must be proved; Acceptance still owns the executable `loom_pa_plan` scenario strategy. Local amendments create immutable Plan revisions and may not retroactively rewrite completed Task meaning.
 
-Register the current Wave with `loom_task_plan`. The executable Task contract must match the persistent semantic Task contract; add only the bounded mutation surface and skill recommendations needed for dispatch.
+Register the current Wave with `loom_task_plan`. The executable Task contract must match the persistent semantic Task contract; add only the bounded mutation surface and skill recommendations needed for dispatch. In workflows with a `review-plan` gate, this compiles the executable DAG but does not claim or authorize the Wave. Complete the Plan step and let Reviewer independently assess the holistic Plan plus exact executable Task contracts before execution begins. A failed Plan review returns the affected unconsumed Plan/DAG to Planner for bounded amendment and recompilation.
 
 Before completion, challenge the Plan from both directions: every accepted obligation must have an owner/proof disposition, and every Task criterion/mechanism must trace back to accepted authority or explicit plan-level verification need.
 
