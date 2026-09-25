@@ -2995,6 +2995,31 @@ test("Planner OQ may amend untouched future work without staling the active Wave
   }
 })
 
+test("reopening Plan after Worker execution does not release the consumed Wave claim", async () => {
+  const h = await waveLifecycleFixture()
+  try {
+    expect((await h.finish("task:one", "worker")).error).toBeUndefined()
+
+    expect((await h.call("reopen", {
+      workflowId: h.workflowId,
+      stepId: "plan",
+      reason: "New evidence requires reassessing the consumed Plan.",
+      newEvidence: true,
+      changedHypothesis: false,
+      changedStrategy: false,
+      reducedUnresolved: false,
+    }, "general", "parent")).error).toBeUndefined()
+
+    const work = await h.work()
+    expect(
+      work.nodes.find((node: any) => node.type === "wave" && node.logicalId === "first")
+        .claimedByWorkflowId,
+    ).toBe(h.workflowId)
+  } finally {
+    h.restore()
+  }
+})
+
 test("reopened Planner can surgically amend a current Task and must refresh the executable DAG", async () => {
   const h = await waveLifecycleFixture()
   try {
