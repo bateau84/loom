@@ -27,13 +27,20 @@ export type BudgetGrant = {
   grantedAt: string
 }
 
+export type BudgetAuthorizationSource = "user-message" | "question"
+
 export type BudgetContinuation = {
   key: string
   agent: string
   grantedBy: string
   reason: string
   confirmation: string
-  authorizationUserMessageId: string
+  /** Generic durable authorization identity. Legacy records may only have authorizationUserMessageId. */
+  authorizationId?: string
+  authorizationSource?: BudgetAuthorizationSource
+  authorizationUserMessageId?: string
+  authorizationQuestionCallId?: string
+  authorizationDenialId?: string
   requestedDispatches: number
   stepLimitIncrease: number
   workflowLimitIncrease: number
@@ -82,6 +89,10 @@ function continuationStepIncreaseForKey(state: BudgetState, key: string) {
   return (state.continuations ?? [])
     .filter((continuation) => continuation.key === key)
     .reduce((total, continuation) => total + continuation.stepLimitIncrease, 0)
+}
+
+function continuationAuthorizationId(continuation: BudgetContinuation) {
+  return continuation.authorizationId ?? continuation.authorizationUserMessageId ?? ""
 }
 
 function automaticStepLimit(state: BudgetState, key: string, agent: string, limits: ExecutionLimits) {
@@ -473,7 +484,11 @@ export function continueWorkflowDispatchBudget(input: {
   grantedBy: string
   reason: string
   confirmation: string
-  authorizationUserMessageId: string
+  authorizationId?: string
+  authorizationSource?: BudgetAuthorizationSource
+  authorizationUserMessageId?: string
+  authorizationQuestionCallId?: string
+  authorizationDenialId?: string
   now: string
 }): WorkflowBudgetContinuationResult {
   const {
@@ -486,7 +501,11 @@ export function continueWorkflowDispatchBudget(input: {
     grantedBy,
     reason,
     confirmation,
+    authorizationId,
+    authorizationSource,
     authorizationUserMessageId,
+    authorizationQuestionCallId,
+    authorizationDenialId,
     now,
   } = input
 
@@ -510,18 +529,19 @@ export function continueWorkflowDispatchBudget(input: {
     }
   }
 
-  if (!authorizationUserMessageId.trim()) {
+  const resolvedAuthorizationId = authorizationId?.trim() || authorizationUserMessageId?.trim() || ""
+  if (!resolvedAuthorizationId) {
     return {
       allowed: false,
-      reason: "Budget continuation requires observed user-message provenance.",
+      reason: "Budget continuation requires explicit authorization provenance.",
       state,
     }
   }
 
-  if ((state.continuations ?? []).some((item) => item.authorizationUserMessageId === authorizationUserMessageId)) {
+  if ((state.continuations ?? []).some((item) => continuationAuthorizationId(item) === resolvedAuthorizationId)) {
     return {
       allowed: false,
-      reason: "This user message has already authorized a Loom budget continuation.",
+      reason: "This authorization has already authorized a Loom budget continuation.",
       state,
     }
   }
@@ -560,8 +580,8 @@ export function continueWorkflowDispatchBudget(input: {
 
   // A user continuation is one exact-target exceptional dispatch. It does not
   // waive BR-008's progress requirement for later retries: another no-progress
-  // attempt requires a fresh user message, while material progress continues
-  // through the ordinary progress-grant path when that capacity remains.
+  // attempt requires fresh explicit user authorization, while material progress
+  // continues through the ordinary progress-grant path when that capacity remains.
   const requestedDispatches = 1
   const stepLimitIncrease = 1
   const workflowLimitIncrease = 1
@@ -571,7 +591,17 @@ export function continueWorkflowDispatchBudget(input: {
     grantedBy,
     reason: reason.trim(),
     confirmation: confirmation.trim(),
-    authorizationUserMessageId: authorizationUserMessageId.trim(),
+    authorizationId: resolvedAuthorizationId,
+    ...(authorizationSource ? { authorizationSource } : {}),
+    ...(authorizationUserMessageId?.trim()
+      ? { authorizationUserMessageId: authorizationUserMessageId.trim() }
+      : {}),
+    ...(authorizationQuestionCallId?.trim()
+      ? { authorizationQuestionCallId: authorizationQuestionCallId.trim() }
+      : {}),
+    ...(authorizationDenialId?.trim()
+      ? { authorizationDenialId: authorizationDenialId.trim() }
+      : {}),
     requestedDispatches,
     stepLimitIncrease,
     workflowLimitIncrease,

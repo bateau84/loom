@@ -2171,7 +2171,7 @@ Verdict: FAIL
           source: { messageID: "message", id: `call-${target}` },
         }
         await evaluate!(event)
-        expect(event.effect).toBeUndefined()
+        expect(event.effect).toBe("allow")
       }
     } finally {
       restore()

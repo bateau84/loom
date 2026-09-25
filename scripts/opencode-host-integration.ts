@@ -4,6 +4,10 @@ import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promis
 import { join, resolve } from "node:path"
 import { tmpdir } from "node:os"
 import { aggregateFleetFromDisk, readPublisherRecords } from "../plugins/loom/dashboard"
+import { DEFAULT_LIMITS, type BudgetState } from "../plugins/loom/budget"
+import { budgetContinuationQuestionInput } from "../plugins/loom/index"
+import { createProjectStorage, createTransactionalStorage, resolveRuntimeIdentity } from "../plugins/loom/runtime"
+import type { Workflow } from "../plugins/loom/workflow"
 
 const root = resolve(import.meta.dir, "..")
 
@@ -68,6 +72,7 @@ async function jsonRequest(url: string, authorization: string, init?: RequestIni
   }
 }
 
+
 async function jsonRequestAny(
   urls: string[],
   authorization: string,
@@ -127,6 +132,32 @@ type MockProviderState = {
   prompts: string[]
   unrelatedStatus?: unknown
   crossProjectStatus?: unknown
+  budgetWorkflowId?: string
+  budgetStepId?: string
+  budgetQuestion?: ReturnType<typeof budgetContinuationQuestionInput>
+  budgetQuestionObserved: boolean
+  budgetContinuationObserved: boolean
+  budgetDispatchGrantId?: string
+  budgetSubagentObserved: boolean
+  budgetWorkerAttached: boolean
+  budgetWorkerCompleted: boolean
+  budgetRestartQuestionObserved: boolean
+  tuiBudgetPhase: number
+  tuiBudgetParentSessionId?: string
+  subagentToolSchema?: unknown
+  tuiBudgetRouting: Array<{
+    phase: number
+    affinity?: string
+    parentHeader?: string
+    hasLoomAttach: boolean
+    hasSubagent: boolean
+    tools?: string[]
+  }>
+  tuiBudgetResolvedSubagentRules?: unknown
+  tuiBudgetSubagentResult?: unknown
+  tuiBudgetInitialGrantObserved: boolean
+  tuiBudgetDenialObserved: boolean
+  tuiBudgetApprovalObserved: boolean
 }
 
 function openAiMessageText(content: unknown) {
@@ -249,6 +280,37 @@ function toolRejected(value: unknown) {
   return /Workflow not found|not bound|another project|error/i.test(text)
 }
 
+function subagentAction(
+  state: MockProviderState,
+  agent: string,
+  prompt: string,
+  description: string,
+) {
+  const schema = state.subagentToolSchema as any
+  const properties = schema?.properties && typeof schema.properties === "object"
+    ? schema.properties as Record<string, unknown>
+    : {}
+  const required = Array.isArray(schema?.required) ? schema.required.map(String) : []
+  const supported = new Set(Object.keys(properties))
+  const args: Record<string, unknown> = {}
+
+  if (supported.has("agent")) args.agent = agent
+  else if (supported.has("subagent_type")) args.subagent_type = agent
+  else throw new Error("Real Loom subagent tool exposes no supported agent selector")
+
+  if (supported.has("prompt")) args.prompt = prompt
+  else throw new Error("Real Loom subagent tool exposes no prompt argument")
+
+  if (supported.has("background")) args.background = false
+  if (supported.has("description")) args.description = description
+
+  const missing = required.filter((key: string) => args[key] === undefined)
+  if (missing.length) {
+    throw new Error(`Real Loom subagent tool has unsupported required arguments: ${missing.join(", ")}`)
+  }
+  return { name: "subagent", args }
+}
+
 function chooseMockAction(prompt: string, results: Map<string, unknown>, state: MockProviderState) {
   const program = state.programs.get(prompt)
   if (program) {
@@ -261,6 +323,187 @@ function chooseMockAction(prompt: string, results: Map<string, unknown>, state: 
   const grantResult = results.get("loom_dispatch_grant") as any
   if (grantResult?.grantId && grantResult?.expectedAgent === "worker") state.workerGrantId = String(grantResult.grantId)
   if (grantResult?.grantId && grantResult?.expectedAgent === "reviewer") state.reviewerGrantId = String(grantResult.grantId)
+
+  if (prompt.includes("LOOM_INTEGRATION_BUDGET_QUESTION")) {
+    if (!state.budgetWorkflowId || !state.budgetStepId || !state.budgetQuestion) {
+      throw new Error("Budget continuation host fixture was not initialized")
+    }
+    const continuation = results.get("loom_budget_continue") as any
+    if (continuation?.continued === true) state.budgetContinuationObserved = true
+    const grant = results.get("loom_dispatch_grant") as any
+    if (grant?.grantId && grant?.expectedAgent === "worker") {
+      state.budgetDispatchGrantId = String(grant.grantId)
+    }
+    const subagent = results.get("subagent")
+    if (subagent !== undefined && !toolRejected(subagent)) state.budgetSubagentObserved = true
+
+    if (!results.has("question")) return { name: "question", args: state.budgetQuestion }
+    if (!results.has("loom_budget_continue")) {
+      return {
+        name: "loom_budget_continue",
+        args: {
+          workflowId: state.budgetWorkflowId,
+          stepId: state.budgetStepId,
+          reason: "The user approved one additional dispatch through the real OpenCode question interaction.",
+        },
+      }
+    }
+    if (!results.has("loom_status")) {
+      return { name: "loom_status", args: { workflowId: state.budgetWorkflowId, detail: true } }
+    }
+    if (!results.has("loom_dispatch_grant")) {
+      return {
+        name: "loom_dispatch_grant",
+        args: { workflowId: state.budgetWorkflowId, stepId: state.budgetStepId },
+      }
+    }
+    if (!results.has("subagent")) {
+      return subagentAction(
+        state,
+        "worker",
+        "LOOM_INTEGRATION_BUDGET_WORKER",
+        "Resume budget worker",
+      )
+    }
+    return null
+  }
+
+  if (prompt.includes("LOOM_INTEGRATION_BUDGET_WORKER")) {
+    const attach = results.get("loom_attach") as any
+    if (results.has("loom_attach") && attach?.attached !== true) {
+      throw new Error("Real TUI recovery Worker attach failed: " + JSON.stringify(attach))
+    }
+    if (attach?.attached) state.budgetWorkerAttached = true
+    const complete = results.get("loom_complete") as any
+    if (results.has("loom_complete") && complete?.error) {
+      throw new Error("Real TUI recovery Worker completion failed: " + JSON.stringify(complete))
+    }
+    if (complete && !complete.error) state.budgetWorkerCompleted = true
+    if (!state.budgetWorkflowId || !state.budgetStepId || !state.budgetDispatchGrantId) {
+      throw new Error("Budget Worker continuation fixture was not initialized")
+    }
+    if (!results.has("loom_attach")) {
+      return {
+        name: "loom_attach",
+        args: {
+          grantId: state.budgetDispatchGrantId,
+          workflowId: state.budgetWorkflowId,
+          stepId: state.budgetStepId,
+        },
+      }
+    }
+    if (!results.has("loom_status")) {
+      return { name: "loom_status", args: { workflowId: state.budgetWorkflowId, detail: true } }
+    }
+    if (!results.has("loom_complete")) {
+      return {
+        name: "loom_complete",
+        args: {
+          workflowId: state.budgetWorkflowId,
+          stepId: state.budgetStepId,
+          summary: "real-host budget continuation Worker complete",
+        },
+      }
+    }
+    return null
+  }
+
+  if (prompt.includes("LOOM_INTEGRATION_BUDGET_RESTART")) {
+    if (!state.budgetQuestion) throw new Error("Budget restart question fixture was not initialized")
+    if (!results.has("question")) return { name: "question", args: state.budgetQuestion }
+    state.budgetRestartQuestionObserved = true
+    return null
+  }
+
+  if (prompt.includes("LOOM_TUI_BUDGET_ACCEPTANCE")) {
+    if (!state.budgetWorkflowId || !state.budgetStepId) {
+      throw new Error("TUI budget acceptance fixture was not initialized")
+    }
+
+    if (state.tuiBudgetPhase === 0) {
+      state.tuiBudgetPhase = 1
+      return {
+        name: "loom_dispatch_grant",
+        args: { workflowId: state.budgetWorkflowId, stepId: state.budgetStepId },
+      }
+    }
+
+    if (state.tuiBudgetPhase === 1) {
+      if (!state.tuiBudgetInitialGrantObserved) {
+        throw new Error("TUI budget fixture did not observe its initial durable dispatch grant")
+      }
+      state.tuiBudgetPhase = 2
+      return subagentAction(
+        state,
+        "worker",
+        "LOOM_TUI_BUDGET_DENIED_WORKER",
+        "Budget exhaustion probe",
+      )
+    }
+
+    if (state.tuiBudgetPhase === 2) {
+      if (!state.tuiBudgetDenialObserved || !state.budgetQuestion) {
+        throw new Error("Real TUI Worker denial has not reached durable Loom state yet")
+      }
+      state.tuiBudgetPhase = 3
+      return { name: "question", args: state.budgetQuestion }
+    }
+
+    if (state.tuiBudgetPhase === 3) {
+      if (!state.tuiBudgetApprovalObserved) {
+        throw new Error("Real TUI answer did not persist an approved Loom budget decision")
+      }
+      state.tuiBudgetPhase = 4
+      return {
+        name: "loom_budget_continue",
+        args: {
+          workflowId: state.budgetWorkflowId,
+          stepId: state.budgetStepId,
+          reason: "The user approved one additional dispatch in the real OpenCode TUI.",
+        },
+      }
+    }
+
+    if (state.tuiBudgetPhase === 4) {
+      if (!state.budgetContinuationObserved) {
+        throw new Error("Real TUI answer did not produce durable question-authorized Loom continuation")
+      }
+      state.tuiBudgetPhase = 5
+      return { name: "loom_status", args: { workflowId: state.budgetWorkflowId, detail: true } }
+    }
+
+    if (state.tuiBudgetPhase === 5) {
+      state.tuiBudgetPhase = 6
+      return {
+        name: "loom_dispatch_grant",
+        args: { workflowId: state.budgetWorkflowId, stepId: state.budgetStepId },
+      }
+    }
+
+    if (state.tuiBudgetPhase === 6) {
+      if (!state.budgetDispatchGrantId) {
+        throw new Error("Real TUI continuation did not produce a fresh durable Worker dispatch grant")
+      }
+      state.tuiBudgetPhase = 7
+      return subagentAction(
+        state,
+        "worker",
+        "LOOM_INTEGRATION_BUDGET_WORKER",
+        "Resume budget worker",
+      )
+    }
+
+    if (state.tuiBudgetPhase === 7) {
+      if (results.has("subagent")) state.tuiBudgetSubagentResult = results.get("subagent")
+      if (!state.budgetSubagentObserved || !state.budgetWorkerAttached || !state.budgetWorkerCompleted) {
+        return null
+      }
+      state.tuiBudgetPhase = 8
+      return null
+    }
+
+    return null
+  }
 
   if (prompt.includes("LOOM_INTEGRATION_GENERAL_START")) {
     if (startResult?.workflowId) state.workflowId = String(startResult.workflowId)
@@ -513,6 +756,17 @@ async function startMockProvider() {
     sawNativeLoomToolGuidance: false,
     codeModeLoomStatusObserved: false,
     codeModeLoomSearchObserved: false,
+    budgetQuestionObserved: false,
+    budgetContinuationObserved: false,
+    budgetSubagentObserved: false,
+    budgetWorkerAttached: false,
+    budgetWorkerCompleted: false,
+    budgetRestartQuestionObserved: false,
+    tuiBudgetPhase: 0,
+    tuiBudgetRouting: [],
+    tuiBudgetInitialGrantObserved: false,
+    tuiBudgetDenialObserved: false,
+    tuiBudgetApprovalObserved: false,
     requests: [],
     prompts: [],
   }
@@ -538,14 +792,93 @@ async function startMockProvider() {
       )) {
         state.sawNativeLoomToolGuidance = true
       }
-      const prompt = latestUserPrompt(messages)
+      const delegatedBudgetWorkerPrompt = [...messages]
+        .reverse()
+        .map((message: any) => openAiMessageText(message?.content))
+        .find((text: string) => text.includes("LOOM_INTEGRATION_BUDGET_WORKER"))
+      const sessionAffinity = request.headers.get("x-session-affinity")
+      const parentSessionHeader = request.headers.get("x-parent-session-id")
+      const requestTools = Array.isArray(body.tools) ? body.tools : []
+      const subagentTool = requestTools.find((item: any) =>
+        String(item?.function?.name ?? item?.name ?? "") === "subagent"
+      )
+      if (subagentTool) {
+        state.subagentToolSchema =
+          subagentTool?.function?.parameters ??
+          subagentTool?.parameters ??
+          subagentTool?.input_schema ??
+          subagentTool?.inputSchema
+      }
+      const requestToolNames = new Set<string>(
+        requestTools
+          .map((item: any) => String(item?.function?.name ?? item?.name ?? ""))
+          .filter((name: string) => Boolean(name)),
+      )
+      if (state.tuiBudgetPhase >= 6 && state.tuiBudgetPhase <= 7 && state.tuiBudgetRouting.length < 20) {
+        state.tuiBudgetRouting.push({
+          phase: state.tuiBudgetPhase,
+          ...(sessionAffinity ? { affinity: sessionAffinity } : {}),
+          ...(parentSessionHeader ? { parentHeader: parentSessionHeader } : {}),
+          hasLoomAttach: requestToolNames.has("loom_attach"),
+          hasSubagent: requestToolNames.has("subagent"),
+          tools: [...requestToolNames].sort(),
+        })
+      }
+      const recoveryWorkerRequest =
+        state.tuiBudgetPhase === 7 &&
+        Boolean(sessionAffinity) &&
+        Boolean(state.tuiBudgetParentSessionId) &&
+        sessionAffinity !== state.tuiBudgetParentSessionId &&
+        requestToolNames.has("loom_attach") &&
+        !(state.budgetSubagentObserved && state.budgetWorkerAttached && state.budgetWorkerCompleted)
+      const prompt =
+        recoveryWorkerRequest
+          ? "LOOM_INTEGRATION_BUDGET_WORKER"
+          : delegatedBudgetWorkerPrompt ?? latestUserPrompt(messages)
       state.prompts.push(prompt)
       const latestUserIndex = messages.findLastIndex((message: any) => message?.role === "user")
       const turnMessages = latestUserIndex >= 0 ? messages.slice(latestUserIndex + 1) : messages
       const results = toolResults(turnMessages)
+      if (prompt.includes("LOOM_TUI_BUDGET_ACCEPTANCE")) {
+        const deadline = Date.now() + 3_000
+        if (state.tuiBudgetPhase === 1) {
+          while (!state.tuiBudgetInitialGrantObserved && Date.now() < deadline) {
+            await Bun.sleep(20)
+          }
+        }
+        if (state.tuiBudgetPhase === 2) {
+          while (!state.tuiBudgetDenialObserved && Date.now() < deadline) {
+            await Bun.sleep(20)
+          }
+        }
+        if (state.tuiBudgetPhase === 3) {
+          while (!state.tuiBudgetApprovalObserved && Date.now() < deadline) {
+            await Bun.sleep(20)
+          }
+        }
+        if (state.tuiBudgetPhase === 4) {
+          while (!state.budgetContinuationObserved && Date.now() < deadline) {
+            await Bun.sleep(20)
+          }
+        }
+        if (state.tuiBudgetPhase === 6) {
+          while (!state.budgetDispatchGrantId && Date.now() < deadline) {
+            await Bun.sleep(20)
+          }
+        }
+        if (state.tuiBudgetPhase === 7) {
+          while (!state.budgetWorkerCompleted && Date.now() < deadline) {
+            await Bun.sleep(20)
+          }
+        }
+      }
       const action = chooseMockAction(prompt, results, state)
       const model = String(body.model ?? "mock")
-      const content = action ? null : "integration sequence complete"
+      const content = action
+        ? null
+        : prompt.includes("LOOM_TUI_BUDGET_ACCEPTANCE") && state.tuiBudgetPhase >= 8
+          ? "LOOM_TUI_BUDGET_ACCEPTANCE_DONE"
+          : "integration sequence complete"
       if (body.stream) {
         return new Response(streamingPayload(model, content, action ?? undefined), {
           headers: { "content-type": "text/event-stream", "cache-control": "no-cache" },
@@ -597,17 +930,18 @@ async function sendPrompt(
 }
 
 async function waitForCondition(
-  predicate: () => boolean,
+  predicate: () => boolean | Promise<boolean>,
   label: string,
-  debug?: () => unknown,
+  debug?: () => unknown | Promise<unknown>,
   timeoutMs = 15_000,
 ) {
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
-    if (predicate()) return
+    if (await predicate()) return
     await Bun.sleep(100)
   }
-  const detail = debug ? `\nDebug: ${JSON.stringify(debug(), null, 2)}` : ""
+  const observed = debug ? await debug() : undefined
+  const detail = debug ? `\nDebug: ${JSON.stringify(observed, null, 2)}` : ""
   throw new Error(`Timed out waiting for ${label}${detail}`)
 }
 
@@ -818,6 +1152,323 @@ async function createProject(base: string, name: string, mockBaseUrl: string) {
 }
 
 
+const TUI_BUDGET_PROJECT_ID = "00000000-0000-4000-8000-000000000068"
+const TUI_BUDGET_WORKFLOW_ID = "tui-budget-continuation"
+const TUI_BUDGET_STEP_ID = "worker"
+
+async function prepareTuiBudgetProject(project: string) {
+  await mkdir(join(project, ".loom"), { recursive: true })
+  await writeFile(
+    join(project, ".loom", "project-id"),
+    JSON.stringify({ schemaVersion: 1, projectId: TUI_BUDGET_PROJECT_ID }) + "\n",
+    "utf8",
+  )
+
+  const configPath = join(project, "opencode.json")
+  const config = JSON.parse(await readFile(configPath, "utf8"))
+  config.default_agent = "general"
+  await writeFile(configPath, JSON.stringify(config, null, 2) + "\n", "utf8")
+}
+
+async function seedTuiBudgetAcceptanceState(
+  project: string,
+  stateHome: string,
+  runtimeDir: string,
+  sessionID: string,
+) {
+  const { runtime, storage } = await openHostProjectStorage(project, stateHome, runtimeDir)
+  const now = new Date().toISOString()
+  const workflow: Workflow = {
+    id: TUI_BUDGET_WORKFLOW_ID,
+    projectId: runtime.projectId,
+    revision: 0,
+    anchor: "task:" + TUI_BUDGET_WORKFLOW_ID,
+    request: "Resume the existing Worker only after explicit budget approval.",
+    createdBySession: sessionID,
+    createdAt: now,
+    steps: [{
+      id: TUI_BUDGET_STEP_ID,
+      agent: "worker",
+      kind: "work",
+      dependsOn: [],
+      status: "pending",
+    }],
+  }
+  const budget: BudgetState = {
+    totalDispatches: 3,
+    byKey: { ["step:" + TUI_BUDGET_STEP_ID]: 3 },
+    seenDispatches: ["tui-seed-1", "tui-seed-2", "tui-seed-3"],
+    grants: [],
+  }
+
+  await storage.set("workflow/" + TUI_BUDGET_WORKFLOW_ID, workflow)
+  await storage.set("session/" + sessionID, TUI_BUDGET_WORKFLOW_ID)
+  await storage.set("session-step/" + sessionID, "")
+  await storage.set("session-oq/" + sessionID, "")
+  await storage.set("limits/" + TUI_BUDGET_WORKFLOW_ID, DEFAULT_LIMITS)
+  await storage.set("budget/" + TUI_BUDGET_WORKFLOW_ID, budget)
+  await storage.set("scope/" + TUI_BUDGET_WORKFLOW_ID + "/" + TUI_BUDGET_STEP_ID, {
+    workflowId: TUI_BUDGET_WORKFLOW_ID,
+    stepId: TUI_BUDGET_STEP_ID,
+    write: ["scratch/**"],
+  })
+  return { runtime, storage }
+}
+
+async function runTuiBudgetAcceptance(
+  base: string,
+  project: string,
+  stateHome: string,
+  runtimeDir: string,
+  mock: { state: MockProviderState },
+) {
+  mock.state.budgetWorkflowId = TUI_BUDGET_WORKFLOW_ID
+  mock.state.budgetStepId = TUI_BUDGET_STEP_ID
+  mock.state.budgetQuestion = undefined
+  mock.state.budgetQuestionObserved = false
+  mock.state.budgetContinuationObserved = false
+  mock.state.budgetDispatchGrantId = undefined
+  mock.state.budgetSubagentObserved = false
+  mock.state.budgetWorkerAttached = false
+  mock.state.budgetWorkerCompleted = false
+  mock.state.tuiBudgetPhase = 0
+  mock.state.tuiBudgetParentSessionId = undefined
+  mock.state.tuiBudgetRouting = []
+  mock.state.tuiBudgetResolvedSubagentRules = undefined
+  mock.state.tuiBudgetSubagentResult = undefined
+  mock.state.tuiBudgetInitialGrantObserved = false
+  mock.state.tuiBudgetDenialObserved = false
+  mock.state.tuiBudgetApprovalObserved = false
+
+  const tuiServer = await startServer(
+    base,
+    project,
+    stateHome,
+    runtimeDir,
+    "tui-budget-server",
+  )
+  const tuiSession = await jsonRequestAny(
+    [`${tuiServer.baseUrl}/api/session`, `${tuiServer.baseUrl}/session`],
+    tuiServer.authorization,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(sessionCreateBody("Loom TUI budget acceptance", "general")),
+    },
+  )
+  if (!tuiSession?.id) {
+    await stop(tuiServer)
+    throw new Error("OpenCode did not create the real TUI budget acceptance session")
+  }
+  mock.state.tuiBudgetParentSessionId = String(tuiSession.id)
+
+  const agentList = await jsonRequest(
+    `${tuiServer.baseUrl}/api/agent`,
+    tuiServer.authorization,
+  )
+  const agents = Array.isArray(agentList) ? agentList : Array.isArray(agentList?.data) ? agentList.data : []
+  const resolvedGeneral = agents.find((agent: any) => String(agent?.id ?? agent?.name ?? "") === "general")
+  const resolvedPermissions = resolvedGeneral?.permissions ?? resolvedGeneral?.permission ?? []
+  mock.state.tuiBudgetResolvedSubagentRules = Array.isArray(resolvedPermissions)
+    ? resolvedPermissions.filter((rule: any) =>
+        String(rule?.action ?? "") === "subagent" || String(rule?.permission ?? "") === "subagent"
+      )
+    : resolvedPermissions
+
+  const { storage: tuiStorage } = await seedTuiBudgetAcceptanceState(
+    project,
+    stateHome,
+    runtimeDir,
+    tuiSession.id,
+  )
+
+  let durableWatchError: unknown
+  const durableWatch = (async () => {
+    const deadline = Date.now() + 50_000
+    let initialGrantId: string | undefined
+    while (Date.now() < deadline) {
+      const grants = (await tuiStorage.scan({
+        prefix: "dispatch-grant/",
+        limit: 100,
+      })).entries
+        .map((entry: any) => entry.value as any)
+        .filter((grant: any) =>
+          grant?.workflowId === TUI_BUDGET_WORKFLOW_ID &&
+          grant?.stepId === TUI_BUDGET_STEP_ID &&
+          grant?.expectedAgent === "worker"
+        )
+
+      if (!initialGrantId && grants[0]?.grantId) {
+        initialGrantId = String(grants[0].grantId)
+        mock.state.tuiBudgetInitialGrantObserved = true
+      }
+      const freshGrant = initialGrantId
+        ? grants.find((grant: any) => grant?.grantId && String(grant.grantId) !== initialGrantId)
+        : undefined
+      if (freshGrant?.grantId) {
+        mock.state.budgetDispatchGrantId = String(freshGrant.grantId)
+      }
+
+      const blocked = (await tuiStorage.scan({
+        prefix: "budget-continuation-blocked/",
+        limit: 100,
+      })).entries
+        .map((entry: any) => entry.value as any)
+        .find((value: any) =>
+          value?.workflowId === TUI_BUDGET_WORKFLOW_ID &&
+          value?.stepId === TUI_BUDGET_STEP_ID &&
+          !value?.resolvedAt &&
+          typeof value?.approvalRef === "string"
+        )
+      if (blocked && !mock.state.tuiBudgetDenialObserved) {
+        mock.state.budgetQuestion = budgetContinuationQuestionInput({
+          agent: "worker",
+          stepId: TUI_BUDGET_STEP_ID,
+          approvalRef: blocked.approvalRef,
+        })
+        mock.state.tuiBudgetDenialObserved = true
+      }
+
+      const decisions = (await tuiStorage.scan({
+        prefix: "budget-continuation-question-decision/",
+        limit: 100,
+      })).entries
+        .map((entry: any) => entry.value as any)
+        .filter((decision: any) =>
+          decision?.workflowId === TUI_BUDGET_WORKFLOW_ID &&
+          decision?.stepId === TUI_BUDGET_STEP_ID &&
+          decision?.approved === true &&
+          decision?.answer === "Allow +1 dispatch"
+        )
+      if (decisions.length > 0) {
+        mock.state.tuiBudgetApprovalObserved = true
+      }
+
+      const budget = await tuiStorage.get("budget/" + TUI_BUDGET_WORKFLOW_ID) as BudgetState | undefined
+      if (
+        budget?.continuations?.some((continuation) =>
+          continuation.key === "step:" + TUI_BUDGET_STEP_ID &&
+          continuation.authorizationSource === "question" &&
+          continuation.requestedDispatches === 1
+        )
+      ) {
+        mock.state.budgetContinuationObserved = true
+      }
+
+      if (freshGrant?.consumedAt) {
+        mock.state.budgetSubagentObserved = true
+        mock.state.budgetWorkerAttached = true
+      }
+      const workflow = await tuiStorage.get("workflow/" + TUI_BUDGET_WORKFLOW_ID) as Workflow | undefined
+      if (workflow?.steps.find((step) => step.id === TUI_BUDGET_STEP_ID)?.status === "complete") {
+        mock.state.budgetWorkerCompleted = true
+      }
+
+      if (
+        mock.state.tuiBudgetInitialGrantObserved &&
+        mock.state.tuiBudgetDenialObserved &&
+        mock.state.tuiBudgetApprovalObserved &&
+        mock.state.budgetContinuationObserved &&
+        mock.state.budgetDispatchGrantId &&
+        mock.state.budgetSubagentObserved &&
+        mock.state.budgetWorkerAttached &&
+        mock.state.budgetWorkerCompleted
+      ) {
+        return
+      }
+      await Bun.sleep(25)
+    }
+    throw new Error(
+      "Timed out waiting for durable TUI budget grant/denial/recovery state: " +
+      JSON.stringify({
+        initialGrant: mock.state.tuiBudgetInitialGrantObserved,
+        denial: mock.state.tuiBudgetDenialObserved,
+        approval: mock.state.tuiBudgetApprovalObserved,
+        continuation: mock.state.budgetContinuationObserved,
+        freshGrant: mock.state.budgetDispatchGrantId,
+        attached: mock.state.budgetWorkerAttached,
+        completed: mock.state.budgetWorkerCompleted,
+      }),
+    )
+  })().catch((error) => {
+    durableWatchError = error
+  })
+
+  const isolated = join(base, "opencode", "tui-budget")
+  await mkdir(isolated, { recursive: true })
+  const env = processEnv({
+    XDG_CONFIG_HOME: join(isolated, "config"),
+    XDG_DATA_HOME: join(isolated, "data"),
+    XDG_CACHE_HOME: join(isolated, "cache"),
+    XDG_STATE_HOME: stateHome,
+    XDG_RUNTIME_DIR: runtimeDir,
+    OPENCODE_DB: join(isolated, "opencode.db"),
+    OPENCODE_DISABLE_AUTOUPDATE: "1",
+    OPENCODE_ENABLE_QUESTION_TOOL: "1",
+    LOOM_TOOL_OUTPUT: "json",
+    TERM: "xterm-256color",
+  })
+  const proc = Bun.spawn(
+    [
+      "python3",
+      join(root, "scripts", "tui-budget-acceptance.py"),
+      project,
+      "LOOM_TUI_BUDGET_ACCEPTANCE",
+      tuiServer.baseUrl,
+      tuiSession.id,
+      tuiServer.password,
+    ],
+    { cwd: root, env, stdout: "pipe", stderr: "pipe" },
+  )
+  const stdout = new Response(proc.stdout).text()
+  const stderr = new Response(proc.stderr).text()
+
+  const completed = await Promise.race([
+    proc.exited.then((code) => ({ type: "exit" as const, code })),
+    Bun.sleep(65_000).then(() => ({ type: "timeout" as const, code: -1 })),
+  ])
+  if (completed.type === "timeout" && proc.exitCode === null) proc.kill("SIGKILL")
+  const [out, err] = await Promise.all([stdout, stderr])
+  await durableWatch
+  await stop(tuiServer)
+  if (completed.type === "timeout" || completed.code !== 0 || durableWatchError) {
+    throw new Error(
+      `Real TUI budget acceptance failed (${completed.type === "timeout" ? "timeout" : "exit " + completed.code}).` +
+      `\nstate:\n${JSON.stringify(mock.state)}` +
+      `\ndurable-watch:\n${durableWatchError instanceof Error ? durableWatchError.message : String(durableWatchError ?? "ok")}` +
+      `\nstdout:\n${out}\nstderr:\n${err}`,
+    )
+  }
+
+  if (
+    !mock.state.tuiBudgetDenialObserved ||
+    !mock.state.budgetContinuationObserved ||
+    !mock.state.budgetDispatchGrantId ||
+    !mock.state.budgetSubagentObserved ||
+    !mock.state.budgetWorkerAttached ||
+    !mock.state.budgetWorkerCompleted
+  ) {
+    throw new Error("Real TUI budget acceptance did not complete the assembled same-target recovery: " + JSON.stringify(mock.state))
+  }
+
+  const { storage } = await openHostProjectStorage(project, stateHome, runtimeDir)
+  const budget = await storage.get("budget/" + TUI_BUDGET_WORKFLOW_ID) as BudgetState
+  const workflow = await storage.get("workflow/" + TUI_BUDGET_WORKFLOW_ID) as Workflow
+  const continuation = budget.continuations?.at(-1)
+  if (
+    continuation?.authorizationSource !== "question" ||
+    continuation?.requestedDispatches !== 1 ||
+    continuation?.usedDispatches !== 1 ||
+    budget.byKey["step:" + TUI_BUDGET_STEP_ID] !== 4 ||
+    workflow.steps.find((step) => step.id === TUI_BUDGET_STEP_ID)?.status !== "complete"
+  ) {
+    throw new Error(
+      "Real TUI budget acceptance ended in unexpected Loom state: " +
+      JSON.stringify({ continuation, budget, step: workflow.steps.find((step) => step.id === TUI_BUDGET_STEP_ID) }),
+    )
+  }
+}
+
 async function updateProjectPluginList(project: string, plugins: string[]) {
   const path = join(project, "opencode.json")
   const config = JSON.parse(await readFile(path, "utf8"))
@@ -917,6 +1568,7 @@ type ServerHandle = {
   stdout: Promise<string>
   stderr: Promise<string>
   authorization: string
+  password: string
 }
 
 async function startServer(
@@ -940,6 +1592,7 @@ async function startServer(
     XDG_RUNTIME_DIR: runtimeDir,
     OPENCODE_DB: join(isolated, "opencode.db"),
     OPENCODE_DISABLE_AUTOUPDATE: "1",
+    OPENCODE_ENABLE_QUESTION_TOOL: "1",
     OPENCODE_SERVER_USERNAME: "opencode",
     OPENCODE_SERVER_PASSWORD: password,
     LOOM_TOOL_OUTPUT: "json",
@@ -961,7 +1614,7 @@ async function startServer(
     const logs = await Promise.all([stdout, stderr])
     throw new Error(`${error instanceof Error ? error.message : String(error)}\nstdout:\n${logs[0]}\nstderr:\n${logs[1]}`)
   }
-  return { project, baseUrl, proc, stdout, stderr, authorization }
+  return { project, baseUrl, proc, stdout, stderr, authorization, password }
 }
 
 function sessionCreateBody(
@@ -988,6 +1641,141 @@ async function stop(handle: ServerHandle) {
   await Promise.allSettled([handle.stdout, handle.stderr])
 }
 
+async function crash(handle: ServerHandle) {
+  if (handle.proc.exitCode === null) handle.proc.kill("SIGKILL")
+  await handle.proc.exited
+  await Promise.allSettled([handle.stdout, handle.stderr])
+}
+
+async function openHostProjectStorage(project: string, sharedState: string, runtimeDir: string) {
+  const previousState = process.env.XDG_STATE_HOME
+  const previousRuntime = process.env.XDG_RUNTIME_DIR
+  process.env.XDG_STATE_HOME = sharedState
+  process.env.XDG_RUNTIME_DIR = runtimeDir
+  try {
+    const bootstrap = {
+      get: async (_key: string) => undefined,
+      set: async (_key: string, value: unknown) => value,
+      scan: async () => ({ entries: [], next: undefined }),
+    }
+    const runtime = await resolveRuntimeIdentity(project, bootstrap as any)
+    const storage = createProjectStorage(await createTransactionalStorage(runtime), runtime.projectId)
+    return { runtime, storage }
+  } finally {
+    if (previousState === undefined) delete process.env.XDG_STATE_HOME
+    else process.env.XDG_STATE_HOME = previousState
+    if (previousRuntime === undefined) delete process.env.XDG_RUNTIME_DIR
+    else process.env.XDG_RUNTIME_DIR = previousRuntime
+  }
+}
+
+async function seedBudgetContinuationHostFixture(
+  project: string,
+  sharedState: string,
+  runtimeDir: string,
+  sessionID: string,
+) {
+  const { runtime, storage } = await openHostProjectStorage(project, sharedState, runtimeDir)
+  const workflowId = `host-budget-${crypto.randomUUID()}`
+  const stepId = "worker"
+  const denialId = `host-denial-${crypto.randomUUID()}`
+  const approvalRef = crypto.randomUUID().replaceAll("-", "").slice(0, 16)
+  const workflow: Workflow = {
+    id: workflowId,
+    projectId: runtime.projectId,
+    revision: 0,
+    anchor: "docs/anchors/host-budget/anchor.md",
+    createdBySession: sessionID,
+    createdAt: new Date().toISOString(),
+    steps: [{ id: stepId, agent: "worker", kind: "work", dependsOn: [], status: "pending" }],
+  }
+  const dispatchKey = `step:${stepId}`
+  const budget: BudgetState = {
+    totalDispatches: DEFAULT_LIMITS.maxDispatchesPerStep,
+    byKey: { [dispatchKey]: DEFAULT_LIMITS.maxDispatchesPerStep },
+    seenDispatches: Array.from(
+      { length: DEFAULT_LIMITS.maxDispatchesPerStep },
+      (_, index) => `host-seed-${index + 1}`,
+    ),
+    grants: [],
+  }
+
+  await storage.set(`workflow/${workflowId}`, workflow)
+  await storage.set(`session/${sessionID}`, workflowId)
+  await storage.set(`session-step/${sessionID}`, "")
+  await storage.set(`session-oq/${sessionID}`, "")
+  await storage.set(`limits/${workflowId}`, DEFAULT_LIMITS)
+  await storage.set(`budget/${workflowId}`, budget)
+  await storage.set(`scope/${workflowId}/${stepId}`, {
+    workflowId,
+    stepId,
+    write: ["scratch/**"],
+  })
+  await storage.set(
+    `budget-continuation-blocked/${encodeURIComponent(sessionID)}/${encodeURIComponent(workflowId)}/step/${encodeURIComponent(stepId)}`,
+    {
+      workflowId,
+      agent: "worker",
+      stepId,
+      denialId,
+      approvalRef,
+      reason: `dispatch limit ${DEFAULT_LIMITS.maxDispatchesPerStep} reached`,
+      blockedAt: new Date().toISOString(),
+    },
+  )
+
+  return { storage, workflowId, stepId, denialId, approvalRef }
+}
+
+async function waitForSessionToolPart(
+  handle: ServerHandle,
+  sessionID: string,
+  toolName: string,
+  predicate?: (part: any) => boolean,
+  timeoutMs = 15_000,
+) {
+  const deadline = Date.now() + timeoutMs
+  let last: unknown
+  while (Date.now() < deadline) {
+    try {
+      const value = await jsonRequestAny(
+        [
+          `${handle.baseUrl}/api/session/${encodeURIComponent(sessionID)}/message`,
+          `${handle.baseUrl}/session/${encodeURIComponent(sessionID)}/message`,
+        ],
+        handle.authorization,
+      )
+      const messages = Array.isArray(value)
+        ? value
+        : Array.isArray(value?.messages)
+          ? value.messages
+          : Array.isArray(value?.data)
+            ? value.data
+            : []
+      last = messages
+      for (const message of [...messages].reverse()) {
+        const parts = Array.isArray(message?.parts)
+          ? message.parts
+          : Array.isArray(message?.content)
+            ? message.content
+            : []
+        const part = [...parts].reverse().find((candidate: any) =>
+          candidate?.type === "tool" &&
+          String(candidate?.tool ?? candidate?.name ?? "") === toolName &&
+          (!predicate || predicate(candidate))
+        )
+        if (part) return part
+      }
+    } catch (error) {
+      last = error
+    }
+    await Bun.sleep(100)
+  }
+  throw new Error(
+    "Timed out waiting for real OpenCode " + toolName + " tool part: " +
+      (last instanceof Error ? last.message : JSON.stringify(last)),
+  )
+}
 const base = await mkdtemp(join(tmpdir(), "loom-opencode-host-"))
 const sharedState = join(base, "shared-state")
 const runtimeA = join(base, "runtime-a")
@@ -996,10 +1784,13 @@ const servers: ServerHandle[] = []
 const mock = await startMockProvider()
 
 try {
-  const [projectA, projectB] = await Promise.all([
+  const [projectA, projectB, projectTuiBudget, projectRestartBudget] = await Promise.all([
     createProject(base, "project-a", mock.baseUrl),
     createProject(base, "project-b", mock.baseUrl),
+    createProject(base, "project-tui-budget", mock.baseUrl),
+    createProject(base, "project-restart-budget", mock.baseUrl),
   ])
+  await prepareTuiBudgetProject(projectTuiBudget)
 
   let dashboardPort = await freePort()
   while (dashboardPort === 4318) dashboardPort = await freePort()
@@ -1164,6 +1955,179 @@ try {
     await browser.close()
   }
 
+  const budgetSession = await jsonRequestAny(
+    [`${serverA.baseUrl}/api/session`, `${serverA.baseUrl}/session`],
+    serverA.authorization,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(sessionCreateBody("Loom interactive budget continuation", "general")),
+    },
+  )
+  if (!budgetSession?.id) throw new Error("OpenCode did not create the budget continuation session")
+
+  const budgetFixture = await seedBudgetContinuationHostFixture(
+    projectA,
+    sharedState,
+    runtimeA,
+    budgetSession.id,
+  )
+  mock.state.budgetWorkflowId = budgetFixture.workflowId
+  mock.state.budgetStepId = budgetFixture.stepId
+  mock.state.budgetQuestion = budgetContinuationQuestionInput({
+    agent: "worker",
+    stepId: budgetFixture.stepId,
+    approvalRef: budgetFixture.approvalRef,
+  })
+
+  let budgetPromptError: unknown
+  void sendPrompt(
+    serverA,
+    budgetSession.id,
+    "LOOM_INTEGRATION_BUDGET_QUESTION",
+  ).catch((error) => {
+    budgetPromptError = error
+  })
+
+  const questionPart = await waitForSessionToolPart(serverA, budgetSession.id, "question")
+  if (budgetPromptError) throw budgetPromptError
+  const questionInput = questionPart?.state?.input ?? questionPart?.input
+  if (questionPart?.state?.status === "error") {
+    const error = questionPart.state.error
+    throw new Error(
+      "Real OpenCode question tool failed: " +
+        (typeof error === "string" ? error : JSON.stringify(error ?? "unknown error")),
+    )
+  }
+  if (
+    questionInput?.questions?.[0]?.header !== mock.state.budgetQuestion.questions[0].header ||
+    questionInput?.questions?.[0]?.question !== mock.state.budgetQuestion.questions[0].question ||
+    questionInput?.questions?.[0]?.options?.[0]?.label !==
+      mock.state.budgetQuestion.questions[0].options[0].label
+  ) {
+    throw new Error(
+      "Real OpenCode question tool part did not preserve the Loom budget prompt: " + JSON.stringify(questionPart),
+    )
+  }
+  mock.state.budgetQuestionObserved = true
+
+  // OpenCode serve 2.0.15 has no advertised question-reply or abort API for
+  // this interaction. The real-host proof therefore stops once the question
+  // tool is admitted, decoded, persisted, and blocked awaiting user input.
+  // The harness-owned server finalizer terminates the blocked request. The
+  // plugin integration test proves answer -> authorization -> one dispatch.
+
+  const tuiState = join(base, "tui-budget-state")
+  const tuiRuntime = join(base, "tui-budget-runtime")
+  await runTuiBudgetAcceptance(base, projectTuiBudget, tuiState, tuiRuntime, mock)
+
+  const restartState = join(base, "restart-budget-state")
+  const restartRuntime = join(base, "restart-budget-runtime")
+  const restartServer = await startServer(
+    base,
+    projectRestartBudget,
+    restartState,
+    restartRuntime,
+    "budget-restart",
+  )
+  servers.push(restartServer)
+  const restartSession = await jsonRequestAny(
+    [`${restartServer.baseUrl}/api/session`, `${restartServer.baseUrl}/session`],
+    restartServer.authorization,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(sessionCreateBody("Loom budget restart recovery", "general")),
+    },
+  )
+  if (!restartSession?.id) throw new Error("OpenCode did not create the restart budget session")
+  const restartFixture = await seedBudgetContinuationHostFixture(
+    projectRestartBudget,
+    restartState,
+    restartRuntime,
+    restartSession.id,
+  )
+  mock.state.budgetWorkflowId = restartFixture.workflowId
+  mock.state.budgetStepId = restartFixture.stepId
+  mock.state.budgetQuestion = budgetContinuationQuestionInput({
+    agent: "worker",
+    stepId: restartFixture.stepId,
+    approvalRef: restartFixture.approvalRef,
+  })
+  const restartPrompt1 = sendPrompt(
+    restartServer,
+    restartSession.id,
+    "LOOM_INTEGRATION_BUDGET_RESTART",
+  ).catch(() => undefined)
+  const restartQuestion1 = await waitForSessionToolPart(restartServer, restartSession.id, "question")
+  if (restartQuestion1?.state?.status === "error") {
+    throw new Error("Initial real restart budget question failed before crash")
+  }
+  const restartBlockedKey =
+    `budget-continuation-blocked/${encodeURIComponent(restartSession.id)}/${encodeURIComponent(restartFixture.workflowId)}/step/${encodeURIComponent(restartFixture.stepId)}`
+  const beforeCrash = await restartFixture.storage.get(restartBlockedKey) as {
+    questionOwnerInstanceId?: string
+    questionStartedAt?: string
+  }
+  if (!beforeCrash.questionOwnerInstanceId || !beforeCrash.questionStartedAt) {
+    throw new Error("Initial real budget question did not persist its runtime owner")
+  }
+
+  await crash(restartServer)
+  await restartPrompt1
+
+  const restartedServer = await startServer(
+    base,
+    projectRestartBudget,
+    restartState,
+    restartRuntime,
+    "budget-restart",
+  )
+  servers.push(restartedServer)
+  const restartPrompt2 = sendPrompt(
+    restartedServer,
+    restartSession.id,
+    "LOOM_INTEGRATION_BUDGET_RESTART",
+  ).catch(() => undefined)
+
+  await waitForCondition(
+    async () => {
+      const current = await restartFixture.storage.get(restartBlockedKey) as {
+        questionOwnerInstanceId?: string
+        questionStartedAt?: string
+      } | undefined
+      return Boolean(
+        current?.questionOwnerInstanceId &&
+        current.questionOwnerInstanceId !== beforeCrash.questionOwnerInstanceId &&
+        current.questionStartedAt,
+      )
+    },
+    "restarted OpenCode host reclaiming orphaned budget question",
+    async () => restartFixture.storage.get(restartBlockedKey),
+    20_000,
+  )
+  const expectedRestartHeader = mock.state.budgetQuestion.questions[0].header
+  const restartQuestion2 = await waitForSessionToolPart(
+    restartedServer,
+    restartSession.id,
+    "question",
+    (part) => {
+      const input = part?.state?.input ?? part?.input
+      return (
+        part?.state?.status !== "error" &&
+        input?.questions?.[0]?.header === expectedRestartHeader
+      )
+    },
+    20_000,
+  )
+  const restartInput2 = restartQuestion2?.state?.input ?? restartQuestion2?.input
+  if (restartInput2?.questions?.[0]?.header !== expectedRestartHeader) {
+    throw new Error(
+      "Restarted OpenCode host did not render the reclaimed canonical budget question: " +
+      JSON.stringify(restartQuestion2),
+    )
+  }
+  void restartPrompt2
   const unrelatedSession = await jsonRequestAny(
     [`${serverA.baseUrl}/api/session`, `${serverA.baseUrl}/session`],
     serverA.authorization,
@@ -1328,6 +2292,9 @@ try {
   console.log(` - workflow: ${mock.state.workflowId}`)
   console.log(` - worker/reviewer attached: ${mock.state.workerAttached}/${mock.state.reviewerAttached}`)
   console.log(` - peer-process review completed + observed by origin: ${mock.state.reviewerCompleted}/${mock.state.generalSawPeerReviewComplete}`)
+  console.log(` - real OpenCode budget question tool state observed: ${mock.state.budgetQuestionObserved}`)
+  console.log(` - real TUI budget approval resumed/completed exact Worker: ${mock.state.budgetContinuationObserved}/${mock.state.budgetWorkerCompleted}`)
+  console.log(" - crashed budget-question owner reclaimed by restarted OpenCode host: true")
   console.log(` - OpenCode auto-started dashboard endpoint reached from sidebar: ${reviewerStatusUrl}`)
   console.log(` - disconnected browser degraded cleanly: ${mock.state.statusPreviewFallbackObserved}`)
   console.log(` - native Loom tool guidance reached provider context: ${mock.state.sawNativeLoomToolGuidance}`)

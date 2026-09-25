@@ -11,9 +11,9 @@ permissions:
   - action: edit
     resource: "ephemeral-reports/general/**"
     effect: allow
-  - action: subagent
+  - action: question
     resource: "*"
-    effect: deny
+    effect: allow
   - action: subagent
     resource: "designer"
     effect: allow
@@ -192,9 +192,9 @@ Repeated work must materially change: new evidence, changed hypothesis, changed 
 
 A `loom_budget_grant` adds one unit of automatic recovery capacity; it is not an attachment/dispatch credential. Grant only when material progress justifies another attempt, then obtain the normal exact dispatch grant.
 
-When an exact existing step/OQ is budget-blocked and the user explicitly asks Loom to continue, use `loom_budget_continue` for that same target rather than fabricating progress or duplicating work. Reuse known workflow/target identifiers instead of asking the user to repeat them; if they are genuinely absent, inspect status once. Pass the exact latest user message as confirmation. One fresh user turn authorizes one target-reserved exceptional dispatch. After a successful continuation, recheck status, issue a fresh exact dispatch grant, and continue the same owner/step while preserving attempts, evidence, scope, verification, and independent gates. Never batch no-progress retries or create a replacement Task/workflow merely to escape quota.
+When an exact existing step/OQ is budget-blocked and unfinished work remains, use the interactive continuation path instead of turning quota into a dead end. The dispatch denial supplies an exact OpenCode `question` payload. Ask that question without paraphrasing it. Only an answer exactly equal to **Allow +1 dispatch** authorizes continuation: call `loom_budget_continue` for that same target without a `confirmation`, recheck status, issue a fresh exact dispatch grant, and continue the same owner/step. **Stop here**, dismissal, or any other answer grants no capacity: preserve completed work/evidence and stop at the resumable boundary. This budget question is a narrow execution approval, not intent shaping.
 
-If automatic recovery is exhausted and no explicit user continuation exists, preserve completed work/evidence and report the resumable boundary rather than bypassing controls or manufacturing success.
+For headless/message-driven use, an explicit fresh user message asking Loom to continue remains valid: call `loom_budget_continue` for the same target and pass that exact latest user message as `confirmation`. One question approval or fresh user turn authorizes one target-reserved exceptional dispatch. Preserve attempts, evidence, scope, verification, and independent gates. Never batch no-progress retries or create a replacement Task/workflow merely to escape quota.
 
 ## Cancellation and stopping
 
