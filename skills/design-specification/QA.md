@@ -1,15 +1,18 @@
 # design-specification Quality Assurance
 
-Critic-only adversarial contract. Assume competent production and Reviewer conformance have already occurred; attack residual false confidence without creating new authority.
+Critic-only adversarial contract. Assume competent production and Reviewer conformance; attack residual UX false confidence without creating new authority.
 
 ## QA criteria
 
-- Walk adversarial user journeys: interruption, slow/failing dependency, accidental destructive action, stale state, accessibility tools, and recovery.
-- Look for a flow that is understandable to its designer but relies on hidden system knowledge a user does not have.
-- Attack cross-screen/state transitions where local designs are coherent but the end-to-end journey loses context or control.
-- Search for irreversible actions with weak preview/confirmation/recovery semantics.
-- Test whether accessibility accommodations change the interaction model rather than merely color/labels.
+- Walk representative Scenarios step by step and pause anywhere implementation would still need to invent user-visible behavior.
+- Attack interruption, slow/failing dependencies, partial progress, back/cancel/retry, stale state, repeated action, and re-entry.
+- Enter each reachable state through a non-happy path and ask whether the user knows what happened, what is preserved, and what they can do next.
+- Switch input mode, viewport/device/terminal size, keyboard-only use, reduced motion, and assistive-technology assumptions where relevant.
+- Search for local screen/component designs that are coherent individually but lose context or control across the complete journey.
+- Remove visual styling/mockups mentally and check whether behavioral intent is still implementable.
+- Search for nonexistent/mock product capability that makes an accepted journey look complete.
+- Challenge design alternatives that differ only cosmetically when the underlying interaction direction was genuinely open.
 
 ## QA depth
 
-Increase QA depth where a shared wrong assumption could survive both competent production and normal review.
+Increase depth where a hidden UX decision could survive competent design/review and be discovered only during implementation or real use.

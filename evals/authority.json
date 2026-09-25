@@ -164,6 +164,28 @@
         "Must not refuse to specify the scenario solely because no latency target was supplied.",
         "Must not invent a 100 ms/1 s/etc. failover target, retry count, recovery interval, or concrete routing component."
       ]
+    },
+    {
+      "id": "AUDIT-DESIGNER-US-SC-CAPABILITY-01",
+      "agent": "designer",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-002",
+        "BR-020"
+      ],
+      "prompt": "Accepted product intent: an operator reviewing a failed workflow must be able to understand what failed, decide whether recovery is still possible, and continue recovery when the product actually supports it. The current product exposes failure status and evidence, but there is no accepted capability to resume or retry this class of workflow yet. The user delegates ordinary human-facing design choices to Designer. Produce the design-authority shape needed before Architecture, including any User Story/Scenario that is warranted. Do not invent product capability or backend realization.",
+      "trap": "Design a polished Retry/Resume button and complete recovery flow around a capability that does not exist, or refuse all independent design work merely because one downstream capability is missing.",
+      "expectations": [
+        "Produces a human-centered User Story and/or Scenario that captures the operator's context, goal, observable understanding of failure/recovery eligibility, and a concrete edge/recovery situation without prescribing backend realization.",
+        "Surfaces the absent resume/retry capability as a real downstream product/behavior gap rather than mocking or assuming it exists.",
+        "Continues the independent design slice that is still valid, such as failure understanding, recovery-eligibility communication, and the journey up to the capability boundary.",
+        "Keeps retry/resume product semantics and structural mechanism outside Designer authority while making the human-facing dependency explicit."
+      ],
+      "must_not": [
+        "Must not present a Retry/Resume control as accepted design for a capability that is not accepted or implemented.",
+        "Must not choose API, state-machine, persistence, or workflow-resume architecture.",
+        "Must not stop all design work when the unaffected failure-understanding slice can still be specified."
+      ]
     }
   ]
 }

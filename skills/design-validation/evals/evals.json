@@ -1,0 +1,43 @@
+{
+  "skill": "design-validation",
+  "version": "1.0.0",
+  "shape": 1,
+  "cases": [
+    {
+      "id": "Validation-01",
+      "name": "real-implementation-drift-and-evidence-limits",
+      "trap": "Validation checks only visual similarity/happy path, treats code inspection as observed keyboard behavior, or redesigns the product instead of separating implementation drift from design gaps.",
+      "prompt": "Validate this implementation against the accepted design. Accepted design: opening Task Details from a task card moves focus into the panel; Escape closes it and returns focus to the originating card; a failed comment submission keeps the typed comment, shows an inline recoverable error, and allows retry; successful submission adds the comment and announces the update to assistive technology. Observed implementation evidence: browser interaction confirms the panel opens/closes and Escape works, but focus remains on the card behind the panel while open and after close moves to document body. Browser interaction confirms failed comment submission clears the textarea and shows a generic top-page error. Code contains an `aria-live=\"polite\"` region for comments, but no screen-reader run was performed. Visual appearance otherwise matches the mockup. Produce the validation result/findings.",
+      "expectations": [
+        "Finds behavioral/accessibility drift for incorrect focus placement/return and for clearing the failed comment instead of preserving recoverable input.",
+        "Traces each finding from accepted intent to observed implementation and states the user consequence rather than focusing on cosmetic similarity.",
+        "Treats the aria-live code as partial/static evidence and explicitly leaves actual assistive-technology announcement behavior unverified rather than claiming it passed.",
+        "Classifies correction ownership as implementation drift where the accepted design is clear and does not redesign the interaction.",
+        "Does not let visual fidelity outweigh the load-bearing behavioral/accessibility failures or issue PASS."
+      ],
+      "negative_expectations": [
+        "Must not claim accessibility passed solely because an aria-live attribute exists in code.",
+        "Must not redesign the panel/comment flow when the accepted intent is already clear.",
+        "Must not approve because the UI looks like the mockup."
+      ]
+    },
+    {
+      "id": "Validation-02",
+      "name": "no-spec-heuristic-vs-spec-deviation",
+      "trap": "With no accepted Design Spec, the validator invents design intent, reports heuristic concerns as spec violations, or claims comprehensive PASS from a narrow static description.",
+      "prompt": "Evaluate the current CLI experience. There is no accepted Design Spec or User Story/Scenario artifact for this command. Observed directly in a terminal: `archive delete project-a` immediately deletes and exits 0 with no confirmation or preview; `--help` documents the command but not whether deletion is reversible; an invalid project prints `not found` to stderr and exits non-zero. You have not inspected the implementation or tested interruption, scripting, accessibility tooling, or recovery. Produce a bounded design-validation result.",
+      "expectations": [
+        "States that without accepted design authority, findings are heuristic/usability observations rather than spec deviations and does not invent retroactive design intent.",
+        "Identifies immediate destructive deletion with unclear reversibility/preview as a user-control/error-prevention concern while avoiding an unsupported claim that confirmation is mandated.",
+        "Records the directly observed evidence and explicitly bounds untested implementation, interruption, scripting, recovery, and other states.",
+        "Distinguishes the observed correct stderr/non-zero invalid-project behavior from the separate destructive-action concern rather than treating the whole CLI as failed.",
+        "Avoids a comprehensive PASS because important design intent and validation surfaces are absent."
+      ],
+      "negative_expectations": [
+        "Must not say 'the design requires a confirmation dialog' when no such accepted design exists.",
+        "Must not claim comprehensive validation from the narrow terminal observations.",
+        "Must not rewrite the CLI design as part of validation."
+      ]
+    }
+  ]
+}

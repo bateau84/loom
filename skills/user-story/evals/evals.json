@@ -1,0 +1,43 @@
+{
+  "skill": "user-story",
+  "version": "1.0.0",
+  "shape": 1,
+  "cases": [
+    {
+      "id": "US-01",
+      "name": "operator-recovery-goal-not-ui",
+      "trap": "The story becomes a feature/UI prescription ('add a retry modal/button') or a generic 'as a user' sentence with no operational context or observable success.",
+      "prompt": "Create the User Story for this accepted product intent: when a long-running deployment fails, an on-call platform engineer who is under incident pressure must be able to understand that the deployment failed, identify which deployment needs attention, and initiate the already-authorized retry capability without reconstructing the deployment from scratch. The product authority does not choose a screen, modal, button, API, or retry mechanism. Produce the durable US content.",
+      "expectations": [
+        "Names the actor/context as an on-call platform engineer handling a failed long-running deployment under incident pressure, rather than a generic user.",
+        "States the trigger as observing/encountering a deployment failure and the goal in human terms: understand the failure/affected deployment and recover using the authorized retry capability.",
+        "Defines observable success from the engineer's perspective, including being able to tell which deployment failed and whether retry was initiated, without using an internal backend event as success.",
+        "Keeps the story independent of modal/button/page/API/storage/queue choices.",
+        "Traces the story to the accepted product intent and does not add a new retry guarantee beyond the already-authorized capability."
+      ],
+      "negative_expectations": [
+        "Must not prescribe a retry modal, dashboard button, REST endpoint, queue, or other implementation/design mechanism.",
+        "Must not use only 'As a user, I want to retry deployments' without meaningful actor/context and observable success.",
+        "Must not redefine success as an internal job/HTTP status the engineer cannot observe."
+      ]
+    },
+    {
+      "id": "US-02",
+      "name": "cli-human-intent-vs-system-requirement",
+      "trap": "The story is written as a system requirement about exit codes/stdout or bundles distinct automation and interactive goals into one compound story.",
+      "prompt": "Create the User Story(s) from this accepted CLI product intent. A release engineer sometimes runs `ship` interactively to publish one build, and CI automation also invokes the same command non-interactively. Both need to know whether publication actually succeeded; humans need understandable failure information, while automation needs a reliable machine-detectable outcome. Product authority allows the same command to serve both contexts but does not fix output format, exit-code taxonomy, flags, or transport. Produce the smallest useful durable US set.",
+      "expectations": [
+        "Recognizes that interactive release engineer and non-interactive CI are materially different actor/contexts and splits or clearly separates their human/consumer goals rather than forcing them into one vague story.",
+        "For the release engineer, expresses the goal and observable success in terms of confidently knowing publication succeeded or what prevented it.",
+        "For the automation context, treats the automation consumer as a distinct context needing an unambiguous consumable success/failure outcome without prescribing a concrete exit-code taxonomy or JSON format.",
+        "Keeps implementation details such as flags, stdout/stderr format, API transport, and specific codes out of the User Story.",
+        "Preserves provenance to the accepted product intent."
+      ],
+      "negative_expectations": [
+        "Must not turn the User Story into a detailed CLI contract with exact exit codes or output schema.",
+        "Must not collapse the two contexts into one generic user if that loses materially different success needs.",
+        "Must not invent interactive prompts or machine-readable formats."
+      ]
+    }
+  ]
+}
