@@ -6744,7 +6744,6 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           )
           const ownership = await gitSessionOwnership(ctx, event.sessionID)
           if (
-            event.agent !== "general" &&
             addTargets.some(
               (target: string) =>
                 !ownership.paths.includes(normalizeRepoPath(target)),
@@ -6755,19 +6754,17 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               "Git staging denied: stage only files authored by this role/session."
             return
           }
-          if (event.agent !== "general") {
-            const changed = await changedOwnedPaths(
-              ownership,
-              ctx.location.directory,
-              addTargets,
-            )
-            if (changed.length > 0) {
-              event.effect = "deny"
-              event.message =
-                "Git staging denied: these files changed after this role's last admitted mutation: " +
-                changed.join(", ")
-              return
-            }
+          const changed = await changedOwnedPaths(
+            ownership,
+            ctx.location.directory,
+            addTargets,
+          )
+          if (changed.length > 0) {
+            event.effect = "deny"
+            event.message =
+              "Git staging denied: these files changed after this role's last admitted mutation: " +
+              changed.join(", ")
+            return
           }
           const conflicts = baselineTargetConflicts(baseline, addTargets)
           if (conflicts.length > 0) {
@@ -6783,7 +6780,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               event.sessionID,
               ctx.location.directory,
               authorScope,
-              event.agent !== "general",
+              true,
             )
             if (error) {
               event.effect = "deny"
@@ -7381,6 +7378,49 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       const input = raw.input
       const inputDigest = input === undefined ? undefined : await digest(input)
       const eventMatches = Boolean(pending) && inputDigest === pending!.inputDigest
+
+      if (
+        raw.status === "completed" &&
+        raw.agent === "general" &&
+        eventMatches
+      ) {
+        const generalScope = durableAuthorGitScopes.general
+        const sessionID = String(raw.sessionID)
+        const owned = successfulMutationPaths(
+          tool,
+          input,
+          ctx.location.directory,
+        ).filter((path) => resourcesWithinScope([path], generalScope))
+        if (owned.length > 0) {
+          await recordGitSessionOwnership(
+            ctx,
+            sessionID,
+            ctx.location.directory,
+            owned,
+          )
+        }
+
+        if (tool === "shell" || tool === "bash") {
+          const command =
+            input && typeof input === "object"
+              ? (input as any).command
+              : undefined
+          const staged =
+            typeof command === "string"
+              ? (scopedGitAddTargets(command) ?? []).filter((path) =>
+                  resourcesWithinScope([path], generalScope),
+                )
+              : []
+          if (staged.length > 0) {
+            await recordGitSessionStaging(
+              ctx,
+              sessionID,
+              ctx.location.directory,
+              staged,
+            )
+          }
+        }
+      }
 
       if (
         raw.status === "completed" &&

@@ -1902,6 +1902,53 @@ Verdict: FAIL
       await evaluate!(designerOutside)
       expect(designerOutside.effect).toBe("deny")
 
+      const generalEdit: any = {
+        agent: "general",
+        action: "edit",
+        resources: ["docs/anchors/runtime.md"],
+        sessionID: "general-author",
+        effect: "allow",
+      }
+      await evaluate!(generalEdit)
+      expect(generalEdit.effect).not.toBe("deny")
+      await toolHooks.get("execute.before")?.({
+        tool: "edit",
+        callID: "general-anchor-edit",
+        sessionID: "general-author",
+        agent: "general",
+        input: { filePath: "docs/anchors/runtime.md" },
+      })
+      await toolHooks.get("execute.after")?.({
+        tool: "edit",
+        callID: "general-anchor-edit",
+        sessionID: "general-author",
+        agent: "general",
+        input: { filePath: "docs/anchors/runtime.md" },
+        status: "completed",
+        result: "updated",
+      })
+
+      const generalOwnedAdd: any = {
+        agent: "general",
+        action: "shell",
+        resources: ["git add docs/anchors/runtime.md"],
+        sessionID: "general-author",
+        effect: "ask",
+      }
+      await evaluate!(generalOwnedAdd)
+      expect(generalOwnedAdd.effect).toBe("allow")
+
+      const generalUnknownAdd: any = {
+        agent: "general",
+        action: "shell",
+        resources: ["git add docs/anchors/unknown.md"],
+        sessionID: "general-author",
+        effect: "ask",
+      }
+      await evaluate!(generalUnknownAdd)
+      expect(generalUnknownAdd.effect).toBe("deny")
+      expect(generalUnknownAdd.message).toContain("stage only files authored")
+
       const unattachedWorker: any = {
         agent: "worker",
         action: "shell",
@@ -2112,6 +2159,47 @@ Verdict: FAIL
         ...stageEvent,
         status: "completed",
         result: "staged",
+      })
+
+      await writeFile(join(h.root, "src", "owned.ts"), "foreign-index\n")
+      await git(h.root, ["add", "src/owned.ts"])
+      await writeFile(join(h.root, "src", "owned.ts"), "owned\n")
+
+      const tamperedCommit: any = {
+        agent: "worker",
+        action: "shell",
+        resources: [
+          "git -c core.hooksPath=/dev/null commit -m 'test: tampered index'",
+        ],
+        sessionID: "git-ownership-worker",
+        effect: "ask",
+      }
+      await evaluate!(tamperedCommit)
+      expect(tamperedCommit.effect).toBe("deny")
+      expect(tamperedCommit.message).toContain("staged content changed")
+
+      const restageEvent = {
+        tool: "shell",
+        callID: "owned-restage",
+        sessionID: "git-ownership-worker",
+        agent: "worker",
+        input: { command: "git add src/owned.ts" },
+      }
+      const restagePermission: any = {
+        agent: "worker",
+        action: "shell",
+        resources: ["git add src/owned.ts"],
+        sessionID: "git-ownership-worker",
+        effect: "ask",
+      }
+      await evaluate!(restagePermission)
+      expect(restagePermission.effect).toBe("allow")
+      await h.toolHooks.get("execute.before")?.(restageEvent)
+      await git(h.root, ["add", "src/owned.ts"])
+      await h.toolHooks.get("execute.after")?.({
+        ...restageEvent,
+        status: "completed",
+        result: "restaged",
       })
 
       const hook = join(h.root, ".git", "hooks", "pre-commit")
