@@ -2448,6 +2448,34 @@ Verdict: FAIL
         result: "second write",
       })
 
+      const failed = {
+        tool: "edit",
+        callID: "active-write-error",
+        sessionID: "write-lock-session-a",
+        agent: "general",
+        input: { filePath: join(firstHarness.root, "src", "failed.ts") },
+      }
+      await firstHarness.toolHooks.get("execute.before")?.(failed)
+      await firstHarness.toolHooks.get("execute.after")?.({
+        ...failed,
+        status: "error",
+        error: new Error("synthetic edit failure"),
+      })
+      await expect(
+        secondHarness.toolHooks.get("execute.before")?.({
+          ...failed,
+          callID: "active-write-after-error",
+          sessionID: "write-lock-session-b",
+        }),
+      ).resolves.toBeUndefined()
+      await secondHarness.toolHooks.get("execute.after")?.({
+        ...failed,
+        callID: "active-write-after-error",
+        sessionID: "write-lock-session-b",
+        status: "completed",
+        result: "retry completed",
+      })
+
       expect(await readFile(join(firstHarness.root, "src", "shared.ts"), "utf8"))
         .toBe("second\n")
     } finally {
