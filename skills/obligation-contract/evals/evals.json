@@ -1,0 +1,44 @@
+{
+  "skill": "obligation-contract",
+  "version": "1.0.0",
+  "shape": 1,
+  "cases": [
+    {
+      "id": "OC-01",
+      "name": "authorization-seam-with-unsettled-timeout",
+      "trap": "The contract freezes HTTP/JSON representation or invents timeout/indeterminate authorization meaning even though accepted authority only settles success and explicit denial.",
+      "prompt": "Write an Obligation Contract for this accepted seam. A policy authority and protected-effect executor are independently implemented. Before a protected effect starts, the executor must obtain authorization for that attempted operation. Authorization success permits that attempt; explicit denial means that effect does not start. Evidence must preserve the association between decision and attempted operation. Accepted authority does not define timeout, unreachable-policy-authority, or otherwise indeterminate authorization semantics. Exact transport, schema, and process boundaries are not decided. Produce the durable OC content and identify any blocking semantic gap.",
+      "expectations": [
+        "Names semantic participants by responsibility and states the precondition that a protected operation is being attempted.",
+        "Defines guarantees and semantic input/output around attempted-operation identity, authorization decision, effect-start permission, and evidence association without choosing HTTP, JSON fields, packages, or transport.",
+        "Makes explicit denial behavior and authorization-before-effect an invariant across the seam.",
+        "Identifies timeout/unreachable/indeterminate authorization meaning as unresolved semantic authority rather than inventing allow, deny, retry, or fallback behavior.",
+        "Verification semantics require observing the real policy-authority/executor relationship, including that denial cannot cross the effect-start fence and evidence remains associated with the attempt."
+      ],
+      "negative_expectations": [
+        "Must not invent fail-open, fail-closed, retry count, or timeout semantics that the accepted authority does not define.",
+        "Must not prescribe POST /authorize, an `allowed` field, RPC, message bus, or other structural realization.",
+        "Must not verify only one participant while mocking away the cross-party ordering/association guarantee."
+      ]
+    },
+    {
+      "id": "OC-02",
+      "name": "duplicate-safe-provenance-handoff",
+      "trap": "The contract describes only a happy-path payload handoff and leaves duplicate delivery, rejection, provenance continuity, or independent-party interpretation to implementation.",
+      "prompt": "Write an Obligation Contract for a result handoff between independently implemented Publisher and Consumer responsibilities. Accepted semantics: a published contribution has a stable contribution identity and attributable producer provenance; delivery may happen more than once; the Consumer must not apply the same logical contribution more than once; Consumer rejection must be observable to the Publisher and must not be represented as successful consumption; provenance must remain associated with the contribution through acceptance or rejection. Transport, serialization, storage, and API shape are not decided. Produce the durable OC content.",
+      "expectations": [
+        "Defines Publisher and Consumer as semantic participants and states the preconditions for a contribution handoff.",
+        "Defines semantic input/output in terms of contribution identity, attributable provenance, and acceptance/rejection meaning rather than fields or wire representation.",
+        "Makes duplicate delivery/idempotent logical consumption explicit so repeated delivery cannot cause repeated application.",
+        "Defines rejection/failure semantics so rejection is observable to the Publisher and cannot be laundered into successful consumption.",
+        "States a cross-seam invariant preserving contribution identity and provenance through duplicate delivery and acceptance/rejection.",
+        "Verification semantics exercise duplicate delivery and both acceptance and rejection across the real participant boundary without prescribing transport."
+      ],
+      "negative_expectations": [
+        "Must not choose Kafka, HTTP, JSON, database tables, message IDs fields, or another structural realization.",
+        "Must not treat transport delivery as equivalent to semantic consumption.",
+        "Must not omit duplicate behavior or provenance continuity."
+      ]
+    }
+  ]
+}

@@ -1,15 +1,17 @@
 # behavioral-spec Quality Assurance
 
-Critic-only adversarial contract. Assume competent production and Reviewer conformance have already occurred; attack residual false confidence without creating new authority.
+Critic-only cross-artifact contract. Assume competent production and Reviewer conformance; attack residual semantic false confidence without creating new authority.
 
 ## QA criteria
 
-- Construct ambiguous combinations where two individually reasonable requirements produce incompatible outcomes.
-- Search for unspecified defaults that implementation teams could resolve differently while each claims conformance.
-- Attack terms such as "final", "successful", "retry", "cancel", "available", or "atomic" for hidden semantic latitude.
-- Ask whether every passing implementation could still violate the user's accepted outcome through an uncovered sequence or failure mode.
-- Look for requirements that accidentally encode one architecture and therefore hide alternative realizations or missing semantics.
+- Construct sequences where individually reasonable BRs, QSs, OCs, and Designer Scenarios compose into contradictory outcomes.
+- Search for a downstream implementation or architecture premise that has been laundered into product truth through wording or examples.
+- Attack ambiguous quantifiers and temporal terms such as all, any, never, final, eventual, retry, cancel, available, atomic, and complete.
+- Find vacuous implementations that satisfy the literal text while defeating the accepted outcome.
+- Search for missing actor/state combinations, unspecified defaults, suppressed evidence, and success-only semantics.
+- Ask whether two independent implementations could each claim conformance while disagreeing on a load-bearing meaning.
+- Challenge verification semantics that observe a neighboring behavior rather than the actual normative guarantee.
 
 ## QA depth
 
-Increase QA depth where a shared wrong assumption could survive both competent production and normal review.
+Increase depth where one shared semantic mistake could survive Producer, Designer/Architect reconciliation, and normal review.

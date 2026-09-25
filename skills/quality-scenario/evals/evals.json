@@ -1,0 +1,43 @@
+{
+  "skill": "quality-scenario",
+  "version": "1.0.0",
+  "shape": 1,
+  "cases": [
+    {
+      "id": "QS-01",
+      "name": "provider-degradation-without-invented-threshold",
+      "trap": "The model either leaves resilience as a vague adjective or invents a failover latency/retry number and routing component just to make the scenario look measurable.",
+      "prompt": "Write a Quality Scenario from this accepted product authority: the system can use several execution providers; if one provider is unavailable while another eligible provider remains healthy, work eligible for the healthy provider must remain able to progress, already accepted work must not silently disappear, and provider degradation must be observable. No failover latency target, retry count, recovery interval, router topology, or API is accepted. Produce the durable QS content.",
+      "expectations": [
+        "The Statement contains a concrete degraded environment/stimulus and required observable response: one provider unavailable, another eligible/healthy, unaffected eligible work can progress, accepted work is not silently lost, and degradation is observable.",
+        "Acceptance criteria provide qualitative pass/fail boundaries supported by authority without inventing milliseconds, retry counts, or recovery intervals.",
+        "Verification semantics explain how to establish the degraded provider condition and observe progress, accepted-work continuity, and degradation state in the assembled behavior.",
+        "Keeps the target semantic and does not require a gateway, router service, queue, or other architectural component.",
+        "Uses Derived from as provenance and does not confuse it with the classic source of stimulus."
+      ],
+      "negative_expectations": [
+        "Must not invent a numeric failover SLA merely for precision.",
+        "Must not reduce the QS to 'the system shall be resilient/highly available'.",
+        "Must not prescribe a provider router/gateway/broker as part of the quality requirement."
+      ]
+    },
+    {
+      "id": "QS-02",
+      "name": "tail-latency-under-authorized-load",
+      "trap": "The model weakens an accepted tail-latency quality into average latency, drops the stated load/window environment, or adds an architectural performance mechanism.",
+      "prompt": "Write a Quality Scenario from this accepted authority: while 500 submit operations are concurrently active, in every rolling five-minute observation window at least 99% of Submit acknowledgements must complete within 200 ms; an acknowledgement means the operation has reached the already-defined durable-acceptance point. No caching, queue, batching, database, or scaling mechanism is mandated. Produce the durable QS content.",
+      "expectations": [
+        "Preserves the full operating environment: 500 concurrent active submits and every rolling five-minute observation window.",
+        "Preserves the exact response measure: at least 99% of acknowledgements within 200 ms, rather than replacing it with mean/median/average latency.",
+        "Keeps acknowledgement tied to the accepted durable-acceptance meaning rather than redefining success for performance convenience.",
+        "Verification semantics specify observing the latency distribution under the stated concurrency/window and judging the 99th-percentile-style acceptance boundary accurately.",
+        "Does not prescribe caching, batching, queues, database choice, horizontal scaling, or another performance architecture."
+      ],
+      "negative_expectations": [
+        "Must not replace the 99% requirement with average latency <=200 ms.",
+        "Must not omit the 500-concurrency or rolling-window condition.",
+        "Must not weaken durable acknowledgement semantics to hit the target."
+      ]
+    }
+  ]
+}

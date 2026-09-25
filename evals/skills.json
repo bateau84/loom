@@ -460,6 +460,210 @@
           "content": "{ \"handlers\": [\"Save\", \"SaveLegacy\"] }\n"
         }
       ]
+    },
+    {
+      "id": "SKILL-BEHAVIORAL-REQUIREMENT-01",
+      "agent": "reviewer",
+      "skill": "behavioral-requirement",
+      "execution": "runtime",
+      "requirements": [
+        "BR-005",
+        "BR-006"
+      ],
+      "prompt": "Review requirement.md as a proposed Behavioral Requirement. Check whether it preserves the accepted authority, remains implementation-independent, and is actually falsifiable without inventing product meaning.",
+      "trap": "The requirement turns a suggested SQLite example and a vague preference for responsive search into mandatory SQLite and an invented 50 ms guarantee.",
+      "expectations": [
+        "Flags the mandatory SQLite choice as an architecture leak because the accepted source names it only as an example.",
+        "Flags the 50 ms threshold as unsupported precision rather than treating it as a legitimate derived acceptance criterion.",
+        "Preserves the accepted observable search capability while separating sourced meaning from invented strengthening."
+      ],
+      "must_not": [
+        "Approve the requirement merely because SQLite and 50 ms are technically plausible.",
+        "Replace the invented threshold with a different reviewer-invented number."
+      ],
+      "tools": {
+        "requires": [
+          "skill",
+          "read",
+          "loom_assessment"
+        ],
+        "forbids": [
+          "loom_qa"
+        ]
+      },
+      "actions": {
+        "requires": [
+          {
+            "tool": "skill",
+            "arg": "name",
+            "equals": "behavioral-requirement"
+          },
+          {
+            "tool": "loom_assessment",
+            "arg": "skill",
+            "equals": "behavioral-requirement"
+          },
+          {
+            "tool": "read",
+            "arg": "filePath",
+            "ends_with": "requirement.md"
+          }
+        ],
+        "forbids": [
+          {
+            "tool": "loom_qa",
+            "arg": "skill",
+            "equals": "behavioral-requirement"
+          },
+          {
+            "tool": "read",
+            "arg": "filePath",
+            "ends_with": "skills/behavioral-requirement/QA.md"
+          }
+        ]
+      },
+      "fixture_files": [
+        {
+          "path": "requirement.md",
+          "content": "# Accepted authority\n\nSearch results must reflect stored notes and search should feel responsive for normal personal use. SQLite is given as an example of a possible local implementation; no latency target is accepted.\n\n# Proposed BR\n\n**Statement:** The system SHALL store its searchable note index in SQLite and return every search within 50 ms.\n\n**Acceptance criteria:**\n- SQLite is used for the searchable index.\n- Every search completes in <= 50 ms.\n\n**Verification semantics:** Benchmark SQLite queries and fail any request over 50 ms.\n\n**Derived from:** Accepted authority above.\n"
+        }
+      ]
+    },
+    {
+      "id": "SKILL-QUALITY-SCENARIO-01",
+      "agent": "reviewer",
+      "skill": "quality-scenario",
+      "execution": "runtime",
+      "requirements": [
+        "BR-005",
+        "BR-006"
+      ],
+      "prompt": "Review quality-scenario.md as a proposed Quality Scenario. Check scenario completeness, authority, measurement, and whether it stays behavioral rather than choosing architecture.",
+      "trap": "The scenario has a valid resilience concern but invents a 250 ms threshold and an API-gateway realization that accepted authority never fixed.",
+      "expectations": [
+        "Recognizes provider outage as a valid quality-scenario stimulus/environment and preserves the requirement that unaffected work continue without silent loss.",
+        "Flags the 250 ms response measure as invented because no threshold is accepted or derivable from the supplied authority.",
+        "Flags the API gateway as structural realization rather than a semantic target and distinguishes Derived from provenance from the source of stimulus."
+      ],
+      "must_not": [
+        "Reject the entire Quality Scenario merely because a numeric threshold is missing from accepted authority.",
+        "Treat Derived from as the classic quality-scenario source-of-stimulus field."
+      ],
+      "tools": {
+        "requires": [
+          "skill",
+          "read",
+          "loom_assessment"
+        ],
+        "forbids": [
+          "loom_qa"
+        ]
+      },
+      "actions": {
+        "requires": [
+          {
+            "tool": "skill",
+            "arg": "name",
+            "equals": "quality-scenario"
+          },
+          {
+            "tool": "loom_assessment",
+            "arg": "skill",
+            "equals": "quality-scenario"
+          },
+          {
+            "tool": "read",
+            "arg": "filePath",
+            "ends_with": "quality-scenario.md"
+          }
+        ],
+        "forbids": [
+          {
+            "tool": "loom_qa",
+            "arg": "skill",
+            "equals": "quality-scenario"
+          },
+          {
+            "tool": "read",
+            "arg": "filePath",
+            "ends_with": "skills/quality-scenario/QA.md"
+          }
+        ]
+      },
+      "fixture_files": [
+        {
+          "path": "quality-scenario.md",
+          "content": "# Accepted authority\n\nIf one execution provider is unavailable while another eligible provider remains healthy, work eligible for the healthy provider must be able to continue and accepted work must not be silently lost. No latency target or routing component is fixed.\n\n# Proposed QS\n\n**Statement:** During a provider outage, the API gateway SHALL reroute eligible work to a healthy provider within 250 ms.\n\n**Acceptance criteria:**\n- Provider A is unavailable and Provider B is healthy.\n- The API gateway selects Provider B within 250 ms.\n- Accepted work is not lost.\n\n**Verification semantics:** Disable Provider A and measure gateway failover latency.\n\n**Derived from:** Accepted authority above.\n"
+        }
+      ]
+    },
+    {
+      "id": "SKILL-OBLIGATION-CONTRACT-01",
+      "agent": "reviewer",
+      "skill": "obligation-contract",
+      "execution": "runtime",
+      "requirements": [
+        "BR-005",
+        "BR-006"
+      ],
+      "prompt": "Review obligation-contract.md as a proposed cross-party Obligation Contract. Check whether the seam warrants a contract, whether the contract stays semantic, and whether shared failure meaning is complete enough for independent implementations.",
+      "trap": "The contract-worthy authorization seam is present, but the artifact freezes an HTTP/JSON realization and leaves timeout/ambiguous authorization behavior undefined.",
+      "expectations": [
+        "Keeps the authorization-before-protected-effect seam as contract-worthy rather than rejecting the OC wholesale.",
+        "Flags POST /authorize and the allowed JSON field as Architecture Specification details rather than semantic contract content.",
+        "Flags timeout or ambiguous authorization response as a correctness-sensitive missing failure semantic because independent parties could otherwise disagree whether the protected effect may start."
+      ],
+      "must_not": [
+        "Approve the contract because the happy-path allow/deny behavior is clear.",
+        "Invent the missing timeout policy instead of identifying it as unresolved semantic authority when the accepted source does not settle it."
+      ],
+      "tools": {
+        "requires": [
+          "skill",
+          "read",
+          "loom_assessment"
+        ],
+        "forbids": [
+          "loom_qa"
+        ]
+      },
+      "actions": {
+        "requires": [
+          {
+            "tool": "skill",
+            "arg": "name",
+            "equals": "obligation-contract"
+          },
+          {
+            "tool": "loom_assessment",
+            "arg": "skill",
+            "equals": "obligation-contract"
+          },
+          {
+            "tool": "read",
+            "arg": "filePath",
+            "ends_with": "obligation-contract.md"
+          }
+        ],
+        "forbids": [
+          {
+            "tool": "loom_qa",
+            "arg": "skill",
+            "equals": "obligation-contract"
+          },
+          {
+            "tool": "read",
+            "arg": "filePath",
+            "ends_with": "skills/obligation-contract/QA.md"
+          }
+        ]
+      },
+      "fixture_files": [
+        {
+          "path": "obligation-contract.md",
+          "content": "# Accepted authority\n\nA protected effect may start only after authorization succeeds. Explicit denial means the effect must not start. The accepted authority does not define timeout or indeterminate authorization semantics.\n\n# Proposed OC\n\n**Participants:** Authorization API; Worker\n\n**Preconditions:** A protected operation is requested.\n\n**Guarantees:** Worker POSTs /authorize and starts the effect only when JSON field `allowed` is true. `allowed: false` prevents the effect.\n\n**Semantic input/output:** Input: operation request. Output: JSON `allowed` boolean.\n\n**Failure semantics:** Explicit denial prevents the effect.\n\n**Invariant:** A denied operation never starts.\n\n**Verification semantics:** Mock /authorize with allowed true/false and assert whether Worker starts.\n\n**Derived from:** Accepted authority above.\n"
+        }
+      ]
     }
   ]
 }
