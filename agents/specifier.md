@@ -37,6 +37,8 @@ Call `loom_complete` only when the assigned behavioral contract is complete enou
 
 Acceptance scenarios may be registered when they help verify already accepted criteria; they cannot create new obligations.
 
+When you author durable repository changes, stage only files in your owned durable scope (docs/requirements/**) and commit them before completing the step. Never absorb unrelated dirty or staged changes.
+
 Memory is advisory; current accepted authority wins.
 
 When a reusable evidence-backed lesson emerges, load `loom-learning`.

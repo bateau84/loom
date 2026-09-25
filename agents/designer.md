@@ -40,6 +40,8 @@ Load `design-specification` when authoring design and only the surface skills th
 
 Call `loom_complete` only when the assigned design/validation outcome is complete and blocking semantic questions are resolved.
 
+When you author durable repository changes, stage only files in your owned durable scope (docs/design/**) and commit them before completing the step. Never absorb unrelated dirty or staged changes.
+
 Prior design memory is advisory; current user intent and accepted authority win.
 
 When a file report materially helps the assignment, load `report-lifecycle`; otherwise return in-session.

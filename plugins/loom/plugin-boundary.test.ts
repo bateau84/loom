@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test"
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
+import { execFile } from "node:child_process"
+import { promisify } from "node:util"
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
 import loomPlugin from "./index"
@@ -15,6 +17,23 @@ import {
 } from "./runtime"
 
 const roots: string[] = []
+
+const execFileAsync = promisify(execFile)
+
+async function git(root: string, args: string[]) {
+  return execFileAsync("git", args, { cwd: root, encoding: "utf8" })
+}
+
+async function initializeGitFixture(root: string) {
+  await git(root, ["init", "-q"])
+  await git(root, ["config", "user.name", "Loom Test"])
+  await git(root, ["config", "user.email", "loom-test@example.invalid"])
+  await writeFile(
+    join(root, ".git", "info", "exclude"),
+    "state/\nruntime/\n.loom/\n",
+  )
+}
+
 
 class MemoryStorage {
   values = new Map<string, unknown>()
@@ -1719,6 +1738,521 @@ Verdict: FAIL
       }
     } finally {
       restore()
+    }
+  })
+
+  test("derives low-ceremony shell capability from the current role", async () => {
+    const { call, permissionHooks, toolHooks, restore } = await harness()
+    try {
+      const evaluate = permissionHooks.get("evaluate")
+      expect(evaluate).toBeDefined()
+
+      const diagnostic: any = {
+        agent: "diagnostic",
+        action: "shell",
+        resources: ["go test ./..."],
+        sessionID: "conversation-diagnostic-execute",
+        effect: "ask",
+      }
+      await evaluate!(diagnostic)
+      expect(diagnostic.effect).toBe("allow")
+
+      const conversationalRun: any = {
+        agent: "diagnostic",
+        action: "shell",
+        resources: ["go run ./cmd/debug"],
+        sessionID: "conversation-diagnostic-execute",
+        effect: "ask",
+      }
+      await evaluate!(conversationalRun)
+      expect(conversationalRun.effect).toBe("deny")
+      expect(conversationalRun.message).toContain("governed Diagnostic step")
+
+      const started = await call(
+        "start",
+        { request: "Diagnose one bounded runtime failure." },
+        "general",
+        "diagnostic-execution-general",
+      )
+      const workflowId = String(started.workflowId)
+      expect((await call(
+        "route",
+        {
+          humanFacing: false,
+          behavioral: false,
+          structural: false,
+          externalUnknown: false,
+          diagnostic: true,
+          productOutcome: false,
+          implementationRequested: false,
+          executionDepth: "task",
+        },
+        "general",
+        "diagnostic-execution-general",
+      )).error).toBeUndefined()
+      const diagnosticGrant = await call(
+        "dispatch_grant",
+        { workflowId, stepId: "diagnostic" },
+        "general",
+        "diagnostic-execution-general",
+      )
+      expect((await call(
+        "attach",
+        {
+          grantId: diagnosticGrant.grantId,
+          workflowId,
+          stepId: "diagnostic",
+        },
+        "diagnostic",
+        "governed-diagnostic-execute",
+      )).attached).toBe(true)
+
+      const governedRun: any = {
+        agent: "diagnostic",
+        action: "shell",
+        resources: ["go run ./cmd/debug"],
+        sessionID: "governed-diagnostic-execute",
+        effect: "ask",
+      }
+      await evaluate!(governedRun)
+      expect(governedRun.effect).toBe("allow")
+
+      const designStarted = await call(
+        "start",
+        { request: "Define one bounded user-facing change." },
+        "general",
+        "designer-general",
+      )
+      const designWorkflowId = String(designStarted.workflowId)
+      expect((await call(
+        "route",
+        {
+          humanFacing: true,
+          behavioral: false,
+          structural: false,
+          externalUnknown: false,
+          diagnostic: false,
+          productOutcome: true,
+          implementationRequested: true,
+          executionDepth: "change",
+        },
+        "general",
+        "designer-general",
+      )).error).toBeUndefined()
+      const designGrant = await call(
+        "dispatch_grant",
+        { workflowId: designWorkflowId, stepId: "designer" },
+        "general",
+        "designer-general",
+      )
+      expect((await call(
+        "attach",
+        {
+          grantId: designGrant.grantId,
+          workflowId: designWorkflowId,
+          stepId: "designer",
+        },
+        "designer",
+        "designer-author",
+      )).attached).toBe(true)
+
+      const designerEdit: any = {
+        agent: "designer",
+        action: "edit",
+        resources: ["docs/design/runtime.md"],
+        sessionID: "designer-author",
+        effect: "ask",
+      }
+      await evaluate!(designerEdit)
+      expect(designerEdit.effect).not.toBe("deny")
+      await toolHooks.get("execute.before")?.({
+        tool: "edit",
+        callID: "designer-edit",
+        sessionID: "designer-author",
+        agent: "designer",
+        input: { filePath: "docs/design/runtime.md" },
+      })
+      await toolHooks.get("execute.after")?.({
+        tool: "edit",
+        callID: "designer-edit",
+        sessionID: "designer-author",
+        agent: "designer",
+        input: { filePath: "docs/design/runtime.md" },
+        status: "completed",
+        result: "updated",
+      })
+
+      const designerAdd: any = {
+        agent: "designer",
+        action: "shell",
+        resources: ["git add docs/design/runtime.md"],
+        sessionID: "designer-author",
+        effect: "ask",
+      }
+      await evaluate!(designerAdd)
+      expect(designerAdd.effect).toBe("allow")
+
+      const designerOutside: any = {
+        agent: "designer",
+        action: "shell",
+        resources: ["git add docs/requirements/runtime.md"],
+        sessionID: "designer-author",
+        effect: "ask",
+      }
+      await evaluate!(designerOutside)
+      expect(designerOutside.effect).toBe("deny")
+
+      const generalEdit: any = {
+        agent: "general",
+        action: "edit",
+        resources: ["docs/anchors/runtime.md"],
+        sessionID: "general-author",
+        effect: "allow",
+      }
+      await evaluate!(generalEdit)
+      expect(generalEdit.effect).not.toBe("deny")
+      await toolHooks.get("execute.before")?.({
+        tool: "edit",
+        callID: "general-anchor-edit",
+        sessionID: "general-author",
+        agent: "general",
+        input: { filePath: "docs/anchors/runtime.md" },
+      })
+      await toolHooks.get("execute.after")?.({
+        tool: "edit",
+        callID: "general-anchor-edit",
+        sessionID: "general-author",
+        agent: "general",
+        input: { filePath: "docs/anchors/runtime.md" },
+        status: "completed",
+        result: "updated",
+      })
+
+      const generalOwnedAdd: any = {
+        agent: "general",
+        action: "shell",
+        resources: ["git add docs/anchors/runtime.md"],
+        sessionID: "general-author",
+        effect: "ask",
+      }
+      await evaluate!(generalOwnedAdd)
+      expect(generalOwnedAdd.effect).toBe("allow")
+
+      const generalUnknownAdd: any = {
+        agent: "general",
+        action: "shell",
+        resources: ["git add docs/anchors/unknown.md"],
+        sessionID: "general-author",
+        effect: "ask",
+      }
+      await evaluate!(generalUnknownAdd)
+      expect(generalUnknownAdd.effect).toBe("deny")
+      expect(generalUnknownAdd.message).toContain("stage only files authored")
+
+      const unattachedWorker: any = {
+        agent: "worker",
+        action: "shell",
+        resources: ["go test ./..."],
+        sessionID: "unattached-worker-shell",
+        effect: "ask",
+      }
+      await evaluate!(unattachedWorker)
+      expect(unattachedWorker.effect).toBe("deny")
+      expect(unattachedWorker.message).toContain("loom_attach")
+    } finally {
+      restore()
+    }
+  })
+
+  test("does not absorb pre-existing Worker changes and requires new owned changes to be committed", async () => {
+    const h = await harness()
+    try {
+      await initializeGitFixture(h.root)
+      await writeFile(join(h.root, "src", "preexisting.ts"), "pre-existing\n")
+      await git(h.root, ["add", "src/preexisting.ts"])
+
+      const started = await h.call(
+        "start",
+        { request: "Apply one bounded implementation change." },
+        "general",
+        "git-ownership-general",
+      )
+      expect(started.error).toBeUndefined()
+      const workflowId = String(started.workflowId)
+
+      const routed = await h.call(
+        "route",
+        {
+          humanFacing: false,
+          behavioral: false,
+          structural: false,
+          externalUnknown: false,
+          diagnostic: false,
+          productOutcome: false,
+          implementationRequested: true,
+          executionDepth: "task",
+        },
+        "general",
+        "git-ownership-general",
+      )
+      expect(routed.error).toBeUndefined()
+
+      expect((await h.call(
+        "task_scope",
+        { workflowId, stepId: "worker", write: ["src/**"] },
+        "general",
+        "git-ownership-general",
+      )).error).toBeUndefined()
+
+      const grant = await h.call(
+        "dispatch_grant",
+        { workflowId, stepId: "worker" },
+        "general",
+        "git-ownership-general",
+      )
+      expect((await h.call(
+        "attach",
+        { grantId: grant.grantId, workflowId, stepId: "worker" },
+        "worker",
+        "git-ownership-worker",
+      )).attached).toBe(true)
+
+      const evaluate = h.permissionHooks.get("evaluate")
+      expect(evaluate).toBeDefined()
+
+      await h.toolHooks.get("execute.before")?.({
+        tool: "edit",
+        callID: "delayed-old-edit",
+        sessionID: "git-ownership-worker",
+        agent: "worker",
+        input: { filePath: join(h.root, "src", "delayed.ts") },
+      })
+      await h.durableStorage.set(
+        "session-attachment/git-ownership-worker",
+        "rotated-attachment",
+      )
+      await h.toolHooks.get("execute.after")?.({
+        tool: "edit",
+        callID: "delayed-old-edit",
+        sessionID: "git-ownership-worker",
+        agent: "worker",
+        input: { filePath: join(h.root, "src", "delayed.ts") },
+        status: "completed",
+        result: "late result",
+      })
+      const delayedStage: any = {
+        agent: "worker",
+        action: "shell",
+        resources: ["git add src/delayed.ts"],
+        sessionID: "git-ownership-worker",
+        effect: "ask",
+      }
+      await evaluate!(delayedStage)
+      expect(delayedStage.effect).toBe("deny")
+      expect(delayedStage.message).toContain("stage only files authored")
+
+      const preExistingEdit: any = {
+        agent: "worker",
+        action: "edit",
+        resources: ["src/preexisting.ts"],
+        sessionID: "git-ownership-worker",
+        effect: "allow",
+      }
+      await evaluate!(preExistingEdit)
+      expect(preExistingEdit.effect).toBe("deny")
+      expect(preExistingEdit.message).toContain("not owned by this role/session")
+
+      const unknownCommit: any = {
+        agent: "worker",
+        action: "shell",
+        resources: ["git -c core.hooksPath=/dev/null commit -m 'test: do not absorb'"],
+        sessionID: "git-ownership-worker",
+        effect: "ask",
+      }
+      await evaluate!(unknownCommit)
+      expect(unknownCommit.effect).toBe("deny")
+      expect(unknownCommit.message).toContain("pre-date")
+
+      await git(h.root, ["rm", "--cached", "src/preexisting.ts"])
+      const ownedEdit: any = {
+        agent: "worker",
+        action: "edit",
+        resources: ["src/owned.ts"],
+        sessionID: "git-ownership-worker",
+        effect: "allow",
+      }
+      await evaluate!(ownedEdit)
+      expect(ownedEdit.effect).not.toBe("deny")
+      await h.toolHooks.get("execute.before")?.({
+        tool: "edit",
+        callID: "owned-edit",
+        sessionID: "git-ownership-worker",
+        agent: "worker",
+        input: { filePath: join(h.root, "src", "owned.ts") },
+      })
+      await writeFile(join(h.root, "src", "owned.ts"), "owned\n")
+      await h.toolHooks.get("execute.after")?.({
+        tool: "edit",
+        callID: "owned-edit",
+        sessionID: "git-ownership-worker",
+        agent: "worker",
+        input: { filePath: join(h.root, "src", "owned.ts") },
+        status: "completed",
+        result: "updated",
+      })
+
+      await writeFile(join(h.root, "src", "owned.ts"), "foreign\n")
+
+      const foreignEdit: any = {
+        agent: "worker",
+        action: "edit",
+        resources: ["src/owned.ts"],
+        sessionID: "git-ownership-worker",
+        effect: "allow",
+      }
+      await evaluate!(foreignEdit)
+      expect(foreignEdit.effect).toBe("deny")
+      expect(foreignEdit.message).toContain("not owned by this role/session")
+
+      const foreignStage: any = {
+        agent: "worker",
+        action: "shell",
+        resources: ["git add src/owned.ts"],
+        sessionID: "git-ownership-worker",
+        effect: "ask",
+      }
+      await evaluate!(foreignStage)
+      expect(foreignStage.effect).toBe("deny")
+      expect(foreignStage.message).toContain("changed after this task")
+
+      // Restore the exact content produced by the admitted Worker mutation.
+      await writeFile(join(h.root, "src", "owned.ts"), "owned\n")
+      await chmod(join(h.root, "src", "owned.ts"), 0o755)
+
+      const foreignModeStage: any = {
+        agent: "worker",
+        action: "shell",
+        resources: ["git add src/owned.ts"],
+        sessionID: "git-ownership-worker",
+        effect: "ask",
+      }
+      await evaluate!(foreignModeStage)
+      expect(foreignModeStage.effect).toBe("deny")
+      expect(foreignModeStage.message).toContain("changed after this task")
+
+      await chmod(join(h.root, "src", "owned.ts"), 0o644)
+
+      const incomplete = await h.call(
+        "complete",
+        { workflowId, stepId: "worker", summary: "implementation complete" },
+        "worker",
+        "git-ownership-worker",
+      )
+      expect(incomplete.error).toContain("uncommitted changes")
+      expect(incomplete.error).toContain("src/owned.ts")
+
+      const ownedStage: any = {
+        agent: "worker",
+        action: "shell",
+        resources: ["git add src/owned.ts"],
+        sessionID: "git-ownership-worker",
+        effect: "ask",
+      }
+      await evaluate!(ownedStage)
+      expect(ownedStage.effect).toBe("allow")
+      const stageEvent = {
+        tool: "shell",
+        callID: "owned-stage",
+        sessionID: "git-ownership-worker",
+        agent: "worker",
+        input: { command: "git add src/owned.ts" },
+      }
+      await h.toolHooks.get("execute.before")?.(stageEvent)
+      await git(h.root, ["add", "src/owned.ts"])
+      await h.toolHooks.get("execute.after")?.({
+        ...stageEvent,
+        status: "completed",
+        result: "staged",
+      })
+
+      await writeFile(join(h.root, "src", "owned.ts"), "foreign-index\n")
+      await git(h.root, ["add", "src/owned.ts"])
+      await writeFile(join(h.root, "src", "owned.ts"), "owned\n")
+
+      const tamperedCommit: any = {
+        agent: "worker",
+        action: "shell",
+        resources: [
+          "git -c core.hooksPath=/dev/null commit -m 'test: tampered index'",
+        ],
+        sessionID: "git-ownership-worker",
+        effect: "ask",
+      }
+      await evaluate!(tamperedCommit)
+      expect(tamperedCommit.effect).toBe("deny")
+      expect(tamperedCommit.message).toContain("staged content changed")
+
+      const restageEvent = {
+        tool: "shell",
+        callID: "owned-restage",
+        sessionID: "git-ownership-worker",
+        agent: "worker",
+        input: { command: "git add src/owned.ts" },
+      }
+      const restagePermission: any = {
+        agent: "worker",
+        action: "shell",
+        resources: ["git add src/owned.ts"],
+        sessionID: "git-ownership-worker",
+        effect: "ask",
+      }
+      await evaluate!(restagePermission)
+      expect(restagePermission.effect).toBe("allow")
+      await h.toolHooks.get("execute.before")?.(restageEvent)
+      await git(h.root, ["add", "src/owned.ts"])
+      await h.toolHooks.get("execute.after")?.({
+        ...restageEvent,
+        status: "completed",
+        result: "restaged",
+      })
+
+      const hook = join(h.root, ".git", "hooks", "pre-commit")
+      await writeFile(
+        hook,
+        "#!/bin/sh\nprintf 'hook-ran\\n' > src/hook-ran.ts\ngit add src/hook-ran.ts\n",
+      )
+      await chmod(hook, 0o755)
+
+      const ownedCommit: any = {
+        agent: "worker",
+        action: "shell",
+        resources: [
+          "git -c core.hooksPath=/dev/null commit -m 'test: owned change'",
+        ],
+        sessionID: "git-ownership-worker",
+        effect: "ask",
+      }
+      await evaluate!(ownedCommit)
+      expect(ownedCommit.effect).toBe("allow")
+      await git(h.root, [
+        "-c",
+        "core.hooksPath=/dev/null",
+        "commit",
+        "-m",
+        "test: owned change",
+        "-q",
+      ])
+      await expect(readFile(join(h.root, "src", "hook-ran.ts"), "utf8")).rejects.toThrow()
+
+      const completed = await h.call(
+        "complete",
+        { workflowId, stepId: "worker", summary: "implementation complete" },
+        "worker",
+        "git-ownership-worker",
+      )
+      expect(completed.error).toBeUndefined()
+    } finally {
+      h.restore()
     }
   })
 

@@ -40,6 +40,8 @@ Load only architecture/domain skills that materially help the assignment. Persis
 
 Call `loom_complete` only when the assigned architecture outcome is coherent and any blocking OQ is resolved.
 
+When you author durable repository changes, stage only files in your owned durable scope (docs/architecture/** and docs/dependencies/**) and commit them before completing the step. Never absorb unrelated dirty or staged changes.
+
 Memory is advisory; current accepted authority and current evidence govern.
 
 When a reusable evidence-backed lesson emerges, load `loom-learning`.
