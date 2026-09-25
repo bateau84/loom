@@ -319,6 +319,41 @@ test("failed workflows with runnable recovery work do not offer deletion", async
   await expect(page.getByRole("button", { name: /Delete/ })).toHaveCount(0)
 })
 
+test("bulk cleanup stays in a session when valid workflows remain", async ({ page, request }) => {
+  const fleet = await (await request.get(`http://127.0.0.1:${port}/api/fleet`)).json()
+  const project = fleet.projects.find((candidate) => candidate.projectId === "project-a")
+  const failed = structuredClone(project.workflows[0])
+  failed.workflowId = "workflow-a-failed"
+  failed.workflowRevision += 1
+  failed.projection.workflowId = failed.workflowId
+  failed.projection.workflowRevision = failed.workflowRevision
+  failed.projection.stateDigest = "failed-session-peer"
+  failed.projection.status = "failed"
+  failed.projection.currentSteps = [{
+    id: "review-implementation",
+    agent: "reviewer",
+    kind: "gate",
+    status: "failed",
+    label: "Review implementation",
+  }]
+  failed.projection.runnableSteps = []
+  project.workflows.push(failed)
+
+  await page.route("**/api/fleet", (route) => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify(fleet),
+  }))
+  await page.goto(sessionUrl())
+
+  const cleanup = page.getByRole("button", { name: "Delete failed/cancelled workflows" })
+  await expect(cleanup).toBeVisible()
+  await expect(cleanup).toHaveAttribute(
+    "data-return-href",
+    "#/directory/project-a/session/session-a",
+  )
+})
+
 test("cleanup endpoint refuses active workflow deletion", async ({ page }) => {
   await page.goto(directoryUrl())
   const result = await page.evaluate(async () => {

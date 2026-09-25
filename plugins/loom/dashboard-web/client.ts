@@ -503,8 +503,11 @@ export const dashboardScript = `
         true,
       ));
     const failed = session.workflows.filter((workflow) => deletableWorkflow(workflow));
+    const bulkCleanupReturn = failed.length === session.workflows.length
+      ? projectHref(project)
+      : sessionHref(project, session.id);
     const cleanupButton = failed.length
-      ? '<button class="danger-button" type="button" data-project-id="' + esc(project.projectId) + '" data-workflow-ids="' + esc(failed.map((workflow) => enc(workflow.workflowId)).join(',')) + '" data-return-href="' + esc(projectHref(project)) + '">Delete failed/cancelled workflows</button>'
+      ? '<button class="danger-button" type="button" data-project-id="' + esc(project.projectId) + '" data-workflow-ids="' + esc(failed.map((workflow) => enc(workflow.workflowId)).join(',')) + '" data-return-href="' + esc(bulkCleanupReturn) + '">Delete failed/cancelled workflows</button>'
       : '';
     const workflowRows = session.workflows.map((workflow) => {
       const p = resolved(workflow);
