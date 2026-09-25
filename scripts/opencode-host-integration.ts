@@ -1722,7 +1722,7 @@ async function startServer(
 
 function sessionCreateBody(
   title: string,
-  agent: "general" | "worker" | "reviewer" | "planner",
+  agent: "general" | "worker" | "reviewer" | "planner" | "diagnostic",
   parentID?: string,
 ) {
   return {
