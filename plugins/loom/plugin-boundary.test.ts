@@ -11,6 +11,7 @@ import { createWorkHierarchy, materializeWorkPlan, claimWorkflowWave, syncWorkTa
 import { buildSidebarSnapshot } from "./sidebar"
 import { prepareReportPromotion, publishPreparedReport, type ReportPromotionRecord } from "./reports"
 import {
+  RUNTIME_STATE_VERSION,
   createProjectStorage,
   createTransactionalStorage,
   resolveRuntimeIdentity,
@@ -408,7 +409,7 @@ describe("Loom registered plugin boundary", () => {
 
       const generalStatus = await h.call("upgrade_status", {}, "general", generalSession)
       expect(generalStatus).toMatchObject({
-        runtimeVersion: 4,
+        runtimeVersion: RUNTIME_STATE_VERSION,
         objectiveId,
         generation: 1,
         actions: [{
