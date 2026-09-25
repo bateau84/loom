@@ -2373,6 +2373,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           try {
             let reset: string[] = []
             let hadPlanReviewClaim = false
+            let hadTaskExecution = false
             const commitReopen = async () => {
               await validateWorkflowMutationLocked(ctx, runtime, workflow)
 
@@ -2381,7 +2382,9 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 work = await readWork(ctx, workflow.work.objectiveId)
                 if (!work) throw new Error("Persistent work hierarchy not found.")
                 assertWorkGeneration(work, workflow.work.generation)
-                const taskIds = plannedTaskSteps(workflow).map((taskStep) => taskStep.task!.id)
+                const currentTaskSteps = plannedTaskSteps(workflow)
+                const taskIds = currentTaskSteps.map((taskStep) => taskStep.task!.id)
+                hadTaskExecution = currentTaskSteps.some((taskStep) => taskStep.status === "complete")
                 if (taskIds.length > 0) {
                   const reviewed = workflow.steps.some((candidate) => candidate.id === "review-implementation" && candidate.status === "passed")
                   const hasPlanReview = workflow.steps.some((candidate) => candidate.id === "review-plan")
@@ -2428,7 +2431,6 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 const planReviewedAfterReset =
                   !hasPlanReview ||
                   workflow.steps.some((candidate) => candidate.id === "review-plan" && candidate.status === "passed")
-                const taskExecutionStarted = taskSteps.some((taskStep) => taskStep.status === "complete")
 
                 // Reopening planning after a passed Plan review but before Worker
                 // execution releases the mechanically acquired Wave claim so
@@ -2437,7 +2439,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                   hadPlanReviewClaim &&
                   reset.includes("review-plan") &&
                   taskIds.length > 0 &&
-                  !taskExecutionStarted
+                  !hadTaskExecution
                 ) {
                   releaseWorkflowWave(work, workflow.id, workflow.work.generation, taskIds, now)
                 } else if (reset.includes("review-implementation") && taskIds.length > 0) {
