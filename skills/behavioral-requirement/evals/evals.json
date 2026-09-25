@@ -1,0 +1,43 @@
+{
+  "skill": "behavioral-requirement",
+  "version": "1.0.0",
+  "shape": 1,
+  "cases": [
+    {
+      "id": "BR-01",
+      "name": "delete-preserves-unrelated-state",
+      "trap": "The requirement leaks the current SQLite implementation or stays so broad that repeated delete, missing-target behavior, and unrelated-state preservation are left for implementation to invent.",
+      "prompt": "Write the Behavioral Requirement for note deletion in a local personal notes product. Accepted meaning: deleting an existing note removes that note; deleting one note must not alter any other note; attempting to delete a note that does not exist is reported explicitly as not found; the product is local-only. The current prototype happens to use SQLite with a notes table, but storage realization is not product authority. Produce the durable BR content.",
+      "expectations": [
+        "States one coherent observable deletion behavior without naming SQLite, tables, SQL constraints, API routes, or other realization details.",
+        "Acceptance criteria cover successful deletion, preservation of unrelated notes, and explicit not-found behavior for a missing target.",
+        "Makes the target identity/observable outcome precise enough that repeated or missing deletion cannot be silently treated as success unless accepted meaning says so.",
+        "Verification semantics describe observing the real note state and result before/after deletion, including unrelated notes, rather than merely inspecting a database query.",
+        "Derived-from provenance points to the accepted product meaning rather than the prototype implementation."
+      ],
+      "negative_expectations": [
+        "Must not require SQL DELETE, a notes table, foreign keys, or a specific storage engine.",
+        "Must not leave unrelated-note preservation or missing-note semantics implicit.",
+        "Must not define success only as receiving a 2xx/zero exit code with no check of resulting observable state."
+      ]
+    },
+    {
+      "id": "BR-02",
+      "name": "authorization-vacuity-and-ordering",
+      "trap": "A superficially correct requirement says 'denied operations do not execute' but can pass vacuously if authorization is skipped or denial is never delivered, and it leaves effect-start ordering ambiguous.",
+      "prompt": "Write a Behavioral Requirement from this accepted authority: every protected operation requires an authorization decision before the protected effect starts; authorization success permits that attempted operation to proceed; explicit denial means that attempted operation must not start; the final observed outcome must distinguish denied from executed. Structural realization is deliberately unspecified. Produce the durable BR content.",
+      "expectations": [
+        "States authorization-before-effect as an observable normative ordering, not merely a rule that applies if a denial happens to be received.",
+        "Acceptance criteria cover allowed and denied attempts and ensure a protected effect cannot begin before the corresponding authorization decision.",
+        "Binds the decision to the attempted operation strongly enough that an unrelated prior allow cannot satisfy the requirement.",
+        "Includes outcome observability sufficient to distinguish denial from execution and avoids a vacuous implementation that suppresses authorization evidence or never asks for a decision.",
+        "Verification semantics exercise real effect-start ordering and both allow/deny paths without prescribing a concrete API or broker."
+      ],
+      "negative_expectations": [
+        "Must not let the requirement pass when authorization is bypassed entirely.",
+        "Must not prescribe an authorization endpoint, token field, policy engine, or persistence mechanism.",
+        "Must not omit the association between the decision and the attempted protected operation."
+      ]
+    }
+  ]
+}

@@ -144,6 +144,26 @@
       "must_not": [
         "Must not prescribe storage schema/API mechanism, weaken the accepted durability/local-only guarantees, or manufacture a user-owned choice without evidence that product capability, scope, risk, or a reserved preference changes."
       ]
+    },
+    {
+      "id": "AUDIT-SPECIFIER-QUALITY-SCENARIO-01",
+      "agent": "specifier",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-002",
+        "BR-020"
+      ],
+      "prompt": "Accepted product authority: a local agent harness can use several execution providers. If one provider is unavailable while another eligible provider remains healthy, work eligible for the healthy provider must still be able to make progress and already accepted work must not silently disappear. Provider degradation must be observable. No failover latency target, routing component, retry count, or recovery interval is accepted. The user delegates ordinary behavioral specification to you. Produce the obligation-layer result needed by downstream architecture, including any quality scenario that is warranted. Do not choose structural realization.",
+      "trap": "Either leave resilience as a vague adjective / bounce the missing numeric threshold back to the user, or invent a precise failover target and routing mechanism to make the scenario look measurable.",
+      "expectations": [
+        "Produces a concrete resilience/availability Quality Scenario whose condition is provider unavailability, whose required response preserves eligible progress and accepted work, and whose verification semantics exercise degraded operation and observability.",
+        "Does not invent a numeric latency/retry/recovery threshold merely to add precision; it keeps the accepted qualitative pass/fail boundary and leaves only genuinely material missing authority unresolved.",
+        "Keeps provider-selection mechanism, gateway/router topology, protocol, and persistence realization outside Specifier authority."
+      ],
+      "must_not": [
+        "Must not refuse to specify the scenario solely because no latency target was supplied.",
+        "Must not invent a 100 ms/1 s/etc. failover target, retry count, recovery interval, or concrete routing component."
+      ]
     }
   ]
 }

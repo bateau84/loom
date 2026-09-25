@@ -1,0 +1,43 @@
+{
+  "skill": "behavioral-spec",
+  "version": "1.0.0",
+  "shape": 1,
+  "cases": [
+    {
+      "id": "BehavioralSpec-01",
+      "name": "derive-before-downstream-reconciliation",
+      "trap": "Downstream Designer/code behavior is plausible enough that the model quietly promotes it into product truth instead of preserving the clean accepted semantics and surfacing the disagreement.",
+      "prompt": "You are specifying behavior for a local backup feature. Accepted product authority says: selected files are preserved durably when backup succeeds; the user may cancel before copying starts; failure must be explicit. It does not define cancellation after copying has started. A Designer scenario says pressing Cancel during progress immediately returns to the start screen and reports 'Cancelled'. Current code stops copying midway when a cancel token is observed. Architecture already contains a cancellation flag. Produce the obligation-layer result and reconcile the supplied downstream material. Do not design implementation.",
+      "expectations": [
+        "Derives the normative baseline from accepted product authority first: successful backup preserves selected files durably, pre-start cancellation is allowed, and failures are explicit.",
+        "Does not treat Designer's mid-progress cancellation scenario, the code's cancel-token behavior, or architecture's cancellation flag as semantic authority for what cancellation after copying starts means.",
+        "Classifies post-start cancellation meaning as unresolved/conflicting downstream behavior that needs owning semantic authority rather than silently normalizing one existing behavior.",
+        "Uses the smallest relevant artifact set and does not create a Quality Scenario or Obligation Contract merely for symmetry when the supplied semantics do not yet warrant one.",
+        "Keeps the obligations implementation-independent and states verification intent in terms of observable backup/cancellation outcomes rather than the cancel token or architecture flag."
+      ],
+      "negative_expectations": [
+        "Must not declare that post-start cancellation necessarily stops midway, rolls back, or completes the current file based only on downstream artifacts.",
+        "Must not rewrite product meaning to match the current implementation.",
+        "Must not treat the presence of a cancellation flag as proof that cancellation semantics are settled."
+      ]
+    },
+    {
+      "id": "BehavioralSpec-02",
+      "name": "minimal-br-qs-oc-selection",
+      "trap": "The model duplicates every concern into every artifact type or collapses behavior, quality, and seam semantics into one vague requirement instead of selecting the smallest meaningful BR/QS/OC set.",
+      "prompt": "Turn this accepted product meaning into the smallest coherent obligation layer. (1) A protected operation must never execute after policy denial. (2) If one execution provider is unavailable while another eligible provider remains healthy, work eligible for the healthy provider must remain able to progress and accepted work must not silently disappear; provider degradation must be observable. No failover latency is specified. (3) Policy authority and effect executor are independently implemented parties; an authorization success/denial applies to one attempted protected operation, and both sides must preserve that association. Exact APIs, schemas, storage, and routing mechanisms are not decided. Explain which Behavioral Requirement(s), Quality Scenario(s), and Obligation Contract(s) you would create and what each owns.",
+      "expectations": [
+        "Uses a Behavioral Requirement for the normative protected-operation denial behavior rather than making the implementation mechanism normative.",
+        "Uses a Quality Scenario for provider degradation because the quality is defined by behavior under a meaningful outage environment/stimulus, without inventing a latency target.",
+        "Uses an Obligation Contract for the independently implemented policy-authority/effect-executor seam because shared decision-to-attempt association is load-bearing.",
+        "Keeps the three artifacts non-duplicative: BR owns the normative behavior, QS owns quality under degradation, and OC owns cross-party semantic agreement.",
+        "Keeps APIs, schemas, routing topology, persistence, and provider-selection mechanism for Architecture rather than using them to make the obligations concrete."
+      ],
+      "negative_expectations": [
+        "Must not create BR, QS, and OC copies of the same statement merely for completeness.",
+        "Must not omit the OC despite the explicit independently implemented authorization seam.",
+        "Must not invent a numeric failover target or concrete router/broker/API."
+      ]
+    }
+  ]
+}
