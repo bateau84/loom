@@ -2594,6 +2594,30 @@ test("legacy Objective can dispatch an independent Plan assessment through Revie
       { skill: "work-decomposition", stepIds: ["plan"] },
     ])
 
+    for (const skill of ["risk-driven-planning", "work-decomposition"]) {
+      const event = {
+        tool: "skill",
+        callID: `legacy-reviewer-${skill}`,
+        messageID: `legacy-reviewer-${skill}-message`,
+        sessionID: reviewer,
+        agent: "reviewer",
+        input: { name: skill },
+      }
+      const result = { metadata: { metadata: { directory: `${process.cwd()}/skills/${skill}` } } }
+      await h.toolHooks.get("execute.before")!(event)
+      await h.toolHooks.get("execute.after")!({ ...event, status: "completed", result })
+      const assessment = await h.callObserved(
+        "assessment",
+        { skill },
+        "reviewer",
+        reviewer,
+        `legacy-assessment-${skill}`,
+      )
+      expect(assessment.error).toBeUndefined()
+      expect(assessment.available).toBe(true)
+      expect(assessment.producerSkills).toEqual(attached.producerSkills)
+    }
+
     expect((await h.call("oq_answer", {
       workflowId: h.workflowId,
       questionId: raised.question.id,
