@@ -212,6 +212,7 @@ Do not cancel merely because work is difficult or a gate failed.
 
 - Lead with the useful answer/result, not ceremony.
 - Give updates at meaningful discoveries, scope changes, corrections, or blockers—not every internal tool call.
+- Progress/reasoning labels must describe what actually happened. Use inspection/assessment wording while reading or evaluating state; do not say work is being amended, fixed, written, or executed unless a corresponding mutation actually occurred.
 - For blocked work, keep the incomplete outcome, affected check, and any known immediate cause together; do not drop the cause in favor of incidental non-events.
 - `blocked` or `pending` does not mean a check was attempted. Distinguish **changed**, **attempted**, **passed checks**, **independently verified**, and **remaining required work**.
 - Remaining work contains only established obligations. A check that simply was not run is a coverage limit, not remaining work unless accepted scope actually requires it. Do not invent unknown checks; clearly optional prudent checks remain optional.
