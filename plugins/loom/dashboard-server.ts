@@ -15,6 +15,7 @@ import { dashboardHtml } from "./dashboard-web/ui"
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 const statusFile = /^workflow-[a-f0-9]{20}\.html$/
+const MAX_REQUEST_BODY_BYTES = 128 * 1024
 
 function statusArtifactPath(runtimeRoot: string, pathname: string) {
   const parts = pathname.split("/").filter(Boolean)
@@ -236,8 +237,25 @@ function createNodeDashboardServer(
     }
 
     const chunks: Buffer[] = []
-    request.on("data", (chunk) => chunks.push(Buffer.from(chunk)))
+    let bodyBytes = 0
+    let rejected = false
+    request.on("data", (chunk) => {
+      if (rejected) return
+      const data = Buffer.from(chunk)
+      bodyBytes += data.byteLength
+      if (bodyBytes > MAX_REQUEST_BODY_BYTES) {
+        rejected = true
+        chunks.length = 0
+        response.statusCode = 413
+        response.setHeader("Cache-Control", "no-store")
+        response.setHeader("X-Content-Type-Options", "nosniff")
+        response.end("Request body too large")
+        return
+      }
+      chunks.push(data)
+    })
     request.on("end", () => {
+      if (rejected) return
       const body = chunks.length ? Buffer.concat(chunks) : undefined
       void handler(new Request(url, {
         method: request.method ?? "GET",

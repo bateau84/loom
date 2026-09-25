@@ -106,6 +106,33 @@ describe("Loom control panel", () => {
     expect(proxyAdmission.status).toBe(409)
   })
 
+  test("bounds request bodies before control parsing", async () => {
+    const root = await mkdtemp(join(tmpdir(), "loom-dashboard-body-limit-"))
+    roots.push(root)
+    const dashboard = await startDashboardServer({
+      runtimeRoot: root,
+      stateRoot: join(root, "state"),
+      port: 0,
+      unref: true,
+    })
+
+    try {
+      const response = await fetch(`http://127.0.0.1:${dashboard.port}/api/control/workflows/delete`, {
+        method: "POST",
+        headers: {
+          origin: `http://127.0.0.1:${dashboard.port}`,
+          "content-type": "application/json",
+          "x-loom-control-token": "not-the-server-token",
+        },
+        body: "x".repeat(129 * 1024),
+      })
+      expect(response.status).toBe(413)
+      expect(await response.text()).toBe("Request body too large")
+    } finally {
+      dashboard.stop()
+    }
+  })
+
   test("serves only generated workflow-status artifacts through the browser-safe route", async () => {
     const root = await mkdtemp(join(tmpdir(), "loom-dashboard-status-"))
     roots.push(root)
