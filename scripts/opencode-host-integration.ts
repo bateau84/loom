@@ -109,8 +109,15 @@ type MockProviderState = {
   workflowId?: string
   workerGrantId?: string
   reviewerGrantId?: string
+  diagnosticWorkflowId?: string
+  diagnosticGrantId?: string
   workerAttached: boolean
+  workerShellObserved: boolean
   workerCompleted: boolean
+  diagnosticConversationalExecutionRejected: boolean
+  diagnosticAttached: boolean
+  diagnosticExecutionObserved: boolean
+  diagnosticCompleted: boolean
   reviewerAttached: boolean
   reviewerSawWorkerComplete: boolean
   reviewerCompleted: boolean
@@ -323,6 +330,7 @@ function chooseMockAction(prompt: string, results: Map<string, unknown>, state: 
   const grantResult = results.get("loom_dispatch_grant") as any
   if (grantResult?.grantId && grantResult?.expectedAgent === "worker") state.workerGrantId = String(grantResult.grantId)
   if (grantResult?.grantId && grantResult?.expectedAgent === "reviewer") state.reviewerGrantId = String(grantResult.grantId)
+  if (grantResult?.grantId && grantResult?.expectedAgent === "diagnostic") state.diagnosticGrantId = String(grantResult.grantId)
 
   if (prompt.includes("LOOM_INTEGRATION_BUDGET_QUESTION")) {
     if (!state.budgetWorkflowId || !state.budgetStepId || !state.budgetQuestion) {
@@ -543,6 +551,8 @@ function chooseMockAction(prompt: string, results: Map<string, unknown>, state: 
   if (prompt.includes("LOOM_INTEGRATION_WORKER")) {
     const attach = results.get("loom_attach") as any
     if (attach?.attached) state.workerAttached = true
+    const shell = results.get("shell")
+    if (shell !== undefined && !toolRejected(shell)) state.workerShellObserved = true
     const complete = results.get("loom_complete") as any
     if (complete && !complete.error) state.workerCompleted = true
     if (!results.has("loom_attach")) {
@@ -551,6 +561,9 @@ function chooseMockAction(prompt: string, results: Map<string, unknown>, state: 
         args: { grantId: state.workerGrantId, workflowId: state.workflowId, stepId: "worker" },
       }
     }
+    if (!results.has("shell")) {
+      return { name: "shell", args: { command: "pwd" } }
+    }
     if (!results.has("loom_status")) {
       return { name: "loom_status", args: { workflowId: state.workflowId, detail: true } }
     }
@@ -558,6 +571,86 @@ function chooseMockAction(prompt: string, results: Map<string, unknown>, state: 
       return {
         name: "loom_complete",
         args: { workflowId: state.workflowId, stepId: "worker", summary: "real-host worker complete" },
+      }
+    }
+    return null
+  }
+
+  if (prompt.includes("LOOM_INTEGRATION_DIAGNOSTIC_CONVERSATION")) {
+    const shell = results.get("shell")
+    if (shell !== undefined && toolRejected(shell)) {
+      state.diagnosticConversationalExecutionRejected = true
+    }
+    if (!results.has("shell")) {
+      return { name: "shell", args: { command: "python3 reproduce.py" } }
+    }
+    return null
+  }
+
+  if (prompt.includes("LOOM_INTEGRATION_DIAGNOSTIC_START")) {
+    if (startResult?.workflowId) state.diagnosticWorkflowId = String(startResult.workflowId)
+    if (!results.has("loom_start")) {
+      return { name: "loom_start", args: { request: "Diagnose one bounded runtime failure." } }
+    }
+    if (!results.has("loom_route")) {
+      return {
+        name: "loom_route",
+        args: {
+          humanFacing: false,
+          behavioral: false,
+          structural: false,
+          externalUnknown: false,
+          diagnostic: true,
+          productOutcome: false,
+          implementationRequested: false,
+          executionDepth: "task",
+        },
+      }
+    }
+    if (!results.has("loom_dispatch_grant")) {
+      return {
+        name: "loom_dispatch_grant",
+        args: { workflowId: state.diagnosticWorkflowId, stepId: "diagnostic" },
+      }
+    }
+    return null
+  }
+
+  if (prompt.includes("LOOM_INTEGRATION_DIAGNOSTIC")) {
+    const attach = results.get("loom_attach") as any
+    if (attach?.attached) state.diagnosticAttached = true
+    const shell = results.get("shell")
+    if (
+      shell !== undefined &&
+      !toolRejected(shell) &&
+      JSON.stringify(shell).includes("loom-diagnostic-reproducer-ok")
+    ) {
+      state.diagnosticExecutionObserved = true
+    }
+    const complete = results.get("loom_complete") as any
+    if (complete && !complete.error) state.diagnosticCompleted = true
+
+    if (!results.has("loom_attach")) {
+      return {
+        name: "loom_attach",
+        args: {
+          grantId: state.diagnosticGrantId,
+          workflowId: state.diagnosticWorkflowId,
+          stepId: "diagnostic",
+        },
+      }
+    }
+    if (!results.has("shell")) {
+      return { name: "shell", args: { command: "python3 reproduce.py" } }
+    }
+    if (!results.has("loom_complete")) {
+      return {
+        name: "loom_complete",
+        args: {
+          workflowId: state.diagnosticWorkflowId,
+          stepId: "diagnostic",
+          summary: "real-host governed Diagnostic reproduction complete",
+        },
       }
     }
     return null
@@ -741,7 +834,12 @@ async function startMockProvider() {
   const state: MockProviderState = {
     programs: new Map(),
     workerAttached: false,
+    workerShellObserved: false,
     workerCompleted: false,
+    diagnosticConversationalExecutionRejected: false,
+    diagnosticAttached: false,
+    diagnosticExecutionObserved: false,
+    diagnosticCompleted: false,
     reviewerAttached: false,
     reviewerSawWorkerComplete: false,
     reviewerCompleted: false,
@@ -1118,9 +1216,14 @@ async function createProject(base: string, name: string, mockBaseUrl: string) {
   if (name === "project-a") {
     await symlink(join(root, "scripts", "fixtures", "lifecycle-delay-plugin.ts"), join(pluginDir, "lifecycle-delay-plugin.ts"), "file")
   }
-  for (const agent of ["general", "worker", "reviewer", "planner"]) {
+  for (const agent of ["general", "worker", "reviewer", "planner", "diagnostic"]) {
     await symlink(join(root, "agents", `${agent}.md`), join(agentDir, `${agent}.md`), "file")
   }
+  await writeFile(
+    join(project, "reproduce.py"),
+    "print('loom-diagnostic-reproducer-ok')\n",
+    "utf8",
+  )
   await writeFile(
     join(project, "opencode.json"),
     JSON.stringify({
@@ -1870,8 +1973,11 @@ try {
   )
   await sendPrompt(serverA, workerSession.id, "LOOM_INTEGRATION_WORKER")
   await waitForCondition(
-    () => mock.state.workerAttached && mock.state.workerCompleted,
-    "fresh real Worker attach/status/complete sequence",
+    () =>
+      mock.state.workerAttached &&
+      mock.state.workerShellObserved &&
+      mock.state.workerCompleted,
+    "fresh real Worker attach/shell/status/complete sequence",
     () => mock.state,
   )
 
@@ -1905,6 +2011,72 @@ try {
   await waitForCondition(
     () => mock.state.generalSawPeerReviewComplete,
     "origin process observing peer-process Reviewer mutation",
+    () => mock.state,
+  )
+
+  const diagnosticSession = await jsonRequestAny(
+    [`${serverA.baseUrl}/api/session`, `${serverA.baseUrl}/session`],
+    serverA.authorization,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(
+        sessionCreateBody("Loom integration Diagnostic", "diagnostic"),
+      ),
+    },
+  )
+  if (!diagnosticSession?.id) {
+    throw new Error("OpenCode did not create the real Diagnostic session")
+  }
+
+  await sendPrompt(
+    serverA,
+    diagnosticSession.id,
+    "LOOM_INTEGRATION_DIAGNOSTIC_CONVERSATION",
+  )
+  await waitForCondition(
+    () => mock.state.diagnosticConversationalExecutionRejected,
+    "conversational Diagnostic project execution rejection",
+    () => mock.state,
+  )
+
+  const diagnosticGeneral = await jsonRequestAny(
+    [`${serverA.baseUrl}/api/session`, `${serverA.baseUrl}/session`],
+    serverA.authorization,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(
+        sessionCreateBody("Loom integration Diagnostic coordinator", "general"),
+      ),
+    },
+  )
+  if (!diagnosticGeneral?.id) {
+    throw new Error("OpenCode did not create the Diagnostic coordinator session")
+  }
+
+  await sendPrompt(
+    serverA,
+    diagnosticGeneral.id,
+    "LOOM_INTEGRATION_DIAGNOSTIC_START",
+  )
+  await waitForCondition(
+    () => Boolean(mock.state.diagnosticWorkflowId && mock.state.diagnosticGrantId),
+    "real OpenCode Diagnostic workflow/grant sequence",
+    () => mock.state,
+  )
+
+  await sendPrompt(
+    serverA,
+    diagnosticSession.id,
+    "LOOM_INTEGRATION_DIAGNOSTIC",
+  )
+  await waitForCondition(
+    () =>
+      mock.state.diagnosticAttached &&
+      mock.state.diagnosticExecutionObserved &&
+      mock.state.diagnosticCompleted,
+    "governed real Diagnostic attach/execute/complete sequence",
     () => mock.state,
   )
 
@@ -2291,6 +2463,10 @@ try {
   console.log("PASS OpenCode host integration")
   console.log(` - workflow: ${mock.state.workflowId}`)
   console.log(` - worker/reviewer attached: ${mock.state.workerAttached}/${mock.state.reviewerAttached}`)
+  console.log(` - attached Worker native shell admitted: ${mock.state.workerShellObserved}`)
+  console.log(
+    ` - Diagnostic conversational execution rejected / governed execution admitted: ${mock.state.diagnosticConversationalExecutionRejected}/${mock.state.diagnosticExecutionObserved}`,
+  )
   console.log(` - peer-process review completed + observed by origin: ${mock.state.reviewerCompleted}/${mock.state.generalSawPeerReviewComplete}`)
   console.log(` - real OpenCode budget question tool state observed: ${mock.state.budgetQuestionObserved}`)
   console.log(` - real TUI budget approval resumed/completed exact Worker: ${mock.state.budgetContinuationObserved}/${mock.state.budgetWorkerCompleted}`)
