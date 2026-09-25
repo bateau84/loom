@@ -7,7 +7,7 @@ tags: [design, loom, index]
 
 # Loom Product Design
 
-- [Dashboard Experience](dashboard-experience.md)
+- [Control Panel Experience](dashboard-experience.md)
 - [Dashboard Refresh](dashboard-refresh.md)
 - [Conversation-First Loom Experience](conversation-first-experience.md)
 
