@@ -567,18 +567,23 @@ export const dashboardScript = `
       errorNode.hidden = true;
       try {
         if (!window.__LOOM_CONTROL_TOKEN__) throw new Error('Dashboard controls are unavailable. Restart the Loom dashboard.');
-        const response = await fetch('/api/control/workflows/delete', {
-          method: 'POST',
-          headers: {
-            'content-type': 'application/json',
-            'x-loom-control-token': window.__LOOM_CONTROL_TOKEN__,
-          },
-          body: JSON.stringify({
-            projectId: project.projectId,
-            workflowIds: workflows.map((workflow) => workflow.workflowId),
-            reason: 'User removed obsolete failed/cancelled workflows from the Loom control panel.',
-          }),
-        });
+        let response;
+        try {
+          response = await fetch('/api/control/workflows/delete', {
+            method: 'POST',
+            headers: {
+              'content-type': 'application/json',
+              'x-loom-control-token': window.__LOOM_CONTROL_TOKEN__,
+            },
+            body: JSON.stringify({
+              projectId: project.projectId,
+              workflowIds: workflows.map((workflow) => workflow.workflowId),
+              reason: 'User removed obsolete failed/cancelled workflows from the Loom control panel.',
+            }),
+          });
+        } catch {
+          throw new Error('Could not confirm whether workflow deletion completed. Retry is safe; Loom treats already-completed cleanup as success.');
+        }
         const result = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(result.error || 'Workflow deletion failed.');
         dialog.close();

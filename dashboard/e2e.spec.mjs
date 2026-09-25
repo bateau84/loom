@@ -279,6 +279,36 @@ test("failed workflow cleanup removes four restart attempts from Loom", async ({
   expect(fleet.projects.find((project) => project.projectId === "project-d").workflows).toHaveLength(0)
 })
 
+test("uncertain delete response stays truthful and a retry converges idempotently", async ({ page }) => {
+  await page.goto(`http://127.0.0.1:${port}/#/directory/project-d/workflows`)
+  await expect(page.locator(".workflow-table-row")).toHaveCount(4)
+
+  let loseFirstResponse = true
+  await page.route("**/api/control/workflows/delete", async (route) => {
+    if (loseFirstResponse) {
+      loseFirstResponse = false
+      await route.fetch()
+      await route.abort("failed")
+      return
+    }
+    await route.continue()
+  })
+
+  await page.getByRole("button", { name: "Delete failed/cancelled workflows" }).click()
+  const dialog = page.locator("dialog[open]")
+  await dialog.getByRole("button", { name: "Delete workflows" }).click()
+
+  await expect(dialog.getByRole("alert")).toContainText(
+    "Could not confirm whether workflow deletion completed",
+  )
+  await expect(dialog.getByRole("button", { name: "Delete workflows" })).toBeEnabled()
+
+  await dialog.getByRole("button", { name: "Delete workflows" }).click()
+  await expect(dialog).toHaveCount(0)
+  await expect(page.locator(".workflow-table-row")).toHaveCount(0)
+  await page.unroute("**/api/control/workflows/delete")
+})
+
 test("session summary does not turn missing workflow question state into zero", async ({ page, request }) => {
   const fleet = await (await request.get(`http://127.0.0.1:${port}/api/fleet`)).json()
   const project = fleet.projects.find((candidate) => candidate.projectId === "project-a")
