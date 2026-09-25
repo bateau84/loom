@@ -48,7 +48,7 @@ const PROJECT_PREFIX = "project/"
 const GLOBAL_PREFIXES = ["installation/", "episode/", "heuristic/"]
 
 export const RUNTIME_BASELINE_VERSION = 1
-export const RUNTIME_STATE_VERSION = 4
+export const RUNTIME_STATE_VERSION = 5
 
 export type RuntimeUpgradePhase =
   | "canonical-upgrade"
@@ -115,6 +115,13 @@ const RUNTIME_UPGRADE_STEPS: RuntimeUpgradeStep[] = [{
   // version advance fences older writers; Objective-scoped upgrade actions
   // drive the reasoning-required adoption at a safe execution boundary.
   applyInstallation: async () => ({ holisticPlanUpgradeActions: true }),
+}, {
+  id: "scoped-file-write-locks-v5",
+  fromVersion: 4,
+  toVersion: 5,
+  // No durable record shape changes. Advancing the runtime version fences
+  // already-running v4 writers that do not participate in file-write locks.
+  applyInstallation: async () => ({ scopedFileWriteLocks: true }),
 }]
 
 function sha256(value: string) {
@@ -290,13 +297,21 @@ async function gitWorktreeDir(project: string): Promise<string | undefined> {
   }
 }
 
-async function acquireFlock(lockPath: string) {
+async function acquireFlock(lockPath: string): Promise<() => Promise<void>>
+async function acquireFlock(
+  lockPath: string,
+  nonBlocking: true,
+): Promise<(() => Promise<void>) | undefined>
+async function acquireFlock(
+  lockPath: string,
+  nonBlocking = false,
+): Promise<(() => Promise<void>) | undefined> {
   await mkdir(dirname(lockPath), { recursive: true, mode: 0o700 })
 
   const marker = "__LOOM_LOCKED__"
   const proc = spawn(
     "flock",
-    ["-x", lockPath, "sh", "-c", `printf '${marker}\\n'; cat >/dev/null`],
+    ["-x", ...(nonBlocking ? ["-n"] : []), lockPath, "sh", "-c", `printf '${marker}\\n'; cat >/dev/null`],
     { stdio: ["pipe", "pipe", "pipe"] },
   )
 
@@ -304,7 +319,7 @@ async function acquireFlock(lockPath: string) {
   proc.stderr.setEncoding("utf8")
   proc.stderr.on("data", (chunk) => { stderr += chunk })
 
-  const acquired = new Promise<void>((resolve, reject) => {
+  const acquired = new Promise<boolean>((resolve, reject) => {
     let buffered = ""
     proc.stdout.setEncoding("utf8")
     const onData = (chunk: string) => {
@@ -315,7 +330,7 @@ async function acquireFlock(lockPath: string) {
         reject(new Error("Loom advisory lock handshake failed."))
         return
       }
-      resolve()
+      resolve(true)
     }
     proc.stdout.on("data", onData)
     proc.once("error", (error: NodeJS.ErrnoException) => {
@@ -326,13 +341,17 @@ async function acquireFlock(lockPath: string) {
       }
     })
     proc.once("exit", (code) => {
+      if (nonBlocking && code === 1 && !buffered.includes("\n")) {
+        resolve(false)
+        return
+      }
       if (code !== null && code !== 0 && !buffered.includes("\n")) {
         reject(new Error(`Unable to acquire Loom advisory lock: ${stderr.trim() || `exit ${code}`}`))
       }
     })
   })
 
-  await acquired
+  if (!await acquired) return undefined
 
   return async () => {
     if (!proc.killed) proc.stdin.end()
@@ -408,6 +427,50 @@ export async function withRuntimeLocks<T>(
     resources.map((resource) => runtimeLockPath(runtime, resource)),
     fn,
   )
+}
+
+export async function tryAcquireRuntimeLocks(
+  runtime: LoomRuntimeIdentity,
+  resources: RuntimeLockResource[],
+): Promise<
+  | { release: () => Promise<void> }
+  | { busyResource: string }
+> {
+  const unique = new Map<string, RuntimeLockResource>()
+  for (const resource of resources) {
+    unique.set(runtimeLockPath(runtime, resource), resource)
+  }
+
+  const releases: Array<() => Promise<void>> = []
+  try {
+    for (const [lockPath, resource] of [...unique.entries()].sort(([a], [b]) => a.localeCompare(b))) {
+      const release = await acquireFlock(lockPath, true)
+      if (!release) {
+        for (const prior of releases.reverse()) await prior()
+        return { busyResource: resource.resourceIdentity }
+      }
+      releases.push(release)
+    }
+  } catch (error) {
+    for (const release of releases.reverse()) {
+      await release().catch(() => {})
+    }
+    throw error
+  }
+
+  return {
+    release: async () => {
+      let releaseError: unknown
+      for (const release of releases.reverse()) {
+        try {
+          await release()
+        } catch (error) {
+          releaseError ??= error
+        }
+      }
+      if (releaseError) throw releaseError
+    },
+  }
 }
 
 export async function withInstallationRuntimeLock<T>(

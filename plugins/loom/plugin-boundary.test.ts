@@ -11,6 +11,7 @@ import { createWorkHierarchy, materializeWorkPlan, claimWorkflowWave, syncWorkTa
 import { buildSidebarSnapshot } from "./sidebar"
 import { prepareReportPromotion, publishPreparedReport, type ReportPromotionRecord } from "./reports"
 import {
+  RUNTIME_STATE_VERSION,
   createProjectStorage,
   createTransactionalStorage,
   resolveRuntimeIdentity,
@@ -408,7 +409,7 @@ describe("Loom registered plugin boundary", () => {
 
       const generalStatus = await h.call("upgrade_status", {}, "general", generalSession)
       expect(generalStatus).toMatchObject({
-        runtimeVersion: 4,
+        runtimeVersion: RUNTIME_STATE_VERSION,
         objectiveId,
         generation: 1,
         actions: [{
@@ -1964,7 +1965,7 @@ Verdict: FAIL
     }
   })
 
-  test("does not absorb pre-existing Worker changes and requires new owned changes to be committed", async () => {
+  test("allows scoped repair of pre-existing dirty files without absorbing untouched changes", async () => {
     const h = await harness()
     try {
       await initializeGitFixture(h.root)
@@ -2059,8 +2060,7 @@ Verdict: FAIL
         effect: "allow",
       }
       await evaluate!(preExistingEdit)
-      expect(preExistingEdit.effect).toBe("deny")
-      expect(preExistingEdit.message).toContain("not owned by this role/session")
+      expect(preExistingEdit.effect).not.toBe("deny")
 
       const unknownCommit: any = {
         agent: "worker",
@@ -2071,9 +2071,67 @@ Verdict: FAIL
       }
       await evaluate!(unknownCommit)
       expect(unknownCommit.effect).toBe("deny")
-      expect(unknownCommit.message).toContain("pre-date")
+      expect(unknownCommit.message).toContain("staged paths were not authored")
 
-      await git(h.root, ["rm", "--cached", "src/preexisting.ts"])
+      const repairEvent = {
+        tool: "edit",
+        callID: "repair-preexisting",
+        sessionID: "git-ownership-worker",
+        agent: "worker",
+        input: { filePath: join(h.root, "src", "preexisting.ts") },
+      }
+      await h.toolHooks.get("execute.before")?.(repairEvent)
+      await writeFile(join(h.root, "src", "preexisting.ts"), "repaired\n")
+      await h.toolHooks.get("execute.after")?.({
+        ...repairEvent,
+        status: "completed",
+        result: "repaired",
+      })
+
+      const repairedStage: any = {
+        agent: "worker",
+        action: "shell",
+        resources: ["git add src/preexisting.ts"],
+        sessionID: "git-ownership-worker",
+        effect: "ask",
+      }
+      await evaluate!(repairedStage)
+      expect(repairedStage.effect).toBe("allow")
+      const repairedStageEvent = {
+        tool: "shell",
+        callID: "stage-repaired-preexisting",
+        sessionID: "git-ownership-worker",
+        agent: "worker",
+        input: { command: "git add src/preexisting.ts" },
+      }
+      await h.toolHooks.get("execute.before")?.(repairedStageEvent)
+      await git(h.root, ["add", "src/preexisting.ts"])
+      await h.toolHooks.get("execute.after")?.({
+        ...repairedStageEvent,
+        status: "completed",
+        result: "staged",
+      })
+
+      const repairedCommit: any = {
+        agent: "worker",
+        action: "shell",
+        resources: [
+          "git -c core.hooksPath=/dev/null commit -m 'test: repair preexisting'",
+        ],
+        sessionID: "git-ownership-worker",
+        effect: "ask",
+      }
+      await evaluate!(repairedCommit)
+      expect(repairedCommit.effect).toBe("allow")
+      await git(h.root, [
+        "-c",
+        "core.hooksPath=/dev/null",
+        "commit",
+        "-m",
+        "test: repair preexisting",
+        "-q",
+      ])
+
       const ownedEdit: any = {
         agent: "worker",
         action: "edit",
@@ -2111,8 +2169,7 @@ Verdict: FAIL
         effect: "allow",
       }
       await evaluate!(foreignEdit)
-      expect(foreignEdit.effect).toBe("deny")
-      expect(foreignEdit.message).toContain("not owned by this role/session")
+      expect(foreignEdit.effect).not.toBe("deny")
 
       const foreignStage: any = {
         agent: "worker",
@@ -2141,6 +2198,27 @@ Verdict: FAIL
       expect(foreignModeStage.message).toContain("changed after this task")
 
       await chmod(join(h.root, "src", "owned.ts"), 0o644)
+
+      const raceStagePermission: any = {
+        agent: "worker",
+        action: "shell",
+        resources: ["git add src/owned.ts"],
+        sessionID: "git-ownership-worker",
+        effect: "ask",
+      }
+      await evaluate!(raceStagePermission)
+      expect(raceStagePermission.effect).toBe("allow")
+      await writeFile(join(h.root, "src", "owned.ts"), "changed-before-stage\n")
+      await expect(
+        h.toolHooks.get("execute.before")?.({
+          tool: "shell",
+          callID: "raced-stage",
+          sessionID: "git-ownership-worker",
+          agent: "worker",
+          input: { command: "git add src/owned.ts" },
+        }),
+      ).rejects.toThrow("changed after this role/task's last admitted mutation")
+      await writeFile(join(h.root, "src", "owned.ts"), "owned\n")
 
       const incomplete = await h.call(
         "complete",
@@ -2216,6 +2294,32 @@ Verdict: FAIL
         result: "restaged",
       })
 
+      const raceCommitPermission: any = {
+        agent: "worker",
+        action: "shell",
+        resources: [
+          "git -c core.hooksPath=/dev/null commit -m 'test: race fence'",
+        ],
+        sessionID: "git-ownership-worker",
+        effect: "ask",
+      }
+      await evaluate!(raceCommitPermission)
+      expect(raceCommitPermission.effect).toBe("allow")
+      await writeFile(join(h.root, "src", "other.ts"), "other\n")
+      await git(h.root, ["add", "src/other.ts"])
+      await expect(
+        h.toolHooks.get("execute.before")?.({
+          tool: "shell",
+          callID: "raced-commit",
+          sessionID: "git-ownership-worker",
+          agent: "worker",
+          input: {
+            command: "git -c core.hooksPath=/dev/null commit -m 'test: race fence'",
+          },
+        }),
+      ).rejects.toThrow("staged paths were not authored")
+      await git(h.root, ["rm", "--cached", "src/other.ts"])
+
       const hook = join(h.root, ".git", "hooks", "pre-commit")
       await writeFile(
         hook,
@@ -2253,6 +2357,340 @@ Verdict: FAIL
       expect(completed.error).toBeUndefined()
     } finally {
       h.restore()
+    }
+  })
+
+  test("overlapping Worker scopes stay authorized while same-file writes serialize", async () => {
+    const h = await harness()
+    try {
+      await initializeGitFixture(h.root)
+      const attachWorker = async (suffix: string) => {
+        const generalSession = `overlap-general-${suffix}`
+        const workerSession = `overlap-worker-${suffix}`
+        const started = await h.call(
+          "start",
+          { request: `Apply overlapping implementation ${suffix}.` },
+          "general",
+          generalSession,
+        )
+        const workflowId = String(started.workflowId)
+        expect(started.error).toBeUndefined()
+        expect((await h.call(
+          "route",
+          {
+            humanFacing: false,
+            behavioral: false,
+            structural: false,
+            externalUnknown: false,
+            diagnostic: false,
+            productOutcome: false,
+            implementationRequested: true,
+            executionDepth: "task",
+          },
+          "general",
+          generalSession,
+        )).error).toBeUndefined()
+        expect((await h.call(
+          "task_scope",
+          { workflowId, stepId: "worker", write: ["src/shared.ts"] },
+          "general",
+          generalSession,
+        )).error).toBeUndefined()
+        const grant = await h.call(
+          "dispatch_grant",
+          { workflowId, stepId: "worker" },
+          "general",
+          generalSession,
+        )
+        expect((await h.call(
+          "attach",
+          { grantId: grant.grantId, workflowId, stepId: "worker" },
+          "worker",
+          workerSession,
+        )).attached).toBe(true)
+        return workerSession
+      }
+
+      const workerA = await attachWorker("a")
+      const workerB = await attachWorker("b")
+      const evaluate = h.permissionHooks.get("evaluate")!
+
+      for (const sessionID of [workerA, workerB]) {
+        const permission: any = {
+          agent: "worker",
+          action: "edit",
+          resources: ["src/shared.ts"],
+          sessionID,
+          effect: "allow",
+        }
+        await evaluate(permission)
+        expect(permission.effect).not.toBe("deny")
+      }
+
+      const first = {
+        tool: "edit",
+        callID: "overlap-write-a",
+        sessionID: workerA,
+        agent: "worker",
+        input: { filePath: join(h.root, "src", "shared.ts") },
+      }
+      const second = {
+        tool: "edit",
+        callID: "overlap-write-b",
+        sessionID: workerB,
+        agent: "worker",
+        input: { filePath: join(h.root, "src", "shared.ts") },
+      }
+
+      await h.toolHooks.get("execute.before")?.(first)
+      await expect(h.toolHooks.get("execute.before")?.(second))
+        .rejects.toThrow(
+          "src/shared.ts is locked for write by another agent. Try again later and re-read the file before retrying.",
+        )
+
+      await writeFile(join(h.root, "src", "shared.ts"), "a\n")
+      await h.toolHooks.get("execute.after")?.({
+        ...first,
+        status: "completed",
+        result: "a",
+      })
+
+      await expect(h.toolHooks.get("execute.before")?.(second)).resolves.toBeUndefined()
+      await writeFile(join(h.root, "src", "shared.ts"), "b\n")
+      await h.toolHooks.get("execute.after")?.({
+        ...second,
+        status: "completed",
+        result: "b",
+      })
+    } finally {
+      h.restore()
+    }
+  })
+
+  test("serializes active writes across plugin instances without permanent ownership", async () => {
+    const firstHarness = await harness(async (_storage, root) => {
+      await initializeGitFixture(root)
+    })
+    let secondHarness: Awaited<ReturnType<typeof harness>> | undefined
+    try {
+      secondHarness = await harness(
+        undefined,
+        undefined,
+        { root: firstHarness.root, storage: firstHarness.storage },
+      )
+
+      const first = {
+        tool: "edit",
+        callID: "active-write-a",
+        sessionID: "write-lock-session-a",
+        agent: "general",
+        input: { filePath: join(firstHarness.root, "src", "shared.ts") },
+      }
+      const second = {
+        tool: "edit",
+        callID: "active-write-b",
+        sessionID: "write-lock-session-b",
+        agent: "general",
+        input: { filePath: join(firstHarness.root, "src", "shared.ts") },
+      }
+
+      await firstHarness.toolHooks.get("execute.before")?.(first)
+
+      await expect(
+        firstHarness.toolHooks.get("execute.before")?.({
+          tool: "edit",
+          sessionID: "write-lock-no-call-id",
+          agent: "general",
+          input: { filePath: join(firstHarness.root, "src", "other-shared.ts") },
+        }),
+      ).rejects.toThrow(
+        "could not establish a stable tool-call identity for write locking",
+      )
+
+      await expect(
+        firstHarness.toolHooks.get("execute.before")?.(first),
+      ).rejects.toThrow(
+        "this tool-call identity is already performing a mutation",
+      )
+
+      await expect(
+        secondHarness.toolHooks.get("execute.before")?.(second),
+      ).rejects.toThrow(
+        "src/shared.ts is locked for write by another agent. Try again later and re-read the file before retrying.",
+      )
+
+      await writeFile(join(firstHarness.root, "src", "shared.ts"), "first\n")
+      await firstHarness.toolHooks.get("execute.after")?.({
+        ...first,
+        status: "completed",
+        result: "first write",
+      })
+
+      await expect(
+        secondHarness.toolHooks.get("execute.before")?.(second),
+      ).resolves.toBeUndefined()
+      await writeFile(join(firstHarness.root, "src", "shared.ts"), "second\n")
+      await secondHarness.toolHooks.get("execute.after")?.({
+        ...second,
+        status: "completed",
+        result: "second write",
+      })
+
+      const failed = {
+        tool: "edit",
+        callID: "active-write-error",
+        sessionID: "write-lock-session-a",
+        agent: "general",
+        input: { filePath: join(firstHarness.root, "src", "failed.ts") },
+      }
+      await firstHarness.toolHooks.get("execute.before")?.(failed)
+      await firstHarness.toolHooks.get("execute.after")?.({
+        ...failed,
+        status: "error",
+        error: new Error("synthetic edit failure"),
+      })
+      await expect(
+        secondHarness.toolHooks.get("execute.before")?.({
+          ...failed,
+          callID: "active-write-after-error",
+          sessionID: "write-lock-session-b",
+        }),
+      ).resolves.toBeUndefined()
+      await secondHarness.toolHooks.get("execute.after")?.({
+        ...failed,
+        callID: "active-write-after-error",
+        sessionID: "write-lock-session-b",
+        status: "completed",
+        result: "retry completed",
+      })
+
+      expect(await readFile(join(firstHarness.root, "src", "shared.ts"), "utf8"))
+        .toBe("second\n")
+    } finally {
+      secondHarness?.restore()
+      firstHarness.restore()
+    }
+  })
+
+  test("locks write, patch, gofmt, and Git index mutation surfaces", async () => {
+    const firstHarness = await harness(async (_storage, root) => {
+      await initializeGitFixture(root)
+      await mkdir(join(root, "docs", "anchors"), { recursive: true })
+      await writeFile(join(root, "src", "shared.go"), "package shared\n")
+    })
+    let secondHarness: Awaited<ReturnType<typeof harness>> | undefined
+    try {
+      secondHarness = await harness(
+        undefined,
+        undefined,
+        { root: firstHarness.root, storage: firstHarness.storage },
+      )
+
+      const writeCall = {
+        tool: "write",
+        callID: "surface-write",
+        sessionID: "surface-a",
+        agent: "general",
+        input: { filePath: join(firstHarness.root, "src", "shared.ts"), content: "a\n" },
+      }
+      const patchCall = {
+        tool: "apply_patch",
+        callID: "surface-patch",
+        sessionID: "surface-b",
+        agent: "general",
+        input: {
+          patchText:
+            "*** Begin Patch\n*** Update File: src/shared.ts\n@@\n-a\n+b\n*** End Patch",
+        },
+      }
+      await firstHarness.toolHooks.get("execute.before")?.(writeCall)
+      await expect(secondHarness.toolHooks.get("execute.before")?.(patchCall))
+        .rejects.toThrow("src/shared.ts is locked for write by another agent")
+      await firstHarness.toolHooks.get("execute.after")?.({
+        ...writeCall,
+        status: "completed",
+        result: "written",
+      })
+
+      const gofmtCall = {
+        tool: "shell",
+        callID: "surface-gofmt",
+        sessionID: "surface-a",
+        agent: "general",
+        input: { command: "gofmt -w src/shared.go" },
+      }
+      const editGoCall = {
+        tool: "edit",
+        callID: "surface-edit-go",
+        sessionID: "surface-b",
+        agent: "general",
+        input: { filePath: join(firstHarness.root, "src", "shared.go") },
+      }
+      await firstHarness.toolHooks.get("execute.before")?.(gofmtCall)
+      await expect(secondHarness.toolHooks.get("execute.before")?.(editGoCall))
+        .rejects.toThrow("src/shared.go is locked for write by another agent")
+      await firstHarness.toolHooks.get("execute.after")?.({
+        ...gofmtCall,
+        status: "completed",
+        result: "formatted",
+      })
+
+      const admitAnchor = async (
+        h: Awaited<ReturnType<typeof harness>>,
+        sessionID: string,
+        name: string,
+      ) => {
+        const event = {
+          tool: "edit",
+          callID: `anchor-edit-${name}`,
+          sessionID,
+          agent: "general",
+          input: { filePath: join(firstHarness.root, "docs", "anchors", `${name}.md`) },
+        }
+        await h.toolHooks.get("execute.before")?.(event)
+        await writeFile(join(firstHarness.root, "docs", "anchors", `${name}.md`), `${name}\n`)
+        await h.toolHooks.get("execute.after")?.({
+          ...event,
+          status: "completed",
+          result: "updated",
+        })
+      }
+
+      await admitAnchor(firstHarness, "surface-a", "a")
+      await admitAnchor(secondHarness, "surface-b", "b")
+
+      const addA = {
+        tool: "shell",
+        callID: "surface-add-a",
+        sessionID: "surface-a",
+        agent: "general",
+        input: { command: "git add docs/anchors/a.md" },
+      }
+      const addB = {
+        tool: "shell",
+        callID: "surface-add-b",
+        sessionID: "surface-b",
+        agent: "general",
+        input: { command: "git add docs/anchors/b.md" },
+      }
+      await firstHarness.toolHooks.get("execute.before")?.(addA)
+      await expect(secondHarness.toolHooks.get("execute.before")?.(addB))
+        .rejects.toThrow("repository index is locked by another agent")
+      await firstHarness.toolHooks.get("execute.after")?.({
+        ...addA,
+        status: "error",
+        error: new Error("synthetic staging stop"),
+      })
+      await expect(secondHarness.toolHooks.get("execute.before")?.(addB))
+        .resolves.toBeUndefined()
+      await secondHarness.toolHooks.get("execute.after")?.({
+        ...addB,
+        status: "error",
+        error: new Error("synthetic staging stop"),
+      })
+    } finally {
+      secondHarness?.restore()
+      firstHarness.restore()
     }
   })
 

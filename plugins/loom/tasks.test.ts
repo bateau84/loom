@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { taskStepId, validateTaskPlan, writeScopesMayOverlap, type TaskSpec } from "./tasks"
+import { taskStepId, validateTaskPlan, type TaskSpec } from "./tasks"
 
 function task(id: string, overrides: Partial<TaskSpec> = {}): TaskSpec {
   return {
@@ -49,20 +49,15 @@ describe("Loom task graph", () => {
     expect(() => validateTaskPlan([task("api", { write: ["docs/architecture/**"] })])).toThrow()
   })
 
-  test("parallel tasks may not overlap writes", () => {
-    expect(
-      writeScopesMayOverlap(["internal/routes/**"], ["internal/routes/parser/**"]),
-    ).toBe(true)
-
-    expect(() =>
-      validateTaskPlan([
-        task("routing", { write: ["internal/routes/**"] }),
-        task("parser", { write: ["internal/routes/parser/**"] }),
-      ]),
-    ).toThrow()
+  test("parallel tasks may share write scope because runtime writes are serialized", () => {
+    const plan = validateTaskPlan([
+      task("routing", { write: ["internal/routes/**"] }),
+      task("parser", { write: ["internal/routes/parser/**"] }),
+    ])
+    expect(plan).toHaveLength(2)
   })
 
-  test("overlapping writes are allowed when tasks are ordered", () => {
+  test("dependency ordering remains valid when write scopes overlap", () => {
     const plan = validateTaskPlan([
       task("routing", { write: ["internal/routes/**"] }),
       task("parser", {

@@ -53,7 +53,7 @@ Evidence-backed checks outrank prose claims. Record evidence for results relied 
 
 Call `loom_complete` only when the assigned outcome is actually complete. A known load-bearing blocker, unmet end-to-end outcome, or unresolved dependent authority prevents completion even when all currently scoped edits are finished.
 
-When you produce durable repository changes, own their delivery: stage only files inside the attached Task write scope and commit them before completing the step. Never absorb pre-existing or unrelated dirty/staged changes. Rebase, push, create the PR, and inspect CI when the assigned delivery outcome calls for it; do not merge a PR unless that action is explicitly assigned.
+When you produce durable repository changes, own their delivery: stage only files inside the attached Task write scope and ensure the resulting scoped work is committed before completing the step. Existing uncommitted content inside a granted file is valid input when the Task intentionally repairs or extends that file; after your admitted mutation, verify the resulting file before staging it. Never stage untouched or unrelated dirty/staged changes. If another agent currently holds the file's write lock, retry later and re-read the file before retrying; scope overlap alone is not a reason to widen or abandon the Task. If a later authorized overlapping mutation leaves the file clean/committed, re-read and revalidate the Task outcome rather than manufacturing a no-op edit or duplicate commit solely to preserve per-session authorship. Rebase, push, create the PR, and inspect CI when the assigned delivery outcome calls for it; do not merge a PR unless that action is explicitly assigned.
 
 Memory is advisory. Current authority and current evidence win.
 

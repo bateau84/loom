@@ -40,6 +40,7 @@ The same relative Anchor path, Objective id, Task id, or other local identifier 
 16. User-authorized cancellation is restricted to the owning General session and project. The cancellation record, owned-claim release, pending-grant revocation and session-binding release commit atomically. Foreign claims and completed records remain intact. A cancelled child cannot use a different tool surface, role name, or old grant to resume mutation; reuse requires a fresh exact grant for a different active workflow. Runtime-version fencing prevents older fence-capable builds from ignoring the cancellation record.
 
 17. A cross-process mutation commit is crash-safe at the durable-record boundary: observers after abrupt process loss see either the complete previous generation or the complete new generation, never a torn/partial record.
+18. Overlapping bounded file write scopes MAY coexist. Dirty or historically modified files do not become permanently owned by a session. Actual concurrent file mutation is serialized with a project-scoped active write lock; a second live writer receives a clear retryable lock error, while an inactive writer cannot leave a permanent file lock.
 
 ## Architectural realization
 
@@ -56,6 +57,7 @@ Use deterministic multi-project/multi-session tests with at least:
 - a same-project session attempting to access an unrelated workflow by supplying its workflow ID, proving rejection without a valid binding/attachment;
 - deliberate attempts to read/mutate another project's workflow and evidence;
 - two separate OpenCode+Loom process fixtures contending on the same workflow/objective, proving incompatible concurrent commits cannot both succeed;
+- overlapping task write scopes targeting the same file, proving both scopes remain valid while simultaneous mutation is serialized, the losing writer receives a clear retryable lock error, and an already-dirty file remains writable when no active writer holds the lock;
 - one workflow reopening/failing while the other remains unchanged;
 - simultaneous first-open from two OpenCode processes, proving one canonical project epoch is established;
 - path-reuse identity: unrelated project B appears at project A's former canonical path and cannot inherit A's state;

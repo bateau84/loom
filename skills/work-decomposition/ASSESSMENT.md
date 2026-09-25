@@ -6,7 +6,7 @@ Reviewer-only domain contract. It does not create Loom authority, product meanin
 
 - Task boundaries follow coherent capabilities/modules rather than file counts.
 - Dependencies reflect real semantic/build/integration order and avoid artificial serialization.
-- Parallel tasks have non-overlapping write surfaces or an explicit ordering dependency.
+- Parallel tasks are ordered only by real semantic or execution dependencies. Overlapping bounded write scopes are acceptable by themselves because runtime file locks serialize concrete mutations; flag overlap only when it exposes ambiguous ownership, conflicting outcomes, or a missing dependency.
 - Integration work and cross-boundary verification have clear ownership.
 - When executable Tasks have been compiled, a Task's write scope is sufficient for every implementation, integration, documentation, and verification obligation it owns; otherwise that responsibility is explicitly assigned elsewhere. In an explicitly planning-only review, executable scopes are intentionally deferred and their absence is not a defect, but the semantic Task contract must be clear enough to compile a bounded scope later without inventing new product meaning.
 - Every accepted obligation assigned to a Task is represented by its outcome, constraints, acceptance criteria, integration contract, or explicit proof path rather than merely appearing in an ownership map.
