@@ -2360,6 +2360,113 @@ Verdict: FAIL
     }
   })
 
+  test("overlapping Worker scopes stay authorized while same-file writes serialize", async () => {
+    const h = await harness()
+    try {
+      await initializeGitFixture(h.root)
+      const attachWorker = async (suffix: string) => {
+        const generalSession = `overlap-general-${suffix}`
+        const workerSession = `overlap-worker-${suffix}`
+        const started = await h.call(
+          "start",
+          { request: `Apply overlapping implementation ${suffix}.` },
+          "general",
+          generalSession,
+        )
+        const workflowId = String(started.workflowId)
+        expect(started.error).toBeUndefined()
+        expect((await h.call(
+          "route",
+          {
+            humanFacing: false,
+            behavioral: false,
+            structural: false,
+            externalUnknown: false,
+            diagnostic: false,
+            productOutcome: false,
+            implementationRequested: true,
+            executionDepth: "task",
+          },
+          "general",
+          generalSession,
+        )).error).toBeUndefined()
+        expect((await h.call(
+          "task_scope",
+          { workflowId, stepId: "worker", write: ["src/shared.ts"] },
+          "general",
+          generalSession,
+        )).error).toBeUndefined()
+        const grant = await h.call(
+          "dispatch_grant",
+          { workflowId, stepId: "worker" },
+          "general",
+          generalSession,
+        )
+        expect((await h.call(
+          "attach",
+          { grantId: grant.grantId, workflowId, stepId: "worker" },
+          "worker",
+          workerSession,
+        )).attached).toBe(true)
+        return workerSession
+      }
+
+      const workerA = await attachWorker("a")
+      const workerB = await attachWorker("b")
+      const evaluate = h.permissionHooks.get("evaluate")!
+
+      for (const sessionID of [workerA, workerB]) {
+        const permission: any = {
+          agent: "worker",
+          action: "edit",
+          resources: ["src/shared.ts"],
+          sessionID,
+          effect: "allow",
+        }
+        await evaluate(permission)
+        expect(permission.effect).not.toBe("deny")
+      }
+
+      const first = {
+        tool: "edit",
+        callID: "overlap-write-a",
+        sessionID: workerA,
+        agent: "worker",
+        input: { filePath: join(h.root, "src", "shared.ts") },
+      }
+      const second = {
+        tool: "edit",
+        callID: "overlap-write-b",
+        sessionID: workerB,
+        agent: "worker",
+        input: { filePath: join(h.root, "src", "shared.ts") },
+      }
+
+      await h.toolHooks.get("execute.before")?.(first)
+      await expect(h.toolHooks.get("execute.before")?.(second))
+        .rejects.toThrow(
+          "src/shared.ts is locked for write by another agent. Try again later and re-read the file before retrying.",
+        )
+
+      await writeFile(join(h.root, "src", "shared.ts"), "a\n")
+      await h.toolHooks.get("execute.after")?.({
+        ...first,
+        status: "completed",
+        result: "a",
+      })
+
+      await expect(h.toolHooks.get("execute.before")?.(second)).resolves.toBeUndefined()
+      await writeFile(join(h.root, "src", "shared.ts"), "b\n")
+      await h.toolHooks.get("execute.after")?.({
+        ...second,
+        status: "completed",
+        result: "b",
+      })
+    } finally {
+      h.restore()
+    }
+  })
+
   test("serializes active writes across plugin instances without permanent ownership", async () => {
     const firstHarness = await harness(async (_storage, root) => {
       await initializeGitFixture(root)
