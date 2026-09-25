@@ -249,6 +249,7 @@ When the decomposition premise is no longer trustworthy, or the desired change w
 
 - Worker gets the focused Task contract plus parent Plan map/context, including durable completed-predecessor summaries and evidence-claim IDs;
 - Reviewer/Critic get the broader Plan needed to distinguish local conformance from decomposition/coverage failure;
+- Reviewer/Critic Plan-assessment OQs on older workflows also receive the observed Planner methodology facts when available, so the same domain assessments can be applied without turning the OQ into a gate verdict;
 - any Loom role answering a planned-task OQ gets the originating Task plus surrounding **historical Plan revision**; non-Task raisers may name an existing current-generation Task and Loom validates the correlation; Reviewer/Critic OQ answers are not gate verdicts;
 - simple Task-depth work without Planner continues to use the committed request directly.
 
