@@ -7,7 +7,7 @@
       "id": "PLANNING-ONLY-OBJECTIVE-RUNTIME-01",
       "agent": "general",
       "execution": "runtime",
-      "target_timeout_seconds": 720,
+      "target_timeout_seconds": 600,
       "requirements": [
         "BR-006",
         "BR-008",
