@@ -300,6 +300,8 @@ accepted Objective authority
   -> gates
   -> verification requirements
   -> control-plane validation/materialization
+  -> independent Plan review
+  -> Wave claim / execution
   -> persistent Loom work state
 ```
 
@@ -351,6 +353,8 @@ Examples:
 - final holistic review: Objective.
 
 A gate PASS only authorizes completion or progression at its declared scope.
+
+For new Objective workflows, `review-plan` is a pre-execution Wave admission gate. Planner may compile the current Wave's exact executable Task contracts while the Wave remains unclaimed. Reviewer assesses the holistic Plan plus that executable DAG; only PASS authorizes the control plane to acquire the Wave claim. FAIL leaves the Plan/DAG unconsumed and amendable. This gate does not prove implementation or whole-product acceptance.
 
 ### Product Acceptance boundary
 
