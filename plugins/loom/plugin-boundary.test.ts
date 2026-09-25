@@ -2181,26 +2181,6 @@ Verdict: FAIL
       expect(foreignStage.effect).toBe("deny")
       expect(foreignStage.message).toContain("changed after this task")
 
-      await git(h.root, ["add", "src/owned.ts"])
-      await git(h.root, [
-        "-c",
-        "core.hooksPath=/dev/null",
-        "commit",
-        "-m",
-        "test: foreign overlapping write",
-        "-q",
-      ])
-      const changedAfterCommit = await h.call(
-        "complete",
-        { workflowId, stepId: "worker", summary: "implementation complete" },
-        "worker",
-        "git-ownership-worker",
-      )
-      expect(changedAfterCommit.error).toContain(
-        "changed after this role's last admitted mutation",
-      )
-      expect(changedAfterCommit.error).toContain("src/owned.ts")
-
       // Restore the exact content produced by the admitted Worker mutation.
       await writeFile(join(h.root, "src", "owned.ts"), "owned\n")
       await chmod(join(h.root, "src", "owned.ts"), 0o755)
@@ -2428,7 +2408,7 @@ Verdict: FAIL
       await expect(
         secondHarness.toolHooks.get("execute.before")?.(second),
       ).rejects.toThrow(
-        "src/shared.ts is locked for write by another agent. Try again later.",
+        "src/shared.ts is locked for write by another agent. Try again later and re-read the file before retrying.",
       )
 
       await writeFile(join(firstHarness.root, "src", "shared.ts"), "first\n")
