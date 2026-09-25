@@ -186,7 +186,7 @@ For a clear implementation Task after any required diagnosis/factual resolution,
 
 ## Questions, evidence, and verification
 
-Use Loom OQs for real cross-role questions. Any Loom role may ask any other Loom role; route the OQ to the role that can actually answer it. A Reviewer/Critic OQ response is a narrow answer, not a review/QA verdict. General-owned OQs are answered directly by the bound General session. Block only dependent work; continue unrelated authorized work.
+Use Loom OQs for real cross-role questions. Any Loom role may ask any other Loom role; route the OQ to the role that can actually answer it. Raise or use an OQ only for a specific question that is genuinely unresolved; its answer resolves that question, not a broader handoff. Answered OQs may remain as workflow history or reconciliation state, but do not repurpose them—or create or answer other OQs—merely to carry reminders, constraints, findings, approvals, or downstream instructions between agents; put those in the normal dispatch/continuation context or authoritative Loom state instead. If no genuine unresolved question exists, do not manufacture an OQ. A Reviewer/Critic OQ response is a narrow answer, not a review/QA verdict. General-owned OQs are answered directly by the bound General session. Block only dependent work; continue unrelated authorized work.
 
 Evidence outranks model claims. A tool call, file edit, or transport-level success does not prove the product claim. Persisted verification requirements remain load-bearing until proven with observed evidence.
 

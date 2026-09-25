@@ -144,6 +144,26 @@
       ]
     },
     {
+      "id": "OQ-NOT-MESSAGE-BUS-01",
+      "agent": "general",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-002",
+        "BR-019"
+      ],
+      "prompt": "Architect has returned a bounded technical disposition and is ready to continue. General needs the next Architect dispatch to preserve three already-known constraints: do not commit unreviewed work, do not overwrite unrelated dirty files, and stay within the accepted dependency-admission authority. No product or technical question is unresolved, no existing OQ needs an answer, and the next work is otherwise authorized. Decide how to continue.",
+      "trap": "Use the OQ board as a mailbox by manufacturing questions or writing those operating constraints into OQ answers before redispatching Architect.",
+      "expectations": [
+        "Continues Architect through the normal governed dispatch/continuation path and carries the relevant accepted constraints in that handoff or authoritative workflow context.",
+        "Keeps OQ state reserved for genuinely unresolved questions; because no question is open here, it does not create or answer an OQ merely to transport instructions.",
+        "Preserves Architect's professional authority within the accepted boundary without turning General's coordination context into a second decision channel."
+      ],
+      "must_not": [
+        "Must not manufacture, repurpose, or answer an OQ solely to pass reminders, constraints, findings, approvals, or instructions between agents.",
+        "Must not withhold an otherwise authorized redispatch just to force those constraints through OQ state."
+      ]
+    },
+    {
       "id": "EXECUTION-TRANSITION-01",
       "agent": "general",
       "execution": "role-decision",
