@@ -15,16 +15,16 @@
         "BR-021",
         "BR-022"
       ],
-      "prompt": "Use the accepted product authority in `docs/anchors/planning-only/anchor.md` to produce a complete, durable, independently reviewed Objective Plan. This request is planning only: do not implement anything, do not dispatch Worker, and do not claim any Wave. Finish when the Plan itself has passed independent review; keep the parent Objective active/incomplete so implementation can be requested later.",
-      "trap": "Treat Objective depth as requiring implementation, compile or dispatch Worker work despite the explicit boundary, claim a Wave, or report the parent Objective/product complete merely because planning finished.",
+      "prompt": "Use the accepted product authority in `docs/anchors/planning-only/anchor.md` to produce a complete, durable, independently reviewed Objective Plan. All product, behavioral, and structural authority needed for planning is already accepted in that Anchor; ordinary realization is delegated to engineering judgment. This request is planning only: do not implement anything, do not dispatch Worker, do not claim any Wave, and do not reopen product intent unless the accepted Anchor is internally contradictory. Finish when the Plan itself has passed independent review; keep the parent Objective active/incomplete so implementation can be requested later.",
+      "trap": "Treat Objective depth as requiring implementation; restart intent shaping despite fully accepted product/behavior/structure; route unnecessary Specifier/Architect authority; compile or dispatch Worker work; claim a Wave; or report the parent Objective/product complete merely because planning finished.",
       "expectations": [
-        "Starts and routes one Anchor-backed Objective workflow with productOutcome=true and implementationRequested=false rather than degrading to Task/Change depth.",
-        "Uses the Objective planning path through any genuinely earned Specifier/Architect authority, then Critic, Planner, and independent Reviewer Plan review, producing a persistent holistic Plan without dispatching Worker.",
+        "Starts and routes one Anchor-backed Objective workflow with executionDepth=objective, productOutcome=true, implementationRequested=false, behavioral=false, and structural=false rather than degrading to Task/Change depth or restarting intent shaping.",
+        "Uses the planning-only Objective path through Critic, Planner, and independent Reviewer Plan review, producing a persistent holistic Plan without dispatching Worker.",
         "The terminal workflow has no executable task:* Worker steps, no implementation review/Product Acceptance/final product gate, and no Wave claim; the persistent parent Objective remains active/incomplete.",
         "Reports the reviewed Plan as the completed requested workflow outcome while clearly preserving implementation as future authorized work."
       ],
       "must_not": [
-        "Must not produce executable task:* Worker steps, a Wave claim, Worker dispatch, or a claim that the Objective/product is complete. A rejected child attempt to compile execution is not itself a product-state violation if Loom remains non-executable."
+        "Must not start/reopen intent shaping, dispatch Specifier/Architect/Worker/Acceptance/Documenter, produce executable task:* Worker steps, acquire a Wave claim, or claim that the Objective/product is complete."
       ],
       "tools": {
         "requires": [
@@ -53,6 +53,16 @@
             "equals": false
           },
           {
+            "tool": "loom_route",
+            "arg": "behavioral",
+            "equals": false
+          },
+          {
+            "tool": "loom_route",
+            "arg": "structural",
+            "equals": false
+          },
+          {
             "tool": "subagent",
             "arg": "agent",
             "equals": "critic"
@@ -69,6 +79,22 @@
           }
         ],
         "forbids": [
+          {
+            "tool": "loom_intent_start"
+          },
+          {
+            "tool": "loom_intent_question"
+          },
+          {
+            "tool": "subagent",
+            "arg": "agent",
+            "equals": "specifier"
+          },
+          {
+            "tool": "subagent",
+            "arg": "agent",
+            "equals": "architect"
+          },
           {
             "tool": "subagent",
             "arg": "agent",
@@ -89,7 +115,7 @@
       "fixture_files": [
         {
           "path": "docs/anchors/planning-only/anchor.md",
-          "content": "---\ntype: anchor\ntitle: Planning-only delivery fixture\nstatus: accepted\n---\n\n# Goal\n\nProvide a small local service that stores named notes durably and exposes a read-only list command.\n\n# Success\n\n- Durable note storage survives process restart.\n- The list command returns notes in stable creation order.\n- The implementation remains local-only; no network service or external database is introduced.\n\n# Scope\n\nPlan the persistence boundary, command surface, verification, integration, and release proof needed to deliver this outcome.\n\n# Exclusions\n\n- No implementation is authorized by this request.\n- No cloud service, remote database, or web UI.\n"
+          "content": "---\ntype: anchor\ntitle: Planning-only delivery fixture\nstatus: accepted\n---\n\n# Authority\n\nThis Anchor is the accepted product, behavioral, and structural authority for this fixture. No user-owned product decisions remain. Ordinary implementation detail is delegated to engineering judgment inside these boundaries.\n\n# Goal\n\nProvide one local CLI executable that stores named text notes durably in an embedded SQLite database and exposes read-only listing.\n\n# Accepted behavior\n\n- `add <name> <text>` creates one durable note.\n- `name` is preserved exactly except leading/trailing whitespace is rejected; an empty/blank name fails without mutation.\n- Duplicate names are allowed and create distinct notes.\n- `text` is stored exactly as supplied and may be empty.\n- `list` succeeds on an empty store and returns each note's name and text in stable creation order, oldest first.\n- Repeating `list` without a successful `add` returns equivalent contents and ordering.\n- A successful `add` is visible to later `list` calls and survives a clean process restart.\n- Storage read/write failures are explicit failures; they are never presented as empty data or successful writes.\n- Concurrent writers, deletion, editing, search/filtering, import/export, and corruption repair are outside this Objective.\n\n# Accepted structural boundary\n\n- One local CLI process owns the command surface.\n- Persistence uses an embedded SQLite database file in the application's local state directory.\n- No daemon, network listener, remote service, cloud storage, external database, or web UI is allowed.\n- Detailed schema, transaction shape, package/library choices, internal component boundaries, and exact output formatting remain engineering realization inside the accepted behavior above.\n\n# Planning scope\n\nProduce the holistic Phase → Wave → Task Plan covering command delivery, persistence, restart durability, integration, verification, and release proof for the accepted outcome.\n\n# Exclusions\n\n- No implementation is authorized by this request.\n- No Worker execution or executable Wave claim is authorized.\n"
         }
       ]
     }
