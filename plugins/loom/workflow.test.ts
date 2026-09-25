@@ -51,6 +51,7 @@ describe("Loom routing DAG", () => {
       "review-architecture",
       "critic-solution",
       "plan",
+      "review-plan",
       "review-implementation",
       "knowledge-sync",
       "product-acceptance",
@@ -95,6 +96,8 @@ describe("Loom routing DAG", () => {
       },
     ])
     finishStep(w, "plan", "planner", "complete", "plan ready")
+    expect(runnable(w).map((step) => step.id)).toEqual(["review-plan"])
+    finishStep(w, "review-plan", "reviewer", "pass", "plan ready for execution")
     expect(runnable(w).map((step) => step.id).sort()).toEqual(["task:backend", "task:ui"])
     finishStep(w, "task:backend", "worker", "complete", "backend built")
     finishStep(w, "task:ui", "worker", "complete", "ui built")
@@ -105,6 +108,39 @@ describe("Loom routing DAG", () => {
       "knowledge-sync",
       "product-acceptance",
     ])
+  })
+
+  test("planned Workers stay blocked until independent Plan review passes", () => {
+    const w = workflow(buildSteps({
+      humanFacing: false,
+      behavioral: false,
+      structural: false,
+      externalUnknown: false,
+      diagnostic: false,
+      productOutcome: true,
+      workLevel: "wave",
+    }))
+
+    finishStep(w, "critic-solution", "critic", "pass", "solution pass")
+    applyTaskPlan(w, [{
+      id: "runtime",
+      title: "Runtime",
+      objective: "Build runtime",
+      dependsOn: [],
+      write: ["internal/runtime/**"],
+      skills: ["golang"],
+      verify: ["go test ./..."],
+    }])
+    finishStep(w, "plan", "planner", "complete", "plan ready")
+
+    expect(runnable(w).map((step) => step.id)).toEqual(["review-plan"])
+    expect(w.steps.find((step) => step.id === "task:runtime")?.dependsOn).toContain("review-plan")
+
+    finishStep(w, "review-plan", "reviewer", "fail", "write scope is incomplete")
+    expect(runnable(w)).toHaveLength(0)
+
+    reopenFrom(w, "plan")
+    expect(runnable(w).map((step) => step.id)).toEqual(["plan"])
   })
 
   test("planned Worker dependencies become real workflow dependencies", () => {
@@ -139,6 +175,8 @@ describe("Loom routing DAG", () => {
       },
     ])
     finishStep(w, "plan", "planner", "complete", "plan ready")
+    expect(runnable(w).map((step) => step.id)).toEqual(["review-plan"])
+    finishStep(w, "review-plan", "reviewer", "pass", "plan ready for execution")
 
     expect(runnable(w).map((step) => step.id)).toEqual(["task:db"])
     finishStep(w, "task:db", "worker", "complete", "db done")
@@ -322,6 +360,7 @@ describe("Loom routing DAG", () => {
     expect(w.steps.map((step) => step.id)).toEqual([
       "critic-solution",
       "plan",
+      "review-plan",
       "review-implementation",
       "knowledge-sync",
     ])
