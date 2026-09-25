@@ -3980,6 +3980,106 @@ describe("Skill methodology evidence lifecycle", () => {
     }
   })
 
+  test("Plan review verdict is fenced to the exact executable Task DAG", async () => {
+    const h = await harness()
+    try {
+      const started = await h.call("start", { anchor: "docs/anchors/plan-review-dag/anchor.md" }, "general", "plan-review-dag-general")
+      const workflowId = String(started.workflowId)
+      expect((await h.call("route", {
+        humanFacing: false,
+        behavioral: false,
+        structural: false,
+        externalUnknown: false,
+        diagnostic: false,
+        productOutcome: true,
+        implementationRequested: true,
+        executionDepth: "objective",
+        workLevel: "wave",
+      }, "general", "plan-review-dag-general")).error).toBeUndefined()
+
+      const attach = async (stepId: string, agent: string, sessionID: string) => {
+        const grant = await h.call("dispatch_grant", { workflowId, stepId }, "general", "plan-review-dag-general")
+        expect(grant.error).toBeUndefined()
+        const attached = await h.call("attach", { workflowId, stepId, grantId: grant.grantId }, agent, sessionID)
+        expect(attached.error).toBeUndefined()
+        return attached
+      }
+
+      await attach("critic-solution", "critic", "plan-review-dag-critic")
+      expect((await h.call("complete", {
+        workflowId,
+        stepId: "critic-solution",
+        outcome: "pass",
+        summary: "Solution ready for planning",
+      }, "critic", "plan-review-dag-critic")).error).toBeUndefined()
+
+      await attach("plan", "planner", "plan-review-dag-planner-1")
+      const task = richPlanTask("scope-task", "Scope task", "Build the bounded scope")
+      expect((await h.call("work_plan", richWorkPlanInput(workflowId, [{
+        id: "core",
+        title: "Core",
+        waves: [{ id: "first", title: "First", tasks: [task] }],
+      }]), "planner", "plan-review-dag-planner-1")).error).toBeUndefined()
+      expect((await h.call("task_plan", {
+        workflowId,
+        tasks: [{ ...task, write: ["src/narrow/**"], skills: [] }],
+      }, "planner", "plan-review-dag-planner-1")).error).toBeUndefined()
+      expect((await h.call("complete", {
+        workflowId,
+        stepId: "plan",
+        summary: "Executable scope compiled",
+      }, "planner", "plan-review-dag-planner-1")).error).toBeUndefined()
+
+      const staleReviewer = "plan-review-dag-reviewer-1"
+      expect((await attach("review-plan", "reviewer", staleReviewer)).planContext.revision).toBe(1)
+
+      expect((await h.call("reopen", {
+        workflowId,
+        stepId: "plan",
+        reason: "Executable write scope needs correction without changing semantic Plan meaning.",
+        newEvidence: true,
+        changedHypothesis: false,
+        changedStrategy: true,
+        reducedUnresolved: false,
+      }, "general", "plan-review-dag-general")).error).toBeUndefined()
+
+      await attach("plan", "planner", "plan-review-dag-planner-2")
+      expect((await h.call("task_plan", {
+        workflowId,
+        tasks: [{ ...task, write: ["src/correct/**"], skills: [] }],
+      }, "planner", "plan-review-dag-planner-2")).error).toBeUndefined()
+      expect((await h.call("complete", {
+        workflowId,
+        stepId: "plan",
+        summary: "Corrected executable scope compiled",
+      }, "planner", "plan-review-dag-planner-2")).error).toBeUndefined()
+
+      const staleVerdict = await h.call("complete", {
+        workflowId,
+        stepId: "review-plan",
+        outcome: "pass",
+        summary: "Verdict from the old executable scope",
+      }, "reviewer", staleReviewer)
+      expect(staleVerdict.error).toContain("executable Task DAG changed")
+
+      const freshReviewer = "plan-review-dag-reviewer-2"
+      await attach("review-plan", "reviewer", freshReviewer)
+      const exact = await h.call("task_status", {
+        workflowId,
+        taskId: "scope-task",
+      }, "reviewer", freshReviewer)
+      expect(exact.tasks[0].task.write).toEqual(["src/correct/**"])
+      expect((await h.call("complete", {
+        workflowId,
+        stepId: "review-plan",
+        outcome: "pass",
+        summary: "Corrected executable scope independently reviewed",
+      }, "reviewer", freshReviewer)).error).toBeUndefined()
+    } finally {
+      h.restore()
+    }
+  })
+
   test("Plan review inherits Planner methodology and can load its assessments", async () => {
     const h = await harness()
     try {
