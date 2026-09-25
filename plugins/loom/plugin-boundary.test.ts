@@ -2572,6 +2572,128 @@ Verdict: FAIL
     }
   })
 
+  test("locks write, patch, gofmt, and Git index mutation surfaces", async () => {
+    const firstHarness = await harness(async (_storage, root) => {
+      await initializeGitFixture(root)
+      await mkdir(join(root, "docs", "anchors"), { recursive: true })
+      await writeFile(join(root, "src", "shared.go"), "package shared\n")
+    })
+    let secondHarness: Awaited<ReturnType<typeof harness>> | undefined
+    try {
+      secondHarness = await harness(
+        undefined,
+        undefined,
+        { root: firstHarness.root, storage: firstHarness.storage },
+      )
+
+      const writeCall = {
+        tool: "write",
+        callID: "surface-write",
+        sessionID: "surface-a",
+        agent: "general",
+        input: { filePath: join(firstHarness.root, "src", "shared.ts"), content: "a\n" },
+      }
+      const patchCall = {
+        tool: "apply_patch",
+        callID: "surface-patch",
+        sessionID: "surface-b",
+        agent: "general",
+        input: {
+          patchText:
+            "*** Begin Patch\n*** Update File: src/shared.ts\n@@\n-a\n+b\n*** End Patch",
+        },
+      }
+      await firstHarness.toolHooks.get("execute.before")?.(writeCall)
+      await expect(secondHarness.toolHooks.get("execute.before")?.(patchCall))
+        .rejects.toThrow("src/shared.ts is locked for write by another agent")
+      await firstHarness.toolHooks.get("execute.after")?.({
+        ...writeCall,
+        status: "completed",
+        result: "written",
+      })
+
+      const gofmtCall = {
+        tool: "shell",
+        callID: "surface-gofmt",
+        sessionID: "surface-a",
+        agent: "general",
+        input: { command: "gofmt -w src/shared.go" },
+      }
+      const editGoCall = {
+        tool: "edit",
+        callID: "surface-edit-go",
+        sessionID: "surface-b",
+        agent: "general",
+        input: { filePath: join(firstHarness.root, "src", "shared.go") },
+      }
+      await firstHarness.toolHooks.get("execute.before")?.(gofmtCall)
+      await expect(secondHarness.toolHooks.get("execute.before")?.(editGoCall))
+        .rejects.toThrow("src/shared.go is locked for write by another agent")
+      await firstHarness.toolHooks.get("execute.after")?.({
+        ...gofmtCall,
+        status: "completed",
+        result: "formatted",
+      })
+
+      const admitAnchor = async (
+        h: Awaited<ReturnType<typeof harness>>,
+        sessionID: string,
+        name: string,
+      ) => {
+        const event = {
+          tool: "edit",
+          callID: `anchor-edit-${name}`,
+          sessionID,
+          agent: "general",
+          input: { filePath: join(firstHarness.root, "docs", "anchors", `${name}.md`) },
+        }
+        await h.toolHooks.get("execute.before")?.(event)
+        await writeFile(join(firstHarness.root, "docs", "anchors", `${name}.md`), `${name}\n`)
+        await h.toolHooks.get("execute.after")?.({
+          ...event,
+          status: "completed",
+          result: "updated",
+        })
+      }
+
+      await admitAnchor(firstHarness, "surface-a", "a")
+      await admitAnchor(secondHarness, "surface-b", "b")
+
+      const addA = {
+        tool: "shell",
+        callID: "surface-add-a",
+        sessionID: "surface-a",
+        agent: "general",
+        input: { command: "git add docs/anchors/a.md" },
+      }
+      const addB = {
+        tool: "shell",
+        callID: "surface-add-b",
+        sessionID: "surface-b",
+        agent: "general",
+        input: { command: "git add docs/anchors/b.md" },
+      }
+      await firstHarness.toolHooks.get("execute.before")?.(addA)
+      await expect(secondHarness.toolHooks.get("execute.before")?.(addB))
+        .rejects.toThrow("repository index is locked by another agent")
+      await firstHarness.toolHooks.get("execute.after")?.({
+        ...addA,
+        status: "error",
+        error: new Error("synthetic staging stop"),
+      })
+      await expect(secondHarness.toolHooks.get("execute.before")?.(addB))
+        .resolves.toBeUndefined()
+      await secondHarness.toolHooks.get("execute.after")?.({
+        ...addB,
+        status: "error",
+        error: new Error("synthetic staging stop"),
+      })
+    } finally {
+      secondHarness?.restore()
+      firstHarness.restore()
+    }
+  })
+
   test("active workflows do not grant conversational Research or Diagnostic bypass", async () => {
     const { call, permissionHooks, restore } = await harness()
     try {
