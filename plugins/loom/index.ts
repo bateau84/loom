@@ -30,6 +30,7 @@ import {
   addVerificationRequirement,
   applyTaskPlan,
   buildSteps,
+  executableTaskPlanFingerprint,
   resolveExecutionDepth,
   executionDepthRank,
   plannedTaskSteps,
@@ -518,6 +519,7 @@ type PlanReviewBinding = {
   workflowId: string
   generation: number
   revision: number
+  executableFingerprint: string
 }
 
 function budgetKey(workflowId: string) {
@@ -2211,14 +2213,17 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               const currentPlan = currentWork
                 ? workPlanContext(currentWork, undefined, "focused", workflow.work.generation)
                 : null
+              const executableFingerprint = executableTaskPlanFingerprint(workflow)
               if (
                 !binding ||
                 binding.workflowId !== workflow.id ||
                 binding.generation !== workflow.work.generation ||
-                binding.revision !== currentPlan?.revision
+                binding.revision !== currentPlan?.revision ||
+                !executableFingerprint ||
+                binding.executableFingerprint !== executableFingerprint
               ) {
                 throw new Error(
-                  "Plan changed after Reviewer attachment. Attach a fresh review-plan attempt before recording a verdict.",
+                  "Plan or executable Task DAG changed after Reviewer attachment. Attach a fresh review-plan attempt before recording a verdict.",
                 )
               }
             }
@@ -5677,10 +5682,15 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               await ctx.storage.set(sessionStepKey(tool.sessionID), value.stepId ?? "")
               await ctx.storage.set(sessionOqKey(tool.sessionID), value.questionId ?? "")
               if (value.stepId === "review-plan" && planContext) {
+                const executableFingerprint = executableTaskPlanFingerprint(workflow)
+                if (!executableFingerprint) {
+                  throw new Error("Plan review requires a compiled executable Task DAG.")
+                }
                 await ctx.storage.set(sessionPlanReviewKey(tool.sessionID), {
                   workflowId: value.workflowId,
                   generation: planContext.generation,
                   revision: planContext.revision,
+                  executableFingerprint,
                 } satisfies PlanReviewBinding)
               } else {
                 await ctx.storage.set(sessionPlanReviewKey(tool.sessionID), null)
