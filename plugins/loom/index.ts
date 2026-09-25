@@ -2372,6 +2372,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
           try {
             let reset: string[] = []
+            let hadPlanReviewClaim = false
             const commitReopen = async () => {
               await validateWorkflowMutationLocked(ctx, runtime, workflow)
 
@@ -2390,6 +2391,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                   if (reviewed) await ensureCompletedWaveHistory(ctx.storage as any, work, workflow)
                   else if (planReviewed) {
                     assertWaveClaimForTasks(work, workflow.id, workflow.work.generation, taskIds)
+                    hadPlanReviewClaim = hasPlanReview
                   }
                 }
               }
@@ -2432,17 +2434,12 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 // execution releases the mechanically acquired Wave claim so
                 // Planner can safely amend/recompile the unconsumed contract.
                 if (
-                  hasPlanReview &&
+                  hadPlanReviewClaim &&
                   reset.includes("review-plan") &&
                   taskIds.length > 0 &&
                   !taskExecutionStarted
                 ) {
-                  try {
-                    assertWaveClaimForTasks(work, workflow.id, workflow.work.generation, taskIds)
-                    releaseWorkflowWave(work, workflow.id, workflow.work.generation, taskIds, now)
-                  } catch {
-                    // A failed Plan review has no claim by design.
-                  }
+                  releaseWorkflowWave(work, workflow.id, workflow.work.generation, taskIds, now)
                 } else if (reset.includes("review-implementation") && taskIds.length > 0) {
                   reopenWaveForTasks(work, workflow.id, workflow.work.generation, taskIds, now)
                 }
