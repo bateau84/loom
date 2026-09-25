@@ -865,11 +865,14 @@ function upstreamDependencyStepIds(workflow: Workflow, targetStepId: string) {
   return seen
 }
 
-async function observedProducerSkills(ctx: any, workflow: Workflow, targetStepId: string): Promise<ObservedProducerSkill[]> {
-  const upstream = upstreamDependencyStepIds(workflow, targetStepId)
+async function observedSkillsForStepIds(
+  ctx: any,
+  workflow: Workflow,
+  stepIds: Set<string>,
+): Promise<ObservedProducerSkill[]> {
   const bySkill = new Map<string, Set<string>>()
   for (const step of workflow.steps) {
-    if (!upstream.has(step.id) || step.agent === "reviewer" || step.agent === "critic") continue
+    if (!stepIds.has(step.id) || step.agent === "reviewer" || step.agent === "critic") continue
     const observations = await stepObservations(ctx, workflow.id, step.id)
     for (const observation of observations) {
       if (
@@ -885,7 +888,11 @@ async function observedProducerSkills(ctx: any, workflow: Workflow, targetStepId
   }
   return [...bySkill.entries()]
     .sort(([a], [b]) => a.localeCompare(b))
-    .map(([skill, stepIds]) => ({ skill, stepIds: [...stepIds] }))
+    .map(([skill, producerStepIds]) => ({ skill, stepIds: [...producerStepIds] }))
+}
+
+async function observedProducerSkills(ctx: any, workflow: Workflow, targetStepId: string): Promise<ObservedProducerSkill[]> {
+  return observedSkillsForStepIds(ctx, workflow, upstreamDependencyStepIds(workflow, targetStepId))
 }
 
 async function attachedMethodologyContext(ctx: any, sessionID: string, agent: string) {
@@ -5709,9 +5716,26 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           }
 
           let producerSkills: ObservedProducerSkill[] | undefined
-          if (value.stepId && (tool.agent === "reviewer" || tool.agent === "critic")) {
+          if (tool.agent === "reviewer" || tool.agent === "critic") {
             const current = await readWorkflow(ctx, value.workflowId)
-            if (current) producerSkills = await observedProducerSkills(ctx, current, value.stepId)
+            if (current && value.stepId) {
+              producerSkills = await observedProducerSkills(ctx, current, value.stepId)
+            } else if (current && value.questionId) {
+              const question = (await ctx.storage.get(
+                oqKey(value.workflowId, value.questionId),
+              )) as OpenQuestion | undefined
+              if (question?.work) {
+                if (question.work.taskId && current.steps.some((step) => step.id === taskStepId(question.work!.taskId!))) {
+                  producerSkills = await observedProducerSkills(
+                    ctx,
+                    current,
+                    taskStepId(question.work.taskId),
+                  )
+                } else if (current.steps.some((step) => step.id === "plan")) {
+                  producerSkills = await observedSkillsForStepIds(ctx, current, new Set(["plan"]))
+                }
+              }
+            }
           }
 
           return {
