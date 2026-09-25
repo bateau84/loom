@@ -6000,7 +6000,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         }
       }
       if (event.action === "edit") {
-        const reportResources = event.resources.filter((resource) =>
+        const reportResources = event.resources.filter((resource: string) =>
           resourceMatchesScope(resource, "ephemeral-reports/**"),
         )
         const reportAgent = typeof event.agent === "string" ? event.agent : ""
@@ -6020,7 +6020,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
       if (
         event.action === "edit" &&
-        event.resources.some((resource) => resourceMatchesScope(resource, "docs/reports/**"))
+        event.resources.some((resource: string) => resourceMatchesScope(resource, "docs/reports/**"))
       ) {
         event.effect = "deny"
         event.message =
@@ -6030,7 +6030,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
       if (
         event.action === "shell" &&
-        event.resources.some((resource) => resource.replaceAll("\\", "/").includes("docs/reports"))
+        event.resources.some((resource: string) => resource.replaceAll("\\", "/").includes("docs/reports"))
       ) {
         event.effect = "deny"
         event.message =
@@ -6040,7 +6040,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
       if (
         event.action === "shell" &&
-        event.resources.some((resource) => resource.replaceAll("\\", "/").includes("ephemeral-reports"))
+        event.resources.some((resource: string) => resource.replaceAll("\\", "/").includes("ephemeral-reports"))
       ) {
         event.effect = "deny"
         event.message =
@@ -6068,7 +6068,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           const reportScope = `ephemeral-reports/${event.agent}/**`
           if (
             event.resources.length > 0 &&
-            event.resources.every((resource) => resourceMatchesScope(resource, reportScope))
+            event.resources.every((resource: string) => resourceMatchesScope(resource, reportScope))
           ) {
             return
           }
@@ -6141,7 +6141,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
       if (event.agent !== "general" || !delegationAction) return
 
-      const target = event.resources.find((resource) => loomAgents.has(resource))
+      const target = event.resources.find((resource: string) => loomAgents.has(resource))
       if (!target) return
 
       const workflow = await activeWorkflow(ctx, event.sessionID, ensureLegacySession)
