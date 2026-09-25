@@ -1473,8 +1473,11 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       if (!executionKey) return
       const active = activeGitWriteCalls.get(executionKey)
       if (!active) return
-      await active.release()
-      activeGitWriteCalls.delete(executionKey)
+      try {
+        await active.release()
+      } finally {
+        activeGitWriteCalls.delete(executionKey)
+      }
     }
 
     const revalidateGitMutationUnderLock = async (raw: any) => {
