@@ -2476,7 +2476,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           }
 
           if (resolvedOutcome === "complete") {
-            let ownedWriteScope = durableAuthorGitScopes[tool.agent]
+            let ownedWriteScope: string[] | undefined = durableAuthorGitScopes[tool.agent]
             if (tool.agent === "worker") {
               const workerScope = (await ctx.storage.get(
                 scopeKey(workflowId, stepId),
@@ -6491,7 +6491,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
     const evaluatePermission = async (event: any) => {
       const delegationAction = event.action === "subagent"
       if (event.action === "edit") {
-        let writeScope = durableAuthorGitScopes[String(event.agent ?? "")]
+        let writeScope: string[] | undefined = durableAuthorGitScopes[String(event.agent ?? "")]
         if (event.agent === "worker") {
           const workflowId = (await ctx.storage.get(sessionKey(event.sessionID))) as string | undefined
           const stepId = (await ctx.storage.get(sessionStepKey(event.sessionID))) as string | undefined
@@ -7257,7 +7257,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           (currentStep?.attempt ?? 0) === admission.attempt
 
         if (sameExecutionAuthority) {
-          let writeScope = durableAuthorGitScopes[String(raw.agent)]
+          let writeScope: string[] | undefined = durableAuthorGitScopes[String(raw.agent)]
           if (raw.agent === "worker") {
             const scope = (await ctx.storage.get(
               scopeKey(admission.workflowId, admission.stepId),
