@@ -520,6 +520,7 @@ type PlanReviewBinding = {
   generation: number
   revision: number
   executableFingerprint: string
+  attempt: number
 }
 
 function budgetKey(workflowId: string) {
@@ -2214,16 +2215,18 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 ? workPlanContext(currentWork, undefined, "focused", workflow.work.generation)
                 : null
               const executableFingerprint = executableTaskPlanFingerprint(workflow)
+              const currentReviewStep = workflow.steps.find((candidate) => candidate.id === "review-plan")
               if (
                 !binding ||
                 binding.workflowId !== workflow.id ||
                 binding.generation !== workflow.work.generation ||
                 binding.revision !== currentPlan?.revision ||
+                binding.attempt !== (currentReviewStep?.attempt ?? 0) ||
                 !executableFingerprint ||
                 binding.executableFingerprint !== executableFingerprint
               ) {
                 throw new Error(
-                  "Plan or executable Task DAG changed after Reviewer attachment. Attach a fresh review-plan attempt before recording a verdict.",
+                  "Plan review attempt, Plan, or executable Task DAG changed after Reviewer attachment. Attach a fresh review-plan attempt before recording a verdict.",
                 )
               }
             }
@@ -5691,6 +5694,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                   generation: planContext.generation,
                   revision: planContext.revision,
                   executableFingerprint,
+                  attempt: step.attempt ?? 0,
                 } satisfies PlanReviewBinding)
               } else {
                 await ctx.storage.set(sessionPlanReviewKey(tool.sessionID), null)
