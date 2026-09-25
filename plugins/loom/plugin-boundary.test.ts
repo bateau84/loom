@@ -3839,6 +3839,108 @@ describe("re-review proof-history attacks", () => {
 })
 
 describe("Skill methodology evidence lifecycle", () => {
+  test("Plan review inherits Planner methodology and can load its assessments", async () => {
+    const h = await harness()
+    try {
+      const started = await h.call("start", { anchor: "docs/anchors/plan-review-skills/anchor.md" }, "general", "plan-review-general")
+      const workflowId = String(started.workflowId)
+      expect((await h.call("route", {
+        humanFacing: false,
+        behavioral: false,
+        structural: false,
+        externalUnknown: false,
+        diagnostic: false,
+        productOutcome: true,
+        implementationRequested: true,
+        executionDepth: "objective",
+        workLevel: "wave",
+      }, "general", "plan-review-general")).error).toBeUndefined()
+
+      const attach = async (stepId: string, agent: string, sessionID: string) => {
+        const grant = await h.call("dispatch_grant", { workflowId, stepId }, "general", "plan-review-general")
+        expect(grant.error).toBeUndefined()
+        const attached = await h.call("attach", { workflowId, stepId, grantId: grant.grantId }, agent, sessionID)
+        expect(attached.error).toBeUndefined()
+        return attached
+      }
+
+      await attach("critic-solution", "critic", "plan-review-critic")
+      expect((await h.call("complete", {
+        workflowId,
+        stepId: "critic-solution",
+        outcome: "pass",
+        summary: "Solution ready for planning",
+      }, "critic", "plan-review-critic")).error).toBeUndefined()
+
+      await attach("plan", "planner", "plan-review-planner")
+      for (const skill of ["risk-driven-planning", "work-decomposition"]) {
+        const event = {
+          tool: "skill",
+          callID: `planner-${skill}`,
+          messageID: `planner-${skill}-message`,
+          sessionID: "plan-review-planner",
+          agent: "planner",
+          input: { name: skill },
+        }
+        const result = { metadata: { metadata: { directory: `${process.cwd()}/skills/${skill}` } } }
+        await h.toolHooks.get("execute.before")!(event)
+        await h.toolHooks.get("execute.after")!({ ...event, status: "completed", result })
+      }
+
+      const task = richPlanTask("reviewed-task", "Reviewed task", "Deliver the reviewed task")
+      expect((await h.call("work_plan", richWorkPlanInput(workflowId, [{
+        id: "core",
+        title: "Core",
+        waves: [{ id: "first", title: "First", tasks: [task] }],
+      }]), "planner", "plan-review-planner")).error).toBeUndefined()
+      expect((await h.call("task_plan", {
+        workflowId,
+        tasks: [{ ...task, write: ["src/**"], skills: [] }],
+      }, "planner", "plan-review-planner")).error).toBeUndefined()
+      expect((await h.call("complete", {
+        workflowId,
+        stepId: "plan",
+        summary: "Plan compiled for independent review",
+      }, "planner", "plan-review-planner")).error).toBeUndefined()
+
+      const attached = await attach("review-plan", "reviewer", "plan-review-reviewer")
+      expect(attached.producerSkills).toEqual([
+        { skill: "risk-driven-planning", stepIds: ["plan"] },
+        { skill: "work-decomposition", stepIds: ["plan"] },
+      ])
+
+      for (const skill of ["risk-driven-planning", "work-decomposition"]) {
+        const event = {
+          tool: "skill",
+          callID: `reviewer-${skill}`,
+          messageID: `reviewer-${skill}-message`,
+          sessionID: "plan-review-reviewer",
+          agent: "reviewer",
+          input: { name: skill },
+        }
+        const result = { metadata: { metadata: { directory: `${process.cwd()}/skills/${skill}` } } }
+        await h.toolHooks.get("execute.before")!(event)
+        await h.toolHooks.get("execute.after")!({ ...event, status: "completed", result })
+        const assessment = await h.callObserved("assessment", { skill }, "reviewer", "plan-review-reviewer", `assessment-${skill}`)
+        expect(assessment.available).toBe(true)
+      }
+
+      const exact = await h.call("task_status", {
+        workflowId,
+        taskId: "reviewed-task",
+      }, "reviewer", "plan-review-reviewer")
+      expect(exact.tasks[0].task.write).toEqual(["src/**"])
+      expect((await h.call("complete", {
+        workflowId,
+        stepId: "review-plan",
+        outcome: "pass",
+        summary: "Plan and executable scope independently reviewed",
+      }, "reviewer", "plan-review-reviewer")).error).toBeUndefined()
+    } finally {
+      h.restore()
+    }
+  })
+
   test("producer skill loads become Reviewer facts and assessment evidence", async () => {
     const h=await harness(); try {
       const started=await h.call("start",{anchor:"docs/anchors/skill-evidence/anchor.md"},"general","skill-general"); const workflowId=String(started.workflowId)
