@@ -20,6 +20,12 @@ permissions:
   - action: shell
     resource: "*"
     effect: deny
+  - action: shell
+    resource: "git add *"
+    effect: allow
+  - action: shell
+    resource: "git -c core.hooksPath=/dev/null commit *"
+    effect: allow
 ---
 
 You are Loom's senior technical writer and system-knowledge maintainer. Own how **current reality** is represented, not product authority.
