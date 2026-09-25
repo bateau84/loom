@@ -12,6 +12,7 @@ import { homedir } from "node:os"
 export type RawStorage = {
   get(key: string): Promise<unknown>
   set(key: string, value: unknown): Promise<unknown>
+  delete?(key: string): Promise<boolean>
   scan(input: { prefix: string; limit?: number; after?: string }): Promise<any>
   transaction?<T>(fn: () => Promise<T>): Promise<T>
 }
@@ -973,6 +974,13 @@ export function createProjectStorage(
       })
     },
   }
+  if (raw.delete) {
+    scoped.delete = (key) =>
+      fencedTransaction(async () => {
+        await assertVersion()
+        return raw.delete!(scopedKey(projectId, key))
+      })
+  }
   if (raw.transaction) {
     scoped.transaction = (fn) =>
       raw.transaction!(async () => {
@@ -1078,6 +1086,12 @@ export async function createTransactionalStorage(
     },
     async set(key: string, value: unknown) {
       return exclusive(() => writeValue(key, value))
+    },
+    async delete(key: string) {
+      return exclusive(() => {
+        const result = db.query("DELETE FROM kv WHERE key = ?1").run(key) as { changes?: number }
+        return Number(result.changes ?? 0) > 0
+      })
     },
     async scan(input: { prefix: string; limit?: number; after?: string }) {
       return exclusive(() => {
@@ -1190,6 +1204,16 @@ export function createAtomicFileStorage(
       const path = storageRecordPath(recordsRoot, key)
       await atomicWriteJson(path, value, 0o600, () => options.afterTempSync?.(key, path))
       return value
+    },
+    async delete(key: string) {
+      const path = storageRecordPath(recordsRoot, key)
+      try {
+        await unlink(path)
+        return true
+      } catch (error: any) {
+        if (error?.code === "ENOENT") return false
+        throw error
+      }
     },
     async scan(input: { prefix: string; limit?: number; after?: string }) {
       const rawSegments = input.prefix.split("/")
@@ -1580,14 +1604,35 @@ export async function migrateLegacySessionState(
 ): Promise<LegacyMigrationResult> {
   const sessionKey = `session/${input.sessionId}`
   const sessionIntentKey = `session-intent/${input.sessionId}`
-  const [scopedWorkflowId, scopedIntentId, legacyWorkflowId, legacyIntentId] = await Promise.all([
+  const [scopedWorkflowId, scopedIntentId, legacyWorkflowId, legacyIntentId, deletionFence] = await Promise.all([
     scoped.get(sessionKey),
     scoped.get(sessionIntentKey),
     raw.get(sessionKey),
     raw.get(sessionIntentKey),
+    scoped.get(`session-deletion-fence/${input.sessionId}`),
   ])
 
-  const hasLegacyWorkflow = typeof legacyWorkflowId === "string" && legacyWorkflowId.length > 0
+  // A cleanup fence is canonical negative authority: compatibility storage may
+  // not resurrect the deleted child's old binding. A later valid attachment
+  // writes a new canonical binding and clears this fence.
+  if (scopedWorkflowId === undefined && deletionFence !== undefined) {
+    return {
+      status: scopedIntentId !== undefined ? "already-scoped" : "none",
+      ...(typeof scopedIntentId === "string" && scopedIntentId.length > 0
+        ? { intentId: scopedIntentId }
+        : {}),
+      migratedKeys: 0,
+    }
+  }
+
+  const legacyWorkflowDeleted =
+    typeof legacyWorkflowId === "string" &&
+    legacyWorkflowId.length > 0 &&
+    (await scoped.get(`workflow-deletion/${legacyWorkflowId}`)) !== undefined
+  const hasLegacyWorkflow =
+    typeof legacyWorkflowId === "string" &&
+    legacyWorkflowId.length > 0 &&
+    !legacyWorkflowDeleted
   const hasLegacyIntent = typeof legacyIntentId === "string" && legacyIntentId.length > 0
   if (!hasLegacyWorkflow && !hasLegacyIntent) {
     return {
@@ -1930,7 +1975,11 @@ export async function revokeWorkflowDispatchGrantsLocked(
     for (const entry of page.entries ?? []) {
       const grant = entry.value as DispatchGrantV1
       if (grant?.projectId !== runtime.projectId || grant.workflowId !== workflowId || grant.revokedAt || grant.consumedAt) continue
-      await storage.set(entry.key, { ...grant, revokedAt: at })
+      const projectPrefix = `project/${runtime.projectId}/`
+      const key = entry.key.startsWith(projectPrefix)
+        ? entry.key.slice(projectPrefix.length)
+        : entry.key
+      await storage.set(key, { ...grant, revokedAt: at })
       revoked.push(grant.grantId)
     }
     after = page.next

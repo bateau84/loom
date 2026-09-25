@@ -11,8 +11,8 @@ afterEach(async () => {
   while (roots.length) await rm(roots.pop()!, { recursive: true, force: true })
 })
 
-describe("Loom external dashboard", () => {
-  test("serves an empty read-only fleet without requiring Loom execution", async () => {
+describe("Loom control panel", () => {
+  test("serves an empty projection without requiring Loom execution", async () => {
     const root = await mkdtemp(join(tmpdir(), "loom-dashboard-app-"))
     roots.push(root)
     const handler = createDashboardHandler(root)
@@ -21,7 +21,7 @@ describe("Loom external dashboard", () => {
     expect(await response.json()).toMatchObject({ projects: [] })
   })
 
-  test("starts a real local server with a Loom-specific health identity", async () => {
+  test("starts a real local server with control-panel health identity", async () => {
     const root = await mkdtemp(join(tmpdir(), "loom-dashboard-server-"))
     roots.push(root)
     const dashboard = await startDashboardServer({
@@ -37,21 +37,99 @@ describe("Loom external dashboard", () => {
       expect(await response.json()).toEqual({
         status: "ok",
         service: "loom-dashboard",
-        mode: "read-only",
+        mode: "control-panel",
       })
     } finally {
       dashboard.stop()
     }
   })
 
-  test("rejects mutation methods at the observation boundary", async () => {
+  test("keeps observation routes read-only and rejects unauthorised cleanup", async () => {
     const root = await mkdtemp(join(tmpdir(), "loom-dashboard-app-"))
     roots.push(root)
-    const handler = createDashboardHandler(root)
+
+    const readOnly = createDashboardHandler(root)
     for (const method of ["POST", "PUT", "PATCH", "DELETE"]) {
-      const response = await handler(new Request("http://localhost/api/fleet", { method }))
+      const response = await readOnly(new Request("http://localhost/api/fleet", { method }))
       expect(response.status).toBe(405)
-      expect(response.headers.get("Allow")).toBe("GET")
+      expect(response.headers.get("Allow")).toBe("GET, POST")
+    }
+    const unavailable = await readOnly(new Request("http://localhost/api/control/workflows/delete", {
+      method: "POST",
+      headers: { origin: "http://localhost", "content-type": "application/json" },
+      body: JSON.stringify({ projectId: "project-a", workflowIds: ["workflow-a"] }),
+    }))
+    expect(unavailable.status).toBe(503)
+
+    const controlled = createDashboardHandler(root, {
+      stateRoot: join(root, "state"),
+      controlToken: "secret-control-token",
+    })
+    const rejected = await controlled(new Request("http://localhost/api/control/workflows/delete", {
+      method: "POST",
+      headers: {
+        origin: "http://evil.example",
+        "x-loom-control-token": "secret-control-token",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ projectId: "project-a", workflowIds: ["workflow-a"] }),
+    }))
+    expect(rejected.status).toBe(403)
+
+    const rebound = await controlled(new Request("http://attacker.example/api/control/workflows/delete", {
+      method: "POST",
+      headers: {
+        origin: "http://attacker.example",
+        "x-loom-control-token": "secret-control-token",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ projectId: "project-a", workflowIds: ["workflow-a"] }),
+    }))
+    expect(rebound.status).toBe(403)
+
+    const configuredProxy = createDashboardHandler(root, {
+      stateRoot: join(root, "state"),
+      controlToken: "secret-control-token",
+      allowedControlOrigins: ["https://loom.example.test"],
+    })
+    const proxyAdmission = await configuredProxy(new Request("http://loom.example.test/api/control/workflows/delete", {
+      method: "POST",
+      headers: {
+        origin: "https://loom.example.test",
+        "x-loom-control-token": "secret-control-token",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ projectId: "project-a", workflowIds: ["workflow-a"] }),
+    }))
+    // The configured proxy Origin/Host passes browser admission. The missing
+    // canonical test database then fails at the next boundary, not as 403.
+    expect(proxyAdmission.status).toBe(409)
+  })
+
+  test("bounds request bodies before control parsing", async () => {
+    const root = await mkdtemp(join(tmpdir(), "loom-dashboard-body-limit-"))
+    roots.push(root)
+    const dashboard = await startDashboardServer({
+      runtimeRoot: root,
+      stateRoot: join(root, "state"),
+      port: 0,
+      unref: true,
+    })
+
+    try {
+      const response = await fetch(`http://127.0.0.1:${dashboard.port}/api/control/workflows/delete`, {
+        method: "POST",
+        headers: {
+          origin: `http://127.0.0.1:${dashboard.port}`,
+          "content-type": "application/json",
+          "x-loom-control-token": "not-the-server-token",
+        },
+        body: "x".repeat(129 * 1024),
+      })
+      expect(response.status).toBe(413)
+      expect(await response.text()).toBe("Request body too large")
+    } finally {
+      dashboard.stop()
     }
   })
 
@@ -81,7 +159,7 @@ describe("Loom external dashboard", () => {
   })
 
   test("generated browser script is syntactically valid JavaScript", () => {
-    const html = dashboardHtml()
+    const html = dashboardHtml("fixture-control-token")
     const start = html.indexOf("<script>")
     const end = html.lastIndexOf("</script>")
     expect(start).toBeGreaterThanOrEqual(0)
@@ -91,8 +169,6 @@ describe("Loom external dashboard", () => {
   })
 
   test("generated CSS keeps status glyphs rather than JavaScript Unicode escape text", () => {
-    // Bun may escape non-ASCII source while transpiling tagged raw templates.
-    // CSS does not understand JavaScript's backslash-u escape syntax.
     const html = dashboardHtml()
     const css = html.slice(html.indexOf("<style>") + 7, html.indexOf("</style>"))
     expect(css).toContain('content:"● "')
@@ -102,37 +178,27 @@ describe("Loom external dashboard", () => {
     expect(css).not.toContain("\\u2713")
   })
 
-  test("UI contains accessible Fleet to Project to Workflow to Session semantics and explicit provenance", () => {
-    const html = dashboardHtml()
-    expect(html).toContain("Loom Operations")
-    expect(html).toContain('aria-label="Fleet filters"')
-    expect(html).toContain('id="agent-filter"')
+  test("UI exposes directory to session to workflow hierarchy and bounded cleanup controls", () => {
+    const html = dashboardHtml("fixture-control-token")
+    expect(html).toContain("Loom Control Panel")
+    expect(html).toContain("Working directories")
+    expect(html).toContain("Control panel")
+    expect(html).toContain("Recent sessions")
+    expect(html).toContain("Session summary")
+    expect(html).toContain("Manage workflows")
+    expect(html).toContain("Delete failed/cancelled workflows")
+    expect(html).toContain("Your code is not deleted.")
+    expect(html).toContain("/api/control/workflows/delete")
+    expect(html).toContain("x-loom-control-token")
     expect(html).toContain('aria-label="Location"')
     expect(html).toContain('id="projection-status"')
-    expect(html).toContain("Objective → Phase → Wave → Task")
-    expect(html).toContain("<details")
-    expect(html).toContain("<summary data-key=")
-    expect(html).toContain("hierarchyOpen")
-    expect(html).toContain("Budget used/limit")
-    expect(html).toContain("Tasks complete")
-    expect(html).toContain("claimed by")
-    expect(html).toContain("Loading Loom projection…")
-    expect(html).toContain("No Loom instances discovered.")
-    expect(html).toContain("No active or recent workflows.")
-    expect(html).toContain("No workflows match the current filters.")
-    expect(html).toContain("Showing the last known Loom projection")
+    expect(html).toContain("Advanced work map")
     expect(html).toContain("consistency conflict")
-    expect(html).toContain("No winner is selected")
-    expect(html).toContain("OpenCode sessions")
     expect(html).toContain("stale/offline")
-    expect(html).toContain('.badge[data-state="consistency conflict"]::before')
-    expect(html).toContain('.badge[data-state="stale/offline"]::before')
-    expect(html).toContain("Missing telemetry is not treated as zero or success")
     expect(html).toContain("Loom-authoritative")
     expect(html).toContain(":focus-visible")
     expect(html).toContain("prefers-reduced-motion")
     expect(html).toContain("The previously focused item is no longer available")
-    expect(html).toContain("fallback?.focus()")
-    expect(html).not.toContain("<form")
+    expect(html).toContain("showModal()")
   })
 })

@@ -1441,6 +1441,70 @@ describe("Loom runtime identity and scoped storage", () => {
     })
   })
 
+  test("workflow-deletion tombstones and child fences block legacy binding resurrection", async () => {
+    await withRoots(async (root) => {
+      const legacy = new MemoryStorage()
+      const canonical = new MemoryStorage()
+      const project = join(root, "deleted-legacy-project")
+      await mkdir(project, { recursive: true })
+      const runtime = await resolveRuntimeIdentity(project, canonical as any)
+      const scoped = createProjectStorage(canonical as any, runtime.projectId)
+
+      await legacy.set("session/old-general", "workflow-deleted")
+      await legacy.set("workflow/workflow-deleted", {
+        id: "workflow-deleted",
+        anchor: "docs/anchors/deleted.md",
+        createdBySession: "old-general",
+        createdAt: "before-project-scoping",
+        steps: [],
+      })
+      await scoped.set("workflow-deletion/workflow-deleted", {
+        schemaVersion: 1,
+        workflowId: "workflow-deleted",
+        projectId: runtime.projectId,
+        deletedAt: "2026-09-25T12:00:00.000Z",
+      })
+
+      const owner = await migrateBaselineLegacySessionState(
+        legacy as any,
+        scoped,
+        runtime,
+        {
+          sessionId: "old-general",
+          sessionProjectId: "opencode-project-a",
+          currentProjectId: "opencode-project-a",
+          resumeProof: {
+            kind: "opencode-host-session",
+            sessionId: "old-general",
+            projectId: "opencode-project-a",
+          },
+        },
+      )
+      expect(owner).toMatchObject({ status: "none", migratedKeys: 0 })
+      expect(await scoped.get("session/old-general")).toBeUndefined()
+      expect(await scoped.get("workflow/workflow-deleted")).toBeUndefined()
+
+      await legacy.set("session/old-child", "workflow-deleted")
+      await scoped.set("session-deletion-fence/old-child", {
+        schemaVersion: 1,
+        workflowId: "workflow-deleted",
+        deletedAt: "2026-09-25T12:00:00.000Z",
+      })
+      const child = await migrateBaselineLegacySessionState(
+        legacy as any,
+        scoped,
+        runtime,
+        {
+          sessionId: "old-child",
+          sessionProjectId: "opencode-project-a",
+          currentProjectId: "opencode-project-a",
+        },
+      )
+      expect(child).toMatchObject({ status: "none", migratedKeys: 0 })
+      expect(await scoped.get("session/old-child")).toBeUndefined()
+    })
+  })
+
   test("canonical rebind outranks stale legacy workflow and compatibility data", async () => {
     await withRoots(async (root) => {
       const legacy = new MemoryStorage()

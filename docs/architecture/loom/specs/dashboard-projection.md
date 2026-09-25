@@ -1,7 +1,7 @@
 ---
 type: specification
 title: Dashboard Projection Specification
-description: Versioned read-only projection contract for aggregating concurrent Loom instances/projects/workflows.
+description: Versioned read-only projection contract consumed by the Loom control panel.
 tags: [architecture, specification, loom, dashboard, observability]
 ---
 
@@ -309,6 +309,6 @@ The default projection excludes credentials, raw hidden prompts, unrestricted to
 
 ## Conformance evidence
 
-Tests must cover two concurrent projects with identical local names, a projected Objective → Phase → Wave → Task tree whose ancestor completion remains independent of workflow completion, workflow-to-work-scope links, competing work-hierarchy publishers ordered by `workVersion` with same-version digest conflict detection, same workflow reported by multiple publishers, bounded-history truncation flags, atomic generation replacement, stale lease expiry, a stale highest-revision publisher beside a live lower-revision publisher, same-revision disagreement, projection write failure not blocking Loom, disabled vs unavailable enrichment, missing-vs-explicit-zero telemetry, and an observation surface with no mutation operation.
+Tests must cover two concurrent projects with identical local names, a projected Objective → Phase → Wave → Task tree whose ancestor completion remains independent of workflow completion, workflow-to-work-scope links, competing work-hierarchy publishers ordered by `workVersion` with same-version digest conflict detection, same workflow reported by multiple publishers, bounded-history truncation flags, atomic generation replacement, stale lease expiry, a stale highest-revision publisher beside a live lower-revision publisher, same-revision disagreement, projection write failure not blocking Loom, disabled vs unavailable enrichment, missing-vs-explicit-zero telemetry, and a read-only projection surface. Bounded control actions are verified separately against canonical runtime state and never mutate projection files.
 
 Readable-context tests additionally cover complete digest verification at the legacy boundary, true common-field/context conflicts, unknown versions, corrupt payloads, independent source freshness, bounded/redacted descriptions, exact name/owner resolution, and production publisher-to-browser behavior.

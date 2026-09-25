@@ -1548,6 +1548,10 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
     const legacyCheckedSessions = new Set<string>()
     const ensureLegacySession = async (sessionID: string) => {
       if (legacyCheckedSessions.has(sessionID)) return
+      if (await scopedStorage.get(`session-deletion-fence/${sessionID}`) !== undefined) {
+        legacyCheckedSessions.add(sessionID)
+        return
+      }
       const session = await ctx.session.get({ sessionID })
       const sessionProjectId =
         typeof session.projectID === "string" ? session.projectID : ""
@@ -1578,6 +1582,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
     // cancellation fence, but do not perform host lookups for fresh sessions.
     const ensureLegacyCancellationBoundary = async (sessionID: string) => {
       if (await scopedStorage.get(sessionKey(sessionID)) !== undefined) return
+      if (await scopedStorage.get(`session-deletion-fence/${sessionID}`) !== undefined) return
       if (await legacyStorage.get(sessionKey(sessionID)) !== undefined) {
         await ensureLegacySession(sessionID)
       }
@@ -6369,6 +6374,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               })
 
               await ctx.storage.set(sessionKey(tool.sessionID), value.workflowId)
+              await scopedStorage.delete?.(`session-deletion-fence/${tool.sessionID}`)
               await ctx.storage.set(sessionAttachmentKey(tool.sessionID), crypto.randomUUID())
               await ctx.storage.set(sessionStepKey(tool.sessionID), value.stepId ?? "")
               await ctx.storage.set(sessionOqKey(tool.sessionID), value.questionId ?? "")

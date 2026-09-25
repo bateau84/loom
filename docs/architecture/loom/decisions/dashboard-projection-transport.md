@@ -43,4 +43,6 @@ Snapshot files need schema versioning, generation, timestamps, lease expiry, use
 
 ## Reconsider when
 
-Interactive control, remote observation, or high-frequency streaming becomes an accepted product requirement.
+Remote observation or high-frequency streaming becomes an accepted product requirement.
+
+Interactive workflow cleanup is now accepted, but it does not change this decision: control actions use a separate canonical-state command path while snapshot transport remains read-only.

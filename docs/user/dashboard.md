@@ -1,98 +1,87 @@
 ---
 type: user-guide
-title: Loom Operational Dashboard
-description: Use Loom's automatically managed read-only external dashboard.
-tags: [user-guide, loom, dashboard]
+title: Loom Control Panel
+description: Use Loom's automatically managed local control panel.
+tags: [user-guide, loom, dashboard, control-panel]
 ---
 
-# Loom Operational Dashboard
+# Loom Control Panel
 
-The dashboard is a local read-only view of Loom work running across OpenCode processes and projects.
+The control panel is a local view of Loom work across your OpenCode processes and working directories.
+
+Its normal hierarchy is:
+
+```text
+Working directory → Session → Workflow
+```
+
+Workflow internals are available when needed, but they are not the starting point.
 
 ## Start
 
-The dashboard starts automatically with the Loom OpenCode plugin. No separate terminal or service command is normally required.
+The control panel starts automatically with the Loom OpenCode plugin.
 
-By default it listens on:
+By default:
 
 ```text
 http://127.0.0.1:54318
 ```
 
-The first OpenCode process that sees no active dashboard lease binds the port and owns the server in-process. Other OpenCode processes reuse the shared endpoint lease. If the owner exits while another OpenCode process is still running, a remaining process takes over after the lease expires.
+Set `LOOM_DASHBOARD_PORT` to choose another local port. Set `LOOM_DASHBOARD_AUTOSTART=0` to disable automatic startup.
 
-Earlier dashboard versions defaulted to `4318`. To preserve an existing bookmark or script, set `LOOM_DASHBOARD_PORT=4318`, but only when that port is not already used by OTLP/HTTP or another local service.
-
-Set `LOOM_DASHBOARD_PORT` to choose another local port. Set `LOOM_DASHBOARD_AUTOSTART=0` on OpenCode to opt out of automatic startup.
-
-For explicit foreground/debug operation, do not run a second server on the same port while an auto-started owner is active. Start OpenCode with auto-start disabled, then run the dashboard separately:
+For foreground/debug operation:
 
 ```bash
 LOOM_DASHBOARD_AUTOSTART=0 opencode
-# in another terminal
+# another terminal
 bun run dashboard
 ```
 
-The running dashboard publishes its effective endpoint into Loom's installation state, and active Loom/OpenCode processes resolve sidebar/status links from that shared endpoint lease.
+## Pages
 
-## Views
+- **Control panel** — working directories, recent sessions, and sessions needing attention.
+- **Working directory** — sessions for one directory plus a small summary.
+- **Session** — workflows that belong to that conversation/work context.
+- **Workflow** — detailed Loom execution state and diagnostics.
+- **Manage workflows** — inspect and clean up failed/cancelled workflow records.
+- **Advanced work map** — Objective → Phase → Wave → Task detail when deeper planning/execution context is needed.
 
-- **Fleet** — attention-first list of active/recent workflows across projects.
-- **Project** — Objective → Phase → Wave → Task progress and project workflows.
-- **Workflow** — runnable/current steps, OQs, verification, budget, Product Acceptance, knowledge status and participating publishers.
-- **Session context** — publisher/session freshness plus optional OpenCode telemetry when enabled.
+Existing `#/project/.../workflow/...` links remain accepted for compatibility.
 
-Use the Status and Project filters to narrow Fleet. Objective, Phase and Wave rows are expandable so large work plans do not need to stay fully open. Browser Back or the breadcrumb links return through Workflow → Project → Fleet without changing Loom state.
+## Delete failed workflow attempts
 
-## In-session workflow status
+Failed restart attempts can be deleted after they are terminal.
 
-`loom_status` stays compact in the OpenCode timeline. Interactive status itself is dashboard-owned and does not depend on the model repeating a presentation URL.
+From a session or **Manage workflows**:
 
-Start OpenCode with Loom enabled. The plugin ensures the read-only dashboard is available automatically.
+1. choose the failed/cancelled workflow or cleanup action;
+2. review the workflows in the confirmation dialog;
+3. choose **Delete workflows**.
 
-Then open:
+Deletion removes obsolete Loom execution/control records so the old attempts no longer clutter the UI or interfere with later routing.
 
-```text
-http://127.0.0.1:54318
-```
+It does **not** delete your code or working-directory files.
 
-Fleet automatically lists active/recent Loom workflows. A workflow can also be opened directly through the stable dashboard route:
+Loom retains evidence and completed durable work results. Active work cannot be deleted; cancel it first. If a workflow owns durable completed-Wave review history, Loom keeps that workflow record rather than destroying required provenance.
 
-```text
-http://127.0.0.1:54318/#/project/<projectId>/workflow/<workflowId>
-```
+If the browser loses the response after you confirm deletion, Loom reports that the result could not be confirmed rather than claiming failure. Retry the same cleanup: already-completed deletion is idempotent and returns success.
 
-The OpenCode terminal client's Loom sidebar exposes that stable deep link for the active workflow. In OpenCode web, the dashboard root remains a fixed browser entry point, so interactive status is still reachable even if plugin-tool output is not rendered by the host UI.
+## Refresh and projection state
 
-`loom_status` may additionally generate a user-private interactive HTML artifact under Loom's runtime root and return a `/status/...` URL. That artifact provides expandable hierarchy, search/filtering, current/upcoming work, OQs, verification, budget, Product Acceptance, and knowledge state. Artifact generation is a convenience path; dashboard reachability does not depend on it.
+The UI refreshes from Loom's bounded operational projection. Missing data is not treated as zero or success.
 
-The `/status/...` endpoint serves only generated workflow-status artifacts and remains GET-only. It does not expose a general runtime filesystem route.
+- **stale/offline** means the latest source lease expired;
+- **consistency conflict** means publishers disagree at the same highest revision and Loom does not pick a winner;
+- optional telemetry can be unavailable without changing authoritative Loom state.
 
-Use `LOOM_DASHBOARD_PORT` for a different local port. The dashboard process publishes that effective endpoint and refreshes a short lease, so existing OpenCode/Loom processes pick up the active port without requiring matching environment variables or a restart.
+## Security boundary
 
-Use `LOOM_DASHBOARD_URL` on the owning OpenCode/dashboard process when the browser reaches the dashboard through a tunnel or reverse proxy. That advertised base URL is published through the same shared endpoint lease.
+The server listens on loopback by default.
 
-> **Local/remote trust boundary:** the dashboard has no built-in authentication and is designed for host-local observation. Loopback prevents remote-network access but is not same-user authentication: another user or process on a shared host may be able to connect. On shared or untrusted multi-user hosts, set `LOOM_DASHBOARD_AUTOSTART=0` or use OS/container isolation. Do not expose it directly to the public internet; for remote access, use a private tunnel or an authenticated/authorized reverse proxy. Treat canonical project paths/workflow metadata as operationally sensitive.
+Normal projection/status reads remain observational. The cleanup endpoint is a separate bounded control path and requires a same-origin request plus a per-server control token embedded in the served page.
 
-### Optional OpenCode Desktop preview
+This is CSRF protection, not shared-host user authentication. On shared or untrusted multi-user hosts, use OS/container isolation or disable dashboard auto-start. Do not expose the control panel directly to the public internet. If you configure `LOOM_DASHBOARD_URL` behind an authenticated reverse proxy, preserve the public Host header so control actions can verify the configured origin.
 
-If OpenCode Desktop is installed and its experimental browser integration is connected, Loom metadata may contain a one-shot Desktop preview program. It is optional and is not part of the normal status flow. TUI/CLI/web/SSH/container/CI usage does not require it.
+## Status artifacts
 
-## Status meaning
-
-- **consistency conflict** — publishers claim the same highest workflow revision with different authoritative state; the dashboard does not pick a winner.
-- **failed / blocked** — Loom-authoritative workflow status.
-- **stale/offline** — the latest-known source lease expired.
-- **active / complete** — Loom-authoritative state from the selected latest revision.
-
-Missing optional telemetry is shown as unavailable/not enabled, not as zero or success.
-
-## Safety
-
-The dashboard is not a Loom controller.
-
-- its HTTP surface is GET-only;
-- snapshot files are observation data, not authority;
-- it cannot answer OQs, grant budget, attach sessions, complete steps, or mutate workflows;
-- dashboard/projection failure does not stop Loom execution;
-- credentials, hidden prompts and unrestricted tool output are not projected by default.
+`loom_status` may still generate private interactive workflow-status artifacts below `/status/...`. Those artifacts remain GET-only and do not expose a general runtime filesystem route.

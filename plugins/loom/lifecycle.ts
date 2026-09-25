@@ -32,6 +32,14 @@ export async function assertLoomToolAdmission(
   if (readOnlyTool(name, input)) return
   const bound = await storage.get(`session/${actor.sessionID}`)
   const workflow = bound ? await storage.get(`workflow/${bound}`) as Workflow | undefined : undefined
+  const deletedFence = !workflow
+    ? await storage.get(`session-deletion-fence/${actor.sessionID}`) as { workflowId?: string } | undefined
+    : undefined
+  if (deletedFence && name !== "attach") {
+    throw new Error(
+      `Workflow ${deletedFence.workflowId ?? "previously attached"} was deleted. Attach to current work before mutating Loom state.`,
+    )
+  }
   const parentConversation = actor.agent === "general" && workflow?.createdBySession === actor.sessionID &&
     (name === "start" || name === "cancel" || name.startsWith("intent_") || name === "report_promote")
   // A new exact grant is the only route for reusing a cancelled child session.
@@ -51,8 +59,20 @@ export async function assertCancelledChildToolAdmission(
 ) {
   const id = await storage.get(`session/${sessionID}`)
   const workflow = id ? await storage.get(`workflow/${id}`) as Workflow | undefined : undefined
-  if (!workflow?.cancellation || workflow.createdBySession === sessionID) return
+  const deletedFence = !workflow
+    ? await storage.get(`session-deletion-fence/${sessionID}`) as { workflowId?: string } | undefined
+    : undefined
   const name = loomToolLeaf(tool)
+  if (deletedFence) {
+    const isLoom = /^(?:tools\.)?loom[._]/.test(tool)
+    if (isLoom && (readOnlyTool(name, input) || name === "attach")) return
+    const recovery = tool === "execute" ? recoveryCodeCall(input) : undefined
+    if (recovery && (recovery.name === "attach" || readOnlyTool(recovery.name, recovery.input))) return
+    throw new Error(
+      `Workflow ${deletedFence.workflowId ?? "previously attached"} was deleted. This old child session may only inspect state or attach to newly granted work.`,
+    )
+  }
+  if (!workflow?.cancellation || workflow.createdBySession === sessionID) return
   const isLoom = /^(?:tools\.)?loom[._]/.test(tool)
   if (isLoom && (readOnlyTool(name, input) || name === "attach")) return
   const recovery = tool === "execute" ? recoveryCodeCall(input) : undefined

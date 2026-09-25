@@ -13,7 +13,9 @@ test.describe("human-readable dashboard context", () => {
   const coordinator = "ses_zzzzzzzzzzzzzzzzzzzzzzzzzz"
   const uuid = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i
   let root, runtime, state, server, port
-  const workflowUrl = () => `http://127.0.0.1:${port}/#/project/${project}/workflow/${workflow}`
+  const workflowUrl = () => `http://127.0.0.1:${port}/#/directory/${project}/session/${coordinator}/workflow/${workflow}`
+  const sessionUrl = () => `http://127.0.0.1:${port}/#/directory/${project}/session/${coordinator}`
+  const projectUrl = () => `http://127.0.0.1:${port}/#/directory/${project}`
   const snapshotPath = () => join(runtime, "instances/readable-installation/readable-publisher/projects", project + ".json")
   async function runBun(args) {
     await new Promise((resolveRun, reject) => {
@@ -78,7 +80,9 @@ test.describe("human-readable dashboard context", () => {
   })
 
   test("ownership resolves within the project and technical IDs stay available by keyboard", async ({ page }) => {
-    await page.goto(`http://127.0.0.1:${port}/#/project/${project}`)
+    await page.goto(projectUrl())
+    const workMap = page.locator('details[data-hierarchy-key^="work-map:"]')
+    await workMap.locator(":scope > summary").click()
     const owner = page.locator('a[data-key^="owner:"]')
     await expect(owner).toHaveText("Build persistence layer")
     await owner.focus(); await page.keyboard.press("Enter")
@@ -100,10 +104,9 @@ test.describe("human-readable dashboard context", () => {
     await expect(session).toContainText("Coordinator session")
     await expect(session).toContainText("Build persistence layer")
     await session.click()
-    await expect(page).toHaveURL(workflowUrl() + "/session/" + coordinator)
-    // Hash changes precede the routed DOM update. Verify the destination view,
-    // not just the URL, before selecting its technical disclosure.
-    await expect(page.locator("#view-title")).toHaveText("OpenCode session")
+    await expect(page).toHaveURL(sessionUrl())
+    // Session is now a first-class page between directory and workflow.
+    await expect(page.locator("#view-title")).toHaveText("Build persistence layer")
     expect(await page.locator("body").innerText()).not.toMatch(uuid)
     expect(await page.locator("body").innerText()).not.toContain("ses_")
     const technical = page.locator('details[data-technical]').filter({ has: page.getByText("Session ID", { exact: true }) })
@@ -142,7 +145,9 @@ test.describe("human-readable dashboard context", () => {
       s.workObjectives[0].phases[0].waves[0].tasks[0].claimedByWorkflowId = "66666666-6666-4666-8666-666666666666"
     })
     await page.goto(workflowUrl()); await expect(page.locator("#view-title")).toHaveText("Unnamed workflow")
-    await page.goto(`http://127.0.0.1:${port}/#/project/${project}`)
+    await page.goto(projectUrl())
+    const workMap = page.locator('details[data-hierarchy-key^="work-map:"]')
+    await workMap.locator(":scope > summary").click()
     await expect(page.locator('a[data-key^="owner:"]')).toHaveText("Workflow outside this view")
     expect(await page.locator("body").innerText()).not.toMatch(uuid)
   })

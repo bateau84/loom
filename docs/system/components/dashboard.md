@@ -1,71 +1,83 @@
 ---
 type: component
-title: Loom Operational Dashboard
-description: Read-only projection and external fleet dashboard for concurrent Loom work.
-tags: [component, loom, dashboard, observability]
+title: Loom Control Panel
+description: Read-only operational projection plus bounded local workflow cleanup.
+tags: [component, loom, dashboard, control-panel, observability]
 ---
 
-# Operational Dashboard
+# Loom Control Panel
 
 ## Purpose
 
-Show concurrent Loom work across projects and OpenCode instances without making the dashboard a workflow authority or controller.
+Present Loom using the user's mental model:
 
-## Publication
+```text
+Working directory → Session → Workflow
+```
 
-Each Loom process publishes user-private atomic JSON snapshots under the installation-persisted runtime root:
+The UI remains primarily informational. Advanced workflow/plan/publisher details are available by drill-down.
+
+## Projection
+
+Each Loom process publishes user-private atomic JSON snapshots under the persisted runtime root:
 
 ```text
 <runtime-root>/instances/<installationId>/<instanceId>/manifest.json
 <runtime-root>/instances/<installationId>/<instanceId>/projects/<projectId>.json
 ```
 
-`plugins/loom/dashboard.ts` publishes on startup, on Loom activity, and by heartbeat. Each project publisher has its own monotonic generation and explicit `leaseExpiresAt`.
+`plugins/loom/dashboard.ts` publishes on startup, Loom activity, and heartbeat. Projection failure does not alter execution.
 
-Projection failure is swallowed by the publication trigger and does not alter Loom workflow state.
+Aggregation never field-merges publishers, keeps workflow revision and work version independent, preserves stale higher revisions, and surfaces same-revision disagreement as a consistency conflict.
 
-## Authority and aggregation
+## Local HTTP surface
 
-Projected Loom workflow/work fields remain authoritative control-plane data. Optional OpenCode telemetry is supplemental and absent by default.
+The server binds to `127.0.0.1` by default.
 
-Aggregation:
-- groups publishers by explicit project/workflow identity;
-- never field-merges snapshots;
-- orders workflow state by `workflowRevision`;
-- orders hierarchy state independently by `workVersion`;
-- retains a stale higher revision over a live lower revision and labels it `stale-source`;
-- surfaces same-highest-revision digest disagreement as a consistency conflict;
-- keeps participant liveness separate from workflow-state freshness.
+- `GET /` — control-panel UI;
+- `GET /api/fleet` — aggregated read-only projection;
+- `GET /health` — service health;
+- `GET /status/<installationId>/<projectId>/workflow-<digest>.html` — generated read-only status artifact;
+- `POST /api/control/workflows/delete` — bounded deletion of terminal failed/cancelled workflow execution records.
 
-## External UI
+The POST control route requires a same-origin browser request and the current per-server control token. It writes canonical runtime state, never projection files.
 
-Run:
+## Cleanup semantics
 
-```bash
-bun run dashboard
+Workflow cleanup:
+
+- revalidates project, revision, status, and terminality under workflow/work locks;
+- rejects active work;
+- rejects workflows that own durable completed-Wave review receipts;
+- releases owned work claims and dispatch grants;
+- clears stale session bindings, OQs, scopes, budgets, limits, and release records;
+- removes the canonical workflow execution record;
+- retains evidence and durable completed results;
+- writes a workflow-deletion tombstone.
+
+The aggregator applies tombstones so stale publisher snapshots cannot temporarily resurrect deleted workflows in the UI.
+
+## Navigation
+
+The preferred routes are:
+
+```text
+/#/
+/#/directory/<projectId>
+/#/directory/<projectId>/session/<sessionId>
+/#/directory/<projectId>/session/<sessionId>/workflow/<workflowId>
+/#/directory/<projectId>/workflows
 ```
 
-The server binds only to `127.0.0.1` by default and exposes:
-- `GET /` — dashboard UI;
-- `GET /api/fleet` — aggregated read-only projection;
-- `GET /health` — dashboard health;
-- `GET /status/<installationId>/<projectId>/workflow-<digest>.html` — one generated read-only workflow-status artifact.
+Legacy `/#/project/<projectId>/workflow/<workflowId>` links remain accepted.
 
-The status route accepts only Loom UUID installation/project identities and generated `workflow-<20 hex>.html` names; it is not a general filesystem endpoint. Non-GET methods are rejected.
-
-The running dashboard also publishes a short-lived `dashboard-endpoint.json` lease under the installation state root. Sidebar/status URL generation resolves this shared endpoint on demand. This keeps a separately started dashboard process and already-running OpenCode/Loom processes consistent when a non-default port or advertised reverse-proxy URL is used; an expired lease falls back to explicit configuration/defaults rather than remaining authoritative indefinitely.
-
-The UI implements Fleet → Project → Workflow → Session context, expandable Objective → Phase → Wave → Task hierarchy, attention-first state labels, filters, keyboard-native navigation, focus preservation across refresh, explicit stale/conflict treatment and Loom-authoritative vs optional-telemetry provenance.
-
-Workflow routes are stable deep links of the form `/#/project/<projectId>/workflow/<workflowId>`. Loom's sidebar RPC derives that URL from the same runtime project/workflow identity and the active shared dashboard endpoint lease, so interactive status reachability does not depend on a model copying tool output into its reply.
-
-Because projection publication is asynchronous, a deep link whose project/workflow is not currently present is held in a waiting state instead of being rewritten. Re-reading the same projection is not evidence that authoritative state disappeared, and bounded/truncated workflow projections do not prove absence. The deep link remains intact until the user explicitly follows the Fleet/Project fallback navigation or the requested state appears.
+The work map remains an advanced disclosure from the working-directory page.
 
 ## Source
 
 - `plugins/loom/dashboard.ts`
-- `plugins/loom/dashboard-endpoint.ts`
-- `dashboard/server.ts`
-- `dashboard/ui.ts`
-- `plugins/loom/dashboard.test.ts`
-- `dashboard/dashboard.test.ts`
+- `plugins/loom/dashboard-control.ts`
+- `plugins/loom/workflow-cleanup.ts`
+- `plugins/loom/dashboard-server.ts`
+- `plugins/loom/dashboard-web/*`
+- `dashboard/*`

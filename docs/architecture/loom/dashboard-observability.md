@@ -1,103 +1,39 @@
 ---
 type: design
-title: Loom Dashboard Observability
-description: Read-only operational projection and aggregation for observing concurrent Loom work outside the OpenCode TUI.
-tags: [architecture, loom, dashboard, observability, projection]
+title: Loom Dashboard Observability and Control
+description: Read-only operational projection plus a bounded local cleanup path for the Loom control panel.
+tags: [architecture, loom, dashboard, control-panel, observability, projection]
 ---
 
 **Status:** proposed
 
 ## Purpose
 
-Loom needs a useful operational view outside the OpenCode TUI for a user who routinely runs several unrelated OpenCode+Loom sessions across multiple repositories and folders.
+Loom exposes a local control panel for work spread across OpenCode processes and working directories.
 
-This design owns **read-only projection, aggregation, freshness, optional OpenCode enrichment, and dashboard boundaries**. It depends on [Runtime Isolation](runtime-isolation.md); the dashboard must observe already-correct compartments rather than invent identity by inference.
+The primary UI hierarchy is defined by the Designer artifact as **Working directory → Session → Workflow**. This architecture owns projection, aggregation, freshness, and the narrowly bounded workflow-cleanup control path.
 
-The human-facing information architecture and interaction contract live in [Dashboard Experience Design](../../design/loom/dashboard-experience.md).
+## Projection boundary
 
-## Operational questions
-
-The projection exists to answer a bounded set of operator questions without reading arbitrary Loom internals:
-
-1. Which workflows need attention now, and why?
-2. What is actively running or runnable in each project/workflow?
-3. What is blocked by OQs, verification, budget, Product Acceptance, or consistency conflict?
-4. What is the latest trustworthy Loom state, and which publishers are stale/offline or lagging?
-5. Which visible values are Loom-authoritative and which are optional OpenCode telemetry?
-6. When supplemental telemetry is missing, is it unavailable/disabled rather than truly zero?
-
-Fields that do not help answer these questions should not be added merely because they are easy to export.
-
-## Dashboard boundary
-
-The dashboard consumes a **read-only operational projection**.
-
-It does not read arbitrary Loom internals and it does not mutate Loom.
-
-### Snapshot model
-
-A project/workflow snapshot should contain bounded operational fields such as:
-
-```text
-installation
-instance
-project
-session
-workflow
-workflow revision
-objective/work-scope identity
-workflow state
-current/runnable steps
-Objective → Phase → Wave → Task hierarchy plus hierarchical progress/work version
-current Plan generation/revision, goal, obligation/risk/Product Acceptance coverage, and bounded Task context
-Plan amendment/invalidation state
-open OQ count plus Plan generation/revision/Task origin when correlated, including bounded historical origin context after later amendments
-open verification count
-budget usage/exhaustion
-Product Acceptance state
-knowledge-sync validity
-recent transition/activity timestamp
-active agent/model metadata when safely available
-```
-
-No raw secrets, auth material, hidden system prompts, or unrestricted tool-result bodies are exported.
-
-Optional numeric/telemetry fields preserve absence explicitly. Missing/unavailable data is never coerced to zero, false, healthy, or complete.
-
-### Local instance publication
-
-The first dashboard transport should avoid making the dashboard a dependency of Loom execution.
-
-Preferred V1 shape:
+Operational display data still flows through the read-only projection:
 
 ```text
 OpenCode + Loom process
         |
-        | state changes / heartbeat
+        | atomic bounded snapshot + heartbeat
         v
-host-local read-only projection
+host-local projection
         |
         v
 dashboard aggregator
         |
         v
-dashboard UI
+control-panel UI
 ```
 
-A practical implementation is a host-local instance registry plus bounded snapshot files under an XDG runtime/state directory.
+Snapshot files are never authority and are never written back to control Loom.
 
-For example:
-
-```text
-<persisted-installation-runtime-root>/instances/<installationId>/<instanceId>/manifest.json
-<persisted-installation-runtime-root>/instances/<installationId>/<instanceId>/projects/<projectId>.json
-```
-
-The manifest carries heartbeat/process metadata and the snapshot carries operational state.
-
-### Snapshot publication invariant
-
-Every published manifest/project snapshot carries at least:
+Each manifest/project snapshot retains:
 
 ```text
 schemaVersion
@@ -108,149 +44,145 @@ generatedAt
 leaseExpiresAt
 ```
 
-Publication is atomic:
+Publication remains atomic and per-publisher generation is monotonic. An expired lease produces stale/offline state. Same-highest-revision incompatible workflow state is a consistency conflict; the aggregator does not invent a winner.
 
-1. serialize the complete next generation to a temporary file in the same directory;
-2. flush/close it;
-3. atomically replace the previous snapshot;
-4. only complete JSON documents become visible at the canonical path.
+## Bounded control path
 
-`generation` is monotonic for one instance/project publisher. The dashboard ignores an older generation after observing a newer one.
+Workflow cleanup is deliberately separate from the projection path:
 
-Heartbeat freshness is explicit through `leaseExpiresAt`. When the dashboard clock is later than that value, the instance/project is shown as stale/offline until a newer atomic publication arrives. A torn/unparseable snapshot is ignored and never merged with fields from another generation.
+```text
+browser control panel
+        |
+        | same-origin POST + per-server control token
+        v
+dashboard control endpoint
+        |
+        | project identity + runtime-version fence
+        | workflow/work advisory locks
+        v
+canonical transactional Loom storage
+```
 
-This avoids requiring each OpenCode process to expose a network listener and allows several independent OpenCode processes to be aggregated safely.
+The first control action is only:
 
-A later local RPC/socket transport may replace or supplement snapshot files without changing the projection contract.
+```text
+delete terminal failed/cancelled workflow records
+```
 
-## OpenCode database enrichment
+It does not turn snapshot files into a command bus and it does not make dashboard availability an execution dependency.
 
-The dashboard MAY open OpenCode's database read-only for presentation/telemetry that Loom does not own, such as:
+### Browser admission
 
-- session title;
-- model/provider;
-- token/cost/cache statistics where available;
-- message/tool counts;
-- last assistant output preview;
-- session timestamps.
+The dashboard server generates an unguessable control token when it starts and embeds it into the HTML served by that process.
 
-Rules:
+A cleanup request is admitted only when:
 
-1. join to Loom through explicit OpenCode session identity;
-2. never infer Loom PASS/FAIL/current-step truth from OpenCode messages;
-3. never write the OpenCode database;
-4. tolerate schema/version drift by disabling unavailable enrichment rather than corrupting Loom state;
-5. keep sensitive transcript display opt-in and bounded.
+- the HTTP method/path is the exact cleanup operation;
+- the browser `Origin` and request Host are either literal loopback or match the explicitly configured `LOOM_DASHBOARD_URL`; arbitrary Host names are rejected to prevent DNS rebinding;
+- the `X-Loom-Control-Token` matches the current server token;
+- the target project exists in Loom's installation registry;
+- the runtime schema version matches the running build.
 
-Loom control-plane state remains authoritative for workflow semantics.
+The token is CSRF protection, not shared-host user authentication. Loopback remains the primary network boundary. An authenticated reverse proxy used with `LOOM_DASHBOARD_URL` must preserve the public Host header for control actions.
 
-## Dashboard views supported by the projection
+### Workflow deletion invariants
 
-The first useful dashboard does not need to reproduce the OpenCode TUI.
+Deletion is allowed only when every selected workflow:
 
-### Fleet view
+- belongs to the selected project;
+- is terminal;
+- is failed or cancelled;
+- has not changed revision between selection and commit;
+- does not own a durable completed-Wave review receipt.
 
-One row/card per active/recent compartment:
+The mutation acquires workflow locks plus relevant work-hierarchy locks before revalidating.
 
-- project;
-- workflow/objective;
-- current step/agent;
-- progress;
-- blocked/failed indicators;
-- open OQs;
-- open verification;
-- budget pressure;
-- last activity;
-- instance online/stale state.
+Deletion then:
 
-### Project view
+1. releases claims owned by the deleted workflow;
+2. revokes remaining dispatch grants;
+3. removes the workflow from `WorkHierarchy.workflowIds`;
+4. removes active session/step/OQ bindings that still point at it;
+5. records a separate child-session deletion fence before dropping old child bindings, so late host/tool calls from those child sessions remain denied until a new valid attachment exists;
+6. removes workflow-local budgets, limits, OQs, scopes, binding-release records, and work-release records;
+7. removes the canonical `workflow/<id>` execution record;
+8. writes a durable `workflow-deletion/<id>` tombstone.
 
-Shows the Objective → Phase → Wave → Task tree, the current Plan goal/revision, Phase/Wave intent, Task outcomes/acceptance/subtasks/integration context, obligation/risk/Product Acceptance coverage, amendment/invalidation history, active workflows, current claims, and recent transitions. Correlated OQs are visible at the Task that caused them and link back to the originating workflow.
+Evidence observations/claims and durable completed work results are retained.
 
-### Workflow view
+The deletion tombstone has a second purpose: stale publisher snapshots can continue to exist until their leases expire. The control-panel aggregator filters any workflow named by a tombstone so deleted work does not reappear in the UI during that window.
 
-Shows:
+## Storage capability
 
-- execution stage;
-- runnable/current/recent steps;
-- Reviewer/Critic/Acceptance position;
-- evidence/verification summary;
-- OQs;
+Canonical Loom storage exposes an optional `delete(key)` capability.
+
+- transactional SQLite implements deletion inside the same serialized transaction model as reads/writes;
+- project-scoped storage qualifies and runtime-version-fences deletion exactly like get/set/scan;
+- workflow cleanup requires transactional storage so a mid-operation failure rolls back canonical control-plane changes;
+- atomic-file storage implements the lower-level delete capability for compatibility/testing but is not eligible for workflow cleanup;
+- callers that do not need mutation can continue implementing the older get/set/scan subset because deletion remains optional.
+
+## Projection model
+
+The existing bounded workflow projection remains authoritative for presentation and can include:
+
+- project/working-directory identity;
+- participating session IDs;
+- workflow state/revision;
+- current/runnable steps;
+- Objective → Phase → Wave → Task detail;
+- OQs and verification counts/details;
 - dispatch budget;
-- latest status summaries.
+- Product Acceptance and knowledge state;
+- recent activity;
+- publisher freshness;
+- optional OpenCode enrichment.
 
-### Session enrichment
-
-Optional OpenCode-derived panel with model, messages, tokens/cost, last output, and session timing.
-
-The architecture provides the data required by those views. The projection is deliberately bounded: active/non-terminal work is always present, while older terminal history may be trimmed with an explicit truncation marker rather than silently omitted as if no history existed. Exact information hierarchy, interactions, visual states, and accessibility belong to the Designer artifact rather than this architecture document.
+Missing optional data is unavailable, never inferred as zero/success.
 
 ## Failure semantics
 
-Dashboard failure must never block Loom.
+Projection failure never blocks Loom execution. Before canonical execution state exists, the control panel may still show read-only snapshots. After canonical state exists, failure to read deletion tombstones makes the dashboard projection fail closed rather than allowing stale snapshots to resurrect deleted workflows; the browser keeps its last valid projection when one exists.
 
-Projection write failure:
+Cleanup failure is fail-closed:
 
-- is observable operational degradation;
-- does not change workflow state;
-- may be retried independently;
-- must not convert state into success/failure.
-
-Dashboard stale data is visibly timestamped.
-
-If two instances report the same `projectId/workflowId`, that is not automatically a conflict: multiple processes may legitimately participate in one workflow.
-
-The aggregator groups those reports as workflow participants and never field-merges them. It uses the durable workflow `revision` to reason about state ordering and publisher lease to reason about liveness:
-
-- a lower revision is a lagging participant view;
-- the highest observed valid revision is the latest-known Loom state candidate;
-- if every publisher carrying that highest revision has an expired lease, the latest-known state remains visible but is explicitly marked **stale-source**; a live lower-revision participant does not overwrite it;
-- two reports claiming the **same highest revision** but different workflow state are a consistency conflict and no winner is inferred;
-- participant liveness is displayed separately from workflow state freshness;
-- per-instance snapshot `generation` orders publications only from that one publisher and is never used to order different instances.
+- project files are not touched;
+- no success is reported unless the canonical transaction completes;
+- revision/work-binding changes force the user to refresh and retry;
+- active work is rejected rather than implicitly cancelled;
+- durable completed-Wave provenance blocks deletion;
+- the HTTP server bounds request bodies before JSON/control processing;
+- a completed tombstone makes a repeated delete idempotent, so an uncertain browser response can be retried safely without recreating or re-deleting state.
 
 ## Security and privacy
 
-- projection is local-user readable by default;
-- files use user-only permissions where supported;
-- no credential values are projected;
-- raw shell/tool output is excluded by default;
-- dashboard mutations are absent in V1;
-- any future control actions require a separately authenticated/authorized command path, not writable snapshot files.
-
-Additional dashboard rules:
-
-- transcript/output previews are opt-in and visibly classified as OpenCode-derived supplemental data;
-- dashboard data is never interpreted as product or workflow authority;
-- the observation surface has no mutation method in V1;
-- projection publication failure is operational degradation, not workflow failure.
-
-## Implementation sequence
-
-1. Define the versioned projection contract after runtime compartment identity is available.
-2. Publish bounded instance/project/workflow snapshots plus heartbeat/lease atomically.
-3. Build the aggregator that groups instance participants without field-merging them.
-4. Implement the external dashboard against the Designer artifact and projection contract.
-5. Add optional read-only OpenCode database enrichment after Loom state aggregation is correct.
-6. Verify stale/offline, conflicting same-revision participants, projection failure, and multiple concurrent projects.
-
-## Related decision and specification
-
-- [Dashboard Projection Transport](decisions/dashboard-projection-transport.md)
-- [Dashboard Projection Specification](specs/dashboard-projection.md)
+- server binds to loopback by default;
+- projection files remain read-only observation data;
+- cleanup uses canonical runtime storage, not writable projection files;
+- no credential values, hidden prompts, or unrestricted tool output are projected;
+- cleanup accepts workflow IDs and a bounded reason only;
+- remote/public exposure still requires an authenticated/authorized reverse proxy or private tunnel;
+- on shared multi-user hosts, OS/container isolation is required because loopback is not same-user authentication.
 
 ## Non-goals
 
-This design does not:
+The control panel does not:
 
-- make the dashboard a workflow controller;
-- infer Loom truth from OpenCode transcripts/messages;
-- require a network listener in every OpenCode process;
-- expose raw transcripts, secrets, hidden prompts, or unrestricted tool output by default;
-- merge unrelated projects because their local names match;
-- make dashboard availability a dependency of Loom execution.
+- answer OQs;
+- grant dispatch budget;
+- attach sessions;
+- complete/pass/fail steps;
+- edit Plans;
+- cancel active work implicitly;
+- delete project files;
+- delete retained evidence;
+- infer Loom truth from OpenCode transcripts.
 
-## Satisfies
+Further control actions require separate product and architecture acceptance rather than expanding this endpoint generically.
 
-- [BR-017](../../requirements/loom/br-017-concurrent-sessions-projects-compartmentalized.md)
+## Related
+
+- [Control Panel Experience](../../design/loom/dashboard-experience.md)
+- [Dashboard Projection Transport](decisions/dashboard-projection-transport.md)
+- [Dashboard Projection Specification](specs/dashboard-projection.md)
 - [BR-018](../../requirements/loom/br-018-external-operational-dashboard.md)
