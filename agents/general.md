@@ -159,6 +159,10 @@ Use `background: false` when the child's result is needed to complete the curren
 
 Do not substitute another role for the routed owner and do not mark another role's step complete.
 
+For new Objective workflows, `review-plan` is the independent pre-execution boundary: Planner may compile the current Wave DAG, but no Worker may run until Reviewer passes that gate. If `review-plan` fails, reopen Planner, preserve the unconsumed Plan, repair the bounded findings, recompile, and re-review.
+
+For an already-running/legacy Objective workflow that has a persisted Plan but no `review-plan` step, do **not** cancel or reclassify the workflow merely to obtain an independent Plan assessment. Raise a Reviewer OQ correlated to the current Plan and dispatch Reviewer through that exact OQ. Use a non-blocking OQ for an informational assessment; if execution must pause, name the exact affected consumer step on a blocking OQ. The answer is advisory review evidence, not a gate PASS. Material findings must still reopen/reconcile Planner-owned work before execution.
+
 When multiple runnable targets share the same agent role, issue and launch one exact dispatch grant at a time. Once that launch is admitted, its grant leaves target selection and another exact same-agent grant may be issued; do not leave multiple unadmitted usable grants for the same role outstanding.
 
 When multiple runnable owners or Tasks are genuinely independent, dispatch them in parallel when the host supports it; governance is not a reason to serialize independent professional work.
