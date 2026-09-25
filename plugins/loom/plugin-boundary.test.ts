@@ -2054,6 +2054,33 @@ Verdict: FAIL
         result: "updated",
       })
 
+      await writeFile(join(h.root, "src", "owned.ts"), "foreign\n")
+
+      const foreignEdit: any = {
+        agent: "worker",
+        action: "edit",
+        resources: ["src/owned.ts"],
+        sessionID: "git-ownership-worker",
+        effect: "allow",
+      }
+      await evaluate!(foreignEdit)
+      expect(foreignEdit.effect).toBe("deny")
+      expect(foreignEdit.message).toContain("not owned by this role/session")
+
+      const foreignStage: any = {
+        agent: "worker",
+        action: "shell",
+        resources: ["git add src/owned.ts"],
+        sessionID: "git-ownership-worker",
+        effect: "ask",
+      }
+      await evaluate!(foreignStage)
+      expect(foreignStage.effect).toBe("deny")
+      expect(foreignStage.message).toContain("changed after this task")
+
+      // Restore the exact content produced by the admitted Worker mutation.
+      await writeFile(join(h.root, "src", "owned.ts"), "owned\n")
+
       const incomplete = await h.call(
         "complete",
         { workflowId, stepId: "worker", summary: "implementation complete" },
@@ -2063,7 +2090,30 @@ Verdict: FAIL
       expect(incomplete.error).toContain("uncommitted changes")
       expect(incomplete.error).toContain("src/owned.ts")
 
+      const ownedStage: any = {
+        agent: "worker",
+        action: "shell",
+        resources: ["git add src/owned.ts"],
+        sessionID: "git-ownership-worker",
+        effect: "ask",
+      }
+      await evaluate!(ownedStage)
+      expect(ownedStage.effect).toBe("allow")
+      const stageEvent = {
+        tool: "shell",
+        callID: "owned-stage",
+        sessionID: "git-ownership-worker",
+        agent: "worker",
+        input: { command: "git add src/owned.ts" },
+      }
+      await h.toolHooks.get("execute.before")?.(stageEvent)
       await git(h.root, ["add", "src/owned.ts"])
+      await h.toolHooks.get("execute.after")?.({
+        ...stageEvent,
+        status: "completed",
+        result: "staged",
+      })
+
       const hook = join(h.root, ".git", "hooks", "pre-commit")
       await writeFile(
         hook,

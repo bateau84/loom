@@ -1,3 +1,6 @@
+import { createHash } from "node:crypto"
+import { readFile } from "node:fs/promises"
+import { join } from "node:path"
 import { execFile } from "node:child_process"
 import { promisify } from "node:util"
 import { captureEvidenceAdmission, observationCallKey, persistEvidenceObservation, sessionAttachmentKey, type EvidenceAdmission } from "./evidence-admission"
@@ -217,9 +220,11 @@ function gitSessionBaselineKey(sessionID: string) {
 }
 
 type GitSessionOwnership = {
-  schemaVersion: 1
+  schemaVersion: 2
   attachmentId?: string
   paths: string[]
+  worktreeFingerprints: Record<string, string>
+  stagedFingerprints: Record<string, string>
 }
 
 function gitSessionOwnershipKey(sessionID: string) {
@@ -228,6 +233,42 @@ function gitSessionOwnershipKey(sessionID: string) {
 
 function normalizeRepoPath(value: string) {
   return value.replaceAll("\\", "/").replace(/^\.\//, "").replace(/\/$/, "")
+}
+
+function safeOwnedRepoPath(value: string) {
+  const normalized = normalizeRepoPath(value)
+  if (
+    !normalized ||
+    normalized.startsWith("/") ||
+    normalized.split("/").includes("..")
+  ) {
+    throw new Error("Owned repository path must be project-relative: " + value)
+  }
+  return normalized
+}
+
+async function worktreeFingerprint(projectDirectory: string, value: string) {
+  const path = safeOwnedRepoPath(value)
+  try {
+    const bytes = await readFile(join(projectDirectory, path))
+    return createHash("sha256").update(bytes).digest("hex")
+  } catch (error: any) {
+    if (error?.code === "ENOENT") return "missing"
+    throw error
+  }
+}
+
+async function stagedFingerprint(projectDirectory: string, value: string) {
+  const path = safeOwnedRepoPath(value)
+  const { stdout } = await execFileAsync(
+    "git",
+    ["ls-files", "-s", "--", path],
+    { cwd: projectDirectory, encoding: "utf8" },
+  )
+  const content = String(stdout)
+  return content
+    ? createHash("sha256").update(content).digest("hex")
+    : "missing"
 }
 
 function gitTargetCoversPath(target: string, path: string) {
@@ -303,14 +344,16 @@ async function gitSessionOwnership(
   )) as string | undefined
   const existing = (await ctx.storage.get(key)) as GitSessionOwnership | undefined
   if (
-    existing?.schemaVersion === 1 &&
+    existing?.schemaVersion === 2 &&
     existing.attachmentId === attachmentId
   ) return existing
 
   const ownership: GitSessionOwnership = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     ...(attachmentId ? { attachmentId } : {}),
     paths: [],
+    worktreeFingerprints: {},
+    stagedFingerprints: {},
   }
   await ctx.storage.set(key, ownership)
   return ownership
@@ -319,17 +362,55 @@ async function gitSessionOwnership(
 async function recordGitSessionOwnership(
   ctx: any,
   sessionID: string,
+  projectDirectory: string,
   paths: readonly string[],
 ) {
   if (paths.length === 0) return
   const ownership = await gitSessionOwnership(ctx, sessionID)
-  ownership.paths = [
-    ...new Set([
-      ...ownership.paths,
-      ...paths.map(normalizeRepoPath),
-    ]),
-  ].sort()
+  const normalized = [...new Set(paths.map(safeOwnedRepoPath))]
+  const fingerprints = await Promise.all(
+    normalized.map(async (path) => [path, await worktreeFingerprint(projectDirectory, path)] as const),
+  )
+  ownership.paths = [...new Set([...ownership.paths, ...normalized])].sort()
+  for (const [path, fingerprint] of fingerprints) {
+    ownership.worktreeFingerprints[path] = fingerprint
+    delete ownership.stagedFingerprints[path]
+  }
   await ctx.storage.set(gitSessionOwnershipKey(sessionID), ownership)
+}
+
+async function recordGitSessionStaging(
+  ctx: any,
+  sessionID: string,
+  projectDirectory: string,
+  paths: readonly string[],
+) {
+  if (paths.length === 0) return
+  const ownership = await gitSessionOwnership(ctx, sessionID)
+  const normalized = [...new Set(paths.map(safeOwnedRepoPath))]
+  const fingerprints = await Promise.all(
+    normalized.map(async (path) => [path, await stagedFingerprint(projectDirectory, path)] as const),
+  )
+  for (const [path, fingerprint] of fingerprints) {
+    ownership.stagedFingerprints[path] = fingerprint
+  }
+  await ctx.storage.set(gitSessionOwnershipKey(sessionID), ownership)
+}
+
+async function changedOwnedPaths(
+  ownership: GitSessionOwnership,
+  projectDirectory: string,
+  paths: readonly string[],
+) {
+  const changed: string[] = []
+  for (const raw of paths) {
+    const path = safeOwnedRepoPath(raw)
+    const expected = ownership.worktreeFingerprints[path]
+    if (!expected || expected !== await worktreeFingerprint(projectDirectory, path)) {
+      changed.push(path)
+    }
+  }
+  return changed
 }
 
 function projectRelativeMutationPath(projectDirectory: string, value: string) {
@@ -435,6 +516,17 @@ async function commitScopeError(
       )
       if (unowned.length > 0) {
         return `Git commit denied: staged paths were not authored by this role/session: ${unowned.join(", ")}`
+      }
+
+      const changedIndex: string[] = []
+      for (const raw of staged) {
+        const path = normalizeRepoPath(raw)
+        const expected = ownership.stagedFingerprints[path]
+        const actual = await stagedFingerprint(projectDirectory, path)
+        if (!expected || expected !== actual) changedIndex.push(path)
+      }
+      if (changedIndex.length > 0) {
+        return `Git commit denied: staged content changed after this role/session staged it: ${changedIndex.join(", ")}`
       }
     }
     return undefined
@@ -6518,11 +6610,22 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               currentDirty = []
             }
           }
+          const ownedResources = event.resources.filter((resource: string) =>
+            ownership.paths.includes(normalizeRepoPath(resource)),
+          )
+          const contentChanged = new Set(
+            await changedOwnedPaths(
+              ownership,
+              ctx.location.directory,
+              ownedResources,
+            ),
+          )
           const conflicts = event.resources.filter((resource: string) => {
             const path = normalizeRepoPath(resource)
             return (
               baseline.dirtyPaths.includes(path) ||
-              (currentDirty.includes(path) && !ownership.paths.includes(path))
+              (currentDirty.includes(path) && !ownership.paths.includes(path)) ||
+              contentChanged.has(path)
             )
           })
           if (conflicts.length > 0) {
@@ -6651,6 +6754,20 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             event.message =
               "Git staging denied: stage only files authored by this role/session."
             return
+          }
+          if (event.agent !== "general") {
+            const changed = await changedOwnedPaths(
+              ownership,
+              ctx.location.directory,
+              addTargets,
+            )
+            if (changed.length > 0) {
+              event.effect = "deny"
+              event.message =
+                "Git staging denied: these files changed after this role's last admitted mutation: " +
+                changed.join(", ")
+              return
+            }
           }
           const conflicts = baselineTargetConflicts(baseline, addTargets)
           if (conflicts.length > 0) {
@@ -6788,6 +6905,42 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             "Worker Git staging denied: stage only files authored by this task/session."
           return
         }
+
+        const changedOwned = await changedOwnedPaths(
+          ownership,
+          ctx.location.directory,
+          [...addTargets, ...gofmtTargets].filter((target) =>
+            ownership.paths.includes(normalizeRepoPath(target)),
+          ),
+        )
+        if (changedOwned.length > 0) {
+          event.effect = "deny"
+          event.message =
+            "Worker mutation denied: these files changed after this task's last admitted mutation: " +
+            changedOwned.join(", ")
+          return
+        }
+
+        let currentDirty: string[] = []
+        if (baseline.available) {
+          try {
+            currentDirty = await projectDirtyPaths(ctx.location.directory)
+          } catch {
+            currentDirty = []
+          }
+        }
+        const unownedDirtyGofmt = gofmtTargets.filter((target) => {
+          const path = normalizeRepoPath(target)
+          return currentDirty.includes(path) && !ownership.paths.includes(path)
+        })
+        if (unownedDirtyGofmt.length > 0) {
+          event.effect = "deny"
+          event.message =
+            "Worker formatting denied: these files contain changes not owned by this task/session: " +
+            unownedDirtyGofmt.join(", ")
+          return
+        }
+
         const mutationTargets = [...addTargets, ...gofmtTargets]
         const mutationConflicts = baselineTargetConflicts(baseline, mutationTargets)
         if (mutationConflicts.length > 0) {
@@ -7272,7 +7425,33 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               ctx.location.directory,
             ).filter((path) => resourcesWithinScope([path], writeScope!))
             if (owned.length > 0) {
-              await recordGitSessionOwnership(ctx, sessionID, owned)
+              await recordGitSessionOwnership(
+                ctx,
+                sessionID,
+                ctx.location.directory,
+                owned,
+              )
+            }
+
+            if (tool === "shell" || tool === "bash") {
+              const command =
+                input && typeof input === "object"
+                  ? (input as any).command
+                  : undefined
+              const staged =
+                typeof command === "string"
+                  ? (scopedGitAddTargets(command) ?? []).filter((path) =>
+                      resourcesWithinScope([path], writeScope!),
+                    )
+                  : []
+              if (staged.length > 0) {
+                await recordGitSessionStaging(
+                  ctx,
+                  sessionID,
+                  ctx.location.directory,
+                  staged,
+                )
+              }
             }
           }
         }
