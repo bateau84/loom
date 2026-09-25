@@ -260,15 +260,28 @@ export function scopedGitAddTargets(command: string) {
 }
 
 export function isGitAuthoringShellCommand(command: string) {
-  return /^git (?:add|commit)(?:\s|$)/.test(command.trim())
+  const words = parsedCommandWords(command)
+  if (!words || words[0] !== "git") return false
+  if (words[1] === "add") return true
+  return (
+    words[1] === "-c" &&
+    words[2] === "core.hooksPath=/dev/null" &&
+    words[3] === "commit"
+  )
 }
 
 export function isAllowedGitCommit(command: string) {
   const words = parsedCommandWords(command)
-  if (!words || words[0] !== "git" || words[1] !== "commit") return false
+  if (
+    !words ||
+    words[0] !== "git" ||
+    words[1] !== "-c" ||
+    words[2] !== "core.hooksPath=/dev/null" ||
+    words[3] !== "commit"
+  ) return false
 
   let hasCommitIntent = false
-  for (let index = 2; index < words.length; index += 1) {
+  for (let index = 4; index < words.length; index += 1) {
     const word = words[index]
     if (word === "-m" || word === "--message") {
       const message = words[index + 1]
@@ -402,10 +415,6 @@ function workerDeliveryAllowed(command: string) {
     if (action === "create") {
       if (args.some((word) => word === "--head" || word.startsWith("--head="))) return false
       return true
-    }
-
-    if (action === "edit") {
-      return args.length === 0 || args[0]?.startsWith("-") === true
     }
 
     return ["view", "checks", "status", "diff"].includes(action)

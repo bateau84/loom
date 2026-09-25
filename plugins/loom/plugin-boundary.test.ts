@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test"
 import { execFile } from "node:child_process"
 import { promisify } from "node:util"
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
 import loomPlugin from "./index"
@@ -2018,7 +2018,7 @@ Verdict: FAIL
       const unknownCommit: any = {
         agent: "worker",
         action: "shell",
-        resources: ["git commit -m 'test: do not absorb'"],
+        resources: ["git -c core.hooksPath=/dev/null commit -m 'test: do not absorb'"],
         sessionID: "git-ownership-worker",
         effect: "ask",
       }
@@ -2064,16 +2064,33 @@ Verdict: FAIL
       expect(incomplete.error).toContain("src/owned.ts")
 
       await git(h.root, ["add", "src/owned.ts"])
+      const hook = join(h.root, ".git", "hooks", "pre-commit")
+      await writeFile(
+        hook,
+        "#!/bin/sh\nprintf 'hook-ran\\n' > src/hook-ran.ts\ngit add src/hook-ran.ts\n",
+      )
+      await chmod(hook, 0o755)
+
       const ownedCommit: any = {
         agent: "worker",
         action: "shell",
-        resources: ["git commit -m 'test: owned change'"],
+        resources: [
+          "git -c core.hooksPath=/dev/null commit -m 'test: owned change'",
+        ],
         sessionID: "git-ownership-worker",
         effect: "ask",
       }
       await evaluate!(ownedCommit)
       expect(ownedCommit.effect).toBe("allow")
-      await git(h.root, ["commit", "-m", "test: owned change", "-q"])
+      await git(h.root, [
+        "-c",
+        "core.hooksPath=/dev/null",
+        "commit",
+        "-m",
+        "test: owned change",
+        "-q",
+      ])
+      await expect(readFile(join(h.root, "src", "hook-ran.ts"), "utf8")).rejects.toThrow()
 
       const completed = await h.call(
         "complete",

@@ -37,7 +37,7 @@ Each subagent runs fresh and is given only its bounded objective/context.
 
 Loom derives ordinary repository capability from the already-attached role; it does not issue a second per-command grant.
 
-- **Worker** may inspect, build, test, run, stage files inside its Task write scope, commit only scoped staged changes, rebase, push, create/update PRs, and inspect CI. Dangerous broad staging, plain force-push, arbitrary shell composition, and PR merge remain blocked.
+- **Worker** may inspect, build, test, run, stage files inside its Task write scope, commit only scoped staged changes through Loom's hook-isolated commit form, rebase, push, create PRs, and inspect CI. Dangerous broad staging, plain force-push, arbitrary shell composition, and PR merge remain blocked.
 - **Diagnostic** may inspect, build/test through the existing verification allowlist, and inspect Git/PR/CI state conversationally. Arbitrary project execution is allowed only after attachment to a governed Diagnostic step, because raw project code can have host or external side effects even though repository/delivery mutation remains outside Diagnostic authority.
 - **Designer, Specifier, Architect, Documenter, and General** may stage and commit only their fixed durable authoring scopes. Loom snapshots pre-existing dirty paths when the role takes ownership, refuses to absorb those paths, and admits a commit only when every staged path belongs to the role.
 - Downstream roles never inherit ownership of unrelated dirty or staged files. `loom_complete` rejects new uncommitted changes created in the role's owned scope.

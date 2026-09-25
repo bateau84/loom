@@ -250,7 +250,6 @@ describe("Loom Worker shell policy", () => {
       "git push origin HEAD",
       "git push --force-with-lease origin HEAD",
       "gh pr create --title 'Fix runtime' --body 'Bounded change'",
-      "gh pr edit --body 'Updated'",
     ]) {
       expect(workerShellResourcesAllowed([command], scope)).toBe(true)
     }
@@ -259,17 +258,34 @@ describe("Loom Worker shell policy", () => {
     expect(workerShellResourcesAllowed(["git add src/runtime.ts cmd/app/main.go"], scope)).toBe(true)
     expect(workerShellResourcesAllowed(["git add docs/requirements/runtime.md"], scope)).toBe(false)
     expect(workerShellResourcesAllowed(["git add ."], scope)).toBe(false)
-    expect(workerShellResourcesAllowed(["git commit -m 'fix: runtime'"], scope)).toBe(true)
-    expect(workerShellResourcesAllowed(["git commit -a -m 'fix: runtime'"], scope)).toBe(false)
-    expect(workerShellResourcesAllowed(["git commit --amend --no-edit"], scope)).toBe(false)
-    expect(workerShellResourcesAllowed(["git commit --no-verify -m 'fix: runtime'"], scope)).toBe(false)
+    expect(
+      workerShellResourcesAllowed(
+        ["git -c core.hooksPath=/dev/null commit -m 'fix: runtime'"],
+        scope,
+      ),
+    ).toBe(true)
+    expect(workerShellResourcesAllowed(["git commit -m 'fix: runtime'"], scope)).toBe(false)
+    expect(
+      workerShellResourcesAllowed(
+        ["git -c core.hooksPath=/dev/null commit -a -m 'fix: runtime'"],
+        scope,
+      ),
+    ).toBe(false)
+    expect(
+      workerShellResourcesAllowed(
+        ["git -c core.hooksPath=/dev/null commit --amend --no-edit"],
+        scope,
+      ),
+    ).toBe(false)
     expect(workerShellResourcesAllowed(["git push --force origin HEAD"], scope)).toBe(false)
     expect(workerShellResourcesAllowed(["git push origin :main"], scope)).toBe(false)
     expect(workerShellResourcesAllowed(["git push origin main"], scope)).toBe(false)
     expect(workerShellResourcesAllowed(["git fetch ext::helper"], scope)).toBe(false)
     expect(workerShellResourcesAllowed(["git rebase --exec 'touch pwn' origin/main"], scope)).toBe(false)
     expect(workerShellResourcesAllowed(["git rebase --strategy=ours origin/main"], scope)).toBe(false)
+    expect(workerShellResourcesAllowed(["gh pr edit --body 'Updated'"], scope)).toBe(false)
     expect(workerShellResourcesAllowed(["gh pr edit 123 --body 'other PR'"], scope)).toBe(false)
+    expect(workerShellResourcesAllowed(["gh pr edit --body 'other PR' 123"], scope)).toBe(false)
     expect(workerShellResourcesAllowed(["gh pr create --head other --title x --body y"], scope)).toBe(false)
     expect(workerShellResourcesAllowed(["gh pr create --repo other/repo --title x --body y"], scope)).toBe(false)
     expect(workerShellResourcesAllowed(["gh pr create --body-file /etc/passwd --title x"], scope)).toBe(false)
@@ -284,10 +300,21 @@ describe("Loom Worker shell policy", () => {
 
     expect(authorGitShellResourcesAllowed(["git add docs/design/runtime.md"], designScope)).toBe(true)
     expect(authorGitShellResourcesAllowed(["git add -- docs/design/runtime.md"], designScope)).toBe(true)
-    expect(authorGitShellResourcesAllowed(["git commit -m 'docs(design): runtime'"], designScope)).toBe(true)
+    expect(
+      authorGitShellResourcesAllowed(
+        ["git -c core.hooksPath=/dev/null commit -m 'docs(design): runtime'"],
+        designScope,
+      ),
+    ).toBe(true)
+    expect(authorGitShellResourcesAllowed(["git commit -m 'docs(design): runtime'"], designScope)).toBe(false)
     expect(authorGitShellResourcesAllowed(["git add docs/requirements/runtime.md"], designScope)).toBe(false)
     expect(authorGitShellResourcesAllowed(["git add ."], designScope)).toBe(false)
-    expect(authorGitShellResourcesAllowed(["git commit -a -m 'docs: all'"], designScope)).toBe(false)
+    expect(
+      authorGitShellResourcesAllowed(
+        ["git -c core.hooksPath=/dev/null commit -a -m 'docs: all'"],
+        designScope,
+      ),
+    ).toBe(false)
     expect(authorGitShellResourcesAllowed(["git rebase main"], designScope)).toBe(false)
 
     expect(scopedGitAddTargets("git add docs/design/a.md docs/design/b.md")).toEqual([
@@ -295,9 +322,17 @@ describe("Loom Worker shell policy", () => {
       "docs/design/b.md",
     ])
     expect(scopedGitAddTargets("git add ../outside.md")).toBeUndefined()
-    expect(isAllowedGitCommit("git commit -m 'docs: update'")).toBe(true)
-    expect(isAllowedGitCommit("git commit --amend --no-edit")).toBe(false)
-    expect(isAllowedGitCommit("git commit --no-verify -m 'docs: update'")).toBe(false)
+    expect(
+      isAllowedGitCommit(
+        "git -c core.hooksPath=/dev/null commit -m 'docs: update'",
+      ),
+    ).toBe(true)
+    expect(isAllowedGitCommit("git commit -m 'docs: update'")).toBe(false)
+    expect(
+      isAllowedGitCommit(
+        "git -c core.hooksPath=/tmp/hooks commit -m 'docs: update'",
+      ),
+    ).toBe(false)
     expect(isAllowedGitCommit("git commit -a -m 'all'")).toBe(false)
   })
 
