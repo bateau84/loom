@@ -1,0 +1,49 @@
+name: PR 76 OQ Live Eval
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  oq-live-eval:
+    if: github.head_ref == 'fix/oq-not-message-bus'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: 1.4.2
+
+      - run: bun install --frozen-lockfile
+
+      - name: Validate corpus
+        run: bun run eval:validate
+
+      - name: Run OQ message-bus regression
+        env:
+          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+        uses: bateau84/opencode-eval-runner@e59d6d016e5b33bdf9832d8808512bd007fa49e1
+        with:
+          engine: docker
+          opencode-image: ghcr.io/bateau84/opencode-eval-runner@sha256:40bc3b97069719b8ad1d0c16f160b2077b4c3064b97597ed6570957eb8d0e6c5
+          prepare-opencode: true
+          prepare-copilot: false
+          artifact-dir: .loom-evals
+          command: |
+            test -n "${OPENCODE_API_KEY:-}" || { echo "OPENCODE_API_KEY is unavailable"; exit 2; }
+            python3 scripts/run-evals.py \
+              --engine docker \
+              --model opencode/gpt-5.6-luna \
+              --judge-model opencode/gpt-5.6-luna \
+              --target-transport opencode \
+              --judge-transport opencode \
+              --target-kind agent \
+              --cases OQ-NOT-MESSAGE-BUS-01 \
+              --iterations 1 \
+              --env OPENCODE_API_KEY
