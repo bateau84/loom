@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto"
 import { taskStepId, type TaskSpec } from "./tasks"
 import type { EvidenceKind } from "./evidence"
 
@@ -470,6 +471,18 @@ export function reopenFrom(workflow: Workflow, stepId: string) {
 
 export function plannedTaskSteps(workflow: Workflow) {
   return workflow.steps.filter((step) => step.id.startsWith("task:") && step.task)
+}
+
+export function executableTaskPlanFingerprint(workflow: Workflow) {
+  const tasks = plannedTaskSteps(workflow)
+    .map((step) => ({
+      stepId: step.id,
+      dependsOn: [...step.dependsOn],
+      task: step.task,
+    }))
+    .sort((a, b) => a.stepId.localeCompare(b.stepId))
+  if (tasks.length === 0) return undefined
+  return createHash("sha256").update(JSON.stringify(tasks)).digest("hex")
 }
 
 export function applyTaskPlan(workflow: Workflow, tasks: TaskSpec[]) {
