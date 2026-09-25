@@ -28,14 +28,20 @@ export function normalizeDashboardBaseUrl(value: string) {
   return trimmed
 }
 
+export const DEFAULT_DASHBOARD_PORT = 54318
+
+export function configuredDashboardPort(value = process.env.LOOM_DASHBOARD_PORT) {
+  const requestedPort = Number(value || String(DEFAULT_DASHBOARD_PORT))
+  return Number.isInteger(requestedPort) && requestedPort > 0 && requestedPort <= 65535
+    ? requestedPort
+    : DEFAULT_DASHBOARD_PORT
+}
+
 export function configuredDashboardBaseUrl(portOverride?: number) {
   const configured = process.env.LOOM_DASHBOARD_URL?.trim()
   if (configured) return normalizeDashboardBaseUrl(configured)
 
-  const requestedPort = portOverride ?? Number(process.env.LOOM_DASHBOARD_PORT || "4318")
-  const port = Number.isInteger(requestedPort) && requestedPort > 0 && requestedPort <= 65535
-    ? requestedPort
-    : 4318
+  const port = portOverride ?? configuredDashboardPort()
   return `http://127.0.0.1:${port}`
 }
 
@@ -95,23 +101,35 @@ export async function publishDashboardEndpoint(
   return record
 }
 
-export async function resolveDashboardBaseUrl(
+export async function readActiveDashboardEndpoint(
   stateRoot: string,
   now = new Date(),
-) {
+): Promise<DashboardEndpointRecordV1 | undefined> {
   try {
     const parsed = JSON.parse(await readFile(dashboardEndpointPath(stateRoot), "utf8")) as DashboardEndpointRecordV1
     if (
       parsed?.schemaVersion === 1 &&
       typeof parsed.baseUrl === "string" &&
       typeof parsed.leaseExpiresAt === "string" &&
+      Number.isInteger(parsed.processId) &&
       Date.parse(parsed.leaseExpiresAt) > now.getTime()
     ) {
-      return normalizeDashboardBaseUrl(parsed.baseUrl)
+      return {
+        ...parsed,
+        baseUrl: normalizeDashboardBaseUrl(parsed.baseUrl),
+      }
     }
   } catch {
-    // An active dashboard heartbeat is optional. Fall back to explicit
-    // configuration/defaults when no current endpoint lease is available.
+    // A missing, malformed, or expired lease means no dashboard currently owns
+    // the shared endpoint. Startup coordination may safely try to acquire it.
   }
-  return configuredDashboardBaseUrl()
+  return undefined
+}
+
+export async function resolveDashboardBaseUrl(
+  stateRoot: string,
+  now = new Date(),
+) {
+  const active = await readActiveDashboardEndpoint(stateRoot, now)
+  return active?.baseUrl ?? configuredDashboardBaseUrl()
 }

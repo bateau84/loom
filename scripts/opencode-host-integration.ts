@@ -878,58 +878,36 @@ async function installCurrentLoomPlugin(project: string) {
   await updateProjectPluginList(project, ["./.opencode/plugins/loom"])
 }
 
-type DashboardHandle = {
+type DashboardEndpoint = {
   baseUrl: string
-  proc: ReturnType<typeof Bun.spawn>
-  stdout: Promise<string>
-  stderr: Promise<string>
+  processId: number
 }
 
-async function startDashboardProcess(sharedState: string): Promise<DashboardHandle> {
-  let port = await freePort()
-  while (port === 4318) port = await freePort()
+async function waitForAutoStartedDashboard(
+  sharedState: string,
+  port: number,
+  expectedProcessId: number,
+): Promise<DashboardEndpoint> {
   const baseUrl = `http://127.0.0.1:${port}`
-  const env = processEnv({
-    XDG_STATE_HOME: sharedState,
-    LOOM_DASHBOARD_PORT: String(port),
-    LOOM_DASHBOARD_URL: undefined,
-  })
-  const proc = Bun.spawn(
-    ["bun", "dashboard/server.ts"],
-    { cwd: root, env, stdout: "pipe", stderr: "pipe" },
-  )
-  const stdout = new Response(proc.stdout).text()
-  const stderr = new Response(proc.stderr).text()
-  try {
-    await waitFor(`${baseUrl}/health`, "")
-    const endpointPath = join(sharedState, "loom", "dashboard-endpoint.json")
-    const deadline = Date.now() + 10_000
-    while (Date.now() < deadline) {
-      try {
-        const record = JSON.parse(await readFile(endpointPath, "utf8"))
-        if (record?.baseUrl === baseUrl && Date.parse(record.leaseExpiresAt) > Date.now()) {
-          return { baseUrl, proc, stdout, stderr }
-        }
-      } catch {}
-      await Bun.sleep(100)
-    }
-    throw new Error("Dashboard endpoint lease was not published")
-  } catch (error) {
-    proc.kill()
-    const logs = await Promise.all([stdout, stderr])
-    throw new Error(`${error instanceof Error ? error.message : String(error)}\nstdout:\n${logs[0]}\nstderr:\n${logs[1]}`)
+  await waitFor(`${baseUrl}/health`, "")
+  const endpointPath = join(sharedState, "loom", "dashboard-endpoint.json")
+  const deadline = Date.now() + 10_000
+  while (Date.now() < deadline) {
+    try {
+      const record = JSON.parse(await readFile(endpointPath, "utf8"))
+      if (
+        record?.baseUrl === baseUrl &&
+        record?.processId === expectedProcessId &&
+        Date.parse(record.leaseExpiresAt) > Date.now()
+      ) {
+        return { baseUrl, processId: record.processId }
+      }
+    } catch {}
+    await Bun.sleep(100)
   }
-}
-
-async function stopDashboard(handle: DashboardHandle) {
-  if (handle.proc.exitCode === null) handle.proc.kill("SIGTERM")
-  await Promise.race([
-    handle.proc.exited,
-    Bun.sleep(5_000).then(() => {
-      if (handle.proc.exitCode === null) handle.proc.kill("SIGKILL")
-    }),
-  ])
-  await Promise.allSettled([handle.stdout, handle.stderr])
+  throw new Error(
+    `OpenCode-started Loom dashboard did not publish the expected live endpoint ${baseUrl} from process ${expectedProcessId}`,
+  )
 }
 
 type ServerHandle = {
@@ -947,6 +925,7 @@ async function startServer(
   sharedState: string,
   runtimeDir: string | undefined,
   name: string,
+  dashboardPort: number | false = false,
 ): Promise<ServerHandle> {
   const port = await freePort()
   const isolated = join(base, "opencode", name)
@@ -964,6 +943,9 @@ async function startServer(
     OPENCODE_SERVER_USERNAME: "opencode",
     OPENCODE_SERVER_PASSWORD: password,
     LOOM_TOOL_OUTPUT: "json",
+    LOOM_DASHBOARD_AUTOSTART: dashboardPort === false ? "0" : undefined,
+    LOOM_DASHBOARD_PORT: dashboardPort === false ? undefined : String(dashboardPort),
+    LOOM_DASHBOARD_URL: undefined,
   })
   const proc = Bun.spawn(
     ["opencode", "serve", "--hostname", "127.0.0.1", "--port", String(port)],
@@ -1011,7 +993,6 @@ const sharedState = join(base, "shared-state")
 const runtimeA = join(base, "runtime-a")
 const runtimeB = join(base, "runtime-b")
 const servers: ServerHandle[] = []
-let dashboard: DashboardHandle | undefined
 const mock = await startMockProvider()
 
 try {
@@ -1020,15 +1001,15 @@ try {
     createProject(base, "project-b", mock.baseUrl),
   ])
 
-  const serverA = await startServer(base, projectA, sharedState, runtimeA, "server-a")
+  let dashboardPort = await freePort()
+  while (dashboardPort === 4318) dashboardPort = await freePort()
+
+  const serverA = await startServer(base, projectA, sharedState, runtimeA, "server-a", dashboardPort)
   servers.push(serverA)
-  const serverAPeer = await startServer(base, projectA, sharedState, runtimeB, "server-a-peer")
-  servers.push(serverAPeer)
-  const serverB = await startServer(base, projectB, sharedState, runtimeB, "server-b")
-  servers.push(serverB)
 
-  dashboard = await startDashboardProcess(sharedState)
-
+  // Global server health and raw session creation do not imply Loom plugin
+  // activation. The first real Loom RPC activates setup; that setup must own
+  // the dashboard without a separate bun run dashboard process.
   const sessionA = await jsonRequestAny(
     [`${serverA.baseUrl}/api/session`, `${serverA.baseUrl}/session`],
     serverA.authorization,
@@ -1038,6 +1019,23 @@ try {
     body: JSON.stringify(sessionCreateBody("Loom integration A", "general")),
     },
   )
+  const sidebarA = await jsonRequest(`${serverA.baseUrl}/api/rpc/loom.control/sidebar`, serverA.authorization, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ input: { sessionID: sessionA.id } }),
+  })
+  const outputA = sidebarA?.output ?? sidebarA
+  if (outputA?.active !== false) {
+    throw new Error("Fresh OpenCode session did not receive idle Loom RPC state")
+  }
+
+  const dashboard = await waitForAutoStartedDashboard(sharedState, dashboardPort, serverA.proc.pid)
+
+  const serverAPeer = await startServer(base, projectA, sharedState, runtimeB, "server-a-peer", dashboardPort)
+  servers.push(serverAPeer)
+  const serverB = await startServer(base, projectB, sharedState, runtimeB, "server-b", dashboardPort)
+  servers.push(serverB)
+
   const sessionB = await jsonRequestAny(
     [`${serverB.baseUrl}/api/session`, `${serverB.baseUrl}/session`],
     serverB.authorization,
@@ -1052,20 +1050,14 @@ try {
     throw new Error("OpenCode did not create distinct real sessions")
   }
 
-  const sidebarA = await jsonRequest(`${serverA.baseUrl}/api/rpc/loom.control/sidebar`, serverA.authorization, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ input: { sessionID: sessionA.id } }),
-  })
   const sidebarB = await jsonRequest(`${serverB.baseUrl}/api/rpc/loom.control/sidebar`, serverB.authorization, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ input: { sessionID: sessionB.id } }),
   })
-  const outputA = sidebarA?.output ?? sidebarA
   const outputB = sidebarB?.output ?? sidebarB
-  if (outputA?.active !== false || outputB?.active !== false) {
-    throw new Error("Fresh OpenCode sessions did not receive idle Loom RPC state")
+  if (outputB?.active !== false) {
+    throw new Error("Fresh second OpenCode session did not receive idle Loom RPC state")
   }
 
 
@@ -1336,7 +1328,7 @@ try {
   console.log(` - workflow: ${mock.state.workflowId}`)
   console.log(` - worker/reviewer attached: ${mock.state.workerAttached}/${mock.state.reviewerAttached}`)
   console.log(` - peer-process review completed + observed by origin: ${mock.state.reviewerCompleted}/${mock.state.generalSawPeerReviewComplete}`)
-  console.log(` - shared non-default dashboard endpoint reached from sidebar: ${reviewerStatusUrl}`)
+  console.log(` - OpenCode auto-started dashboard endpoint reached from sidebar: ${reviewerStatusUrl}`)
   console.log(` - disconnected browser degraded cleanly: ${mock.state.statusPreviewFallbackObserved}`)
   console.log(` - native Loom tool guidance reached provider context: ${mock.state.sawNativeLoomToolGuidance}`)
   console.log(` - Loom Code Mode mirrors discoverable: ${mock.state.codeModeLoomSearchObserved}`)
@@ -1350,7 +1342,6 @@ try {
   console.log(` - resumed session IDs: ${upgradePrimary.id}, ${upgradeSecondary.id}`)
 } finally {
   await Promise.allSettled(servers.map(stop))
-  if (dashboard) await stopDashboard(dashboard)
   mock.server.stop(true)
   await rm(base, { recursive: true, force: true })
 }

@@ -16,6 +16,7 @@ import {
   writeStatusArtifact,
 } from "./status-view"
 import { createDashboardPublisher } from "./dashboard"
+import { ensureDashboardServerLifecycle } from "./dashboard-lifecycle"
 import {
   objectiveUpgradeActions,
   upgradeCompatibilityNotice,
@@ -811,6 +812,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
     const dashboardPublisher = createDashboardPublisher(scopedStorage, runtime)
     dashboardPublisher.trigger()
     dashboardPublisher.startHeartbeat()
+    await ensureDashboardServerLifecycle()
 
     // Per-plugin-instance, bounded pending observations. Missing/evicted before
     // events remain passive; they are never reconstructed from a later binding.
