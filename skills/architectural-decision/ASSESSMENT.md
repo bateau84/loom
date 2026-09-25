@@ -4,12 +4,15 @@ Reviewer-only domain contract. It does not create Loom authority, product meanin
 
 ## Review criteria
 
-- The decision addresses a real structural choice inside Architect authority.
-- Alternatives are materially plausible and tradeoffs are compared against accepted constraints.
-- Consequences, reversibility, migration/operational impact, and rejected options are explicit where relevant.
-- The selected option does not smuggle in new product semantics.
-- Evidence distinguishes facts from assumptions and preference.
+- The artifact is one real technical choice inside Architect authority; product semantics were not silently converted into an engineering preference.
+- The simplest viable/reused baseline was considered before introducing additional machinery.
+- Genuine alternatives were developed before selection, are materially plausible, and receive symmetric treatment on the relevant drivers.
+- Each serious option exposes mechanism, benefits, costs, failure modes, operational/compatibility effects, security/authority effects, coupling, and obligation impact where relevant.
+- The comparison uses accepted constraints and evidence rather than preference or post-hoc justification; options that violate guarantees are rejected explicitly.
+- The selected option is the least complex complete realization, and each serious rejected option has a concrete losing reason.
+- Consequences, migration/operational cost, lock-in, reversibility, and material assumptions are explicit.
+- Confirmation is falsifiable and states what evidence or changed premise would force reconsideration.
 
 ## Review depth
 
-Scale review depth with consequence, uncertainty, boundary count, and blast radius.
+Scale review depth with consequence, uncertainty, irreversibility, and blast radius.
