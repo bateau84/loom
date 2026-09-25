@@ -1157,6 +1157,44 @@ async function readJson<T>(path: string): Promise<T | undefined> {
   }
 }
 
+export async function runtimeInstanceIsLive(
+  runtime: LoomRuntimeIdentity,
+  instanceId: string,
+  now = new Date(),
+) {
+  const manifest = await readJson<InstanceManifestV1>(
+    join(
+      runtime.runtimeRoot,
+      "instances",
+      runtime.installationId,
+      instanceId,
+      "manifest.json",
+    ),
+  )
+  if (
+    !manifest ||
+    manifest.schemaVersion !== 1 ||
+    manifest.installationId !== runtime.installationId ||
+    manifest.instanceId !== instanceId ||
+    Date.parse(manifest.leaseExpiresAt) <= now.getTime()
+  ) {
+    return false
+  }
+
+  if (typeof manifest.processId === "number" && manifest.processId > 0) {
+    try {
+      process.kill(manifest.processId, 0)
+      return true
+    } catch (error: any) {
+      if (error?.code === "ESRCH") return false
+      // A permission/namespace limitation cannot prove death. Keep the
+      // lease authoritative until it expires rather than risking duplicates.
+    }
+  }
+
+  return true
+}
+
 export async function readPublisherRecords(runtimeRoot: string): Promise<PublisherRecord[]> {
   const instancesRoot = join(runtimeRoot, "instances")
   let installations

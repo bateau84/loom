@@ -15,7 +15,7 @@ import {
   statusPresentation,
   writeStatusArtifact,
 } from "./status-view"
-import { createDashboardPublisher } from "./dashboard"
+import { createDashboardPublisher, runtimeInstanceIsLive } from "./dashboard"
 import { ensureDashboardServerLifecycle } from "./dashboard-lifecycle"
 import {
   objectiveUpgradeActions,
@@ -200,6 +200,160 @@ function sessionUserMessageKey(sessionID: string) {
 
 function continuationAuthorizationUseKey(sessionID: string, userMessageId: string) {
   return `budget-continuation-user-message/${encodeURIComponent(sessionID)}/${encodeURIComponent(userMessageId)}`
+}
+
+function continuationQuestionAuthorizationUseKey(sessionID: string, denialId: string) {
+  return `budget-continuation-question/${encodeURIComponent(sessionID)}/${encodeURIComponent(denialId)}`
+}
+
+type BudgetContinuationQuestionTarget = {
+  agent: string
+  stepId?: string
+  questionId?: string
+  approvalRef?: string
+}
+type BudgetBlockedTarget = BudgetContinuationQuestionTarget & {
+  workflowId: string
+  denialId: string
+  approvalRef: string
+  reason: string
+  blockedAt: string
+  questionStartedAt?: string
+  questionOwnerInstanceId?: string
+  resolvedAt?: string
+}
+type BudgetQuestionDecision = BudgetContinuationQuestionTarget & {
+  workflowId: string
+  denialId: string
+  callID?: string
+  answer: string
+  approved: boolean
+  decidedAt: string
+}
+
+const BUDGET_CONTINUATION_ALLOW = "Allow +1 dispatch"
+const BUDGET_CONTINUATION_STOP = "Stop here"
+
+function sessionBudgetBlockedTargetPrefix(sessionID: string) {
+  return `budget-continuation-blocked/${encodeURIComponent(sessionID)}/`
+}
+
+function budgetContinuationTargetKey(
+  sessionID: string,
+  workflowId: string,
+  target: { stepId?: string; questionId?: string },
+) {
+  const stepId = target.stepId?.trim()
+  const questionId = target.questionId?.trim()
+  if (Boolean(stepId) === Boolean(questionId)) return undefined
+  const kind = stepId ? "step" : "oq"
+  const id = stepId ?? questionId!
+  return (
+    sessionBudgetBlockedTargetPrefix(sessionID) +
+    `${encodeURIComponent(workflowId)}/${kind}/${encodeURIComponent(id)}`
+  )
+}
+
+function sessionBudgetQuestionDecisionKey(sessionID: string, denialId: string) {
+  return `budget-continuation-question-decision/${encodeURIComponent(sessionID)}/${encodeURIComponent(denialId)}`
+}
+
+async function matchingActiveBudgetBlockedTargets(ctx: any, sessionID: string, input: unknown) {
+  const activeWorkflowId = (await ctx.storage.get(sessionKey(sessionID))) as string | undefined
+  if (!activeWorkflowId) return []
+
+  const matches: BudgetBlockedTarget[] = []
+  let after: string | undefined
+  do {
+    const page = await ctx.storage.scan({
+      prefix: sessionBudgetBlockedTargetPrefix(sessionID),
+      limit: 100,
+      ...(after ? { after } : {}),
+    })
+    for (const entry of page.entries) {
+      const blocked = entry.value as BudgetBlockedTarget
+      if (!blocked?.denialId || blocked.resolvedAt || blocked.workflowId !== activeWorkflowId) continue
+      if (matchesBudgetContinuationQuestion(input, blocked)) matches.push(blocked)
+    }
+    after = page.next
+  } while (after)
+  return matches
+}
+
+export function budgetContinuationQuestionInput(target: BudgetContinuationQuestionTarget) {
+  const label = target.stepId
+    ? `${target.agent} step "${target.stepId}"`
+    : target.questionId
+      ? `${target.agent} OQ "${target.questionId}"`
+      : `${target.agent} target`
+  return {
+    questions: [{
+      header: target.approvalRef ? `Budget ${target.approvalRef}` : "Dispatch budget",
+      question: `Loom has exhausted the dispatch budget for ${label}, but work remains. Choose "${BUDGET_CONTINUATION_ALLOW}" to approve exactly one additional dispatch. "${BUDGET_CONTINUATION_STOP}" or any custom answer grants no additional capacity.`,
+      options: [
+        { label: BUDGET_CONTINUATION_ALLOW, description: "Continue this exact blocked target once." },
+        { label: BUDGET_CONTINUATION_STOP, description: "Keep current progress and stop without adding dispatch capacity." },
+      ],
+      multiple: false,
+    }],
+  }
+}
+
+function toolHookInput(raw: any) {
+  if (raw?.input !== undefined) return raw.input
+
+  const args = raw?.args
+  if (args && typeof args.update === "function") {
+    let observed: unknown
+    args.update((current: unknown) => {
+      observed = current
+      return current
+    })
+    return observed
+  }
+
+  return args
+}
+
+function matchesBudgetContinuationQuestion(input: unknown, target: BudgetContinuationQuestionTarget) {
+  const actual = (input as any)?.questions
+  const expected = budgetContinuationQuestionInput(target).questions[0]
+  if (!Array.isArray(actual) || actual.length !== 1) return false
+  const question = actual[0]
+  if (
+    question?.header !== expected.header ||
+    question?.question !== expected.question ||
+    question?.multiple === true
+  ) return false
+  if (!Array.isArray(question?.options) || question.options.length !== expected.options.length) return false
+  return expected.options.every((option, index) =>
+    question.options[index]?.label === option.label &&
+    question.options[index]?.description === option.description
+  )
+}
+
+type BudgetQuestionDecisionValue = {
+  answer: string
+  approved: boolean
+}
+
+function budgetQuestionDecision(result: unknown): BudgetQuestionDecisionValue | undefined {
+  let value = result as any
+  if (typeof value === "string") {
+    try { value = JSON.parse(value) } catch { return undefined }
+  }
+  const answers = value?.metadata?.answers ?? value?.result?.metadata?.answers ?? value?.answers
+  if (!Array.isArray(answers) || answers.length !== 1) return undefined
+  const selected = answers[0]
+  if (!Array.isArray(selected) || selected.length !== 1 || typeof selected[0] !== "string") {
+    return undefined
+  }
+  const answer = selected[0]
+  if (!answer) return undefined
+  return {
+    answer,
+    approved: answer === BUDGET_CONTINUATION_ALLOW,
+  }
 }
 
 function latestObservedUserMessage(messages: unknown): Omit<ObservedUserMessage, "observedAt"> | undefined {
@@ -3423,7 +3577,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       addLoomTool({
         name: "budget_continue",
         description:
-          "Immediately continue one exhausted exact target when the user explicitly asks Loom to keep going. When workflowId and stepId/questionId are already known from current context, use them directly rather than asking the user to repeat them. The confirmation must exactly match the latest observed user message and that user message is single-use. General only; preserves attempts, evidence, workflow identity, independent gates, and automatic grant history.",
+          "Immediately continue one exhausted exact target after explicit user approval. Interactive approval comes from the exact OpenCode budget question recorded for the current denial; message-driven/headless recovery may instead supply the exact latest user message as confirmation. Each approval is single-use and adds exactly one target-reserved dispatch. General only; preserves attempts, evidence, workflow identity, independent gates, and automatic grant history.",
         input: {
           type: "object",
           properties: {
@@ -3433,10 +3587,10 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             reason: { type: "string" },
             confirmation: {
               type: "string",
-              description: "Exact latest user message authorizing one more bounded dispatch.",
+              description: "Optional exact latest user message authorizing one more bounded dispatch. Omit after an approved Loom budget question.",
             },
           },
-          required: ["workflowId", "reason", "confirmation"],
+          required: ["workflowId", "reason"],
           additionalProperties: false,
         },
         options: { namespace: "loom", codemode: false },
@@ -3454,50 +3608,129 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             stepId?: string
             questionId?: string
             reason: string
-            confirmation: string
+            confirmation?: string
           }
 
-          const observedUserMessage = (await ctx.storage.get(
-            sessionUserMessageKey(tool.sessionID),
-          )) as ObservedUserMessage | undefined
-          if (!observedUserMessage) {
-            return {
-              content: renderToolOutput({
-                error: "No current observed user message is available to authorize budget continuation.",
-              }),
-            }
+          type ContinuationAuthorization = {
+            source: "user-message" | "question"
+            id: string
+            confirmation: string
+            useKey: string
+            lockAggregate: string
+            lockIdentity: string
+            userMessageId?: string
+            questionCallId?: string
+            denialId?: string
+            record: Record<string, unknown>
           }
-          if (value.confirmation.trim() !== observedUserMessage.text.trim()) {
-            return {
-              content: renderToolOutput({
-                error: "Budget continuation confirmation must match the latest observed user message exactly.",
-                authorizationUserMessageId: observedUserMessage.messageId,
-              }),
+
+          let authorization: ContinuationAuthorization
+          if (typeof value.confirmation === "string" && value.confirmation.trim()) {
+            const observedUserMessage = (await ctx.storage.get(
+              sessionUserMessageKey(tool.sessionID),
+            )) as ObservedUserMessage | undefined
+            if (!observedUserMessage) {
+              return { content: renderToolOutput({ error: "No current observed user message is available to authorize budget continuation." }) }
+            }
+            if (value.confirmation.trim() !== observedUserMessage.text.trim()) {
+              return {
+                content: renderToolOutput({
+                  error: "Budget continuation confirmation must match the latest observed user message exactly.",
+                  authorizationUserMessageId: observedUserMessage.messageId,
+                }),
+              }
+            }
+            authorization = {
+              source: "user-message",
+              id: observedUserMessage.messageId,
+              confirmation: observedUserMessage.text,
+              useKey: continuationAuthorizationUseKey(tool.sessionID, observedUserMessage.messageId),
+              lockAggregate: "budget-continuation-user-message",
+              lockIdentity: `${tool.sessionID}:${observedUserMessage.messageId}`,
+              userMessageId: observedUserMessage.messageId,
+              record: { userMessageId: observedUserMessage.messageId, confirmation: observedUserMessage.text },
+            }
+          } else {
+            const blockedKey = budgetContinuationTargetKey(
+              tool.sessionID,
+              value.workflowId,
+              { stepId: value.stepId, questionId: value.questionId },
+            )
+            if (!blockedKey) {
+              return {
+                content: renderToolOutput({
+                  error: "Budget continuation requires exactly one stepId or questionId.",
+                }),
+              }
+            }
+            const blocked = (await ctx.storage.get(blockedKey)) as BudgetBlockedTarget | undefined
+            if (!blocked) {
+              return { content: renderToolOutput({ error: "No current budget-blocked target is available." }) }
+            }
+            const decision = (await ctx.storage.get(
+              sessionBudgetQuestionDecisionKey(tool.sessionID, blocked.denialId),
+            )) as BudgetQuestionDecision | undefined
+            if (!decision || decision.denialId !== blocked.denialId) {
+              return {
+                content: renderToolOutput({
+                  error: "No user decision exists for the current budget denial. Ask the exact OpenCode budget question first.",
+                  expectedQuestion: budgetContinuationQuestionInput(blocked),
+                }),
+              }
+            }
+            if (!decision.approved) {
+              const error = decision.answer === BUDGET_CONTINUATION_STOP
+                ? "The user chose Stop here; no additional dispatch capacity was authorized."
+                : `Only "${BUDGET_CONTINUATION_ALLOW}" authorizes an additional dispatch; "${decision.answer}" did not.`
+              return { content: renderToolOutput({ error }) }
+            }
+            const targetMatches = blocked.workflowId === value.workflowId && (blocked.stepId
+              ? blocked.stepId === value.stepId && !value.questionId
+              : blocked.questionId === value.questionId && !value.stepId)
+            if (!targetMatches) {
+              return {
+                content: renderToolOutput({
+                  error: "The approved budget question is reserved for a different exact target.",
+                  approvedTarget: { workflowId: blocked.workflowId, stepId: blocked.stepId, questionId: blocked.questionId },
+                }),
+              }
+            }
+            authorization = {
+              source: "question",
+              id: `question-denial:${decision.denialId}`,
+              confirmation: decision.answer,
+              useKey: continuationQuestionAuthorizationUseKey(tool.sessionID, decision.denialId),
+              lockAggregate: "budget-continuation-question",
+              lockIdentity: `${tool.sessionID}:${decision.denialId}`,
+              ...(decision.callID ? { questionCallId: decision.callID } : {}),
+              denialId: decision.denialId,
+              record: {
+                ...(decision.callID ? { questionCallID: decision.callID } : {}),
+                approvalRef: decision.approvalRef,
+                answer: decision.answer,
+                denialId: decision.denialId,
+                blockedTargetKey: blockedKey,
+              },
             }
           }
 
           if (!(await readBoundWorkflow(ctx, tool.sessionID, value.workflowId, ensureLegacySession))) {
             return { content: renderToolOutput({ error: "Workflow not found or current session is not bound to it." }) }
           }
-
-          const authorizationUseKey = continuationAuthorizationUseKey(
-            tool.sessionID,
-            observedUserMessage.messageId,
-          )
           const mutation = await withRuntimeLocks(runtime, [
             { aggregate: "workflow", resourceIdentity: value.workflowId },
             {
-              aggregate: "budget-continuation-user-message",
-              resourceIdentity: `${tool.sessionID}:${observedUserMessage.messageId}`,
+              aggregate: authorization.lockAggregate,
+              resourceIdentity: authorization.lockIdentity,
             },
           ], async () => {
-            if (await ctx.storage.get(authorizationUseKey)) {
+            if (await ctx.storage.get(authorization.useKey)) {
               const state = await readBudget(ctx, value.workflowId)
               return {
                 state,
                 result: {
                   allowed: false as const,
-                  reason: "This observed user message has already authorized a Loom budget continuation.",
+                  reason: `This ${authorization.source === "question" ? "question approval" : "observed user message"} has already authorized a Loom budget continuation.`,
                   state,
                 },
               }
@@ -3523,20 +3756,46 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               questionId: value.questionId,
               grantedBy: tool.agent,
               reason: value.reason,
-              confirmation: value.confirmation,
-              authorizationUserMessageId: observedUserMessage.messageId,
+              confirmation: authorization.confirmation,
+              authorizationId: authorization.id,
+              authorizationSource: authorization.source,
+              ...(authorization.userMessageId
+                ? { authorizationUserMessageId: authorization.userMessageId }
+                : {}),
+              ...(authorization.questionCallId
+                ? { authorizationQuestionCallId: authorization.questionCallId }
+                : {}),
+              ...(authorization.denialId
+                ? { authorizationDenialId: authorization.denialId }
+                : {}),
               now: new Date().toISOString(),
             })
 
             if (result.allowed) {
               await ctx.storage.set(budgetKey(value.workflowId), state)
-              await ctx.storage.set(authorizationUseKey, {
+              const usedAt = new Date().toISOString()
+              await ctx.storage.set(authorization.useKey, {
                 workflowId: value.workflowId,
                 target: result.target,
-                userMessageId: observedUserMessage.messageId,
-                confirmation: observedUserMessage.text,
-                usedAt: new Date().toISOString(),
+                authorizationSource: authorization.source,
+                authorizationId: authorization.id,
+                ...authorization.record,
+                usedAt,
               })
+              const blockedKey = budgetContinuationTargetKey(
+                tool.sessionID,
+                value.workflowId,
+                { stepId: value.stepId, questionId: value.questionId },
+              )
+              if (blockedKey) {
+                const currentBlocked = (await ctx.storage.get(blockedKey)) as BudgetBlockedTarget | undefined
+                const sameQuestionDenial =
+                  authorization.source !== "question" ||
+                  currentBlocked?.denialId === authorization.denialId
+                if (currentBlocked && !currentBlocked.resolvedAt && sameQuestionDenial) {
+                  await ctx.storage.set(blockedKey, { ...currentBlocked, resolvedAt: usedAt })
+                }
+              }
               await bumpWorkflowRevisionLocked(ctx, runtime, value.workflowId)
             }
             return { state, result }
@@ -3558,6 +3817,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             content: renderToolOutput({
               continued: true,
               target: mutation.result.target,
+              authorizationSource: authorization.source,
               used: mutation.state.byKey[mutation.result.target.key] ?? 0,
               requestedDispatches: mutation.result.continuation.requestedDispatches,
               stepDispatches: {
@@ -5726,11 +5986,12 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
     })
 
-    await ctx.permission.hook("evaluate", async (event) => {
-      if (["edit", "shell", "subagent"].includes(event.action)) {
+    const evaluatePermission = async (event: any) => {
+      const delegationAction = event.action === "subagent"
+      if (event.action === "edit" || event.action === "shell" || delegationAction) {
         await ensureLegacyCancellationBoundary(event.sessionID)
       }
-      if (["edit", "shell", "subagent"].includes(event.action)) {
+      if (event.action === "edit" || event.action === "shell" || delegationAction) {
         const bound = await activeWorkflow(ctx, event.sessionID, ensureLegacySession)
         if (bound?.cancellation && bound.createdBySession !== event.sessionID) {
           event.effect = "deny"
@@ -5878,7 +6139,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         return
       }
 
-      if (event.agent !== "general" || event.action !== "subagent") return
+      if (event.agent !== "general" || !delegationAction) return
 
       const target = event.resources.find((resource) => loomAgents.has(resource))
       if (!target) return
@@ -5889,6 +6150,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           // Conversation-first boundary: a fresh session, or a session whose
           // previous workflow is terminal, may use Research/Diagnostic as
           // advisory non-mutating capabilities without reviving governed state.
+          event.effect = "allow"
           return
         }
         event.effect = "deny"
@@ -6008,11 +6270,39 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       if (!recorded.allowed) {
         const reason = recorded.reason ?? "Unknown dispatch denial."
         event.effect = "deny"
-        event.message = reason.startsWith("Dispatch grant admission failed:")
-          ? `${reason} Issue a fresh exact loom_dispatch_grant before retrying.`
-          : `Loom execution budget exhausted: ${reason}. Preserve this workflow and target. A fresh explicit user message may authorize one exact-target dispatch through loom_budget_continue; do not duplicate the task or workflow.`
+        if (reason.startsWith("Dispatch grant admission failed:")) {
+          event.message = `${reason} Issue a fresh exact loom_dispatch_grant before retrying.`
+        } else {
+          const blocked: BudgetBlockedTarget = {
+            workflowId: workflow.id,
+            agent: target,
+            denialId: dispatchID,
+            approvalRef: crypto.randomUUID().replaceAll("-", "").slice(0, 16),
+            reason,
+            blockedAt: new Date().toISOString(),
+            ...(runnableStep ? { stepId: runnableStep.id } : { questionId: openQuestion!.id }),
+          }
+          const blockedKey = budgetContinuationTargetKey(
+            event.sessionID,
+            workflow.id,
+            { stepId: blocked.stepId, questionId: blocked.questionId },
+          )
+          if (!blockedKey) throw new Error("Budget denial did not resolve to one exact target.")
+          await ctx.storage.set(blockedKey, blocked)
+          const question = budgetContinuationQuestionInput(blocked)
+          event.message =
+            `Loom execution budget exhausted: ${reason}. Preserve this workflow and exact target; do not duplicate the task or workflow. ` +
+            `Ask the user with OpenCode\'s question tool using this exact payload: ${JSON.stringify(question)}. ` +
+            `If they choose "${BUDGET_CONTINUATION_ALLOW}", call loom_budget_continue for this same target without confirmation. ` +
+            `If they choose "${BUDGET_CONTINUATION_STOP}" or dismiss the question, stop at the resumable boundary.`
+        }
+        return
       }
-    })
+
+      event.effect = "allow"
+    }
+
+    await ctx.permission.hook("evaluate", evaluatePermission)
 
     await ctx.session.hook("context", async (event) => {
       const raw = event as any
@@ -6062,6 +6352,58 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         await ensureLegacyCancellationBoundary(String(raw.sessionID))
         await assertCancelledChildToolAdmission(ctx.storage as any, tool, raw.input, String(raw.sessionID))
       }
+      if (tool === "question") {
+        const sessionID = String(raw.sessionID ?? "").trim()
+        if (!sessionID) {
+          throw new Error("OpenCode question tool is reserved for admitted Loom General interactions.")
+        }
+        await dashboardPublisher.publish()
+        const matches = await matchingActiveBudgetBlockedTargets(ctx, sessionID, toolHookInput(raw))
+        if (matches.length !== 1) {
+          throw new Error(
+            matches.length === 0
+              ? "OpenCode question tool is reserved for the exact current Loom budget approval question."
+              : "OpenCode question tool matched multiple active budget denials; refusing ambiguous user authority.",
+          )
+        }
+        const blocked = matches[0]
+        const blockedKey = budgetContinuationTargetKey(
+          sessionID,
+          blocked.workflowId,
+          { stepId: blocked.stepId, questionId: blocked.questionId },
+        )
+        if (!blockedKey) throw new Error("Budget question admission lost its exact target.")
+        await withRuntimeLock(
+          runtime,
+          "budget-continuation-question-admission",
+          `${sessionID}:${blocked.denialId}`,
+          async () => {
+            const current = (await ctx.storage.get(blockedKey)) as BudgetBlockedTarget | undefined
+            if (
+              !current ||
+              current.denialId !== blocked.denialId ||
+              current.resolvedAt ||
+              !matchesBudgetContinuationQuestion(toolHookInput(raw), current)
+            ) {
+              throw new Error("OpenCode budget question became stale before admission.")
+            }
+            if (current.questionStartedAt) {
+              const sameOwner = current.questionOwnerInstanceId === runtime.instanceId
+              const ownerLive = current.questionOwnerInstanceId
+                ? await runtimeInstanceIsLive(runtime, current.questionOwnerInstanceId)
+                : false
+              if (sameOwner || ownerLive) {
+                throw new Error("This Loom budget approval question is already active.")
+              }
+            }
+            await ctx.storage.set(blockedKey, {
+              ...current,
+              questionStartedAt: new Date().toISOString(),
+              questionOwnerInstanceId: runtime.instanceId,
+            })
+          },
+        )
+      }
       if (skipLoomEvidence(tool)) return
       const key = observationCallKey(raw)
       if (!key) return
@@ -6088,6 +6430,74 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       const raw = event as any
       const tool = String(raw.tool ?? "")
       if (!tool) return
+
+      if (tool === "question" && raw.sessionID) {
+        const sessionID = String(raw.sessionID)
+        const input = toolHookInput(raw)
+        const matches = await matchingActiveBudgetBlockedTargets(ctx, sessionID, input)
+        if (matches.length === 1) {
+          const blocked = matches[0]
+          const blockedKey = budgetContinuationTargetKey(
+            sessionID,
+            blocked.workflowId,
+            { stepId: blocked.stepId, questionId: blocked.questionId },
+          )
+          if (blockedKey && raw.status === "error") {
+            await withRuntimeLock(
+              runtime,
+              "budget-continuation-question-admission",
+              `${sessionID}:${blocked.denialId}`,
+              async () => {
+                const current = (await ctx.storage.get(blockedKey)) as BudgetBlockedTarget | undefined
+                if (current?.denialId === blocked.denialId && !current.resolvedAt) {
+                  await ctx.storage.set(blockedKey, {
+                    ...current,
+                    resolvedAt: new Date().toISOString(),
+                  })
+                }
+              },
+            )
+          } else if (raw.status !== "error") {
+            const decision = budgetQuestionDecision(raw.result ?? (raw.metadata ? { metadata: raw.metadata } : raw.output))
+            if (decision) {
+              const callID = String(raw.callID ?? "").trim()
+              const decidedAt = new Date().toISOString()
+              await ctx.storage.set(sessionBudgetQuestionDecisionKey(sessionID, blocked.denialId), {
+                workflowId: blocked.workflowId,
+                agent: blocked.agent,
+                ...(blocked.stepId ? { stepId: blocked.stepId } : {}),
+                ...(blocked.questionId ? { questionId: blocked.questionId } : {}),
+                approvalRef: blocked.approvalRef,
+                denialId: blocked.denialId,
+                ...(callID ? { callID } : {}),
+                answer: decision.answer,
+                approved: decision.approved,
+                decidedAt,
+              } satisfies BudgetQuestionDecision)
+              if (!decision.approved && blockedKey) {
+                await ctx.storage.set(blockedKey, { ...blocked, resolvedAt: decidedAt })
+              }
+            } else if (blockedKey) {
+              await withRuntimeLock(
+                runtime,
+                "budget-continuation-question-admission",
+                `${sessionID}:${blocked.denialId}`,
+                async () => {
+                  const current = (await ctx.storage.get(blockedKey)) as BudgetBlockedTarget | undefined
+                  if (current?.denialId === blocked.denialId && !current.resolvedAt) {
+                    const {
+                      questionStartedAt: _questionStartedAt,
+                      questionOwnerInstanceId: _questionOwnerInstanceId,
+                      ...retryable
+                    } = current
+                    await ctx.storage.set(blockedKey, retryable)
+                  }
+                },
+              )
+            }
+          }
+        }
+      }
 
       // Dashboard publication is read-only and failure-isolated. Trigger after
       // Loom/control activity before evidence filtering so control-plane state
