@@ -510,6 +510,16 @@ function sessionOqKey(sessionID: string) {
   return `session-oq/${sessionID}`
 }
 
+function sessionPlanReviewKey(sessionID: string) {
+  return `session-plan-review/${encodeURIComponent(sessionID)}`
+}
+
+type PlanReviewBinding = {
+  workflowId: string
+  generation: number
+  revision: number
+}
+
 function budgetKey(workflowId: string) {
   return `budget/${workflowId}`
 }
@@ -2193,6 +2203,26 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             }
 
             const reviewedWave = workflow.steps.some((candidate) => candidate.id === "review-implementation" && candidate.status === "passed")
+
+            if (stepId === "review-plan") {
+              if (!workflow.work) throw new Error("Plan review requires a persistent Objective Plan.")
+              const binding = (await ctx.storage.get(sessionPlanReviewKey(tool.sessionID))) as PlanReviewBinding | undefined
+              const currentWork = await readWork(ctx, workflow.work.objectiveId)
+              const currentPlan = currentWork
+                ? workPlanContext(currentWork, undefined, "focused", workflow.work.generation)
+                : null
+              if (
+                !binding ||
+                binding.workflowId !== workflow.id ||
+                binding.generation !== workflow.work.generation ||
+                binding.revision !== currentPlan?.revision
+              ) {
+                throw new Error(
+                  "Plan changed after Reviewer attachment. Attach a fresh review-plan attempt before recording a verdict.",
+                )
+              }
+            }
+
             finishStep(workflow, stepId, tool.agent, resolvedOutcome, summary)
             evidenceBound = await bindSessionEvidence(ctx, tool.sessionID, workflowId, stepId)
             const completedTaskClaims =
@@ -5646,6 +5676,15 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               await ctx.storage.set(sessionAttachmentKey(tool.sessionID), crypto.randomUUID())
               await ctx.storage.set(sessionStepKey(tool.sessionID), value.stepId ?? "")
               await ctx.storage.set(sessionOqKey(tool.sessionID), value.questionId ?? "")
+              if (value.stepId === "review-plan" && planContext) {
+                await ctx.storage.set(sessionPlanReviewKey(tool.sessionID), {
+                  workflowId: value.workflowId,
+                  generation: planContext.generation,
+                  revision: planContext.revision,
+                } satisfies PlanReviewBinding)
+              } else {
+                await ctx.storage.set(sessionPlanReviewKey(tool.sessionID), null)
+              }
               await bumpWorkflowRevisionLocked(ctx, runtime, value.workflowId)
               if (previousBinding && previousBinding !== value.workflowId) {
                 await bumpWorkflowRevisionLocked(ctx, runtime, previousBinding, true)
