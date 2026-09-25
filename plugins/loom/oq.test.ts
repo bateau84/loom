@@ -45,19 +45,115 @@ describe("Loom shared OQ board", () => {
     expect(blockingQuestionsForStep([q], "specifier")).toHaveLength(1)
   })
 
-  test("Reviewer and Critic cannot become OQ answer authorities", () => {
-    for (const requiredAuthority of ["reviewer", "critic"] as const) {
-      expect(() => raiseQuestion({
+  test("preserves stable Plan/Task correlation on the question", () => {
+    const q = raiseQuestion({
+      id: "q-plan",
+      workflow: workflow(),
+      question: "Which lifecycle guarantee applies here?",
+      raisedByAgent: "specifier",
+      raisedByStepId: "specifier",
+      requiredAuthority: "architect",
+      blocking: true,
+      work: {
+        objectiveId: "objective:docs/anchors/product/anchor.md",
+        generation: 3,
+        revision: 2,
+        taskId: "runtime-recovery",
+      },
+      now: "now",
+    })
+
+    expect(q.work).toEqual({
+      objectiveId: "objective:docs/anchors/product/anchor.md",
+      generation: 3,
+      revision: 2,
+      taskId: "runtime-recovery",
+    })
+  })
+
+  test("any Loom role may be the named OQ responder without turning the answer into a gate verdict", () => {
+    for (const requiredAuthority of ["planner", "worker", "reviewer", "critic", "documenter", "acceptance"] as const) {
+      const q = raiseQuestion({
         id: `q-${requiredAuthority}`,
         workflow: workflow(),
-        question: "Please approve this implementation choice.",
+        question: "Answer the narrow role-owned question.",
         raisedByAgent: "specifier",
         raisedByStepId: "specifier",
-        requiredAuthority: requiredAuthority as any,
+        requiredAuthority,
         blocking: true,
         now: "now",
-      })).toThrow("independent gates")
+      })
+      expect(q.requiredAuthority).toBe(requiredAuthority)
+      expect(() => answerQuestion(q, requiredAuthority, "agent", "bounded answer", [], "later")).not.toThrow()
+      expect(q.answer?.by).toBe(requiredAuthority)
     }
+  })
+
+  test("General may raise a coordinator OQ when blocking consumers are explicit", () => {
+    const w = workflow()
+    const q = raiseQuestion({
+      id: "q-general",
+      workflow: w,
+      question: "Does Planner need to split this work?",
+      raisedByAgent: "general",
+      raisedByStepId: "general",
+      requiredAuthority: "planner",
+      blocking: true,
+      consumerStepIds: ["specifier"],
+      now: "now",
+    })
+    expect(q.raisedByAgent).toBe("general")
+    expect(q.consumerStepIds).toEqual(["specifier"])
+
+    expect(() => raiseQuestion({
+      id: "q-general-bad",
+      workflow: w,
+      question: "Blocking but affects nothing.",
+      raisedByAgent: "general",
+      raisedByStepId: "general",
+      requiredAuthority: "planner",
+      blocking: true,
+      now: "now",
+    })).toThrow("must name at least one affected consumer")
+  })
+
+  test("an OQ responder may raise a nested peer OQ with inherited consumers", () => {
+    const w = workflow()
+    const parent = raiseQuestion({
+      id: "q-parent",
+      workflow: w,
+      question: "Does the plan dependency still hold?",
+      raisedByAgent: "specifier",
+      raisedByStepId: "specifier",
+      requiredAuthority: "planner",
+      blocking: true,
+      work: {
+        objectiveId: "objective:docs/anchors/product/anchor.md",
+        generation: 2,
+        revision: 4,
+        taskId: "runtime",
+      },
+      now: "now",
+    })
+
+    const child = raiseQuestion({
+      id: "q-child",
+      workflow: w,
+      question: "Does architecture still require this interface?",
+      raisedByAgent: "planner",
+      raisedByStepId: parent.raisedByStepId,
+      parentQuestionId: parent.id,
+      requiredAuthority: "architect",
+      blocking: true,
+      consumerStepIds: parent.consumerStepIds,
+      work: parent.work,
+      now: "later",
+    })
+
+    expect(child.parentQuestionId).toBe(parent.id)
+    expect(child.consumerStepIds).toEqual(parent.consumerStepIds)
+    expect(child.work).toEqual(parent.work)
+    expect(child.requiredAuthority).toBe("architect")
   })
 
   test("only required authority can answer", () => {

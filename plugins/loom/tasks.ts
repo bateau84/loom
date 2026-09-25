@@ -1,12 +1,43 @@
 import { validateWriteScope } from "./scope"
 
 export const MAX_TASKS = 24
+export const MAX_TASK_ID_LENGTH = 96
+export const MAX_TASK_TEXT_LENGTH = 1_000
+export const MAX_TASK_CONTEXT_ITEMS = 16
+
+function boundedText(value: string, label: string) {
+  const text = value.trim()
+  if (text.length > MAX_TASK_TEXT_LENGTH) {
+    throw new Error(`${label} exceeds maximum of ${MAX_TASK_TEXT_LENGTH} characters.`)
+  }
+  return text
+}
+
+function boundedList(values: string[], label: string, max = MAX_TASK_CONTEXT_ITEMS) {
+  const normalized = [...new Set(values.map((item) => boundedText(item, label)).filter(Boolean))]
+  if (normalized.length > max) throw new Error(`${label} exceeds maximum of ${max} values.`)
+  return normalized
+}
+
 
 export type TaskSpec = {
   id: string
   title: string
+  /** Bounded contribution this Task owns; never the parent accepted product outcome. */
   objective: string
+  /** Why this Task exists in the larger plan and what gap it closes. */
+  rationale?: string
   dependsOn: string[]
+  /** Accepted authority this Task implements or proves. */
+  authorityRefs?: string[]
+  /** Inherited semantic/non-goal constraints that Worker must preserve. */
+  constraints?: string[]
+  /** Falsifiable local completion contract for Worker and Reviewer. */
+  acceptanceCriteria?: string[]
+  /** Non-executable local checklist; these do not become workflow nodes. */
+  subtasks?: string[]
+  /** Cross-task/component context that must survive the handoff. */
+  integration?: string[]
   write: string[]
   skills: string[]
   verify: string[]
@@ -14,21 +45,47 @@ export type TaskSpec = {
 
 function normalizeTask(input: TaskSpec): TaskSpec {
   const id = input.id.trim()
-  const title = input.title.trim()
-  const objective = input.objective.trim()
-  const dependsOn = [...new Set(input.dependsOn.map((item) => item.trim()).filter(Boolean))]
+  const title = boundedText(input.title, `Task ${id} title`)
+  const objective = boundedText(input.objective, `Task ${id} objective`)
+  const rationale = boundedText(input.rationale ?? "", `Task ${id} rationale`)
+  const dependsOn = boundedList(input.dependsOn, `Task ${id} dependencies`)
+  const authorityRefs = boundedList(input.authorityRefs ?? [], `Task ${id} authorityRefs`)
+  const constraints = boundedList(input.constraints ?? [], `Task ${id} constraints`)
+  const acceptanceCriteria = boundedList(input.acceptanceCriteria ?? [], `Task ${id} acceptanceCriteria`)
+  const subtasks = boundedList(input.subtasks ?? [], `Task ${id} subtasks`)
+  const integration = boundedList(input.integration ?? [], `Task ${id} integration`)
   const write = [...new Set(input.write.map((item) => item.trim()).filter(Boolean))]
-  const skills = [...new Set(input.skills.map((item) => item.trim()).filter(Boolean))]
-  const verify = [...new Set(input.verify.map((item) => item.trim()).filter(Boolean))]
+  const skills = boundedList(input.skills, `Task ${id} skills`)
+  const verify = boundedList(input.verify, `Task ${id} verify`)
 
   if (!/^[a-z0-9][a-z0-9-]*$/.test(id)) {
     throw new Error(`Invalid task id ${input.id}; use lowercase letters, numbers, and hyphens.`)
   }
+  if (id.length > MAX_TASK_ID_LENGTH) {
+    throw new Error(`Task id exceeds maximum of ${MAX_TASK_ID_LENGTH} characters.`)
+  }
   if (!title || !objective) throw new Error(`Task ${id} requires title and objective.`)
+  if (!rationale) throw new Error(`Task ${id} requires rationale within the parent Plan.`)
+  if (authorityRefs.length === 0) throw new Error(`Task ${id} requires at least one accepted authority reference.`)
+  if (acceptanceCriteria.length === 0) throw new Error(`Task ${id} requires at least one falsifiable acceptance criterion.`)
   if (verify.length === 0) throw new Error(`Task ${id} requires at least one verification expectation.`)
   validateWriteScope(write)
 
-  return { id, title, objective, dependsOn, write, skills, verify }
+  return {
+    id,
+    title,
+    objective,
+    rationale,
+    dependsOn,
+    authorityRefs,
+    constraints,
+    acceptanceCriteria,
+    subtasks,
+    integration,
+    write,
+    skills,
+    verify,
+  }
 }
 
 function transitiveDependencies(tasks: TaskSpec[]) {

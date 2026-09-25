@@ -83,6 +83,19 @@ WorkObjectiveProjectionV1 {
   status: WorkState
   workVersion: integer >= 1
   generation: integer >= 0
+  plan?: {
+    revision: integer >= 1
+    goal: bounded DashboardText
+    assumptions: bounded DashboardText[]
+    outOfScope: bounded DashboardText[]
+    authorityRefs: string[]
+    obligations: bounded obligation summaries
+    riskBoundaries: bounded risk summaries
+    acceptanceCoverage: bounded accepted-outcome coverage summaries
+    relationships: bounded Task-relationship summaries
+    amendments: bounded recent amendment summaries
+    invalidated?: { by, reason, at }
+  }
   stateDigest: string
   phases: WorkPhaseProjectionV1[]
 }
@@ -90,6 +103,7 @@ WorkObjectiveProjectionV1 {
 WorkPhaseProjectionV1 {
   phaseId: string
   title?: string
+  objective?: bounded DashboardText
   status: WorkState
   waves: WorkWaveProjectionV1[]
 }
@@ -97,6 +111,8 @@ WorkPhaseProjectionV1 {
 WorkWaveProjectionV1 {
   waveId: string
   title?: string
+  objective?: bounded DashboardText
+  constraints?: bounded DashboardText[]
   status: WorkState
   tasks: WorkTaskProjectionV1[]
 }
@@ -105,11 +121,23 @@ WorkTaskProjectionV1 {
   taskId: string
   title: string
   status: WorkState
+  objective?: bounded DashboardText
+  rationale?: bounded DashboardText
+  authorityRefs?: string[]
+  constraints?: bounded DashboardText[]
+  acceptanceCriteria?: bounded DashboardText[]
+  subtasks?: bounded DashboardText[]
+  integration?: bounded DashboardText[]
+  result?: {
+    summary?: bounded DashboardText
+    evidenceClaims: integer >= 0
+    completedAt: RFC3339
+  }
   claimedByWorkflowId?: string
 }
 ```
 
-The projection preserves the current hierarchy generation and its independent durable `workVersion`. `stateDigest` is SHA-256 over canonical UTF-8 JSON of the normalized Loom-authoritative Objective projection, excluding publisher identity and publication timestamps. It MUST NOT flatten Workflow completion into ancestor Objective completion.
+The projection preserves the current hierarchy generation, Plan revision/amendment state, and its independent durable `workVersion`. An invalidated Plan keeps completed Tasks visible but exposes unfinished nodes as superseded/non-runnable. `stateDigest` is SHA-256 over canonical UTF-8 JSON of the normalized Loom-authoritative Objective projection, excluding publisher identity and publication timestamps. It MUST NOT flatten Workflow completion into ancestor Objective completion.
 
 V1 projects the current generation rather than replaying the entire historical work graph. Superseded/cancelled historical nodes are available through Loom's durable store but are not required in the bounded dashboard projection unless a later product requirement adds history browsing.
 

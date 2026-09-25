@@ -92,10 +92,71 @@ function work(): WorkHierarchy {
     createdAt: "2026-09-21T12:00:00.000Z",
     updatedAt: "2026-09-21T12:05:00.000Z",
     nodes: [
-      { id: "phase:1:build", logicalId: "build", type: "phase", title: "Build", status: "active", generation: 1, createdAt: "2026-09-21T12:00:00.000Z", updatedAt: "2026-09-21T12:05:00.000Z" },
-      { id: "wave:1:build/runtime", logicalId: "runtime", type: "wave", title: "Runtime", status: "active", generation: 1, parentId: "phase:1:build", claimedByWorkflowId: "workflow-a", createdAt: "2026-09-21T12:00:00.000Z", updatedAt: "2026-09-21T12:05:00.000Z" },
+      { id: "phase:1:build", logicalId: "build", type: "phase", title: "Build", objective: "Build the product", status: "active", generation: 1, createdAt: "2026-09-21T12:00:00.000Z", updatedAt: "2026-09-21T12:05:00.000Z" },
+      { id: "wave:1:build/runtime", logicalId: "runtime", type: "wave", title: "Runtime", objective: "Implement runtime", status: "active", generation: 1, parentId: "phase:1:build", claimedByWorkflowId: "workflow-a", createdAt: "2026-09-21T12:00:00.000Z", updatedAt: "2026-09-21T12:05:00.000Z" },
       { id: "task:1:build", logicalId: "build", type: "task", title: "Build runtime", objective: "Build it", status: "active", generation: 1, parentId: "wave:1:build/runtime", claimedByWorkflowId: "workflow-a", createdAt: "2026-09-21T12:00:00.000Z", updatedAt: "2026-09-21T12:05:00.000Z" },
     ],
+    plans: [{
+      generation: 1,
+      revision: 2,
+      amendments: [{
+        revision: 2,
+        by: "planner",
+        reason: "Clarify the runtime checklist",
+        operations: ["patch-task:build"],
+        at: "2026-09-21T12:04:00.000Z",
+      }],
+      goal: "Deliver the runtime product.",
+      assumptions: ["Accepted architecture remains current."],
+      outOfScope: ["Unrelated UI work."],
+      authorityRefs: ["docs/anchors/product/anchor.md"],
+      obligations: [{
+        id: "runtime-obligation",
+        sourceRef: "docs/anchors/product/anchor.md",
+        statement: "The runtime path works.",
+        disposition: "implement",
+        taskIds: ["build"],
+        verification: ["Run the assembled path"],
+      }],
+      riskBoundaries: [{
+        id: "runtime-boundary",
+        title: "Runtime boundary",
+        description: "Runtime state crosses the execution boundary.",
+        taskIds: ["build"],
+      }],
+      acceptanceCoverage: [{
+        id: "pa-runtime",
+        title: "Runtime acceptance",
+        criterion: "The runtime path is usable end to end.",
+        taskIds: ["build"],
+      }],
+      relationships: [],
+      correctionRouting: [],
+      phases: [{
+        id: "build",
+        title: "Build",
+        objective: "Build the product",
+        waves: [{
+          id: "runtime",
+          title: "Runtime",
+          objective: "Implement runtime",
+          constraints: ["Preserve accepted behavior."],
+          tasks: [{
+            id: "build",
+            title: "Build runtime",
+            objective: "Build it",
+            rationale: "The runtime is the product-owned implementation path.",
+            dependsOn: [],
+            authorityRefs: ["docs/anchors/product/anchor.md"],
+            constraints: ["Preserve accepted behavior."],
+            acceptanceCriteria: ["The runtime works end to end."],
+            subtasks: ["Implement runtime", "Exercise runtime"],
+            integration: ["Compose with the accepted entry point."],
+            verify: ["Run the assembled path"],
+          }],
+        }],
+      }],
+    }],
   }
 }
 
@@ -109,6 +170,7 @@ async function populated(root: string) {
     id: "OQ-1", workflowId: "workflow-a", question: "Which behavior applies?",
     raisedByAgent: "worker", raisedByStepId: "task:build", requiredAuthority: "reviewer",
     blocking: true, consumerStepIds: ["task:build"], evidence: [], status: "open",
+    work: { objectiveId: "objective:docs/anchors/product/anchor.md", generation: 1, revision: 2, taskId: "build" },
     reconciliations: {}, createdAt: "2026-09-21T12:01:00.000Z",
   })
   await storage.set("budget/workflow-a", { totalDispatches: 5, byKey: {}, seenDispatches: [] })
@@ -138,9 +200,143 @@ describe("Loom dashboard projection", () => {
     expect(snapshot.workObjectives[0]).toMatchObject({
       workVersion: 4,
       generation: 1,
+      plan: {
+        revision: 2,
+        goal: { text: "Deliver the runtime product.", truncated: false },
+      },
+      phases: [{
+        phaseId: "build",
+        objective: { text: "Build the product", truncated: false },
+        waves: [{
+          waveId: "runtime",
+          objective: { text: "Implement runtime", truncated: false },
+          tasks: [{
+            taskId: "build",
+            objective: { text: "Build it", truncated: false },
+            subtasks: [
+              { text: "Implement runtime", truncated: false },
+              { text: "Exercise runtime", truncated: false },
+            ],
+          }],
+        }],
+      }],
+    })
+    expect(snapshot.workflows[0].context?.questions[0].work).toEqual({
+      objectiveId: "objective:docs/anchors/product/anchor.md",
+      generation: 1,
+      revision: 2,
+      taskId: "build",
+    })
+    expect(snapshot.workflows[0].context?.questions[0].origin).toMatchObject({
+      phaseTitle: { text: "Build", truncated: false },
+      waveTitle: { text: "Runtime", truncated: false },
+      taskTitle: { text: "Build runtime", truncated: false },
+      taskObjective: { text: "Build it", truncated: false },
     })
     expect(snapshot.workflows[0].stateDigest).toHaveLength(64)
     expect(snapshot.workObjectives[0].stateDigest).toHaveLength(64)
+  })
+
+  test("historical OQ projection retains the exact amended Plan origin", async () => {
+    const root = await fixture()
+    const { storage, runtime } = await populated(root)
+    const current = work()
+    const historical = structuredClone(current.plans![0])
+    historical.revision = 1
+    historical.amendments = []
+    historical.phases[0].waves[0].tasks[0].title = "Original runtime Task"
+    historical.phases[0].waves[0].tasks[0].objective = "Build the original runtime behavior"
+    current.plans = [historical, current.plans![0]]
+    await storage.set("work/objective", current)
+    await storage.set("oq/workflow-a/OQ-1", {
+      id: "OQ-1", workflowId: "workflow-a", question: "Why did the original runtime contract require this?",
+      raisedByAgent: "worker", raisedByStepId: "task:build", requiredAuthority: "architect",
+      blocking: true, consumerStepIds: ["task:build"], evidence: [], status: "open",
+      work: {
+        objectiveId: current.objectiveId,
+        generation: 1,
+        revision: 1,
+        taskId: "build",
+      },
+      reconciliations: {}, createdAt: "2026-09-21T12:01:00.000Z",
+    })
+
+    const snapshot = await buildProjectSnapshot(
+      storage,
+      runtime,
+      8,
+      {},
+      new Date("2026-09-21T12:11:00.000Z"),
+    )
+    expect(snapshot.workObjectives[0].plan?.revision).toBe(2)
+    expect(snapshot.workflows[0].context?.questions[0]).toMatchObject({
+      work: { generation: 1, revision: 1, taskId: "build" },
+      origin: {
+        taskTitle: { text: "Original runtime Task", truncated: false },
+        taskObjective: { text: "Build the original runtime behavior", truncated: false },
+      },
+    })
+  })
+
+  test("legacy superseded Task OQ retains its historical origin after rich-Plan adoption", async () => {
+    const root = await fixture()
+    const { storage, runtime } = await populated(root)
+    const current = work()
+    const legacyTask = structuredClone(
+      current.nodes.find((node) => node.type === "task" && node.logicalId === "build")!,
+    )
+    legacyTask.status = "superseded"
+    delete legacyTask.claimedByWorkflowId
+    delete legacyTask.claimedAt
+
+    const phase = structuredClone(current.nodes.find((node) => node.type === "phase")!)
+    const wave = structuredClone(current.nodes.find((node) => node.type === "wave")!)
+    const task = structuredClone(current.nodes.find((node) => node.type === "task")!)
+    phase.id = "phase:2:build"
+    phase.generation = 2
+    wave.id = "wave:2:build/runtime"
+    wave.generation = 2
+    wave.parentId = phase.id
+    task.id = "task:2:build"
+    task.generation = 2
+    task.parentId = wave.id
+
+    current.generation = 2
+    current.nodes = [legacyTask, phase, wave, task]
+    current.plans = [{
+      ...structuredClone(current.plans![0]),
+      generation: 2,
+      revision: 1,
+      amendments: [],
+    }]
+    await storage.set("work/objective", current)
+    await storage.set("oq/workflow-a/OQ-1", {
+      id: "OQ-1", workflowId: "workflow-a", question: "What did the legacy Task require?",
+      raisedByAgent: "worker", raisedByStepId: "task:build", requiredAuthority: "architect",
+      blocking: false, consumerStepIds: ["task:build"], evidence: [], status: "open",
+      work: {
+        objectiveId: current.objectiveId,
+        generation: 1,
+        taskId: "build",
+      },
+      reconciliations: {}, createdAt: "2026-09-21T12:01:00.000Z",
+    })
+
+    const snapshot = await buildProjectSnapshot(
+      storage,
+      runtime,
+      9,
+      {},
+      new Date("2026-09-21T12:12:00.000Z"),
+    )
+    expect(snapshot.workObjectives[0].generation).toBe(2)
+    expect(snapshot.workflows[0].context?.questions[0]).toMatchObject({
+      work: { generation: 1, taskId: "build" },
+      origin: {
+        taskTitle: { text: "Build runtime", truncated: false },
+        taskObjective: { text: "Build it", truncated: false },
+      },
+    })
   })
 
   test("recent activity includes OQ, verification and budget semantic changes", async () => {

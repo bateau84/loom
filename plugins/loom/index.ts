@@ -16,6 +16,10 @@ import {
   writeStatusArtifact,
 } from "./status-view"
 import { createDashboardPublisher } from "./dashboard"
+import {
+  objectiveUpgradeActions,
+  upgradeCompatibilityNotice,
+} from "./upgrade-actions"
 
 export const LOOM_NATIVE_TOOL_GUIDANCE =
   "Loom control-plane tools are available through two equivalent OpenCode surfaces: native loom_* tools and Code Mode mirrors under tools.loom.code.*. Use either surface directly according to the active tool paradigm. If using Code Mode, search for Loom tools and invoke the returned tools.loom.code.* signatures; do not fall back to shell/filesystem discovery for Loom commands. Reviewer/Critic methodology uses a two-part contract: load practitioner guidance with OpenCode's native skill tool, then consume the role companion through loom_assessment or loom_qa; a plain ASSESSMENT.md/QA.md read is artifact inspection, not methodology loading. Interactive status is dashboard-first and does not depend on model prose: the Loom sidebar exposes a stable workflow dashboard URL, while loom_status may also return presentation metadata. Desktop browser preview is optional metadata only; do not invoke tools.browser.preview merely because presentation metadata exists."
@@ -110,6 +114,7 @@ import {
 import { loadSkillCompanion, type SkillCompanionKind } from "./methodology"
 import { taskStepId, validateTaskPlan, type TaskSpec } from "./tasks"
 import {
+  amendWorkPlan,
   assertWaveClaimForTasks,
   assertWorkGeneration,
   attachWorkflowToWork,
@@ -117,6 +122,7 @@ import {
   completeObjective,
   completeWaveForTasks,
   createWorkHierarchy,
+  invalidateWorkPlan,
   materializeWorkPlan,
   nextRunnableWaves,
   objectiveWorkLevel,
@@ -124,9 +130,14 @@ import {
   releaseWorkflowWave,
   reopenWaveForTasks,
   syncWorkTaskStatuses,
+  workPlanContext,
+  taskSemanticFingerprintAtRevision,
+  workflowTaskSemanticFingerprint,
   workTree,
   type WorkHierarchy,
-  type WorkPlanPhase,
+  type WorkPlanAmendOperation,
+  type WorkPlanDefinition,
+  type WorkPlanTopLevelPatch,
 } from "./work"
 import {
   createKnowledgeReport,
@@ -575,13 +586,18 @@ async function appendQuestion(ctx: any, question: OpenQuestion) {
   await saveQuestion(ctx, question)
 }
 
+function questionView(question: OpenQuestion) {
+  const { requiredAuthority, ...rest } = question
+  return { ...rest, responder: requiredAuthority }
+}
+
 function questionState(questions: OpenQuestion[], workflow: Workflow) {
   const unresolved = questions.filter((question) => question.status !== "closed")
   const routes = unresolved
     .filter((question) => !question.answer)
     .map((question) => ({
       questionId: question.id,
-      requiredAuthority: question.requiredAuthority,
+      responder: question.requiredAuthority,
       blocking: question.blocking,
     }))
 
@@ -601,7 +617,7 @@ function questionState(questions: OpenQuestion[], workflow: Workflow) {
     unresolved: unresolved.map((question) => ({
       id: question.id,
       status: question.status,
-      requiredAuthority: question.requiredAuthority,
+      responder: question.requiredAuthority,
       blocking: question.blocking,
       consumers: question.consumerStepIds,
     })),
@@ -1942,7 +1958,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 questions: blocking.map((question) => ({
                   id: question.id,
                   status: question.status,
-                  requiredAuthority: question.requiredAuthority,
+                  responder: question.requiredAuthority,
                 })),
               }),
             }
@@ -1958,6 +1974,24 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
           if (stepId === "plan" && plannedTaskSteps(workflow).length === 0) {
             return { content: renderToolOutput({ error: "Planning step cannot complete before a validated task graph exists." }) }
+          }
+          if (stepId === "plan" && workflow.work) {
+            const work = await readWork(ctx, workflow.work.objectiveId)
+            const taskIds = plannedTaskSteps(workflow).map((taskStep) => taskStep.task!.id)
+            const currentFingerprint = work
+              ? workflowTaskSemanticFingerprint(work, taskIds, workflow.work.generation)
+              : undefined
+            if (
+              currentFingerprint &&
+              workflow.work.taskPlanFingerprint !== currentFingerprint
+            ) {
+              return {
+                content: renderToolOutput({
+                  error:
+                    "Executable Task DAG is stale against the current semantic Task/Wave contract. Re-run loom_task_plan before completing planning.",
+                }),
+              }
+            }
           }
 
           if (stepId === "knowledge-sync") {
@@ -2004,6 +2038,10 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             const reviewedWave = workflow.steps.some((candidate) => candidate.id === "review-implementation" && candidate.status === "passed")
             finishStep(workflow, stepId, tool.agent, resolvedOutcome, summary)
             evidenceBound = await bindSessionEvidence(ctx, tool.sessionID, workflowId, stepId)
+            const completedTaskClaims =
+              step.task && step.status === "complete"
+                ? await stepClaims(ctx, workflowId, stepId)
+                : []
 
             if (workflow.work) {
               const work = await readWork(ctx, workflow.work.objectiveId)
@@ -2020,7 +2058,20 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 assertWaveClaimForTasks(work, workflow.id, workflow.work.generation, taskIds)
                 syncWorkTaskStatuses(
                   work, workflow.id, workflow.work.generation,
-                  plannedTaskSteps(workflow).map((taskStep) => ({ taskId: taskStep.task!.id, complete: taskStep.status === "complete" })),
+                  plannedTaskSteps(workflow).map((taskStep) => ({
+                    taskId: taskStep.task!.id,
+                    complete: taskStep.status === "complete",
+                    ...(taskStep.id === stepId && taskStep.status === "complete"
+                      ? {
+                          result: {
+                            workflowId,
+                            ...(taskStep.summary ? { summary: taskStep.summary } : {}),
+                            evidenceClaimIds: completedTaskClaims.map((claim) => claim.id),
+                            completedAt: now,
+                          },
+                        }
+                      : {}),
+                  })),
                   now,
                 )
               }
@@ -2228,65 +2279,165 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       addLoomTool({
         name: "oq_raise",
         description:
-          "Raise a shared cross-authority workflow question. Use only for genuinely missing user/design/behavior/architecture/research/diagnostic authority; mutation-scope coordination returns to General directly. Reviewer and Critic are independent gates, not OQ answer authorities. Blocking questions automatically make the raising step a required consumer.",
+          "Raise a shared peer OQ to any Loom role or the user. Planned Worker questions inherit their Task automatically; a non-Task step may supply an existing taskId to correlate the OQ with that Plan context. Ask the role that owns or can best answer the specific question; an OQ answer does not substitute for that role's independent gate when one exists. Mutation-scope coordination returns to General directly. Blocking questions automatically make the raising step a required consumer.",
         input: {
           type: "object",
           properties: {
             workflowId: { type: "string" },
             stepId: { type: "string" },
+            parentQuestionId: { type: "string" },
+            taskId: { type: "string" },
             question: { type: "string" },
-            requiredAuthority: {
+            responder: {
               type: "string",
-              enum: ["user", "designer", "specifier", "architect", "research", "diagnostic"],
+              enum: [
+                "user",
+                "general",
+                "designer",
+                "specifier",
+                "architect",
+                "reviewer",
+                "critic",
+                "acceptance",
+                "planner",
+                "documenter",
+                "worker",
+                "research",
+                "diagnostic",
+              ],
             },
             blocking: { type: "boolean" },
             consumerStepIds: { type: "array", items: { type: "string" } },
             evidence: { type: "array", items: { type: "string" } },
           },
-          required: ["workflowId", "stepId", "question", "requiredAuthority", "blocking"],
+          required: ["workflowId", "question", "responder", "blocking"],
           additionalProperties: false,
         },
         options: { namespace: "loom", codemode: false },
         execute: async (input, tool) => {
           const value = input as {
             workflowId: string
-            stepId: string
+            stepId?: string
+            parentQuestionId?: string
+            taskId?: string
             question: string
-            requiredAuthority: OQAuthority
+            responder: OQAuthority
             blocking: boolean
             consumerStepIds?: string[]
             evidence?: string[]
           }
           const workflow = await readBoundWorkflow(ctx, tool.sessionID, value.workflowId, ensureLegacySession)
           if (!workflow) return { content: renderToolOutput({ error: "Workflow not found or current session is not bound to it." }) }
-          if (!(await exactStepBinding(ctx, tool.sessionID, value.workflowId, value.stepId))) {
-            return { content: renderToolOutput({ error: "Raising a workflow OQ requires the exact attached workflow step." }) }
+
+          let raisedByStepId: string
+          let parentQuestion: OpenQuestion | undefined
+          if (tool.agent === "general") {
+            raisedByStepId = "general"
+          } else if (value.stepId && await exactStepBinding(ctx, tool.sessionID, value.workflowId, value.stepId)) {
+            raisedByStepId = value.stepId
+          } else if (
+            value.parentQuestionId &&
+            await exactOqBinding(ctx, tool.sessionID, value.workflowId, value.parentQuestionId)
+          ) {
+            parentQuestion = (await ctx.storage.get(
+              oqKey(value.workflowId, value.parentQuestionId),
+            )) as OpenQuestion | undefined
+            if (!parentQuestion || parentQuestion.requiredAuthority !== tool.agent) {
+              return {
+                content: renderToolOutput({
+                  error: "Nested OQ raise requires the exact parent OQ attachment for this responder.",
+                }),
+              }
+            }
+            raisedByStepId = parentQuestion.raisedByStepId
+          } else {
+            return {
+              content: renderToolOutput({
+                error:
+                  "Child-agent OQ raises require either the exact attached workflow step or exact parent OQ attachment.",
+              }),
+            }
           }
 
           try {
             const question = await withRuntimeLock(runtime, "workflow", value.workflowId, async () => {
               const current = await readWorkflow(ctx, value.workflowId)
               if (!current) throw new Error("Workflow not found.")
+              const inferredTaskId = value.stepId
+                ? current.steps.find((step) => step.id === value.stepId)?.task?.id
+                : parentQuestion?.work?.taskId
+              const requestedTaskId = value.taskId?.trim()
+              if (inferredTaskId && requestedTaskId && inferredTaskId !== requestedTaskId) {
+                throw new Error(`OQ taskId ${requestedTaskId} does not match the attached Task ${inferredTaskId}.`)
+              }
+              const correlatedTaskId = inferredTaskId ?? requestedTaskId
+              if (requestedTaskId && !current.work) {
+                throw new Error("OQ taskId requires a persistent Objective Plan.")
+              }
+              let correlatedPlanRevision = parentQuestion?.work?.revision
+              const correlatedWorkBinding = parentQuestion?.work ?? current.work
+              if (correlatedWorkBinding) {
+                const work = await readWork(ctx, correlatedWorkBinding.objectiveId)
+                const context = work
+                  ? workPlanContext(
+                      work,
+                      correlatedTaskId,
+                      "focused",
+                      correlatedWorkBinding.generation,
+                      correlatedPlanRevision,
+                    )
+                  : null
+                if (correlatedTaskId && !context?.focus?.task) {
+                  const legacyTask = work?.nodes.find(
+                    (node) =>
+                      node.generation === correlatedWorkBinding.generation &&
+                      node.type === "task" &&
+                      node.logicalId === correlatedTaskId,
+                  )
+                  if (!legacyTask || correlatedPlanRevision !== undefined) {
+                    throw new Error(`OQ taskId ${correlatedTaskId} is not part of the correlated Plan revision.`)
+                  }
+                }
+                if (correlatedPlanRevision === undefined && context) {
+                  correlatedPlanRevision = context.revision
+                }
+              }
+
               const created = raiseQuestion({
                 id: crypto.randomUUID(),
                 workflow: current,
                 question: value.question,
                 raisedByAgent: tool.agent,
-                raisedByStepId: value.stepId,
-                requiredAuthority: value.requiredAuthority,
+                raisedByStepId,
+                ...(parentQuestion ? { parentQuestionId: parentQuestion.id } : {}),
+                requiredAuthority: value.responder,
                 blocking: value.blocking,
-                consumerStepIds: value.consumerStepIds,
+                consumerStepIds:
+                  value.consumerStepIds ??
+                  (parentQuestion ? [...parentQuestion.consumerStepIds] : undefined),
                 evidence: value.evidence,
+                ...((parentQuestion?.work ?? current.work)
+                  ? {
+                      work: {
+                        objectiveId: (parentQuestion?.work ?? current.work)!.objectiveId,
+                        generation: (parentQuestion?.work ?? current.work)!.generation,
+                        ...(correlatedPlanRevision !== undefined ? { revision: correlatedPlanRevision } : {}),
+                        ...(correlatedTaskId ? { taskId: correlatedTaskId } : {}),
+                      },
+                    }
+                  : {}),
                 now: new Date().toISOString(),
               })
               await appendQuestion(ctx, created)
               await bumpWorkflowRevisionLocked(ctx, runtime, value.workflowId)
               return created
             })
-            await bindSessionEvidence(ctx, tool.sessionID, value.workflowId, value.stepId)
+            if (tool.agent !== "general" && value.stepId) {
+              await bindSessionEvidence(ctx, tool.sessionID, value.workflowId, value.stepId)
+            }
             return {
               content: renderToolOutput({
-                question,
+                question: questionView(question),
                 routeTo: question.requiredAuthority,
               }),
             }
@@ -2317,7 +2468,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           const questions = await readQuestions(ctx, workflowId)
           return {
             content: renderToolOutput({
-              questions: relevantQuestions(questions, workflow, tool.agent, stepId),
+              questions: relevantQuestions(questions, workflow, tool.agent, stepId).map(questionView),
             }),
           }
         },
@@ -2326,7 +2477,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       addLoomTool({
         name: "oq_answer",
         description:
-          "Answer a shared question. Agent-owned questions require the named authority. User-owned answers are recorded by General with source=user.",
+          "Answer a shared question as its named responder role. Any Loom role may be an OQ responder. Reviewer/Critic OQ answers are not gate verdicts. User-owned answers are recorded by General with source=user.",
         input: {
           type: "object",
           properties: {
@@ -2351,8 +2502,12 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           const workflow = await readBoundWorkflow(ctx, tool.sessionID, value.workflowId, ensureLegacySession)
           if (!workflow) return { content: renderToolOutput({ error: "Workflow not found or current session is not bound to it." }) }
 
-          if (value.source === "agent" && !(await exactOqBinding(ctx, tool.sessionID, value.workflowId, value.questionId))) {
-            return { content: renderToolOutput({ error: "Agent OQ answers require the exact OQ dispatch-grant attachment." }) }
+          if (
+            value.source === "agent" &&
+            tool.agent !== "general" &&
+            !(await exactOqBinding(ctx, tool.sessionID, value.workflowId, value.questionId))
+          ) {
+            return { content: renderToolOutput({ error: "Child-agent OQ answers require the exact OQ dispatch-grant attachment." }) }
           }
 
           try {
@@ -2371,7 +2526,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               await bumpWorkflowRevisionLocked(ctx, runtime, value.workflowId)
               return current
             })
-            return { content: renderToolOutput({ question }) }
+            return { content: renderToolOutput({ question: questionView(question) }) }
           } catch (error) {
             return { content: renderToolOutput({ error: error instanceof Error ? error.message : String(error) }) }
           }
@@ -2430,7 +2585,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               await bumpWorkflowRevisionLocked(ctx, runtime, value.workflowId)
               return currentQuestion
             })
-            return { content: renderToolOutput({ question }) }
+            return { content: renderToolOutput({ question: questionView(question) }) }
           } catch (error) {
             return { content: renderToolOutput({ error: error instanceof Error ? error.message : String(error) }) }
           }
@@ -2478,7 +2633,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               await bumpWorkflowRevisionLocked(ctx, runtime, value.workflowId)
               return current
             })
-            return { content: renderToolOutput({ question }) }
+            return { content: renderToolOutput({ question: questionView(question) }) }
           } catch (error) {
             return { content: renderToolOutput({ error: error instanceof Error ? error.message : String(error) }) }
           }
@@ -3422,13 +3577,90 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       addLoomTool({
         name: "work_plan",
         description:
-          "Create or replace the persistent Objective/Phase/Wave/Task plan for the accepted product Objective. Planner only. Replacing an existing generation requires its exact current version and a reason.",
+          "Create or replace the persistent holistic Plan for the accepted Objective: goal, authority, risks, acceptance, relationships, correction routing, and rich Phase/Wave/Task contracts. Planner only. Replacing an existing generation requires its exact current version and a reason.",
         input: {
           type: "object",
           properties: {
             workflowId: { type: "string" },
             expectedVersion: { type: "number" },
             replaceReason: { type: "string" },
+            goal: { type: "string" },
+            assumptions: { type: "array", items: { type: "string" } },
+            outOfScope: { type: "array", items: { type: "string" } },
+            authorityRefs: { type: "array", items: { type: "string" } },
+            obligations: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  id: { type: "string" },
+                  sourceRef: { type: "string" },
+                  statement: { type: "string" },
+                  disposition: {
+                    type: "string",
+                    enum: ["implement", "already-satisfied", "authorized-defer", "out-of-scope", "blocked"],
+                  },
+                  taskIds: { type: "array", items: { type: "string" } },
+                  verification: { type: "array", items: { type: "string" } },
+                  dispositionAuthorityRef: { type: "string" },
+                },
+                required: ["id", "sourceRef", "statement", "disposition", "taskIds", "verification"],
+                additionalProperties: false,
+              },
+            },
+            riskBoundaries: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  id: { type: "string" },
+                  title: { type: "string" },
+                  description: { type: "string" },
+                  taskIds: { type: "array", items: { type: "string" } },
+                },
+                required: ["id", "title", "description", "taskIds"],
+                additionalProperties: false,
+              },
+            },
+            acceptanceCoverage: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  id: { type: "string" },
+                  title: { type: "string" },
+                  criterion: { type: "string" },
+                  taskIds: { type: "array", items: { type: "string" } },
+                },
+                required: ["id", "title", "criterion", "taskIds"],
+                additionalProperties: false,
+              },
+            },
+            relationships: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  summary: { type: "string" },
+                  taskIds: { type: "array", items: { type: "string" } },
+                },
+                required: ["summary", "taskIds"],
+                additionalProperties: false,
+              },
+            },
+            correctionRouting: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  condition: { type: "string" },
+                  routeTo: { type: "string" },
+                  taskId: { type: "string" },
+                },
+                required: ["condition", "routeTo"],
+                additionalProperties: false,
+              },
+            },
             phases: {
               type: "array",
               items: {
@@ -3436,6 +3668,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 properties: {
                   id: { type: "string" },
                   title: { type: "string" },
+                  objective: { type: "string" },
                   waves: {
                     type: "array",
                     items: {
@@ -3443,6 +3676,8 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                       properties: {
                         id: { type: "string" },
                         title: { type: "string" },
+                        objective: { type: "string" },
+                        constraints: { type: "array", items: { type: "string" } },
                         tasks: {
                           type: "array",
                           items: {
@@ -3451,24 +3686,55 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                               id: { type: "string" },
                               title: { type: "string" },
                               objective: { type: "string" },
+                              rationale: { type: "string" },
                               dependsOn: { type: "array", items: { type: "string" } },
+                              authorityRefs: { type: "array", items: { type: "string" } },
+                              constraints: { type: "array", items: { type: "string" } },
+                              acceptanceCriteria: { type: "array", items: { type: "string" } },
+                              subtasks: { type: "array", items: { type: "string" } },
+                              integration: { type: "array", items: { type: "string" } },
+                              verify: { type: "array", items: { type: "string" } },
                             },
-                            required: ["id", "title", "objective", "dependsOn"],
+                            required: [
+                              "id",
+                              "title",
+                              "objective",
+                              "rationale",
+                              "dependsOn",
+                              "authorityRefs",
+                              "constraints",
+                              "acceptanceCriteria",
+                              "subtasks",
+                              "integration",
+                              "verify",
+                            ],
                             additionalProperties: false,
                           },
                         },
                       },
-                      required: ["id", "title", "tasks"],
+                      required: ["id", "title", "objective", "constraints", "tasks"],
                       additionalProperties: false,
                     },
                   },
                 },
-                required: ["id", "title", "waves"],
+                required: ["id", "title", "objective", "waves"],
                 additionalProperties: false,
               },
             },
           },
-          required: ["workflowId", "phases"],
+          required: [
+            "workflowId",
+            "goal",
+            "assumptions",
+            "outOfScope",
+            "authorityRefs",
+            "obligations",
+            "riskBoundaries",
+            "acceptanceCoverage",
+            "relationships",
+            "correctionRouting",
+            "phases",
+          ],
           additionalProperties: false,
         },
         options: { namespace: "loom", codemode: false },
@@ -3477,11 +3743,10 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             return { content: renderToolOutput({ error: "Only planner may define the persistent work plan." }) }
           }
 
-          const value = input as {
+          const value = input as WorkPlanDefinition & {
             workflowId: string
             expectedVersion?: number
             replaceReason?: string
-            phases: WorkPlanPhase[]
           }
           const workflow = await readBoundWorkflow(ctx, tool.sessionID, value.workflowId, ensureLegacySession)
           if (!workflow) return { content: renderToolOutput({ error: "Workflow not found." }) }
@@ -3519,7 +3784,23 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 }
               }
 
-              materializeWorkPlan(work, workflow.id, value.phases, now)
+              materializeWorkPlan(
+                work,
+                workflow.id,
+                {
+                  goal: value.goal,
+                  assumptions: value.assumptions,
+                  outOfScope: value.outOfScope,
+                  authorityRefs: value.authorityRefs,
+                  obligations: value.obligations,
+                  riskBoundaries: value.riskBoundaries,
+                  acceptanceCoverage: value.acceptanceCoverage,
+                  relationships: value.relationships,
+                  correctionRouting: value.correctionRouting,
+                  phases: value.phases,
+                },
+                now,
+              )
               await ctx.storage.set(workKey(work.objectiveId), work)
               workflow.work = { objectiveId: work.objectiveId, generation: work.generation }
               await persistWorkflowMutationLocked(ctx, runtime, workflow)
@@ -3532,6 +3813,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 version: result.version,
                 generation: result.generation,
                 tree: workTree(result),
+                plan: workPlanContext(result, undefined, "full"),
                 nextRunnableWaves: nextRunnableWaves(result),
               }),
             }
@@ -3542,20 +3824,625 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       })
 
       addLoomTool({
-        name: "work_status",
+        name: "work_amend",
         description:
-          "Inspect persistent Objective/Phase/Wave/Task progress and the next dependency-eligible Waves. Uses the current workflow when no id is supplied.",
+          "Atomically amend a bounded part of the current Plan generation without replacing the whole Plan. Planner only. Pending/unclaimed Tasks may be edited/added/removed; completed semantic contracts cannot be rewritten. Supports local Phase/Wave/Task/subtask changes plus matching Plan metadata updates.",
+        input: {
+          type: "object",
+          properties: {
+            workflowId: { type: "string" },
+            questionId: { type: "string" },
+            expectedVersion: { type: "number" },
+            reason: { type: "string" },
+            planPatch: {
+              type: "object",
+              properties: {
+                goal: { type: "string" },
+                assumptions: { type: "array", items: { type: "string" } },
+                outOfScope: { type: "array", items: { type: "string" } },
+                authorityRefs: { type: "array", items: { type: "string" } },
+                obligations: {
+                  type: "array",
+                  items: {
+                    type: "object",
+                    properties: {
+                      id: { type: "string" },
+                      sourceRef: { type: "string" },
+                      statement: { type: "string" },
+                      disposition: {
+                        type: "string",
+                        enum: ["implement", "already-satisfied", "authorized-defer", "out-of-scope", "blocked"],
+                      },
+                      taskIds: { type: "array", items: { type: "string" } },
+                      verification: { type: "array", items: { type: "string" } },
+                      dispositionAuthorityRef: { type: "string" },
+                    },
+                    required: ["id", "sourceRef", "statement", "disposition", "taskIds", "verification"],
+                    additionalProperties: false,
+                  },
+                },
+                riskBoundaries: {
+                  type: "array",
+                  items: {
+                    type: "object",
+                    properties: {
+                      id: { type: "string" },
+                      title: { type: "string" },
+                      description: { type: "string" },
+                      taskIds: { type: "array", items: { type: "string" } },
+                    },
+                    required: ["id", "title", "description", "taskIds"],
+                    additionalProperties: false,
+                  },
+                },
+                acceptanceCoverage: {
+                  type: "array",
+                  items: {
+                    type: "object",
+                    properties: {
+                      id: { type: "string" },
+                      title: { type: "string" },
+                      criterion: { type: "string" },
+                      taskIds: { type: "array", items: { type: "string" } },
+                    },
+                    required: ["id", "title", "criterion", "taskIds"],
+                    additionalProperties: false,
+                  },
+                },
+                relationships: {
+                  type: "array",
+                  items: {
+                    type: "object",
+                    properties: {
+                      summary: { type: "string" },
+                      taskIds: { type: "array", items: { type: "string" } },
+                    },
+                    required: ["summary", "taskIds"],
+                    additionalProperties: false,
+                  },
+                },
+                correctionRouting: {
+                  type: "array",
+                  items: {
+                    type: "object",
+                    properties: {
+                      condition: { type: "string" },
+                      routeTo: { type: "string" },
+                      taskId: { type: "string" },
+                    },
+                    required: ["condition", "routeTo"],
+                    additionalProperties: false,
+                  },
+                },
+              },
+              additionalProperties: false,
+            },
+            operations: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  action: {
+                    type: "string",
+                    enum: [
+                      "patch-phase",
+                      "patch-wave",
+                      "patch-task",
+                      "add-phase",
+                      "remove-phase",
+                      "add-wave",
+                      "remove-wave",
+                      "add-task",
+                      "remove-task",
+                    ],
+                  },
+                  phaseId: { type: "string" },
+                  waveId: { type: "string" },
+                  taskId: { type: "string" },
+                  patch: {
+                    type: "object",
+                    properties: {
+                      title: { type: "string" },
+                      objective: { type: "string" },
+                      rationale: { type: "string" },
+                      dependsOn: { type: "array", items: { type: "string" } },
+                      authorityRefs: { type: "array", items: { type: "string" } },
+                      constraints: { type: "array", items: { type: "string" } },
+                      acceptanceCriteria: { type: "array", items: { type: "string" } },
+                      subtasks: { type: "array", items: { type: "string" } },
+                      integration: { type: "array", items: { type: "string" } },
+                      verify: { type: "array", items: { type: "string" } },
+                    },
+                    additionalProperties: false,
+                  },
+                  task: {
+                    type: "object",
+                    properties: {
+                  id: { type: "string" },
+                  title: { type: "string" },
+                  objective: { type: "string" },
+                  rationale: { type: "string" },
+                  dependsOn: { type: "array", items: { type: "string" } },
+                  authorityRefs: { type: "array", items: { type: "string" } },
+                  constraints: { type: "array", items: { type: "string" } },
+                  acceptanceCriteria: { type: "array", items: { type: "string" } },
+                  subtasks: { type: "array", items: { type: "string" } },
+                  integration: { type: "array", items: { type: "string" } },
+                  verify: { type: "array", items: { type: "string" } },
+                },
+                    required: [
+                      "id", "title", "objective", "rationale", "dependsOn", "authorityRefs",
+                      "constraints", "acceptanceCriteria", "subtasks", "integration",
+                      "verify",
+                    ],
+                    additionalProperties: false,
+                  },
+                  wave: {
+                    type: "object",
+                    properties: {
+                      id: { type: "string" },
+                      title: { type: "string" },
+                      objective: { type: "string" },
+                      constraints: { type: "array", items: { type: "string" } },
+                      tasks: {
+                        type: "array",
+                        items: {
+                          type: "object",
+                          properties: {
+                  id: { type: "string" },
+                  title: { type: "string" },
+                  objective: { type: "string" },
+                  rationale: { type: "string" },
+                  dependsOn: { type: "array", items: { type: "string" } },
+                  authorityRefs: { type: "array", items: { type: "string" } },
+                  constraints: { type: "array", items: { type: "string" } },
+                  acceptanceCriteria: { type: "array", items: { type: "string" } },
+                  subtasks: { type: "array", items: { type: "string" } },
+                  integration: { type: "array", items: { type: "string" } },
+                  verify: { type: "array", items: { type: "string" } },
+                },
+                          required: [
+                            "id", "title", "objective", "rationale", "dependsOn", "authorityRefs",
+                            "constraints", "acceptanceCriteria", "subtasks", "integration",
+                            "verify",
+                          ],
+                          additionalProperties: false,
+                        },
+                      },
+                    },
+                    required: ["id", "title", "objective", "constraints", "tasks"],
+                    additionalProperties: false,
+                  },
+                  phase: {
+                    type: "object",
+                    properties: {
+                      id: { type: "string" },
+                      title: { type: "string" },
+                      objective: { type: "string" },
+                      waves: {
+                        type: "array",
+                        items: {
+                          type: "object",
+                          properties: {
+                            id: { type: "string" },
+                            title: { type: "string" },
+                            objective: { type: "string" },
+                            constraints: { type: "array", items: { type: "string" } },
+                            tasks: {
+                              type: "array",
+                              items: {
+                                type: "object",
+                                properties: {
+                  id: { type: "string" },
+                  title: { type: "string" },
+                  objective: { type: "string" },
+                  rationale: { type: "string" },
+                  dependsOn: { type: "array", items: { type: "string" } },
+                  authorityRefs: { type: "array", items: { type: "string" } },
+                  constraints: { type: "array", items: { type: "string" } },
+                  acceptanceCriteria: { type: "array", items: { type: "string" } },
+                  subtasks: { type: "array", items: { type: "string" } },
+                  integration: { type: "array", items: { type: "string" } },
+                  verify: { type: "array", items: { type: "string" } },
+                },
+                                required: [
+                                  "id", "title", "objective", "rationale", "dependsOn", "authorityRefs",
+                                  "constraints", "acceptanceCriteria", "subtasks", "integration",
+                                  "verify",
+                                ],
+                                additionalProperties: false,
+                              },
+                            },
+                          },
+                          required: ["id", "title", "objective", "constraints", "tasks"],
+                          additionalProperties: false,
+                        },
+                      },
+                    },
+                    required: ["id", "title", "objective", "waves"],
+                    additionalProperties: false,
+                  },
+                },
+                required: ["action"],
+                additionalProperties: false,
+              },
+            },
+          },
+          required: ["workflowId", "expectedVersion", "reason", "operations"],
+          additionalProperties: false,
+        },
+        options: { namespace: "loom", codemode: false },
+        execute: async (input, tool) => {
+          if (tool.agent !== "planner") {
+            return { content: renderToolOutput({ error: "Only planner may amend the persistent Plan." }) }
+          }
+          const value = input as {
+            workflowId: string
+            questionId?: string
+            expectedVersion: number
+            reason: string
+            operations: WorkPlanAmendOperation[]
+            planPatch?: WorkPlanTopLevelPatch
+          }
+          const workflow = await readBoundWorkflow(ctx, tool.sessionID, value.workflowId, ensureLegacySession)
+          if (!workflow?.work) {
+            return { content: renderToolOutput({ error: "Workflow has no persistent Plan to amend." }) }
+          }
+          const attachedPlanStep =
+            (await exactStepBinding(ctx, tool.sessionID, workflow.id, "plan")) &&
+            runnable(workflow).some((step) => step.id === "plan")
+          let attachedPlannerOq = false
+          let plannerQuestion: OpenQuestion | undefined
+          if (value.questionId) {
+            plannerQuestion = (await ctx.storage.get(
+              oqKey(workflow.id, value.questionId),
+            )) as OpenQuestion | undefined
+            attachedPlannerOq =
+              Boolean(plannerQuestion) &&
+              plannerQuestion!.requiredAuthority === "planner" &&
+              (await exactOqBinding(ctx, tool.sessionID, workflow.id, value.questionId))
+          }
+          if (!attachedPlanStep && !attachedPlannerOq) {
+            return {
+              content: renderToolOutput({
+                error:
+                  "Plan amendment requires either the runnable attached plan step or an exact Planner OQ attachment. Use a Planner OQ for bounded mid-plan repair; reopen plan for full replanning.",
+              }),
+            }
+          }
+
+          try {
+            const result = await withWorkflowWorkLocks(
+              runtime,
+              workflow.id,
+              workflow.work.objectiveId,
+              async () => {
+                await validateWorkflowMutationLocked(ctx, runtime, workflow)
+                const work = await readWork(ctx, workflow.work!.objectiveId)
+                if (!work) throw new Error("Persistent work hierarchy not found.")
+                if (work.generation !== workflow.work!.generation) {
+                  throw new Error("Workflow is bound to a stale Plan generation.")
+                }
+                if (plannerQuestion?.work) {
+                  if (
+                    plannerQuestion.work.objectiveId !== work.objectiveId ||
+                    plannerQuestion.work.generation !== work.generation
+                  ) {
+                    throw new Error(
+                      "Planner OQ belongs to an older Objective/Plan generation. Reconcile it and use a current planning boundary before mutation.",
+                    )
+                  }
+                  const latestPlan = workPlanContext(work, undefined, "focused", work.generation)
+                  if (plannerQuestion.work.revision === undefined) {
+                    if (latestPlan) {
+                      throw new Error(
+                        "Legacy Planner OQ has no rich Plan revision and cannot mutate the adopted Plan. Use a fresh current Planner boundary.",
+                      )
+                    }
+                  } else if (plannerQuestion.work.taskId) {
+                    const historicalFingerprint = taskSemanticFingerprintAtRevision(
+                      work,
+                      plannerQuestion.work.taskId,
+                      work.generation,
+                      plannerQuestion.work.revision,
+                    )
+                    const currentFingerprint = taskSemanticFingerprintAtRevision(
+                      work,
+                      plannerQuestion.work.taskId,
+                      work.generation,
+                    )
+                    if (
+                      !historicalFingerprint ||
+                      !currentFingerprint ||
+                      historicalFingerprint !== currentFingerprint
+                    ) {
+                      throw new Error(
+                        "Planner OQ Task semantics changed after the question was raised. Reconcile the historical OQ and raise a fresh Planner question before mutation.",
+                      )
+                    }
+                  } else if (latestPlan?.revision !== plannerQuestion.work.revision) {
+                    throw new Error(
+                      "Planner OQ refers to an older Plan revision. Reconcile it and use a fresh current Planner boundary before Plan-wide mutation.",
+                    )
+                  }
+                }
+                const currentTaskIds = plannedTaskSteps(workflow).map((step) => step.task!.id)
+                const priorFingerprint =
+                  currentTaskIds.length > 0
+                    ? workflowTaskSemanticFingerprint(
+                        work,
+                        currentTaskIds,
+                        workflow.work!.generation,
+                      )
+                    : undefined
+                const amended = amendWorkPlan(
+                  work,
+                  {
+                    expectedVersion: value.expectedVersion,
+                    reason: value.reason,
+                    by: tool.agent,
+                    operations: value.operations,
+                    planPatch: value.planPatch,
+                  },
+                  new Date().toISOString(),
+                )
+                const currentFingerprint =
+                  currentTaskIds.length > 0
+                    ? workflowTaskSemanticFingerprint(
+                        work,
+                        currentTaskIds,
+                        workflow.work!.generation,
+                      )
+                    : undefined
+                const taskPlanRefreshRequired =
+                  Boolean(priorFingerprint && currentFingerprint && priorFingerprint !== currentFingerprint)
+                if (workflow.work && currentTaskIds.length > 0 && !taskPlanRefreshRequired) {
+                  workflow.work.taskPlanRevision = amended.plan.revision
+                  workflow.work.taskPlanFingerprint = currentFingerprint
+                }
+                await ctx.storage.set(workKey(work.objectiveId), work)
+                await persistWorkflowMutationLocked(ctx, runtime, workflow)
+                return { ...amended, taskPlanRefreshRequired }
+              },
+            )
+
+            return {
+              content: renderToolOutput({
+                amended: true,
+                objectiveId: result.hierarchy.objectiveId,
+                version: result.hierarchy.version,
+                generation: result.hierarchy.generation,
+                revision: result.plan.revision,
+                amendment: result.amendment,
+                changedTaskIds: result.changedTaskIds,
+                changedWaveKeys: result.changedWaveKeys,
+                taskPlanRefreshRequired: result.taskPlanRefreshRequired,
+                tree: workTree(result.hierarchy),
+                plan: workPlanContext(result.hierarchy, undefined, "full"),
+                nextRunnableWaves: nextRunnableWaves(result.hierarchy),
+              }),
+            }
+          } catch (error) {
+            return { content: renderToolOutput({ error: error instanceof Error ? error.message : String(error) }) }
+          }
+        },
+      })
+
+      addLoomTool({
+        name: "work_invalidate",
+        description:
+          "Invalidate the current Plan generation so it cannot execute further. Planner only; callable from a reopened plan step or exact Planner OQ. Live claims must be released first. Existing history is preserved; General then reopens planning and loom_work_plan creates a fresh generation.",
+        input: {
+          type: "object",
+          properties: {
+            workflowId: { type: "string" },
+            questionId: { type: "string" },
+            expectedVersion: { type: "number" },
+            reason: { type: "string" },
+          },
+          required: ["workflowId", "expectedVersion", "reason"],
+          additionalProperties: false,
+        },
+        options: { namespace: "loom", codemode: false },
+        execute: async (input, tool) => {
+          if (tool.agent !== "planner") {
+            return { content: renderToolOutput({ error: "Only planner may invalidate the persistent Plan." }) }
+          }
+          const value = input as { workflowId: string; questionId?: string; expectedVersion: number; reason: string }
+          const workflow = await readBoundWorkflow(ctx, tool.sessionID, value.workflowId, ensureLegacySession)
+          if (!workflow?.work) {
+            return { content: renderToolOutput({ error: "Workflow has no persistent Plan to invalidate." }) }
+          }
+          const attachedPlanStep =
+            (await exactStepBinding(ctx, tool.sessionID, workflow.id, "plan")) &&
+            runnable(workflow).some((step) => step.id === "plan")
+          let attachedPlannerOq = false
+          let plannerQuestion: OpenQuestion | undefined
+          if (value.questionId) {
+            plannerQuestion = (await ctx.storage.get(
+              oqKey(workflow.id, value.questionId),
+            )) as OpenQuestion | undefined
+            attachedPlannerOq =
+              Boolean(plannerQuestion) &&
+              plannerQuestion!.requiredAuthority === "planner" &&
+              (await exactOqBinding(ctx, tool.sessionID, workflow.id, value.questionId))
+          }
+          if (!attachedPlanStep && !attachedPlannerOq) {
+            return {
+              content: renderToolOutput({
+                error:
+                  "Plan invalidation requires either the runnable attached plan step or an exact Planner OQ attachment. Release/cancel live claims before invalidating.",
+              }),
+            }
+          }
+
+          try {
+            const result = await withWorkflowWorkLocks(
+              runtime,
+              workflow.id,
+              workflow.work.objectiveId,
+              async () => {
+                await validateWorkflowMutationLocked(ctx, runtime, workflow)
+                const work = await readWork(ctx, workflow.work!.objectiveId)
+                if (!work) throw new Error("Persistent work hierarchy not found.")
+                if (work.generation !== workflow.work!.generation) {
+                  throw new Error("Workflow is bound to a stale Plan generation.")
+                }
+                if (plannerQuestion?.work) {
+                  const latestPlan = workPlanContext(work, undefined, "focused", work.generation)
+                  if (
+                    plannerQuestion.work.objectiveId !== work.objectiveId ||
+                    plannerQuestion.work.generation !== work.generation ||
+                    plannerQuestion.work.revision === undefined ||
+                    plannerQuestion.work.revision !== latestPlan?.revision
+                  ) {
+                    throw new Error(
+                      "Plan invalidation cannot be authorized from a stale or legacy Planner OQ. Reconcile it and use the current plan step or a fresh Planner OQ.",
+                    )
+                  }
+                }
+                const invalidated = invalidateWorkPlan(
+                  work,
+                  {
+                    expectedVersion: value.expectedVersion,
+                    reason: value.reason,
+                    by: tool.agent,
+                  },
+                  new Date().toISOString(),
+                )
+                await ctx.storage.set(workKey(work.objectiveId), work)
+                await persistWorkflowMutationLocked(ctx, runtime, workflow)
+                return invalidated
+              },
+            )
+
+            return {
+              content: renderToolOutput({
+                invalidated: true,
+                objectiveId: result.hierarchy.objectiveId,
+                version: result.hierarchy.version,
+                generation: result.hierarchy.generation,
+                revision: result.plan.revision,
+                plan: workPlanContext(result.hierarchy, undefined, "full"),
+                next: "Create a fresh Plan generation with loom_work_plan.",
+              }),
+            }
+          } catch (error) {
+            return { content: renderToolOutput({ error: error instanceof Error ? error.message : String(error) }) }
+          }
+        },
+      })
+
+      addLoomTool({
+        name: "upgrade_status",
+        description:
+          "Inspect state-derived Loom compatibility actions for the current Objective after an upgrade. Read-only. Actions disappear automatically when authoritative state satisfies the new invariant; there is no acknowledgement/complete call.",
         input: {
           type: "object",
           properties: {
             workflowId: { type: "string" },
             objectiveId: { type: "string" },
+            taskId: { type: "string" },
+            revision: { type: "number" },
           },
           additionalProperties: false,
         },
         options: { namespace: "loom", codemode: false },
         execute: async (input, tool) => {
-          const value = input as { workflowId?: string; objectiveId?: string }
+          const value = input as {
+            workflowId?: string
+            objectiveId?: string
+            taskId?: string
+            revision?: number
+          }
+          if (value.revision !== undefined && !value.taskId) {
+            return {
+              content: renderToolOutput({
+                error: "Plan revision selection requires taskId; whole-Plan status always uses the latest revision.",
+              }),
+            }
+          }
+          let objectiveId = value.objectiveId
+
+          if (!objectiveId) {
+            const workflow = value.workflowId
+              ? await readBoundWorkflow(ctx, tool.sessionID, value.workflowId, ensureLegacySession)
+              : await activeWorkflow(ctx, tool.sessionID, ensureLegacySession)
+            objectiveId = workflow?.work?.objectiveId
+          }
+
+          if (!objectiveId) {
+            return {
+              content: renderToolOutput({
+                runtimeVersion: RUNTIME_STATE_VERSION,
+                upgradeState: "current",
+                actions: [],
+              }),
+            }
+          }
+
+          if (value.objectiveId) {
+            const active = await activeWorkflow(ctx, tool.sessionID, ensureLegacySession)
+            if (!active?.work || active.work.objectiveId !== value.objectiveId) {
+              return {
+                content: renderToolOutput({
+                  error: "Current session is not bound to a workflow for this Objective.",
+                }),
+              }
+            }
+          }
+
+          const work = await readWork(ctx, objectiveId)
+          if (!work) {
+            return {
+              content: renderToolOutput({
+                error: "Persistent work Objective not found.",
+              }),
+            }
+          }
+
+          const actions = objectiveUpgradeActions(work)
+          return {
+            content: renderToolOutput({
+              runtimeVersion: RUNTIME_STATE_VERSION,
+              upgradeState: actions.length > 0 ? "action-required" : "current",
+              objectiveId: work.objectiveId,
+              generation: work.generation,
+              actions,
+            }),
+          }
+        },
+      })
+
+      addLoomTool({
+        name: "work_status",
+        description:
+          "Inspect persistent Objective progress and the bounded current holistic Plan. Pass taskId to retrieve one exact persistent Plan Task contract (including future Waves) without loading the whole rich Plan; revision optionally selects an immutable revision in the current generation.",
+        input: {
+          type: "object",
+          properties: {
+            workflowId: { type: "string" },
+            objectiveId: { type: "string" },
+            taskId: { type: "string" },
+            revision: { type: "number" },
+          },
+          additionalProperties: false,
+        },
+        options: { namespace: "loom", codemode: false },
+        execute: async (input, tool) => {
+          const value = input as {
+            workflowId?: string
+            objectiveId?: string
+            taskId?: string
+            revision?: number
+          }
+          if (value.revision !== undefined && !value.taskId) {
+            return {
+              content: renderToolOutput({
+                error: "Plan revision selection requires taskId; whole-Plan status always uses the latest revision.",
+              }),
+            }
+          }
           let objectiveId = value.objectiveId
 
           if (!objectiveId) {
@@ -3579,12 +4466,33 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           const work = await readWork(ctx, objectiveId)
           if (!work) return { content: renderToolOutput({ error: "Persistent work Objective not found." }) }
 
+          const plan = value.taskId
+            ? workPlanContext(
+                work,
+                value.taskId,
+                "focused",
+                work.generation,
+                value.revision,
+              )
+            : workPlanContext(work, undefined, "full")
+          if (value.taskId && !plan?.focus?.task) {
+            return {
+              content: renderToolOutput({
+                error:
+                  value.revision === undefined
+                    ? `Persistent Plan Task ${value.taskId} not found in the current generation.`
+                    : `Persistent Plan Task ${value.taskId} not found in current generation revision ${value.revision}.`,
+              }),
+            }
+          }
+
           return {
             content: renderToolOutput({
               objectiveId: work.objectiveId,
               version: work.version,
               generation: work.generation,
               tree: workTree(work),
+              plan,
               nextRunnableWaves: nextRunnableWaves(work),
             }),
           }
@@ -3699,7 +4607,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       addLoomTool({
         name: "task_plan",
         description:
-          "Create the bounded Worker DAG for exactly one remaining runnable Wave from the persistent work plan. Planner only. Tasks become real workflow steps with immutable write scopes.",
+          "Create the bounded Worker DAG for exactly one remaining runnable Wave. Planner only. Executable Task semantics must match the persistent rich Task contracts; this step adds immutable write scopes and skill recommendations.",
         input: {
           type: "object",
           properties: {
@@ -3712,12 +4620,32 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                   id: { type: "string" },
                   title: { type: "string" },
                   objective: { type: "string" },
+                  rationale: { type: "string" },
                   dependsOn: { type: "array", items: { type: "string" } },
+                  authorityRefs: { type: "array", items: { type: "string" } },
+                  constraints: { type: "array", items: { type: "string" } },
+                  acceptanceCriteria: { type: "array", items: { type: "string" } },
+                  subtasks: { type: "array", items: { type: "string" } },
+                  integration: { type: "array", items: { type: "string" } },
                   write: { type: "array", items: { type: "string" } },
                   skills: { type: "array", items: { type: "string" } },
                   verify: { type: "array", items: { type: "string" } },
                 },
-                required: ["id", "title", "objective", "dependsOn", "write", "skills", "verify"],
+                required: [
+                  "id",
+                  "title",
+                  "objective",
+                  "rationale",
+                  "dependsOn",
+                  "authorityRefs",
+                  "constraints",
+                  "acceptanceCriteria",
+                  "subtasks",
+                  "integration",
+                  "write",
+                  "skills",
+                  "verify",
+                ],
                 additionalProperties: false,
               },
             },
@@ -3794,6 +4722,14 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 }
 
                 const steps = applyTaskPlan(workflow, tasks)
+                const currentPlan = workPlanContext(work, undefined, "full", workflow.work!.generation)
+                if (!currentPlan) throw new Error("Persistent semantic Plan snapshot not found.")
+                workflow.work!.taskPlanRevision = currentPlan.revision
+                workflow.work!.taskPlanFingerprint = workflowTaskSemanticFingerprint(
+                  work,
+                  tasks.map((task) => task.id),
+                  workflow.work!.generation,
+                )
                 const wave = claimWorkflowWave(
                   work,
                   workflow.id,
@@ -3856,19 +4792,29 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
       addLoomTool({
         name: "task_status",
-        description: "Inspect planned Worker tasks, status, dependencies, scopes, skills, and currently runnable tasks.",
+        description:
+          "Inspect planned Worker Task contracts and runtime status. Pass taskId to retrieve one exact Task without loading the whole Wave; omit it only when the whole current Wave is materially needed.",
         input: {
           type: "object",
-          properties: { workflowId: { type: "string" } },
+          properties: {
+            workflowId: { type: "string" },
+            taskId: { type: "string" },
+          },
           required: ["workflowId"],
           additionalProperties: false,
         },
         options: { namespace: "loom", codemode: false },
         execute: async (input, tool) => {
-          const { workflowId } = input as { workflowId: string }
+          const { workflowId, taskId } = input as { workflowId: string; taskId?: string }
           const workflow = await readBoundWorkflow(ctx, tool.sessionID, workflowId, ensureLegacySession)
           if (!workflow) return { content: renderToolOutput({ error: "Workflow not found." }) }
-          const tasks = plannedTaskSteps(workflow)
+          const allTasks = plannedTaskSteps(workflow)
+          const tasks = taskId
+            ? allTasks.filter((step) => step.task?.id === taskId)
+            : allTasks
+          if (taskId && tasks.length === 0) {
+            return { content: renderToolOutput({ error: `Planned Task ${taskId} not found.` }) }
+          }
           const runnableIDs = new Set(runnable(workflow).map((step) => step.id))
           return {
             content: renderToolOutput({
@@ -3995,6 +4941,13 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             if (question.requiredAuthority === "user") {
               return { content: renderToolOutput({ error: "User-owned OQs are not dispatched to child agents." }) }
             }
+            if (question.requiredAuthority === "general") {
+              return {
+                content: renderToolOutput({
+                  error: "General-owned OQs are answered directly by the bound General session with loom_oq_answer.",
+                }),
+              }
+            }
             expectedAgent = question.requiredAuthority
           }
 
@@ -4023,6 +4976,21 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                     throw new Error(
                       `Worker step ${value.stepId} has no declared write scope. Call loom_task_scope first.`,
                     )
+                  }
+                  if (current.work && step.task) {
+                    const work = await readWork(ctx, current.work.objectiveId)
+                    const taskIds = plannedTaskSteps(current).map((taskStep) => taskStep.task!.id)
+                    const currentFingerprint = work
+                      ? workflowTaskSemanticFingerprint(work, taskIds, current.work.generation)
+                      : undefined
+                    if (
+                      currentFingerprint &&
+                      current.work.taskPlanFingerprint !== currentFingerprint
+                    ) {
+                      throw new Error(
+                        "Worker Task DAG is stale against its semantic Task/Wave contract. Reopen planning and re-run loom_task_plan before dispatch.",
+                      )
+                    }
                   }
                 }
               } else {
@@ -4117,7 +5085,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       addLoomTool({
         name: "attach",
         description:
-          "Consume a General-issued one-use grant and attach the current child session to its exact Loom workflow step or OQ.",
+          "Consume a General-issued one-use grant and attach the current child session to its exact Loom workflow step or OQ, including the relevant Task/holistic Plan context when available.",
         input: {
           type: "object",
           properties: {
@@ -4153,15 +5121,34 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             ...(observedBinding && observedBinding !== value.workflowId
               ? [{ aggregate: "workflow", resourceIdentity: observedBinding }]
               : []),
-            ...(tool.agent === "worker" && value.stepId && targetSnapshot.work
+            ...(targetSnapshot.work
               ? [{ aggregate: "work", resourceIdentity: targetSnapshot.work.objectiveId }]
               : []),
           ]
 
           let scope: TaskScope | undefined
           let task: TaskSpec | undefined
+          let taskOutcome: string | undefined
           let acceptedOutcome: string | undefined
           let acceptedAuthority: string | undefined
+          let planContext: ReturnType<typeof workPlanContext> | undefined
+          let legacyTaskContext:
+            | {
+                taskId: string
+                title: string
+                objective?: string
+                status: string
+                dependsOn: string[]
+                result?: {
+                  workflowId: string
+                  summary?: string
+                  evidenceClaimIds: string[]
+                  evidenceClaimsOmitted?: number
+                  completedAt: string
+                }
+              }
+            | undefined
+          let upgradeActions: ReturnType<typeof objectiveUpgradeActions> | undefined
 
           try {
             await withRuntimeLocks(runtime, resources, async () => {
@@ -4189,18 +5176,49 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 }
 
                 task = step.task
-                acceptedOutcome = step.task?.objective ?? workflow.request
+                taskOutcome = step.task?.objective
+                acceptedOutcome = workflow.request
                 acceptedAuthority = workflow.anchor
+
+                let work: WorkHierarchy | undefined
+                if (workflow.work) {
+                  if (targetSnapshot.work?.objectiveId !== workflow.work.objectiveId) {
+                    throw new Error("Workflow work binding changed concurrently; retry attachment.")
+                  }
+                  work = await readWork(ctx, workflow.work.objectiveId)
+                  if (!work) throw new Error("Persistent work hierarchy not found.")
+                  planContext =
+                    workPlanContext(
+                      work,
+                      step.task?.id,
+                      tool.agent === "reviewer" || tool.agent === "critic" ? "full" : "focused",
+                      workflow.work.generation,
+                    ) ?? undefined
+                  if (tool.agent === "planner") {
+                    const pending = objectiveUpgradeActions(work)
+                    if (pending.length > 0) upgradeActions = pending
+                  }
+                }
+
                 if (tool.agent === "worker") {
                   scope = (await ctx.storage.get(scopeKey(value.workflowId, value.stepId))) as TaskScope | undefined
                   if (!scope) throw new Error("Worker step has no declared task scope.")
 
-                  if (step.task && workflow.work) {
-                    if (targetSnapshot.work?.objectiveId !== workflow.work.objectiveId) {
-                      throw new Error("Workflow work binding changed concurrently; retry attachment.")
+                  if (step.task && workflow.work && work) {
+                    const taskIds = plannedTaskSteps(workflow).map((taskStep) => taskStep.task!.id)
+                    const currentFingerprint = workflowTaskSemanticFingerprint(
+                      work,
+                      taskIds,
+                      workflow.work.generation,
+                    )
+                    if (
+                      currentFingerprint &&
+                      workflow.work.taskPlanFingerprint !== currentFingerprint
+                    ) {
+                      throw new Error(
+                        "Worker Task DAG is stale against its semantic Task/Wave contract. Reopen planning and re-run loom_task_plan before attachment.",
+                      )
                     }
-                    const work = await readWork(ctx, workflow.work.objectiveId)
-                    if (!work) throw new Error("Persistent work hierarchy not found.")
                     assertWaveClaimForTasks(
                       work,
                       workflow.id,
@@ -4218,6 +5236,62 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 }
                 if (question.requiredAuthority !== tool.agent) {
                   throw new Error(`Question requires ${question.requiredAuthority}, not ${tool.agent}.`)
+                }
+
+                acceptedOutcome = workflow.request
+                acceptedAuthority = workflow.anchor
+                const workBinding = question.work ?? workflow.work
+                if (workBinding) {
+                  const work = await readWork(ctx, workBinding.objectiveId)
+                  if (work) {
+                    planContext =
+                      workPlanContext(
+                        work,
+                        question.work?.taskId,
+                        "focused",
+                        workBinding.generation,
+                        question.work?.revision,
+                      ) ?? undefined
+                    if (!planContext && question.work?.taskId) {
+                      const legacyTask = work.nodes.find(
+                        (node) =>
+                          node.generation === workBinding.generation &&
+                          node.type === "task" &&
+                          node.logicalId === question.work!.taskId,
+                      )
+                      if (legacyTask) {
+                        const evidenceClaimIds = legacyTask.result?.evidenceClaimIds ?? []
+                        legacyTaskContext = {
+                          taskId: legacyTask.logicalId,
+                          title: clippedSummary(legacyTask.title, 320) ?? legacyTask.logicalId,
+                          ...(legacyTask.objective
+                            ? { objective: clippedSummary(legacyTask.objective, 320) }
+                            : {}),
+                          status: legacyTask.status,
+                          dependsOn: [...(legacyTask.dependsOn ?? [])].slice(0, 24),
+                          ...(legacyTask.result
+                            ? {
+                                result: {
+                                  workflowId: legacyTask.result.workflowId,
+                                  ...(legacyTask.result.summary
+                                    ? { summary: clippedSummary(legacyTask.result.summary, 320) }
+                                    : {}),
+                                  evidenceClaimIds: evidenceClaimIds.slice(0, 12),
+                                  ...(evidenceClaimIds.length > 12
+                                    ? { evidenceClaimsOmitted: evidenceClaimIds.length - 12 }
+                                    : {}),
+                                  completedAt: legacyTask.result.completedAt,
+                                },
+                              }
+                            : {}),
+                        }
+                      }
+                    }
+                    if (tool.agent === "planner") {
+                      const pending = objectiveUpgradeActions(work)
+                      if (pending.length > 0) upgradeActions = pending
+                    }
+                  }
                 }
               }
 
@@ -4254,13 +5328,19 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               workflowId: value.workflowId,
               ...(value.stepId ? { stepId: value.stepId } : { questionId: value.questionId }),
               ...(acceptedOutcome ? { acceptedOutcome } : {}),
+              ...(taskOutcome ? { taskOutcome } : {}),
               ...(acceptedAuthority ? { acceptedAuthority } : {}),
+              ...(planContext ? { planContext } : {}),
+              ...(legacyTaskContext ? { legacyTaskContext } : {}),
+              ...(upgradeActions?.length ? { upgradeActions } : {}),
               ...(scope ? {
                 write: scope.write,
                 scopeSemantics: "mutation-boundary-only",
-                scopeNote: acceptedOutcome
-                  ? "Write scope limits mutation only; acceptedOutcome is the completion target and acceptedAuthority is its governing source. Prove the outcome with read-only discovery beyond the write list and request scope extension when another load-bearing write is required."
-                  : "Write scope limits mutation only; acceptedAuthority identifies the governing source. Read that authority as needed, prove the assigned outcome beyond the write list, and request scope extension when another load-bearing write is required.",
+                scopeNote: taskOutcome
+                  ? "Write scope limits mutation only; taskOutcome is the bounded completion target. planContext preserves the parent goal, accepted authority, constraints, acceptance criteria, integration, dependencies, risks, and downstream acceptance context. Prove the Task end to end and request scope extension when another load-bearing write is required."
+                  : acceptedOutcome
+                    ? "Write scope limits mutation only; acceptedOutcome is the bounded completion target and acceptedAuthority is its governing source. Prove the outcome with read-only discovery beyond the write list and request scope extension when another load-bearing write is required."
+                    : "Write scope limits mutation only; acceptedAuthority identifies the governing source. Read that authority as needed, prove the assigned outcome beyond the write list, and request scope extension when another load-bearing write is required.",
               } : {}),
               ...(task ? { task } : {}),
               ...(producerSkills ? { producerSkills } : {}),
@@ -4943,6 +6023,28 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         } satisfies ObservedUserMessage)
       }
       event.system.push({ type: "text", text: LOOM_NATIVE_TOOL_GUIDANCE })
+
+      // Compatibility guidance is deliberately conditional and tiny. Detailed
+      // one-shot migration instructions live behind loom_upgrade_status.
+      if (sessionID) {
+        try {
+          const workflow = await activeWorkflow(ctx, sessionID, ensureLegacySession)
+          if (
+            !workflow ||
+            workflow.createdBySession !== sessionID ||
+            !workflow.work
+          ) {
+            return
+          }
+          const workBinding = workflow.work
+          const work = await readWork(ctx, workBinding.objectiveId)
+          const notice = upgradeCompatibilityNotice(objectiveUpgradeActions(work))
+          if (notice) event.system.push({ type: "text", text: notice })
+        } catch {
+          // Dashboard/tool status remains the explicit inspection path. A
+          // presentation-only notification must never block context assembly.
+        }
+      }
     })
 
     await ctx.session.hook("retry", (event) => {

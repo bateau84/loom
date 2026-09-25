@@ -15,7 +15,9 @@ After pulling a Loom upgrade, restart OpenCode as usual.
 
 When adopting a Loom release that introduces or changes runtime-version fencing, stop/restart all already-running OpenCode+Loom processes once. A process still executing code from before the fence existed cannot be retroactively intercepted by newer code; the durable fence protects version-skew between fence-capable releases going forward.
 
-Loom records the canonical runtime-state version under the installation's durable state root and applies any required ordered upgrade steps before normal mutable execution. Completed upgrade steps have durable receipts and are not rerun.
+Loom records the canonical runtime-state version under the installation's durable state root and applies any required ordered upgrade steps before normal mutable execution. Completed deterministic upgrade steps have durable receipts and are not rerun.
+
+Some upgrades also introduce **semantic compatibility actions** that cannot be manufactured safely by a storage migration. Loom derives those actions from current authoritative state. They are scoped to the thing that actually needs adoption (for example an Objective), exposed through `loom_upgrade_status`, and disappear automatically once the new invariant is satisfied. There is no model acknowledgement flag to clear.
 
 ## Resuming an older OpenCode session
 
@@ -48,6 +50,23 @@ A chat/model confirmation such as “yes, migrate it” is deliberately **not** 
 
 If a future migration cannot prove ownership safely, Loom stops rather than merging unrelated execution state.
 
+## Semantic compatibility actions
+
+Runtime version 4 adds the first semantic compatibility action: `holistic-plan-adoption-v1`.
+
+An active Objective created before holistic Plan snapshots is detected when its current generation exists, has no rich Plan snapshot, and still has claimed or unfinished implementation work. A legacy Objective whose implementation work is already complete is not reopened or nagged solely to migrate representation while its remaining final documentation/acceptance gates finish. Loom does **not** synthesize rationale, acceptance criteria, risks, integration semantics, or authority mappings from the legacy Task DAG.
+
+Instead:
+
+1. the plugin injects one short compatibility notification only into the Objective's coordinator/General context while the action exists;
+2. General calls `loom_upgrade_status` for the one-shot instructions;
+3. if a Wave is claimed, that admitted Wave keeps its existing contract and completes/reviews normally; Task-linked peer OQs remain usable during this deferred period and carry bounded legacy Task context until a rich Plan exists;
+4. adoption happens at the next natural Objective planning boundary rather than reopening reviewed work solely for migration;
+5. a fresh Planner receives the pending upgrade action in `loom_attach` and reconstructs the remaining Objective from accepted authority plus durable completed-work evidence;
+6. once the current generation has a rich Plan snapshot, the action is state-satisfied and disappears for every session observing that Objective.
+
+Completed legacy work remains historical truth. Planner may classify obligations as already satisfied only when durable evidence actually proves that result.
+
 ## Future schema upgrades
 
 The runtime upgrade ledger provides a single mechanism for later state-format changes:
@@ -76,7 +95,7 @@ A mutation already in flight before the upgrade is serialized by the canonical S
 
 ## Cancelling or replacing a stuck workflow
 
-After installing the cancellation update, stop/restart all OpenCode+Loom processes. Runtime version 3 preserves existing records but rejects older fence-capable writers (including earlier version-2 drafts), which must restart before using the shared state. Do not downgrade against that upgraded store.
+After installing an update that advances the runtime fence, stop/restart all OpenCode+Loom processes. Runtime version 4 preserves existing records while fencing version-3 and older writers before holistic Plan adoption can mutate shared state. Do not downgrade against that upgraded store.
 
 In the original General session, a request such as **“Abort this workflow, keep completed work, and start the replacement plan we agreed on”** authorizes cancellation and that replacement. General calls `loom_cancel` with the workflow ID, a reason and your exact confirmation, then checks the result before calling `loom_start`. Both native `loom_cancel` and the Code Mode mirror `tools.loom.code.cancel` use the same operation. This is an agent tool, not a shell command.
 

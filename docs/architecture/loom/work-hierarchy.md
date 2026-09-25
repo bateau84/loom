@@ -86,6 +86,32 @@ The smallest Planner-owned unit that should be independently assigned, executed,
 
 A Task may require multiple runtime steps or agent invocations.
 
+## Plan Semantics Are First-Class
+
+The hierarchy is not only a progress tree. Each plan generation also persists the shared semantic model that explains how accepted authority becomes executable work.
+
+A plan generation records:
+
+- the parent goal, assumptions, exclusions, and accepted authority references;
+- an obligation coverage map with explicit source, disposition, Task ownership, verification, and authorized deferral/out-of-scope authority;
+- material risk boundaries and whole-product acceptance coverage (accepted criteria/outcomes, not executable Product Acceptance scenarios);
+- important cross-Task relationships and correction routes;
+- for every Task: bounded outcome, rationale, dependencies, authority references, inherited constraints, falsifiable acceptance criteria, non-executable subtasks/checklist, integration context, and verification expectations; Plan-level risk/acceptance records canonically reference the Tasks they cover.
+
+The control plane preserves this structure as data. A human-readable plan document is optional.
+
+### Plan revision and generation
+
+A **Plan revision** is a bounded amendment inside one still-trustworthy generation. Planner may atomically patch, add, or remove a small pending/unclaimed Phase, Wave, or Task, including Task subtasks/checklist, while preserving all unaffected nodes and completed result/evidence history. Revision history is immutable but storage-bounded: Loom keeps one current semantic snapshot per generation plus inverse amendment deltas sufficient to reconstruct earlier revisions exactly. Every amendment records who changed it, why, which local operations occurred, and the new revision.
+
+A revision cannot retroactively rewrite semantic context already consumed by completed work. If a requested change alters completed Task meaning, consumed obligation/risk/acceptance authority, or the Plan's trusted premise, Loom requires a **new Plan generation** instead.
+
+Planner may explicitly invalidate the current generation. Invalidation preserves its history but makes unfinished work non-runnable. Replacement planning creates a fresh generation; invalidation is not deletion and does not turn prior unfinished work into completion.
+
+A Task outcome is **not** the accepted Objective. It is one bounded contribution inside the Objective. Worker therefore receives both the focused Task contract and parent Plan context, including durable result summaries/evidence references from completed dependencies; Reviewer/Critic receive a bounded whole-Plan map and inspect exact current executable Wave contracts on demand through `loom_task_status`. Durable Plan state is complete, while model-facing whole-Plan projection clips text and large ownership lists and reports omitted counts to prevent supported maximum Plan size from becoming uncontrolled model context. Planner has decomposition authority only: Plan fields compile accepted authority and never become a new source of product meaning.
+
+OQs raised from governed planned work retain the Objective identity, Plan generation, **Plan revision**, and originating Task ID when known. Non-Task steps may explicitly correlate an OQ to an existing Task in the current generation; Loom validates that reference. Any Loom role may be the responder, including Planner, Worker, Reviewer, Critic, Acceptance, or Documenter. The responder receives the exact historical Task/Plan revision automatically when available; later same-generation amendments do not rewrite the OQ's origin context. During deferred legacy adoption, Task-linked OQs remain available before a rich revision exists: Loom validates the Task against the admitted legacy hierarchy and supplies bounded legacy Task context without inventing missing Plan semantics. An OQ answer remains a narrow role-owned answer; it does not substitute for an independent Reviewer/Critic/Product Acceptance gate.
+
 ## Hierarchy and DAG Are Separate
 
 Hierarchy describes **scope ownership and progress**.

@@ -34,7 +34,7 @@ Accepted design belongs in `docs/design/**`; validation reports are execution ev
 
 ## Loom contract
 
-For governed work, attach first with the exact grant/workflow/step or question ID.
+For governed work, attach first with the exact grant/workflow/step or question ID. You may raise an OQ to any Loom role whose answer is needed; when you are the responder, answer only the human-facing/design question actually asked. When answering a planned-task OQ, attachment may include `planContext`; use it to see the user-facing consequence in the Task's parent goal, owned obligations, constraints, dependencies, acceptance criteria, integration seams, and downstream acceptance path. Resolve the human-facing question at that level while keeping accepted product intent as the authority.
 
 Load `design-specification` when authoring design and only the surface skills that materially help. For `designer-validation`, inspect the realized experience with `design-validation` and return PASS/FAIL from the actual interaction, not the design artifact.
 

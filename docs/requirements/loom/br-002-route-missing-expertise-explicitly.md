@@ -20,6 +20,8 @@ Routing MUST be explicit enough that required expertise cannot be skipped merely
 4. Normal conformance checking invokes Reviewer capability independently of the producer.
 5. Holistic adversarial review invokes Critic only at defined system-level boundaries or exceptional escalation.
 6. A coordinator cannot bypass required expertise solely by deciding to proceed directly.
+7. Any Loom role may raise an OQ to any other Loom role when that role can answer the specific missing question; General may raise coordinator OQs directly.
+8. Answering an OQ does not promote the responder into another authority role and does not substitute for a required independent Reviewer/Critic/Product Acceptance gate.
 
 ## Verification Semantics
 

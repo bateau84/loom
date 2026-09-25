@@ -14,6 +14,7 @@ import type { LoomRuntimeIdentity } from "./runtime"
 import { runnable, type Workflow } from "./workflow"
 import {
   nextRunnableWaves,
+  workPlanContext,
   workTree,
   type WorkHierarchy,
   type WorkNodeStatus,
@@ -34,7 +35,7 @@ export function compactQuestions(questions: OpenQuestion[], workflow: Workflow) 
       .filter((question) => !question.answer)
       .map((question) => ({
         questionId: question.id,
-        requiredAuthority: question.requiredAuthority,
+        responder: question.requiredAuthority,
         blocking: question.blocking,
       })),
     reconcile: (workflow.cancellation ? [] : unresolved)
@@ -132,6 +133,7 @@ export type CompactWorkflowState = ReturnType<typeof compactWorkflowState>
 
 export type StatusWorkSummary = {
   tree: WorkTree
+  plan: ReturnType<typeof workPlanContext>
   nextRunnableWaves: ReturnType<typeof nextRunnableWaves>
   version: number
 }
@@ -154,6 +156,7 @@ export function buildStatusView(
     work: work
       ? {
           tree: workTree(work),
+          plan: workPlanContext(work, undefined, "full"),
           nextRunnableWaves: nextRunnableWaves(work),
           version: work.version,
         }
@@ -262,6 +265,11 @@ export function renderStatusMarkdown(view: StatusView, artifact?: StatusArtifact
     lines.push(
       `- **Objective:** ${statusGlyph(objective.status)} ${objective.title} · ${objective.progress.finished}/${objective.progress.total} tasks`,
     )
+    if (view.work.plan) {
+      lines.push(
+        `- **Plan:** generation ${view.work.plan.generation} · revision ${view.work.plan.revision}${view.work.plan.invalidated ? " · invalidated" : ""} · ${clippedSummary(view.work.plan.goal)}`,
+      )
+    }
     for (const item of workAttention(view).slice(0, 3)) {
       lines.push(
         `- **Work:** ${statusGlyph(item.status)} ${item.phase} / ${item.wave} · ${item.progress.finished}/${item.progress.total}`,

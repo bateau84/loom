@@ -48,7 +48,7 @@ const PROJECT_PREFIX = "project/"
 const GLOBAL_PREFIXES = ["installation/", "episode/", "heuristic/"]
 
 export const RUNTIME_BASELINE_VERSION = 1
-export const RUNTIME_STATE_VERSION = 3
+export const RUNTIME_STATE_VERSION = 4
 
 export type RuntimeUpgradePhase =
   | "canonical-upgrade"
@@ -107,6 +107,14 @@ const RUNTIME_UPGRADE_STEPS: RuntimeUpgradeStep[] = [{
   fromVersion: 2,
   toVersion: 3,
   applyInstallation: async () => ({ admissionBoundEvidence: true }),
+}, {
+  id: "holistic-plan-adoption-v4",
+  fromVersion: 3,
+  toVersion: 4,
+  // Semantic Plan reconstruction is intentionally not performed here. The
+  // version advance fences older writers; Objective-scoped upgrade actions
+  // drive the reasoning-required adoption at a safe execution boundary.
+  applyInstallation: async () => ({ holisticPlanUpgradeActions: true }),
 }]
 
 function sha256(value: string) {

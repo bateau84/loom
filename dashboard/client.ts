@@ -241,6 +241,60 @@ export const dashboardScript = `
     main.innerHTML = summary + '<div class="panel-head"><h2>Workflows <span class="meta">' + items.length + ' shown</span></h2><span class="meta">Attention first · select a workflow to inspect</span></div><section class="grid section" aria-label="Fleet workflows">' + items.map(({project, workflow}) => workflowCard(project, workflow)).join("") + '</section>';
   }
   function hierarchyOpen(status) { return status === "active" || status === "blocked"; }
+  function taskQuestions(project, objective, taskId) {
+    const projection = objective?.projection;
+    return project.workflows.flatMap((workflow) => {
+      const p = resolved(workflow);
+      const c = contextFor(p);
+      return arr(c?.questions)
+        .filter((q) =>
+          q.work?.objectiveId === objective.objectiveId &&
+          q.work?.generation === projection?.generation &&
+          (q.work?.revision === undefined || q.work.revision === projection?.plan?.revision) &&
+          q.work?.taskId === taskId
+        )
+        .map((q) => ({ workflow, q }));
+    });
+  }
+  function compactTextList(items, emptyText) {
+    return arr(items).length
+      ? '<ul>' + arr(items).map((item) => '<li>' + description(item) + '</li>').join('') + '</ul>'
+      : '<p class="notice">' + esc(emptyText) + '</p>';
+  }
+  function renderPlanOverview(project, objective) {
+    const p = objective.projection;
+    const plan = p?.plan;
+    if (!plan) return '';
+    const key = 'project:' + project.projectId + ':objective:' + objective.objectiveId + ':plan';
+    const obligations = arr(plan.obligations).map((item) =>
+      '<div class="row"><div class="name">' + description(item.statement) + '</div><div class="badges">' +
+      badge(item.disposition || 'Disposition unavailable', item.disposition === 'blocked' ? 'warn' : item.disposition === 'implement' ? 'info' : 'neutral') +
+      '</div><p class="meta">Owner Tasks: ' + esc(arr(item.taskIds).join(', ') || 'none') + '</p>' +
+      technical(key + ':obligation:' + item.id, [['Obligation ID', item.id], ['Source authority', item.sourceRef], ['Deferral authority', item.dispositionAuthorityRef]]) + '</div>'
+    ).join('');
+    const risks = arr(plan.riskBoundaries).map((item) =>
+      '<div class="row"><div class="name">' + esc(named(item.title, item.id)) + '</div><p>' + description(item.description) + '</p><p class="meta">Tasks: ' + esc(arr(item.taskIds).join(', ') || 'none') + '</p></div>'
+    ).join('');
+    const acceptance = arr(plan.acceptanceCoverage).map((item) =>
+      '<div class="row"><div class="name">' + esc(named(item.title, item.id)) + '</div><p>' + description(item.criterion) + '</p><p class="meta">Tasks: ' + esc(arr(item.taskIds).join(', ') || 'none') + '</p></div>'
+    ).join('');
+    const amendments = arr(plan.amendments).map((item) =>
+      '<div class="row"><div class="name">Revision ' + esc(item.revision) + '</div><p>' + description(item.reason) + '</p><p class="meta">' + esc(arr(item.operations).join(' · ') || 'metadata update') + ' · ' + time(item.at) + '</p></div>'
+    ).join('');
+    const invalidated = plan.invalidated
+      ? '<div class="callout" data-tone="danger"><strong>Plan generation invalidated</strong><div class="notice">' + description(plan.invalidated.reason) + ' · ' + time(plan.invalidated.at) + '</div></div>'
+      : '';
+    return invalidated +
+      '<div class="callout"><strong>Plan goal · revision ' + esc(plan.revision) + '</strong><div class="notice">' + description(plan.goal) + '</div></div>' +
+      '<div class="detail-grid section"><div class="stack">' +
+      disclosure(key + ':obligations', 'Accepted obligations · ' + arr(plan.obligations).length, '<div class="list">' + (obligations || '<p class="notice">No obligation map projected.</p>') + '</div>', false) +
+      disclosure(key + ':risks', 'Risk boundaries · ' + arr(plan.riskBoundaries).length, '<div class="list">' + (risks || '<p class="notice">No risk boundaries projected.</p>') + '</div>', false) +
+      '</div><div class="stack">' +
+      disclosure(key + ':acceptance', 'Acceptance coverage · ' + arr(plan.acceptanceCoverage).length, '<div class="list">' + (acceptance || '<p class="notice">No Plan-level acceptance coverage projected.</p>') + '</div>', false) +
+      disclosure(key + ':scope', 'Assumptions & out of scope', '<h3>Assumptions</h3>' + compactTextList(plan.assumptions, 'No explicit assumptions projected.') + '<h3 class="section">Out of scope</h3>' + compactTextList(plan.outOfScope, 'No explicit exclusions projected.'), false) +
+      (amendments ? disclosure(key + ':amendments', 'Plan amendments · ' + arr(plan.amendments).length, '<div class="list">' + amendments + '</div>', false) : '') +
+      '</div></div>';
+  }
   function renderHierarchy(project) {
     if (!arr(project.workObjectives).length) return '<p class="notice">No current work hierarchy is projected. Task progress is unavailable, not zero.</p>';
     return '<div class="hierarchy">' + project.workObjectives.map((objective) => {
@@ -251,15 +305,34 @@ export const dashboardScript = `
         const phaseKey = base + ':phase:' + phase.phaseId;
         const waves = arr(phase.waves).map((wave) => {
           const waveKey = phaseKey + ':wave:' + wave.waveId;
-          return '<details ' + (hierarchyOpen(wave.status) ? 'open ' : '') + 'data-hierarchy-key="' + esc(waveKey) + '" data-status="' + esc(wave.status) + '"><summary data-key="' + esc('hierarchy:' + waveKey) + '"><span>' + esc(named(wave.title, 'Unnamed wave')) + ' — ' + esc(wave.status) + '</span></summary><ul>' + arr(wave.tasks).map((task) => {
+          const taskRows = arr(wave.tasks).map((task) => {
+            const taskKey = waveKey + ':task:' + task.taskId;
             const owner = workflowById(project, task.claimedByWorkflowId);
-            const ownership = task.claimedByWorkflowId ? '<div class="meta">Owned by: <a data-key="' + esc('owner:' + waveKey + ':' + task.taskId) + '" href="' + esc(projectHref(project) + '/workflow/' + enc(task.claimedByWorkflowId)) + '">' + esc(owner ? titleFor(project, owner) : 'Workflow outside this view') + '</a></div>' : '';
-            return '<li><span class="name">' + esc(named(task.title, 'Unnamed task')) + '</span> — ' + esc(task.status) + ownership + technical(waveKey + ':task:' + task.taskId, [['Task ID', task.taskId], ['claimed by workflow ID', task.claimedByWorkflowId]]) + '</li>';
-          }).join("") + '</ul>' + technical(waveKey, [['Wave ID', wave.waveId]]) + '</details>';
+            const ownership = task.claimedByWorkflowId ? '<div class="meta">Owned by: <a data-key="' + esc('owner:' + taskKey) + '" href="' + esc(projectHref(project) + '/workflow/' + enc(task.claimedByWorkflowId)) + '">' + esc(owner ? titleFor(project, owner) : 'Workflow outside this view') + '</a></div>' : '';
+            const questions = taskQuestions(project, objective, task.taskId);
+            const questionRows = questions.map(({workflow, q}) =>
+              '<div class="row"><div class="name">' + description(q.description) + '</div><p class="meta">' + esc(q.status) + ' · ' + esc(roleName(q.requiredAuthority)) + '</p>' +
+              link(workflowHref(project, workflow), 'Open originating workflow →', 'oq-origin:' + q.id) + '</div>'
+            ).join('');
+            const details =
+              (task.objective ? '<p><strong>Outcome:</strong> ' + description(task.objective) + '</p>' : '') +
+              (task.rationale ? '<p><strong>Why:</strong> ' + description(task.rationale) + '</p>' : '') +
+              (arr(task.constraints).length ? '<h4>Constraints</h4>' + compactTextList(task.constraints, '') : '') +
+              (arr(task.acceptanceCriteria).length ? '<h4>Acceptance criteria</h4>' + compactTextList(task.acceptanceCriteria, '') : '') +
+              (arr(task.subtasks).length ? '<h4>Subtasks / checklist</h4>' + compactTextList(task.subtasks, '') : '') +
+              (arr(task.integration).length ? '<h4>Integration</h4>' + compactTextList(task.integration, '') : '') +
+              (task.result?.summary ? '<h4>Completed result</h4><p>' + description(task.result.summary) + '</p><p class="meta">' + esc(task.result.evidenceClaims) + ' evidence claim(s) · ' + time(task.result.completedAt) + '</p>' : '') +
+              (questions.length ? '<h4>Correlated OQs</h4><div class="list">' + questionRows + '</div>' : '<p class="notice">No open correlated OQ is projected for this Task.</p>');
+            return '<li><details class="disclosure" data-hierarchy-key="' + esc(taskKey) + '"' + (task.status === 'active' || task.status === 'blocked' ? ' open' : '') + '><summary data-key="' + esc('hierarchy:' + taskKey) + '"><span class="name">' + esc(named(task.title, 'Unnamed task')) + ' — ' + esc(task.status) + (questions.length ? ' · ' + questions.length + ' OQ' + (questions.length === 1 ? '' : 's') : '') + '</span></summary><div class="panel-body">' + ownership + details + technical(taskKey, [['Task ID', task.taskId], ['claimed by workflow ID', task.claimedByWorkflowId]]) + '</div></details></li>';
+          }).join("");
+          const waveIntro = (wave.objective ? '<p class="notice">' + description(wave.objective) + '</p>' : '') +
+            (arr(wave.constraints).length ? '<div class="meta">Constraints: ' + arr(wave.constraints).map((item) => description(item)).join(' · ') + '</div>' : '');
+          return '<details ' + (hierarchyOpen(wave.status) ? 'open ' : '') + 'data-hierarchy-key="' + esc(waveKey) + '" data-status="' + esc(wave.status) + '"><summary data-key="' + esc('hierarchy:' + waveKey) + '"><span>' + esc(named(wave.title, 'Unnamed wave')) + ' — ' + esc(wave.status) + '</span></summary><div class="panel-body">' + waveIntro + '<ul>' + taskRows + '</ul>' + technical(waveKey, [['Wave ID', wave.waveId]]) + '</div></details>';
         }).join("");
-        return '<details ' + (hierarchyOpen(phase.status) ? 'open ' : '') + 'data-hierarchy-key="' + esc(phaseKey) + '" data-status="' + esc(phase.status) + '"><summary data-key="' + esc('hierarchy:' + phaseKey) + '"><span>' + esc(named(phase.title, 'Unnamed phase')) + ' — ' + esc(phase.status) + '</span></summary>' + waves + technical(phaseKey, [['Phase ID', phase.phaseId]]) + '</details>';
+        const phaseIntro = phase.objective ? '<p class="notice">' + description(phase.objective) + '</p>' : '';
+        return '<details ' + (hierarchyOpen(phase.status) ? 'open ' : '') + 'data-hierarchy-key="' + esc(phaseKey) + '" data-status="' + esc(phase.status) + '"><summary data-key="' + esc('hierarchy:' + phaseKey) + '"><span>' + esc(named(phase.title, 'Unnamed phase')) + ' — ' + esc(phase.status) + '</span></summary><div class="panel-body">' + phaseIntro + waves + technical(phaseKey, [['Phase ID', phase.phaseId]]) + '</div></details>';
       }).join("");
-      return '<details open data-hierarchy-key="' + esc(base) + '" data-status="' + esc(p?.status || 'unknown') + '"><summary data-key="' + esc('hierarchy:' + base) + '"><span class="name">' + esc(named(p?.title, 'Unnamed objective')) + '</span><span class="meta">Objective: ' + esc(p?.status || 'unknown') + ' · version ' + esc(objective.workVersion) + (objective.sourceFreshness === 'stale-source' ? ' · stale/offline source' : '') + '</span></summary>' + phases + technical(base, [['Objective ID', objective.objectiveId], ['Anchor reference', p?.anchor]]) + '</details>';
+      return '<details open data-hierarchy-key="' + esc(base) + '" data-status="' + esc(p?.status || 'unknown') + '"><summary data-key="' + esc('hierarchy:' + base) + '"><span class="name">' + esc(named(p?.title, 'Unnamed objective')) + '</span><span class="meta">Objective: ' + esc(p?.status || 'unknown') + ' · work version ' + esc(objective.workVersion) + ' · generation ' + esc(p?.generation) + (p?.plan ? ' · plan revision ' + esc(p.plan.revision) : '') + (objective.sourceFreshness === 'stale-source' ? ' · stale/offline source' : '') + '</span></summary><div class="panel-body">' + renderPlanOverview(project, objective) + phases + technical(base, [['Objective ID', objective.objectiveId], ['Anchor reference', p?.anchor]]) + '</div></details>';
     }).join("") + '</div>';
   }
   function renderProject(project) {

@@ -49,7 +49,9 @@ objective/work-scope identity
 workflow state
 current/runnable steps
 Objective → Phase → Wave → Task hierarchy plus hierarchical progress/work version
-open OQ count
+current Plan generation/revision, goal, obligation/risk/Product Acceptance coverage, and bounded Task context
+Plan amendment/invalidation state
+open OQ count plus Plan generation/revision/Task origin when correlated, including bounded historical origin context after later amendments
 open verification count
 budget usage/exhaustion
 Product Acceptance state
@@ -163,7 +165,7 @@ One row/card per active/recent compartment:
 
 ### Project view
 
-Shows the Objective → Phase → Wave → Task tree, active workflows, current claims, and recent transitions.
+Shows the Objective → Phase → Wave → Task tree, the current Plan goal/revision, Phase/Wave intent, Task outcomes/acceptance/subtasks/integration context, obligation/risk/Product Acceptance coverage, amendment/invalidation history, active workflows, current claims, and recent transitions. Correlated OQs are visible at the Task that caused them and link back to the originating workflow.
 
 ### Workflow view
 

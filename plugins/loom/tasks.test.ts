@@ -6,7 +6,13 @@ function task(id: string, overrides: Partial<TaskSpec> = {}): TaskSpec {
     id,
     title: id,
     objective: "Implement " + id,
+    rationale: `Task ${id} is required by the accepted plan.`,
     dependsOn: [],
+    authorityRefs: ["docs/architecture/example.md"],
+    constraints: [],
+    acceptanceCriteria: [`${id} behaves as specified`],
+    subtasks: [],
+    integration: [],
     write: [`internal/${id}/**`],
     skills: ["golang"],
     verify: ["go test ./..."],
@@ -18,6 +24,11 @@ describe("Loom task graph", () => {
   test("accepts independent bounded tasks", () => {
     const plan = validateTaskPlan([task("api"), task("ui")])
     expect(plan.map((item) => item.id)).toEqual(["api", "ui"])
+  })
+
+  test("bounds task identifiers used in model-facing Plan maps", () => {
+    expect(() => validateTaskPlan([task("a".repeat(97))]))
+      .toThrow("Task id exceeds maximum of 96 characters")
   })
 
   test("rejects cycles", () => {
@@ -62,7 +73,10 @@ describe("Loom task graph", () => {
     expect(plan).toHaveLength(2)
   })
 
-  test("requires explicit verification expectation", () => {
+  test("requires semantic task context and explicit verification", () => {
+    expect(() => validateTaskPlan([task("api", { rationale: "" })])).toThrow()
+    expect(() => validateTaskPlan([task("api", { authorityRefs: [] })])).toThrow()
+    expect(() => validateTaskPlan([task("api", { acceptanceCriteria: [] })])).toThrow()
     expect(() => validateTaskPlan([task("api", { verify: [] })])).toThrow()
   })
 

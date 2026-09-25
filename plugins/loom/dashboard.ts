@@ -4,7 +4,12 @@ import { basename, dirname, isAbsolute, join } from "node:path"
 import { homedir } from "node:os"
 import { acceptanceReadiness, type AcceptancePlan } from "./acceptance"
 import { effectiveTotalDispatchLimit, type BudgetState, type ExecutionLimits } from "./budget"
-import { buildDashboardWorkflowContext, type DashboardWorkflowContext } from "./dashboard-context"
+import {
+  buildDashboardWorkflowContext,
+  dashboardText,
+  type DashboardText,
+  type DashboardWorkflowContext,
+} from "./dashboard-context"
 import type { KnowledgeReport } from "./knowledge"
 import type { OpenQuestion } from "./oq"
 import type { LoomRuntimeIdentity, RawStorage } from "./runtime"
@@ -14,6 +19,10 @@ import type { WorkHierarchy, WorkNode, WorkNodeStatus } from "./work"
 export const DASHBOARD_SCHEMA_VERSION = 1
 export const DEFAULT_DASHBOARD_LEASE_MS = 90_000
 export const DEFAULT_DASHBOARD_HEARTBEAT_MS = 30_000
+export const DASHBOARD_PLAN_SUMMARY_ITEMS = 24
+export const DASHBOARD_TASK_DETAIL_ITEMS = 6
+export const DASHBOARD_TASK_ID_ITEMS = 32
+export const DASHBOARD_AUTHORITY_REF_ITEMS = 12
 
 export type StepSummary = Pick<Step, "id" | "agent" | "kind" | "status"> & {
   label?: string
@@ -31,6 +40,25 @@ export type WorkTaskProjectionV1 = {
   taskId: string
   title: string
   status: WorkNodeStatus
+  objective?: DashboardText
+  rationale?: DashboardText
+  authorityRefs?: string[]
+  constraints?: DashboardText[]
+  acceptanceCriteria?: DashboardText[]
+  subtasks?: DashboardText[]
+  integration?: DashboardText[]
+  result?: {
+    summary?: DashboardText
+    evidenceClaims: number
+    completedAt: string
+  }
+  omitted?: {
+    authorityRefs?: number
+    constraints?: number
+    acceptanceCriteria?: number
+    subtasks?: number
+    integration?: number
+  }
   claimedByWorkflowId?: string
 }
 
@@ -38,6 +66,8 @@ export type WorkWaveProjectionV1 = {
   waveId: string
   title?: string
   status: WorkNodeStatus
+  objective?: DashboardText
+  constraints?: DashboardText[]
   tasks: WorkTaskProjectionV1[]
 }
 
@@ -45,6 +75,7 @@ export type WorkPhaseProjectionV1 = {
   phaseId: string
   title?: string
   status: WorkNodeStatus
+  objective?: DashboardText
   waves: WorkWaveProjectionV1[]
 }
 
@@ -55,6 +86,61 @@ export type WorkObjectiveProjectionV1 = {
   status: WorkNodeStatus
   workVersion: number
   generation: number
+  plan?: {
+    revision: number
+    goal: DashboardText
+    assumptions: DashboardText[]
+    outOfScope: DashboardText[]
+    authorityRefs: string[]
+    obligations: Array<{
+      id: string
+      sourceRef: string
+      statement: DashboardText
+      disposition: string
+      taskIds: string[]
+      verification: DashboardText[]
+      taskIdsOmitted?: number
+      verificationOmitted?: number
+      dispositionAuthorityRef?: string
+    }>
+    riskBoundaries: Array<{
+      id: string
+      title: string
+      description: DashboardText
+      taskIds: string[]
+      taskIdsOmitted?: number
+    }>
+    acceptanceCoverage: Array<{
+      id: string
+      title: string
+      criterion: DashboardText
+      taskIds: string[]
+      taskIdsOmitted?: number
+    }>
+    relationships: Array<{
+      summary: DashboardText
+      taskIds: string[]
+      taskIdsOmitted?: number
+    }>
+    amendments: Array<{
+      revision: number
+      by: string
+      reason: DashboardText
+      operations: string[]
+      at: string
+    }>
+    omitted?: {
+      assumptions?: number
+      outOfScope?: number
+      authorityRefs?: number
+      obligations?: number
+      riskBoundaries?: number
+      acceptanceCoverage?: number
+      relationships?: number
+      amendments?: number
+    }
+    invalidated?: { by: string; reason: DashboardText; at: string }
+  }
   stateDigest: string
   phases: WorkPhaseProjectionV1[]
 }
@@ -312,32 +398,245 @@ function latestTimestamp(values: Array<string | undefined>, fallback: string) {
   return values.filter((value): value is string => Boolean(value)).sort().at(-1) ?? fallback
 }
 
+function dashboardBounded<T>(values: T[], limit: number) {
+  return {
+    items: values.slice(0, limit),
+    omitted: Math.max(0, values.length - limit),
+  }
+}
+
+function dashboardTaskIds(values: string[]) {
+  const bounded = dashboardBounded(values, DASHBOARD_TASK_ID_ITEMS)
+  return { taskIds: bounded.items, ...(bounded.omitted ? { taskIdsOmitted: bounded.omitted } : {}) }
+}
+
+function dashboardTextItems(values: string[], limit: number) {
+  const bounded = dashboardBounded(values, limit)
+  return {
+    items: bounded.items.map((item) => dashboardText(item)),
+    omitted: bounded.omitted,
+  }
+}
+
+function dashboardRefs(values: string[]) {
+  const bounded = dashboardBounded(values, DASHBOARD_AUTHORITY_REF_ITEMS)
+  return {
+    items: bounded.items.map((item) => dashboardText(item).text),
+    omitted: bounded.omitted,
+  }
+}
+
 function projectWork(work: WorkHierarchy): WorkObjectiveProjectionV1 {
   const nodes = work.nodes.filter((node) => node.generation === work.generation)
+  const plan = (work.plans ?? [])
+    .filter((candidate) => candidate.generation === work.generation)
+    .sort((a, b) => (b.revision ?? 1) - (a.revision ?? 1))[0]
+  const displayStatus = (status: WorkNodeStatus): WorkNodeStatus =>
+    plan?.invalidated && status !== "complete" ? "superseded" : status
+  const planTask = (taskId: string) =>
+    plan?.phases.flatMap((phase) => phase.waves.flatMap((wave) => wave.tasks)).find((task) => task.id === taskId)
+  const planPhase = (phaseId: string) => plan?.phases.find((phase) => phase.id === phaseId)
+  const planWave = (phaseId: string, waveId: string) =>
+    planPhase(phaseId)?.waves.find((wave) => wave.id === waveId)
+
   const phases = nodes
-    .filter((node) => node.type === "phase")
+    .filter((node) => node.type === "phase" && node.status !== "superseded")
     .map((phase) => ({
       phaseId: phase.logicalId,
       title: phase.title,
-      status: phase.status,
+      status: displayStatus(phase.status),
+      ...(planPhase(phase.logicalId)?.objective
+        ? { objective: dashboardText(planPhase(phase.logicalId)!.objective) }
+        : {}),
       waves: nodes
-        .filter((node) => node.type === "wave" && node.parentId === phase.id)
-        .map((wave) => ({
-          waveId: wave.logicalId,
-          title: wave.title,
-          status: wave.status,
-          tasks: nodes
-            .filter((node) => node.type === "task" && node.parentId === wave.id)
-            .map((task) => ({
-              taskId: task.logicalId,
-              title: task.title,
-              status: task.status,
-              ...(task.claimedByWorkflowId
-                ? { claimedByWorkflowId: task.claimedByWorkflowId }
-                : {}),
-            })),
-        })),
+        .filter(
+          (node) =>
+            node.type === "wave" &&
+            node.parentId === phase.id &&
+            node.status !== "superseded",
+        )
+        .map((wave) => {
+          const semanticWave = planWave(phase.logicalId, wave.logicalId)
+          return {
+            waveId: wave.logicalId,
+            title: wave.title,
+            status: displayStatus(wave.status),
+            ...(semanticWave?.objective ? { objective: dashboardText(semanticWave.objective) } : {}),
+            ...(semanticWave?.constraints?.length
+              ? { constraints: semanticWave.constraints.map((item) => dashboardText(item)) }
+              : {}),
+            tasks: nodes
+              .filter(
+                (node) =>
+                  node.type === "task" &&
+                  node.parentId === wave.id &&
+                  node.status !== "superseded",
+              )
+              .map((task) => {
+                const semanticTask = planTask(task.logicalId)
+                return {
+                  taskId: task.logicalId,
+                  title: task.title,
+                  status: displayStatus(task.status),
+                  ...(semanticTask
+                    ? {
+                        objective: dashboardText(semanticTask.objective),
+                        rationale: dashboardText(semanticTask.rationale),
+                        authorityRefs: dashboardRefs(semanticTask.authorityRefs).items,
+                        constraints: dashboardTextItems(
+                          semanticTask.constraints,
+                          DASHBOARD_TASK_DETAIL_ITEMS,
+                        ).items,
+                        acceptanceCriteria: dashboardTextItems(
+                          semanticTask.acceptanceCriteria,
+                          DASHBOARD_TASK_DETAIL_ITEMS,
+                        ).items,
+                        subtasks: dashboardTextItems(
+                          semanticTask.subtasks,
+                          DASHBOARD_TASK_DETAIL_ITEMS,
+                        ).items,
+                        integration: dashboardTextItems(
+                          semanticTask.integration,
+                          DASHBOARD_TASK_DETAIL_ITEMS,
+                        ).items,
+                        ...(() => {
+                          const authority = dashboardRefs(semanticTask.authorityRefs).omitted
+                          const constraints = dashboardTextItems(
+                            semanticTask.constraints,
+                            DASHBOARD_TASK_DETAIL_ITEMS,
+                          ).omitted
+                          const acceptanceCriteria = dashboardTextItems(
+                            semanticTask.acceptanceCriteria,
+                            DASHBOARD_TASK_DETAIL_ITEMS,
+                          ).omitted
+                          const subtasks = dashboardTextItems(
+                            semanticTask.subtasks,
+                            DASHBOARD_TASK_DETAIL_ITEMS,
+                          ).omitted
+                          const integration = dashboardTextItems(
+                            semanticTask.integration,
+                            DASHBOARD_TASK_DETAIL_ITEMS,
+                          ).omitted
+                          const omitted = {
+                            ...(authority ? { authorityRefs: authority } : {}),
+                            ...(constraints ? { constraints } : {}),
+                            ...(acceptanceCriteria ? { acceptanceCriteria } : {}),
+                            ...(subtasks ? { subtasks } : {}),
+                            ...(integration ? { integration } : {}),
+                          }
+                          return Object.keys(omitted).length ? { omitted } : {}
+                        })(),
+                      }
+                    : {}),
+                  ...(task.result
+                    ? {
+                        result: {
+                          ...(task.result.summary
+                            ? { summary: dashboardText(task.result.summary) }
+                            : {}),
+                          evidenceClaims: task.result.evidenceClaimIds.length,
+                          completedAt: task.result.completedAt,
+                        },
+                      }
+                    : {}),
+                  ...(task.claimedByWorkflowId
+                    ? { claimedByWorkflowId: task.claimedByWorkflowId }
+                    : {}),
+                }
+              }),
+          }
+        }),
     }))
+
+  const planProjection = plan
+    ? {
+        revision: plan.revision ?? 1,
+        goal: dashboardText(plan.goal),
+        assumptions: dashboardTextItems(
+          plan.assumptions,
+          DASHBOARD_PLAN_SUMMARY_ITEMS,
+        ).items,
+        outOfScope: dashboardTextItems(
+          plan.outOfScope,
+          DASHBOARD_PLAN_SUMMARY_ITEMS,
+        ).items,
+        authorityRefs: dashboardRefs(plan.authorityRefs).items,
+        obligations: plan.obligations.slice(0, DASHBOARD_PLAN_SUMMARY_ITEMS).map((item) => {
+          const verification = dashboardTextItems(item.verification, DASHBOARD_TASK_DETAIL_ITEMS)
+          return {
+            id: item.id,
+            sourceRef: dashboardText(item.sourceRef).text,
+            statement: dashboardText(item.statement),
+            disposition: item.disposition,
+            ...dashboardTaskIds(item.taskIds),
+            verification: verification.items,
+            ...(verification.omitted ? { verificationOmitted: verification.omitted } : {}),
+            ...(item.dispositionAuthorityRef
+              ? { dispositionAuthorityRef: dashboardText(item.dispositionAuthorityRef).text }
+              : {}),
+          }
+        }),
+        riskBoundaries: plan.riskBoundaries.slice(0, DASHBOARD_PLAN_SUMMARY_ITEMS).map((item) => ({
+          id: item.id,
+          title: dashboardText(item.title).text,
+          description: dashboardText(item.description),
+          ...dashboardTaskIds(item.taskIds),
+        })),
+        acceptanceCoverage: plan.acceptanceCoverage.slice(0, DASHBOARD_PLAN_SUMMARY_ITEMS).map((item) => ({
+          id: item.id,
+          title: dashboardText(item.title).text,
+          criterion: dashboardText(item.criterion),
+          ...dashboardTaskIds(item.taskIds),
+        })),
+        relationships: plan.relationships.slice(0, DASHBOARD_PLAN_SUMMARY_ITEMS).map((item) => ({
+          summary: dashboardText(item.summary),
+          ...dashboardTaskIds(item.taskIds),
+        })),
+        amendments: (plan.amendments ?? []).slice(-20).map((item) => ({
+          revision: item.revision,
+          by: item.by,
+          reason: dashboardText(item.reason),
+          operations: item.operations.slice(0, 16),
+          at: item.at,
+        })),
+        omitted: {
+          ...(plan.assumptions.length > DASHBOARD_PLAN_SUMMARY_ITEMS
+            ? { assumptions: plan.assumptions.length - DASHBOARD_PLAN_SUMMARY_ITEMS }
+            : {}),
+          ...(plan.outOfScope.length > DASHBOARD_PLAN_SUMMARY_ITEMS
+            ? { outOfScope: plan.outOfScope.length - DASHBOARD_PLAN_SUMMARY_ITEMS }
+            : {}),
+          ...(plan.authorityRefs.length > DASHBOARD_AUTHORITY_REF_ITEMS
+            ? { authorityRefs: plan.authorityRefs.length - DASHBOARD_AUTHORITY_REF_ITEMS }
+            : {}),
+          ...(plan.obligations.length > DASHBOARD_PLAN_SUMMARY_ITEMS
+            ? { obligations: plan.obligations.length - DASHBOARD_PLAN_SUMMARY_ITEMS }
+            : {}),
+          ...(plan.riskBoundaries.length > DASHBOARD_PLAN_SUMMARY_ITEMS
+            ? { riskBoundaries: plan.riskBoundaries.length - DASHBOARD_PLAN_SUMMARY_ITEMS }
+            : {}),
+          ...(plan.acceptanceCoverage.length > DASHBOARD_PLAN_SUMMARY_ITEMS
+            ? { acceptanceCoverage: plan.acceptanceCoverage.length - DASHBOARD_PLAN_SUMMARY_ITEMS }
+            : {}),
+          ...(plan.relationships.length > DASHBOARD_PLAN_SUMMARY_ITEMS
+            ? { relationships: plan.relationships.length - DASHBOARD_PLAN_SUMMARY_ITEMS }
+            : {}),
+          ...((plan.amendments ?? []).length > 20
+            ? { amendments: (plan.amendments ?? []).length - 20 }
+            : {}),
+        },
+        ...(plan.invalidated
+          ? {
+              invalidated: {
+                by: plan.invalidated.by,
+                reason: dashboardText(plan.invalidated.reason),
+                at: plan.invalidated.at,
+              },
+            }
+          : {}),
+      }
+    : undefined
+
   const body = {
     objectiveId: work.objectiveId,
     anchor: work.anchor,
@@ -345,6 +644,7 @@ function projectWork(work: WorkHierarchy): WorkObjectiveProjectionV1 {
     status: work.objectiveStatus,
     workVersion: work.version,
     generation: work.generation,
+    ...(planProjection ? { plan: planProjection } : {}),
     phases,
   }
   return { ...body, stateDigest: projectionDigest(body) }
@@ -432,7 +732,13 @@ async function workflowProjection(
     participatingSessionIds: participants,
     ...(ready[0] ? { activeAgent: ready[0].agent } : {}),
     ...(participants[0] ? { activeSessionId: participants[0] } : {}),
-    context: buildDashboardWorkflowContext(workflow, questionValues, participants, questions.length >= 1000),
+    context: buildDashboardWorkflowContext(
+      workflow,
+      questionValues,
+      participants,
+      questions.length >= 1000,
+      work,
+    ),
   }
   return { ...body, stateDigest: projectionDigest(body) }
 }

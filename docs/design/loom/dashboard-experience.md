@@ -80,8 +80,14 @@ Show:
 
 - project identity/location;
 - Objective → Phase → Wave → Task hierarchy;
+- current Plan generation/revision and concise Plan goal;
+- Phase/Wave intent;
+- expandable Task detail for outcome, constraints, acceptance criteria, subtasks/checklist, integration context, and completed result;
+- obligation, risk-boundary, and Product Acceptance coverage;
+- Plan amendment/invalidation history;
 - task/wave progress;
 - active claims/workers;
+- OQs visibly attached to their originating Task/Plan when correlated, preserving bounded historical Phase/Wave/Task context after amendments and routing to the originating workflow;
 - workflows participating in the project;
 - current gates and recent transitions;
 - project-level stale/conflict indicators.
@@ -97,7 +103,7 @@ Show:
 - current and runnable steps;
 - recent completed/failed transitions;
 - Reviewer/Critic/Acceptance position;
-- OQs and their owner/status;
+- OQs, their answering role/status, and their originating Plan generation/revision/Task when correlated;
 - verification requirements;
 - dispatch budget state;
 - Product Acceptance summary;

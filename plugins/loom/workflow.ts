@@ -88,6 +88,10 @@ export type Workflow = {
   work?: {
     objectiveId: string
     generation: number
+    /** Plan revision visible when this executable Task DAG was compiled (display/audit only). */
+    taskPlanRevision?: number
+    /** Semantic fingerprint of this workflow's exact Task/Wave contracts. */
+    taskPlanFingerprint?: string
   }
   steps: Step[]
   verification?: VerificationRequirement[]

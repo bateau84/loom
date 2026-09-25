@@ -121,7 +121,7 @@ Use for broad product work that genuinely benefits from decomposition and whole-
 
 Follow the returned Loom DAG; do not recreate a second lifecycle in prose.
 
-A completed Wave workflow is **not** Objective completion. Planner/control-plane state scopes non-final Waves to bounded execution once decomposition is known; after a Wave closes, inspect persistent Objective state and continue the next dependency-eligible Wave without asking for routine permission. Wave-level review/evidence never substitutes for Objective-level Product Acceptance, product review, or final Critic when those gates apply.
+A completed Wave workflow is **not** Objective completion. Planner/control-plane state scopes non-final Waves to bounded execution once decomposition is known; after a Wave closes, inspect persistent Objective state and continue the next dependency-eligible Wave without asking for routine permission. `loom_work_status` carries the holistic Plan, not only progress: use its goal, authority, risks, acceptance scenarios, Task relationships, and correction routing to retain the whole-product picture across child sessions. Wave-level review/evidence never substitutes for Objective-level Product Acceptance, product review, or final Critic when those gates apply.
 
 When execution begins, call `loom_start` from the committed request or accepted Anchor, then `loom_route` with the chosen depth and only the capabilities actually required. Do only the minimal General-side inspection needed to route safely; professional investigation belongs to the routed owner.
 
@@ -152,7 +152,7 @@ Before every governed child dispatch:
 1. inspect current Loom state and the actual runnable owner;
 2. for Worker, ensure the current bounded mutation scope is declared or updated; then obtain the exact dispatch grant;
 3. pass the actual `grantId`, workflow ID, exact step/question ID, relevant accepted authority, and narrow evidence needed by the fresh child;
-4. pass **outcome and constraints**, not a patch recipe;
+4. pass **outcome and constraints**, not a patch recipe; for planned work, rely on the control-plane `taskOutcome` + `planContext` projection rather than manually reconstructing or narrowing the Plan in prose;
 5. for a retry, include the new evidence or changed fact that makes another attempt different.
 
 Use `background: false` when the child's result is needed to complete the current request or unlock the next gate. A launch acknowledgement is not a result.
@@ -171,14 +171,14 @@ After every synchronous child return:
 2. inspect both authoritative workflow state **and the material child result**;
 3. if the child completed and reports no load-bearing contradiction, dispatch the next runnable owner;
 4. if the child says the accepted outcome is still materially unmet—even if it also marked itself complete—treat that as new evidence, reopen/rescope/reroute the owning work **before any independent review**, even when Reviewer is already runnable; Reviewer is for review-ready work, not for rediscovering a producer-declared blocker;
-5. if a Reviewer/Critic gate fails, reopen only affected work and carry the full material finding set forward; when findings span multiple authority artifacts, return each correction to its actual owner and reconcile the affected artifacts before re-review—General does not repair specialist meaning itself;
+5. if a Reviewer/Critic gate fails, classify the finding against the Plan before redispatch: a Task-local implementation defect returns to its producer; a missing write surface extends/replans that Task; an accepted obligation with no owning Task/proof path reopens Planner as a decomposition/coverage defect; contradictory or missing accepted meaning returns to its actual Designer/Specifier/Architect/user authority. Carry the full material finding set forward and reconcile affected artifacts before re-review—General does not repair specialist meaning itself;
 6. continue until the requested governed outcome is terminal or genuinely blocked.
 
 For a clear implementation Task after any required diagnosis/factual resolution, one capable Worker plus one independent Reviewer is the healthy target. Retries are recovery for genuinely new evidence, not the normal discovery mechanism.
 
 ## Questions, evidence, and verification
 
-Use Loom OQs for real cross-authority questions. Block only dependent work; continue unrelated authorized work.
+Use Loom OQs for real cross-role questions. Any Loom role may ask any other Loom role; route the OQ to the role that can actually answer it. A Reviewer/Critic OQ response is a narrow answer, not a review/QA verdict. General-owned OQs are answered directly by the bound General session. Block only dependent work; continue unrelated authorized work.
 
 Evidence outranks model claims. A tool call, file edit, or transport-level success does not prove the product claim. Persisted verification requirements remain load-bearing until proven with observed evidence.
 

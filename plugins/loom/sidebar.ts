@@ -1,6 +1,6 @@
 import type { OpenQuestion } from "./oq"
 import { plannedTaskSteps, runnable, type Workflow } from "./workflow"
-import { workTree, type WorkHierarchy } from "./work"
+import { workPlanContext, workTree, type WorkHierarchy } from "./work"
 import type {
   LoomSidebarSnapshot,
   LoomSidebarTaskStatus,
@@ -48,14 +48,45 @@ export function buildSidebarSnapshot(
   let work: LoomSidebarWork | undefined
   if (hierarchy) {
     const tree = workTree(hierarchy)
+    const plan = workPlanContext(hierarchy, undefined, "full")
+    const planPhase = (phaseId: string) => plan?.planMap?.find((phase) => phase.id === phaseId)
+    const planWave = (phaseId: string, waveId: string) =>
+      planPhase(phaseId)?.waves.find((wave) => wave.id === waveId)
+    const planTask = (taskId: string) =>
+      plan?.planMap?.flatMap((phase) => phase.waves.flatMap((wave) => wave.tasks)).find((task) => task.id === taskId)
+    const openOqsForTask = (taskId: string) =>
+      questions.filter(
+        (question) =>
+          question.status !== "closed" &&
+          question.work?.objectiveId === hierarchy.objectiveId &&
+          question.work?.generation === hierarchy.generation &&
+          (question.work?.revision === undefined || question.work.revision === plan?.revision) &&
+          question.work?.taskId === taskId,
+      ).length
+
     work = {
       ...tree,
+      ...(plan
+        ? {
+            plan: {
+              revision: plan.revision,
+              goal: plan.goal.length > 72 ? plan.goal.slice(0, 69) + "…" : plan.goal,
+              ...(plan.invalidated ? { invalidated: true } : {}),
+            },
+          }
+        : {}),
       phases: tree.phases.map((phase) => ({
         ...phase,
+        ...(planPhase(phase.id)?.objective ? { objective: planPhase(phase.id)!.objective } : {}),
         waves: phase.waves.map((wave) => ({
           ...wave,
+          ...(planWave(phase.id, wave.id)?.objective
+            ? { objective: planWave(phase.id, wave.id)!.objective }
+            : {}),
           tasks: wave.tasks.map((task) => ({
             ...task,
+            ...(planTask(task.id)?.objective ? { objective: planTask(task.id)!.objective } : {}),
+            ...(openOqsForTask(task.id) ? { openQuestions: openOqsForTask(task.id) } : {}),
             status:
               task.status === "complete"
                 ? "complete"

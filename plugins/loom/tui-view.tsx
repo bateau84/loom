@@ -90,6 +90,12 @@ function LoomSidebar(props: { sessionID?: string }) {
               {workGlyph(snapshot()!.work!.objective.status)} {snapshot()!.work!.objective.title} ·{" "}
               {progressText(snapshot()!.work!.objective.progress)}
             </text>
+            <Show when={snapshot()!.work!.plan}>
+              <text>
+                Plan r{snapshot()!.work!.plan!.revision}
+                {snapshot()!.work!.plan!.invalidated ? " · invalidated" : ""} · {snapshot()!.work!.plan!.goal}
+              </text>
+            </Show>
 
             {(() => {
               const allTasks = snapshot()!.work!.phases.flatMap((phase) =>
@@ -116,6 +122,7 @@ function LoomSidebar(props: { sessionID?: string }) {
                                 {(task) => (
                                   <text>
                                     {"      "}{taskGlyph(task.status)} {task.title}
+                                    {task.openQuestions ? ` · ${task.openQuestions} OQ${task.openQuestions === 1 ? "" : "s"}` : ""}
                                   </text>
                                 )}
                               </For>

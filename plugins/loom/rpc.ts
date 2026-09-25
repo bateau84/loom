@@ -11,9 +11,15 @@ export type LoomSidebarWorkStatus =
   | "superseded"
 
 export type LoomSidebarWork = {
+  plan?: {
+    revision: number
+    goal: string
+    invalidated?: boolean
+  }
   objective: {
     id: string
     title: string
+    objective?: string
     status: LoomSidebarWorkStatus
     progress: { finished: number; total: number }
   }
@@ -21,16 +27,20 @@ export type LoomSidebarWork = {
   phases: Array<{
     id: string
     title: string
+    objective?: string
     status: LoomSidebarWorkStatus
     progress: { finished: number; total: number }
     waves: Array<{
       id: string
       title: string
+      objective?: string
       status: LoomSidebarWorkStatus
       progress: { finished: number; total: number }
       tasks: Array<{
         id: string
         title: string
+        objective?: string
+        openQuestions?: number
         status: LoomSidebarTaskStatus
       }>
     }>
@@ -114,11 +124,22 @@ export const LoomRpc = {
           work: {
             type: "object",
             properties: {
+              plan: {
+                type: "object",
+                properties: {
+                  revision: { type: "number" },
+                  goal: { type: "string" },
+                  invalidated: { type: "boolean" },
+                },
+                required: ["revision", "goal"],
+                additionalProperties: false,
+              },
               objective: {
                 type: "object",
                 properties: {
                   id: { type: "string" },
                   title: { type: "string" },
+                  objective: { type: "string" },
                   status: workStatusSchema,
                   progress: progressSchema,
                 },
@@ -133,6 +154,7 @@ export const LoomRpc = {
                   properties: {
                     id: { type: "string" },
                     title: { type: "string" },
+                    objective: { type: "string" },
                     status: workStatusSchema,
                     progress: progressSchema,
                     waves: {
@@ -142,6 +164,7 @@ export const LoomRpc = {
                         properties: {
                           id: { type: "string" },
                           title: { type: "string" },
+                          objective: { type: "string" },
                           status: workStatusSchema,
                           progress: progressSchema,
                           tasks: {
@@ -151,6 +174,8 @@ export const LoomRpc = {
                               properties: {
                                 id: { type: "string" },
                                 title: { type: "string" },
+                                objective: { type: "string" },
+                                openQuestions: { type: "number" },
                                 status: taskStatusSchema,
                               },
                               required: ["id", "title", "status"],

@@ -280,6 +280,405 @@ describe("Loom registered plugin boundary", () => {
     }
   })
 
+  test("legacy Objective compatibility action is Objective-scoped, conditional, and self-completing", async () => {
+    const h = await harness()
+    const generalSession = "upgrade-general"
+    const workerSession = "upgrade-worker"
+    const workflowId = "upgrade-workflow"
+    const objectiveId = "objective:docs/anchors/upgrade/anchor.md"
+    try {
+      const workflow = {
+        id: workflowId,
+        projectId: h.runtime.projectId,
+        revision: 1,
+        anchor: "docs/anchors/upgrade/anchor.md",
+        createdBySession: generalSession,
+        createdAt: "before-holistic-plan",
+        work: { objectiveId, generation: 1 },
+        steps: [
+          {
+            id: "plan",
+            agent: "planner",
+            kind: "work",
+            dependsOn: [],
+            status: "pending",
+          },
+        ],
+      }
+      const work: any = {
+        objectiveId,
+        anchor: workflow.anchor,
+        title: "Upgrade",
+        objectiveStatus: "active",
+        version: 3,
+        generation: 1,
+        workflowIds: [workflowId],
+        nodes: [
+          {
+            id: "phase:1:legacy",
+            logicalId: "legacy",
+            type: "phase",
+            title: "Legacy",
+            status: "active",
+            generation: 1,
+            createdAt: "old",
+            updatedAt: "old",
+          },
+          {
+            id: "wave:1:legacy/wave",
+            logicalId: "wave",
+            type: "wave",
+            title: "Legacy wave",
+            status: "pending",
+            generation: 1,
+            parentId: "phase:1:legacy",
+            createdAt: "old",
+            updatedAt: "old",
+          },
+          {
+            id: "task:1:legacy",
+            logicalId: "legacy",
+            type: "task",
+            title: "Legacy task",
+            objective: "Finish legacy work",
+            status: "pending",
+            generation: 1,
+            parentId: "wave:1:legacy/wave",
+            dependsOn: [],
+            createdAt: "old",
+            updatedAt: "old",
+          },
+          {
+            id: "task:1:completed",
+            logicalId: "completed",
+            type: "task",
+            title: "Completed legacy task",
+            objective: "Preserve completed legacy work",
+            status: "complete",
+            generation: 1,
+            parentId: "wave:1:legacy/wave",
+            dependsOn: [],
+            result: {
+              workflowId: "legacy-reviewed-workflow",
+              summary: "Completed legacy behavior is already proven.",
+              evidenceClaimIds: ["claim-legacy-complete"],
+              completedAt: "before-holistic-plan",
+            },
+            createdAt: "old",
+            updatedAt: "old",
+          },
+        ],
+        createdAt: "old",
+        updatedAt: "old",
+      }
+
+      await h.durableStorage.set(`workflow/${workflowId}`, workflow)
+      await h.durableStorage.set(`session/${generalSession}`, workflowId)
+      await h.durableStorage.set(`session/${workerSession}`, workflowId)
+      await h.durableStorage.set(`work/${encodeURIComponent(objectiveId)}`, work)
+
+      const context = h.sessionHooks.get("context")!
+      const generalEvent = { sessionID: generalSession, system: [] as Array<{ type: string; text: string }> }
+      await context(generalEvent)
+      expect(generalEvent.system).toHaveLength(2)
+      expect(generalEvent.system[1]?.text).toContain("loom_upgrade_status")
+
+      const workerEvent = { sessionID: workerSession, system: [] as Array<{ type: string; text: string }> }
+      await context(workerEvent)
+      expect(workerEvent.system).toHaveLength(1)
+
+      const generalStatus = await h.call("upgrade_status", {}, "general", generalSession)
+      expect(generalStatus).toMatchObject({
+        runtimeVersion: 4,
+        objectiveId,
+        generation: 1,
+        actions: [{
+          id: "holistic-plan-adoption-v1",
+          scope: "objective",
+          status: "ready",
+          owner: "general",
+        }],
+      })
+      const workerStatus = await h.call("upgrade_status", {}, "worker", workerSession)
+      expect(workerStatus.actions).toHaveLength(1)
+
+      await h.durableStorage.set(`workflow/${workflowId}`, {
+        ...workflow,
+        steps: workflow.steps.map((step: any) => ({ ...step, status: "complete" })),
+      })
+      const terminalGeneralEvent = {
+        sessionID: generalSession,
+        system: [] as Array<{ type: string; text: string }>,
+      }
+      await context(terminalGeneralEvent)
+      expect(terminalGeneralEvent.system).toHaveLength(2)
+      expect(terminalGeneralEvent.system[1]?.text).toContain("loom_upgrade_status")
+      await h.durableStorage.set(`workflow/${workflowId}`, workflow)
+
+      const plannerGrant = await h.call("dispatch_grant", {
+        workflowId,
+        stepId: "plan",
+      }, "general", generalSession)
+      expect(plannerGrant.error).toBeUndefined()
+      const plannerSession = "upgrade-planner"
+      const attached = await h.call("attach", {
+        workflowId,
+        stepId: "plan",
+        grantId: plannerGrant.grantId,
+      }, "planner", plannerSession)
+      expect(attached.error).toBeUndefined()
+      expect(attached.upgradeActions).toMatchObject([{
+        id: "holistic-plan-adoption-v1",
+        status: "ready",
+        scope: "objective",
+        objectiveId,
+      }])
+
+      const adoptedTask = {
+        id: "remaining",
+        title: "Remaining rich-plan work",
+        objective: "Finish the remaining accepted Objective.",
+        rationale: "This is the remaining implementation contribution after preserved legacy work.",
+        dependsOn: [],
+        authorityRefs: [workflow.anchor],
+        constraints: ["Preserve the already-proven legacy behavior."],
+        acceptanceCriteria: ["The remaining Objective behavior is complete."],
+        subtasks: [],
+        integration: ["Compose with the preserved completed legacy behavior."],
+        verify: ["Run the assembled Objective acceptance path."],
+      }
+      const adopted = await h.call("work_plan", {
+        workflowId,
+        expectedVersion: work.version,
+        replaceReason: "Adopt holistic Plan semantics at the safe planning boundary.",
+        goal: "Deliver the accepted Objective.",
+        assumptions: [],
+        outOfScope: [],
+        authorityRefs: [workflow.anchor],
+        obligations: [
+          {
+            id: "legacy-complete",
+            sourceRef: workflow.anchor,
+            statement: "Preserve the already-proven legacy behavior.",
+            disposition: "already-satisfied",
+            taskIds: [],
+            verification: ["claim-legacy-complete"],
+          },
+          {
+            id: "remaining",
+            sourceRef: workflow.anchor,
+            statement: "Finish the remaining accepted Objective behavior.",
+            disposition: "implement",
+            taskIds: ["remaining"],
+            verification: ["Run the assembled Objective acceptance path."],
+          },
+        ],
+        riskBoundaries: [{
+          id: "remaining-integration",
+          title: "Legacy integration boundary",
+          description: "Remaining work must preserve and compose with completed legacy behavior.",
+          taskIds: ["remaining"],
+        }],
+        acceptanceCoverage: [{
+          id: "objective-acceptance",
+          title: "Accepted Objective",
+          criterion: "The assembled Objective works with preserved legacy behavior.",
+          taskIds: ["remaining"],
+        }],
+        relationships: [],
+        correctionRouting: [{
+          condition: "Remaining decomposition is incomplete",
+          routeTo: "planner",
+          taskId: "remaining",
+        }],
+        phases: [{
+          id: "remaining",
+          title: "Remaining work",
+          objective: "Finish the remaining Objective.",
+          waves: [{
+            id: "delivery",
+            title: "Delivery",
+            objective: "Deliver the remaining implementation contribution.",
+            constraints: ["Do not rerun already-proven legacy work solely for migration."],
+            tasks: [adoptedTask],
+          }],
+        }],
+      }, "planner", plannerSession)
+      expect(adopted.error).toBeUndefined()
+      expect(adopted.generation).toBe(2)
+
+      const adoptedWork: any = await h.durableStorage.get(`work/${encodeURIComponent(objectiveId)}`)
+      expect(adoptedWork.plans.at(-1)).toMatchObject({ generation: 2, revision: 1 })
+      expect(adoptedWork.nodes.find((node: any) => node.id === "task:1:completed")).toMatchObject({
+        status: "complete",
+        result: {
+          workflowId: "legacy-reviewed-workflow",
+          evidenceClaimIds: ["claim-legacy-complete"],
+        },
+      })
+
+      const afterGeneral = { sessionID: generalSession, system: [] as Array<{ type: string; text: string }> }
+      await context(afterGeneral)
+      expect(afterGeneral.system).toHaveLength(1)
+      expect((await h.call("upgrade_status", {}, "general", generalSession)).actions).toEqual([])
+      expect((await h.call("upgrade_status", {}, "worker", workerSession)).actions).toEqual([])
+    } finally {
+      h.restore()
+    }
+  })
+
+  test("deferred holistic-Plan adoption does not block Task-linked peer OQs from a legacy Wave", async () => {
+    const h = await harness()
+    const generalSession = "legacy-oq-general"
+    const workerSession = "legacy-oq-worker"
+    const architectSession = "legacy-oq-architect"
+    const workflowId = "legacy-oq-workflow"
+    const objectiveId = "objective:docs/anchors/legacy-oq/anchor.md"
+    try {
+      const legacyTask = {
+        id: "legacy-task",
+        title: "Legacy runtime Task",
+        objective: "Finish the admitted legacy runtime path.",
+        dependsOn: [],
+        write: ["src/**"],
+        skills: [],
+        verify: ["bun test"],
+      }
+      const workflow: any = {
+        id: workflowId,
+        projectId: h.runtime.projectId,
+        revision: 1,
+        anchor: "docs/anchors/legacy-oq/anchor.md",
+        createdBySession: generalSession,
+        createdAt: "before-holistic-plan",
+        work: { objectiveId, generation: 1 },
+        steps: [{
+          id: "task:legacy-task",
+          agent: "worker",
+          kind: "work",
+          dependsOn: [],
+          status: "pending",
+          task: legacyTask,
+        }],
+      }
+      const work: any = {
+        objectiveId,
+        anchor: workflow.anchor,
+        title: "Legacy OQ",
+        objectiveStatus: "active",
+        version: 3,
+        generation: 1,
+        workflowIds: [workflowId],
+        nodes: [
+          {
+            id: "phase:1:legacy",
+            logicalId: "legacy",
+            type: "phase",
+            title: "Legacy",
+            status: "active",
+            generation: 1,
+            createdAt: "old",
+            updatedAt: "old",
+          },
+          {
+            id: "wave:1:legacy/wave",
+            logicalId: "wave",
+            type: "wave",
+            title: "Legacy wave",
+            status: "active",
+            generation: 1,
+            parentId: "phase:1:legacy",
+            claimedByWorkflowId: workflowId,
+            createdAt: "old",
+            updatedAt: "old",
+          },
+          {
+            id: "task:1:legacy-task",
+            logicalId: "legacy-task",
+            type: "task",
+            title: "Legacy runtime Task",
+            objective: "Finish the admitted legacy runtime path.",
+            status: "active",
+            generation: 1,
+            parentId: "wave:1:legacy/wave",
+            dependsOn: [],
+            claimedByWorkflowId: workflowId,
+            createdAt: "old",
+            updatedAt: "old",
+          },
+        ],
+        createdAt: "old",
+        updatedAt: "old",
+      }
+
+      await h.durableStorage.set(`workflow/${workflowId}`, workflow)
+      await h.durableStorage.set(`work/${encodeURIComponent(objectiveId)}`, work)
+      await h.durableStorage.set(`session/${generalSession}`, workflowId)
+      await h.durableStorage.set(`session/${workerSession}`, workflowId)
+      await h.durableStorage.set(`session-step/${workerSession}`, "task:legacy-task")
+
+      const raised = await h.call("oq_raise", {
+        workflowId,
+        stepId: "task:legacy-task",
+        question: "Which accepted recovery mechanism applies to this legacy Task?",
+        responder: "architect",
+        blocking: false,
+      }, "worker", workerSession)
+      expect(raised.error).toBeUndefined()
+      expect(raised.question.work).toEqual({
+        objectiveId,
+        generation: 1,
+        taskId: "legacy-task",
+      })
+
+      // The non-blocking OQ may outlive adoption. Its generation-1 Task is
+      // historical/superseded but remains the provenance for this question.
+      work.generation = 2
+      for (const node of work.nodes) {
+        node.status = "superseded"
+        node.supersededByGeneration = 2
+      }
+      work.plans = [{
+        generation: 2,
+        revision: 1,
+        amendments: [],
+        goal: "Adopt the rich Plan after the legacy Wave.",
+        assumptions: [],
+        outOfScope: [],
+        authorityRefs: [workflow.anchor],
+        obligations: [],
+        riskBoundaries: [],
+        acceptanceCoverage: [],
+        relationships: [],
+        correctionRouting: [],
+        phases: [],
+      }]
+      await h.durableStorage.set(`work/${encodeURIComponent(objectiveId)}`, work)
+
+      const grant = await h.call("dispatch_grant", {
+        workflowId,
+        questionId: raised.question.id,
+      }, "general", generalSession)
+      expect(grant.error).toBeUndefined()
+      const attached = await h.call("attach", {
+        workflowId,
+        questionId: raised.question.id,
+        grantId: grant.grantId,
+      }, "architect", architectSession)
+      expect(attached.error).toBeUndefined()
+      expect(attached.planContext).toBeUndefined()
+      expect(attached.legacyTaskContext).toMatchObject({
+        taskId: "legacy-task",
+        title: "Legacy runtime Task",
+        objective: "Finish the admitted legacy runtime path.",
+        status: "superseded",
+        dependsOn: [],
+      })
+    } finally {
+      h.restore()
+    }
+  })
+
   test("resumed pre-upgrade OpenCode session automatically reconciles its ongoing workflow", async () => {
     const sessionID = "resumed-general-session"
     const workflowId = "legacy-workflow"
@@ -1986,7 +2385,53 @@ describe("dispatch grant target resolution", () => {
   })
 })
 
-async function waveLifecycleFixture(workLevel: "wave" | "objective" = "wave") {
+function richPlanTask(id: string, title: string, objective: string, dependsOn: string[] = []) {
+  return {
+    id,
+    title,
+    objective,
+    rationale: `${title} is required by the accepted test Objective.`,
+    dependsOn,
+    authorityRefs: ["docs/anchors/test/anchor.md"],
+    constraints: [],
+    acceptanceCriteria: [`${title} completes its accepted contribution.`],
+    subtasks: [],
+    integration: [],
+    verify: ["bun test"],
+  }
+}
+
+function richPlanDefinition(phases: any[]) {
+  return {
+    goal: "Deliver the accepted test Objective.",
+    assumptions: [],
+    outOfScope: [],
+    authorityRefs: ["docs/anchors/test/anchor.md"],
+    obligations: [],
+    riskBoundaries: [],
+    acceptanceCoverage: [],
+    relationships: [],
+    correctionRouting: [],
+    phases: phases.map((phase) => ({
+      ...phase,
+      objective: phase.objective ?? `Deliver ${phase.title}.`,
+      waves: phase.waves.map((wave: any) => ({
+        ...wave,
+        objective: wave.objective ?? `Complete ${wave.title}.`,
+        constraints: wave.constraints ?? [],
+      })),
+    })),
+  }
+}
+
+function richWorkPlanInput(workflowId: string, phases: any[], extra: Record<string, unknown> = {}) {
+  return { workflowId, ...richPlanDefinition(phases), ...extra }
+}
+
+async function waveLifecycleFixture(
+  workLevel: "wave" | "objective" = "wave",
+  includeFutureWave = false,
+) {
   const h = await harness()
   try {
     const { workflowId } = await h.call("start", { anchor: "docs/anchors/lifecycle/anchor.md" }, "general", "parent")
@@ -2008,12 +2453,20 @@ async function waveLifecycleFixture(workLevel: "wave" | "objective" = "wave") {
     }, "general", "parent")
     expect((await finish("critic-solution", "critic", "pass")).error).toBeUndefined()
     const planner = await attach("plan", "planner")
-    const task = { id: "one", title: "One", objective: "Build one", dependsOn: [] }
-    expect((await h.call("work_plan", {
-      workflowId, phases: [{ id: "core", title: "Core", waves: [{ id: "first", title: "First", tasks: [task] }] }],
-    }, "planner", planner)).error).toBeUndefined()
+    const task = richPlanTask("one", "One", "Build one")
+    const future = richPlanTask("two", "Two", "Build two", ["one"])
+    expect((await h.call("work_plan", richWorkPlanInput(workflowId, [
+      {
+        id: "core",
+        title: "Core",
+        waves: [
+          { id: "first", title: "First", tasks: [task] },
+          ...(includeFutureWave ? [{ id: "second", title: "Second", tasks: [future] }] : []),
+        ],
+      },
+    ]), "planner", planner)).error).toBeUndefined()
     expect((await h.call("task_plan", {
-      workflowId, tasks: [{ ...task, write: ["src/**"], skills: [], verify: ["bun test"] }],
+      workflowId, tasks: [{ ...task, write: ["src/**"], skills: [] }],
     }, "planner", planner)).error).toBeUndefined()
     expect((await h.call("complete", { workflowId, stepId: "plan", summary: "Planned" }, "planner", planner)).error).toBeUndefined()
     const workflow = () => h.durableStorage.get(`workflow/${workflowId}`) as Promise<any>
@@ -2039,6 +2492,41 @@ async function waveLifecycleFixture(workLevel: "wave" | "objective" = "wave") {
     throw error
   }
 }
+
+test("Reviewer attachment keeps exact Wave contracts on-demand instead of injecting the full corpus", async () => {
+  const h = await waveLifecycleFixture()
+  try {
+    expect((await h.finish("task:one", "worker")).error).toBeUndefined()
+    const grant = await h.call("dispatch_grant", {
+      workflowId: h.workflowId,
+      stepId: "review-implementation",
+    }, "general", "parent")
+    expect(grant.error).toBeUndefined()
+    const reviewerSession = "bounded-reviewer"
+    const attached = await h.call("attach", {
+      workflowId: h.workflowId,
+      stepId: "review-implementation",
+      grantId: grant.grantId,
+    }, "reviewer", reviewerSession)
+    expect(attached.error).toBeUndefined()
+    expect(attached.planContext).toBeDefined()
+    expect(attached.reviewTasks).toBeUndefined()
+
+    const exact = await h.call("task_status", {
+      workflowId: h.workflowId,
+      taskId: "one",
+    }, "reviewer", reviewerSession)
+    expect(exact.error).toBeUndefined()
+    expect(exact.tasks).toHaveLength(1)
+    expect(exact.tasks[0].task).toMatchObject({
+      id: "one",
+      objective: "Build one",
+      acceptanceCriteria: ["One completes its accepted contribution."],
+    })
+  } finally {
+    h.restore()
+  }
+})
 
 test("Planner keeps auto Objective routing Wave-scoped when multiple Waves remain", async () => {
   const h = await harness()
@@ -2077,20 +2565,18 @@ test("Planner keeps auto Objective routing Wave-scoped when multiple Waves remai
     }, "critic", critic)).error).toBeUndefined()
 
     const planner = await attach("plan", "planner", "planner-auto-wave")
-    const task = { id: "first-task", title: "First task", objective: "Build the first Wave", dependsOn: [] as string[] }
-    const second = { id: "second-task", title: "Second task", objective: "Build the second Wave", dependsOn: ["first-task"] }
+    const task = richPlanTask("first-task", "First task", "Build the first Wave")
+    const second = richPlanTask("second-task", "Second task", "Build the second Wave", ["first-task"])
 
-    expect((await h.call("work_plan", {
-      workflowId,
-      phases: [{
+    expect((await h.call("work_plan", richWorkPlanInput(workflowId, [{
         id: "delivery",
         title: "Delivery",
         waves: [
           { id: "first", title: "First", tasks: [task] },
           { id: "second", title: "Second", tasks: [second] },
         ],
-      }],
-    }, "planner", planner)).error).toBeUndefined()
+      },
+    ]), "planner", planner)).error).toBeUndefined()
 
     const before = await h.durableStorage.get(`workflow/${workflowId}`) as any
     const planAttempt = before.steps.find((step: any) => step.id === "plan").attempt ?? 0
@@ -2101,7 +2587,6 @@ test("Planner keeps auto Objective routing Wave-scoped when multiple Waves remai
         ...task,
         write: ["src/first/**"],
         skills: [],
-        verify: ["bun test"],
       }],
     }, "planner", planner)
 
@@ -2169,16 +2654,14 @@ test("Planner upgrades auto Objective routing for the only remaining Wave", asyn
     }, "critic", critic)).error).toBeUndefined()
 
     const planner = await attach("plan", "planner", "planner-auto-objective")
-    const task = { id: "only-task", title: "Only task", objective: "Build the product", dependsOn: [] as string[] }
+    const task = richPlanTask("only-task", "Only task", "Build the product")
 
-    expect((await h.call("work_plan", {
-      workflowId,
-      phases: [{
+    expect((await h.call("work_plan", richWorkPlanInput(workflowId, [{
         id: "delivery",
         title: "Delivery",
         waves: [{ id: "only", title: "Only", tasks: [task] }],
-      }],
-    }, "planner", planner)).error).toBeUndefined()
+      },
+    ]), "planner", planner)).error).toBeUndefined()
 
     const before = await h.durableStorage.get(`workflow/${workflowId}`) as any
     const planAttempt = before.steps.find((step: any) => step.id === "plan").attempt ?? 0
@@ -2191,7 +2674,6 @@ test("Planner upgrades auto Objective routing for the only remaining Wave", asyn
         ...task,
         write: ["src/product/**"],
         skills: [],
-        verify: ["bun test"],
       }],
     }, "planner", planner)
 
@@ -2292,6 +2774,244 @@ describe("workflow lifecycle recovery", () => {
     } finally { h.restore() }
   })
 })
+
+test("Planner OQ may amend untouched future work without staling the active Wave DAG", async () => {
+  const h = await waveLifecycleFixture("wave", true)
+  try {
+    const raised = await h.call("oq_raise", {
+      workflowId: h.workflowId,
+      taskId: "two",
+      question: "Clarify the checklist for future Task two without disturbing current Task one.",
+      responder: "planner",
+      blocking: false,
+    }, "general", "parent")
+    expect(raised.error).toBeUndefined()
+    expect(raised.question.responder).toBe("planner")
+
+    const grant = await h.call("dispatch_grant", {
+      workflowId: h.workflowId,
+      questionId: raised.question.id,
+    }, "general", "parent")
+    expect(grant.error).toBeUndefined()
+    const planner = "planner-future-amend"
+    expect((await h.call("attach", {
+      workflowId: h.workflowId,
+      questionId: raised.question.id,
+      grantId: grant.grantId,
+    }, "planner", planner)).attached).toBe(true)
+
+    const futureStatus = await h.call("work_status", {
+      workflowId: h.workflowId,
+      taskId: "two",
+    }, "planner", planner)
+    expect(futureStatus.error).toBeUndefined()
+    expect(futureStatus.plan).toMatchObject({
+      generation: 1,
+      revision: 1,
+      focus: {
+        task: {
+          id: "two",
+          objective: "Build two",
+          subtasks: [],
+        },
+      },
+    })
+
+    const nested = await h.call("oq_raise", {
+      workflowId: h.workflowId,
+      parentQuestionId: raised.question.id,
+      question: "Does architecture impose any additional constraint on future Task two?",
+      responder: "architect",
+      blocking: false,
+    }, "planner", planner)
+    expect(nested.error).toBeUndefined()
+    expect(nested.question).toMatchObject({
+      responder: "architect",
+      parentQuestionId: raised.question.id,
+      work: { taskId: "two" },
+    })
+
+    const nestedGrant = await h.call("dispatch_grant", {
+      workflowId: h.workflowId,
+      questionId: nested.question.id,
+    }, "general", "parent")
+    expect(nestedGrant.error).toBeUndefined()
+
+    const before = await h.work()
+    const amended = await h.call("work_amend", {
+      workflowId: h.workflowId,
+      questionId: raised.question.id,
+      expectedVersion: before.version,
+      reason: "Clarify one future Task checklist.",
+      operations: [{
+        action: "patch-task",
+        taskId: "two",
+        patch: {
+          subtasks: ["Implement Two", "Verify Two against One's completed interface"],
+        },
+      }],
+    }, "planner", planner)
+    expect(amended.error).toBeUndefined()
+    expect(amended.taskPlanRefreshRequired).toBe(false)
+    expect(amended.changedTaskIds).toContain("two")
+
+    const oldRevision = await h.call("work_status", {
+      workflowId: h.workflowId,
+      taskId: "two",
+      revision: 1,
+    }, "planner", planner)
+    expect(oldRevision.error).toBeUndefined()
+    expect(oldRevision.plan.focus.task.subtasks).toEqual([])
+
+    const currentRevision = await h.call("work_status", {
+      workflowId: h.workflowId,
+      taskId: "two",
+    }, "planner", planner)
+    expect(currentRevision.plan).toMatchObject({
+      revision: 2,
+      focus: {
+        task: {
+          subtasks: ["Implement Two", "Verify Two against One's completed interface"],
+        },
+      },
+    })
+
+    const afterFirstAmendment = await h.work()
+    const staleMutation = await h.call("work_amend", {
+      workflowId: h.workflowId,
+      questionId: raised.question.id,
+      expectedVersion: afterFirstAmendment.version,
+      reason: "Attempt to mutate again from stale revision-1 OQ context.",
+      operations: [{
+        action: "patch-task",
+        taskId: "two",
+        patch: { subtasks: ["Stale rewrite"] },
+      }],
+    }, "planner", planner)
+    expect(staleMutation.error).toContain("Task semantics changed after the question was raised")
+
+    const architect = "architect-nested-oq"
+    const architectAttach = await h.call("attach", {
+      workflowId: h.workflowId,
+      questionId: nested.question.id,
+      grantId: nestedGrant.grantId,
+    }, "architect", architect)
+    expect(architectAttach.attached).toBe(true)
+    expect(architectAttach.planContext).toMatchObject({
+      generation: 1,
+      revision: 1,
+      focus: {
+        task: {
+          id: "two",
+          subtasks: [],
+        },
+      },
+    })
+    expect((await h.call("oq_answer", {
+      workflowId: h.workflowId,
+      questionId: nested.question.id,
+      answer: "No additional architecture constraint applies.",
+      source: "agent",
+    }, "architect", architect)).error).toBeUndefined()
+
+    expect((await h.call("oq_answer", {
+      workflowId: h.workflowId,
+      questionId: raised.question.id,
+      answer: "Future Task two is amended; current Wave remains valid.",
+      source: "agent",
+    }, "planner", planner)).error).toBeUndefined()
+
+    const currentGrant = await h.call("dispatch_grant", {
+      workflowId: h.workflowId,
+      stepId: "task:one",
+    }, "general", "parent")
+    expect(currentGrant.error).toBeUndefined()
+  } finally {
+    h.restore()
+  }
+})
+
+test("reopened Planner can surgically amend a current Task and must refresh the executable DAG", async () => {
+  const h = await waveLifecycleFixture()
+  try {
+    expect((await h.call("reopen", {
+      workflowId: h.workflowId,
+      stepId: "plan",
+      reason: "A bounded Task-local criterion is missing.",
+      newEvidence: true,
+      changedHypothesis: false,
+      changedStrategy: false,
+      reducedUnresolved: false,
+    }, "general", "parent")).error).toBeUndefined()
+
+    expect((await h.call("work_release", {
+      workflowId: h.workflowId,
+      reason: "Release the Wave while Planner repairs its Task contract.",
+    }, "general", "parent")).released).toBe(true)
+
+    const planGrant = await h.call("dispatch_grant", {
+      workflowId: h.workflowId,
+      stepId: "plan",
+    }, "general", "parent")
+    expect(planGrant.error).toBeUndefined()
+    const planner = "planner-amend"
+    expect((await h.call("attach", {
+      workflowId: h.workflowId,
+      stepId: "plan",
+      grantId: planGrant.grantId,
+    }, "planner", planner)).attached).toBe(true)
+
+    const before = await h.work()
+    const amended = await h.call("work_amend", {
+      workflowId: h.workflowId,
+      expectedVersion: before.version,
+      reason: "Reviewer found one missing Task-local near-miss criterion.",
+      operations: [{
+        action: "patch-task",
+        taskId: "one",
+        patch: {
+          acceptanceCriteria: [
+            "One completes its accepted contribution.",
+            "The near-miss path is rejected.",
+          ],
+          subtasks: ["Implement One", "Verify the near-miss path"],
+        },
+      }],
+    }, "planner", planner)
+    expect(amended.error).toBeUndefined()
+    expect(amended.taskPlanRefreshRequired).toBe(true)
+    expect(amended.generation).toBe(1)
+    expect(amended.revision).toBe(2)
+
+    const prematureComplete = await h.call("complete", {
+      workflowId: h.workflowId,
+      stepId: "plan",
+      summary: "Do not accept the stale executable Task DAG.",
+    }, "planner", planner)
+    expect(prematureComplete.error).toContain("stale against the current semantic Task/Wave contract")
+
+    const current = await h.work()
+    const semanticTask = current.plans.at(-1).phases[0].waves[0].tasks[0]
+    expect((await h.call("task_plan", {
+      workflowId: h.workflowId,
+      tasks: [{ ...semanticTask, write: ["src/**"], skills: [] }],
+    }, "planner", planner)).error).toBeUndefined()
+    expect((await h.call("complete", {
+      workflowId: h.workflowId,
+      stepId: "plan",
+      summary: "Refreshed executable Task DAG from Plan revision 2.",
+    }, "planner", planner)).error).toBeUndefined()
+
+    const refreshedGrant = await h.call("dispatch_grant", {
+      workflowId: h.workflowId,
+      stepId: "task:one",
+    }, "general", "parent")
+    expect(refreshedGrant.error).toBeUndefined()
+  } finally {
+    h.restore()
+  }
+})
+
 
 const reopenRequest = (workflowId: string, stepId: string) => ({
   workflowId, stepId, reason: "New evidence invalidates this step.",
@@ -2631,13 +3351,13 @@ describe("Reviewer recovery probes", () => {
       const critic = await nextAttach("critic-solution", "critic")
       expect((await h.call("complete", { workflowId: next.workflowId, stepId: "critic-solution", outcome: "pass", summary: "Reviewed replacement" }, "critic", critic)).error).toBeUndefined()
       const planner = await nextAttach("plan", "planner")
-      const replacementPlan = await h.call("work_plan", {
-        workflowId: next.workflowId, expectedVersion: (await h.work()).version,
+      const replacementTask = richPlanTask("two", "Two", "Replacement work")
+      const replacementPlan = await h.call("work_plan", richWorkPlanInput(next.workflowId, [
+        { id: "core", title: "Core", waves: [{ id: "next", title: "Next", tasks: [replacementTask] }] },
+      ], {
+        expectedVersion: (await h.work()).version,
         replaceReason: "User requested replacing the failed plan",
-        phases: [{ id: "core", title: "Core", waves: [{ id: "next", title: "Next", tasks: [
-          { id: "two", title: "Two", objective: "Replacement work", dependsOn: [] },
-        ] }] }],
-      }, "planner", planner)
+      }), "planner", planner)
       const retry = await h.call("cancel", cancellationRequest(h.workflowId), "general", "parent")
       expect((await h.workflow()).steps.find((s: any) => s.id === "review-implementation").status).toBe("failed")
       expect(claims).toHaveLength(0)
@@ -2687,14 +3407,14 @@ describe("Critic cross-boundary counterexamples", () => {
 
   test("C2: partial-Wave reopening respects consumers of every reviewed Task", () => {
     const now = "2026-09-23T12:00:00Z"
-    const a = { id: "a", title: "A", objective: "Build A", dependsOn: [] as string[] }
-    const b = { id: "b", title: "B", objective: "Build B", dependsOn: ["a"] }
-    const c = { id: "c", title: "C", objective: "Consume A's reviewed Wave", dependsOn: ["a"] }
-    const spec = (task: typeof a, dependsOn = task.dependsOn) => ({ ...task, dependsOn, write: [`src/${task.id}.ts`], skills: [], verify: ["bun test"] })
+    const a = richPlanTask("a", "A", "Build A")
+    const b = richPlanTask("b", "B", "Build B", ["a"])
+    const c = richPlanTask("c", "C", "Consume A's reviewed Wave", ["a"])
+    const spec = (task: typeof a, dependsOn = task.dependsOn) => ({ ...task, dependsOn, write: [`src/${task.id}.ts`], skills: [] })
     const work = createWorkHierarchy("docs/anchors/partial/anchor.md", "original", now)
-    materializeWorkPlan(work, "original", [{ id: "core", title: "Core", waves: [
+    materializeWorkPlan(work, "original", richPlanDefinition([{ id: "core", title: "Core", waves: [
       { id: "first", title: "First", tasks: [a, b] }, { id: "consumer", title: "Consumer", tasks: [c] },
-    ] }], now)
+    ] }]), now)
     claimWorkflowWave(work, "original", 1, [spec(a), spec(b)], false, now)
     syncWorkTaskStatuses(work, "original", 1, [{ taskId: "a", complete: true }, { taskId: "b", complete: false }], now)
     releaseCancelledWorkflowClaims(work, "original", now)
@@ -2956,17 +3676,17 @@ describe("proof-consumer and full-Wave negative controls", () => {
 
   test("full-Wave invalidation preserves completed consumers and allows unrelated claims", () => {
     const now = "2026-09-23T12:00:00Z"
-    const a = { id: "a", title: "A", objective: "Build A", dependsOn: [] as string[] }
-    const b = { id: "b", title: "B", objective: "Build B", dependsOn: ["a"] }
-    const c = { id: "c", title: "C", objective: "Consume A", dependsOn: ["a"] }
-    const d = { id: "d", title: "D", objective: "Consume C", dependsOn: ["c"] }
-    const u = { id: "u", title: "U", objective: "Unrelated work", dependsOn: [] as string[] }
-    const spec = (task: typeof a, dependsOn = task.dependsOn) => ({ ...task, dependsOn, write: [`src/${task.id}.ts`], skills: [], verify: ["bun test"] })
+    const a = richPlanTask("a", "A", "Build A")
+    const b = richPlanTask("b", "B", "Build B", ["a"])
+    const c = richPlanTask("c", "C", "Consume A", ["a"])
+    const d = richPlanTask("d", "D", "Consume C", ["c"])
+    const u = richPlanTask("u", "U", "Unrelated work")
+    const spec = (task: typeof a, dependsOn = task.dependsOn) => ({ ...task, dependsOn, write: [`src/${task.id}.ts`], skills: [] })
     const work = createWorkHierarchy("docs/anchors/partial/anchor.md", "original", now)
-    materializeWorkPlan(work, "original", [{ id: "core", title: "Core", waves: [
+    materializeWorkPlan(work, "original", richPlanDefinition([{ id: "core", title: "Core", waves: [
       { id: "first", title: "First", tasks: [a, b] }, { id: "second", title: "Second", tasks: [c] },
       { id: "third", title: "Third", tasks: [d] }, { id: "unrelated", title: "Unrelated", tasks: [u] },
-    ] }], now)
+    ] }]), now)
     claimWorkflowWave(work, "original", 1, [spec(a), spec(b)], false, now)
     syncWorkTaskStatuses(work, "original", 1, [{ taskId: "a", complete: true }], now)
     releaseCancelledWorkflowClaims(work, "original", now)

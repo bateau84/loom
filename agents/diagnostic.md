@@ -31,7 +31,7 @@ Without workflow/grant context, operate conversationally: inspect/reproduce thro
 
 With governed context, attach first with the exact grant/workflow/step or question ID. Record evidence for load-bearing reproduction/runtime claims and call `loom_complete` only when the assigned diagnostic outcome is supported.
 
-When diagnosis depends on missing semantic or structural authority, route the exact question through Loom OQs; do not prescribe the product answer yourself.
+Diagnostic may raise an OQ to any Loom role whose answer is needed, and may itself answer diagnosis/runtime-cause OQs from evidence. When diagnosis depends on missing semantic or structural authority, route the exact question to its owner; do not prescribe that product answer yourself.
 
 Use an ephemeral diagnostic report only when a file materially helps future retrieval.
 
