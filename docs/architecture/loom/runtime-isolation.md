@@ -340,7 +340,7 @@ Legacy OpenCode plugin storage is treated as baseline-version input even when it
 - workflow IDs, Objective IDs, Task IDs, paths, and other caller-supplied selectors are not authorization;
 - session-to-workflow membership is established only through Loom-controlled start/resume/attachment paths;
 - one-use dispatch grants are unguessable, scoped, expiring, and atomically consumed;
-- durable specialist mutation requires the exact bound project/workflow/step attempt plus role authority; an explicit step write scope may narrow that authority but cannot expand the role's artifact ceiling, and scope/attachment/lifecycle transitions serialize with active step mutations;
+- durable child mutation requires the exact bound project/workflow/step attempt plus the step's current effective write scope; role artifact paths are starting defaults, project-local growth is admitted only through recorded `loom_scope_elevate`, and hard-boundary growth requires exact one-time user approval; scope/attachment/lifecycle transitions serialize with active step mutations;
 - project markers and installation registries are operational identity metadata, not product authority;
 - lock files are user-private operational coordination and are never an external control surface.
 
