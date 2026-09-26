@@ -1,7 +1,19 @@
+export type ScopeElevation = {
+  id: string
+  attempt: number
+  byAgent: string
+  bySessionId: string
+  paths: string[]
+  reason: string
+  elevatedAt: string
+  crossesRoleDefault?: boolean
+}
+
 export type TaskScope = {
   workflowId: string
   stepId: string
   write: string[]
+  elevations?: ScopeElevation[]
 }
 
 const forbiddenAuthorityRoots = [
@@ -63,6 +75,31 @@ export function validateStepWriteScope(
   }
 
   return paths
+}
+
+/**
+ * Validate a normal in-project runtime scope elevation. Unlike the historical
+ * specialist ceiling check, this deliberately does not decide role authority:
+ * the attached step may widen its own project-local mutation surface and Loom
+ * records that elevation for review. Hard-boundary paths are handled before
+ * this helper is called.
+ */
+export function validateScopeElevation(paths: string[]) {
+  return validateBoundedWriteScope(paths, "Scope elevation")
+}
+
+export function mergeWriteScope(current: readonly string[], additions: readonly string[]) {
+  return [...new Set([...current.map(normalize), ...additions.map(normalize)])].sort()
+}
+
+export function committableWriteScope(paths: readonly string[]) {
+  return paths
+    .map(normalize)
+    .filter(
+      (path) =>
+        path !== "ephemeral-reports" &&
+        !path.startsWith("ephemeral-reports/"),
+    )
 }
 
 export function validateWriteScope(paths: string[]) {
