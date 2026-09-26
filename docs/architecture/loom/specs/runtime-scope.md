@@ -106,9 +106,15 @@ record to the step scope, and make the expanded scope effective immediately.
 Successful project-local elevation returns `continue=true`; the child continues
 in the same session without a General round trip.
 
-Role-default paths are observability defaults, not hard mutation ceilings.
-Crossing a role default is recorded explicitly on the elevation so General,
-status tooling, and later review can distinguish expected work from scope growth.
+For product-producing roles (Designer, Specifier, Architect, Documenter, and
+Worker), role-default paths are observability defaults rather than hard mutation
+ceilings. Crossing a role default is recorded explicitly on the elevation so
+General, status tooling, and later review can distinguish expected work from
+scope growth.
+
+Independent/advisory roles (Reviewer, Critic, Research, Diagnostic, and
+Acceptance) do not gain implementation authority through scope elevation. They
+may re-expand a narrowed step only inside their role-owned output surface.
 Product rules that are independent of role defaults remain hard rules; for
 example durable reports remain promotion-only and ephemeral report namespaces
 remain producer-scoped.
