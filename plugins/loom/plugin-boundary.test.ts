@@ -3203,6 +3203,103 @@ Verdict: FAIL
     }
   })
 
+  test("completed specialist step loses mutation authority until reopened", async () => {
+    const h = await harness()
+    try {
+      await initializeGitFixture(h.root)
+      const generalSession = "completed-authority-general"
+      const childSession = "completed-authority-specifier"
+      const started = await h.call(
+        "start",
+        { request: "Specify one bounded lifecycle behavior." },
+        "general",
+        generalSession,
+      )
+      const workflowId = String(started.workflowId)
+      expect((await h.call(
+        "route",
+        {
+          humanFacing: false,
+          behavioral: true,
+          structural: false,
+          externalUnknown: false,
+          diagnostic: false,
+          productOutcome: false,
+          implementationRequested: true,
+          executionDepth: "change",
+        },
+        "general",
+        generalSession,
+      )).error).toBeUndefined()
+
+      const grant = await h.call(
+        "dispatch_grant",
+        { workflowId, stepId: "specifier" },
+        "general",
+        generalSession,
+      )
+      expect((await h.call(
+        "attach",
+        { grantId: grant.grantId, workflowId, stepId: "specifier" },
+        "specifier",
+        childSession,
+      )).attached).toBe(true)
+
+      const evaluate = h.permissionHooks.get("evaluate")!
+      const before: any = {
+        agent: "specifier",
+        action: "edit",
+        resources: ["docs/requirements/post-complete.md"],
+        sessionID: childSession,
+        effect: "ask",
+      }
+      await evaluate(before)
+      expect(before.effect).not.toBe("deny")
+
+      expect((await h.call(
+        "complete",
+        {
+          workflowId,
+          stepId: "specifier",
+          summary: "Specification step completed without repository mutation.",
+        },
+        "specifier",
+        childSession,
+      )).error).toBeUndefined()
+
+      const after: any = { ...before, effect: "ask" }
+      await evaluate(after)
+      expect(after.effect).toBe("deny")
+      expect(after.message).toContain("current runnable Loom step attempt")
+
+      const elevation = await h.call(
+        "scope_elevate",
+        {
+          workflowId,
+          stepId: "specifier",
+          paths: ["docs/requirements/after-complete.md"],
+          reason: "Attempted late write after completion.",
+        },
+        "specifier",
+        childSession,
+      )
+      expect(elevation.error).toContain("currently runnable pending step")
+
+      const stage: any = {
+        agent: "specifier",
+        action: "shell",
+        resources: ["git add docs/requirements/post-complete.md"],
+        sessionID: childSession,
+        effect: "ask",
+      }
+      await evaluate(stage)
+      expect(stage.effect).toBe("deny")
+      expect(stage.message).toContain("current runnable Loom step attempt")
+    } finally {
+      h.restore()
+    }
+  })
+
   test("reopened scoped Research cannot fall back to its broader report ceiling", async () => {
     const h = await harness()
     try {
