@@ -25,9 +25,12 @@ jobs:
           prepare-copilot: true
           command: |
             opencode-eval-runner --help
+            opencode-eval-runner invoke --help | grep -F -- '--reasoning'
             docker image inspect "$OPENCODE_EVAL_RUNNER_OPENCODE_IMAGE" >/dev/null
             docker run --rm --entrypoint opencode "$OPENCODE_EVAL_RUNNER_OPENCODE_IMAGE" --version | grep -F "2.0.15"
+            docker run --rm --entrypoint opencode "$OPENCODE_EVAL_RUNNER_OPENCODE_IMAGE" run --help | grep -F -- 'provider/model#variant'
             docker image inspect "$OPENCODE_EVAL_RUNNER_COPILOT_IMAGE" >/dev/null
+            docker run --rm --entrypoint copilot "$OPENCODE_EVAL_RUNNER_COPILOT_IMAGE" --help | grep -F -- '--effort'
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
           bun-version: 1.4.2
