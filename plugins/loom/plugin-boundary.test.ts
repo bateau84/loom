@@ -3230,6 +3230,18 @@ Verdict: FAIL
       )).error).toBeUndefined()
 
       const assigned = "ephemeral-reports/research/assigned.md"
+      const invalidProductScope = await h.call(
+        "step_scope",
+        {
+          workflowId,
+          stepId: "research",
+          write: ["src/research-should-not-edit.ts"],
+        },
+        "general",
+        "research-scope-general",
+      )
+      expect(invalidProductScope.error).toContain("independent/advisory role")
+
       expect((await h.call(
         "step_scope",
         { workflowId, stepId: "research", write: [assigned] },
