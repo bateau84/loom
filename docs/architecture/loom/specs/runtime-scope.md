@@ -57,6 +57,7 @@ Rules:
 - `sessionId` is mandatory caller provenance;
 - `workflowId` is required for workflow-shared state;
 - `stepId` is required for step-scoped mutation;
+- where a role's mutation authority is attempt-bound, the session's attached step attempt MUST equal the current workflow step attempt;
 - explicit identifiers select records but never authorize access.
 
 ## Project/session/workflow binding
@@ -84,7 +85,7 @@ consumingSessionId?
 
 Grant consumption is atomic under the workflow mutation guard.
 
-A project-local session has at most one current workflow binding. Rebinding is permitted only through a Loom-controlled transition after the previous binding is terminal or explicitly released. Rebinding atomically clears the old step/OQ attachment before installing the new workflow binding; old selectors remain historical and do not authorize current access.
+A project-local session has at most one current workflow binding. Step attachment also records the exact workflow-step attempt when the attachment is consumed. Rebinding is permitted only through a Loom-controlled transition after the previous binding is terminal or explicitly released. Rebinding atomically clears the old step/OQ/attempt attachment before installing the new workflow binding; old selectors remain historical and do not authorize current access. Reopening or rerouting a step advances its attempt, so attempt-bound mutation requires a fresh attachment before it can resume.
 
 ## Scoped key families
 
@@ -94,6 +95,7 @@ New mutable execution keys are project-prefixed. At minimum the scoped store cov
 project/<projectId>/workflow/<workflowId>
 project/<projectId>/session/<sessionId>/workflow
 project/<projectId>/session/<sessionId>/step
+project/<projectId>/session/<sessionId>/step-attempt
 project/<projectId>/intent/<intentId>
 project/<projectId>/session/<sessionId>/intent
 project/<projectId>/work/<objectiveId>
@@ -125,7 +127,8 @@ For any workflow state access:
 4. validate stored project metadata;
 5. require workflow membership for workflow-shared reads;
 6. require exact step attachment plus role authority for step mutation;
-7. reject mismatch without global fallback.
+7. for attempt-bound mutation, require the attached attempt to equal the current workflow-step attempt;
+8. reject mismatch without global fallback.
 
 Same-workflow cross-session evidence consumption is allowed after legitimate membership. Unrelated workflow/project access is rejected.
 
@@ -210,4 +213,4 @@ If durable legacy state already names a different Loom project epoch, neither se
 
 ## Conformance evidence
 
-Deterministic tests must cover transactional upgrade rollback, all-project schema migration, late legacy import after the installation has already advanced (including failed-transform rollback), pre-project-epoch continuity imported into a synthetic newer runtime schema (including failed-transform rollback), a canonical A→B rebind followed by restart with stale legacy A still present, live old/new process version skew with the old writer fenced after upgrade, identical Anchor/objective/task names across projects, same-workflow fresh child sharing, unrelated same-project workflow rejection, controlled session rebinding with prior attachment invalidation, cross-project rejection, two-process contention including mixed/missing `XDG_RUNTIME_DIR` environments sharing one durable installation, crash/fault injection during durable commit, project first-open races, path reuse, copied markers, symlinks, Git worktrees, moves, reopen/failure isolation, ambiguous legacy migration, and a real OpenCode host stop/restart where persisted pre-upgrade session IDs reconcile through the upgraded plugin.
+Deterministic tests must cover transactional upgrade rollback, all-project schema migration, late legacy import after the installation has already advanced (including failed-transform rollback), pre-project-epoch continuity imported into a synthetic newer runtime schema (including failed-transform rollback), a canonical A→B rebind followed by restart with stale legacy A still present, live old/new process version skew with the old writer fenced after upgrade, identical Anchor/objective/task names across projects, same-workflow fresh child sharing, unrelated same-project workflow rejection, controlled session rebinding with prior attachment invalidation, exact step-attempt invalidation after reopen/reroute, step-scope/lifecycle transitions contending with admitted mutation, cross-project rejection, two-process contention including mixed/missing `XDG_RUNTIME_DIR` environments sharing one durable installation, crash/fault injection during durable commit, project first-open races, path reuse, copied markers, symlinks, Git worktrees, moves, reopen/failure isolation, ambiguous legacy migration, and a real OpenCode host stop/restart where persisted pre-upgrade session IDs reconcile through the upgraded plugin.

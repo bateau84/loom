@@ -23,7 +23,7 @@ The Loom plugin exposes tools for:
 - Product Acceptance;
 - living-knowledge sync;
 - learning/heuristics;
-- budget and scope inspection;
+- bounded Worker and specialist step write scopes, plus scope inspection;
 - state-derived upgrade compatibility inspection through `loom_upgrade_status`;
 - bounded read-only project inspection;
 - explicit ephemeral-report promotion into durable `docs/reports/**`.
@@ -45,7 +45,7 @@ The Loom plugin exposes tools for:
 - `plugins/loom/tasks.ts` — bounded implementation DAG validation.
 - `plugins/loom/oq.ts` — shared questions.
 - `plugins/loom/budget.ts` — dispatch/retry limits.
-- `plugins/loom/scope.ts` / `shell.ts` — Worker mutation boundaries.
+- `plugins/loom/scope.ts` / `shell.ts` — bounded Worker mutation scopes, specialist artifact-scope ceilings, and restricted shell/Git mutation policy.
 - `plugins/loom/reports.ts` — guarded report promotion and retention boundary.
 
 ## State
@@ -59,6 +59,8 @@ Loom now:
 4. serializes shared workflow/work mutations with installation-shared OS locks plus transactional commits;
 5. fences workflow mutations with a monotonic workflow revision and work-hierarchy mutations with an independent work version;
 6. binds OpenCode sessions to workflows only through Loom-controlled start/dispatch/attach transitions.
+
+Artifact-producing specialist steps may carry an explicit write scope that only **narrows** the role's existing artifact permissions. Loom records the exact attached step attempt and serializes scope changes, attachment rotation, completion, rerouting, and reopen transitions with active mutations. Durable specialist artifacts are staged and committed by the producing role; they are not handed to Worker merely for publication.
 
 OpenCode plugin storage is used only as the legacy import source during bounded migration. Execution state is still not product authority.
 

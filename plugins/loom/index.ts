@@ -83,7 +83,7 @@ import {
   type ExecutionLimits,
   type ProgressSignal,
 } from "./budget"
-import { resourceMatchesScope, resourcesWithinScope, validateWriteScope, type TaskScope } from "./scope"
+import { resourceMatchesScope, resourcesWithinScope, validateStepWriteScope, validateWriteScope, type TaskScope } from "./scope"
 import {
   authorGitShellResourcesAllowed,
   diagnosticExecutionShellResourcesAllowed,
@@ -200,6 +200,18 @@ const reportProducerAgents = new Set([
 ])
 
 const execFileAsync = promisify(execFile)
+
+const artifactWriteCeilings: Record<string, string[]> = {
+  designer: ["docs/design/**", "ephemeral-reports/designer/**"],
+  specifier: ["docs/requirements/**"],
+  architect: ["docs/architecture/**", "docs/dependencies/**"],
+  reviewer: ["ephemeral-reports/reviewer/**"],
+  critic: ["ephemeral-reports/critic/**"],
+  acceptance: ["ephemeral-reports/acceptance/**"],
+  documenter: ["docs/system/**", "docs/user/**", "README.md"],
+  research: ["ephemeral-reports/research/**"],
+  diagnostic: ["ephemeral-reports/diagnostic/**"],
+}
 
 const durableAuthorGitScopes: Record<string, string[]> = {
   general: ["docs/anchors/**"],
@@ -893,6 +905,10 @@ function sessionStepKey(sessionID: string) {
   return `session-step/${sessionID}`
 }
 
+function sessionStepAttemptKey(sessionID: string) {
+  return `session-step-attempt/${encodeURIComponent(sessionID)}`
+}
+
 function sessionOqKey(sessionID: string) {
   return `session-oq/${sessionID}`
 }
@@ -941,6 +957,17 @@ async function withWorkLock<T>(
   fn: () => Promise<T>,
 ): Promise<T> {
   return withRuntimeLock(runtime, "work", objectiveId, fn)
+}
+
+function stepAuthorityResource(workflowId: string, stepId: string) {
+  return {
+    aggregate: "step-authority",
+    resourceIdentity: `${workflowId}:${stepId}`,
+  }
+}
+
+function workflowStepAuthorityResources(workflow: Workflow) {
+  return workflow.steps.map((step) => stepAuthorityResource(workflow.id, step.id))
 }
 
 async function withWorkflowWorkLocks<T>(
@@ -1097,6 +1124,20 @@ async function readBoundWorkflow(
 
 async function exactStepBinding(ctx: any, sessionID: string, workflowId: string, stepId: string) {
   return sessionBoundToStep(ctx.storage as any, sessionID, workflowId, stepId)
+}
+
+async function exactStepAttemptBinding(
+  ctx: any,
+  sessionID: string,
+  workflowId: string,
+  stepId: string,
+) {
+  if (!(await exactStepBinding(ctx, sessionID, workflowId, stepId))) return false
+  const attachedAttempt = await ctx.storage.get(sessionStepAttemptKey(sessionID))
+  if (!Number.isSafeInteger(attachedAttempt)) return false
+  const workflow = await readWorkflow(ctx, workflowId)
+  const step = workflow?.steps.find((candidate) => candidate.id === stepId)
+  return Boolean(step) && attachedAttempt === (step!.attempt ?? 0)
 }
 
 async function exactOqBinding(ctx: any, sessionID: string, workflowId: string, questionId: string) {
@@ -1431,7 +1472,18 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       lockGitIndex: boolean,
     ) => {
       const normalized = [...new Set(paths.map(safeOwnedRepoPath))].sort()
-      if (normalized.length === 0 && !lockGitIndex) return
+      const sessionID = typeof raw.sessionID === "string" ? raw.sessionID : ""
+      const workflowId = sessionID
+        ? (await ctx.storage.get(sessionKey(sessionID))) as string | undefined
+        : undefined
+      const stepId = sessionID
+        ? (await ctx.storage.get(sessionStepKey(sessionID))) as string | undefined
+        : undefined
+      const stepAuthority =
+        workflowId && stepId && raw.agent !== "general"
+          ? { aggregate: "step-authority", resourceIdentity: `${workflowId}:${stepId}` }
+          : undefined
+      if (normalized.length === 0 && !lockGitIndex && !stepAuthority) return
       const executionKey = observationCallKey(raw)
       if (!executionKey) {
         throw new Error("Write blocked: Loom could not establish a stable tool-call identity for write locking.")
@@ -1455,6 +1507,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 resourceIdentity: "__repository_index__",
               }]
             : []),
+          ...(stepAuthority ? [stepAuthority] : []),
         ],
       )
       if ("busyResource" in acquired) {
@@ -1484,6 +1537,84 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       }
     }
 
+    const revalidateDirectMutationUnderLock = async (
+      raw: any,
+      directMutationPaths: string[],
+    ) => {
+      if (directMutationPaths.length === 0 || !raw.sessionID) return
+
+      const sessionID = String(raw.sessionID)
+      const workflowId = (await ctx.storage.get(
+        sessionKey(sessionID),
+      )) as string | undefined
+      const stepId = (await ctx.storage.get(
+        sessionStepKey(sessionID),
+      )) as string | undefined
+
+      if (raw.agent === "worker") {
+        if (
+          !workflowId ||
+          !stepId ||
+          !(await exactStepBinding(ctx, sessionID, workflowId, stepId))
+        ) {
+          throw new Error(
+            "Worker mutation requires the exact attached Loom workflow step.",
+          )
+        }
+        await assertWorkerWorkClaim(ctx, workflowId, stepId)
+        const scope = (await ctx.storage.get(
+          scopeKey(workflowId, stepId),
+        )) as TaskScope | undefined
+        if (
+          !scope ||
+          !resourcesWithinScope(directMutationPaths, scope.write)
+        ) {
+          throw new Error(
+            "Worker mutation is outside the current declared Loom task scope.",
+          )
+        }
+        return
+      }
+
+      if (!raw.agent || raw.agent === "general") return
+      const agent = String(raw.agent)
+      const durableScope = durableAuthorGitScopes[agent]
+      const touchesDurableArtifact = Boolean(
+        durableScope?.length &&
+        directMutationPaths.some((path) =>
+          resourcesWithinScope([path], durableScope),
+        ),
+      )
+      const exactAttempt = Boolean(
+        workflowId &&
+        stepId &&
+        await exactStepAttemptBinding(ctx, sessionID, workflowId, stepId),
+      )
+      const declaredScope =
+        workflowId && stepId
+          ? (await ctx.storage.get(scopeKey(workflowId, stepId))) as TaskScope | undefined
+          : undefined
+      if (declaredScope?.write.length && !exactAttempt) {
+        throw new Error(
+          "Scoped specialist mutation requires a fresh attachment to the current Loom step attempt.",
+        )
+      }
+      if (touchesDurableArtifact && !exactAttempt) {
+        throw new Error(
+          "Durable specialist artifact mutation requires the role's exact attached Loom workflow step at the current Loom step attempt.",
+        )
+      }
+      if (
+        exactAttempt &&
+        declaredScope?.write.length &&
+        !resourcesWithinScope(directMutationPaths, declaredScope.write)
+      ) {
+        throw new Error(
+          "Specialist mutation is outside the current declared Loom step write scope.",
+        )
+      }
+    }
+
     const revalidateGitMutationUnderLock = async (raw: any) => {
       const tool = String(raw.tool ?? "")
       if ((tool !== "shell" && tool !== "bash") || !raw.input || typeof raw.input !== "object") {
@@ -1491,6 +1622,22 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       }
       const command = (raw.input as any).command
       if (typeof command !== "string") return
+
+      const agent = String(raw.agent ?? "")
+      if (agent !== "general" && durableAuthorGitScopes[agent]) {
+        const sessionID = String(raw.sessionID ?? "")
+        const workflowId = (await ctx.storage.get(sessionKey(sessionID))) as string | undefined
+        const stepId = (await ctx.storage.get(sessionStepKey(sessionID))) as string | undefined
+        if (
+          !workflowId ||
+          !stepId ||
+          !(await exactStepAttemptBinding(ctx, sessionID, workflowId, stepId))
+        ) {
+          throw new Error(
+            "Git authoring requires the role's exact current Loom step attempt.",
+          )
+        }
+      }
 
       const addTargets = scopedGitAddTargets(command) ?? []
       if (addTargets.length > 0) {
@@ -1520,19 +1667,18 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
       let writeScope: string[] | undefined =
         durableAuthorGitScopes[String(raw.agent ?? "")]
-      if (raw.agent === "worker") {
-        const workflowId = (await ctx.storage.get(
-          sessionKey(String(raw.sessionID)),
-        )) as string | undefined
-        const stepId = (await ctx.storage.get(
-          sessionStepKey(String(raw.sessionID)),
-        )) as string | undefined
-        if (workflowId && stepId) {
-          const scope = (await ctx.storage.get(
-            scopeKey(workflowId, stepId),
-          )) as TaskScope | undefined
-          writeScope = scope?.write
-        }
+      const workflowId = (await ctx.storage.get(
+        sessionKey(String(raw.sessionID)),
+      )) as string | undefined
+      const stepId = (await ctx.storage.get(
+        sessionStepKey(String(raw.sessionID)),
+      )) as string | undefined
+      if (workflowId && stepId && (raw.agent === "worker" || writeScope)) {
+        const scope = (await ctx.storage.get(
+          scopeKey(workflowId, stepId),
+        )) as TaskScope | undefined
+        if (scope?.write.length) writeScope = scope.write
+        else if (raw.agent === "worker") writeScope = undefined
       }
 
       if (!writeScope?.length) return
@@ -2318,6 +2464,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               await ctx.storage.set(sessionKey(tool.sessionID), id)
               await ctx.storage.set(sessionAttachmentKey(tool.sessionID), crypto.randomUUID())
               await ctx.storage.set(sessionStepKey(tool.sessionID), "")
+              await ctx.storage.set(sessionStepAttemptKey(tool.sessionID), null)
               await ctx.storage.set(sessionOqKey(tool.sessionID), "")
               if (intent?.acceptedAnchor?.path === anchor) {
                 await ctx.storage.set(sessionIntentKey(tool.sessionID), "")
@@ -2526,22 +2673,33 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             }
           }
 
+          const routeResources = [
+            ...workflowStepAuthorityResources(workflow),
+            { aggregate: "workflow", resourceIdentity: workflow.id },
+          ]
           if (effects.productOutcome && effects.executionDepth === "objective") {
             const objectiveId = objectiveIdForAnchor(workflow.anchor)
-            await withWorkflowWorkLocks(runtime, workflow.id, objectiveId, async () => {
-              await validateWorkflowMutationLocked(ctx, runtime, workflow)
-              const now = new Date().toISOString()
-              const existing = await readWork(ctx, objectiveId)
-              const work = existing ?? createWorkHierarchy(workflow.anchor, workflow.id, now)
-              attachWorkflowToWork(work, workflow.id, now)
-              await ctx.storage.set(workKey(objectiveId), work)
-              workflow.work = { objectiveId, generation: work.generation }
-              applyRouteMutation()
-              await invalidateEscalatedWorkerScope()
-              await persistWorkflowMutationLocked(ctx, runtime, workflow)
-            })
+            await withRuntimeLocks(
+              runtime,
+              [
+                ...routeResources,
+                { aggregate: "work", resourceIdentity: objectiveId },
+              ],
+              async () => {
+                await validateWorkflowMutationLocked(ctx, runtime, workflow)
+                const now = new Date().toISOString()
+                const existing = await readWork(ctx, objectiveId)
+                const work = existing ?? createWorkHierarchy(workflow.anchor, workflow.id, now)
+                attachWorkflowToWork(work, workflow.id, now)
+                await ctx.storage.set(workKey(objectiveId), work)
+                workflow.work = { objectiveId, generation: work.generation }
+                applyRouteMutation()
+                await invalidateEscalatedWorkerScope()
+                await persistWorkflowMutationLocked(ctx, runtime, workflow)
+              },
+            )
           } else {
-            await withRuntimeLock(runtime, "workflow", workflow.id, async () => {
+            await withRuntimeLocks(runtime, routeResources, async () => {
               await validateWorkflowMutationLocked(ctx, runtime, workflow)
               applyRouteMutation()
               await invalidateEscalatedWorkerScope()
@@ -2690,6 +2848,19 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           if (!(await exactStepBinding(ctx, tool.sessionID, workflowId, stepId))) {
             return { content: renderToolOutput({ error: "Step completion requires the exact attached workflow step." }) }
           }
+          if (
+            stepId !== "review-plan" &&
+            tool.agent !== "worker" &&
+            tool.agent !== "general" &&
+            artifactWriteCeilings[tool.agent] &&
+            !(await exactStepAttemptBinding(ctx, tool.sessionID, workflowId, stepId))
+          ) {
+            return {
+              content: renderToolOutput({
+                error: "Step completion requires a fresh attachment to the current step attempt.",
+              }),
+            }
+          }
 
           const questions = await readQuestions(ctx, workflowId)
           const blocking = blockingQuestionsForStep(questions, stepId)
@@ -2712,27 +2883,6 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           const resolvedOutcome = outcome ?? (step.kind === "work" ? "complete" : undefined)
           if (!resolvedOutcome) {
             return { content: renderToolOutput({ error: "Gate step requires outcome pass or fail." }) }
-          }
-
-          if (resolvedOutcome === "complete") {
-            let ownedWriteScope: string[] | undefined = durableAuthorGitScopes[tool.agent]
-            if (tool.agent === "worker") {
-              const workerScope = (await ctx.storage.get(
-                scopeKey(workflowId, stepId),
-              )) as TaskScope | undefined
-              ownedWriteScope = workerScope?.write
-            }
-            if (ownedWriteScope?.length) {
-              const repositoryError = await uncommittedOwnedChangesError(
-                ctx,
-                tool.sessionID,
-                ctx.location.directory,
-                ownedWriteScope,
-              )
-              if (repositoryError) {
-                return { content: renderToolOutput({ error: repositoryError }) }
-              }
-            }
           }
 
           const planningOnly = planningOnlyObjective(workflow.effects)
@@ -2815,7 +2965,36 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
           let evidenceBound = 0
           const commitCompletion = async () => {
+            if (
+              stepId !== "review-plan" &&
+              tool.agent !== "general" &&
+              artifactWriteCeilings[tool.agent] &&
+              !(await exactStepAttemptBinding(ctx, tool.sessionID, workflowId, stepId))
+            ) {
+              throw new Error(
+                "Step completion requires a fresh attachment to the current step attempt.",
+              )
+            }
             await validateWorkflowMutationLocked(ctx, runtime, workflow)
+
+            if (resolvedOutcome === "complete") {
+              let ownedWriteScope: string[] | undefined = durableAuthorGitScopes[tool.agent]
+              if (tool.agent === "worker") {
+                const declaredScope = (await ctx.storage.get(
+                  scopeKey(workflowId, stepId),
+                )) as TaskScope | undefined
+                ownedWriteScope = declaredScope?.write
+              }
+              if (ownedWriteScope?.length) {
+                const repositoryError = await uncommittedOwnedChangesError(
+                  ctx,
+                  tool.sessionID,
+                  ctx.location.directory,
+                  ownedWriteScope,
+                )
+                if (repositoryError) throw new Error(repositoryError)
+              }
+            }
 
             const currentQuestions = await readQuestions(ctx, workflowId)
             const currentBlocking = blockingQuestionsForStep(currentQuestions, stepId)
@@ -2963,16 +3142,17 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           }
 
           try {
-            if (workflow.work) {
-              await withWorkflowWorkLocks(
-                runtime,
-                workflow.id,
-                workflow.work.objectiveId,
-                commitCompletion,
-              )
-            } else {
-              await withRuntimeLock(runtime, "workflow", workflow.id, commitCompletion)
-            }
+            await withRuntimeLocks(
+              runtime,
+              [
+                stepAuthorityResource(workflow.id, stepId),
+                { aggregate: "workflow", resourceIdentity: workflow.id },
+                ...(workflow.work
+                  ? [{ aggregate: "work", resourceIdentity: workflow.work.objectiveId }]
+                  : []),
+              ],
+              commitCompletion,
+            )
           } catch (error) {
             return { content: renderToolOutput({ error: error instanceof Error ? error.message : String(error) }) }
           }
@@ -3148,16 +3328,17 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               await persistWorkflowMutationLocked(ctx, runtime, workflow)
             }
 
-            if (workflow.work) {
-              await withWorkflowWorkLocks(
-                runtime,
-                workflow.id,
-                workflow.work.objectiveId,
-                commitReopen,
-              )
-            } else {
-              await withRuntimeLock(runtime, "workflow", workflow.id, commitReopen)
-            }
+            await withRuntimeLocks(
+              runtime,
+              [
+                ...workflowStepAuthorityResources(workflow),
+                { aggregate: "workflow", resourceIdentity: workflow.id },
+                ...(workflow.work
+                  ? [{ aggregate: "work", resourceIdentity: workflow.work.objectiveId }]
+                  : []),
+              ],
+              commitReopen,
+            )
 
             return {
               content: renderToolOutput({
@@ -5894,73 +6075,121 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         },
       })
 
+      const setStepWriteScope = async (input: unknown, tool: any) => {
+        if (tool.agent !== "general") {
+          return { content: renderToolOutput({ error: "Only general may define a step write scope." }) }
+        }
+
+        const value = input as { workflowId: string; stepId: string; write: string[] }
+        const workflow = await readBoundWorkflow(ctx, tool.sessionID, value.workflowId, ensureLegacySession)
+        if (!workflow) return { content: renderToolOutput({ error: "Workflow not found." }) }
+
+        try {
+          const result = await withRuntimeLocks(
+            runtime,
+            [
+              { aggregate: "workflow", resourceIdentity: value.workflowId },
+              stepAuthorityResource(value.workflowId, value.stepId),
+            ],
+            async () => {
+            const currentBinding = (await ctx.storage.get(sessionKey(tool.sessionID))) as string | undefined
+            if (currentBinding !== value.workflowId) {
+              throw new Error("General is no longer bound to this workflow.")
+            }
+            const current = await readWorkflow(ctx, value.workflowId)
+            if (!current) throw new Error("Workflow not found.")
+
+            const step = current.steps.find((candidate) => candidate.id === value.stepId)
+            if (!step) throw new Error("Step not found.")
+            if (step.status !== "pending") {
+              throw new Error("Step write scope cannot change after the step has finished.")
+            }
+
+            let roleWriteCeiling: string[] | undefined
+            if (step.agent === "worker") {
+              if (step.task) {
+                throw new Error("Planned task scope is immutable; reopen the planning step to change it.")
+              }
+              validateWriteScope(value.write)
+            } else {
+              roleWriteCeiling = artifactWriteCeilings[step.agent]
+              if (!roleWriteCeiling) {
+                throw new Error(
+                  `Step ${value.stepId} (${step.agent}) has no repository artifact write capability.`,
+                )
+              }
+              validateStepWriteScope(
+                value.write,
+                roleWriteCeiling,
+                `${step.agent} step write scope`,
+              )
+            }
+
+            const scope: TaskScope = {
+              workflowId: value.workflowId,
+              stepId: value.stepId,
+              write: value.write,
+            }
+            await ctx.storage.set(scopeKey(value.workflowId, value.stepId), scope)
+            await bumpWorkflowRevisionLocked(ctx, runtime, value.workflowId)
+            return { current, step, scope, roleWriteCeiling }
+          },
+          )
+
+          return {
+            content: renderToolOutput({
+              scope: result.scope,
+              agent: result.step.agent,
+              ...(result.roleWriteCeiling
+                ? { roleWriteCeiling: result.roleWriteCeiling }
+                : {}),
+              ...(result.current.request ? { acceptedOutcome: result.current.request } : {}),
+              acceptedAuthority: result.current.anchor,
+              scopeSemantics: "mutation-boundary-only",
+              scopeNote:
+                result.step.agent === "worker"
+                  ? "The write list limits Worker mutation only. Delegate acceptedOutcome separately when present; acceptedAuthority identifies the governing source. Worker owns read-only discovery of load-bearing consumers/enforcement/tests and must request scope extension before any additional write."
+                  : "The write list narrows this attached producer step inside its existing role-owned artifact surface. It never grants a new artifact class or transfers authority to another role.",
+            }),
+          }
+        } catch (error) {
+          return { content: renderToolOutput({ error: error instanceof Error ? error.message : String(error) }) }
+        }
+      }
+
+      const stepWriteScopeInput = {
+        type: "object",
+        properties: {
+          workflowId: { type: "string" },
+          stepId: { type: "string" },
+          write: { type: "array", items: { type: "string" } },
+        },
+        required: ["workflowId", "stepId", "write"],
+        additionalProperties: false,
+      } as const
+
+      addLoomTool({
+        name: "step_scope",
+        description:
+          "Declare or narrow the bounded writable artifact surface for one pending workflow step. General only. Worker scopes remain implementation-only; specialist scopes cannot exceed that role's artifact authority.",
+        input: stepWriteScopeInput,
+        options: { namespace: "loom", codemode: false },
+        execute: setStepWriteScope,
+      })
+
       addLoomTool({
         name: "task_scope",
         description:
-          "Declare the bounded writable surface for one Worker step. This limits mutation only; it is not an outcome or read/knowledge boundary. General only. Accepted authority documents cannot be delegated to Worker.",
-        input: {
-          type: "object",
-          properties: {
-            workflowId: { type: "string" },
-            stepId: { type: "string" },
-            write: { type: "array", items: { type: "string" } },
-          },
-          required: ["workflowId", "stepId", "write"],
-          additionalProperties: false,
-        },
+          "Compatibility alias for loom_step_scope. Worker still requires an explicit scope before dispatch; artifact-producing specialist steps may also be narrowed without handing their work to Worker.",
+        input: stepWriteScopeInput,
         options: { namespace: "loom", codemode: false },
-        execute: async (input, tool) => {
-          if (tool.agent !== "general") {
-            return { content: renderToolOutput({ error: "Only general may define Worker task scope." }) }
-          }
-
-          const value = input as { workflowId: string; stepId: string; write: string[] }
-          const workflow = await readBoundWorkflow(ctx, tool.sessionID, value.workflowId, ensureLegacySession)
-          if (!workflow) return { content: renderToolOutput({ error: "Workflow not found." }) }
-
-          const step = workflow.steps.find((candidate) => candidate.id === value.stepId)
-          if (!step) return { content: renderToolOutput({ error: "Step not found." }) }
-          if (step.agent !== "worker") {
-            return { content: renderToolOutput({ error: "Task scope may only be assigned to Worker steps." }) }
-          }
-          if (step.task) {
-            return { content: renderToolOutput({ error: "Planned task scope is immutable; reopen the planning step to change it." }) }
-          }
-          if (step.status !== "pending") {
-            return { content: renderToolOutput({ error: "Worker task scope cannot change after the step has finished." }) }
-          }
-
-          try {
-            validateWriteScope(value.write)
-          } catch (error) {
-            return { content: renderToolOutput({ error: error instanceof Error ? error.message : String(error) }) }
-          }
-
-          const scope: TaskScope = {
-            workflowId: value.workflowId,
-            stepId: value.stepId,
-            write: value.write,
-          }
-          await withRuntimeLock(runtime, "workflow", value.workflowId, async () => {
-            await ctx.storage.set(scopeKey(value.workflowId, value.stepId), scope)
-            await bumpWorkflowRevisionLocked(ctx, runtime, value.workflowId)
-          })
-          return {
-            content: renderToolOutput({
-              scope,
-              ...(workflow.request ? { acceptedOutcome: workflow.request } : {}),
-              acceptedAuthority: workflow.anchor,
-              scopeSemantics: "mutation-boundary-only",
-              scopeNote: "The write list limits mutation only. Delegate acceptedOutcome separately when present; acceptedAuthority identifies the governing source. Worker owns read-only discovery of load-bearing consumers/enforcement/tests and must request scope extension before any additional write.",
-            }),
-          }
-        },
+        execute: setStepWriteScope,
       })
 
       addLoomTool({
         name: "dispatch_grant",
         description:
-          "Issue one short-lived, single-use attachment grant for an exact runnable workflow step or unanswered OQ. General only; Worker steps require a declared task scope first. Pass the returned grantId to the child session.",
+          "Issue one short-lived, single-use attachment grant for an exact runnable workflow step or unanswered OQ. General only; Worker steps require a declared write scope first. Artifact-producing specialist steps may carry an optional narrower step scope inside their role ceiling. Pass the returned grantId to the child session.",
         input: {
           type: "object",
           properties: {
@@ -6180,7 +6409,16 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           }
 
           const observedBinding = (await ctx.storage.get(sessionKey(tool.sessionID))) as string | undefined
+          const observedStepId = (await ctx.storage.get(
+            sessionStepKey(tool.sessionID),
+          )) as string | undefined
           const resources = [
+            ...(value.stepId
+              ? [stepAuthorityResource(value.workflowId, value.stepId)]
+              : []),
+            ...(observedBinding && observedStepId
+              ? [stepAuthorityResource(observedBinding, observedStepId)]
+              : []),
             { aggregate: "workflow", resourceIdentity: value.workflowId },
             ...(observedBinding && observedBinding !== value.workflowId
               ? [{ aggregate: "workflow", resourceIdentity: observedBinding }]
@@ -6218,6 +6456,14 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
           try {
             await withRuntimeLocks(runtime, resources, async () => {
+              const currentObservedStepId = (await ctx.storage.get(
+                sessionStepKey(tool.sessionID),
+              )) as string | undefined
+              if (currentObservedStepId !== observedStepId) {
+                throw new Error(
+                  "Session step attachment changed concurrently; retry the Loom attachment.",
+                )
+              }
               const previousBinding = await assertSessionRebindingAllowedLocked(
                 ctx,
                 tool.sessionID,
@@ -6270,8 +6516,11 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                   }
                 }
 
+                scope = (await ctx.storage.get(
+                  scopeKey(value.workflowId, value.stepId),
+                )) as TaskScope | undefined
+
                 if (tool.agent === "worker") {
-                  scope = (await ctx.storage.get(scopeKey(value.workflowId, value.stepId))) as TaskScope | undefined
                   if (!scope) throw new Error("Worker step has no declared task scope.")
 
                   if (step.task && workflow.work && work) {
@@ -6377,6 +6626,10 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               await scopedStorage.delete?.(`session-deletion-fence/${tool.sessionID}`)
               await ctx.storage.set(sessionAttachmentKey(tool.sessionID), crypto.randomUUID())
               await ctx.storage.set(sessionStepKey(tool.sessionID), value.stepId ?? "")
+              await ctx.storage.set(
+                sessionStepAttemptKey(tool.sessionID),
+                value.stepId ? (stepAttempt ?? 0) : null,
+              )
               await ctx.storage.set(sessionOqKey(tool.sessionID), value.questionId ?? "")
               if (value.stepId === "review-plan" && planContext) {
                 const planningOnly = planningOnlyObjective(workflow.effects)
@@ -6429,7 +6682,9 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             content: renderToolOutput({
               attached: true,
               workflowId: value.workflowId,
-              ...(value.stepId ? { stepId: value.stepId } : { questionId: value.questionId }),
+              ...(value.stepId
+                ? { stepId: value.stepId, attempt: stepAttempt ?? 0 }
+                : { questionId: value.questionId }),
               ...(acceptedOutcome ? { acceptedOutcome } : {}),
               ...(taskOutcome ? { taskOutcome } : {}),
               ...(acceptedAuthority ? { acceptedAuthority } : {}),
@@ -6454,7 +6709,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
       addLoomTool({
         name: "scope_status",
-        description: "Inspect the declared Worker write scope for one workflow step.",
+        description: "Inspect the declared write scope for one workflow step.",
         input: {
           type: "object",
           properties: {
@@ -6467,11 +6722,22 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         options: { namespace: "loom", codemode: false },
         execute: async (input, tool) => {
           const { workflowId, stepId } = input as { workflowId: string; stepId: string }
-          if (!(await readBoundWorkflow(ctx, tool.sessionID, workflowId, ensureLegacySession))) {
+          const workflow = await readBoundWorkflow(ctx, tool.sessionID, workflowId, ensureLegacySession)
+          if (!workflow) {
             return { content: renderToolOutput({ error: "Workflow not found or current session is not bound to it." }) }
           }
+          const step = workflow.steps.find((candidate) => candidate.id === stepId)
+          if (!step) return { content: renderToolOutput({ error: "Step not found." }) }
           const scope = (await ctx.storage.get(scopeKey(workflowId, stepId))) as TaskScope | undefined
-          return { content: renderToolOutput({ scope: scope ?? null }) }
+          return {
+            content: renderToolOutput({
+              scope: scope ?? null,
+              agent: step.agent,
+              ...(artifactWriteCeilings[step.agent]
+                ? { roleWriteCeiling: artifactWriteCeilings[step.agent] }
+                : {}),
+            }),
+          }
         },
       })
 
@@ -6890,11 +7156,12 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       }
 
       if (event.action === "shell") {
-        const authorScope = durableAuthorGitScopes[String(event.agent ?? "")]
+        const roleAuthorScope = durableAuthorGitScopes[String(event.agent ?? "")]
         const gitAuthoring = event.resources.some((resource: string) =>
           isGitAuthoringShellCommand(resource),
         )
-        if (authorScope && gitAuthoring) {
+        if (roleAuthorScope && gitAuthoring) {
+          let authorScope = roleAuthorScope
           if (event.agent !== "general") {
             const workflowId = (await ctx.storage.get(
               sessionKey(event.sessionID),
@@ -6905,7 +7172,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             if (
               !workflowId ||
               !stepId ||
-              !(await exactStepBinding(
+              !(await exactStepAttemptBinding(
                 ctx,
                 event.sessionID,
                 workflowId,
@@ -6914,15 +7181,19 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             ) {
               event.effect = "deny"
               event.message =
-                "Git authoring requires the role's exact attached Loom workflow step."
+                "Git authoring requires the role's exact current Loom step attempt."
               return
             }
+            const declaredScope = (await ctx.storage.get(
+              scopeKey(workflowId, stepId),
+            )) as TaskScope | undefined
+            if (declaredScope?.write.length) authorScope = declaredScope.write
           }
 
           if (!authorGitShellResourcesAllowed(event.resources, authorScope)) {
             event.effect = "deny"
             event.message =
-              "Git authoring is limited to explicit files inside this role's durable write scope; broad staging and other Git mutations remain blocked."
+              "Git authoring is limited to explicit files inside this role's effective step write scope; broad staging and other Git mutations remain blocked."
             return
           }
           const addTargets = event.resources.flatMap(
@@ -7028,6 +7299,73 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           event.effect = "deny"
           event.message =
             `Conversational ${event.agent} may only edit its own ${reportScope} report namespace; product/repository edits require governed execution.`
+          return
+        }
+      }
+
+      if (
+        event.action === "edit" &&
+        event.agent !== "general" &&
+        event.agent !== "worker" &&
+        loomAgents.has(String(event.agent ?? ""))
+      ) {
+        const agent = String(event.agent)
+        const roleCeiling = artifactWriteCeilings[agent]
+        if (
+          !roleCeiling ||
+          !resourcesWithinScope(event.resources, roleCeiling)
+        ) {
+          event.effect = "deny"
+          event.message =
+            "Specialist edit is outside this role's Loom artifact ceiling."
+          return
+        }
+      }
+
+
+      if (event.action === "edit" && event.agent !== "worker" && event.agent !== "general") {
+        const workflowId = (await ctx.storage.get(
+          sessionKey(event.sessionID),
+        )) as string | undefined
+        const stepId = (await ctx.storage.get(
+          sessionStepKey(event.sessionID),
+        )) as string | undefined
+        const exactAttachment = Boolean(
+          workflowId &&
+          stepId &&
+          await exactStepAttemptBinding(ctx, event.sessionID, workflowId, stepId),
+        )
+        const declaredScope =
+          workflowId && stepId
+            ? (await ctx.storage.get(scopeKey(workflowId, stepId))) as TaskScope | undefined
+            : undefined
+        const durableScope = durableAuthorGitScopes[String(event.agent ?? "")]
+        const touchesDurableArtifact = Boolean(
+          durableScope?.length &&
+          event.resources.some((resource: string) =>
+            resourcesWithinScope([resource], durableScope),
+          ),
+        )
+        if (declaredScope?.write.length && !exactAttachment) {
+          event.effect = "deny"
+          event.message =
+            "Scoped specialist mutation requires a fresh attachment to the current Loom step attempt."
+          return
+        }
+        if (touchesDurableArtifact && !exactAttachment) {
+          event.effect = "deny"
+          event.message =
+            "Durable specialist artifact mutation requires the role's exact attached Loom workflow step at the current Loom step attempt."
+          return
+        }
+        if (
+          exactAttachment &&
+          declaredScope?.write.length &&
+          !resourcesWithinScope(event.resources, declaredScope.write)
+        ) {
+          event.effect = "deny"
+          event.message =
+            "Specialist edit is outside the declared Loom step write scope."
           return
         }
       }
@@ -7362,6 +7700,13 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         ctx.location.directory,
       )
       const lockGitIndex = toolNeedsGitIndexLock(tool, raw.input)
+      const directMutationPaths = successfulMutationPaths(
+        tool,
+        raw.input,
+        ctx.location.directory,
+      )
+
+      await revalidateDirectMutationUnderLock(raw, directMutationPaths)
 
       if (tool === "question") {
         const sessionID = String(raw.sessionID ?? "").trim()
@@ -7452,6 +7797,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       if (mutationNeedsLock) {
         try {
           await acquireGitWriteLocks(raw, mutationLockPaths, lockGitIndex)
+          await revalidateDirectMutationUnderLock(raw, directMutationPaths)
           if (lockGitIndex) await revalidateGitMutationUnderLock(raw)
         } catch (error) {
           await releaseGitWriteLocks(raw)
@@ -7623,11 +7969,13 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
         if (sameExecutionAuthority) {
           let writeScope: string[] | undefined = durableAuthorGitScopes[String(raw.agent)]
-          if (raw.agent === "worker") {
-            const scope = (await ctx.storage.get(
-              scopeKey(admission.workflowId, admission.stepId),
-            )) as TaskScope | undefined
-            writeScope = scope?.write
+          const declaredScope = (await ctx.storage.get(
+            scopeKey(admission.workflowId, admission.stepId),
+          )) as TaskScope | undefined
+          if (declaredScope?.write.length) {
+            writeScope = declaredScope.write
+          } else if (raw.agent === "worker") {
+            writeScope = undefined
           }
 
           if (writeScope?.length) {
