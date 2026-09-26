@@ -2230,6 +2230,15 @@ Verdict: FAIL
       await evaluate(earlierEdit)
       expect(earlierEdit.effect).not.toBe("deny")
 
+      const racedEditEvent = {
+        tool: "edit",
+        callID: "specifier-raced-edit",
+        messageID: "specifier-raced-message",
+        sessionID: "specifier-narrow-author",
+        agent: "specifier",
+        input: { filePath: join(h.root, earlier), oldString: "", newString: "raced\n" },
+      }
+
       const editEvent = {
         tool: "edit",
         callID: "specifier-earlier-edit",
@@ -2253,6 +2262,10 @@ Verdict: FAIL
         "specifier-narrow-general",
       )
       expect(narrowed.error).toBeUndefined()
+
+      await expect(
+        h.toolHooks.get("execute.before")!(racedEditEvent),
+      ).rejects.toThrow("outside the current declared Loom step write scope")
 
       const completed = await h.call(
         "complete",

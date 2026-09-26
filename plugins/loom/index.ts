@@ -7474,6 +7474,101 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         ctx.location.directory,
       )
       const lockGitIndex = toolNeedsGitIndexLock(tool, raw.input)
+      const directMutationPaths = successfulMutationPaths(
+        tool,
+        raw.input,
+        ctx.location.directory,
+      )
+
+      if (
+        directMutationPaths.length > 0 &&
+        raw.sessionID &&
+        raw.agent === "worker"
+      ) {
+        const workflowId = (await ctx.storage.get(
+          sessionKey(String(raw.sessionID)),
+        )) as string | undefined
+        const stepId = (await ctx.storage.get(
+          sessionStepKey(String(raw.sessionID)),
+        )) as string | undefined
+        if (
+          !workflowId ||
+          !stepId ||
+          !(await exactStepBinding(
+            ctx,
+            String(raw.sessionID),
+            workflowId,
+            stepId,
+          ))
+        ) {
+          throw new Error(
+            "Worker mutation requires the exact attached Loom workflow step.",
+          )
+        }
+        await assertWorkerWorkClaim(ctx, workflowId, stepId)
+        const scope = (await ctx.storage.get(
+          scopeKey(workflowId, stepId),
+        )) as TaskScope | undefined
+        if (
+          !scope ||
+          !resourcesWithinScope(directMutationPaths, scope.write)
+        ) {
+          throw new Error(
+            "Worker mutation is outside the current declared Loom task scope.",
+          )
+        }
+      }
+
+      if (
+        directMutationPaths.length > 0 &&
+        raw.sessionID &&
+        raw.agent &&
+        raw.agent !== "worker" &&
+        raw.agent !== "general"
+      ) {
+        const agent = String(raw.agent)
+        const workflowId = (await ctx.storage.get(
+          sessionKey(String(raw.sessionID)),
+        )) as string | undefined
+        const stepId = (await ctx.storage.get(
+          sessionStepKey(String(raw.sessionID)),
+        )) as string | undefined
+        const exactAttachment = Boolean(
+          workflowId &&
+          stepId &&
+          await exactStepBinding(
+            ctx,
+            String(raw.sessionID),
+            workflowId,
+            stepId,
+          ),
+        )
+        const durableScope = durableAuthorGitScopes[agent]
+        const touchesDurableArtifact = Boolean(
+          durableScope?.length &&
+          directMutationPaths.some((path) =>
+            resourcesWithinScope([path], durableScope),
+          ),
+        )
+        if (touchesDurableArtifact && !exactAttachment) {
+          throw new Error(
+            "Durable specialist artifact mutation requires the role's exact attached Loom workflow step.",
+          )
+        }
+        if (exactAttachment) {
+          const declaredScope = (await ctx.storage.get(
+            scopeKey(workflowId!, stepId!),
+          )) as TaskScope | undefined
+          if (
+            declaredScope?.write.length &&
+            !resourcesWithinScope(directMutationPaths, declaredScope.write)
+          ) {
+            throw new Error(
+              "Specialist mutation is outside the current declared Loom step write scope.",
+            )
+          }
+        }
+      }
 
       if (tool === "question") {
         const sessionID = String(raw.sessionID ?? "").trim()
