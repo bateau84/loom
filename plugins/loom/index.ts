@@ -7862,16 +7862,21 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 throw new Error("Git ownership recovery requires the exact currently runnable pending step.")
               }
 
-              const roleWriteCeiling = durableAuthorGitScopes[step.agent]
-              if (!roleWriteCeiling) {
-                throw new Error(`Step ${value.stepId} (${step.agent}) is not a durable Git-authoring specialist.`)
-              }
-              validateStepWriteScope(normalized, roleWriteCeiling, "Git ownership recovery")
               const scope = (await ctx.storage.get(
                 scopeKey(value.workflowId, value.stepId),
               )) as TaskScope | undefined
-              if (!scope?.write.length || !resourcesWithinScope(normalized, scope.write)) {
-                throw new Error("Git ownership recovery paths must all be inside the step's declared write scope.")
+              const effectiveWrite = committableWriteScope(
+                scope?.write.length
+                  ? scope.write
+                  : (artifactWriteCeilings[step.agent] ?? []),
+              )
+              if (
+                effectiveWrite.length === 0 ||
+                !resourcesWithinScope(normalized, effectiveWrite)
+              ) {
+                throw new Error(
+                  "Git ownership recovery paths must all be inside the step's current committable Loom write scope.",
+                )
               }
               if (!(await exactStepAttemptBinding(
                 ctx,
