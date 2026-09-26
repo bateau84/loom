@@ -255,6 +255,19 @@ type GitStepAttemptOwnedPath = {
   sourceSessionId: string
 }
 
+type GitScopeStagingAdoption = {
+  schemaVersion: 1
+  authorityId: string
+  workflowId: string
+  stepId: string
+  attempt: number
+  path: string
+  fingerprint: string
+  sessionId: string
+  sourceSessionIds: string[]
+  adoptedAt: string
+}
+
 function gitSessionOwnershipKey(sessionID: string) {
   return `git-session-ownership/${encodeURIComponent(sessionID)}`
 }
@@ -270,6 +283,19 @@ function gitStepAttemptOwnedPathKey(
     encodeURIComponent(workflowId),
     encodeURIComponent(stepId),
     String(attempt),
+    encodeURIComponent(safeOwnedRepoPath(path)),
+  ].join("/")
+}
+
+function gitScopeStagingAdoptionKey(
+  sessionID: string,
+  authorityId: string,
+  path: string,
+) {
+  return [
+    "git-scope-staging-adoption",
+    encodeURIComponent(sessionID),
+    encodeURIComponent(authorityId),
     encodeURIComponent(safeOwnedRepoPath(path)),
   ].join("/")
 }
@@ -471,6 +497,35 @@ async function recordGitStepAttemptOwnedFingerprints(
   )
 }
 
+async function recordGitScopeStagingAdoptions(
+  ctx: any,
+  binding: GitOwnershipBinding,
+  sessionID: string,
+  fingerprints: Record<string, string>,
+  sourceSessionIds: string[],
+) {
+  const adoptedAt = new Date().toISOString()
+  await Promise.all(
+    Object.entries(fingerprints).map(([path, fingerprint]) =>
+      ctx.storage.set(
+        gitScopeStagingAdoptionKey(sessionID, binding.authorityId, path),
+        {
+          schemaVersion: 1,
+          authorityId: binding.authorityId,
+          workflowId: binding.workflowId,
+          stepId: binding.stepId,
+          attempt: binding.attempt,
+          path,
+          fingerprint,
+          sessionId: sessionID,
+          sourceSessionIds: [...new Set(sourceSessionIds)].sort(),
+          adoptedAt,
+        } satisfies GitScopeStagingAdoption,
+      ),
+    ),
+  )
+}
+
 async function gitSessionOwnership(
   ctx: any,
   sessionID: string,
@@ -583,6 +638,63 @@ async function recordGitSessionStaging(
     ownership.stagedFingerprints[path] = fingerprint
   }
   await ctx.storage.set(gitSessionOwnershipKey(sessionID), ownership)
+}
+
+async function resolveGitStagingOwnership(
+  ctx: any,
+  sessionID: string,
+  projectDirectory: string,
+  paths: readonly string[],
+) {
+  const [ownership, binding] = await Promise.all([
+    gitSessionOwnership(ctx, sessionID),
+    gitSessionOwnershipBinding(ctx, sessionID),
+  ])
+  const normalized = [...new Set(paths.map(safeOwnedRepoPath))]
+  const unowned: string[] = []
+  const changed: string[] = []
+  let restored = false
+
+  for (const path of normalized) {
+    const current = await worktreeFingerprint(projectDirectory, path)
+    const ownsPath = ownership.paths.includes(path)
+    if (ownsPath && ownership.worktreeFingerprints[path] === current) continue
+
+    const adoption = binding
+      ? (await ctx.storage.get(
+          gitScopeStagingAdoptionKey(
+            sessionID,
+            binding.authorityId,
+            path,
+          ),
+        )) as GitScopeStagingAdoption | undefined
+      : undefined
+    const validAdoption =
+      adoption?.schemaVersion === 1 &&
+      adoption.sessionId === sessionID &&
+      adoption.authorityId === binding?.authorityId &&
+      adoption.workflowId === binding?.workflowId &&
+      adoption.stepId === binding?.stepId &&
+      adoption.attempt === binding?.attempt &&
+      adoption.path === path
+
+    if (validAdoption && adoption.fingerprint === current) {
+      ownership.paths = [...new Set([...ownership.paths, path])].sort()
+      ownership.worktreeFingerprints[path] = current
+      delete ownership.stagedFingerprints[path]
+      restored = true
+      continue
+    }
+
+    if (!ownsPath) unowned.push(path)
+    else changed.push(path)
+  }
+
+  if (restored) {
+    await ctx.storage.set(gitSessionOwnershipKey(sessionID), ownership)
+  }
+
+  return { ownership, unowned, changed }
 }
 
 async function changedOwnedPaths(
@@ -1800,24 +1912,22 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
       const addTargets = scopedGitAddTargets(command) ?? []
       if (addTargets.length > 0) {
-        const ownership = await gitSessionOwnership(ctx, String(raw.sessionID))
-        const unowned = addTargets.filter(
-          (target) => !ownership.paths.includes(normalizeRepoPath(target)),
-        )
-        if (unowned.length > 0) {
-          throw new Error(
-            "Git staging denied: stage only files changed by this role/task session. If these exact in-scope bytes were admitted by an earlier session on this same Loom step attempt, call loom_scope_request for those paths.",
-          )
-        }
-        const changed = await changedOwnedPaths(
-          ownership,
+        const stage = await resolveGitStagingOwnership(
+          ctx,
+          String(raw.sessionID),
           ctx.location.directory,
           addTargets,
         )
-        if (changed.length > 0) {
+        if (stage.unowned.length > 0) {
           throw new Error(
-            "Git staging denied: these files changed after this role/task's last admitted mutation: " +
-            changed.join(", "),
+            "Git staging denied: stage only files changed by this role/task session or explicitly adopted with loom_scope_request for this exact session/step attempt: " +
+            stage.unowned.join(", "),
+          )
+        }
+        if (stage.changed.length > 0) {
+          throw new Error(
+            "Git staging denied: these files changed after this role/task's last admitted mutation or scope adoption: " +
+            stage.changed.join(", "),
           )
         }
       }
@@ -7123,16 +7233,24 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 gitSessionOwnershipKey(tool.sessionID),
                 ownership,
               )
+              const sourceSessions = [
+                ...new Set(
+                  records.map(([, record]) => record!.sourceSessionId),
+                ),
+              ].sort()
+              await recordGitScopeStagingAdoptions(
+                ctx,
+                binding,
+                tool.sessionID,
+                currentFingerprints,
+                sourceSessions,
+              )
 
               return {
                 paths: normalized,
                 fingerprints: currentFingerprints,
                 authorityId: binding.authorityId,
-                sourceSessions: [
-                  ...new Set(
-                    records.map(([, record]) => record!.sourceSessionId),
-                  ),
-                ].sort(),
+                sourceSessions,
               }
             })
 
@@ -7859,28 +7977,24 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           const addTargets = event.resources.flatMap(
             (resource: string) => scopedGitAddTargets(resource) ?? [],
           )
-          const ownership = await gitSessionOwnership(ctx, event.sessionID)
-          if (
-            addTargets.some(
-              (target: string) =>
-                !ownership.paths.includes(normalizeRepoPath(target)),
-            )
-          ) {
-            event.effect = "deny"
-            event.message =
-              "Git staging denied: stage only files authored or explicitly adopted by this role/session. If these exact in-scope bytes were admitted by an earlier session on the same step attempt, call loom_scope_request for the paths."
-            return
-          }
-          const changed = await changedOwnedPaths(
-            ownership,
+          const stage = await resolveGitStagingOwnership(
+            ctx,
+            event.sessionID,
             ctx.location.directory,
             addTargets,
           )
-          if (changed.length > 0) {
+          if (stage.unowned.length > 0) {
             event.effect = "deny"
             event.message =
-              "Git staging denied: these files changed after this role's last admitted mutation: " +
-              changed.join(", ")
+              "Git staging denied: stage only files authored by this role/session or explicitly adopted with loom_scope_request for this exact session/step attempt: " +
+              stage.unowned.join(", ")
+            return
+          }
+          if (stage.changed.length > 0) {
+            event.effect = "deny"
+            event.message =
+              "Git staging denied: these files changed after this role's last admitted mutation or scope adoption: " +
+              stage.changed.join(", ")
             return
           }
           if (event.resources.some((resource: string) => isAllowedGitCommit(resource))) {

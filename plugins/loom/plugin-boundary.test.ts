@@ -2867,6 +2867,216 @@ Verdict: FAIL
     }
   })
 
+  test("recovered Specifier scope adoption remains stageable after redispatch and session ownership loss", async () => {
+    const h = await harness()
+    try {
+      await initializeGitFixture(h.root)
+      const generalSession = "specifier-recovered-redispatch-general"
+      const authorSession = "specifier-recovered-redispatch-author"
+      const started = await h.call(
+        "start",
+        { request: "Recover and commit stranded lifecycle requirements after a guard defect." },
+        "general",
+        generalSession,
+      )
+      const workflowId = String(started.workflowId)
+      expect((await h.call(
+        "route",
+        {
+          humanFacing: false,
+          behavioral: true,
+          structural: false,
+          externalUnknown: false,
+          diagnostic: false,
+          productOutcome: false,
+          implementationRequested: true,
+          executionDepth: "change",
+        },
+        "general",
+        generalSession,
+      )).error).toBeUndefined()
+
+      const write = [
+        "docs/requirements/lifecycle/br-050.md",
+        "docs/requirements/lifecycle/oc-025.md",
+        "docs/requirements/lifecycle/index.md",
+      ]
+      expect((await h.call(
+        "step_scope",
+        { workflowId, stepId: "specifier", write },
+        "general",
+        generalSession,
+      )).error).toBeUndefined()
+      const initialGrant = await h.call(
+        "dispatch_grant",
+        { workflowId, stepId: "specifier" },
+        "general",
+        generalSession,
+      )
+      const initialAttach = await h.call(
+        "attach",
+        { grantId: initialGrant.grantId, workflowId, stepId: "specifier" },
+        "specifier",
+        authorSession,
+      )
+      expect(initialAttach.attached).toBe(true)
+
+      await mkdir(join(h.root, "docs", "requirements", "lifecycle"), { recursive: true })
+      for (const [index, path] of write.entries()) {
+        // Emulate exact stranded pre-fix bytes: dirty in scope, but no admitted
+        // mutation/ownership record survived.
+        await writeFile(join(h.root, path), `stranded-${index}\n`)
+      }
+
+      const confirmation = "Recover these exact stranded Specifier requirement files."
+      await h.sessionHooks.get("context")!({
+        sessionID: generalSession,
+        system: [],
+        messages: [{
+          id: "specifier-recovered-redispatch-user-message",
+          role: "user",
+          content: [{ type: "text", text: confirmation }],
+        }],
+      })
+      const recovered = await h.call(
+        "git_ownership_recover",
+        {
+          workflowId,
+          stepId: "specifier",
+          targetSessionId: authorSession,
+          paths: write,
+          reason: "Recover exact current fingerprints after the historical guard defect.",
+          confirmation,
+        },
+        "general",
+        generalSession,
+      )
+      expect(recovered.error).toBeUndefined()
+      expect(recovered.recovered).toBe(true)
+
+      // Mirror the production sequence: a new dispatch reattaches the original
+      // author session before the spoke asks for continuity.
+      const retryGrant = await h.call(
+        "dispatch_grant",
+        { workflowId, stepId: "specifier" },
+        "general",
+        generalSession,
+      )
+      const retryAttach = await h.call(
+        "attach",
+        { grantId: retryGrant.grantId, workflowId, stepId: "specifier" },
+        "specifier",
+        authorSession,
+      )
+      expect(retryAttach.attached).toBe(true)
+      expect(retryAttach.attempt).toBe(initialAttach.attempt)
+
+      const adopted = await h.call(
+        "scope_request",
+        {
+          workflowId,
+          stepId: "specifier",
+          paths: write,
+          reason: "Continue the exact recovered bytes in this redispatched Specifier session.",
+        },
+        "specifier",
+        authorSession,
+      )
+      expect(adopted.error).toBeUndefined()
+      expect(adopted.adopted).toBe(true)
+
+      // The production failure occurred after successful adoption. Prove the
+      // staging guard no longer depends on the transient session-ownership copy:
+      // the durable scope-adoption record must restore it.
+      await h.durableStorage.set(
+        `git-session-ownership/${encodeURIComponent(authorSession)}`,
+        {
+          schemaVersion: 3,
+          authorityId: adopted.authorityId,
+          paths: [],
+          worktreeFingerprints: {},
+          stagedFingerprints: {},
+        },
+      )
+
+      const command = `git add -- ${write.join(" ")}`
+      const permission: any = {
+        agent: "specifier",
+        action: "shell",
+        resources: [command],
+        sessionID: authorSession,
+        effect: "ask",
+      }
+      await h.permissionHooks.get("evaluate")!(permission)
+      expect(permission.effect).toBe("allow")
+
+      const stageEvent = {
+        tool: "shell",
+        callID: "specifier-recovered-redispatch-stage",
+        messageID: "specifier-recovered-redispatch-stage-message",
+        sessionID: authorSession,
+        agent: "specifier",
+        input: { command },
+      }
+      await h.toolHooks.get("execute.before")!(stageEvent)
+      await git(h.root, ["add", "--", ...write])
+      await h.toolHooks.get("execute.after")!({
+        ...stageEvent,
+        status: "completed",
+        result: "staged",
+      })
+      expect(
+        (await git(h.root, ["diff", "--cached", "--name-only"])).stdout
+          .trim()
+          .split("\n")
+          .filter(Boolean)
+          .sort(),
+      ).toEqual([...write].sort())
+
+      // Adoption is exact-byte and session-bound. A later content change cannot
+      // reuse it after unstaging.
+      await git(h.root, ["reset", "--", ...write])
+      await writeFile(join(h.root, write[0]), "changed-after-adoption\n")
+      const changedPermission: any = {
+        agent: "specifier",
+        action: "shell",
+        resources: [`git add -- ${write[0]}`],
+        sessionID: authorSession,
+        effect: "ask",
+      }
+      await h.permissionHooks.get("evaluate")!(changedPermission)
+      expect(changedPermission.effect).toBe("deny")
+      expect(changedPermission.message).toContain("changed after")
+
+      await writeFile(join(h.root, write[0]), "stranded-0\n")
+      const otherSession = "specifier-recovered-redispatch-other"
+      const otherGrant = await h.call(
+        "dispatch_grant",
+        { workflowId, stepId: "specifier" },
+        "general",
+        generalSession,
+      )
+      expect((await h.call(
+        "attach",
+        { grantId: otherGrant.grantId, workflowId, stepId: "specifier" },
+        "specifier",
+        otherSession,
+      )).attached).toBe(true)
+      const otherPermission: any = {
+        agent: "specifier",
+        action: "shell",
+        resources: [`git add -- ${write[0]}`],
+        sessionID: otherSession,
+        effect: "ask",
+      }
+      await h.permissionHooks.get("evaluate")!(otherPermission)
+      expect(otherPermission.effect).toBe("deny")
+      expect(otherPermission.message).toContain("loom_scope_request")
+    } finally {
+      h.restore()
+    }
+  })
+
   test("specialist completion rechecks repository cleanliness after an active mutation", async () => {
     const h = await harness()
     try {
