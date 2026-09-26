@@ -64,6 +64,18 @@ class WorkflowCredentialTests(unittest.TestCase):
         self.assertNotIn("actions/upload-artifact@v4", live)
         self.assertNotIn("- run: bun install\n", live + ci)
 
+    def test_live_workflow_exposes_reasoning_controls(self):
+        workflow = (
+            RUN_EVALS.ROOT / ".github" / "workflows" / "loom-live-evals.yml"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("      reasoning:", workflow)
+        self.assertIn("      target_reasoning:", workflow)
+        self.assertIn("      judge_reasoning:", workflow)
+        self.assertIn('args+=(--reasoning "$EVAL_REASONING")', workflow)
+        self.assertIn('args+=(--target-reasoning "$TARGET_REASONING")', workflow)
+        self.assertIn('args+=(--judge-reasoning "$JUDGE_REASONING")', workflow)
+
     def test_opencode_host_and_plugin_api_share_compat_version(self):
         workflow = (
             RUN_EVALS.ROOT / ".github" / "workflows" / "loom-ci.yml"
