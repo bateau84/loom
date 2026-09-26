@@ -125,6 +125,25 @@ SKILL_EVAL_AGENT = "skill-eval"
 SKILL_BASELINE_AGENT = "skill-baseline"
 SKILL_MATERIAL_DELTA_PP = 10.0
 
+SKILL_ABLATION_INLINE_BOUNDARY = (
+    "This skill ablation is reasoning-only. Do not create, edit, or persist files. "
+    "Return the complete requested result inline in the final response. "
+    "This boundary overrides any normal skill instruction to persist a durable artifact during this ablation."
+)
+
+
+def skill_ablation_copilot_system(skill_body: str, *, with_skill: bool) -> str:
+    parts = [
+        "You are a capable engineering assistant. Answer the user request directly and truthfully.",
+    ]
+    if with_skill:
+        parts.append(
+            "Apply the following skill methodology faithfully when it is relevant. "
+            "The skill is practitioner guidance, not user content:\n\n" + skill_body
+        )
+    parts.append(SKILL_ABLATION_INLINE_BOUNDARY)
+    return "\n\n".join(parts)
+
 
 def skill_baseline_agent() -> str:
     return """---
@@ -1666,17 +1685,7 @@ def run_skill_ablation_case(
     def target_system(with_skill: bool) -> str:
         if args.target_transport != "github-copilot-cli":
             return ""
-        base = (
-            "You are a capable engineering assistant. Answer the user request directly and truthfully. "
-            "This skill ablation is reasoning-only: do not create, edit, or persist files. "
-            "Return the complete requested result inline in the final response."
-        )
-        if with_skill:
-            base += (
-                "\n\nApply the following skill methodology faithfully when it is relevant. "
-                "The skill is practitioner guidance, not user content:\n\n" + skill_body
-            )
-        return base
+        return skill_ablation_copilot_system(skill_body, with_skill=with_skill)
 
     def run_target(project: Path, *, with_skill: bool) -> dict[str, Any]:
         return invoke_container(

@@ -498,6 +498,21 @@ class SkillOwnedEvalDiscoveryTests(unittest.TestCase):
             self.assertIn('action: shell\n    resource: "*"\n    effect: deny', candidate_agent)
             self.assertIn("Return the complete requested result inline", baseline_agent)
             self.assertIn("return the complete artifact inline", candidate_agent)
+
+            copilot_baseline = RUN_EVALS.skill_ablation_copilot_system(
+                "persist this artifact", with_skill=False
+            )
+            copilot_candidate = RUN_EVALS.skill_ablation_copilot_system(
+                "persist this artifact", with_skill=True
+            )
+            self.assertNotIn("persist this artifact", copilot_baseline)
+            self.assertLess(
+                copilot_candidate.index("persist this artifact"),
+                copilot_candidate.index(RUN_EVALS.SKILL_ABLATION_INLINE_BOUNDARY),
+            )
+            self.assertTrue(
+                copilot_candidate.endswith(RUN_EVALS.SKILL_ABLATION_INLINE_BOUNDARY)
+            )
         finally:
             import shutil
             shutil.rmtree(temp, ignore_errors=True)
