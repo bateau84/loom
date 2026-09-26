@@ -374,6 +374,7 @@ async function acquireFlock(
 type RuntimeLockResource = {
   aggregate: string
   resourceIdentity: string
+  scope?: "project" | "installation"
 }
 
 function runtimeLockPath(runtime: LoomRuntimeIdentity, resource: RuntimeLockResource) {
@@ -381,7 +382,7 @@ function runtimeLockPath(runtime: LoomRuntimeIdentity, resource: RuntimeLockReso
     runtime.runtimeRoot,
     "locks",
     runtime.installationId,
-    runtime.projectId,
+    resource.scope === "installation" ? "installation" : runtime.projectId,
     resource.aggregate,
     `${sha256(resource.resourceIdentity)}.lock`,
   )
@@ -488,14 +489,11 @@ export async function withInstallationRuntimeLock<T>(
   resourceIdentity: string,
   fn: () => Promise<T>,
 ): Promise<T> {
-  const lockPath = join(
-    runtime.runtimeRoot,
-    "locks",
-    runtime.installationId,
-    "installation",
+  const lockPath = runtimeLockPath(runtime, {
     aggregate,
-    `${sha256(resourceIdentity)}.lock`,
-  )
+    resourceIdentity,
+    scope: "installation",
+  })
   return withRuntimeLockPaths(runtime, [lockPath], fn, { enforceRuntimeVersion: false })
 }
 
