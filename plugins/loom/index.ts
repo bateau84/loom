@@ -89,8 +89,6 @@ import {
   resourceMatchesScope,
   resourcesWithinScope,
   validateScopeElevation,
-  validateStepWriteScope,
-  validateWriteScope,
   type ScopeElevation,
   type TaskScope,
 } from "./scope"
@@ -265,19 +263,6 @@ type GitStepAttemptOwnedPath = {
   sourceSessionId: string
 }
 
-type GitScopeStagingAdoption = {
-  schemaVersion: 1
-  authorityId: string
-  workflowId: string
-  stepId: string
-  attempt: number
-  path: string
-  fingerprint: string
-  sessionId: string
-  sourceSessionIds: string[]
-  adoptedAt: string
-}
-
 function gitSessionOwnershipKey(sessionID: string) {
   return `git-session-ownership/${encodeURIComponent(sessionID)}`
 }
@@ -293,19 +278,6 @@ function gitStepAttemptOwnedPathKey(
     encodeURIComponent(workflowId),
     encodeURIComponent(stepId),
     String(attempt),
-    encodeURIComponent(safeOwnedRepoPath(path)),
-  ].join("/")
-}
-
-function gitScopeStagingAdoptionKey(
-  sessionID: string,
-  authorityId: string,
-  path: string,
-) {
-  return [
-    "git-scope-staging-adoption",
-    encodeURIComponent(sessionID),
-    encodeURIComponent(authorityId),
     encodeURIComponent(safeOwnedRepoPath(path)),
   ].join("/")
 }
@@ -502,35 +474,6 @@ async function recordGitStepAttemptOwnedFingerprints(
           fingerprint,
           sourceSessionId,
         } satisfies GitStepAttemptOwnedPath,
-      ),
-    ),
-  )
-}
-
-async function recordGitScopeStagingAdoptions(
-  ctx: any,
-  binding: GitOwnershipBinding,
-  sessionID: string,
-  fingerprints: Record<string, string>,
-  sourceSessionIds: string[],
-) {
-  const adoptedAt = new Date().toISOString()
-  await Promise.all(
-    Object.entries(fingerprints).map(([path, fingerprint]) =>
-      ctx.storage.set(
-        gitScopeStagingAdoptionKey(sessionID, binding.authorityId, path),
-        {
-          schemaVersion: 1,
-          authorityId: binding.authorityId,
-          workflowId: binding.workflowId,
-          stepId: binding.stepId,
-          attempt: binding.attempt,
-          path,
-          fingerprint,
-          sessionId: sessionID,
-          sourceSessionIds: [...new Set(sourceSessionIds)].sort(),
-          adoptedAt,
-        } satisfies GitScopeStagingAdoption,
       ),
     ),
   )
