@@ -3261,6 +3261,34 @@ Verdict: FAIL
       await evaluate(current)
       expect(current.effect).not.toBe("deny")
 
+      const extraReport = "ephemeral-reports/research/other.md"
+      const reportElevation = await h.call(
+        "scope_elevate",
+        {
+          workflowId,
+          stepId: "research",
+          paths: [extraReport],
+          reason: "The investigation needs a second role-owned report artifact.",
+        },
+        "research",
+        "research-scope-author",
+      )
+      expect(reportElevation.error).toBeUndefined()
+      expect(reportElevation.continue).toBe(true)
+
+      const productElevation = await h.call(
+        "scope_elevate",
+        {
+          workflowId,
+          stepId: "research",
+          paths: ["src/research-should-not-edit.ts"],
+          reason: "Research should not become the implementation role.",
+        },
+        "research",
+        "research-scope-author",
+      )
+      expect(productElevation.error).toContain("independent/advisory role")
+
       expect((await h.call(
         "reopen",
         {
@@ -3279,7 +3307,7 @@ Verdict: FAIL
       const stale: any = {
         agent: "research",
         action: "edit",
-        resources: ["ephemeral-reports/research/other.md"],
+        resources: [extraReport],
         sessionID: "research-scope-author",
         effect: "ask",
       }
