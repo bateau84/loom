@@ -222,6 +222,14 @@ const durableAuthorGitScopes: Record<string, string[]> = {
 }
 
 type GitSessionOwnership = {
+  schemaVersion: 3
+  authorityId?: string
+  paths: string[]
+  worktreeFingerprints: Record<string, string>
+  stagedFingerprints: Record<string, string>
+}
+
+type LegacyGitSessionOwnership = {
   schemaVersion: 2
   attachmentId?: string
   paths: string[]
@@ -229,8 +237,41 @@ type GitSessionOwnership = {
   stagedFingerprints: Record<string, string>
 }
 
+type GitOwnershipBinding = {
+  workflowId: string
+  stepId: string
+  attempt: number
+  authorityId: string
+}
+
+type GitStepAttemptOwnedPath = {
+  schemaVersion: 1
+  authorityId: string
+  workflowId: string
+  stepId: string
+  attempt: number
+  path: string
+  fingerprint: string
+  sourceSessionId: string
+}
+
 function gitSessionOwnershipKey(sessionID: string) {
   return `git-session-ownership/${encodeURIComponent(sessionID)}`
+}
+
+function gitStepAttemptOwnedPathKey(
+  workflowId: string,
+  stepId: string,
+  attempt: number,
+  path: string,
+) {
+  return [
+    "git-step-attempt-owned",
+    encodeURIComponent(workflowId),
+    encodeURIComponent(stepId),
+    String(attempt),
+    encodeURIComponent(safeOwnedRepoPath(path)),
+  ].join("/")
 }
 
 function normalizeRepoPath(value: string) {
@@ -367,23 +408,121 @@ function writeLockError(paths: readonly string[]) {
   )
 }
 
+async function gitSessionOwnershipBinding(
+  ctx: any,
+  sessionID: string,
+): Promise<GitOwnershipBinding | undefined> {
+  const [workflowId, stepId, attempt] = await Promise.all([
+    ctx.storage.get(sessionKey(sessionID)),
+    ctx.storage.get(sessionStepKey(sessionID)),
+    ctx.storage.get(sessionStepAttemptKey(sessionID)),
+  ])
+  if (
+    typeof workflowId === "string" &&
+    workflowId &&
+    typeof stepId === "string" &&
+    stepId &&
+    Number.isSafeInteger(attempt)
+  ) {
+    return {
+      workflowId,
+      stepId,
+      attempt: Number(attempt),
+      authorityId: `step:${encodeURIComponent(workflowId)}:${encodeURIComponent(stepId)}:${attempt}`,
+    }
+  }
+  return undefined
+}
+
+async function gitSessionOwnershipAuthority(
+  ctx: any,
+  sessionID: string,
+): Promise<string | undefined> {
+  return (await gitSessionOwnershipBinding(ctx, sessionID))?.authorityId
+}
+
+async function recordGitStepAttemptOwnedFingerprints(
+  ctx: any,
+  binding: GitOwnershipBinding,
+  sourceSessionId: string,
+  fingerprints: Record<string, string>,
+) {
+  await Promise.all(
+    Object.entries(fingerprints).map(([path, fingerprint]) =>
+      ctx.storage.set(
+        gitStepAttemptOwnedPathKey(
+          binding.workflowId,
+          binding.stepId,
+          binding.attempt,
+          path,
+        ),
+        {
+          schemaVersion: 1,
+          authorityId: binding.authorityId,
+          workflowId: binding.workflowId,
+          stepId: binding.stepId,
+          attempt: binding.attempt,
+          path,
+          fingerprint,
+          sourceSessionId,
+        } satisfies GitStepAttemptOwnedPath,
+      ),
+    ),
+  )
+}
+
 async function gitSessionOwnership(
   ctx: any,
   sessionID: string,
 ): Promise<GitSessionOwnership> {
   const key = gitSessionOwnershipKey(sessionID)
-  const attachmentId = (await ctx.storage.get(
-    sessionAttachmentKey(sessionID),
-  )) as string | undefined
-  const existing = (await ctx.storage.get(key)) as GitSessionOwnership | undefined
+  const [binding, attachmentId] = await Promise.all([
+    gitSessionOwnershipBinding(ctx, sessionID),
+    ctx.storage.get(sessionAttachmentKey(sessionID)),
+  ])
+  const authorityId = binding?.authorityId
+  const existing = (await ctx.storage.get(key)) as
+    | GitSessionOwnership
+    | LegacyGitSessionOwnership
+    | undefined
+  if (
+    existing?.schemaVersion === 3 &&
+    existing.authorityId === authorityId
+  ) return existing
+
   if (
     existing?.schemaVersion === 2 &&
     existing.attachmentId === attachmentId
-  ) return existing
+  ) {
+    const migrated: GitSessionOwnership = {
+      schemaVersion: 3,
+      ...(authorityId ? { authorityId } : {}),
+      paths: [...existing.paths],
+      worktreeFingerprints: { ...existing.worktreeFingerprints },
+      stagedFingerprints: { ...existing.stagedFingerprints },
+    }
+    await ctx.storage.set(key, migrated)
+    if (binding) {
+      const fingerprints = Object.fromEntries(
+        migrated.paths
+          .filter((path) => typeof migrated.worktreeFingerprints[path] === "string")
+          .map((path) => [path, migrated.worktreeFingerprints[path]]),
+      )
+      if (Object.keys(fingerprints).length > 0) {
+        await recordGitStepAttemptOwnedFingerprints(
+          ctx,
+          binding,
+          sessionID,
+          fingerprints,
+        )
+      }
+    }
+    return migrated
+  }
 
   const ownership: GitSessionOwnership = {
-    schemaVersion: 2,
-    ...(attachmentId ? { attachmentId } : {}),
+    schemaVersion: 3,
+    ...(authorityId ? { authorityId } : {}),
     paths: [],
     worktreeFingerprints: {},
     stagedFingerprints: {},
@@ -399,17 +538,33 @@ async function recordGitSessionOwnership(
   paths: readonly string[],
 ) {
   if (paths.length === 0) return
-  const ownership = await gitSessionOwnership(ctx, sessionID)
+  const [ownership, binding] = await Promise.all([
+    gitSessionOwnership(ctx, sessionID),
+    gitSessionOwnershipBinding(ctx, sessionID),
+  ])
   const normalized = [...new Set(paths.map(safeOwnedRepoPath))]
-  const fingerprints = await Promise.all(
-    normalized.map(async (path) => [path, await worktreeFingerprint(projectDirectory, path)] as const),
+  const fingerprints = Object.fromEntries(
+    await Promise.all(
+      normalized.map(async (path) => [
+        path,
+        await worktreeFingerprint(projectDirectory, path),
+      ] as const),
+    ),
   )
   ownership.paths = [...new Set([...ownership.paths, ...normalized])].sort()
-  for (const [path, fingerprint] of fingerprints) {
+  for (const [path, fingerprint] of Object.entries(fingerprints)) {
     ownership.worktreeFingerprints[path] = fingerprint
     delete ownership.stagedFingerprints[path]
   }
   await ctx.storage.set(gitSessionOwnershipKey(sessionID), ownership)
+  if (binding) {
+    await recordGitStepAttemptOwnedFingerprints(
+      ctx,
+      binding,
+      sessionID,
+      fingerprints,
+    )
+  }
 }
 
 async function recordGitSessionStaging(
@@ -600,6 +755,10 @@ function sessionUserMessageKey(sessionID: string) {
 
 function continuationAuthorizationUseKey(sessionID: string, userMessageId: string) {
   return `budget-continuation-user-message/${encodeURIComponent(sessionID)}/${encodeURIComponent(userMessageId)}`
+}
+
+function gitOwnershipRecoveryAuthorizationKey(sessionID: string, userMessageId: string) {
+  return `git-ownership-recovery-user-message/${encodeURIComponent(sessionID)}/${encodeURIComponent(userMessageId)}`
 }
 
 function continuationQuestionAuthorizationUseKey(sessionID: string, denialId: string) {
@@ -1647,7 +1806,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         )
         if (unowned.length > 0) {
           throw new Error(
-            "Git staging denied: stage only files changed by this role/task session.",
+            "Git staging denied: stage only files changed by this role/task session. If these exact in-scope bytes were admitted by an earlier session on this same Loom step attempt, call loom_scope_request for those paths.",
           )
         }
         const changed = await changedOwnedPaths(
@@ -6695,10 +6854,10 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 write: scope.write,
                 scopeSemantics: "mutation-boundary-only",
                 scopeNote: taskOutcome
-                  ? "Write scope limits mutation only; taskOutcome is the bounded completion target. planContext preserves the parent goal, accepted authority, constraints, acceptance criteria, integration, dependencies, risks, and downstream acceptance context. Prove the Task end to end and request scope extension when another load-bearing write is required."
+                  ? "Write scope limits mutation only; taskOutcome is the bounded completion target. planContext preserves the parent goal, accepted authority, constraints, acceptance criteria, integration, dependencies, risks, and downstream acceptance context. Prove the Task end to end. If exact current in-scope bytes were admitted by an earlier session on this same step attempt, call loom_scope_request; return any actual write-scope extension to General."
                   : acceptedOutcome
-                    ? "Write scope limits mutation only; acceptedOutcome is the bounded completion target and acceptedAuthority is its governing source. Prove the outcome with read-only discovery beyond the write list and request scope extension when another load-bearing write is required."
-                    : "Write scope limits mutation only; acceptedAuthority identifies the governing source. Read that authority as needed, prove the assigned outcome beyond the write list, and request scope extension when another load-bearing write is required.",
+                    ? "Write scope limits mutation only; acceptedOutcome is the bounded completion target and acceptedAuthority is its governing source. Prove the outcome with read-only discovery beyond the write list. If exact current in-scope bytes were admitted by an earlier session on this same step attempt, call loom_scope_request; return any actual write-scope extension to General."
+                    : "Write scope limits mutation only; acceptedAuthority identifies the governing source. Read that authority as needed and prove the assigned outcome beyond the write list. If exact current in-scope bytes were admitted by an earlier session on this same step attempt, call loom_scope_request; return any actual write-scope extension to General.",
               } : {}),
               ...(task ? { task } : {}),
               ...(producerSkills ? { producerSkills } : {}),
@@ -6737,6 +6896,507 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 ? { roleWriteCeiling: artifactWriteCeilings[step.agent] }
                 : {}),
             }),
+          }
+        },
+      })
+
+      addLoomTool({
+        name: "scope_request",
+        description:
+          "Spoke-side mutation-scope continuity request for the current attached specialist step. When exact current dirty, unstaged bytes were previously admitted under this same Loom workflow step attempt and remain inside the current effective write scope, Loom resolves the request by adopting staging ownership into this session. This never widens scope, edits, stages, or commits files; out-of-scope writes return to General, while missing provenance requires General's explicit user-authorized recovery path.",
+        input: {
+          type: "object",
+          properties: {
+            workflowId: { type: "string" },
+            stepId: { type: "string" },
+            paths: { type: "array", items: { type: "string" } },
+            reason: { type: "string" },
+          },
+          required: ["workflowId", "stepId", "paths"],
+          additionalProperties: false,
+        },
+        options: { namespace: "loom", codemode: false },
+        execute: async (input, tool) => {
+          if (tool.agent === "general") {
+            return {
+              content: renderToolOutput({
+                error:
+                  "General owns scope definition directly. Dispatch/attach the specialist and let that spoke call loom_scope_request for same-attempt continuity.",
+              }),
+            }
+          }
+
+          const roleWriteCeiling = durableAuthorGitScopes[tool.agent]
+          if (!roleWriteCeiling) {
+            return {
+              content: renderToolOutput({
+                error: `${tool.agent} is not a durable Git-authoring specialist.`,
+              }),
+            }
+          }
+
+          const value = input as {
+            workflowId: string
+            stepId: string
+            paths: string[]
+            reason?: string
+          }
+          let normalized: string[]
+          try {
+            normalized = [...new Set(value.paths.map(safeOwnedRepoPath))].sort()
+            if (normalized.length === 0) {
+              throw new Error("Scope request paths must not be empty.")
+            }
+            validateStepWriteScope(
+              normalized,
+              roleWriteCeiling,
+              "Scope request",
+            )
+          } catch (error) {
+            return {
+              content: renderToolOutput({
+                error: error instanceof Error ? error.message : String(error),
+              }),
+            }
+          }
+
+          const resources = [
+            { aggregate: "workflow", resourceIdentity: value.workflowId },
+            stepAuthorityResource(value.workflowId, value.stepId),
+            { aggregate: "git-index", resourceIdentity: "__repository_index__" },
+            ...normalized.map((path) => ({
+              aggregate: "file-write",
+              resourceIdentity: path,
+            })),
+          ]
+
+          try {
+            const adopted = await withRuntimeLocks(runtime, resources, async () => {
+              const binding = await gitSessionOwnershipBinding(
+                ctx,
+                tool.sessionID,
+              )
+              if (
+                !binding ||
+                binding.workflowId !== value.workflowId ||
+                binding.stepId !== value.stepId ||
+                !(await exactStepAttemptBinding(
+                  ctx,
+                  tool.sessionID,
+                  value.workflowId,
+                  value.stepId,
+                ))
+              ) {
+                throw new Error(
+                  "Scope request requires this specialist session to be attached to the exact current Loom step attempt.",
+                )
+              }
+
+              const workflow = await readWorkflow(ctx, value.workflowId)
+              if (!workflow) throw new Error("Workflow not found.")
+              const step = workflow.steps.find(
+                (candidate) => candidate.id === value.stepId,
+              )
+              if (!step || step.agent !== tool.agent) {
+                throw new Error(
+                  `Step ${value.stepId} does not belong to ${tool.agent}.`,
+                )
+              }
+              if (
+                step.status !== "pending" ||
+                !runnable(workflow).some(
+                  (candidate) => candidate.id === value.stepId,
+                )
+              ) {
+                throw new Error(
+                  "Scope request requires the exact currently runnable pending step.",
+                )
+              }
+
+              const scope = (await ctx.storage.get(
+                scopeKey(value.workflowId, value.stepId),
+              )) as TaskScope | undefined
+              const effectiveWriteScope = scope?.write.length
+                ? scope.write
+                : roleWriteCeiling
+              if (!resourcesWithinScope(normalized, effectiveWriteScope)) {
+                throw new Error(
+                  "Requested paths are outside the current effective Loom step write scope. Return them to General for loom_step_scope before retrying loom_scope_request.",
+                )
+              }
+
+              const staged = new Set(
+                await stagedGitPaths(ctx.location.directory),
+              )
+              const alreadyStaged = normalized.filter((path) =>
+                staged.has(path),
+              )
+              if (alreadyStaged.length > 0) {
+                throw new Error(
+                  "Scope request refuses already-staged paths: " +
+                    alreadyStaged.join(", "),
+                )
+              }
+
+              const dirty = new Set(
+                await projectDirtyPaths(ctx.location.directory),
+              )
+              const notDirty = normalized.filter((path) => !dirty.has(path))
+              if (notDirty.length > 0) {
+                throw new Error(
+                  "Scope request requires current uncommitted changes for every path: " +
+                    notDirty.join(", "),
+                )
+              }
+
+              const records = await Promise.all(
+                normalized.map(async (path) => {
+                  const record = (await ctx.storage.get(
+                    gitStepAttemptOwnedPathKey(
+                      binding.workflowId,
+                      binding.stepId,
+                      binding.attempt,
+                      path,
+                    ),
+                  )) as GitStepAttemptOwnedPath | undefined
+                  return [path, record] as const
+                }),
+              )
+              const missing = records
+                .filter(
+                  ([, record]) =>
+                    !record ||
+                    record.schemaVersion !== 1 ||
+                    record.authorityId !== binding.authorityId,
+                )
+                .map(([path]) => path)
+              if (missing.length > 0) {
+                throw new Error(
+                  "No admitted same-attempt Git provenance exists for: " +
+                    missing.join(", ") +
+                    ". If these are stranded pre-fix bytes after a guard/runtime defect, ask General to use loom_git_ownership_recover with explicit user authorization.",
+                )
+              }
+
+              const currentFingerprints = Object.fromEntries(
+                await Promise.all(
+                  normalized.map(async (path) => [
+                    path,
+                    await worktreeFingerprint(
+                      ctx.location.directory,
+                      path,
+                    ),
+                  ] as const),
+                ),
+              )
+              const changed = records
+                .filter(
+                  ([path, record]) =>
+                    record!.fingerprint !== currentFingerprints[path],
+                )
+                .map(([path]) => path)
+              if (changed.length > 0) {
+                throw new Error(
+                  "Scope request refused files whose bytes changed after the last admitted same-attempt mutation: " +
+                    changed.join(", "),
+                )
+              }
+
+              const ownership = await gitSessionOwnership(
+                ctx,
+                tool.sessionID,
+              )
+              if (ownership.authorityId !== binding.authorityId) {
+                throw new Error(
+                  "Scope request authority changed concurrently; retry after reattaching.",
+                )
+              }
+              ownership.paths = [
+                ...new Set([...ownership.paths, ...normalized]),
+              ].sort()
+              for (const path of normalized) {
+                ownership.worktreeFingerprints[path] =
+                  currentFingerprints[path]
+                delete ownership.stagedFingerprints[path]
+              }
+              await ctx.storage.set(
+                gitSessionOwnershipKey(tool.sessionID),
+                ownership,
+              )
+
+              return {
+                paths: normalized,
+                fingerprints: currentFingerprints,
+                authorityId: binding.authorityId,
+                sourceSessions: [
+                  ...new Set(
+                    records.map(([, record]) => record!.sourceSessionId),
+                  ),
+                ].sort(),
+              }
+            })
+
+            return {
+              content: renderToolOutput({
+                resolved: true,
+                adopted: true,
+                workflowId: value.workflowId,
+                stepId: value.stepId,
+                sessionId: tool.sessionID,
+                ...adopted,
+                ...(value.reason?.trim()
+                  ? { reason: value.reason.trim() }
+                  : {}),
+                note:
+                  "Scope request resolved by transferring staging authority for exact same-attempt bytes into this session; it does not widen write scope or claim that this session historically authored them.",
+              }),
+            }
+          } catch (error) {
+            return {
+              content: renderToolOutput({
+                error: error instanceof Error ? error.message : String(error),
+              }),
+            }
+          }
+        },
+      })
+
+      addLoomTool({
+        name: "git_ownership_recover",
+        description:
+          "Recover lost Git authorship provenance for exact current dirty bytes after a guard/runtime defect. General only and requires the exact latest user message as authorization. This does not edit, stage, or commit files; it adopts only current fingerprints for the target session's exact current step attempt inside its declared specialist scope.",
+        input: {
+          type: "object",
+          properties: {
+            workflowId: { type: "string" },
+            stepId: { type: "string" },
+            targetSessionId: { type: "string" },
+            paths: { type: "array", items: { type: "string" } },
+            reason: { type: "string" },
+            confirmation: {
+              type: "string",
+              description: "Exact latest real user message explicitly authorizing recovery of these current files.",
+            },
+          },
+          required: ["workflowId", "stepId", "targetSessionId", "paths", "reason", "confirmation"],
+          additionalProperties: false,
+        },
+        options: { namespace: "loom", codemode: false },
+        execute: async (input, tool) => {
+          if (tool.agent !== "general") {
+            return { content: renderToolOutput({ error: "Only general may recover Git authorship provenance." }) }
+          }
+
+          const value = input as {
+            workflowId: string
+            stepId: string
+            targetSessionId: string
+            paths: string[]
+            reason: string
+            confirmation: string
+          }
+          const observedUserMessage = (await ctx.storage.get(
+            sessionUserMessageKey(tool.sessionID),
+          )) as ObservedUserMessage | undefined
+          if (!observedUserMessage) {
+            return { content: renderToolOutput({ error: "No current observed user message is available to authorize Git ownership recovery." }) }
+          }
+          if (value.confirmation.trim() !== observedUserMessage.text.trim()) {
+            return {
+              content: renderToolOutput({
+                error: "Git ownership recovery confirmation must match the latest observed user message exactly.",
+                authorizationUserMessageId: observedUserMessage.messageId,
+              }),
+            }
+          }
+
+          let normalized: string[]
+          try {
+            normalized = [...new Set(value.paths.map(safeOwnedRepoPath))].sort()
+            if (normalized.length === 0) throw new Error("Git ownership recovery paths must not be empty.")
+          } catch (error) {
+            return { content: renderToolOutput({ error: error instanceof Error ? error.message : String(error) }) }
+          }
+
+          const recoveryKey = gitOwnershipRecoveryAuthorizationKey(
+            tool.sessionID,
+            observedUserMessage.messageId,
+          )
+          const resources = [
+            { aggregate: "workflow", resourceIdentity: value.workflowId },
+            stepAuthorityResource(value.workflowId, value.stepId),
+            { aggregate: "git-index", resourceIdentity: "__repository_index__" },
+            {
+              aggregate: "git-ownership-recovery",
+              resourceIdentity: `${tool.sessionID}:${observedUserMessage.messageId}`,
+            },
+            ...normalized.map((path) => ({
+              aggregate: "file-write",
+              resourceIdentity: path,
+            })),
+          ]
+
+          try {
+            const recovered = await withRuntimeLocks(runtime, resources, async () => {
+              const latestUserMessage = (await ctx.storage.get(
+                sessionUserMessageKey(tool.sessionID),
+              )) as ObservedUserMessage | undefined
+              if (
+                !latestUserMessage ||
+                latestUserMessage.messageId !== observedUserMessage.messageId ||
+                latestUserMessage.text.trim() !== value.confirmation.trim()
+              ) {
+                throw new Error("User authorization changed before Git ownership recovery could commit.")
+              }
+
+              const currentBinding = (await ctx.storage.get(sessionKey(tool.sessionID))) as string | undefined
+              if (currentBinding !== value.workflowId) {
+                throw new Error("General is no longer bound to this workflow.")
+              }
+              const workflow = await readWorkflow(ctx, value.workflowId)
+              if (!workflow) throw new Error("Workflow not found.")
+              const step = workflow.steps.find((candidate) => candidate.id === value.stepId)
+              if (!step || step.status !== "pending" || !runnable(workflow).some((candidate) => candidate.id === step.id)) {
+                throw new Error("Git ownership recovery requires the exact currently runnable pending step.")
+              }
+
+              const roleWriteCeiling = durableAuthorGitScopes[step.agent]
+              if (!roleWriteCeiling) {
+                throw new Error(`Step ${value.stepId} (${step.agent}) is not a durable Git-authoring specialist.`)
+              }
+              validateStepWriteScope(normalized, roleWriteCeiling, "Git ownership recovery")
+              const scope = (await ctx.storage.get(
+                scopeKey(value.workflowId, value.stepId),
+              )) as TaskScope | undefined
+              if (!scope?.write.length || !resourcesWithinScope(normalized, scope.write)) {
+                throw new Error("Git ownership recovery paths must all be inside the step's declared write scope.")
+              }
+              if (!(await exactStepAttemptBinding(
+                ctx,
+                value.targetSessionId,
+                value.workflowId,
+                value.stepId,
+              ))) {
+                throw new Error("Target session is not attached to the exact current Loom step attempt.")
+              }
+
+              const staged = new Set(await stagedGitPaths(ctx.location.directory))
+              const alreadyStaged = normalized.filter((path) => staged.has(path))
+              if (alreadyStaged.length > 0) {
+                throw new Error(
+                  "Git ownership recovery refuses already-staged paths: " + alreadyStaged.join(", "),
+                )
+              }
+              const dirty = new Set(await projectDirtyPaths(ctx.location.directory))
+              const notDirty = normalized.filter((path) => !dirty.has(path))
+              if (notDirty.length > 0) {
+                throw new Error(
+                  "Git ownership recovery requires current uncommitted changes for every path: " + notDirty.join(", "),
+                )
+              }
+
+              const currentFingerprints = Object.fromEntries(
+                await Promise.all(
+                  normalized.map(async (path) => [
+                    path,
+                    await worktreeFingerprint(ctx.location.directory, path),
+                  ] as const),
+                ),
+              )
+              const prior = (await ctx.storage.get(recoveryKey)) as
+                | {
+                    workflowId: string
+                    stepId: string
+                    targetSessionId: string
+                    paths: string[]
+                    fingerprints: Record<string, string>
+                    userMessageId: string
+                    recoveredAt: string
+                    reason: string
+                  }
+                | undefined
+
+              if (prior) {
+                const sameRequest =
+                  prior.workflowId === value.workflowId &&
+                  prior.stepId === value.stepId &&
+                  prior.targetSessionId === value.targetSessionId &&
+                  JSON.stringify(prior.paths) === JSON.stringify(normalized)
+                if (!sameRequest) {
+                  throw new Error("This user authorization was already used for a different Git ownership recovery.")
+                }
+                const changed = normalized.filter(
+                  (path) => prior.fingerprints[path] !== currentFingerprints[path],
+                )
+                if (changed.length > 0) {
+                  throw new Error(
+                    "Recovered files changed after this user authorization: " + changed.join(", "),
+                  )
+                }
+              } else {
+                await ctx.storage.set(recoveryKey, {
+                  workflowId: value.workflowId,
+                  stepId: value.stepId,
+                  targetSessionId: value.targetSessionId,
+                  paths: normalized,
+                  fingerprints: currentFingerprints,
+                  userMessageId: observedUserMessage.messageId,
+                  recoveredAt: new Date().toISOString(),
+                  reason: value.reason,
+                })
+              }
+
+              const ownership = await gitSessionOwnership(ctx, value.targetSessionId)
+              ownership.paths = [...new Set([...ownership.paths, ...normalized])].sort()
+              for (const path of normalized) {
+                ownership.worktreeFingerprints[path] = currentFingerprints[path]
+                delete ownership.stagedFingerprints[path]
+              }
+              await ctx.storage.set(
+                gitSessionOwnershipKey(value.targetSessionId),
+                ownership,
+              )
+              const recoveredBinding = await gitSessionOwnershipBinding(
+                ctx,
+                value.targetSessionId,
+              )
+              if (
+                !recoveredBinding ||
+                recoveredBinding.workflowId !== value.workflowId ||
+                recoveredBinding.stepId !== value.stepId ||
+                recoveredBinding.authorityId !== ownership.authorityId
+              ) {
+                throw new Error(
+                  "Target session Git ownership authority changed before recovery could publish same-attempt provenance.",
+                )
+              }
+              await recordGitStepAttemptOwnedFingerprints(
+                ctx,
+                recoveredBinding,
+                value.targetSessionId,
+                currentFingerprints,
+              )
+              return {
+                paths: normalized,
+                fingerprints: currentFingerprints,
+                authorityId: ownership.authorityId,
+                reusedAuthorization: Boolean(prior),
+              }
+            })
+
+            return {
+              content: renderToolOutput({
+                recovered: true,
+                workflowId: value.workflowId,
+                stepId: value.stepId,
+                targetSessionId: value.targetSessionId,
+                authorizationUserMessageId: observedUserMessage.messageId,
+                ...recovered,
+                note: "Recovered authorship adopts the exact current uncommitted bytes; it does not assert that historical provenance survived the earlier guard defect.",
+              }),
+            }
+          } catch (error) {
+            return { content: renderToolOutput({ error: error instanceof Error ? error.message : String(error) }) }
           }
         },
       })
@@ -7208,7 +7868,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           ) {
             event.effect = "deny"
             event.message =
-              "Git staging denied: stage only files authored by this role/session."
+              "Git staging denied: stage only files authored or explicitly adopted by this role/session. If these exact in-scope bytes were admitted by an earlier session on the same step attempt, call loom_scope_request for the paths."
             return
           }
           const changed = await changedOwnedPaths(
