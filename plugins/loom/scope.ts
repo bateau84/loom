@@ -16,67 +16,6 @@ export type TaskScope = {
   elevations?: ScopeElevation[]
 }
 
-const forbiddenAuthorityRoots = [
-  "docs/anchors/",
-  "docs/design/",
-  "docs/requirements/",
-  "docs/architecture/",
-]
-
-function normalize(value: string) {
-  return value.replaceAll("\\", "/").replace(/^\.\//, "")
-}
-
-function validateBoundedWriteScope(paths: string[], label: string) {
-  if (paths.length === 0) throw new Error(`${label} must not be empty.`)
-
-  for (const raw of paths) {
-    const path = normalize(raw)
-
-    if (!path || path === "*" || path === "**" || path === "**/*") {
-      throw new Error(`${label} must be bounded; repository-wide wildcards are not allowed.`)
-    }
-    if (path.startsWith("/") || path.includes("../")) {
-      throw new Error(`${label} must be project-relative: ${raw}`)
-    }
-  }
-
-  return paths
-}
-
-function patternWithinCeiling(pattern: string, ceiling: string) {
-  const normalizedPattern = normalize(pattern)
-  const normalizedCeiling = normalize(ceiling)
-
-  if (normalizedCeiling.endsWith("/**")) {
-    const root = normalizedCeiling.slice(0, -3)
-    return normalizedPattern === root || normalizedPattern.startsWith(root + "/")
-  }
-
-  return normalizedPattern === normalizedCeiling
-}
-
-export function validateStepWriteScope(
-  paths: string[],
-  roleCeiling: readonly string[],
-  label = "Step write scope",
-) {
-  validateBoundedWriteScope(paths, label)
-  if (roleCeiling.length === 0) {
-    throw new Error(`${label} has no role-owned artifact surface.`)
-  }
-
-  for (const raw of paths) {
-    if (!roleCeiling.some((ceiling) => patternWithinCeiling(raw, ceiling))) {
-      throw new Error(
-        `${label} may narrow role authority but cannot grant ${raw}; allowed roots: ${roleCeiling.join(", ")}`,
-      )
-    }
-  }
-
-  return paths
-}
-
 /**
  * Validate a normal in-project runtime scope elevation. Unlike the historical
  * specialist ceiling check, this deliberately does not decide role authority:
@@ -104,16 +43,7 @@ export function committableWriteScope(paths: readonly string[]) {
 
 export function validateWriteScope(paths: string[]) {
   if (paths.length === 0) return paths
-  validateBoundedWriteScope(paths, "Worker write scope")
-
-  for (const raw of paths) {
-    const path = normalize(raw)
-    if (forbiddenAuthorityRoots.some((root) => path.startsWith(root))) {
-      throw new Error("Worker may not receive write authority for " + path)
-    }
-  }
-
-  return paths
+  return validateBoundedWriteScope(paths, "Worker starting write scope")
 }
 
 function globRegex(pattern: string) {
