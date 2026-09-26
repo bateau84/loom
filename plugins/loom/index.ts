@@ -842,12 +842,34 @@ async function uncommittedOwnedChangesError(
     return `Cannot verify repository completion state: ${error instanceof Error ? error.message : String(error)}`
   }
 
-  const ownership = await gitSessionOwnership(ctx, sessionID)
-  const dirtyOwned = dirty.filter(
-    (path) =>
-      ownership.paths.includes(normalizeRepoPath(path)) &&
-      resourcesWithinScope([path], writeScope),
-  )
+  const [ownership, binding] = await Promise.all([
+    gitSessionOwnership(ctx, sessionID),
+    gitSessionOwnershipBinding(ctx, sessionID),
+  ])
+  const dirtyOwned: string[] = []
+  for (const raw of dirty) {
+    const path = normalizeRepoPath(raw)
+    if (!resourcesWithinScope([path], writeScope)) continue
+    if (ownership.paths.includes(path)) {
+      dirtyOwned.push(path)
+      continue
+    }
+    if (!binding) continue
+    const provenance = (await ctx.storage.get(
+      gitStepAttemptOwnedPathKey(
+        binding.workflowId,
+        binding.stepId,
+        binding.attempt,
+        path,
+      ),
+    )) as GitStepAttemptOwnedPath | undefined
+    if (
+      provenance?.schemaVersion === 1 &&
+      provenance.authorityId === binding.authorityId
+    ) {
+      dirtyOwned.push(path)
+    }
+  }
   if (dirtyOwned.length === 0) return undefined
 
   return (
@@ -2162,6 +2184,33 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       if (!raw.agent || raw.agent === "general") return
       const agent = String(raw.agent)
       if (!loomAgents.has(agent)) return
+
+      const hardBoundaryPaths = directMutationPaths.filter(
+        (path) =>
+          classifyScopeTarget(ctx.location.directory, path).kind ===
+          "hard-boundary",
+      )
+      if (hardBoundaryPaths.length > 0) {
+        if (hardBoundaryPaths.length !== directMutationPaths.length) {
+          throw new Error(
+            "Do not mix project-local and hard-boundary writes in one mutation.",
+          )
+        }
+        if (
+          await scopeBoundaryMutationWasAuthorized(
+            ctx,
+            ctx.location.directory,
+            sessionID,
+            agent,
+            hardBoundaryPaths,
+          )
+        ) {
+          return
+        }
+        throw new Error(
+          "Hard-boundary mutation is not authorized for this current step attempt.",
+        )
+      }
 
       if (
         !workflowId ||
@@ -3555,14 +3604,19 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             await validateWorkflowMutationLocked(ctx, runtime, workflow)
 
             if (resolvedOutcome === "complete") {
-              let ownedWriteScope: string[] | undefined = durableAuthorGitScopes[tool.agent]
-              if (tool.agent === "worker") {
+              let ownedWriteScope: string[]
+              if (tool.agent === "general") {
+                ownedWriteScope = durableAuthorGitScopes.general
+              } else {
                 const declaredScope = (await ctx.storage.get(
                   scopeKey(workflowId, stepId),
                 )) as TaskScope | undefined
-                ownedWriteScope = declaredScope?.write
+                ownedWriteScope = declaredScope?.write.length
+                  ? declaredScope.write
+                  : (artifactWriteCeilings[tool.agent] ?? [])
               }
-              if (ownedWriteScope?.length) {
+              ownedWriteScope = committableWriteScope(ownedWriteScope)
+              if (ownedWriteScope.length) {
                 const repositoryError = await uncommittedOwnedChangesError(
                   ctx,
                   tool.sessionID,
@@ -7438,7 +7492,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
                 if (projectPaths.length > 0) {
                   const crossesRoleDefault =
-                    roleWriteDefault.length > 0 &&
+                    roleWriteDefault.length === 0 ||
                     !resourcesWithinScope(projectPaths, roleWriteDefault)
                   elevation = {
                     id: crypto.randomUUID(),
@@ -9379,17 +9433,18 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           (currentStep?.attempt ?? 0) === admission.attempt
 
         if (sameExecutionAuthority) {
-          let writeScope: string[] | undefined = durableAuthorGitScopes[String(raw.agent)]
           const declaredScope = (await ctx.storage.get(
             scopeKey(admission.workflowId, admission.stepId),
           )) as TaskScope | undefined
-          if (declaredScope?.write.length) {
-            writeScope = declaredScope.write
-          } else if (raw.agent === "worker") {
-            writeScope = undefined
-          }
+          const defaultScope =
+            artifactWriteCeilings[String(raw.agent)] ?? []
+          const writeScope = committableWriteScope(
+            declaredScope?.write.length
+              ? declaredScope.write
+              : defaultScope,
+          )
 
-          if (writeScope?.length) {
+          if (writeScope.length) {
             const owned = successfulMutationPaths(
               tool,
               input,
