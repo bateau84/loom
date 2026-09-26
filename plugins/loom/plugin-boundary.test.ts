@@ -2722,6 +2722,18 @@ Verdict: FAIL
           stagedFingerprints: {},
         },
       )
+      // Session-cache loss alone is no longer a provenance failure: the same
+      // step attempt can recover exact admitted bytes automatically. Simulate
+      // the actual break-glass condition by deleting the durable admitted-byte
+      // record as well.
+      const provenanceKey = [
+        "git-step-attempt-owned",
+        encodeURIComponent(workflowId),
+        encodeURIComponent("specifier"),
+        "0",
+        encodeURIComponent(path),
+      ].join("/")
+      expect(await h.durableStorage.delete?.(provenanceKey)).toBe(true)
 
       const evaluate = h.permissionHooks.get("evaluate")!
       const deniedStage: any = {
