@@ -8588,8 +8588,34 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           reportResources.length === event.resources.length
         ) {
           // Ephemeral reports are intentionally outside product write/commit
-          // scope. A producer may write its own report namespace without a
-          // product-step scope or Git authority.
+          // scope. Conversational producers may write their own namespace
+          // without governed scope. A producer still attached to an active
+          // workflow, however, must not use this shortcut to survive a
+          // reopen/reroute attempt change.
+          const workflow = await activeWorkflow(
+            ctx,
+            event.sessionID,
+            ensureLegacySession,
+          )
+          const attachedStepId = (await ctx.storage.get(
+            sessionStepKey(event.sessionID),
+          )) as string | undefined
+          if (
+            workflow &&
+            !workflowBindingTerminal(workflow) &&
+            attachedStepId &&
+            !(await exactStepAttemptBinding(
+              ctx,
+              event.sessionID,
+              workflow.id,
+              attachedStepId,
+            ))
+          ) {
+            event.effect = "deny"
+            event.message =
+              "Ephemeral report mutation requires a fresh attachment to the current Loom step attempt."
+            return
+          }
           return
         }
       }
