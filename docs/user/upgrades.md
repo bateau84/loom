@@ -90,6 +90,8 @@ An upgrade may happen while another OpenCode+Loom process from the previous buil
 
 Every normal project mutation validates the durable runtime version against the running build in the same transaction as the write. If another process upgrades the installation, an older still-running process fails closed on its next canonical project-state access/mutation and must be restarted with the current Loom build.
 
+Runtime version 6 is a protocol-only fence for specialist write scopes and exact step-attempt authority. It does not rewrite product artifacts. A specialist session resumed from an older runtime may lack the new attempt binding; in that case its existing history remains intact, but durable mutation is refused until General issues a fresh exact grant and the child re-attaches to the current runnable step. This is intentional fail-closed recovery rather than guessing which historical attempt the session belonged to.
+
 A mutation already in flight before the upgrade is serialized by the canonical SQLite transaction boundary; the upgrade runs after that old-version mutation commits and migrates its result.
 
 
