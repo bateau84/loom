@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto"
-import { lstat, readFile, readlink } from "node:fs/promises"
-import { isAbsolute, join, relative, resolve } from "node:path"
+import { lstat, readFile, readlink, realpath } from "node:fs/promises"
+import { dirname, isAbsolute, join, relative, resolve } from "node:path"
 import { execFile } from "node:child_process"
 import { promisify } from "node:util"
 import { captureEvidenceAdmission, observationCallKey, persistEvidenceObservation, sessionAttachmentKey, type EvidenceAdmission } from "./evidence-admission"
@@ -1079,13 +1079,37 @@ function scopeBoundaryAuthorizationKey(
     encodeURIComponent(requestId)
 }
 
-function classifyScopeTarget(projectDirectory: string, raw: string) {
+async function nearestExistingRealPath(path: string) {
+  let candidate = path
+  while (true) {
+    try {
+      return await realpath(candidate)
+    } catch (error: any) {
+      if (error?.code !== "ENOENT" && error?.code !== "ENOTDIR") throw error
+      const parent = dirname(candidate)
+      if (parent === candidate) throw error
+      candidate = parent
+    }
+  }
+}
+
+function pathBeforeGlob(path: string) {
+  const normalized = path.replaceAll("\\", "/")
+  const wildcard = normalized.search(/[*?\[\]{}]/)
+  if (wildcard < 0) return path
+  const prefix = normalized.slice(0, wildcard)
+  const boundary = prefix.lastIndexOf("/")
+  if (boundary < 0) return "."
+  return prefix.slice(0, boundary) || "/"
+}
+
+async function classifyScopeTarget(projectDirectory: string, raw: string) {
   const requested = raw.trim()
   if (!requested) throw new Error("Scope elevation paths must not be empty.")
+
   const absolute = resolve(projectDirectory, requested)
   const projectRelative = relative(projectDirectory, absolute).replaceAll("\\", "/")
   const outside =
-    !projectRelative ||
     projectRelative === ".." ||
     projectRelative.startsWith("../") ||
     isAbsolute(projectRelative)
@@ -1098,12 +1122,38 @@ function classifyScopeTarget(projectDirectory: string, raw: string) {
     }
   }
 
+  if (!projectRelative || projectRelative === ".") {
+    throw new Error(
+      "Repository-root scope elevation is too broad; request a concrete file or folder.",
+    )
+  }
+
   const path = normalizeRepoPath(projectRelative)
   if (path === ".git" || path.startsWith(".git/")) {
     return {
       kind: "hard-boundary" as const,
       path: absolute.replaceAll("\\", "/"),
       reason: "repository-internal-state",
+    }
+  }
+
+  const [realProjectRoot, realExistingTarget] = await Promise.all([
+    realpath(projectDirectory).catch(() => resolve(projectDirectory)),
+    nearestExistingRealPath(
+      resolve(projectDirectory, pathBeforeGlob(requested)),
+    ),
+  ])
+  const realRelative = relative(realProjectRoot, realExistingTarget)
+  if (
+    realRelative === ".." ||
+    realRelative.startsWith("../") ||
+    isAbsolute(realRelative)
+  ) {
+    return {
+      kind: "hard-boundary" as const,
+      path: absolute.replaceAll("\\", "/"),
+      reason: "symlink-escape",
+      resolvedExistingTarget: realExistingTarget.replaceAll("\\", "/"),
     }
   }
 
@@ -2128,11 +2178,20 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       const agent = String(raw.agent)
       if (!loomAgents.has(agent)) return
 
-      const hardBoundaryPaths = directMutationPaths.filter(
-        (path) =>
-          classifyScopeTarget(ctx.location.directory, path).kind ===
-          "hard-boundary",
+      const classifiedMutationPaths = await Promise.all(
+        directMutationPaths.map(async (path) => ({
+          path,
+          classification: await classifyScopeTarget(
+            ctx.location.directory,
+            path,
+          ),
+        })),
       )
+      const hardBoundaryPaths = classifiedMutationPaths
+        .filter(
+          (entry) => entry.classification.kind === "hard-boundary",
+        )
+        .map((entry) => entry.path)
       if (hardBoundaryPaths.length > 0) {
         if (hardBoundaryPaths.length !== directMutationPaths.length) {
           throw new Error(
@@ -7348,10 +7407,12 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             }
           }
 
-          let classified: ReturnType<typeof classifyScopeTarget>[]
+          let classified: Awaited<ReturnType<typeof classifyScopeTarget>>[]
           try {
-            classified = value.paths.map((path) =>
-              classifyScopeTarget(ctx.location.directory, path),
+            classified = await Promise.all(
+              value.paths.map((path) =>
+                classifyScopeTarget(ctx.location.directory, path),
+              ),
             )
           } catch (error) {
             return {
@@ -8317,8 +8378,10 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         }
       }
       if (event.action === "edit") {
-        const classified = event.resources.map((resource: string) =>
-          classifyScopeTarget(ctx.location.directory, resource),
+        const classified = await Promise.all(
+          event.resources.map((resource: string) =>
+            classifyScopeTarget(ctx.location.directory, resource),
+          ),
         )
         const hardBoundary = classified.filter(
           (entry) => entry.kind === "hard-boundary",
