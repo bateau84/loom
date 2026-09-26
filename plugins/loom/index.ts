@@ -3393,6 +3393,48 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           const knowledge = (await ctx.storage.get(knowledgeKey(workflow.id))) as KnowledgeReport | undefined
           const work = workflow.work ? await readWork(ctx, workflow.work.objectiveId) : undefined
           const detail = Boolean((input as { detail?: boolean }).detail)
+          const scopeRecords = (
+            await Promise.all(
+              workflow.steps.map(async (step) => ({
+                step,
+                scope: (await ctx.storage.get(
+                  scopeKey(workflow.id, step.id),
+                )) as TaskScope | undefined,
+              })),
+            )
+          )
+          const scopeElevations = scopeRecords
+            .flatMap(({ step, scope }) =>
+              (scope?.elevations ?? []).map((elevation) => ({
+                stepId: step.id,
+                agent: step.agent,
+                ...elevation,
+              })),
+            )
+            .sort((left, right) =>
+              left.elevatedAt.localeCompare(right.elevatedAt),
+            )
+
+          const pendingHardBoundaries: ScopeBoundaryRequest[] = []
+          let boundaryAfter: string | undefined
+          do {
+            const page = await ctx.storage.scan({
+              prefix: scopeBoundaryRequestPrefix(workflow.createdBySession),
+              limit: 100,
+              ...(boundaryAfter ? { after: boundaryAfter } : {}),
+            })
+            for (const entry of page.entries) {
+              const request = entry.value as ScopeBoundaryRequest
+              if (
+                request?.workflowId === workflow.id &&
+                !request.resolvedAt
+              ) {
+                pendingHardBoundaries.push(request)
+              }
+            }
+            boundaryAfter = page.next
+          } while (boundaryAfter)
+
           const view = buildStatusView(
             workflow,
             questions,
@@ -3404,7 +3446,35 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           )
           const artifact = await writeStatusArtifact(runtime, view).catch(() => undefined)
           const presentation = statusPresentation(artifact)
-          const compact = renderStatusMarkdown(view, artifact)
+          let compact = renderStatusMarkdown(view, artifact)
+          if (scopeElevations.length > 0 || pendingHardBoundaries.length > 0) {
+            const lines = ["", "### Scope activity"]
+            for (const elevation of scopeElevations.slice(-8)) {
+              lines.push(
+                `- **${elevation.agent}** · \`${elevation.stepId}\` · +${elevation.paths.join(", ")}${elevation.crossesRoleDefault ? " · crossed role default" : ""} · ${elevation.reason}`,
+              )
+            }
+            for (const request of pendingHardBoundaries.slice(0, 4)) {
+              lines.push(
+                `- **USER DECISION REQUIRED** · \`${request.stepId}\` · ${request.paths.join(", ")} · child returned control`,
+              )
+            }
+            compact += "\n" + lines.join("\n")
+          }
+          const scopeActivity = {
+            elevations: scopeElevations,
+            pendingHardBoundaries: pendingHardBoundaries.map((request) => ({
+              requestId: request.requestId,
+              approvalRef: request.approvalRef,
+              stepId: request.stepId,
+              agent: request.agent,
+              paths: request.paths,
+              reason: request.reason,
+              requestedAt: request.requestedAt,
+              continue: false,
+              rememberChoiceAllowed: false,
+            })),
+          }
           const metadata = {
             loom: {
               kind: "workflow-status",
@@ -3420,6 +3490,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 content: renderToolOutput(
                   {
                     ...view,
+                    scopeActivity,
                     ...(presentation ? { presentation } : {}),
                   },
                   "json",
@@ -3442,6 +3513,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 ? { plan: acceptance, readiness: acceptanceReadiness(acceptance) }
                 : null,
               knowledge: knowledge ?? null,
+              scopeActivity,
             }),
             metadata,
           }
