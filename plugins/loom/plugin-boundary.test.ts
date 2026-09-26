@@ -3314,6 +3314,23 @@ Verdict: FAIL
       await evaluate(stale)
       expect(stale.effect).toBe("deny")
       expect(stale.message).toContain("fresh attachment")
+
+      const freshGrant = await h.call(
+        "dispatch_grant",
+        { workflowId, stepId: "research" },
+        "general",
+        "research-scope-general",
+      )
+      expect((await h.call(
+        "attach",
+        { grantId: freshGrant.grantId, workflowId, stepId: "research" },
+        "research",
+        "research-scope-author",
+      )).attached).toBe(true)
+
+      stale.effect = "ask"
+      await evaluate(stale)
+      expect(stale.effect).not.toBe("deny")
     } finally {
       h.restore()
     }
