@@ -2266,6 +2266,187 @@ Verdict: FAIL
     }
   })
 
+  test("fresh same-attempt Specifier can adopt exact prior-dispatch bytes before staging", async () => {
+    const h = await harness()
+    try {
+      await initializeGitFixture(h.root)
+      const generalSession = "specifier-adopt-general"
+      const firstSession = "specifier-adopt-first"
+      const freshSession = "specifier-adopt-fresh"
+      const started = await h.call(
+        "start",
+        { request: "Specify bounded lifecycle artifacts across a fresh specialist dispatch." },
+        "general",
+        generalSession,
+      )
+      const workflowId = String(started.workflowId)
+      expect((await h.call(
+        "route",
+        {
+          humanFacing: false,
+          behavioral: true,
+          structural: false,
+          externalUnknown: false,
+          diagnostic: false,
+          productOutcome: false,
+          implementationRequested: true,
+          executionDepth: "change",
+        },
+        "general",
+        generalSession,
+      )).error).toBeUndefined()
+
+      const write = [
+        "docs/requirements/lifecycle/br-050.md",
+        "docs/requirements/lifecycle/oc-025.md",
+      ]
+      expect((await h.call(
+        "step_scope",
+        { workflowId, stepId: "specifier", write },
+        "general",
+        generalSession,
+      )).error).toBeUndefined()
+
+      const firstGrant = await h.call(
+        "dispatch_grant",
+        { workflowId, stepId: "specifier" },
+        "general",
+        generalSession,
+      )
+      expect((await h.call(
+        "attach",
+        { grantId: firstGrant.grantId, workflowId, stepId: "specifier" },
+        "specifier",
+        firstSession,
+      )).attached).toBe(true)
+
+      await mkdir(join(h.root, "docs", "requirements", "lifecycle"), { recursive: true })
+      for (const [index, path] of write.entries()) {
+        const editEvent = {
+          tool: "edit",
+          callID: `specifier-adopt-edit-${index}`,
+          messageID: `specifier-adopt-message-${index}`,
+          sessionID: firstSession,
+          agent: "specifier",
+          input: {
+            filePath: join(h.root, path),
+            oldString: "",
+            newString: `owned-${index}\n`,
+          },
+        }
+        await h.toolHooks.get("execute.before")!(editEvent)
+        await writeFile(join(h.root, path), `owned-${index}\n`)
+        await h.toolHooks.get("execute.after")!({
+          ...editEvent,
+          status: "completed",
+          result: "updated",
+        })
+      }
+
+      // Simulate one path changing outside the admitted specialist mutation
+      // after its same-attempt provenance was recorded.
+      await writeFile(join(h.root, write[1]), "changed-outside-admission\n")
+
+      const freshGrant = await h.call(
+        "dispatch_grant",
+        { workflowId, stepId: "specifier" },
+        "general",
+        generalSession,
+      )
+      const attached = await h.call(
+        "attach",
+        { grantId: freshGrant.grantId, workflowId, stepId: "specifier" },
+        "specifier",
+        freshSession,
+      )
+      expect(attached.attached).toBe(true)
+      expect(attached.attempt).toBe(0)
+
+      const evaluate = h.permissionHooks.get("evaluate")!
+      const deniedBeforeAdoption: any = {
+        agent: "specifier",
+        action: "shell",
+        resources: [`git add ${write[0]}`],
+        sessionID: freshSession,
+        effect: "ask",
+      }
+      await evaluate(deniedBeforeAdoption)
+      expect(deniedBeforeAdoption.effect).toBe("deny")
+      expect(deniedBeforeAdoption.message).toContain("loom_git_ownership_adopt")
+
+      const adopted = await h.call(
+        "git_ownership_adopt",
+        {
+          workflowId,
+          stepId: "specifier",
+          paths: [write[0]],
+          reason: "Continue the same pending Specifier step in a fresh session.",
+        },
+        "specifier",
+        freshSession,
+      )
+      expect(adopted.error).toBeUndefined()
+      expect(adopted.adopted).toBe(true)
+      expect(adopted.paths).toEqual([write[0]])
+      expect(adopted.sourceSessions).toEqual([firstSession])
+      expect(await readFile(join(h.root, write[0]), "utf8")).toBe("owned-0\n")
+      expect((await git(h.root, ["diff", "--cached", "--name-only"])).stdout.trim()).toBe("")
+
+      const allowedAfterAdoption: any = {
+        ...deniedBeforeAdoption,
+        effect: "ask",
+      }
+      await evaluate(allowedAfterAdoption)
+      expect(allowedAfterAdoption.effect).toBe("allow")
+
+      const changed = await h.call(
+        "git_ownership_adopt",
+        {
+          workflowId,
+          stepId: "specifier",
+          paths: [write[1]],
+        },
+        "specifier",
+        freshSession,
+      )
+      expect(changed.error).toContain("bytes changed after the last admitted same-attempt mutation")
+
+      const unproven = "docs/requirements/lifecycle/unproven.md"
+      await writeFile(join(h.root, unproven), "unproven\n")
+      expect((await h.call(
+        "step_scope",
+        { workflowId, stepId: "specifier", write: [...write, unproven] },
+        "general",
+        generalSession,
+      )).error).toBeUndefined()
+      const noProvenance = await h.call(
+        "git_ownership_adopt",
+        {
+          workflowId,
+          stepId: "specifier",
+          paths: [unproven],
+        },
+        "specifier",
+        freshSession,
+      )
+      expect(noProvenance.error).toContain("No admitted same-attempt Git provenance exists")
+
+      const outsideScope = await h.call(
+        "git_ownership_adopt",
+        {
+          workflowId,
+          stepId: "specifier",
+          paths: ["docs/requirements/outside.md"],
+        },
+        "specifier",
+        freshSession,
+      )
+      expect(outsideScope.error).toContain("effective step write scope")
+    } finally {
+      h.restore()
+    }
+  })
+
   test("migrates matching legacy Git ownership without losing in-flight authorship", async () => {
     const h = await harness()
     try {

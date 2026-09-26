@@ -237,8 +237,41 @@ type LegacyGitSessionOwnership = {
   stagedFingerprints: Record<string, string>
 }
 
+type GitOwnershipBinding = {
+  workflowId: string
+  stepId: string
+  attempt: number
+  authorityId: string
+}
+
+type GitStepAttemptOwnedPath = {
+  schemaVersion: 1
+  authorityId: string
+  workflowId: string
+  stepId: string
+  attempt: number
+  path: string
+  fingerprint: string
+  sourceSessionId: string
+}
+
 function gitSessionOwnershipKey(sessionID: string) {
   return `git-session-ownership/${encodeURIComponent(sessionID)}`
+}
+
+function gitStepAttemptOwnedPathKey(
+  workflowId: string,
+  stepId: string,
+  attempt: number,
+  path: string,
+) {
+  return [
+    "git-step-attempt-owned",
+    encodeURIComponent(workflowId),
+    encodeURIComponent(stepId),
+    String(attempt),
+    encodeURIComponent(safeOwnedRepoPath(path)),
+  ].join("/")
 }
 
 function normalizeRepoPath(value: string) {
@@ -375,10 +408,10 @@ function writeLockError(paths: readonly string[]) {
   )
 }
 
-async function gitSessionOwnershipAuthority(
+async function gitSessionOwnershipBinding(
   ctx: any,
   sessionID: string,
-): Promise<string | undefined> {
+): Promise<GitOwnershipBinding | undefined> {
   const [workflowId, stepId, attempt] = await Promise.all([
     ctx.storage.get(sessionKey(sessionID)),
     ctx.storage.get(sessionStepKey(sessionID)),
@@ -391,9 +424,51 @@ async function gitSessionOwnershipAuthority(
     stepId &&
     Number.isSafeInteger(attempt)
   ) {
-    return `step:${encodeURIComponent(workflowId)}:${encodeURIComponent(stepId)}:${attempt}`
+    return {
+      workflowId,
+      stepId,
+      attempt: Number(attempt),
+      authorityId: `step:${encodeURIComponent(workflowId)}:${encodeURIComponent(stepId)}:${attempt}`,
+    }
   }
   return undefined
+}
+
+async function gitSessionOwnershipAuthority(
+  ctx: any,
+  sessionID: string,
+): Promise<string | undefined> {
+  return (await gitSessionOwnershipBinding(ctx, sessionID))?.authorityId
+}
+
+async function recordGitStepAttemptOwnedFingerprints(
+  ctx: any,
+  binding: GitOwnershipBinding,
+  sourceSessionId: string,
+  fingerprints: Record<string, string>,
+) {
+  await Promise.all(
+    Object.entries(fingerprints).map(([path, fingerprint]) =>
+      ctx.storage.set(
+        gitStepAttemptOwnedPathKey(
+          binding.workflowId,
+          binding.stepId,
+          binding.attempt,
+          path,
+        ),
+        {
+          schemaVersion: 1,
+          authorityId: binding.authorityId,
+          workflowId: binding.workflowId,
+          stepId: binding.stepId,
+          attempt: binding.attempt,
+          path,
+          fingerprint,
+          sourceSessionId,
+        } satisfies GitStepAttemptOwnedPath,
+      ),
+    ),
+  )
 }
 
 async function gitSessionOwnership(
@@ -447,17 +522,33 @@ async function recordGitSessionOwnership(
   paths: readonly string[],
 ) {
   if (paths.length === 0) return
-  const ownership = await gitSessionOwnership(ctx, sessionID)
+  const [ownership, binding] = await Promise.all([
+    gitSessionOwnership(ctx, sessionID),
+    gitSessionOwnershipBinding(ctx, sessionID),
+  ])
   const normalized = [...new Set(paths.map(safeOwnedRepoPath))]
-  const fingerprints = await Promise.all(
-    normalized.map(async (path) => [path, await worktreeFingerprint(projectDirectory, path)] as const),
+  const fingerprints = Object.fromEntries(
+    await Promise.all(
+      normalized.map(async (path) => [
+        path,
+        await worktreeFingerprint(projectDirectory, path),
+      ] as const),
+    ),
   )
   ownership.paths = [...new Set([...ownership.paths, ...normalized])].sort()
-  for (const [path, fingerprint] of fingerprints) {
+  for (const [path, fingerprint] of Object.entries(fingerprints)) {
     ownership.worktreeFingerprints[path] = fingerprint
     delete ownership.stagedFingerprints[path]
   }
   await ctx.storage.set(gitSessionOwnershipKey(sessionID), ownership)
+  if (binding) {
+    await recordGitStepAttemptOwnedFingerprints(
+      ctx,
+      binding,
+      sessionID,
+      fingerprints,
+    )
+  }
 }
 
 async function recordGitSessionStaging(
@@ -6794,6 +6885,265 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       })
 
       addLoomTool({
+        name: "git_ownership_adopt",
+        description:
+          "Adopt exact current dirty bytes previously admitted under this same Loom workflow step attempt into the current attached specialist session's Git staging ownership. Spoke-side handoff only: this does not edit, stage, or commit files and cannot cross step attempts, role ceilings, or declared write scope.",
+        input: {
+          type: "object",
+          properties: {
+            workflowId: { type: "string" },
+            stepId: { type: "string" },
+            paths: { type: "array", items: { type: "string" } },
+            reason: { type: "string" },
+          },
+          required: ["workflowId", "stepId", "paths"],
+          additionalProperties: false,
+        },
+        options: { namespace: "loom", codemode: false },
+        execute: async (input, tool) => {
+          if (tool.agent === "general") {
+            return {
+              content: renderToolOutput({
+                error:
+                  "General does not adopt specialist Git ownership. Dispatch/attach the specialist and let that spoke adopt same-attempt provenance directly.",
+              }),
+            }
+          }
+
+          const roleWriteCeiling = durableAuthorGitScopes[tool.agent]
+          if (!roleWriteCeiling) {
+            return {
+              content: renderToolOutput({
+                error: `${tool.agent} is not a durable Git-authoring specialist.`,
+              }),
+            }
+          }
+
+          const value = input as {
+            workflowId: string
+            stepId: string
+            paths: string[]
+            reason?: string
+          }
+          let normalized: string[]
+          try {
+            normalized = [...new Set(value.paths.map(safeOwnedRepoPath))].sort()
+            if (normalized.length === 0) {
+              throw new Error("Git ownership adoption paths must not be empty.")
+            }
+            validateStepWriteScope(
+              normalized,
+              roleWriteCeiling,
+              "Git ownership adoption",
+            )
+          } catch (error) {
+            return {
+              content: renderToolOutput({
+                error: error instanceof Error ? error.message : String(error),
+              }),
+            }
+          }
+
+          const resources = [
+            { aggregate: "workflow", resourceIdentity: value.workflowId },
+            stepAuthorityResource(value.workflowId, value.stepId),
+            { aggregate: "git-index", resourceIdentity: "__repository_index__" },
+            ...normalized.map((path) => ({
+              aggregate: "file-write",
+              resourceIdentity: path,
+            })),
+          ]
+
+          try {
+            const adopted = await withRuntimeLocks(runtime, resources, async () => {
+              const binding = await gitSessionOwnershipBinding(
+                ctx,
+                tool.sessionID,
+              )
+              if (
+                !binding ||
+                binding.workflowId !== value.workflowId ||
+                binding.stepId !== value.stepId ||
+                !(await exactStepAttemptBinding(
+                  ctx,
+                  tool.sessionID,
+                  value.workflowId,
+                  value.stepId,
+                ))
+              ) {
+                throw new Error(
+                  "Git ownership adoption requires this specialist session to be attached to the exact current Loom step attempt.",
+                )
+              }
+
+              const workflow = await readWorkflow(ctx, value.workflowId)
+              if (!workflow) throw new Error("Workflow not found.")
+              const step = workflow.steps.find(
+                (candidate) => candidate.id === value.stepId,
+              )
+              if (!step || step.agent !== tool.agent) {
+                throw new Error(
+                  `Step ${value.stepId} does not belong to ${tool.agent}.`,
+                )
+              }
+              if (
+                step.status !== "pending" ||
+                !runnable(workflow).some(
+                  (candidate) => candidate.id === value.stepId,
+                )
+              ) {
+                throw new Error(
+                  "Git ownership adoption requires the exact currently runnable pending step.",
+                )
+              }
+
+              const scope = (await ctx.storage.get(
+                scopeKey(value.workflowId, value.stepId),
+              )) as TaskScope | undefined
+              const effectiveWriteScope = scope?.write.length
+                ? scope.write
+                : roleWriteCeiling
+              if (!resourcesWithinScope(normalized, effectiveWriteScope)) {
+                throw new Error(
+                  "Git ownership adoption paths must all be inside the current effective step write scope.",
+                )
+              }
+
+              const staged = new Set(
+                await stagedGitPaths(ctx.location.directory),
+              )
+              const alreadyStaged = normalized.filter((path) =>
+                staged.has(path),
+              )
+              if (alreadyStaged.length > 0) {
+                throw new Error(
+                  "Git ownership adoption refuses already-staged paths: " +
+                    alreadyStaged.join(", "),
+                )
+              }
+
+              const dirty = new Set(
+                await projectDirtyPaths(ctx.location.directory),
+              )
+              const notDirty = normalized.filter((path) => !dirty.has(path))
+              if (notDirty.length > 0) {
+                throw new Error(
+                  "Git ownership adoption requires current uncommitted changes for every path: " +
+                    notDirty.join(", "),
+                )
+              }
+
+              const records = await Promise.all(
+                normalized.map(async (path) => {
+                  const record = (await ctx.storage.get(
+                    gitStepAttemptOwnedPathKey(
+                      binding.workflowId,
+                      binding.stepId,
+                      binding.attempt,
+                      path,
+                    ),
+                  )) as GitStepAttemptOwnedPath | undefined
+                  return [path, record] as const
+                }),
+              )
+              const missing = records
+                .filter(
+                  ([, record]) =>
+                    !record ||
+                    record.schemaVersion !== 1 ||
+                    record.authorityId !== binding.authorityId,
+                )
+                .map(([path]) => path)
+              if (missing.length > 0) {
+                throw new Error(
+                  "No admitted same-attempt Git provenance exists for: " +
+                    missing.join(", "),
+                )
+              }
+
+              const currentFingerprints = Object.fromEntries(
+                await Promise.all(
+                  normalized.map(async (path) => [
+                    path,
+                    await worktreeFingerprint(
+                      ctx.location.directory,
+                      path,
+                    ),
+                  ] as const),
+                ),
+              )
+              const changed = records
+                .filter(
+                  ([path, record]) =>
+                    record!.fingerprint !== currentFingerprints[path],
+                )
+                .map(([path]) => path)
+              if (changed.length > 0) {
+                throw new Error(
+                  "Git ownership adoption refused files whose bytes changed after the last admitted same-attempt mutation: " +
+                    changed.join(", "),
+                )
+              }
+
+              const ownership = await gitSessionOwnership(
+                ctx,
+                tool.sessionID,
+              )
+              if (ownership.authorityId !== binding.authorityId) {
+                throw new Error(
+                  "Git ownership adoption authority changed concurrently; retry after reattaching.",
+                )
+              }
+              ownership.paths = [
+                ...new Set([...ownership.paths, ...normalized]),
+              ].sort()
+              for (const path of normalized) {
+                ownership.worktreeFingerprints[path] =
+                  currentFingerprints[path]
+                delete ownership.stagedFingerprints[path]
+              }
+              await ctx.storage.set(
+                gitSessionOwnershipKey(tool.sessionID),
+                ownership,
+              )
+
+              return {
+                paths: normalized,
+                fingerprints: currentFingerprints,
+                authorityId: binding.authorityId,
+                sourceSessions: [
+                  ...new Set(
+                    records.map(([, record]) => record!.sourceSessionId),
+                  ),
+                ].sort(),
+              }
+            })
+
+            return {
+              content: renderToolOutput({
+                adopted: true,
+                workflowId: value.workflowId,
+                stepId: value.stepId,
+                sessionId: tool.sessionID,
+                ...adopted,
+                ...(value.reason?.trim()
+                  ? { reason: value.reason.trim() }
+                  : {}),
+                note:
+                  "Adoption transfers staging authority for exact same-attempt bytes into this session; it does not claim that this session historically authored them.",
+              }),
+            }
+          } catch (error) {
+            return {
+              content: renderToolOutput({
+                error: error instanceof Error ? error.message : String(error),
+              }),
+            }
+          }
+        },
+      })
+
+      addLoomTool({
         name: "git_ownership_recover",
         description:
           "Recover lost Git authorship provenance for exact current dirty bytes after a guard/runtime defect. General only and requires the exact latest user message as authorization. This does not edit, stage, or commit files; it adopts only current fingerprints for the target session's exact current step attempt inside its declared specialist scope.",
@@ -6987,6 +7337,26 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               await ctx.storage.set(
                 gitSessionOwnershipKey(value.targetSessionId),
                 ownership,
+              )
+              const recoveredBinding = await gitSessionOwnershipBinding(
+                ctx,
+                value.targetSessionId,
+              )
+              if (
+                !recoveredBinding ||
+                recoveredBinding.workflowId !== value.workflowId ||
+                recoveredBinding.stepId !== value.stepId ||
+                recoveredBinding.authorityId !== ownership.authorityId
+              ) {
+                throw new Error(
+                  "Target session Git ownership authority changed before recovery could publish same-attempt provenance.",
+                )
+              }
+              await recordGitStepAttemptOwnedFingerprints(
+                ctx,
+                recoveredBinding,
+                value.targetSessionId,
+                currentFingerprints,
               )
               return {
                 paths: normalized,
@@ -7480,7 +7850,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           ) {
             event.effect = "deny"
             event.message =
-              "Git staging denied: stage only files authored by this role/session."
+              "Git staging denied: stage only files authored or explicitly adopted by this role/session. If these exact dirty bytes were admitted by an earlier dispatch of the same step attempt, call loom_git_ownership_adopt for the paths."
             return
           }
           const changed = await changedOwnedPaths(

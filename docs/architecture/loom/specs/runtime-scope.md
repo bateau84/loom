@@ -89,13 +89,22 @@ A project-local session has at most one current workflow binding. Step attachmen
 
 ## Git authorship continuity and bounded recovery
 
-Git authorship provenance is session-local and step-attempt-bound. A fresh one-use
-dispatch grant or attachment for the same OpenCode session, Workflow step, and
-unchanged step attempt MUST NOT erase admitted authored-path fingerprints. A
-reopen/reroute that advances the step attempt invalidates those fingerprints for
-future staging/commit authority.
+Git staging ownership is session-local and step-attempt-bound, while admitted
+worktree fingerprints are also recorded per exact Workflow step attempt and path
+as handoff provenance. A fresh one-use dispatch grant or attachment for the same
+OpenCode session, Workflow step, and unchanged step attempt MUST NOT erase
+session-local fingerprints.
 
-If a runtime/guard defect has already destroyed the provenance record, Loom MAY
+A fresh specialist session attached to that same current step attempt MAY
+explicitly adopt current dirty, unstaged bytes from the step-attempt provenance
+ledger when the paths remain inside both the role ceiling and effective declared
+step write scope and the current fingerprints exactly match the last admitted
+same-attempt mutation. Adoption transfers only staging authority into the current
+session; it does not assert that the fresh session historically authored those
+bytes. Reopen/reroute advances the attempt and therefore makes prior-attempt
+provenance ineligible for adoption.
+
+If a runtime/guard defect has already destroyed all usable provenance, Loom MAY
 recover it only as an explicit user-authorized adoption of the **current**
 uncommitted bytes. Recovery is General-owned, bound to one exact latest real user
 message, one current runnable specialist step attempt, one attached target
@@ -115,6 +124,7 @@ project/<projectId>/workflow/<workflowId>
 project/<projectId>/session/<sessionId>/workflow
 project/<projectId>/session/<sessionId>/step
 project/<projectId>/session/<sessionId>/step-attempt
+project/<projectId>/git-step-attempt-owned/<workflowId>/<stepId>/<attempt>/<path>
 project/<projectId>/git-ownership-recovery-user-message/<generalSessionId>/<messageId>
 project/<projectId>/intent/<intentId>
 project/<projectId>/session/<sessionId>/intent
@@ -233,4 +243,4 @@ If durable legacy state already names a different Loom project epoch, neither se
 
 ## Conformance evidence
 
-Deterministic tests must cover transactional upgrade rollback, all-project schema migration, late legacy import after the installation has already advanced (including failed-transform rollback), pre-project-epoch continuity imported into a synthetic newer runtime schema (including failed-transform rollback), a canonical A→B rebind followed by restart with stale legacy A still present, live old/new process version skew with the old writer fenced after upgrade, identical Anchor/objective/task names across projects, same-workflow fresh child sharing, unrelated same-project workflow rejection, controlled session rebinding with prior attachment invalidation, same-session same-attempt redispatch preserving Git authorship, exact step-attempt invalidation after reopen/reroute, explicit-user Git-authorship recovery after simulated provenance loss (including scope, dirty/staged, fingerprint-change and authorization-replay negatives), step-scope/lifecycle transitions contending with admitted mutation, cross-project rejection, two-process contention including mixed/missing `XDG_RUNTIME_DIR` environments sharing one durable installation, crash/fault injection during durable commit, project first-open races, path reuse, copied markers, symlinks, Git worktrees, moves, reopen/failure isolation, ambiguous legacy migration, and a real OpenCode host stop/restart where persisted pre-upgrade session IDs reconcile through the upgraded plugin.
+Deterministic tests must cover transactional upgrade rollback, all-project schema migration, late legacy import after the installation has already advanced (including failed-transform rollback), pre-project-epoch continuity imported into a synthetic newer runtime schema (including failed-transform rollback), a canonical A→B rebind followed by restart with stale legacy A still present, live old/new process version skew with the old writer fenced after upgrade, identical Anchor/objective/task names across projects, same-workflow fresh child sharing, unrelated same-project workflow rejection, controlled session rebinding with prior attachment invalidation, same-session same-attempt redispatch preserving Git staging ownership, fresh-session same-attempt adoption from exact admitted fingerprints (including dirty/staged/scope/fingerprint/attempt negatives), exact step-attempt invalidation after reopen/reroute, explicit-user Git-authorship recovery after simulated provenance loss (including scope, dirty/staged, fingerprint-change and authorization-replay negatives), step-scope/lifecycle transitions contending with admitted mutation, cross-project rejection, two-process contention including mixed/missing `XDG_RUNTIME_DIR` environments sharing one durable installation, crash/fault injection during durable commit, project first-open races, path reuse, copied markers, symlinks, Git worktrees, moves, reopen/failure isolation, ambiguous legacy migration, and a real OpenCode host stop/restart where persisted pre-upgrade session IDs reconcile through the upgraded plugin.
