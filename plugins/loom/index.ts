@@ -1590,23 +1590,28 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         stepId &&
         await exactStepAttemptBinding(ctx, sessionID, workflowId, stepId),
       )
+      const declaredScope =
+        workflowId && stepId
+          ? (await ctx.storage.get(scopeKey(workflowId, stepId))) as TaskScope | undefined
+          : undefined
+      if (declaredScope?.write.length && !exactAttempt) {
+        throw new Error(
+          "Scoped specialist mutation requires a fresh attachment to the current Loom step attempt.",
+        )
+      }
       if (touchesDurableArtifact && !exactAttempt) {
         throw new Error(
           "Durable specialist artifact mutation requires the role's exact attached Loom workflow step at the current Loom step attempt.",
         )
       }
-      if (exactAttempt) {
-        const declaredScope = (await ctx.storage.get(
-          scopeKey(workflowId!, stepId!),
-        )) as TaskScope | undefined
-        if (
-          declaredScope?.write.length &&
-          !resourcesWithinScope(directMutationPaths, declaredScope.write)
-        ) {
-          throw new Error(
-            "Specialist mutation is outside the current declared Loom step write scope.",
-          )
-        }
+      if (
+        exactAttempt &&
+        declaredScope?.write.length &&
+        !resourcesWithinScope(directMutationPaths, declaredScope.write)
+      ) {
+        throw new Error(
+          "Specialist mutation is outside the current declared Loom step write scope.",
+        )
       }
     }
 
@@ -6453,6 +6458,14 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
           try {
             await withRuntimeLocks(runtime, resources, async () => {
+              const currentObservedStepId = (await ctx.storage.get(
+                sessionStepKey(tool.sessionID),
+              )) as string | undefined
+              if (currentObservedStepId !== observedStepId) {
+                throw new Error(
+                  "Session step attachment changed concurrently; retry the Loom attachment.",
+                )
+              }
               const previousBinding = await assertSessionRebindingAllowedLocked(
                 ctx,
                 tool.sessionID,
@@ -7324,6 +7337,10 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           stepId &&
           await exactStepAttemptBinding(ctx, event.sessionID, workflowId, stepId),
         )
+        const declaredScope =
+          workflowId && stepId
+            ? (await ctx.storage.get(scopeKey(workflowId, stepId))) as TaskScope | undefined
+            : undefined
         const durableScope = durableAuthorGitScopes[String(event.agent ?? "")]
         const touchesDurableArtifact = Boolean(
           durableScope?.length &&
@@ -7331,25 +7348,27 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             resourcesWithinScope([resource], durableScope),
           ),
         )
+        if (declaredScope?.write.length && !exactAttachment) {
+          event.effect = "deny"
+          event.message =
+            "Scoped specialist mutation requires a fresh attachment to the current Loom step attempt."
+          return
+        }
         if (touchesDurableArtifact && !exactAttachment) {
           event.effect = "deny"
           event.message =
             "Durable specialist artifact mutation requires the role's exact attached Loom workflow step at the current Loom step attempt."
           return
         }
-        if (exactAttachment) {
-          const declaredScope = (await ctx.storage.get(
-            scopeKey(workflowId!, stepId!),
-          )) as TaskScope | undefined
-          if (
-            declaredScope?.write.length &&
-            !resourcesWithinScope(event.resources, declaredScope.write)
-          ) {
-            event.effect = "deny"
-            event.message =
-              "Specialist edit is outside the declared Loom step write scope."
-            return
-          }
+        if (
+          exactAttachment &&
+          declaredScope?.write.length &&
+          !resourcesWithinScope(event.resources, declaredScope.write)
+        ) {
+          event.effect = "deny"
+          event.message =
+            "Specialist edit is outside the declared Loom step write scope."
+          return
         }
       }
 

@@ -2231,6 +2231,94 @@ Verdict: FAIL
     }
   })
 
+  test("reopened scoped Research cannot fall back to its broader report ceiling", async () => {
+    const h = await harness()
+    try {
+      const started = await h.call(
+        "start",
+        { request: "Research one bounded external fact." },
+        "general",
+        "research-scope-general",
+      )
+      const workflowId = String(started.workflowId)
+      expect((await h.call(
+        "route",
+        {
+          humanFacing: false,
+          behavioral: false,
+          structural: false,
+          externalUnknown: true,
+          diagnostic: false,
+          productOutcome: false,
+          implementationRequested: false,
+          executionDepth: "task",
+        },
+        "general",
+        "research-scope-general",
+      )).error).toBeUndefined()
+
+      const assigned = "ephemeral-reports/research/assigned.md"
+      expect((await h.call(
+        "step_scope",
+        { workflowId, stepId: "research", write: [assigned] },
+        "general",
+        "research-scope-general",
+      )).error).toBeUndefined()
+
+      const grant = await h.call(
+        "dispatch_grant",
+        { workflowId, stepId: "research" },
+        "general",
+        "research-scope-general",
+      )
+      expect((await h.call(
+        "attach",
+        { grantId: grant.grantId, workflowId, stepId: "research" },
+        "research",
+        "research-scope-author",
+      )).attached).toBe(true)
+
+      const evaluate = h.permissionHooks.get("evaluate")!
+      const current: any = {
+        agent: "research",
+        action: "edit",
+        resources: [assigned],
+        sessionID: "research-scope-author",
+        effect: "ask",
+      }
+      await evaluate(current)
+      expect(current.effect).not.toBe("deny")
+
+      expect((await h.call(
+        "reopen",
+        {
+          workflowId,
+          stepId: "research",
+          reason: "fresh source evidence",
+          newEvidence: true,
+          changedHypothesis: false,
+          changedStrategy: false,
+          reducedUnresolved: false,
+        },
+        "general",
+        "research-scope-general",
+      )).error).toBeUndefined()
+
+      const stale: any = {
+        agent: "research",
+        action: "edit",
+        resources: ["ephemeral-reports/research/other.md"],
+        sessionID: "research-scope-author",
+        effect: "ask",
+      }
+      await evaluate(stale)
+      expect(stale.effect).toBe("deny")
+      expect(stale.message).toContain("fresh attachment")
+    } finally {
+      h.restore()
+    }
+  })
+
   test("specialist scope and reopen transitions serialize with active mutation authority", async () => {
     const h = await harness()
     try {
