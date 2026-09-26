@@ -8315,6 +8315,45 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         }
       }
       if (event.action === "edit") {
+        const classified = event.resources.map((resource: string) =>
+          classifyScopeTarget(ctx.location.directory, resource),
+        )
+        const hardBoundary = classified.filter(
+          (entry) => entry.kind === "hard-boundary",
+        )
+        if (hardBoundary.length > 0) {
+          if (hardBoundary.length !== classified.length) {
+            event.effect = "deny"
+            event.message =
+              "Do not mix project-local and hard-boundary writes in one mutation. Split the mutation, call loom_scope_elevate for the hard-boundary path(s), and obey continue=false if returned."
+            return
+          }
+          const agent = String(event.agent ?? "")
+          if (agent === "general" || !loomAgents.has(agent)) {
+            event.effect = "deny"
+            event.message =
+              "Hard-boundary writes require an explicit one-time user authorization tied to an attached child step; they are never remembered."
+            return
+          }
+          const authorized = await useScopeBoundaryAuthorization(
+            ctx,
+            runtime,
+            ctx.location.directory,
+            event.sessionID,
+            agent,
+            event.resources,
+          )
+          if (!authorized) {
+            event.effect = "deny"
+            event.message =
+              "Hard-boundary write denied. Call loom_scope_elevate with the exact requested path(s) and reason. If it returns continue=false, return control to General immediately; General must present the exact user approval menu before this step may resume."
+            return
+          }
+          event.effect = "allow"
+          return
+        }
+      }
+      if (event.action === "edit") {
         const reportResources = event.resources.filter((resource: string) =>
           resourceMatchesScope(resource, "ephemeral-reports/**"),
         )
@@ -8364,13 +8403,18 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       }
 
       if (event.action === "shell") {
-        const roleAuthorScope = durableAuthorGitScopes[String(event.agent ?? "")]
         const gitAuthoring = event.resources.some((resource: string) =>
           isGitAuthoringShellCommand(resource),
         )
-        if (roleAuthorScope && gitAuthoring) {
-          let authorScope = roleAuthorScope
-          if (event.agent !== "general") {
+        const agent = String(event.agent ?? "")
+        if (
+          gitAuthoring &&
+          (agent === "general" || loomAgents.has(agent))
+        ) {
+          let authorScope: string[]
+          if (agent === "general") {
+            authorScope = durableAuthorGitScopes.general
+          } else {
             const workflowId = (await ctx.storage.get(
               sessionKey(event.sessionID),
             )) as string | undefined
@@ -8392,16 +8436,36 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 "Git authoring requires the role's exact current Loom step attempt."
               return
             }
+            if (agent === "worker") {
+              try {
+                await assertWorkerWorkClaim(ctx, workflowId, stepId)
+              } catch (error) {
+                event.effect = "deny"
+                event.message =
+                  error instanceof Error ? error.message : String(error)
+                return
+              }
+            }
             const declaredScope = (await ctx.storage.get(
               scopeKey(workflowId, stepId),
             )) as TaskScope | undefined
-            if (declaredScope?.write.length) authorScope = declaredScope.write
+            authorScope = declaredScope?.write.length
+              ? declaredScope.write
+              : (artifactWriteCeilings[agent] ?? [])
+          }
+
+          authorScope = committableWriteScope(authorScope)
+          if (authorScope.length === 0) {
+            event.effect = "deny"
+            event.message =
+              "This step has no committable product write scope. Ephemeral report paths are intentionally non-committable; call loom_scope_elevate before Git authoring if product files are required."
+            return
           }
 
           if (!authorGitShellResourcesAllowed(event.resources, authorScope)) {
             event.effect = "deny"
             event.message =
-              "Git authoring is limited to explicit files inside this role's effective step write scope; broad staging and other Git mutations remain blocked."
+              "Git authoring is limited to explicit files inside the current committable Loom write scope; broad staging and other Git mutations remain blocked."
             return
           }
           const addTargets = event.resources.flatMap(
@@ -8416,18 +8480,22 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           if (stage.unowned.length > 0) {
             event.effect = "deny"
             event.message =
-              "Git staging denied: stage only files authored by this role/session or explicitly adopted with loom_scope_request for this exact session/step attempt: " +
+              "Git staging denied: stage only exact bytes previously admitted by this current Loom step attempt: " +
               stage.unowned.join(", ")
             return
           }
           if (stage.changed.length > 0) {
             event.effect = "deny"
             event.message =
-              "Git staging denied: these files changed after this role's last admitted mutation or scope adoption: " +
+              "Git staging denied: these files changed after this step attempt's last admitted mutation: " +
               stage.changed.join(", ")
             return
           }
-          if (event.resources.some((resource: string) => isAllowedGitCommit(resource))) {
+          if (
+            event.resources.some((resource: string) =>
+              isAllowedGitCommit(resource),
+            )
+          ) {
             const error = await commitScopeError(
               ctx,
               event.sessionID,
@@ -8514,64 +8582,44 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         loomAgents.has(String(event.agent ?? ""))
       ) {
         const agent = String(event.agent)
-        const roleCeiling = artifactWriteCeilings[agent]
-        if (
-          !roleCeiling ||
-          !resourcesWithinScope(event.resources, roleCeiling)
-        ) {
-          event.effect = "deny"
-          event.message =
-            "Specialist edit is outside this role's Loom artifact ceiling."
-          return
-        }
-      }
-
-
-      if (event.action === "edit" && event.agent !== "worker" && event.agent !== "general") {
         const workflowId = (await ctx.storage.get(
           sessionKey(event.sessionID),
         )) as string | undefined
         const stepId = (await ctx.storage.get(
           sessionStepKey(event.sessionID),
         )) as string | undefined
-        const exactAttachment = Boolean(
-          workflowId &&
-          stepId &&
-          await exactStepAttemptBinding(ctx, event.sessionID, workflowId, stepId),
-        )
-        const declaredScope =
-          workflowId && stepId
-            ? (await ctx.storage.get(scopeKey(workflowId, stepId))) as TaskScope | undefined
-            : undefined
-        const durableScope = durableAuthorGitScopes[String(event.agent ?? "")]
-        const touchesDurableArtifact = Boolean(
-          durableScope?.length &&
-          event.resources.some((resource: string) =>
-            resourcesWithinScope([resource], durableScope),
-          ),
-        )
-        if (declaredScope?.write.length && !exactAttachment) {
-          event.effect = "deny"
-          event.message =
-            "Scoped specialist mutation requires a fresh attachment to the current Loom step attempt."
-          return
-        }
-        if (touchesDurableArtifact && !exactAttachment) {
-          event.effect = "deny"
-          event.message =
-            "Durable specialist artifact mutation requires the role's exact attached Loom workflow step at the current Loom step attempt."
-          return
-        }
         if (
-          exactAttachment &&
-          declaredScope?.write.length &&
-          !resourcesWithinScope(event.resources, declaredScope.write)
+          !workflowId ||
+          !stepId ||
+          !(await exactStepAttemptBinding(
+            ctx,
+            event.sessionID,
+            workflowId,
+            stepId,
+          ))
         ) {
           event.effect = "deny"
           event.message =
-            "Specialist edit is outside the declared Loom step write scope."
+            "Specialist mutation requires a fresh attachment to the exact current Loom step attempt."
           return
         }
+
+        const declaredScope = (await ctx.storage.get(
+          scopeKey(workflowId, stepId),
+        )) as TaskScope | undefined
+        const effectiveWrite = declaredScope?.write.length
+          ? declaredScope.write
+          : (artifactWriteCeilings[agent] ?? [])
+        if (
+          effectiveWrite.length === 0 ||
+          !resourcesWithinScope(event.resources, effectiveWrite)
+        ) {
+          event.effect = "deny"
+          event.message =
+            "Specialist edit is outside the current Loom write scope. Call loom_scope_elevate for the additional project-local path(s) before retrying. If that tool returns continue=false, return control immediately."
+          return
+        }
+        return
       }
 
       if (event.agent === "worker" && event.action === "shell") {
@@ -8595,7 +8643,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         if (!workerShellResourcesAllowed(event.resources, scope?.write ?? [])) {
           event.effect = "deny"
           event.message =
-            "Worker shell is limited to inspection, build/test/run, scoped Git staging/commit, safe rebase/push, PR delivery, and CI inspection for the attached task."
+            "Worker shell is limited to inspection, build/test/run, safe delivery operations, and writes already inside the current Loom scope. Call loom_scope_elevate before retrying a newly discovered project-local write target."
           return
         }
 
@@ -8670,16 +8718,16 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           return
         }
 
-        const scope = (await ctx.storage.get(scopeKey(workflowId, stepId))) as TaskScope | undefined
-        if (!scope) {
+        const scope = (await ctx.storage.get(
+          scopeKey(workflowId, stepId),
+        )) as TaskScope | undefined
+        if (
+          !scope?.write.length ||
+          !resourcesWithinScope(event.resources, scope.write)
+        ) {
           event.effect = "deny"
-          event.message = "Worker step has no declared task scope."
-          return
-        }
-
-        if (!resourcesWithinScope(event.resources, scope.write)) {
-          event.effect = "deny"
-          event.message = "Worker edit is outside the declared Loom task scope."
+          event.message =
+            "Worker edit is outside the current Loom write scope. Call loom_scope_elevate for the additional project-local path(s) before retrying. If that tool returns continue=false, return control immediately."
           return
         }
         return
