@@ -959,6 +959,17 @@ async function withWorkLock<T>(
   return withRuntimeLock(runtime, "work", objectiveId, fn)
 }
 
+function stepAuthorityResource(workflowId: string, stepId: string) {
+  return {
+    aggregate: "step-authority",
+    resourceIdentity: `${workflowId}:${stepId}`,
+  }
+}
+
+function workflowStepAuthorityResources(workflow: Workflow) {
+  return workflow.steps.map((step) => stepAuthorityResource(workflow.id, step.id))
+}
+
 async function withWorkflowWorkLocks<T>(
   runtime: LoomRuntimeIdentity,
   workflowId: string,
@@ -2657,22 +2668,33 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             }
           }
 
+          const routeResources = [
+            ...workflowStepAuthorityResources(workflow),
+            { aggregate: "workflow", resourceIdentity: workflow.id },
+          ]
           if (effects.productOutcome && effects.executionDepth === "objective") {
             const objectiveId = objectiveIdForAnchor(workflow.anchor)
-            await withWorkflowWorkLocks(runtime, workflow.id, objectiveId, async () => {
-              await validateWorkflowMutationLocked(ctx, runtime, workflow)
-              const now = new Date().toISOString()
-              const existing = await readWork(ctx, objectiveId)
-              const work = existing ?? createWorkHierarchy(workflow.anchor, workflow.id, now)
-              attachWorkflowToWork(work, workflow.id, now)
-              await ctx.storage.set(workKey(objectiveId), work)
-              workflow.work = { objectiveId, generation: work.generation }
-              applyRouteMutation()
-              await invalidateEscalatedWorkerScope()
-              await persistWorkflowMutationLocked(ctx, runtime, workflow)
-            })
+            await withRuntimeLocks(
+              runtime,
+              [
+                ...routeResources,
+                { aggregate: "work", resourceIdentity: objectiveId },
+              ],
+              async () => {
+                await validateWorkflowMutationLocked(ctx, runtime, workflow)
+                const now = new Date().toISOString()
+                const existing = await readWork(ctx, objectiveId)
+                const work = existing ?? createWorkHierarchy(workflow.anchor, workflow.id, now)
+                attachWorkflowToWork(work, workflow.id, now)
+                await ctx.storage.set(workKey(objectiveId), work)
+                workflow.work = { objectiveId, generation: work.generation }
+                applyRouteMutation()
+                await invalidateEscalatedWorkerScope()
+                await persistWorkflowMutationLocked(ctx, runtime, workflow)
+              },
+            )
           } else {
-            await withRuntimeLock(runtime, "workflow", workflow.id, async () => {
+            await withRuntimeLocks(runtime, routeResources, async () => {
               await validateWorkflowMutationLocked(ctx, runtime, workflow)
               applyRouteMutation()
               await invalidateEscalatedWorkerScope()
@@ -2959,6 +2981,16 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
           let evidenceBound = 0
           const commitCompletion = async () => {
+            if (
+              stepId !== "review-plan" &&
+              tool.agent !== "general" &&
+              artifactWriteCeilings[tool.agent] &&
+              !(await exactStepAttemptBinding(ctx, tool.sessionID, workflowId, stepId))
+            ) {
+              throw new Error(
+                "Step completion requires a fresh attachment to the current step attempt.",
+              )
+            }
             await validateWorkflowMutationLocked(ctx, runtime, workflow)
 
             const currentQuestions = await readQuestions(ctx, workflowId)
@@ -3107,16 +3139,17 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           }
 
           try {
-            if (workflow.work) {
-              await withWorkflowWorkLocks(
-                runtime,
-                workflow.id,
-                workflow.work.objectiveId,
-                commitCompletion,
-              )
-            } else {
-              await withRuntimeLock(runtime, "workflow", workflow.id, commitCompletion)
-            }
+            await withRuntimeLocks(
+              runtime,
+              [
+                stepAuthorityResource(workflow.id, stepId),
+                { aggregate: "workflow", resourceIdentity: workflow.id },
+                ...(workflow.work
+                  ? [{ aggregate: "work", resourceIdentity: workflow.work.objectiveId }]
+                  : []),
+              ],
+              commitCompletion,
+            )
           } catch (error) {
             return { content: renderToolOutput({ error: error instanceof Error ? error.message : String(error) }) }
           }
@@ -3292,16 +3325,17 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               await persistWorkflowMutationLocked(ctx, runtime, workflow)
             }
 
-            if (workflow.work) {
-              await withWorkflowWorkLocks(
-                runtime,
-                workflow.id,
-                workflow.work.objectiveId,
-                commitReopen,
-              )
-            } else {
-              await withRuntimeLock(runtime, "workflow", workflow.id, commitReopen)
-            }
+            await withRuntimeLocks(
+              runtime,
+              [
+                ...workflowStepAuthorityResources(workflow),
+                { aggregate: "workflow", resourceIdentity: workflow.id },
+                ...(workflow.work
+                  ? [{ aggregate: "work", resourceIdentity: workflow.work.objectiveId }]
+                  : []),
+              ],
+              commitReopen,
+            )
 
             return {
               content: renderToolOutput({
@@ -6052,10 +6086,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             runtime,
             [
               { aggregate: "workflow", resourceIdentity: value.workflowId },
-              {
-                aggregate: "step-authority",
-                resourceIdentity: `${value.workflowId}:${value.stepId}`,
-              },
+              stepAuthorityResource(value.workflowId, value.stepId),
             ],
             async () => {
             const currentBinding = (await ctx.storage.get(sessionKey(tool.sessionID))) as string | undefined
@@ -6375,7 +6406,16 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           }
 
           const observedBinding = (await ctx.storage.get(sessionKey(tool.sessionID))) as string | undefined
+          const observedStepId = (await ctx.storage.get(
+            sessionStepKey(tool.sessionID),
+          )) as string | undefined
           const resources = [
+            ...(value.stepId
+              ? [stepAuthorityResource(value.workflowId, value.stepId)]
+              : []),
+            ...(observedBinding && observedStepId
+              ? [stepAuthorityResource(observedBinding, observedStepId)]
+              : []),
             { aggregate: "workflow", resourceIdentity: value.workflowId },
             ...(observedBinding && observedBinding !== value.workflowId
               ? [{ aggregate: "workflow", resourceIdentity: observedBinding }]
@@ -6631,7 +6671,9 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             content: renderToolOutput({
               attached: true,
               workflowId: value.workflowId,
-              ...(value.stepId ? { stepId: value.stepId } : { questionId: value.questionId }),
+              ...(value.stepId
+                ? { stepId: value.stepId, attempt: stepAttempt ?? 0 }
+                : { questionId: value.questionId }),
               ...(acceptedOutcome ? { acceptedOutcome } : {}),
               ...(taskOutcome ? { taskOutcome } : {}),
               ...(acceptedAuthority ? { acceptedAuthority } : {}),
