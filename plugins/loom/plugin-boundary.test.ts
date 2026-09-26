@@ -2231,6 +2231,96 @@ Verdict: FAIL
     }
   })
 
+  test("specialist completion rechecks repository cleanliness after an active mutation", async () => {
+    const h = await harness()
+    try {
+      await initializeGitFixture(h.root)
+      const started = await h.call(
+        "start",
+        { request: "Specify one bounded lifecycle meaning." },
+        "general",
+        "specifier-completion-general",
+      )
+      const workflowId = String(started.workflowId)
+      expect((await h.call(
+        "route",
+        {
+          humanFacing: false,
+          behavioral: true,
+          structural: false,
+          externalUnknown: false,
+          diagnostic: false,
+          productOutcome: false,
+          implementationRequested: true,
+          executionDepth: "change",
+        },
+        "general",
+        "specifier-completion-general",
+      )).error).toBeUndefined()
+
+      const path = "docs/requirements/lifecycle/racing-completion.md"
+      expect((await h.call(
+        "step_scope",
+        { workflowId, stepId: "specifier", write: [path] },
+        "general",
+        "specifier-completion-general",
+      )).error).toBeUndefined()
+      const grant = await h.call(
+        "dispatch_grant",
+        { workflowId, stepId: "specifier" },
+        "general",
+        "specifier-completion-general",
+      )
+      expect((await h.call(
+        "attach",
+        { grantId: grant.grantId, workflowId, stepId: "specifier" },
+        "specifier",
+        "specifier-completion-author",
+      )).attached).toBe(true)
+
+      await mkdir(join(h.root, "docs", "requirements", "lifecycle"), { recursive: true })
+      const editEvent = {
+        tool: "edit",
+        callID: "specifier-completion-active-edit",
+        messageID: "specifier-completion-message",
+        sessionID: "specifier-completion-author",
+        agent: "specifier",
+        input: {
+          filePath: join(h.root, path),
+          oldString: "",
+          newString: "dirty\n",
+        },
+      }
+      await h.toolHooks.get("execute.before")!(editEvent)
+
+      let completionSettled = false
+      const completionPromise = h.call(
+        "complete",
+        { workflowId, stepId: "specifier", summary: "must wait for active edit" },
+        "specifier",
+        "specifier-completion-author",
+      ).then((result: any) => {
+        completionSettled = true
+        return result
+      })
+      await new Promise((resolve) => setTimeout(resolve, 30))
+      expect(completionSettled).toBe(false)
+
+      await writeFile(join(h.root, path), "dirty\n")
+      await h.toolHooks.get("execute.after")!({
+        ...editEvent,
+        status: "completed",
+        result: "updated",
+      })
+
+      const completion = await completionPromise
+      expect(completion.error).toContain("uncommitted changes")
+      expect(completion.error).toContain(path)
+    } finally {
+      h.restore()
+    }
+  })
+
   test("reopened scoped Research cannot fall back to its broader report ceiling", async () => {
     const h = await harness()
     try {

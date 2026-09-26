@@ -2885,27 +2885,6 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             return { content: renderToolOutput({ error: "Gate step requires outcome pass or fail." }) }
           }
 
-          if (resolvedOutcome === "complete") {
-            let ownedWriteScope: string[] | undefined = durableAuthorGitScopes[tool.agent]
-            if (tool.agent === "worker") {
-              const declaredScope = (await ctx.storage.get(
-                scopeKey(workflowId, stepId),
-              )) as TaskScope | undefined
-              ownedWriteScope = declaredScope?.write
-            }
-            if (ownedWriteScope?.length) {
-              const repositoryError = await uncommittedOwnedChangesError(
-                ctx,
-                tool.sessionID,
-                ctx.location.directory,
-                ownedWriteScope,
-              )
-              if (repositoryError) {
-                return { content: renderToolOutput({ error: repositoryError }) }
-              }
-            }
-          }
-
           const planningOnly = planningOnlyObjective(workflow.effects)
           const plannedTasks = plannedTaskSteps(workflow)
           if (planningOnly && plannedTasks.length > 0) {
@@ -2997,6 +2976,25 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               )
             }
             await validateWorkflowMutationLocked(ctx, runtime, workflow)
+
+            if (resolvedOutcome === "complete") {
+              let ownedWriteScope: string[] | undefined = durableAuthorGitScopes[tool.agent]
+              if (tool.agent === "worker") {
+                const declaredScope = (await ctx.storage.get(
+                  scopeKey(workflowId, stepId),
+                )) as TaskScope | undefined
+                ownedWriteScope = declaredScope?.write
+              }
+              if (ownedWriteScope?.length) {
+                const repositoryError = await uncommittedOwnedChangesError(
+                  ctx,
+                  tool.sessionID,
+                  ctx.location.directory,
+                  ownedWriteScope,
+                )
+                if (repositoryError) throw new Error(repositoryError)
+              }
+            }
 
             const currentQuestions = await readQuestions(ctx, workflowId)
             const currentBlocking = blockingQuestionsForStep(currentQuestions, stepId)
