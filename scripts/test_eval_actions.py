@@ -2,12 +2,14 @@
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor
 import importlib.util
 import json
 import os
 from io import StringIO
 from pathlib import Path
 import tempfile
+import threading
 import unittest
 from unittest.mock import patch
 
@@ -1560,6 +1562,142 @@ class ActionAssertionTests(unittest.TestCase):
         )
 
         self.assertEqual(failures, [])
+
+    def test_default_artifact_directory_is_run_scoped(self):
+        self.assertEqual(
+            RUN_EVALS.default_artifact_dir("run-123"),
+            RUN_EVALS.ROOT / ".loom-evals" / "run-123",
+        )
+
+    def test_case_artifact_round_trip_detects_console_durable_mismatch(self):
+        case = {"id": "INTEGRITY-01"}
+        with tempfile.TemporaryDirectory() as tmp:
+            args = argparse.Namespace(
+                artifact_dir=tmp,
+                iterations=1,
+                eval_run_id="run-integrity-01",
+            )
+            artifact = {
+                "classification": "behavioral-fail",
+                "passed": False,
+                "baseline_score": 1.0,
+                "candidate_score": 0.8,
+                "delta_pp": -20.0,
+                "trap_fixed": False,
+                "trap_regression": True,
+                "candidate_absolute_pass": False,
+                "semantic": {"passed": False},
+                "candidate": {"semantic": {"passed": False}},
+            }
+
+            RUN_EVALS.write_case_artifact(case, args, 1, artifact)
+            self.assertEqual(artifact["eval_run_id"], "run-integrity-01")
+            self.assertRegex(artifact["artifact_evidence_id"], r"^[0-9a-f]{64}$")
+            RUN_EVALS.verify_case_artifact(case, args, 1, artifact)
+
+            path = RUN_EVALS.case_artifact_path(case, args, 1)
+            durable = json.loads(path.read_text(encoding="utf-8"))
+            durable["candidate_score"] = 1.0
+            path.write_text(json.dumps(durable, indent=2) + "\n", encoding="utf-8")
+
+            with self.assertRaisesRegex(RuntimeError, "evidence ID mismatch"):
+                RUN_EVALS.verify_case_artifact(case, args, 1, artifact)
+
+            RUN_EVALS.write_case_artifact(case, args, 1, artifact)
+            durable = json.loads(path.read_text(encoding="utf-8"))
+            durable["diagnostic_note"] = "different durable artifact content"
+            path.write_text(json.dumps(durable, indent=2) + "\n", encoding="utf-8")
+
+            with self.assertRaisesRegex(RuntimeError, "evidence ID mismatch"):
+                RUN_EVALS.verify_case_artifact(case, args, 1, artifact)
+
+            RUN_EVALS.write_case_artifact(case, args, 1, artifact)
+            artifact["diagnostic_note"] = "different in-memory artifact content"
+            with self.assertRaisesRegex(RuntimeError, "in-memory eval evidence ID mismatch"):
+                RUN_EVALS.verify_case_artifact(case, args, 1, artifact)
+
+    def test_case_artifact_refuses_cross_run_overwrite(self):
+        case = {"id": "INTEGRITY-COLLISION-01"}
+        with tempfile.TemporaryDirectory() as tmp:
+            first_args = argparse.Namespace(
+                artifact_dir=tmp,
+                iterations=1,
+                eval_run_id="run-first",
+            )
+            second_args = argparse.Namespace(
+                artifact_dir=tmp,
+                iterations=1,
+                eval_run_id="run-second",
+            )
+            artifact = {"classification": "pass", "passed": True}
+
+            RUN_EVALS.write_case_artifact(case, first_args, 1, dict(artifact))
+            with self.assertRaisesRegex(RuntimeError, "artifact directory .* claimed by run"):
+                RUN_EVALS.write_case_artifact(case, second_args, 1, dict(artifact))
+
+            path = RUN_EVALS.case_artifact_path(case, first_args, 1)
+            durable = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual(durable["eval_run_id"], "run-first")
+            owner = Path(tmp) / ".loom-eval-run-id"
+            self.assertEqual(owner.read_text(encoding="utf-8").strip(), "run-first")
+
+            disjoint_case = {"id": "INTEGRITY-COLLISION-02"}
+            with self.assertRaisesRegex(RuntimeError, "artifact directory .* claimed by run"):
+                RUN_EVALS.write_case_artifact(disjoint_case, second_args, 1, dict(artifact))
+            self.assertFalse(
+                RUN_EVALS.case_artifact_path(disjoint_case, second_args, 1).exists()
+            )
+
+    def test_artifact_directory_claim_is_atomic_under_contention(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            barrier = threading.Barrier(2)
+
+            def attempt(run_id: str):
+                barrier.wait()
+                try:
+                    RUN_EVALS.claim_artifact_directory(root, run_id)
+                    return ("claimed", run_id, "")
+                except RuntimeError as exc:
+                    return ("rejected", run_id, str(exc))
+
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                results = list(pool.map(attempt, ("run-a", "run-b")))
+
+            claimed = [item for item in results if item[0] == "claimed"]
+            rejected = [item for item in results if item[0] == "rejected"]
+            self.assertEqual(len(claimed), 1, results)
+            self.assertEqual(len(rejected), 1, results)
+            self.assertIn("claimed by run", rejected[0][2])
+
+            owner = root / ".loom-eval-run-id"
+            self.assertEqual(owner.read_text(encoding="utf-8").strip(), claimed[0][1])
+
+            loser_args = argparse.Namespace(
+                artifact_dir=tmp,
+                iterations=1,
+                eval_run_id=rejected[0][1],
+            )
+            with self.assertRaisesRegex(RuntimeError, "artifact directory .* claimed by run"):
+                RUN_EVALS.write_case_artifact(
+                    {"id": "CONTENDED-01"},
+                    loser_args,
+                    1,
+                    {"classification": "pass", "passed": True},
+                )
+            self.assertFalse((root / "CONTENDED-01.json").exists())
+
+    def test_artifact_directory_rejects_preexisting_unowned_evidence(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "stale-case.json").write_text('{"passed":true}\n', encoding="utf-8")
+
+            with self.assertRaisesRegex(RuntimeError, "was not empty before run"):
+                RUN_EVALS.claim_artifact_directory(root, "run-new")
+
+            owner = root / ".loom-eval-run-id"
+            self.assertFalse(owner.exists())
+            self.assertTrue((root / "stale-case.json").is_file())
 
     def test_run_case_reports_phase_progress_and_records_timings(self):
         case = {

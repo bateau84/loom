@@ -396,7 +396,8 @@ class ToolResultEvidenceTests(unittest.TestCase):
         grade = {"passed": True, "expectations": [{"met": True}], "violations": [{"violated": False}], "trap_observed": False, "trap_evidence": "none"}
         judge = {"exit_code": 0, "text": json.dumps(grade)}
         with tempfile.TemporaryDirectory() as tmp:
-            args = argparse.Namespace(iterations=1, target_transport="opencode", judge_transport="opencode", judge_model=None, model="test", auth=None, provider_config=None, models_catalog=None, database=None, timeout_seconds=30, container_timeout=60, env=[], network=None, image="fixture", opencode_image=None, copilot_image=None, artifact_dir=tmp, keep_temp=True)
+            artifact_dir = Path(tmp) / "artifacts"
+            args = argparse.Namespace(iterations=1, target_transport="opencode", judge_transport="opencode", judge_model=None, model="test", auth=None, provider_config=None, models_catalog=None, database=None, timeout_seconds=30, container_timeout=60, env=[], network=None, image="fixture", opencode_image=None, copilot_image=None, artifact_dir=str(artifact_dir), keep_temp=True)
             with patch.object(RUN, "setup_projects", return_value=(Path(tmp), Path(tmp), Path(tmp))), \
                  patch.object(RUN, "resolve_optional_file", return_value=None), \
                  patch.object(RUN, "invoke_container", side_effect=[target, judge]) as invoke, redirect_stdout(StringIO()):
@@ -404,7 +405,7 @@ class ToolResultEvidenceTests(unittest.TestCase):
             actual_prompt = invoke.call_args_list[1].kwargs["prompt"]
             self.assertIn("complete - 3/3", actual_prompt)
             self.assertEqual(result["observed_tool_results"], target["observed_tool_results"])
-            saved = json.loads((Path(tmp) / "RESULTS-01.json").read_text())
+            saved = json.loads((artifact_dir / "RESULTS-01.json").read_text())
             self.assertEqual(saved["observed_tool_results"], result["observed_tool_results"])
 
 

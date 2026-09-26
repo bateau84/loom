@@ -48,11 +48,14 @@ bun run eval:stress -- \
 
 Use `--parallel` without a number to run the entire selected case × iteration matrix concurrently. Use `--parallel N` to cap concurrency. The default is sequential execution.
 
-When `--iterations` is greater than one, artifacts are written separately as:
+Each live invocation gets a generated run ID. Without `--artifact-dir`, artifacts are isolated under:
 
 ```text
-.loom-evals/<CASE>.iteration-<N>.json
+.loom-evals/<RUN-ID>/<CASE>.json
+.loom-evals/<RUN-ID>/<CASE>.iteration-<N>.json
 ```
+
+An explicit `--artifact-dir` is treated as a single-run evidence destination and must be empty before the run starts.
 
 Runtime cases use isolated OpenCode target containers with Loom's plugin injected into the standalone runtime. Target and judge run in separate containers.
 

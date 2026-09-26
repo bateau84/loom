@@ -11,7 +11,7 @@ The specification is a **human-experience contract**, not backend architecture a
 
 ## Method
 
-1. **Ground the handoff.** Start from accepted product intent, relevant User Stories/Scenarios, existing experience language, and the specialist design work actually needed. Flag required product capabilities that do not exist instead of designing around mocks.
+1. **Ground the handoff.** Start from accepted product intent, relevant User Stories/Scenarios, existing experience language, and the specialist design work actually needed. State required capability/information dependencies explicitly. A dependency is not evidence of a gap: flag a missing capability only when current evidence establishes that it does not exist, rather than designing around mocks or inventing absence.
 2. **State experience intent.** Preserve the human goal, context, and experience principles that explain why the design behaves as it does.
 3. **Define information and flow.** Specify relevant information hierarchy/navigation and task flows: entry points, decision branches, success exits, abandonment, error/recovery paths, and preserved progress.
 4. **Define views/regions by purpose.** Describe each meaningful view/region/component by the user job it serves, not just its contents or visual form.

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -10,6 +11,7 @@ import sqlite3
 import subprocess
 import tempfile
 import time
+import uuid
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from io import StringIO
@@ -362,6 +364,10 @@ def reasoning_provenance(
         if variant:
             return variant, "model-variant"
     return "provider-default", "provider-default"
+
+
+def default_artifact_dir(run_id: str) -> Path:
+    return ROOT / ".loom-evals" / run_id
 
 
 def case_selectors(case: dict[str, Any]) -> set[str]:
@@ -1652,6 +1658,100 @@ def transport_error(result: dict[str, Any]) -> str | None:
     return None
 
 
+def case_artifact_path(
+    case: dict[str, Any],
+    args: argparse.Namespace,
+    iteration: int,
+) -> Path:
+    artifact_name = (
+        case["id"] + ".json"
+        if args.iterations == 1
+        else f"{case['id']}.iteration-{iteration}.json"
+    )
+    return Path(args.artifact_dir) / artifact_name
+
+
+def artifact_integrity_payload(artifact: dict[str, Any]) -> dict[str, Any]:
+    baseline = artifact.get("baseline") if isinstance(artifact.get("baseline"), dict) else {}
+    candidate = artifact.get("candidate") if isinstance(artifact.get("candidate"), dict) else {}
+    semantic = artifact.get("semantic") if isinstance(artifact.get("semantic"), dict) else {}
+    candidate_semantic = (
+        candidate.get("semantic")
+        if isinstance(candidate.get("semantic"), dict)
+        else {}
+    )
+    return {
+        "eval_run_id": artifact.get("eval_run_id"),
+        "classification": artifact.get("classification"),
+        "passed": artifact.get("passed"),
+        "baseline_score": artifact.get("baseline_score"),
+        "candidate_score": artifact.get("candidate_score"),
+        "delta_pp": artifact.get("delta_pp"),
+        "trap_fixed": artifact.get("trap_fixed"),
+        "trap_regression": artifact.get("trap_regression"),
+        "candidate_absolute_pass": artifact.get("candidate_absolute_pass"),
+        "semantic_passed": semantic.get("passed"),
+        "candidate_semantic_passed": candidate_semantic.get("passed"),
+        "target_error": artifact.get("target_error"),
+        "judge_error": artifact.get("judge_error"),
+        "baseline_target_error": baseline.get("target_error"),
+        "baseline_judge_error": baseline.get("judge_error"),
+        "candidate_target_error": candidate.get("target_error"),
+        "candidate_judge_error": candidate.get("judge_error"),
+    }
+
+
+def artifact_evidence_id(artifact: dict[str, Any]) -> str:
+    evidence = dict(artifact)
+    evidence.pop("artifact_evidence_id", None)
+    payload = json.dumps(
+        evidence,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
+def claim_artifact_directory(artifact_dir: Path, run_id: str) -> None:
+    artifact_dir.mkdir(parents=True, exist_ok=True)
+    owner = artifact_dir / ".loom-eval-run-id"
+    try:
+        fd = os.open(owner, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError:
+        try:
+            existing_run = owner.read_text(encoding="utf-8").strip()
+        except OSError as exc:
+            raise RuntimeError(
+                f"cannot read eval artifact-directory ownership claim {owner}: {exc}"
+            ) from exc
+        if existing_run != run_id:
+            raise RuntimeError(
+                f"eval artifact directory {artifact_dir} is claimed by run {existing_run!r}, "
+                f"not current run {run_id!r}; use a clean or distinct artifact directory"
+            )
+        return
+
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            stream.write(run_id + "\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+    except Exception:
+        owner.unlink(missing_ok=True)
+        raise
+
+    stale_entries = sorted(
+        item.name for item in artifact_dir.iterdir() if item != owner
+    )
+    if stale_entries:
+        owner.unlink(missing_ok=True)
+        raise RuntimeError(
+            f"eval artifact directory {artifact_dir} was not empty before run {run_id!r}; "
+            f"existing entries: {stale_entries[:20]}; use a clean or distinct artifact directory"
+        )
+
+
 def write_case_artifact(
     case: dict[str, Any],
     args: argparse.Namespace,
@@ -1660,15 +1760,80 @@ def write_case_artifact(
 ) -> None:
     artifact_dir = Path(args.artifact_dir)
     artifact_dir.mkdir(parents=True, exist_ok=True)
-    artifact_name = (
-        case["id"] + ".json"
-        if args.iterations == 1
-        else f"{case['id']}.iteration-{iteration}.json"
+    run_id = getattr(args, "eval_run_id", None)
+    if not run_id:
+        run_id = uuid.uuid4().hex
+        args.eval_run_id = run_id
+    artifact["eval_run_id"] = run_id
+    artifact["artifact_evidence_id"] = artifact_evidence_id(artifact)
+
+    claim_artifact_directory(artifact_dir, run_id)
+    path = case_artifact_path(case, args, iteration)
+    if path.exists():
+        try:
+            existing = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise RuntimeError(
+                f"existing eval artifact {path} is unreadable; use a clean artifact directory: {exc}"
+            ) from exc
+        existing_run = existing.get("eval_run_id") if isinstance(existing, dict) else None
+        if existing_run != run_id:
+            raise RuntimeError(
+                f"eval artifact {path.name} belongs to run {existing_run!r}, "
+                f"not current run {run_id!r}; use a clean or distinct artifact directory"
+            )
+
+    temp = path.with_name(
+        "." + path.name + "." + run_id + "." + uuid.uuid4().hex + ".tmp"
     )
-    (artifact_dir / artifact_name).write_text(
-        json.dumps(artifact, indent=2) + "\n",
-        encoding="utf-8",
-    )
+    try:
+        temp.write_text(json.dumps(artifact, indent=2) + "\n", encoding="utf-8")
+        os.replace(temp, path)
+    finally:
+        temp.unlink(missing_ok=True)
+
+
+def verify_case_artifact(
+    case: dict[str, Any],
+    args: argparse.Namespace,
+    iteration: int,
+    artifact: dict[str, Any],
+) -> None:
+    path = case_artifact_path(case, args, iteration)
+    try:
+        durable = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError(f"cannot read durable eval artifact {path}: {exc}") from exc
+    if not isinstance(durable, dict):
+        raise RuntimeError(f"durable eval artifact {path} is not a JSON object")
+
+    expected_run = artifact.get("eval_run_id")
+    if durable.get("eval_run_id") != expected_run:
+        raise RuntimeError(
+            f"durable eval artifact run mismatch for {path.name}: "
+            f"memory={expected_run!r} durable={durable.get('eval_run_id')!r}"
+        )
+
+    durable_id = durable.get("artifact_evidence_id")
+    recomputed_id = artifact_evidence_id(durable)
+    if durable_id != recomputed_id:
+        raise RuntimeError(
+            f"durable eval artifact evidence ID mismatch for {path.name}: "
+            f"stored={durable_id!r} recomputed={recomputed_id!r}"
+        )
+
+    memory_id = artifact.get("artifact_evidence_id")
+    recomputed_memory_id = artifact_evidence_id(artifact)
+    if memory_id != recomputed_memory_id:
+        raise RuntimeError(
+            f"in-memory eval evidence ID mismatch for {path.name}: "
+            f"stored={memory_id!r} recomputed={recomputed_memory_id!r}"
+        )
+    if durable_id != memory_id or artifact_integrity_payload(durable) != artifact_integrity_payload(artifact):
+        raise RuntimeError(
+            f"console/durable eval evidence mismatch for {path.name}: "
+            f"memory={memory_id!r} durable={durable_id!r}"
+        )
 
 
 def run_skill_ablation_case(
@@ -2332,7 +2497,10 @@ def main() -> int:
     parser.add_argument("--models-catalog")
     parser.add_argument("--database")
     parser.add_argument("--env", action="append", default=[], metavar="NAME")
-    parser.add_argument("--artifact-dir", default=str(ROOT / ".loom-evals"))
+    parser.add_argument(
+        "--artifact-dir",
+        help="Single-run artifact directory. Default: .loom-evals/<generated-run-id>.",
+    )
     parser.add_argument("--timeout-seconds", type=int, default=240)
     parser.add_argument("--container-timeout", type=int, default=300)
     parser.add_argument(
@@ -2399,6 +2567,10 @@ def main() -> int:
     if args.runtime_parallel < 1:
         parser.error("--runtime-parallel must be >= 1")
 
+    args.eval_run_id = uuid.uuid4().hex
+    if not args.artifact_dir:
+        args.artifact_dir = str(default_artifact_dir(args.eval_run_id))
+
     selected_targets = {value.strip() for value in args.target.split(",") if value.strip()}
     if not args.all and not selected_ids and not selected_targets and args.target_kind == "all":
         parser.error(
@@ -2461,9 +2633,10 @@ def main() -> int:
         mode,
     ) = eval_job_concurrency(jobs, args.parallel, args.runtime_parallel)
     skill_ablation_jobs = sum(1 for case, _ in jobs if case.get("_skill_owned"))
+    claim_artifact_directory(Path(args.artifact_dir), args.eval_run_id)
     print(
         "Running %d Loom live behavioral eval run(s) (%d case(s) x %d iteration(s)) via %s "
-        "(%s target / %s judge, %s)%s..."
+        "(%s target / %s judge, %s)%s [run %s]..."
         % (
             len(jobs),
             len(selected),
@@ -2478,6 +2651,7 @@ def main() -> int:
                 if skill_ablation_jobs
                 else ""
             ),
+            args.eval_run_id,
         )
     )
 
@@ -2506,9 +2680,17 @@ def main() -> int:
             print("  - " + error)
             return False
         assert result is not None
+        try:
+            verify_case_artifact(case, args, iteration, result)
+        except RuntimeError as exc:
+            print(prefix + " ... ERROR")
+            print("  - artifact integrity: " + str(exc))
+            return False
         timing = result.get("timing") or {}
         total = timing.get("total_seconds")
         duration = f" ({float(total):.1f}s total)" if isinstance(total, (int, float)) else ""
+        evidence_id = result.get("artifact_evidence_id")
+        evidence = f" [evidence {str(evidence_id)[:16]}]" if evidence_id else ""
 
         def report_ablation() -> None:
             if result.get("evaluation_mode") != "skill-ablation":
@@ -2532,11 +2714,11 @@ def main() -> int:
                 print("  - trap: regression with skill")
 
         if result["classification"] == "pass":
-            print(prefix + " ... PASS" + duration)
+            print(prefix + " ... PASS" + duration + evidence)
             report_ablation()
             return True
         if result["classification"] == "non-evidence":
-            print(prefix + " ... ERROR" + duration)
+            print(prefix + " ... ERROR" + duration + evidence)
             if result.get("evaluation_mode") == "skill-ablation":
                 for phase in ("baseline", "candidate"):
                     phase_result = result.get(phase)
@@ -2553,7 +2735,7 @@ def main() -> int:
                     print("  - judge: " + str(result["judge_error"]))
             return False
 
-        print(prefix + " ... FAIL" + duration)
+        print(prefix + " ... FAIL" + duration + evidence)
         report_ablation()
         for item in result["deterministic_failures"]:
             print("  - " + item)

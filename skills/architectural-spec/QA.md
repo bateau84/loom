@@ -6,6 +6,7 @@ Critic-only adversarial contract. Assume competent production and Reviewer confo
 
 - Give two competent implementers the spec mentally: find any place they could make incompatible choices while each still satisfies the text.
 - Attack unspecified atomicity, ordering, concurrency, idempotency, ownership, timeout, retry, cancellation, or partial-commit behavior at seams.
+- For idempotency/deduplication, probe same idempotency key + equivalent request concurrently, same idempotency key + conflicting request concurrently, winner commits while a loser remains in flight, crash around commit/ack, and timeout/retry while the first attempt is unresolved. Reject contracts that only guarantee one stored object while leaving contender-visible outcomes or request equivalence ambiguous, and attack any precise equivalence rule that the specification invented without parent authority.
 - Look for contracts that are exact on happy-path types but vague on lifecycle, failure transitions, or what callers may infer after uncertainty.
 - Test restart, replay, duplicate delivery, stale reads, unknown fields, malformed input, boundary values, and interrupted operations where applicable.
 - Test upgrade, downgrade, rollback, and partial-deployment states where two versions or persisted formats interact.
