@@ -76,7 +76,7 @@ db.run("CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY NOT NULL, value TEXT
 db.run("DELETE FROM kv");
 const set = (key, value) => db.query("INSERT INTO kv(key,value) VALUES(?1,?2)").run(key, JSON.stringify(value));
 set("installation/id", "installation-e2e");
-set("installation/runtime-schema", { schemaVersion: 1, currentVersion: 5, initializedAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
+set("installation/runtime-schema", { schemaVersion: 1, currentVersion: 6, initializedAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
 for (const [projectId, canonicalLocation] of [["project-a","/work/project-a"],["project-d","/work/project-d"]]) {
   set("installation/projects/" + projectId, { projectId, canonicalLocation, identitySource: "loom-project-marker", markerLocation: canonicalLocation + "/.loom/project-id", lastSeenAt: new Date().toISOString() });
 }
