@@ -2105,6 +2105,29 @@ Verdict: FAIL
         result: "updated",
       })
 
+      // A fresh dispatch/attachment to the same logical step attempt must not
+      // erase this session's admitted authorship. Grants are ephemeral execution
+      // capabilities; the step attempt is the mutation-authority epoch.
+      const redispatchGrant = await h.call(
+        "dispatch_grant",
+        { workflowId, stepId: "specifier" },
+        "general",
+        "specifier-scope-general",
+      )
+      expect(redispatchGrant.error).toBeUndefined()
+      const reattached = await h.call(
+        "attach",
+        {
+          grantId: redispatchGrant.grantId,
+          workflowId,
+          stepId: "specifier",
+        },
+        "specifier",
+        "specifier-scope-author",
+      )
+      expect(reattached.attached).toBe(true)
+      expect(reattached.attempt).toBe(0)
+
       const stageOwned: any = {
         agent: "specifier",
         action: "shell",
@@ -2221,11 +2244,22 @@ Verdict: FAIL
         "attach",
         { grantId: freshGrant.grantId, workflowId, stepId: "specifier" },
         "specifier",
-        "specifier-scope-author-2",
+        "specifier-scope-author",
       )
       expect(freshAttach.attached).toBe(true)
       expect(freshAttach.attempt).toBe(1)
       expect(freshAttach.write).toEqual(write)
+
+      const priorAttemptStage: any = {
+        agent: "specifier",
+        action: "shell",
+        resources: [`git add ${write[0]}`],
+        sessionID: "specifier-scope-author",
+        effect: "ask",
+      }
+      await evaluate(priorAttemptStage)
+      expect(priorAttemptStage.effect).toBe("deny")
+      expect(priorAttemptStage.message).toContain("stage only files authored")
     } finally {
       h.restore()
     }

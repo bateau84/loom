@@ -222,8 +222,8 @@ const durableAuthorGitScopes: Record<string, string[]> = {
 }
 
 type GitSessionOwnership = {
-  schemaVersion: 2
-  attachmentId?: string
+  schemaVersion: 3
+  authorityId?: string
   paths: string[]
   worktreeFingerprints: Record<string, string>
   stagedFingerprints: Record<string, string>
@@ -367,23 +367,42 @@ function writeLockError(paths: readonly string[]) {
   )
 }
 
+async function gitSessionOwnershipAuthority(
+  ctx: any,
+  sessionID: string,
+): Promise<string | undefined> {
+  const [workflowId, stepId, attempt] = await Promise.all([
+    ctx.storage.get(sessionKey(sessionID)),
+    ctx.storage.get(sessionStepKey(sessionID)),
+    ctx.storage.get(sessionStepAttemptKey(sessionID)),
+  ])
+  if (
+    typeof workflowId === "string" &&
+    workflowId &&
+    typeof stepId === "string" &&
+    stepId &&
+    Number.isSafeInteger(attempt)
+  ) {
+    return `step:${encodeURIComponent(workflowId)}:${encodeURIComponent(stepId)}:${attempt}`
+  }
+  return undefined
+}
+
 async function gitSessionOwnership(
   ctx: any,
   sessionID: string,
 ): Promise<GitSessionOwnership> {
   const key = gitSessionOwnershipKey(sessionID)
-  const attachmentId = (await ctx.storage.get(
-    sessionAttachmentKey(sessionID),
-  )) as string | undefined
+  const authorityId = await gitSessionOwnershipAuthority(ctx, sessionID)
   const existing = (await ctx.storage.get(key)) as GitSessionOwnership | undefined
   if (
-    existing?.schemaVersion === 2 &&
-    existing.attachmentId === attachmentId
+    existing?.schemaVersion === 3 &&
+    existing.authorityId === authorityId
   ) return existing
 
   const ownership: GitSessionOwnership = {
-    schemaVersion: 2,
-    ...(attachmentId ? { attachmentId } : {}),
+    schemaVersion: 3,
+    ...(authorityId ? { authorityId } : {}),
     paths: [],
     worktreeFingerprints: {},
     stagedFingerprints: {},
