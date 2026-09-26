@@ -787,23 +787,33 @@ async function uncommittedOwnedChangesError(
   const dirtyOwned: string[] = []
   for (const raw of dirty) {
     const path = normalizeRepoPath(raw)
-    if (!resourcesWithinScope([path], writeScope)) continue
-    if (ownership.paths.includes(path)) {
-      dirtyOwned.push(path)
+
+    // Child completion is step-attempt based. Once Loom admitted bytes for the
+    // current attempt, later scope narrowing must not make those dirty bytes
+    // disappear from the completion fence.
+    if (binding) {
+      const provenance = (await ctx.storage.get(
+        gitStepAttemptOwnedPathKey(
+          binding.workflowId,
+          binding.stepId,
+          binding.attempt,
+          path,
+        ),
+      )) as GitStepAttemptOwnedPath | undefined
+      if (
+        provenance?.schemaVersion === 1 &&
+        provenance.authorityId === binding.authorityId
+      ) {
+        dirtyOwned.push(path)
+      }
       continue
     }
-    if (!binding) continue
-    const provenance = (await ctx.storage.get(
-      gitStepAttemptOwnedPathKey(
-        binding.workflowId,
-        binding.stepId,
-        binding.attempt,
-        path,
-      ),
-    )) as GitStepAttemptOwnedPath | undefined
+
+    // General has no step-attempt authority id, so retain the existing bounded
+    // scope check for its session-local ownership.
     if (
-      provenance?.schemaVersion === 1 &&
-      provenance.authorityId === binding.authorityId
+      ownership.paths.includes(path) &&
+      resourcesWithinScope([path], writeScope)
     ) {
       dirtyOwned.push(path)
     }
@@ -813,7 +823,7 @@ async function uncommittedOwnedChangesError(
   return (
     "Cannot complete while this role has uncommitted changes from its admitted mutations: " +
     dirtyOwned.join(", ") +
-    ". Commit only these scoped changes before completing."
+    ". Commit these admitted changes before completing."
   )
 }
 
@@ -8721,6 +8731,30 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         (event.action === "shell" || event.action === "edit")
       ) {
         const workflow = await activeWorkflow(ctx, event.sessionID, ensureLegacySession)
+        const attachedStepId = (await ctx.storage.get(
+          sessionStepKey(event.sessionID),
+        )) as string | undefined
+
+        // A reopened/rerouted governed step invalidates the old attachment
+        // before any conversation-first exception is considered. Otherwise a
+        // stale Research/Diagnostic child could fall back to its conversational
+        // report surface instead of obtaining a fresh exact attempt grant.
+        if (
+          workflow &&
+          attachedStepId &&
+          !(await exactStepAttemptBinding(
+            ctx,
+            event.sessionID,
+            workflow.id,
+            attachedStepId,
+          ))
+        ) {
+          event.effect = "deny"
+          event.message =
+            "Research/Diagnostic mutation requires a fresh attachment to the current Loom step attempt."
+          return
+        }
+
         const conversational = !workflow || workflowBindingTerminal(workflow)
 
         if (conversational && event.action === "shell") {
