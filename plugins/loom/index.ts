@@ -7223,7 +7223,8 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
       addLoomTool({
         name: "scope_status",
-        description: "Inspect the declared write scope for one workflow step.",
+        description:
+          "Inspect one workflow step's current effective write scope, General's declared starting expectation, and durable self-elevation history.",
         input: {
           type: "object",
           properties: {
@@ -7243,31 +7244,37 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           const step = workflow.steps.find((candidate) => candidate.id === stepId)
           if (!step) return { content: renderToolOutput({ error: "Step not found." }) }
           const scope = (await ctx.storage.get(scopeKey(workflowId, stepId))) as TaskScope | undefined
+          const roleWriteDefault = artifactWriteCeilings[step.agent] ?? []
+          const effectiveWrite = scope?.write.length ? scope.write : roleWriteDefault
           return {
             content: renderToolOutput({
               scope: scope ?? null,
               agent: step.agent,
-              ...(artifactWriteCeilings[step.agent]
-                ? { roleWriteCeiling: artifactWriteCeilings[step.agent] }
-                : {}),
+              roleWriteDefault,
+              effectiveWrite,
+              elevations: scope?.elevations ?? [],
+              scopeSemantics: "starting-expectation-with-runtime-elevation",
             }),
           }
         },
       })
 
       addLoomTool({
-        name: "scope_request",
+        name: "scope_elevate",
         description:
-          "Spoke-side mutation-scope continuity request for the current attached specialist step. When exact current dirty, unstaged bytes were previously admitted under this same Loom workflow step attempt and remain inside the current effective write scope, Loom resolves the request by adopting staging ownership into this session. This never widens scope, edits, stages, or commits files; out-of-scope writes return to General, while missing provenance requires General's explicit user-authorized recovery path.",
+          "Expand the current attached child step's write scope when discovery reveals additional files or folders. Project-local elevation is immediate, durable, and traceable; the child continues in the same session. Hard-boundary paths (outside the current project or repository-internal .git state) cannot self-authorize: this tool returns continue=false plus an exact user question payload. When continue=false, STOP the current child turn immediately and return control to General; do not retry the write or continue assuming access will arrive later.",
         input: {
           type: "object",
           properties: {
             workflowId: { type: "string" },
             stepId: { type: "string" },
             paths: { type: "array", items: { type: "string" } },
-            reason: { type: "string" },
+            reason: {
+              type: "string",
+              description: "Why the newly discovered paths are required for the assigned step.",
+            },
           },
-          required: ["workflowId", "stepId", "paths"],
+          required: ["workflowId", "stepId", "paths", "reason"],
           additionalProperties: false,
         },
         options: { namespace: "loom", codemode: false },
@@ -7276,16 +7283,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             return {
               content: renderToolOutput({
                 error:
-                  "General owns scope definition directly. Dispatch/attach the specialist and let that spoke call loom_scope_request for same-attempt continuity.",
-              }),
-            }
-          }
-
-          const roleWriteCeiling = durableAuthorGitScopes[tool.agent]
-          if (!roleWriteCeiling) {
-            return {
-              content: renderToolOutput({
-                error: `${tool.agent} is not a durable Git-authoring specialist.`,
+                  "General defines starting scope with loom_step_scope. Runtime self-elevation belongs to the attached child that discovered the additional mutation surface.",
               }),
             }
           }
@@ -7294,18 +7292,21 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             workflowId: string
             stepId: string
             paths: string[]
-            reason?: string
+            reason: string
           }
-          let normalized: string[]
-          try {
-            normalized = [...new Set(value.paths.map(safeOwnedRepoPath))].sort()
-            if (normalized.length === 0) {
-              throw new Error("Scope request paths must not be empty.")
+          const reason = value.reason.trim()
+          if (!reason) {
+            return {
+              content: renderToolOutput({
+                error: "Scope elevation requires a non-empty reason for the audit trail.",
+              }),
             }
-            validateStepWriteScope(
-              normalized,
-              roleWriteCeiling,
-              "Scope request",
+          }
+
+          let classified: ReturnType<typeof classifyScopeTarget>[]
+          try {
+            classified = value.paths.map((path) =>
+              classifyScopeTarget(ctx.location.directory, path),
             )
           } catch (error) {
             return {
@@ -7314,204 +7315,340 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               }),
             }
           }
-
-          const resources = [
-            { aggregate: "workflow", resourceIdentity: value.workflowId },
-            stepAuthorityResource(value.workflowId, value.stepId),
-            { aggregate: "git-index", resourceIdentity: "__repository_index__" },
-            ...normalized.map((path) => ({
-              aggregate: "file-write",
-              resourceIdentity: path,
-            })),
-          ]
+          const projectPaths = [
+            ...new Set(
+              classified
+                .filter((entry) => entry.kind === "project")
+                .map((entry) => entry.path),
+            ),
+          ].sort()
+          const hardBoundaryPaths = [
+            ...new Set(
+              classified
+                .filter((entry) => entry.kind === "hard-boundary")
+                .map((entry) => entry.path),
+            ),
+          ].sort()
 
           try {
-            const adopted = await withRuntimeLocks(runtime, resources, async () => {
-              const binding = await gitSessionOwnershipBinding(
-                ctx,
-                tool.sessionID,
-              )
-              if (
-                !binding ||
-                binding.workflowId !== value.workflowId ||
-                binding.stepId !== value.stepId ||
-                !(await exactStepAttemptBinding(
-                  ctx,
-                  tool.sessionID,
-                  value.workflowId,
-                  value.stepId,
-                ))
-              ) {
-                throw new Error(
-                  "Scope request requires this specialist session to be attached to the exact current Loom step attempt.",
-                )
-              }
+            if (projectPaths.length > 0) validateScopeElevation(projectPaths)
 
-              const workflow = await readWorkflow(ctx, value.workflowId)
-              if (!workflow) throw new Error("Workflow not found.")
-              const step = workflow.steps.find(
-                (candidate) => candidate.id === value.stepId,
-              )
-              if (!step || step.agent !== tool.agent) {
-                throw new Error(
-                  `Step ${value.stepId} does not belong to ${tool.agent}.`,
-                )
-              }
-              if (
-                step.status !== "pending" ||
-                !runnable(workflow).some(
+            const result = await withRuntimeLocks(
+              runtime,
+              [
+                { aggregate: "workflow", resourceIdentity: value.workflowId },
+                stepAuthorityResource(value.workflowId, value.stepId),
+              ],
+              async () => {
+                const binding = await gitSessionOwnershipBinding(ctx, tool.sessionID)
+                if (
+                  !binding ||
+                  binding.workflowId !== value.workflowId ||
+                  binding.stepId !== value.stepId ||
+                  !(await exactStepAttemptBinding(
+                    ctx,
+                    tool.sessionID,
+                    value.workflowId,
+                    value.stepId,
+                  ))
+                ) {
+                  throw new Error(
+                    "Scope elevation requires this child session to be attached to the exact current Loom step attempt.",
+                  )
+                }
+
+                const workflow = await readWorkflow(ctx, value.workflowId)
+                if (!workflow) throw new Error("Workflow not found.")
+                const step = workflow.steps.find(
                   (candidate) => candidate.id === value.stepId,
                 )
-              ) {
-                throw new Error(
-                  "Scope request requires the exact currently runnable pending step.",
-                )
-              }
+                if (!step || step.agent !== tool.agent) {
+                  throw new Error(
+                    `Step ${value.stepId} belongs to ${step?.agent ?? "another role"}, not ${tool.agent}.`,
+                  )
+                }
+                if (
+                  step.status !== "pending" ||
+                  !runnable(workflow).some(
+                    (candidate) => candidate.id === value.stepId,
+                  )
+                ) {
+                  throw new Error(
+                    "Scope elevation requires the exact currently runnable pending step.",
+                  )
+                }
 
-              const scope = (await ctx.storage.get(
-                scopeKey(value.workflowId, value.stepId),
-              )) as TaskScope | undefined
-              const effectiveWriteScope = scope?.write.length
-                ? scope.write
-                : roleWriteCeiling
-              if (!resourcesWithinScope(normalized, effectiveWriteScope)) {
-                throw new Error(
-                  "Requested paths are outside the current effective Loom step write scope. Return them to General for loom_step_scope before retrying loom_scope_request.",
-                )
-              }
+                const existing = (await ctx.storage.get(
+                  scopeKey(value.workflowId, value.stepId),
+                )) as TaskScope | undefined
+                const roleWriteDefault = artifactWriteCeilings[step.agent] ?? []
+                const currentWrite = existing?.write.length
+                  ? existing.write
+                  : roleWriteDefault
+                let scope = existing
+                let elevation: ScopeElevation | undefined
 
-              const staged = new Set(
-                await stagedGitPaths(ctx.location.directory),
-              )
-              const alreadyStaged = normalized.filter((path) =>
-                staged.has(path),
-              )
-              if (alreadyStaged.length > 0) {
-                throw new Error(
-                  "Scope request refuses already-staged paths: " +
-                    alreadyStaged.join(", "),
-                )
-              }
+                if (projectPaths.length > 0) {
+                  const crossesRoleDefault =
+                    roleWriteDefault.length > 0 &&
+                    !resourcesWithinScope(projectPaths, roleWriteDefault)
+                  elevation = {
+                    id: crypto.randomUUID(),
+                    attempt: binding.attempt,
+                    byAgent: tool.agent,
+                    bySessionId: tool.sessionID,
+                    paths: projectPaths,
+                    reason,
+                    elevatedAt: new Date().toISOString(),
+                    ...(crossesRoleDefault ? { crossesRoleDefault: true } : {}),
+                  }
+                  scope = {
+                    workflowId: value.workflowId,
+                    stepId: value.stepId,
+                    write: mergeWriteScope(currentWrite, projectPaths),
+                    elevations: [...(existing?.elevations ?? []), elevation],
+                  }
+                  await ctx.storage.set(
+                    scopeKey(value.workflowId, value.stepId),
+                    scope,
+                  )
+                }
 
-              const dirty = new Set(
-                await projectDirtyPaths(ctx.location.directory),
-              )
-              const notDirty = normalized.filter((path) => !dirty.has(path))
-              if (notDirty.length > 0) {
-                throw new Error(
-                  "Scope request requires current uncommitted changes for every path: " +
-                    notDirty.join(", "),
-                )
-              }
-
-              const records = await Promise.all(
-                normalized.map(async (path) => {
-                  const record = (await ctx.storage.get(
-                    gitStepAttemptOwnedPathKey(
-                      binding.workflowId,
-                      binding.stepId,
-                      binding.attempt,
-                      path,
+                let boundaryRequest: ScopeBoundaryRequest | undefined
+                if (hardBoundaryPaths.length > 0) {
+                  const requestId = crypto.randomUUID()
+                  boundaryRequest = {
+                    requestId,
+                    approvalRef: crypto.randomUUID().replaceAll("-", "").slice(0, 16),
+                    workflowId: value.workflowId,
+                    stepId: value.stepId,
+                    attempt: binding.attempt,
+                    agent: tool.agent,
+                    requestedBySessionId: tool.sessionID,
+                    generalSessionId: workflow.createdBySession,
+                    paths: hardBoundaryPaths,
+                    reason,
+                    requestedAt: new Date().toISOString(),
+                  }
+                  await ctx.storage.set(
+                    scopeBoundaryRequestKey(
+                      boundaryRequest.generalSessionId,
+                      requestId,
                     ),
-                  )) as GitStepAttemptOwnedPath | undefined
-                  return [path, record] as const
-                }),
-              )
-              const missing = records
-                .filter(
-                  ([, record]) =>
-                    !record ||
-                    record.schemaVersion !== 1 ||
-                    record.authorityId !== binding.authorityId,
-                )
-                .map(([path]) => path)
-              if (missing.length > 0) {
-                throw new Error(
-                  "No admitted same-attempt Git provenance exists for: " +
-                    missing.join(", ") +
-                    ". If these are stranded pre-fix bytes after a guard/runtime defect, ask General to use loom_git_ownership_recover with explicit user authorization.",
-                )
-              }
+                    boundaryRequest,
+                  )
+                }
 
-              const currentFingerprints = Object.fromEntries(
-                await Promise.all(
-                  normalized.map(async (path) => [
-                    path,
-                    await worktreeFingerprint(
-                      ctx.location.directory,
-                      path,
-                    ),
-                  ] as const),
-                ),
-              )
-              const changed = records
-                .filter(
-                  ([path, record]) =>
-                    record!.fingerprint !== currentFingerprints[path],
-                )
-                .map(([path]) => path)
-              if (changed.length > 0) {
-                throw new Error(
-                  "Scope request refused files whose bytes changed after the last admitted same-attempt mutation: " +
-                    changed.join(", "),
-                )
-              }
+                if (projectPaths.length > 0 || boundaryRequest) {
+                  await bumpWorkflowRevisionLocked(
+                    ctx,
+                    runtime,
+                    value.workflowId,
+                  )
+                }
 
-              const ownership = await gitSessionOwnership(
-                ctx,
-                tool.sessionID,
-              )
-              if (ownership.authorityId !== binding.authorityId) {
-                throw new Error(
-                  "Scope request authority changed concurrently; retry after reattaching.",
-                )
-              }
-              ownership.paths = [
-                ...new Set([...ownership.paths, ...normalized]),
-              ].sort()
-              for (const path of normalized) {
-                ownership.worktreeFingerprints[path] =
-                  currentFingerprints[path]
-                delete ownership.stagedFingerprints[path]
-              }
-              await ctx.storage.set(
-                gitSessionOwnershipKey(tool.sessionID),
-                ownership,
-              )
-              const sourceSessions = [
-                ...new Set(
-                  records.map(([, record]) => record!.sourceSessionId),
-                ),
-              ].sort()
-              await recordGitScopeStagingAdoptions(
-                ctx,
-                binding,
-                tool.sessionID,
-                currentFingerprints,
-                sourceSessions,
-              )
+                return { scope, elevation, boundaryRequest, roleWriteDefault }
+              },
+            )
 
+            if (result.boundaryRequest) {
+              const question = scopeBoundaryQuestionInput(result.boundaryRequest)
               return {
-                paths: normalized,
-                fingerprints: currentFingerprints,
-                authorityId: binding.authorityId,
-                sourceSessions,
+                content: renderToolOutput({
+                  status: "user_authorization_required",
+                  continue: false,
+                  workflowId: value.workflowId,
+                  stepId: value.stepId,
+                  ...(projectPaths.length > 0
+                    ? {
+                        grantedProjectPaths: projectPaths,
+                        effectiveWrite: result.scope?.write ?? result.roleWriteDefault,
+                        elevation: result.elevation,
+                      }
+                    : {}),
+                  hardBoundary: {
+                    requestId: result.boundaryRequest.requestId,
+                    approvalRef: result.boundaryRequest.approvalRef,
+                    paths: result.boundaryRequest.paths,
+                    reason,
+                    question,
+                    rememberChoiceAllowed: false,
+                  },
+                  requiredAction:
+                    "Return control to General immediately. Do not continue this child turn, retry the blocked mutation, or assume access has been granted. General must ask the user with the exact supplied question payload; after an Allow once decision, General calls loom_scope_authorize_once and then resumes/redispatches this same step attempt.",
+                }),
               }
-            })
+            }
 
             return {
               content: renderToolOutput({
-                resolved: true,
-                adopted: true,
+                status: "granted",
+                continue: true,
                 workflowId: value.workflowId,
                 stepId: value.stepId,
-                sessionId: tool.sessionID,
-                ...adopted,
-                ...(value.reason?.trim()
-                  ? { reason: value.reason.trim() }
-                  : {}),
+                scopeAdded: projectPaths,
+                effectiveWrite: result.scope?.write ?? result.roleWriteDefault,
+                elevation: result.elevation,
                 note:
-                  "Scope request resolved by transferring staging authority for exact same-attempt bytes into this session; it does not widen write scope or claim that this session historically authored them.",
+                  "Project-local scope elevation is active immediately and recorded. Continue the current step; no General round-trip is required.",
+              }),
+            }
+          } catch (error) {
+            return {
+              content: renderToolOutput({
+                error: error instanceof Error ? error.message : String(error),
+              }),
+            }
+          }
+        },
+      })
+
+      addLoomTool({
+        name: "scope_authorize_once",
+        description:
+          "General only. Consume an approved exact Loom hard-boundary question and authorize that request for one mutation attempt on the same current step attempt. This authorization is never remembered or generalized; resume/redispatch the child only after this tool reports authorized=true.",
+        input: {
+          type: "object",
+          properties: {
+            workflowId: { type: "string" },
+            requestId: { type: "string" },
+          },
+          required: ["workflowId", "requestId"],
+          additionalProperties: false,
+        },
+        options: { namespace: "loom", codemode: false },
+        execute: async (input, tool) => {
+          if (tool.agent !== "general") {
+            return {
+              content: renderToolOutput({
+                error: "Only General may consume user-approved hard-boundary scope authorization.",
+              }),
+            }
+          }
+          const value = input as { workflowId: string; requestId: string }
+          const requestKey = scopeBoundaryRequestKey(
+            tool.sessionID,
+            value.requestId,
+          )
+          const observed = (await ctx.storage.get(
+            requestKey,
+          )) as ScopeBoundaryRequest | undefined
+          if (!observed || observed.workflowId !== value.workflowId) {
+            return {
+              content: renderToolOutput({
+                error: "Hard-boundary scope request not found for this General session/workflow.",
+              }),
+            }
+          }
+          const decision = (await ctx.storage.get(
+            scopeBoundaryDecisionKey(tool.sessionID, value.requestId),
+          )) as ScopeBoundaryDecision | undefined
+          if (!decision?.approved) {
+            return {
+              content: renderToolOutput({
+                error:
+                  "No approved hard-boundary decision is recorded. Ask the user with the exact question payload from loom_scope_elevate; only an explicit Allow once decision authorizes access.",
+                question: scopeBoundaryQuestionInput(observed),
+                continue: false,
+                rememberChoiceAllowed: false,
+              }),
+            }
+          }
+
+          try {
+            const authorization = await withRuntimeLocks(
+              runtime,
+              [
+                { aggregate: "workflow", resourceIdentity: value.workflowId },
+                stepAuthorityResource(value.workflowId, observed.stepId),
+                {
+                  aggregate: "scope-boundary-authorization",
+                  resourceIdentity: value.requestId,
+                },
+              ],
+              async () => {
+                const currentBinding = (await ctx.storage.get(
+                  sessionKey(tool.sessionID),
+                )) as string | undefined
+                if (currentBinding !== value.workflowId) {
+                  throw new Error("General is no longer bound to this workflow.")
+                }
+                const request = (await ctx.storage.get(
+                  requestKey,
+                )) as ScopeBoundaryRequest | undefined
+                if (!request || request.resolvedAt) {
+                  throw new Error("Hard-boundary scope request is no longer active.")
+                }
+                const latestDecision = (await ctx.storage.get(
+                  scopeBoundaryDecisionKey(tool.sessionID, value.requestId),
+                )) as ScopeBoundaryDecision | undefined
+                if (!latestDecision?.approved) {
+                  throw new Error("Hard-boundary user approval is missing or changed.")
+                }
+
+                const workflow = await readWorkflow(ctx, value.workflowId)
+                if (!workflow) throw new Error("Workflow not found.")
+                const step = workflow.steps.find(
+                  (candidate) => candidate.id === request.stepId,
+                )
+                if (
+                  !step ||
+                  step.agent !== request.agent ||
+                  step.status !== "pending" ||
+                  (step.attempt ?? 0) !== request.attempt ||
+                  !runnable(workflow).some(
+                    (candidate) => candidate.id === request.stepId,
+                  )
+                ) {
+                  throw new Error(
+                    "Hard-boundary approval is stale because the target step/attempt changed.",
+                  )
+                }
+
+                const record: ScopeBoundaryAuthorization = {
+                  requestId: request.requestId,
+                  workflowId: request.workflowId,
+                  stepId: request.stepId,
+                  attempt: request.attempt,
+                  agent: request.agent,
+                  patterns: request.paths,
+                  authorizedAt: new Date().toISOString(),
+                  authorizedBySessionId: tool.sessionID,
+                }
+                await ctx.storage.set(
+                  scopeBoundaryAuthorizationKey(
+                    request.workflowId,
+                    request.stepId,
+                    request.attempt,
+                    request.requestId,
+                  ),
+                  record,
+                )
+                await ctx.storage.set(requestKey, {
+                  ...request,
+                  resolvedAt: record.authorizedAt,
+                } satisfies ScopeBoundaryRequest)
+                await bumpWorkflowRevisionLocked(
+                  ctx,
+                  runtime,
+                  value.workflowId,
+                )
+                return record
+              },
+            )
+
+            return {
+              content: renderToolOutput({
+                authorized: true,
+                continueChild: true,
+                requestId: authorization.requestId,
+                workflowId: authorization.workflowId,
+                stepId: authorization.stepId,
+                attempt: authorization.attempt,
+                paths: authorization.patterns,
+                rememberChoiceAllowed: false,
+                requiredAction:
+                  "Resume or redispatch the authorized child on this same step attempt. The authorization is consumed by one matching mutation attempt and is never remembered.",
               }),
             }
           } catch (error) {
