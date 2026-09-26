@@ -7588,27 +7588,59 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
                 let boundaryRequest: ScopeBoundaryRequest | undefined
                 if (hardBoundaryPaths.length > 0) {
-                  const requestId = crypto.randomUUID()
-                  boundaryRequest = {
-                    requestId,
-                    approvalRef: crypto.randomUUID().replaceAll("-", "").slice(0, 16),
-                    workflowId: value.workflowId,
-                    stepId: value.stepId,
-                    attempt: binding.attempt,
-                    agent: tool.agent,
-                    requestedBySessionId: tool.sessionID,
-                    generalSessionId: workflow.createdBySession,
-                    paths: hardBoundaryPaths,
-                    reason,
-                    requestedAt: new Date().toISOString(),
-                  }
-                  await ctx.storage.set(
-                    scopeBoundaryRequestKey(
-                      boundaryRequest.generalSessionId,
+                  let after: string | undefined
+                  do {
+                    const page = await ctx.storage.scan({
+                      prefix: scopeBoundaryRequestPrefix(
+                        workflow.createdBySession,
+                      ),
+                      limit: 100,
+                      ...(after ? { after } : {}),
+                    })
+                    for (const entry of page.entries) {
+                      const candidate = entry.value as ScopeBoundaryRequest
+                      if (
+                        !candidate?.resolvedAt &&
+                        candidate.workflowId === value.workflowId &&
+                        candidate.stepId === value.stepId &&
+                        candidate.attempt === binding.attempt &&
+                        candidate.agent === tool.agent &&
+                        candidate.requestedBySessionId === tool.sessionID &&
+                        candidate.reason === reason &&
+                        JSON.stringify(candidate.paths) ===
+                          JSON.stringify(hardBoundaryPaths)
+                      ) {
+                        boundaryRequest = candidate
+                        break
+                      }
+                    }
+                    if (boundaryRequest) break
+                    after = page.next
+                  } while (after)
+
+                  if (!boundaryRequest) {
+                    const requestId = crypto.randomUUID()
+                    boundaryRequest = {
                       requestId,
-                    ),
-                    boundaryRequest,
-                  )
+                      approvalRef: crypto.randomUUID().replaceAll("-", "").slice(0, 16),
+                      workflowId: value.workflowId,
+                      stepId: value.stepId,
+                      attempt: binding.attempt,
+                      agent: tool.agent,
+                      requestedBySessionId: tool.sessionID,
+                      generalSessionId: workflow.createdBySession,
+                      paths: hardBoundaryPaths,
+                      reason,
+                      requestedAt: new Date().toISOString(),
+                    }
+                    await ctx.storage.set(
+                      scopeBoundaryRequestKey(
+                        boundaryRequest.generalSessionId,
+                        requestId,
+                      ),
+                      boundaryRequest,
+                    )
+                  }
                 }
 
                 if (projectPaths.length > 0 || boundaryRequest) {
