@@ -2795,6 +2795,154 @@ Verdict: FAIL
     }
   })
 
+  test("same-attempt stale staged bytes cannot commit after a fresher admitted mutation", async () => {
+    const h = await harness()
+    try {
+      await initializeGitFixture(h.root)
+      const generalSession = "same-attempt-stale-general"
+      const firstSession = "same-attempt-stale-first"
+      const freshSession = "same-attempt-stale-fresh"
+      const started = await h.call(
+        "start",
+        { request: "Specify one requirement across a redispatch." },
+        "general",
+        generalSession,
+      )
+      const workflowId = String(started.workflowId)
+      expect((await h.call(
+        "route",
+        {
+          humanFacing: false,
+          behavioral: true,
+          structural: false,
+          externalUnknown: false,
+          diagnostic: false,
+          productOutcome: false,
+          implementationRequested: true,
+          executionDepth: "change",
+        },
+        "general",
+        generalSession,
+      )).error).toBeUndefined()
+
+      const path = "docs/requirements/same-attempt.md"
+      expect((await h.call(
+        "step_scope",
+        { workflowId, stepId: "specifier", write: [path] },
+        "general",
+        generalSession,
+      )).error).toBeUndefined()
+
+      const firstGrant = await h.call(
+        "dispatch_grant",
+        { workflowId, stepId: "specifier" },
+        "general",
+        generalSession,
+      )
+      expect((await h.call(
+        "attach",
+        { grantId: firstGrant.grantId, workflowId, stepId: "specifier" },
+        "specifier",
+        firstSession,
+      )).attached).toBe(true)
+
+      await mkdir(join(h.root, "docs", "requirements"), { recursive: true })
+      const firstEdit = {
+        tool: "edit",
+        callID: "same-attempt-first-edit",
+        messageID: "same-attempt-first-edit-message",
+        sessionID: firstSession,
+        agent: "specifier",
+        input: {
+          filePath: join(h.root, path),
+          oldString: "",
+          newString: "v1\n",
+        },
+      }
+      await h.toolHooks.get("execute.before")!(firstEdit)
+      await writeFile(join(h.root, path), "v1\n")
+      await h.toolHooks.get("execute.after")!({
+        ...firstEdit,
+        status: "completed",
+        result: "updated",
+      })
+
+      const stageCommand = `git add -- ${path}`
+      const stageEvent = {
+        tool: "shell",
+        callID: "same-attempt-first-stage",
+        messageID: "same-attempt-first-stage-message",
+        sessionID: firstSession,
+        agent: "specifier",
+        input: { command: stageCommand },
+      }
+      const stagePermission: any = {
+        agent: "specifier",
+        action: "shell",
+        resources: [stageCommand],
+        sessionID: firstSession,
+        effect: "ask",
+      }
+      await h.permissionHooks.get("evaluate")!(stagePermission)
+      expect(stagePermission.effect).toBe("allow")
+      await h.toolHooks.get("execute.before")!(stageEvent)
+      await git(h.root, ["add", "--", path])
+      await h.toolHooks.get("execute.after")!({
+        ...stageEvent,
+        status: "completed",
+        result: "staged",
+      })
+
+      const freshGrant = await h.call(
+        "dispatch_grant",
+        { workflowId, stepId: "specifier" },
+        "general",
+        generalSession,
+      )
+      expect((await h.call(
+        "attach",
+        { grantId: freshGrant.grantId, workflowId, stepId: "specifier" },
+        "specifier",
+        freshSession,
+      )).attached).toBe(true)
+
+      const freshEdit = {
+        tool: "edit",
+        callID: "same-attempt-fresh-edit",
+        messageID: "same-attempt-fresh-edit-message",
+        sessionID: freshSession,
+        agent: "specifier",
+        input: {
+          filePath: join(h.root, path),
+          oldString: "v1\n",
+          newString: "v2\n",
+        },
+      }
+      await h.toolHooks.get("execute.before")!(freshEdit)
+      await writeFile(join(h.root, path), "v2\n")
+      await h.toolHooks.get("execute.after")!({
+        ...freshEdit,
+        status: "completed",
+        result: "updated",
+      })
+
+      const commitCommand =
+        "git -c core.hooksPath=/dev/null commit -m 'test: stale same-attempt bytes'"
+      const staleCommit: any = {
+        agent: "specifier",
+        action: "shell",
+        resources: [commitCommand],
+        sessionID: firstSession,
+        effect: "ask",
+      }
+      await h.permissionHooks.get("evaluate")!(staleCommit)
+      expect(staleCommit.effect).toBe("deny")
+      expect(staleCommit.message).toContain("newer unstaged worktree changes")
+    } finally {
+      h.restore()
+    }
+  })
+
   test("migrates matching legacy Git ownership without losing in-flight authorship", async () => {
     const h = await harness()
     try {
