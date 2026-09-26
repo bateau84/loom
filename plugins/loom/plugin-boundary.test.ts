@@ -1501,6 +1501,119 @@ Verdict: FAIL
     }
   })
 
+  test("symlink aliases into .git remain target-bound hard boundaries", async () => {
+    const h = await harness()
+    try {
+      await initializeGitFixture(h.root)
+      const generalSession = "scope-git-alias-general"
+      const childSession = "scope-git-alias-worker"
+      const started = await h.call(
+        "start",
+        { request: "Implement one bounded change without rewriting Git internals." },
+        "general",
+        generalSession,
+      )
+      const workflowId = String(started.workflowId)
+      expect((await h.call(
+        "route",
+        {
+          humanFacing: false,
+          behavioral: false,
+          structural: false,
+          externalUnknown: false,
+          diagnostic: false,
+          productOutcome: false,
+          implementationRequested: true,
+          executionDepth: "task",
+        },
+        "general",
+        generalSession,
+      )).error).toBeUndefined()
+
+      const grant = await h.call(
+        "dispatch_grant",
+        { workflowId, stepId: "worker" },
+        "general",
+        generalSession,
+      )
+      expect((await h.call(
+        "attach",
+        { grantId: grant.grantId, workflowId, stepId: "worker" },
+        "worker",
+        childSession,
+      )).attached).toBe(true)
+
+      const alias = join(h.root, "git-internal-alias")
+      const gitConfig = join(h.root, ".git", "config")
+      await symlink(gitConfig, alias)
+
+      const requested = await h.call(
+        "scope_elevate",
+        {
+          workflowId,
+          stepId: "worker",
+          paths: ["git-internal-alias"],
+          reason: "Attempt to mutate Git internal state through an alias.",
+        },
+        "worker",
+        childSession,
+      )
+      expect(requested.status).toBe("user_authorization_required")
+      expect(requested.continue).toBe(false)
+      expect(requested.hardBoundary.boundaryDetails[0]).toMatchObject({
+        kind: "repository-internal-state",
+        resolvedExistingTarget: gitConfig,
+      })
+      expect(
+        requested.hardBoundary.question.questions[0].question,
+      ).toContain(gitConfig)
+
+      const questionEvent = {
+        tool: "question",
+        callID: "scope-git-alias-question",
+        messageID: "scope-git-alias-question-message",
+        sessionID: generalSession,
+        agent: "general",
+        input: requested.hardBoundary.question,
+      }
+      await h.toolHooks.get("execute.before")!(questionEvent)
+      await h.toolHooks.get("execute.after")!({
+        ...questionEvent,
+        status: "completed",
+        result: { metadata: { answers: [["Allow once"]] } },
+      })
+      expect((await h.call(
+        "scope_authorize_once",
+        { workflowId, requestId: requested.hardBoundary.requestId },
+        "general",
+        generalSession,
+      )).authorized).toBe(true)
+
+      const beforeRetarget: any = {
+        agent: "worker",
+        action: "edit",
+        resources: [alias],
+        sessionID: childSession,
+        effect: "ask",
+      }
+      await h.permissionHooks.get("evaluate")!(beforeRetarget)
+      expect(beforeRetarget.effect).toBe("allow")
+
+      await rm(alias, { force: true })
+      await symlink(join(h.root, ".git", "HEAD"), alias)
+
+      const afterRetarget: any = {
+        ...beforeRetarget,
+        effect: "ask",
+      }
+      await h.permissionHooks.get("evaluate")!(afterRetarget)
+      expect(afterRetarget.effect).toBe("deny")
+      expect(afterRetarget.message).toContain("loom_scope_elevate")
+    } finally {
+      h.restore()
+    }
+  })
+
   test("Loom internal project state is a user-only hard boundary", async () => {
     const h = await harness()
     try {
