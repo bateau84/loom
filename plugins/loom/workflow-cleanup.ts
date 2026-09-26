@@ -269,6 +269,7 @@ export async function deleteWorkflowRecords(
         })
       }
       await deleteKey(storage, `session-step/${sessionId}`)
+      await deleteKey(storage, `session-step-attempt/${encodeURIComponent(sessionId)}`)
       await deleteKey(storage, `session-oq/${sessionId}`)
       await deleteKey(storage, `session-plan-review/${encodeURIComponent(sessionId)}`)
     }

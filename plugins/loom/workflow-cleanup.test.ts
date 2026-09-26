@@ -207,8 +207,10 @@ describe("workflow cleanup", () => {
     await storage.set("work/objective%3Adocs%2Fanchors%2Fproduct%2Fanchor.md", work())
     await storage.set("session/session-general", "workflow-failed")
     await storage.set("session-step/session-general", "review-implementation")
+    await storage.set("session-step-attempt/session-general", 0)
     await storage.set("session/session-child", "workflow-failed")
     await storage.set("session-step/session-child", "task:build")
+    await storage.set("session-step-attempt/session-child", 2)
     await storage.set("oq-index/workflow-failed", ["OQ-1"])
     await storage.set("oq/workflow-failed/OQ-1", { id: "OQ-1" })
     await storage.set("budget/workflow-failed", { totalDispatches: 7 })
@@ -228,6 +230,8 @@ describe("workflow cleanup", () => {
     expect(await storage.get("session/session-general")).toBeUndefined()
     expect(await storage.get("session/session-child")).toBeUndefined()
     expect(await storage.get("session-step/session-child")).toBeUndefined()
+    expect(await storage.get("session-step-attempt/session-child")).toBeUndefined()
+    expect(await storage.get("session-step-attempt/session-general")).toBeUndefined()
     expect(await storage.get("session-deletion-fence/session-child")).toMatchObject({
       schemaVersion: 1,
       workflowId: "workflow-failed",
