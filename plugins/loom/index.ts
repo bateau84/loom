@@ -1028,7 +1028,11 @@ function budgetQuestionDecision(result: unknown): BudgetQuestionDecisionValue | 
 
 type ScopeBoundaryDetail = {
   path: string
-  kind: "outside-current-project" | "repository-internal-state" | "symlink-escape"
+  kind:
+    | "outside-current-project"
+    | "repository-internal-state"
+    | "loom-internal-state"
+    | "symlink-escape"
   resolvedExistingTarget?: string
 }
 
@@ -1167,6 +1171,13 @@ async function classifyScopeTarget(projectDirectory: string, raw: string) {
       reason: "repository-internal-state",
     }
   }
+  if (path === ".loom" || path.startsWith(".loom/")) {
+    return {
+      kind: "hard-boundary" as const,
+      path: absolute.replaceAll("\\", "/"),
+      reason: "loom-internal-state",
+    }
+  }
 
   const [realProjectRoot, realExistingTarget] = await Promise.all([
     realpath(projectDirectory).catch(() => resolve(projectDirectory)),
@@ -1210,6 +1221,9 @@ export function scopeBoundaryQuestionInput(target: {
       }
       if (detail.kind === "repository-internal-state") {
         return `${detail.path} (repository-internal .git state)`
+      }
+      if (detail.kind === "loom-internal-state") {
+        return `${detail.path} (Loom internal project state)`
       }
       return `${detail.path} (outside the current project)`
     })
