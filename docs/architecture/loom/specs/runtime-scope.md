@@ -85,7 +85,7 @@ consumingSessionId?
 
 Grant consumption is atomic under the workflow mutation guard.
 
-A project-local session has at most one current workflow binding. Step attachment also records the exact workflow-step attempt when the attachment is consumed. Rebinding is permitted only through a Loom-controlled transition after the previous binding is terminal or explicitly released. Rebinding atomically clears the old step/OQ/attempt attachment before installing the new workflow binding; old selectors remain historical and do not authorize current access. Reopening or rerouting a step advances its attempt, so attempt-bound mutation requires a fresh attachment before it can resume.
+A project-local session has at most one current workflow binding. Step attachment also records the exact workflow-step attempt when the attachment is consumed. Rebinding is permitted only through a Loom-controlled transition after the previous binding is terminal or explicitly released. Rebinding atomically clears the old step/OQ/attempt attachment before installing the new workflow binding; old selectors remain historical and do not authorize current access. Mutation and Git authoring require that attached attempt to remain the **current runnable pending** step attempt; completion, PASS/FAIL, cancellation, reopen, or reroute therefore removes mutation authority immediately. Reopening or rerouting also advances the attempt, so resumed mutation requires a fresh attachment.
 
 ## Runtime write scope and elevation
 
@@ -133,10 +133,15 @@ control to General. It MUST NOT retry the write or continue on the assumption
 that access will be granted later.
 
 General presents the exact Loom question with only an **Allow once** or **Deny**
-decision. Allow once authorizes only the requested path patterns for that exact
-Workflow step attempt. It does not become project policy, does not survive a new
-attempt/workflow, and MUST NOT expose a "remember my choice" path. A custom
-answer grants no authority.
+decision. The question MUST include Loom's own hard-boundary classification. For
+a symlink escape it MUST disclose the existing resolved external target rather
+than showing only the apparently project-local symlink path. Allow once
+authorizes only the requested path patterns for that exact current runnable
+Workflow step attempt. It does not become project policy, does not survive step
+completion or a new attempt/workflow, and MUST NOT expose a "remember my choice"
+path. A custom answer grants no authority. Hard-boundary authorization MUST be
+revalidated while holding the step mutation guard immediately before the write,
+so completion/reopen cannot race between permission admission and execution.
 
 ## Git authorship continuity and bounded recovery
 
@@ -216,11 +221,12 @@ For any workflow state access:
 3. load explicit workflow/objective selectors only from the current project namespace;
 4. validate stored project metadata;
 5. require workflow membership for workflow-shared reads;
-6. require exact step attachment plus the step's current effective write scope for normal project mutation;
-7. permit project-local scope growth only through recorded `loom_scope_elevate` on the exact current runnable step attempt;
-8. require an exact user-approved hard-boundary authorization for external, symlink-escaping, or repository-internal writes;
-9. for attempt-bound mutation and Git provenance, require the attached attempt to equal the current workflow-step attempt;
-10. reject mismatch without global fallback.
+6. require exact step attachment to the current runnable pending attempt plus the step's current effective write scope for normal project mutation;
+7. permit project-local scope growth only through recorded `loom_scope_elevate` on that exact current runnable step attempt;
+8. require an exact user-approved hard-boundary authorization for external, symlink-escaping, or repository-internal writes, then revalidate it under the step mutation guard immediately before execution;
+9. treat completed/failed/passed/cancelled/reopened/rerouted step attachments as non-mutating until a new runnable attempt is attached;
+10. for attempt-bound Git provenance, require the attached attempt to equal the current workflow-step attempt;
+11. reject mismatch without global fallback.
 
 Same-workflow cross-session evidence consumption is allowed after legitimate membership. Unrelated workflow/project access is rejected.
 
