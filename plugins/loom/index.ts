@@ -210,7 +210,7 @@ const reportProducerAgents = new Set([
 
 const execFileAsync = promisify(execFile)
 
-const artifactWriteCeilings: Record<string, string[]> = {
+const artifactWriteDefaults: Record<string, string[]> = {
   designer: ["docs/design/**", "ephemeral-reports/designer/**"],
   specifier: ["docs/requirements/**"],
   architect: ["docs/architecture/**", "docs/dependencies/**"],
@@ -222,13 +222,7 @@ const artifactWriteCeilings: Record<string, string[]> = {
   diagnostic: ["ephemeral-reports/diagnostic/**"],
 }
 
-const durableAuthorGitScopes: Record<string, string[]> = {
-  general: ["docs/anchors/**"],
-  designer: ["docs/design/**"],
-  specifier: ["docs/requirements/**"],
-  architect: ["docs/architecture/**", "docs/dependencies/**"],
-  documenter: ["docs/system/**", "docs/user/**", "README.md"],
-}
+const generalGitWriteScope = ["docs/anchors/**"]
 
 type GitSessionOwnership = {
   schemaVersion: 3
@@ -2233,7 +2227,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       )) as TaskScope | undefined
       const effectiveWriteScope = declaredScope?.write.length
         ? declaredScope.write
-        : (artifactWriteCeilings[agent] ?? [])
+        : (artifactWriteDefaults[agent] ?? [])
       if (
         effectiveWriteScope.length === 0 ||
         !resourcesWithinScope(directMutationPaths, effectiveWriteScope)
@@ -2294,8 +2288,8 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
       let writeScope: string[] | undefined =
         raw.agent === "general"
-          ? durableAuthorGitScopes.general
-          : (artifactWriteCeilings[String(raw.agent ?? "")] ?? [])
+          ? generalGitWriteScope
+          : (artifactWriteDefaults[String(raw.agent ?? "")] ?? [])
       const workflowId = (await ctx.storage.get(
         sessionKey(String(raw.sessionID)),
       )) as string | undefined
@@ -3680,14 +3674,14 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             if (resolvedOutcome === "complete") {
               let ownedWriteScope: string[]
               if (tool.agent === "general") {
-                ownedWriteScope = durableAuthorGitScopes.general
+                ownedWriteScope = generalGitWriteScope
               } else {
                 const declaredScope = (await ctx.storage.get(
                   scopeKey(workflowId, stepId),
                 )) as TaskScope | undefined
                 ownedWriteScope = declaredScope?.write.length
                   ? declaredScope.write
-                  : (artifactWriteCeilings[tool.agent] ?? [])
+                  : (artifactWriteDefaults[tool.agent] ?? [])
               }
               ownedWriteScope = committableWriteScope(ownedWriteScope)
               if (ownedWriteScope.length) {
@@ -6817,7 +6811,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               )
             }
             validateScopeElevation(value.write)
-            const roleWriteDefault = artifactWriteCeilings[step.agent]
+            const roleWriteDefault = artifactWriteDefaults[step.agent]
             const previous = (await ctx.storage.get(
               scopeKey(value.workflowId, value.stepId),
             )) as TaskScope | undefined
@@ -7420,7 +7414,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           const step = workflow.steps.find((candidate) => candidate.id === stepId)
           if (!step) return { content: renderToolOutput({ error: "Step not found." }) }
           const scope = (await ctx.storage.get(scopeKey(workflowId, stepId))) as TaskScope | undefined
-          const roleWriteDefault = artifactWriteCeilings[step.agent] ?? []
+          const roleWriteDefault = artifactWriteDefaults[step.agent] ?? []
           const effectiveWrite = scope?.write.length ? scope.write : roleWriteDefault
           return {
             content: renderToolOutput({
@@ -7559,7 +7553,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 const existing = (await ctx.storage.get(
                   scopeKey(value.workflowId, value.stepId),
                 )) as TaskScope | undefined
-                const roleWriteDefault = artifactWriteCeilings[step.agent] ?? []
+                const roleWriteDefault = artifactWriteDefaults[step.agent] ?? []
                 const currentWrite = existing?.write.length
                   ? existing.write
                   : roleWriteDefault
@@ -7944,7 +7938,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               const effectiveWrite = committableWriteScope(
                 scope?.write.length
                   ? scope.write
-                  : (artifactWriteCeilings[step.agent] ?? []),
+                  : (artifactWriteDefaults[step.agent] ?? []),
               )
               if (
                 effectiveWrite.length === 0 ||
@@ -8550,7 +8544,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         ) {
           let authorScope: string[]
           if (agent === "general") {
-            authorScope = durableAuthorGitScopes.general
+            authorScope = generalGitWriteScope
           } else {
             const workflowId = (await ctx.storage.get(
               sessionKey(event.sessionID),
@@ -8588,7 +8582,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             )) as TaskScope | undefined
             authorScope = declaredScope?.write.length
               ? declaredScope.write
-              : (artifactWriteCeilings[agent] ?? [])
+              : (artifactWriteDefaults[agent] ?? [])
           }
 
           authorScope = committableWriteScope(authorScope)
@@ -8746,7 +8740,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         )) as TaskScope | undefined
         const effectiveWrite = declaredScope?.write.length
           ? declaredScope.write
-          : (artifactWriteCeilings[agent] ?? [])
+          : (artifactWriteDefaults[agent] ?? [])
         if (
           effectiveWrite.length === 0 ||
           !resourcesWithinScope(event.resources, effectiveWrite)
@@ -9450,7 +9444,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         raw.agent === "general" &&
         eventMatches
       ) {
-        const generalScope = durableAuthorGitScopes.general
+        const generalScope = generalGitWriteScope
         const sessionID = String(raw.sessionID)
         const owned = successfulMutationPaths(
           tool,
@@ -9520,7 +9514,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             scopeKey(admission.workflowId, admission.stepId),
           )) as TaskScope | undefined
           const defaultScope =
-            artifactWriteCeilings[String(raw.agent)] ?? []
+            artifactWriteDefaults[String(raw.agent)] ?? []
           const writeScope = committableWriteScope(
             declaredScope?.write.length
               ? declaredScope.write
