@@ -927,7 +927,7 @@ describe("Loom registered plugin boundary", () => {
       expect(scoped.error).toBeUndefined()
       expect(scoped).toMatchObject({
         acceptedAuthority: "docs/anchors/test/anchor.md",
-        scopeSemantics: "mutation-boundary-only",
+        scopeSemantics: "starting-expectation-with-runtime-elevation",
       })
       expect(scoped.acceptedOutcome).toBeUndefined()
       expect(scoped.scopeNote).toContain("acceptedAuthority identifies the governing source")
@@ -952,7 +952,7 @@ describe("Loom registered plugin boundary", () => {
         stepId: "worker",
         acceptedAuthority: "docs/anchors/test/anchor.md",
         write: ["src/**"],
-        scopeSemantics: "mutation-boundary-only",
+        scopeSemantics: "starting-expectation-with-runtime-elevation",
       })
       expect(attachedWorker.acceptedOutcome).toBeUndefined()
       expect(attachedWorker.scopeNote).toContain("acceptedAuthority identifies the governing source")
@@ -2103,7 +2103,7 @@ Verdict: FAIL
       }
       await evaluate!(generalUnknownAdd)
       expect(generalUnknownAdd.effect).toBe("deny")
-      expect(generalUnknownAdd.message).toContain("stage only files authored")
+      expect(generalUnknownAdd.message).toContain("exact bytes previously admitted")
 
       const unattachedWorker: any = {
         agent: "worker",
@@ -2637,28 +2637,6 @@ Verdict: FAIL
         effect: "ask",
       }
       await h.permissionHooks.get("evaluate")!(freshStage)
-      expect(freshStage.effect).toBe("deny")
-      expect(freshStage.message).toContain("loom_scope_request")
-
-      const continued = await h.call(
-        "scope_request",
-        {
-          workflowId,
-          stepId: "specifier",
-          paths: [path],
-          reason: "Continue exact legacy-admitted bytes in a fresh same-attempt Specifier session.",
-        },
-        "specifier",
-        freshSession,
-      )
-      expect(continued.error).toBeUndefined()
-      expect(continued.resolved).toBe(true)
-      expect(continued.adopted).toBe(true)
-      expect(continued.paths).toEqual([path])
-      expect(continued.sourceSessions).toEqual([childSession])
-
-      freshStage.effect = "ask"
-      await h.permissionHooks.get("evaluate")!(freshStage)
       expect(freshStage.effect).toBe("allow")
     } finally {
       h.restore()
@@ -2755,7 +2733,7 @@ Verdict: FAIL
       }
       await evaluate(deniedStage)
       expect(deniedStage.effect).toBe("deny")
-      expect(deniedStage.message).toContain("stage only files authored")
+      expect(deniedStage.message).toContain("exact bytes previously admitted")
 
       const confirmation = "Recover Git ownership for this exact Specifier file."
       await h.sessionHooks.get("context")!({
@@ -2800,7 +2778,7 @@ Verdict: FAIL
         "general",
         generalSession,
       )
-      expect(outsideScope.error).toContain("declared write scope")
+      expect(outsideScope.error).toContain("current committable Loom write scope")
 
       const recovered = await h.call(
         "git_ownership_recover",
@@ -3549,7 +3527,7 @@ Verdict: FAIL
       }
       await evaluate!(delayedStage)
       expect(delayedStage.effect).toBe("deny")
-      expect(delayedStage.message).toContain("stage only files authored")
+      expect(delayedStage.message).toContain("exact bytes previously admitted")
 
       const preExistingEdit: any = {
         agent: "worker",
@@ -3679,7 +3657,7 @@ Verdict: FAIL
       }
       await evaluate!(foreignStage)
       expect(foreignStage.effect).toBe("deny")
-      expect(foreignStage.message).toContain("changed after this task")
+      expect(foreignStage.message).toContain("changed after this step attempt")
 
       // Restore the exact content produced by the admitted Worker mutation.
       await writeFile(join(h.root, "src", "owned.ts"), "owned\n")
@@ -3694,7 +3672,7 @@ Verdict: FAIL
       }
       await evaluate!(foreignModeStage)
       expect(foreignModeStage.effect).toBe("deny")
-      expect(foreignModeStage.message).toContain("changed after this task")
+      expect(foreignModeStage.message).toContain("changed after this step attempt")
 
       await chmod(join(h.root, "src", "owned.ts"), 0o644)
 
@@ -3716,7 +3694,7 @@ Verdict: FAIL
           agent: "worker",
           input: { command: "git add src/owned.ts" },
         }),
-      ).rejects.toThrow("changed after this role/task's last admitted mutation")
+      ).rejects.toThrow("changed after this step attempt's last admitted mutation")
       await writeFile(join(h.root, "src", "owned.ts"), "owned\n")
 
       const incomplete = await h.call(
