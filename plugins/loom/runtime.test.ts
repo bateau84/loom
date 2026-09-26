@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, rename, rm, symlink, writeFile } from "node:f
 import { join } from "node:path"
 import { tmpdir } from "node:os"
 import { fileURLToPath } from "node:url"
-import { RUNTIME_STATE_VERSION, consumeDispatchGrant, createProjectStorage, createTransactionalStorage, ensureRuntimeStateVersion, findUsableDispatchGrant, importLegacyPluginStorage, issueDispatchGrant, migrateLegacySessionState, resolveRuntimeIdentity, sessionBoundToOq, sessionBoundToStep, sessionBoundToWorkflow } from "./runtime"
+import { RUNTIME_STATE_VERSION, consumeDispatchGrant, createProjectStorage, createTransactionalStorage, ensureRuntimeStateVersion, findUsableDispatchGrant, importLegacyPluginStorage, issueDispatchGrant, migrateLegacySessionState, resolveRuntimeIdentity, sessionBoundToOq, sessionBoundToStep, sessionBoundToWorkflow, tryAcquireRuntimeLocks } from "./runtime"
 
 // These identity fixtures intentionally model the pre-upgrade v1 store.
 // Schema transformation/replay is tested separately above and at the plugin boundary.
@@ -1900,6 +1900,51 @@ describe("Loom runtime identity and scoped storage", () => {
       const refusals = await raw.scan({ prefix: "installation/migration-refusal/" })
       expect(refusals.entries).toHaveLength(1)
       expect(refusals.entries[0].value).toMatchObject({ projectId: runtime.projectId })
+    })
+  })
+
+  test("installation-scoped hard-boundary locks contend across projects", async () => {
+    await withRoots(async (root) => {
+      const projectA = join(root, "external-lock-project-a")
+      const projectB = join(root, "external-lock-project-b")
+      await mkdir(projectA, { recursive: true })
+      await mkdir(projectB, { recursive: true })
+
+      const runtimeA = await resolveRuntimeIdentity(projectA, new MemoryStorage())
+      const runtimeB = await resolveRuntimeIdentity(projectB, new MemoryStorage())
+      expect(runtimeA.installationId).toBe(runtimeB.installationId)
+      expect(runtimeA.runtimeRoot).toBe(runtimeB.runtimeRoot)
+      expect(runtimeA.projectId).not.toBe(runtimeB.projectId)
+
+      const externalResource = "hard-boundary:/tmp/loom-shared-external.json"
+      const held = await tryAcquireRuntimeLocks(runtimeA, [{
+        aggregate: "file-write",
+        resourceIdentity: externalResource,
+        scope: "installation",
+      }])
+      expect("release" in held).toBe(true)
+
+      const blocked = await tryAcquireRuntimeLocks(runtimeB, [{
+        aggregate: "file-write",
+        resourceIdentity: externalResource,
+        scope: "installation",
+      }])
+      expect(blocked).toEqual({ busyResource: externalResource })
+
+      if ("release" in held) await held.release()
+
+      const projectAOnly = await tryAcquireRuntimeLocks(runtimeA, [{
+        aggregate: "file-write",
+        resourceIdentity: "src/shared.ts",
+      }])
+      const projectBOnly = await tryAcquireRuntimeLocks(runtimeB, [{
+        aggregate: "file-write",
+        resourceIdentity: "src/shared.ts",
+      }])
+      expect("release" in projectAOnly).toBe(true)
+      expect("release" in projectBOnly).toBe(true)
+      if ("release" in projectBOnly) await projectBOnly.release()
+      if ("release" in projectAOnly) await projectAOnly.release()
     })
   })
 
