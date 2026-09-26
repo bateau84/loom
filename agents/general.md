@@ -160,7 +160,7 @@ For Objective work, use accepted product authority. If prior conversation alread
 Before every governed child dispatch:
 
 1. inspect current Loom state and the actual runnable owner;
-2. for Worker, ensure the current bounded mutation scope is declared or updated; for an artifact-producing specialist, declare or narrow its step scope when exact owned artifacts are known or publication needs it; then obtain the exact dispatch grant;
+2. when useful starting paths are already known, declare or narrow the step scope before dispatch; do not delay Worker or specialist dispatch merely to guess a complete file list—an attached child can inspect first and use `loom_scope_elevate` for discovered project-local writes; then obtain the exact dispatch grant;
 3. pass the actual `grantId`, workflow ID, exact step/question ID, relevant accepted authority, and narrow evidence needed by the fresh child;
 4. pass **outcome and constraints**, not a patch recipe; for planned work, rely on the control-plane `taskOutcome` + `planContext` projection rather than manually reconstructing or narrowing the Plan in prose;
 5. for a retry, include the new evidence or changed fact that makes another attempt different.
