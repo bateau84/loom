@@ -2182,6 +2182,50 @@ Verdict: FAIL
         "specifier-scope-author",
       )
       expect(completed.error).toBeUndefined()
+
+      const reopened = await h.call(
+        "reopen",
+        {
+          workflowId,
+          stepId: "specifier",
+          reason: "new requirement evidence",
+          newEvidence: true,
+          changedHypothesis: false,
+          changedStrategy: false,
+          reducedUnresolved: false,
+        },
+        "general",
+        "specifier-scope-general",
+      )
+      expect(reopened.error).toBeUndefined()
+
+      const staleAttempt: any = {
+        agent: "specifier",
+        action: "edit",
+        resources: [write[0]],
+        sessionID: "specifier-scope-author",
+        effect: "ask",
+      }
+      await evaluate(staleAttempt)
+      expect(staleAttempt.effect).toBe("deny")
+      expect(staleAttempt.message).toContain("current Loom step attempt")
+
+      const freshGrant = await h.call(
+        "dispatch_grant",
+        { workflowId, stepId: "specifier" },
+        "general",
+        "specifier-scope-general",
+      )
+      expect(freshGrant.error).toBeUndefined()
+      const freshAttach = await h.call(
+        "attach",
+        { grantId: freshGrant.grantId, workflowId, stepId: "specifier" },
+        "specifier",
+        "specifier-scope-author-2",
+      )
+      expect(freshAttach.attached).toBe(true)
+      expect(freshAttach.attempt).toBe(1)
+      expect(freshAttach.write).toEqual(write)
     } finally {
       h.restore()
     }
