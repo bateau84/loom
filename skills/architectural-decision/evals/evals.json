@@ -29,8 +29,8 @@
       "prompt": "Make one architecture decision for configuration freshness. Accepted invariant: a query that begins after a local configuration change is observable on disk must not return a result derived from the old configuration. Filesystem notifications are available but may be dropped or delayed. Configuration is under 1 MB, local filesystem only, and the service handles about 10 queries/second. Eventual consistency is not acceptable for this invariant. Choose the freshness mechanism; the rest of the architecture is already settled.",
       "expectations": [
         "Identifies watcher-only invalidation as insufficient for the accepted correctness invariant because missed/delayed notifications can produce stale query results.",
-        "Establishes a small query-time validation/fingerprint/freshness fence as a serious minimum-sufficient option and compares it against at least one other viable realization such as watcher-assisted validation or eager reverse invalidation.",
-        "Compares viable options on correctness, query overhead, failure modes, operational complexity, stale-state detectability, and coupling before selecting.",
+        "Establishes a correctness-preserving query-time freshness fence as a serious minimum-sufficient option; a full authoritative read/parse, fingerprint validation, or equivalent query-time validation is acceptable. Compares it against at least one materially plausible alternative when one exists, and explains why eliminated alternatives cannot satisfy the invariant.",
+        "Compares materially plausible options on correctness, query overhead, failure modes, operational complexity, stale-state detectability, and coupling before selecting; it does not need to preserve an option as viable after showing that the invariant eliminates it.",
         "Chooses a mechanism that makes correctness independent of reliable notification delivery and explains the consequence of that choice.",
         "States what measurement or changed scale/config-size premise would make the selected mechanism worth reconsidering."
       ],

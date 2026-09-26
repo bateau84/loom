@@ -27,7 +27,10 @@ Specifier may resolve ordinary semantic detail inside delegated product authorit
    - Behavioral Requirement: one normative observable behavior.
    - Quality Scenario: a quality must hold measurably under a meaningful condition/stimulus.
    - Obligation Contract: independently realized parties must share semantic agreement at a correctness-sensitive seam.
-   Do not create all three for symmetry.
+   Use the artifact whose semantic role is primary:
+   - If the obligation exists specifically as a quality under a defined condition, stimulus, load, degradation, threat, or recovery situation, make the QS normative. Add a BR only when there is a distinct baseline behavior that remains meaningful independently of that scenario.
+   - If the obligation exists specifically because independently realized parties must agree at a seam, make the OC normative for that shared meaning. Add a BR only when there is a distinct system-level outcome outside the seam contract.
+   Cross-reference related artifacts instead of restating the same guarantee in multiple types. Do not create BR/QS/OC copies for symmetry or completeness.
 5. **Check semantic completeness.** Cover consequential ordering, precedence, continuation/termination, lifecycle, failure, cancellation, timeout, retry/recovery, authority, compatibility, evidence/provenance, destructive behavior, and edge combinations when applicable.
 6. **Check architecture leakage.** Ask: could materially different architectures satisfy this obligation while preserving the same meaning? If not, verify that the structural constraint is itself authoritative; otherwise rewrite the obligation or route the structural choice to Architect.
 7. **Make meaning falsifiable.** A normative claim must admit a real pass/fail observation. Avoid vague qualities, hidden defaults, ambiguous quantifiers, and requirements that can pass vacuously because the triggering state is impossible or its evidence is suppressed.

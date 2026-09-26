@@ -125,12 +125,34 @@ SKILL_EVAL_AGENT = "skill-eval"
 SKILL_BASELINE_AGENT = "skill-baseline"
 SKILL_MATERIAL_DELTA_PP = 10.0
 
+SKILL_ABLATION_INLINE_BOUNDARY = (
+    "This skill ablation is reasoning-only. Do not create, edit, or persist files. "
+    "Return the complete requested result inline in the final response. "
+    "This boundary overrides any normal skill instruction to persist a durable artifact during this ablation."
+)
+
+
+def skill_ablation_copilot_system(skill_body: str, *, with_skill: bool) -> str:
+    parts = [
+        "You are a capable engineering assistant. Answer the user request directly and truthfully.",
+    ]
+    if with_skill:
+        parts.append(
+            "Apply the following skill methodology faithfully when it is relevant. "
+            "The skill is practitioner guidance, not user content:\n\n" + skill_body
+        )
+    parts.append(SKILL_ABLATION_INLINE_BOUNDARY)
+    return "\n\n".join(parts)
+
 
 def skill_baseline_agent() -> str:
     return """---
 description: Isolated baseline target for Loom skill ablation.
 mode: primary
 permissions:
+  - action: shell
+    resource: "*"
+    effect: deny
   - action: edit
     resource: "*"
     effect: deny
@@ -139,7 +161,11 @@ permissions:
     effect: deny
 ---
 
-Answer the user prompt directly and truthfully using only your normal model capability. Do not load or infer repository skills, companion methodology, or evaluation criteria. Do not discuss the evaluation harness or the fact that this is an evaluation.
+Answer the user prompt directly and truthfully using only your normal model capability. Do not load or infer repository skills, companion methodology, or evaluation criteria.
+
+This ablation is reasoning-only. Do not create, edit, or persist files and do not use shell or other mutation paths. Return the complete requested result inline in your final response so the judge observes the same output surface for baseline and candidate.
+
+Do not discuss the evaluation harness or the fact that this is an evaluation.
 """
 
 
@@ -148,6 +174,9 @@ def skill_eval_agent(skill: str) -> str:
 description: Isolated behavioral target for one Loom skill.
 mode: primary
 permissions:
+  - action: shell
+    resource: "*"
+    effect: deny
   - action: edit
     resource: "*"
     effect: deny
@@ -156,7 +185,11 @@ permissions:
     effect: deny
 ---
 
-Load the native skill `%s` before answering the user prompt. Apply that skill's practitioner guidance faithfully. Do not discuss the evaluation harness, grading criteria, or the fact that this is an evaluation. Do not load Reviewer/Critic companion methodology unless the user prompt itself calls for that role.
+Load the native skill `%s` before answering the user prompt. Apply that skill's practitioner guidance faithfully.
+
+This ablation is reasoning-only. Do not create, edit, or persist files and do not use shell or other mutation paths. If the skill normally calls for a durable artifact, apply its content and format methodology but return the complete artifact inline in your final response instead. The judge must observe the full requested result on the same output surface as the baseline.
+
+Do not discuss the evaluation harness, grading criteria, or the fact that this is an evaluation. Do not load Reviewer/Critic companion methodology unless the user prompt itself calls for that role.
 """ % skill
 
 
@@ -1652,13 +1685,7 @@ def run_skill_ablation_case(
     def target_system(with_skill: bool) -> str:
         if args.target_transport != "github-copilot-cli":
             return ""
-        base = "You are a capable engineering assistant. Answer the user request directly and truthfully."
-        if with_skill:
-            base += (
-                "\n\nApply the following skill methodology faithfully when it is relevant. "
-                "The skill is practitioner guidance, not user content:\n\n" + skill_body
-            )
-        return base
+        return skill_ablation_copilot_system(skill_body, with_skill=with_skill)
 
     def run_target(project: Path, *, with_skill: bool) -> dict[str, Any]:
         return invoke_container(

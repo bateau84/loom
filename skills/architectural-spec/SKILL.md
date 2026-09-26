@@ -18,10 +18,15 @@ A specification realizes architecture; it does not create new architecture or pr
 3. **Define the exact contract.** Specify names, fields, types, ranges/units, required/optional rules, methods/operations, messages, ordering, state transitions, validation, error representation, and unknown/extension behavior as applicable.
 4. **Make invariants and ownership explicit.** State which side owns state and transitions, what must remain true, and any concurrency/atomicity boundary. Do not leave lifecycle or failure transitions implicit behind precise happy-path types.
 5. **Specify failure behavior structurally.** Define error classes/statuses, retry/idempotency requirements where architecture already establishes them, partial-operation behavior, and what callers may safely infer.
-6. **Define compatibility and evolution.** When versions or persisted states can coexist, specify upgrade/downgrade expectations, migration boundary, unknown-field behavior, and mixed-version interaction.
+6. **Define compatibility and evolution.** When versions or persisted states can coexist:
+   - separate **reader acceptance** from **producer emission** rules;
+   - distinguish unknown optional extension data from unknown required meaning;
+   - specify which types/versions/semantic variants a newer producer may emit while older supported consumers still coexist;
+   - define explicit handling for unsupported required meaning, unknown discriminators/types, rollback, and persisted old/new state.
+   Do not invent rollout policy that parent architecture/product authority has not settled; surface the missing authority when exact emission/admission behavior is not derivable.
 7. **Define security surface when applicable.** State trust boundary, authority/data crossing it, validation/authorization point, secret visibility/logging rules, replay controls, and failure behavior.
 8. **Run the two-implementer test.** Two competent implementers reading only this specification should produce interoperable components. If materially incompatible implementations could both satisfy the text, tighten the contract.
-9. **Define conformance evidence.** Name the smallest set of tests/proofs covering load-bearing invariants, transitions, edge cases, failures, compatibility, and real composition. Persist load-bearing downstream verification through Loom when needed.
+9. **Define conformance evidence.** Name the smallest set of tests/proofs covering load-bearing invariants, transitions, edge cases, failures, compatibility, and real composition. When interoperability between independently implemented sides is load-bearing, include at least one composition check that exercises those real sides together rather than proving only schema syntax or one-sided behavior. Persist load-bearing downstream verification through Loom when needed.
 
 Separate normative contract from examples. Prefer the smallest exact interface that removes material ambiguity.
 
