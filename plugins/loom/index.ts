@@ -9690,7 +9690,11 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           tool,
           input,
           ctx.location.directory,
-        ).filter((path) => resourcesWithinScope([path], generalScope))
+        ).filter(
+          (path) =>
+            !isAbsolute(path) &&
+            resourcesWithinScope([path], generalScope),
+        )
         if (owned.length > 0) {
           await recordGitSessionOwnership(
             ctx,
@@ -9766,7 +9770,11 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               tool,
               input,
               ctx.location.directory,
-            ).filter((path) => resourcesWithinScope([path], writeScope!))
+            ).filter(
+              (path) =>
+                !isAbsolute(path) &&
+                resourcesWithinScope([path], writeScope!),
+            )
             if (owned.length > 0) {
               await recordGitSessionOwnership(
                 ctx,
