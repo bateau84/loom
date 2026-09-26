@@ -1611,6 +1611,11 @@ class ActionAssertionTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "evidence ID mismatch"):
                 RUN_EVALS.verify_case_artifact(case, args, 1, artifact)
 
+            RUN_EVALS.write_case_artifact(case, args, 1, artifact)
+            artifact["diagnostic_note"] = "different in-memory artifact content"
+            with self.assertRaisesRegex(RuntimeError, "in-memory eval evidence ID mismatch"):
+                RUN_EVALS.verify_case_artifact(case, args, 1, artifact)
+
     def test_case_artifact_refuses_cross_run_overwrite(self):
         case = {"id": "INTEGRITY-COLLISION-01"}
         with tempfile.TemporaryDirectory() as tmp:

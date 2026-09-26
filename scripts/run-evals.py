@@ -1823,6 +1823,12 @@ def verify_case_artifact(
         )
 
     memory_id = artifact.get("artifact_evidence_id")
+    recomputed_memory_id = artifact_evidence_id(artifact)
+    if memory_id != recomputed_memory_id:
+        raise RuntimeError(
+            f"in-memory eval evidence ID mismatch for {path.name}: "
+            f"stored={memory_id!r} recomputed={recomputed_memory_id!r}"
+        )
     if durable_id != memory_id or artifact_integrity_payload(durable) != artifact_integrity_payload(artifact):
         raise RuntimeError(
             f"console/durable eval evidence mismatch for {path.name}: "
