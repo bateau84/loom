@@ -2576,6 +2576,55 @@ Verdict: FAIL
       expect(migrated.authorityId).toContain(
         `step:${encodeURIComponent(workflowId)}:specifier:0`,
       )
+
+      // Migration of a still-valid legacy ownership record also seeds the
+      // step-attempt provenance ledger, so a fresh child can continue the
+      // same pending step without user-authorized break-glass recovery.
+      const freshSession = "legacy-ownership-specifier-fresh"
+      const freshGrant = await h.call(
+        "dispatch_grant",
+        { workflowId, stepId: "specifier" },
+        "general",
+        generalSession,
+      )
+      expect((await h.call(
+        "attach",
+        { grantId: freshGrant.grantId, workflowId, stepId: "specifier" },
+        "specifier",
+        freshSession,
+      )).attached).toBe(true)
+
+      const freshStage: any = {
+        agent: "specifier",
+        action: "shell",
+        resources: [`git add ${path}`],
+        sessionID: freshSession,
+        effect: "ask",
+      }
+      await h.permissionHooks.get("evaluate")!(freshStage)
+      expect(freshStage.effect).toBe("deny")
+      expect(freshStage.message).toContain("loom_scope_request")
+
+      const continued = await h.call(
+        "scope_request",
+        {
+          workflowId,
+          stepId: "specifier",
+          paths: [path],
+          reason: "Continue exact legacy-admitted bytes in a fresh same-attempt Specifier session.",
+        },
+        "specifier",
+        freshSession,
+      )
+      expect(continued.error).toBeUndefined()
+      expect(continued.resolved).toBe(true)
+      expect(continued.adopted).toBe(true)
+      expect(continued.paths).toEqual([path])
+      expect(continued.sourceSessions).toEqual([childSession])
+
+      freshStage.effect = "ask"
+      await h.permissionHooks.get("evaluate")!(freshStage)
+      expect(freshStage.effect).toBe("allow")
     } finally {
       h.restore()
     }

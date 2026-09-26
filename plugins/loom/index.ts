@@ -476,10 +476,11 @@ async function gitSessionOwnership(
   sessionID: string,
 ): Promise<GitSessionOwnership> {
   const key = gitSessionOwnershipKey(sessionID)
-  const [authorityId, attachmentId] = await Promise.all([
-    gitSessionOwnershipAuthority(ctx, sessionID),
+  const [binding, attachmentId] = await Promise.all([
+    gitSessionOwnershipBinding(ctx, sessionID),
     ctx.storage.get(sessionAttachmentKey(sessionID)),
   ])
+  const authorityId = binding?.authorityId
   const existing = (await ctx.storage.get(key)) as
     | GitSessionOwnership
     | LegacyGitSessionOwnership
@@ -501,6 +502,21 @@ async function gitSessionOwnership(
       stagedFingerprints: { ...existing.stagedFingerprints },
     }
     await ctx.storage.set(key, migrated)
+    if (binding) {
+      const fingerprints = Object.fromEntries(
+        migrated.paths
+          .filter((path) => typeof migrated.worktreeFingerprints[path] === "string")
+          .map((path) => [path, migrated.worktreeFingerprints[path]]),
+      )
+      if (Object.keys(fingerprints).length > 0) {
+        await recordGitStepAttemptOwnedFingerprints(
+          ctx,
+          binding,
+          sessionID,
+          fingerprints,
+        )
+      }
+    }
     return migrated
   }
 
