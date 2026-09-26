@@ -344,6 +344,16 @@ def case_target_name(case: dict[str, Any]) -> str:
     return str(case.get("skill") or case["agent"])
 
 
+def requested_reasoning(args: argparse.Namespace, role: str) -> str | None:
+    override = getattr(args, f"{role}_reasoning", None)
+    common = getattr(args, "reasoning", None)
+    return override if override is not None else common
+
+
+def reasoning_label(value: str | None) -> str:
+    return value if value else "provider-default"
+
+
 def case_selectors(case: dict[str, Any]) -> set[str]:
     selectors = {str(case["id"])}
     if case.get("_skill_owned"):
@@ -969,6 +979,7 @@ def invoke_container(
     extra_envs: list[str],
     skill: str | None = None,
     network: str | None = None,
+    reasoning: str | None = None,
 ) -> dict[str, Any]:
     node_modules = prepare_node_modules_mount(
         project,
@@ -1010,6 +1021,8 @@ def invoke_container(
             ]
             if network:
                 command += ["--network", network]
+            if reasoning:
+                command += ["--reasoning", reasoning]
             if agent:
                 command += ["--agent", agent]
             if skill:
@@ -1635,6 +1648,8 @@ def run_skill_ablation_case(
         else None
     )
     judge_model = args.judge_model or args.model
+    target_reasoning = requested_reasoning(args, "target")
+    judge_reasoning = requested_reasoning(args, "judge")
     if args.judge_transport != args.target_transport and not args.judge_model:
         raise RuntimeError("--judge-model is required when target and judge transports differ")
 
@@ -1666,7 +1681,9 @@ def run_skill_ablation_case(
         "target_transport": args.target_transport,
         "judge_transport": args.judge_transport,
         "model": args.model,
+        "reasoning": reasoning_label(target_reasoning),
         "judge_model": judge_model,
+        "judge_reasoning": reasoning_label(judge_reasoning),
         "classification": "non-evidence",
         "passed": False,
         "baseline": {},
@@ -1710,6 +1727,7 @@ def run_skill_ablation_case(
             extra_envs=args.env,
             skill=skill if with_skill and args.target_transport == "opencode" else None,
             network=args.network,
+            reasoning=target_reasoning,
         )
 
     def run_judge(target: dict[str, Any]) -> tuple[dict[str, Any] | None, dict[str, Any] | None, str | None]:
@@ -1735,6 +1753,7 @@ def run_skill_ablation_case(
             extra_envs=args.env,
             skill=None,
             network=args.network,
+            reasoning=judge_reasoning,
         )
         error = transport_error(result)
         if error:
@@ -1964,6 +1983,8 @@ def run_case(
         else None
     )
     judge_model = args.judge_model or args.model
+    target_reasoning = requested_reasoning(args, "target")
+    judge_reasoning = requested_reasoning(args, "judge")
 
     if args.judge_transport != args.target_transport and not args.judge_model:
         raise RuntimeError("--judge-model is required when target and judge transports differ")
@@ -2034,6 +2055,7 @@ def run_case(
                 else None
             ),
             network=args.network,
+            reasoning=target_reasoning,
         )
         target_seconds = time.perf_counter() - target_started
         target_error = transport_error(target)
@@ -2093,6 +2115,7 @@ def run_case(
                 extra_envs=args.env,
                 skill=None,
                 network=args.network,
+                reasoning=judge_reasoning,
             )
             judge_seconds = time.perf_counter() - judge_started
             judge_error = transport_error(judge_result)
@@ -2132,7 +2155,9 @@ def run_case(
             "target_transport": args.target_transport,
             "judge_transport": args.judge_transport,
             "model": args.model,
+            "reasoning": reasoning_label(target_reasoning),
             "judge_model": judge_model,
+            "judge_reasoning": reasoning_label(judge_reasoning),
             "timing": {
                 "target_seconds": round(target_seconds, 3),
                 "judge_seconds": round(judge_seconds, 3),
@@ -2212,6 +2237,21 @@ def main() -> int:
     parser.add_argument("--target", default="", help="Comma-separated agent/skill target names.")
     parser.add_argument("--model")
     parser.add_argument("--judge-model")
+    parser.add_argument(
+        "--reasoning",
+        metavar="LEVEL",
+        help="Reasoning level for both target and judge. Omit to use each transport/provider default.",
+    )
+    parser.add_argument(
+        "--target-reasoning",
+        metavar="LEVEL",
+        help="Override --reasoning for target invocations.",
+    )
+    parser.add_argument(
+        "--judge-reasoning",
+        metavar="LEVEL",
+        help="Override --reasoning for judge invocations.",
+    )
     parser.add_argument("--target-transport", choices=("opencode", "github-copilot-cli"), default="opencode")
     parser.add_argument("--judge-transport", choices=("opencode", "github-copilot-cli"), default="opencode")
     parser.add_argument("--engine", choices=("auto", "podman", "docker"), default="auto")

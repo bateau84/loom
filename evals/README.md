@@ -236,6 +236,18 @@ Central native skill-routing cases still require `--target-transport opencode` b
 
 Each skill-owned case therefore makes four model calls per iteration: baseline target, baseline judge, candidate target, and candidate judge.
 
+Reasoning effort is part of benchmark provenance. Use `--reasoning LEVEL` to pin the same explicit level for target and judge, or `--target-reasoning` / `--judge-reasoning` to override either side. Loom forwards the requested level to the eval runner, which maps it to the transport-native control (OpenCode model variant or Copilot reasoning effort). If no reasoning flag is supplied, Loom sends no override and records `provider-default` in the artifact rather than inferring the provider's current default. Skill-ablation baseline and candidate always share the same resolved target reasoning level.
+
+Example:
+
+```bash
+bun run eval:live -- \
+  --cases Design-01,Design-02 \
+  --model openai/gpt-5.6-luna \
+  --judge-model openai/gpt-5.6-luna \
+  --reasoning medium
+```
+
 The harness chooses Podman first, then Docker. Override it explicitly with `--engine podman` or `--engine docker`. For rootless Podman on SELinux hosts, Loom disables container SELinux labeling for the eval container rather than relabeling your repository or credential files.
 
 The harness pins the runner images by digest so the Action source and container runtime cannot drift independently:

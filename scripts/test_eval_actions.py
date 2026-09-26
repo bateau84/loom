@@ -927,6 +927,88 @@ class ActionAssertionTests(unittest.TestCase):
         self.assertIn("--network", command)
         self.assertEqual(command[command.index("--network") + 1], "host")
 
+    def test_invoke_container_forwards_explicit_reasoning(self):
+        class Result:
+            returncode = 0
+            stdout = '{"exit_code":0,"text":"ok","tools":[],"actions":[]}'
+            stderr = ""
+
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            with patch.object(RUN_EVALS.shutil, "which", return_value=None), \
+                 patch.object(RUN_EVALS.subprocess, "run", return_value=Result()) as run:
+                RUN_EVALS.invoke_container(
+                    engine="podman",
+                    image="test-image",
+                    transport="opencode",
+                    model="openai/test",
+                    agent="general",
+                    prompt="test",
+                    system="",
+                    project=project,
+                    auth=None,
+                    config=None,
+                    models_catalog=None,
+                    database_seed=None,
+                    config_root=None,
+                    expected_plugin=None,
+                    timeout=30,
+                    container_timeout=60,
+                    mount_node_modules=False,
+                    workspace_mode="ro",
+                    extra_envs=[],
+                    reasoning="high",
+                )
+
+        command = run.call_args.args[0]
+        self.assertIn("--reasoning", command)
+        self.assertEqual(command[command.index("--reasoning") + 1], "high")
+
+    def test_invoke_container_omits_reasoning_for_provider_default(self):
+        class Result:
+            returncode = 0
+            stdout = '{"exit_code":0,"text":"ok","tools":[],"actions":[]}'
+            stderr = ""
+
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            with patch.object(RUN_EVALS.shutil, "which", return_value=None), \
+                 patch.object(RUN_EVALS.subprocess, "run", return_value=Result()) as run:
+                RUN_EVALS.invoke_container(
+                    engine="podman",
+                    image="test-image",
+                    transport="opencode",
+                    model="openai/test",
+                    agent="general",
+                    prompt="test",
+                    system="",
+                    project=project,
+                    auth=None,
+                    config=None,
+                    models_catalog=None,
+                    database_seed=None,
+                    config_root=None,
+                    expected_plugin=None,
+                    timeout=30,
+                    container_timeout=60,
+                    mount_node_modules=False,
+                    workspace_mode="ro",
+                    extra_envs=[],
+                )
+
+        self.assertNotIn("--reasoning", run.call_args.args[0])
+
+    def test_reasoning_resolution_supports_common_and_role_overrides(self):
+        args = argparse.Namespace(reasoning="medium", target_reasoning=None, judge_reasoning=None)
+        self.assertEqual(RUN_EVALS.requested_reasoning(args, "target"), "medium")
+        self.assertEqual(RUN_EVALS.requested_reasoning(args, "judge"), "medium")
+
+        args.target_reasoning = "low"
+        args.judge_reasoning = "high"
+        self.assertEqual(RUN_EVALS.requested_reasoning(args, "target"), "low")
+        self.assertEqual(RUN_EVALS.requested_reasoning(args, "judge"), "high")
+        self.assertEqual(RUN_EVALS.reasoning_label(None), "provider-default")
+
     def test_invoke_container_leaves_network_default_when_unset(self):
         class Result:
             returncode = 0
