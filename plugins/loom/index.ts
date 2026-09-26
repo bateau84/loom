@@ -6355,34 +6355,29 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               throw new Error("Step write scope cannot change after the step has finished.")
             }
 
-            let roleWriteCeiling: string[] | undefined
-            if (step.agent === "worker") {
-              if (step.task) {
-                throw new Error("Planned task scope is immutable; reopen the planning step to change it.")
-              }
-              validateWriteScope(value.write)
-            } else {
-              roleWriteCeiling = artifactWriteCeilings[step.agent]
-              if (!roleWriteCeiling) {
-                throw new Error(
-                  `Step ${value.stepId} (${step.agent}) has no repository artifact write capability.`,
-                )
-              }
-              validateStepWriteScope(
-                value.write,
-                roleWriteCeiling,
-                `${step.agent} step write scope`,
+            if (step.agent === "worker" && step.task) {
+              throw new Error(
+                "Planned Task write scope is the starting expectation from the accepted Plan. " +
+                "Do not rewrite the Plan to follow implementation discovery; let the attached Worker call loom_scope_elevate instead.",
               )
             }
+            validateScopeElevation(value.write)
+            const roleWriteDefault = artifactWriteCeilings[step.agent]
+            const previous = (await ctx.storage.get(
+              scopeKey(value.workflowId, value.stepId),
+            )) as TaskScope | undefined
 
             const scope: TaskScope = {
               workflowId: value.workflowId,
               stepId: value.stepId,
-              write: value.write,
+              write: [...new Set(value.write)].sort(),
+              ...(previous?.elevations?.length
+                ? { elevations: previous.elevations }
+                : {}),
             }
             await ctx.storage.set(scopeKey(value.workflowId, value.stepId), scope)
             await bumpWorkflowRevisionLocked(ctx, runtime, value.workflowId)
-            return { current, step, scope, roleWriteCeiling }
+            return { current, step, scope, roleWriteDefault }
           },
           )
 
@@ -6390,16 +6385,16 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             content: renderToolOutput({
               scope: result.scope,
               agent: result.step.agent,
-              ...(result.roleWriteCeiling
-                ? { roleWriteCeiling: result.roleWriteCeiling }
+              ...(result.roleWriteDefault
+                ? { roleWriteDefault: result.roleWriteDefault }
                 : {}),
               ...(result.current.request ? { acceptedOutcome: result.current.request } : {}),
               acceptedAuthority: result.current.anchor,
-              scopeSemantics: "mutation-boundary-only",
+              scopeSemantics: "starting-expectation-with-runtime-elevation",
               scopeNote:
-                result.step.agent === "worker"
-                  ? "The write list limits Worker mutation only. Delegate acceptedOutcome separately when present; acceptedAuthority identifies the governing source. Worker owns read-only discovery of load-bearing consumers/enforcement/tests and must request scope extension before any additional write."
-                  : "The write list narrows this attached producer step inside its existing role-owned artifact surface. It never grants a new artifact class or transfers authority to another role.",
+                "The write list is General's current expected mutation surface, not a claim that every required file is known up front. " +
+                "The attached agent may call loom_scope_elevate when implementation/discovery reveals additional project-local paths; each elevation is recorded. " +
+                "Hard-boundary elevation returns continue=false and requires an explicit one-time user decision before work may resume.",
             }),
           }
         } catch (error) {
@@ -6421,7 +6416,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       addLoomTool({
         name: "step_scope",
         description:
-          "Declare or narrow the bounded writable artifact surface for one pending workflow step. General only. Worker scopes remain implementation-only; specialist scopes cannot exceed that role's artifact authority.",
+          "Declare or narrow General's bounded starting write expectation for one pending workflow step. General only. This need not predict every file the child will discover; attached agents may expand project-local scope with loom_scope_elevate and Loom records every elevation.",
         input: stepWriteScopeInput,
         options: { namespace: "loom", codemode: false },
         execute: setStepWriteScope,
@@ -6430,7 +6425,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       addLoomTool({
         name: "task_scope",
         description:
-          "Compatibility alias for loom_step_scope. Worker still requires an explicit scope before dispatch; artifact-producing specialist steps may also be narrowed without handing their work to Worker.",
+          "Compatibility alias for loom_step_scope. The declared write list is a starting expectation; attached agents may expand it at runtime with loom_scope_elevate.",
         input: stepWriteScopeInput,
         options: { namespace: "loom", codemode: false },
         execute: setStepWriteScope,
@@ -6439,7 +6434,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       addLoomTool({
         name: "dispatch_grant",
         description:
-          "Issue one short-lived, single-use attachment grant for an exact runnable workflow step or unanswered OQ. General only; Worker steps require a declared write scope first. Artifact-producing specialist steps may carry an optional narrower step scope inside their role ceiling. Pass the returned grantId to the child session.",
+          "Issue one short-lived, single-use attachment grant for an exact runnable workflow step or unanswered OQ. General only. A Worker may be dispatched without a predeclared file list so it can inspect first and call loom_scope_elevate when it discovers the actual mutation surface. Pass the returned grantId to the child session.",
         input: {
           type: "object",
           properties: {
@@ -6512,14 +6507,6 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                   throw new Error("Step is no longer runnable.")
                 }
                 if (step.agent === "worker") {
-                  const scope = (await ctx.storage.get(
-                    scopeKey(value.workflowId, value.stepId),
-                  )) as TaskScope | undefined
-                  if (!scope) {
-                    throw new Error(
-                      `Worker step ${value.stepId} has no declared write scope. Call loom_task_scope first.`,
-                    )
-                  }
                   if (current.work && step.task) {
                     const work = await readWork(ctx, current.work.objectiveId)
                     const taskIds = plannedTaskSteps(current).map((taskStep) => taskStep.task!.id)
@@ -6771,8 +6758,6 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 )) as TaskScope | undefined
 
                 if (tool.agent === "worker") {
-                  if (!scope) throw new Error("Worker step has no declared task scope.")
-
                   if (step.task && workflow.work && work) {
                     const taskIds = plannedTaskSteps(workflow).map((taskStep) => taskStep.task!.id)
                     const currentFingerprint = workflowTaskSemanticFingerprint(
@@ -6945,10 +6930,10 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 write: scope.write,
                 scopeSemantics: "mutation-boundary-only",
                 scopeNote: taskOutcome
-                  ? "Write scope limits mutation only; taskOutcome is the bounded completion target. planContext preserves the parent goal, accepted authority, constraints, acceptance criteria, integration, dependencies, risks, and downstream acceptance context. Prove the Task end to end. If exact current in-scope bytes were admitted by an earlier session on this same step attempt, call loom_scope_request; return any actual write-scope extension to General."
+                  ? "The attached write scope is the current mutation surface, not a prediction that every needed file is already known. taskOutcome is the bounded completion target and planContext preserves the parent goal, accepted authority, constraints, acceptance criteria, integration, dependencies, risks, and downstream acceptance context. Discover freely; call loom_scope_elevate before mutating additional project-local paths. Same-attempt admitted bytes are automatically commit-authorized across redispatch."
                   : acceptedOutcome
-                    ? "Write scope limits mutation only; acceptedOutcome is the bounded completion target and acceptedAuthority is its governing source. Prove the outcome with read-only discovery beyond the write list. If exact current in-scope bytes were admitted by an earlier session on this same step attempt, call loom_scope_request; return any actual write-scope extension to General."
-                    : "Write scope limits mutation only; acceptedAuthority identifies the governing source. Read that authority as needed and prove the assigned outcome beyond the write list. If exact current in-scope bytes were admitted by an earlier session on this same step attempt, call loom_scope_request; return any actual write-scope extension to General.",
+                    ? "The attached write scope is the current mutation surface, not a prediction that every needed file is already known. acceptedOutcome is the bounded completion target and acceptedAuthority is its governing source. Discover freely; call loom_scope_elevate before mutating additional project-local paths. Same-attempt admitted bytes are automatically commit-authorized across redispatch."
+                    : "The attached write scope is the current mutation surface, not a prediction that every needed file is already known. acceptedAuthority identifies the governing source. Discover freely; call loom_scope_elevate before mutating additional project-local paths. Same-attempt admitted bytes are automatically commit-authorized across redispatch.",
               } : {}),
               ...(task ? { task } : {}),
               ...(producerSkills ? { producerSkills } : {}),
