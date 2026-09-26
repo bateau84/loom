@@ -927,17 +927,17 @@ class ActionAssertionTests(unittest.TestCase):
         self.assertIn("--network", command)
         self.assertEqual(command[command.index("--network") + 1], "host")
 
-    def test_invoke_container_forwards_explicit_reasoning(self):
+    def test_fallback_container_forwards_explicit_reasoning_env(self):
         class Result:
             returncode = 0
-            stdout = '{"exit_code":0,"text":"ok","tools":[],"actions":[]}'
+            stdout = '{"exit_code":0,"text":"ok","tools":[],"actions":[],"reasoning":"high","reasoning_source":"explicit"}'
             stderr = ""
 
         with tempfile.TemporaryDirectory() as tmp:
             project = Path(tmp)
             with patch.object(RUN_EVALS.shutil, "which", return_value=None), \
                  patch.object(RUN_EVALS.subprocess, "run", return_value=Result()) as run:
-                RUN_EVALS.invoke_container(
+                result = RUN_EVALS.invoke_container(
                     engine="podman",
                     image="test-image",
                     transport="opencode",
@@ -961,8 +961,18 @@ class ActionAssertionTests(unittest.TestCase):
                 )
 
         command = run.call_args.args[0]
-        self.assertIn("--reasoning", command)
-        self.assertEqual(command[command.index("--reasoning") + 1], "high")
+        rendered = " ".join(command)
+        self.assertIn("--env EVAL_REASONING=high", rendered)
+        self.assertNotIn("--reasoning", command)
+        self.assertFalse(result.get("infrastructure_error", False))
+
+    def test_explicit_reasoning_fails_closed_when_transport_does_not_confirm_it(self):
+        result = RUN_EVALS.enforce_reasoning_contract(
+            {"exit_code": 0, "text": "ok", "stderr": ""},
+            "high",
+        )
+        self.assertTrue(result["infrastructure_error"])
+        self.assertIn("reasoning control mismatch", result["stderr"])
 
     def test_invoke_container_omits_reasoning_for_provider_default(self):
         class Result:
@@ -996,7 +1006,7 @@ class ActionAssertionTests(unittest.TestCase):
                     extra_envs=[],
                 )
 
-        self.assertNotIn("--reasoning", run.call_args.args[0])
+        self.assertIn("--env EVAL_REASONING=", " ".join(run.call_args.args[0]))
 
     def test_reasoning_resolution_supports_common_and_role_overrides(self):
         args = argparse.Namespace(reasoning="medium", target_reasoning=None, judge_reasoning=None)
@@ -1102,6 +1112,65 @@ class ActionAssertionTests(unittest.TestCase):
         self.assertEqual(result["exit_code"], 0)
         self.assertIn("--expected-plugin", seen)
         self.assertEqual(seen[seen.index("--expected-plugin") + 1], "loom")
+
+    def test_eval_runner_cli_receives_explicit_reasoning(self):
+        class Result:
+            returncode = 0
+            stdout = ""
+            stderr = ""
+
+        seen: list[str] = []
+
+        def fake_run(command, **kwargs):
+            seen.extend(command)
+            output = Path(command[command.index("--output") + 1])
+            output.write_text(
+                json.dumps({
+                    "exit_code": 0,
+                    "text": "ok",
+                    "tools": [],
+                    "actions": [],
+                    "skills_loaded": [],
+                    "reasoning": "high",
+                    "reasoning_source": "explicit",
+                }),
+                encoding="utf-8",
+            )
+            return Result()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            with patch.object(
+                RUN_EVALS.shutil,
+                "which",
+                side_effect=lambda name: "/usr/bin/opencode-eval-runner" if name == "opencode-eval-runner" else None,
+            ), patch.object(RUN_EVALS.subprocess, "run", side_effect=fake_run):
+                result = RUN_EVALS.invoke_container(
+                    engine="podman",
+                    image="test-image",
+                    transport="opencode",
+                    model="openai/test",
+                    agent="general",
+                    prompt="test",
+                    system="",
+                    project=project,
+                    auth=None,
+                    config=None,
+                    models_catalog=None,
+                    database_seed=None,
+                    config_root=None,
+                    expected_plugin=None,
+                    timeout=30,
+                    container_timeout=60,
+                    mount_node_modules=False,
+                    workspace_mode="ro",
+                    extra_envs=[],
+                    reasoning="high",
+                )
+
+        self.assertIn("--reasoning", seen)
+        self.assertEqual(seen[seen.index("--reasoning") + 1], "high")
+        self.assertFalse(result.get("infrastructure_error", False))
 
     def test_eval_runner_cli_receives_explicit_network_mode(self):
         class Result:

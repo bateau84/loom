@@ -918,6 +918,36 @@ def prepare_transport_result(result: dict[str, Any], secrets: list[str]) -> dict
     }
 
 
+def enforce_reasoning_contract(
+    result: dict[str, Any],
+    requested: str | None,
+) -> dict[str, Any]:
+    if not requested:
+        return result
+    if (
+        result.get("reasoning") == requested
+        and result.get("reasoning_source") == "explicit"
+    ):
+        return result
+
+    observed = result.get("reasoning", "<missing>")
+    source = result.get("reasoning_source", "<missing>")
+    detail = (
+        "reasoning control mismatch: requested "
+        + repr(requested)
+        + ", transport reported reasoning="
+        + repr(observed)
+        + ", reasoning_source="
+        + repr(source)
+    )
+    prior = str(result.get("stderr") or "").strip()
+    return {
+        **result,
+        "infrastructure_error": True,
+        "stderr": detail + (("\n" + prior) if prior else ""),
+    }
+
+
 def prepare_node_modules_mount(project: Path, source: Path | None) -> Path | None:
     if source is None:
         return None
@@ -1091,7 +1121,10 @@ def invoke_container(
                     "stdout": redacted_prefix(proc.stdout, secrets, 100000),
                     "infrastructure_error": True,
                 }, secrets)
-            return prepare_transport_result(result, secrets)
+            return enforce_reasoning_contract(
+                prepare_transport_result(result, secrets),
+                reasoning,
+            )
 
     with tempfile.TemporaryDirectory(prefix="loom-eval-invoke-") as tmp:
         root = Path(tmp)
@@ -1154,6 +1187,8 @@ def invoke_container(
             "--env",
             f"EVAL_MODEL={model}",
             "--env",
+            f"EVAL_REASONING={reasoning or ''}",
+            "--env",
             f"EVAL_AGENT={agent}",
             "--env",
             f"EVAL_SKILL={skill or ''}",
@@ -1209,7 +1244,10 @@ def invoke_container(
                 "stdout": "",
                 "infrastructure_error": True,
             }, secrets)
-        return prepare_transport_result(result, secrets)
+        return enforce_reasoning_contract(
+            prepare_transport_result(result, secrets),
+            reasoning,
+        )
 
 
 def normalize_tool(value: str) -> str:
