@@ -103,6 +103,7 @@ export function committableWriteScope(paths: readonly string[]) {
 }
 
 export function validateWriteScope(paths: string[]) {
+  if (paths.length === 0) return paths
   validateBoundedWriteScope(paths, "Worker write scope")
 
   for (const raw of paths) {
