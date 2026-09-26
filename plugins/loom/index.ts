@@ -1426,9 +1426,8 @@ async function boundaryAuthorizationCoversResources(
       return false
     }
 
-    if (detail.kind === "symlink-escape") {
+    if (detail.resolvedExistingTarget) {
       if (
-        !detail.resolvedExistingTarget ||
         !("resolvedExistingTarget" in current) ||
         !current.resolvedExistingTarget ||
         !resolvedTargetWithinApprovedRoot(
