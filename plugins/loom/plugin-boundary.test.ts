@@ -2393,9 +2393,10 @@ Verdict: FAIL
       )).error).toBeUndefined()
 
       const path = "docs/requirements/lifecycle/br-050.md"
+      const secondPath = "docs/requirements/lifecycle/oc-025.md"
       expect((await h.call(
         "step_scope",
-        { workflowId, stepId: "specifier", write: [path] },
+        { workflowId, stepId: "specifier", write: [path, secondPath] },
         "general",
         generalSession,
       )).error).toBeUndefined()
@@ -2466,6 +2467,39 @@ Verdict: FAIL
       })
 
       const before = await readFile(join(h.root, path), "utf8")
+
+      const wrongConfirmation = await h.call(
+        "git_ownership_recover",
+        {
+          workflowId,
+          stepId: "specifier",
+          targetSessionId: childSession,
+          paths: [path],
+          reason: "Wrong confirmation must fail.",
+          confirmation: "not the user's message",
+        },
+        "general",
+        generalSession,
+      )
+      expect(wrongConfirmation.error).toContain("must match the latest observed user message exactly")
+
+      const outsidePath = "docs/requirements/lifecycle/outside.md"
+      await writeFile(join(h.root, outsidePath), "outside\n")
+      const outsideScope = await h.call(
+        "git_ownership_recover",
+        {
+          workflowId,
+          stepId: "specifier",
+          targetSessionId: childSession,
+          paths: [outsidePath],
+          reason: "Scope escape must fail.",
+          confirmation,
+        },
+        "general",
+        generalSession,
+      )
+      expect(outsideScope.error).toContain("declared write scope")
+
       const recovered = await h.call(
         "git_ownership_recover",
         {
@@ -2513,6 +2547,22 @@ Verdict: FAIL
       expect(replay.error).toBeUndefined()
       expect(replay.reusedAuthorization).toBe(true)
 
+      await writeFile(join(h.root, secondPath), "second-owned\n")
+      const differentRequest = await h.call(
+        "git_ownership_recover",
+        {
+          workflowId,
+          stepId: "specifier",
+          targetSessionId: childSession,
+          paths: [secondPath],
+          reason: "One user message must not authorize a different recovery.",
+          confirmation,
+        },
+        "general",
+        generalSession,
+      )
+      expect(differentRequest.error).toContain("already used for a different Git ownership recovery")
+
       await writeFile(join(h.root, path), "changed-after-recovery\n")
       const changedReplay = await h.call(
         "git_ownership_recover",
@@ -2528,6 +2578,23 @@ Verdict: FAIL
         generalSession,
       )
       expect(changedReplay.error).toContain("changed after this user authorization")
+
+      await writeFile(join(h.root, path), "owned\n")
+      await git(h.root, ["add", path])
+      const stagedRecovery = await h.call(
+        "git_ownership_recover",
+        {
+          workflowId,
+          stepId: "specifier",
+          targetSessionId: childSession,
+          paths: [path],
+          reason: "Already-staged paths must not be adopted.",
+          confirmation,
+        },
+        "general",
+        generalSession,
+      )
+      expect(stagedRecovery.error).toContain("refuses already-staged paths")
     } finally {
       h.restore()
     }
