@@ -2261,6 +2261,23 @@ Verdict: FAIL
       await evaluate(priorAttemptStage)
       expect(priorAttemptStage.effect).toBe("deny")
       expect(priorAttemptStage.message).toContain("stage only files authored")
+
+      // Prior-attempt provenance must not become adoptable merely because the
+      // same file is dirty again in the reopened step.
+      await writeFile(join(h.root, write[0]), "dirty-in-attempt-1\n")
+      const priorAttemptAdoption = await h.call(
+        "git_ownership_adopt",
+        {
+          workflowId,
+          stepId: "specifier",
+          paths: [write[0]],
+        },
+        "specifier",
+        "specifier-scope-author",
+      )
+      expect(priorAttemptAdoption.error).toContain(
+        "No admitted same-attempt Git provenance exists",
+      )
     } finally {
       h.restore()
     }
@@ -2398,6 +2415,20 @@ Verdict: FAIL
       }
       await evaluate(allowedAfterAdoption)
       expect(allowedAfterAdoption.effect).toBe("allow")
+
+      await git(h.root, ["add", write[0]])
+      const stagedAdoption = await h.call(
+        "git_ownership_adopt",
+        {
+          workflowId,
+          stepId: "specifier",
+          paths: [write[0]],
+        },
+        "specifier",
+        freshSession,
+      )
+      expect(stagedAdoption.error).toContain("refuses already-staged paths")
+      await git(h.root, ["reset", "--", write[0]])
 
       const changed = await h.call(
         "git_ownership_adopt",

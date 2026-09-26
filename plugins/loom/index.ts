@@ -7057,7 +7057,8 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               if (missing.length > 0) {
                 throw new Error(
                   "No admitted same-attempt Git provenance exists for: " +
-                    missing.join(", "),
+                    missing.join(", ") +
+                    ". If these are stranded pre-fix bytes after a guard/runtime defect, ask General to use loom_git_ownership_recover with explicit user authorization.",
                 )
               }
 
