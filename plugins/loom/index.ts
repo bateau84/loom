@@ -9182,15 +9182,6 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       const runnableStep = grantedTarget.kind === "step" ? grantedTarget.step : undefined
       const openQuestion = grantedTarget.kind === "question" ? grantedTarget.question : undefined
 
-      if (target === "worker" && runnableStep) {
-        const scope = (await ctx.storage.get(scopeKey(workflow.id, runnableStep.id))) as TaskScope | undefined
-        if (!scope) {
-          event.effect = "deny"
-          event.message = `Worker step ${runnableStep.id} has no declared write scope. Call loom_task_scope first.`
-          return
-        }
-      }
-
       const dispatchID = [
         event.sessionID,
         event.source?.messageID ?? "message",
