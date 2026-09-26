@@ -3552,6 +3552,18 @@ Verdict: FAIL
         h.toolHooks.get("execute.before")!(racedEditEvent),
       ).rejects.toThrow("outside the current Loom write scope")
 
+      const staleStageEvent = {
+        tool: "shell",
+        callID: "specifier-narrow-stale-stage",
+        messageID: "specifier-narrow-stale-stage-message",
+        sessionID: "specifier-narrow-author",
+        agent: "specifier",
+        input: { command: `git add ${earlier}` },
+      }
+      await expect(
+        h.toolHooks.get("execute.before")!(staleStageEvent),
+      ).rejects.toThrow("outside the current committable Loom write scope")
+
       const completed = await h.call(
         "complete",
         { workflowId, stepId: "specifier", summary: "specifier work complete" },
