@@ -1242,6 +1242,30 @@ async function classifyScopeTarget(projectDirectory: string, raw: string) {
     }
   }
 
+  const normalizedRealRelative = realRelative.replaceAll("\\", "/")
+  if (
+    normalizedRealRelative === ".git" ||
+    normalizedRealRelative.startsWith(".git/")
+  ) {
+    return {
+      kind: "hard-boundary" as const,
+      path: absolute.replaceAll("\\", "/"),
+      reason: "repository-internal-state",
+      resolvedExistingTarget: realExistingTarget.replaceAll("\\", "/"),
+    }
+  }
+  if (
+    normalizedRealRelative === ".loom" ||
+    normalizedRealRelative.startsWith(".loom/")
+  ) {
+    return {
+      kind: "hard-boundary" as const,
+      path: absolute.replaceAll("\\", "/"),
+      reason: "loom-internal-state",
+      resolvedExistingTarget: realExistingTarget.replaceAll("\\", "/"),
+    }
+  }
+
   return { kind: "project" as const, path }
 }
 
@@ -1263,10 +1287,10 @@ export function scopeBoundaryQuestionInput(target: {
         return `${detail.path} (symlink escape; existing path resolves outside the project${detail.resolvedExistingTarget ? ` via ${detail.resolvedExistingTarget}` : ""})`
       }
       if (detail.kind === "repository-internal-state") {
-        return `${detail.path} (repository-internal .git state)`
+        return `${detail.path} (repository-internal .git state${detail.resolvedExistingTarget ? ` via ${detail.resolvedExistingTarget}` : ""})`
       }
       if (detail.kind === "loom-internal-state") {
-        return `${detail.path} (Loom internal project state)`
+        return `${detail.path} (Loom internal project state${detail.resolvedExistingTarget ? ` via ${detail.resolvedExistingTarget}` : ""})`
       }
       return `${detail.path} (outside the current project)`
     })
