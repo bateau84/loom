@@ -124,9 +124,10 @@ export function validateTaskPlan(inputs: TaskSpec[]) {
   const ids = tasks.map((task) => task.id)
   if (new Set(ids).size !== ids.length) throw new Error("Task ids must be unique.")
 
-  // Dependency validation remains semantic. Overlapping write scopes are
-  // allowed because task scope is authorization, not an exclusive file claim.
-  // Runtime file-write locks serialize actual mutations.
+  // Dependency validation remains semantic. Planned write paths are the
+  // Worker's starting expectation, not a prediction of the full mutation set
+  // and not an exclusive file claim. Runtime loom_scope_elevate records
+  // discovered additions; file-write locks serialize actual mutations.
   transitiveDependencies(tasks)
 
   return tasks
