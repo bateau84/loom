@@ -2283,8 +2283,34 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         }
       }
 
+      let writeScope: string[] =
+        raw.agent === "general"
+          ? generalGitWriteScope
+          : (artifactWriteDefaults[String(raw.agent ?? "")] ?? [])
+      const workflowId = (await ctx.storage.get(
+        sessionKey(String(raw.sessionID)),
+      )) as string | undefined
+      const stepId = (await ctx.storage.get(
+        sessionStepKey(String(raw.sessionID)),
+      )) as string | undefined
+      if (workflowId && stepId && raw.agent !== "general") {
+        const scope = (await ctx.storage.get(
+          scopeKey(workflowId, stepId),
+        )) as TaskScope | undefined
+        if (scope?.write.length) writeScope = scope.write
+      }
+      writeScope = committableWriteScope(writeScope)
+
       const addTargets = scopedGitAddTargets(command) ?? []
       if (addTargets.length > 0) {
+        if (
+          writeScope.length === 0 ||
+          !resourcesWithinScope(addTargets, writeScope)
+        ) {
+          throw new Error(
+            "Git staging denied: targets are outside the current committable Loom write scope. Re-elevate the needed project-local path before staging.",
+          )
+        }
         const stage = await resolveGitStagingOwnership(
           ctx,
           String(raw.sessionID),
@@ -2306,26 +2332,11 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       }
 
       if (!isAllowedGitCommit(command)) return
-
-      let writeScope: string[] | undefined =
-        raw.agent === "general"
-          ? generalGitWriteScope
-          : (artifactWriteDefaults[String(raw.agent ?? "")] ?? [])
-      const workflowId = (await ctx.storage.get(
-        sessionKey(String(raw.sessionID)),
-      )) as string | undefined
-      const stepId = (await ctx.storage.get(
-        sessionStepKey(String(raw.sessionID)),
-      )) as string | undefined
-      if (workflowId && stepId && raw.agent !== "general") {
-        const scope = (await ctx.storage.get(
-          scopeKey(workflowId, stepId),
-        )) as TaskScope | undefined
-        if (scope?.write.length) writeScope = scope.write
+      if (!writeScope.length) {
+        throw new Error(
+          "Git commit denied: the current step has no committable Loom write scope.",
+        )
       }
-
-      writeScope = committableWriteScope(writeScope ?? [])
-      if (!writeScope.length) return
       const error = await commitScopeError(
         ctx,
         String(raw.sessionID),
