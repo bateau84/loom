@@ -1276,7 +1276,15 @@ async function useScopeBoundaryAuthorization(
   resources: readonly string[],
 ) {
   const binding = await gitSessionOwnershipBinding(ctx, sessionID)
-  if (!binding) return false
+  if (
+    !binding ||
+    !(await exactRunnableStepAttemptBinding(
+      ctx,
+      sessionID,
+      binding.workflowId,
+      binding.stepId,
+    ))
+  ) return false
 
   const canonical = resources.map((resource) =>
     resolve(projectDirectory, resource).replaceAll("\\", "/"),
@@ -1358,7 +1366,15 @@ async function scopeBoundaryMutationWasAuthorized(
   resources: readonly string[],
 ) {
   const binding = await gitSessionOwnershipBinding(ctx, sessionID)
-  if (!binding) return false
+  if (
+    !binding ||
+    !(await exactRunnableStepAttemptBinding(
+      ctx,
+      sessionID,
+      binding.workflowId,
+      binding.stepId,
+    ))
+  ) return false
   const canonical = resources.map((resource) =>
     resolve(projectDirectory, resource).replaceAll("\\", "/"),
   )
@@ -1777,6 +1793,25 @@ async function exactStepAttemptBinding(
   const workflow = await readWorkflow(ctx, workflowId)
   const step = workflow?.steps.find((candidate) => candidate.id === stepId)
   return Boolean(step) && attachedAttempt === (step!.attempt ?? 0)
+}
+
+async function exactRunnableStepAttemptBinding(
+  ctx: any,
+  sessionID: string,
+  workflowId: string,
+  stepId: string,
+) {
+  if (!(await exactStepAttemptBinding(ctx, sessionID, workflowId, stepId))) {
+    return false
+  }
+  const workflow = await readWorkflow(ctx, workflowId)
+  const step = workflow?.steps.find((candidate) => candidate.id === stepId)
+  return Boolean(
+    workflow &&
+    step &&
+    step.status === "pending" &&
+    runnable(workflow).some((candidate) => candidate.id === stepId),
+  )
 }
 
 async function exactOqBinding(ctx: any, sessionID: string, workflowId: string, questionId: string) {
@@ -2233,10 +2268,10 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       if (
         !workflowId ||
         !stepId ||
-        !(await exactStepAttemptBinding(ctx, sessionID, workflowId, stepId))
+        !(await exactRunnableStepAttemptBinding(ctx, sessionID, workflowId, stepId))
       ) {
         throw new Error(
-          `${agent} mutation requires the exact attached current Loom step attempt.`,
+          `${agent} mutation requires the exact attached current runnable Loom step attempt.`,
         )
       }
       if (agent === "worker") {
@@ -2275,10 +2310,10 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         if (
           !workflowId ||
           !stepId ||
-          !(await exactStepAttemptBinding(ctx, sessionID, workflowId, stepId))
+          !(await exactRunnableStepAttemptBinding(ctx, sessionID, workflowId, stepId))
         ) {
           throw new Error(
-            "Git authoring requires the role's exact current Loom step attempt.",
+            "Git authoring requires the role's exact current runnable Loom step attempt.",
           )
         }
       }
@@ -8614,7 +8649,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             workflow &&
             !workflowBindingTerminal(workflow) &&
             attachedStepId &&
-            !(await exactStepAttemptBinding(
+            !(await exactRunnableStepAttemptBinding(
               ctx,
               event.sessionID,
               workflow.id,
@@ -8623,7 +8658,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           ) {
             event.effect = "deny"
             event.message =
-              "Ephemeral report mutation requires a fresh attachment to the current Loom step attempt."
+              "Ephemeral report mutation requires a fresh attachment to the current runnable Loom step attempt."
             return
           }
           return
@@ -8682,7 +8717,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             if (
               !workflowId ||
               !stepId ||
-              !(await exactStepAttemptBinding(
+              !(await exactRunnableStepAttemptBinding(
                 ctx,
                 event.sessionID,
                 workflowId,
@@ -8691,7 +8726,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             ) {
               event.effect = "deny"
               event.message =
-                "Git authoring requires the role's exact current Loom step attempt."
+                "Git authoring requires the role's exact current runnable Loom step attempt."
               return
             }
             if (agent === "worker") {
@@ -8818,7 +8853,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         if (
           workflow &&
           attachedStepId &&
-          !(await exactStepAttemptBinding(
+          !(await exactRunnableStepAttemptBinding(
             ctx,
             event.sessionID,
             workflow.id,
@@ -8827,7 +8862,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         ) {
           event.effect = "deny"
           event.message =
-            "Research/Diagnostic mutation requires a fresh attachment to the current Loom step attempt."
+            "Research/Diagnostic mutation requires a fresh attachment to the current runnable Loom step attempt."
           return
         }
 
@@ -8873,7 +8908,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         if (
           !workflowId ||
           !stepId ||
-          !(await exactStepAttemptBinding(
+          !(await exactRunnableStepAttemptBinding(
             ctx,
             event.sessionID,
             workflowId,
@@ -8882,7 +8917,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         ) {
           event.effect = "deny"
           event.message =
-            "Specialist mutation requires a fresh attachment to the exact current Loom step attempt."
+            "Specialist mutation requires a fresh attachment to the exact current runnable Loom step attempt."
           return
         }
 
@@ -8986,9 +9021,19 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       if (event.agent === "worker" && event.action === "edit") {
         const workflowId = (await ctx.storage.get(sessionKey(event.sessionID))) as string | undefined
         const stepId = (await ctx.storage.get(sessionStepKey(event.sessionID))) as string | undefined
-        if (!workflowId || !stepId) {
+        if (
+          !workflowId ||
+          !stepId ||
+          !(await exactRunnableStepAttemptBinding(
+            ctx,
+            event.sessionID,
+            workflowId,
+            stepId,
+          ))
+        ) {
           event.effect = "deny"
-          event.message = "Worker must call loom_attach before editing."
+          event.message =
+            "Worker mutation requires the exact current runnable Loom step attempt; attach again after reopen/reroute."
           return
         }
 
