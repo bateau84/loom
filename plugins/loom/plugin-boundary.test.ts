@@ -2316,6 +2316,7 @@ Verdict: FAIL
       const write = [
         "docs/requirements/lifecycle/br-050.md",
         "docs/requirements/lifecycle/oc-025.md",
+        "docs/requirements/lifecycle/index.md",
       ]
       expect((await h.call(
         "step_scope",
@@ -2396,7 +2397,7 @@ Verdict: FAIL
         {
           workflowId,
           stepId: "specifier",
-          paths: [write[0]],
+          paths: [write[0], write[2]],
           reason: "Continue the same pending Specifier step in a fresh session.",
         },
         "specifier",
@@ -2404,9 +2405,10 @@ Verdict: FAIL
       )
       expect(adopted.error).toBeUndefined()
       expect(adopted.adopted).toBe(true)
-      expect(adopted.paths).toEqual([write[0]])
+      expect(adopted.paths).toEqual([write[0], write[2]])
       expect(adopted.sourceSessions).toEqual([firstSession])
       expect(await readFile(join(h.root, write[0]), "utf8")).toBe("owned-0\n")
+      expect(await readFile(join(h.root, write[2]), "utf8")).toBe("owned-2\n")
       expect((await git(h.root, ["diff", "--cached", "--name-only"])).stdout.trim()).toBe("")
 
       const allowedAfterAdoption: any = {
@@ -2562,7 +2564,7 @@ Verdict: FAIL
 
       const migrated = await h.durableStorage.get(
         `git-session-ownership/${encodeURIComponent(childSession)}`,
-      )
+      ) as any
       expect(migrated).toMatchObject({
         schemaVersion: 3,
         paths: [path],
