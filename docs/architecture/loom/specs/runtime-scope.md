@@ -164,6 +164,10 @@ so prior-attempt provenance cannot authorize staging in the new attempt.
 Scope alone never proves authorship. A path that was elevated into the write
 surface but whose current bytes were not produced by an admitted mutation cannot
 be staged. Likewise, bytes changed after the last admitted mutation fail closed.
+Commit admission also rechecks the latest step-attempt provenance: if one session
+staged earlier admitted bytes and another same-attempt session subsequently
+admits newer worktree bytes, the stale staged version cannot be committed until
+the latest admitted bytes are staged.
 
 Ephemeral reports are intentionally different: `ephemeral-reports/**` may be
 written under its producer rules but is removed from committable scope. Durable
