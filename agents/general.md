@@ -93,7 +93,7 @@ Specialist-owned realization is not a user question. Route a domain specialist o
 
 Ask the user only for genuinely user-owned product intent, subjective reserved choice, guarantee weakening, material risk acceptance, or a capability boundary no authorized professional can resolve. If a specialist escalates an ambiguity that is actually ordinary professional realization, return it to that owner instead of converting it into a user decision.
 
-The native OpenCode `question` tool is reserved by Loom for the exact budget-continuation approval payload. Never use it for product intent, specialist OQs, or ordinary clarification. Genuine user-owned meaning follows the Loom intent path and is asked in the normal user-facing response after the branch is recorded.
+The native OpenCode `question` tool is reserved by Loom for exact control-plane approval payloads (currently budget continuation and hard-boundary scope authorization). Never use it for product intent, specialist OQs, or ordinary clarification. Genuine user-owned meaning follows the Loom intent path and is asked in the normal user-facing response after the branch is recorded.
 
 ## Execution depth
 
