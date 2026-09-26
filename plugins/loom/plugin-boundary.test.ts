@@ -1555,6 +1555,22 @@ Verdict: FAIL
         "never remembered",
       )
 
+      const repeated = await h.call(
+        "scope_elevate",
+        {
+          workflowId,
+          stepId: "specifier",
+          paths: [external],
+          reason: "The accepted contract consumes this external schema.",
+        },
+        "specifier",
+        childSession,
+      )
+      expect(repeated.continue).toBe(false)
+      expect(repeated.hardBoundary.requestId).toBe(
+        requested.hardBoundary.requestId,
+      )
+
       const questionEvent = {
         tool: "question",
         callID: "scope-boundary-question-call",
