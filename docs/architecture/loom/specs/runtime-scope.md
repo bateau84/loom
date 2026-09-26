@@ -124,7 +124,8 @@ The following are **hard boundaries**, not self-elevatable project scope:
 - a path lexically outside the current project;
 - a project-relative path whose existing symlink ancestry resolves outside the
   current project;
-- repository-internal `.git` state.
+- repository-internal `.git` state;
+- Loom internal project state such as `.loom/project-id`.
 
 For a hard-boundary request, `loom_scope_elevate` MUST return
 `status=user_authorization_required` and `continue=false`, together with the
@@ -226,7 +227,7 @@ For any workflow state access:
 5. require workflow membership for workflow-shared reads;
 6. require exact step attachment to the current runnable pending attempt plus the step's current effective write scope for normal project mutation;
 7. permit project-local scope growth only through recorded `loom_scope_elevate` on that exact current runnable step attempt;
-8. require an exact user-approved hard-boundary authorization for external, symlink-escaping, or repository-internal writes, then revalidate it under the step mutation guard immediately before execution;
+8. require an exact user-approved hard-boundary authorization for external, symlink-escaping, repository-internal, or Loom-internal writes, then revalidate it under the step mutation guard immediately before execution;
 9. treat completed/failed/passed/cancelled/reopened/rerouted step attachments as non-mutating until a new runnable attempt is attached;
 10. for attempt-bound Git provenance, require the attached attempt to equal the current workflow-step attempt;
 11. reject mismatch without global fallback.
