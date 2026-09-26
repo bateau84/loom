@@ -1072,9 +1072,8 @@ type ScopeBoundaryAuthorization = {
   patterns: string[]
   authorizedAt: string
   authorizedBySessionId: string
-  consumedAt?: string
-  consumedBySessionId?: string
-  consumedResources?: string[]
+  lastUsedAt?: string
+  usedBySessionIds?: string[]
 }
 
 const SCOPE_BOUNDARY_ALLOW = "Allow once"
@@ -1237,7 +1236,7 @@ async function matchingActiveScopeBoundaryRequests(
   return matches
 }
 
-async function consumeScopeBoundaryAuthorization(
+async function useScopeBoundaryAuthorization(
   ctx: any,
   runtime: LoomRuntimeIdentity,
   projectDirectory: string,
@@ -1267,8 +1266,10 @@ async function consumeScopeBoundaryAuthorization(
       const authorization = entry.value as ScopeBoundaryAuthorization
       if (
         authorization?.requestId &&
-        !authorization.consumedAt &&
         authorization.agent === agent &&
+        authorization.workflowId === binding.workflowId &&
+        authorization.stepId === binding.stepId &&
+        authorization.attempt === binding.attempt &&
         canonical.every((resource) =>
           authorization.patterns.some((pattern) =>
             resourceMatchesScope(resource, pattern),
@@ -1283,7 +1284,7 @@ async function consumeScopeBoundaryAuthorization(
 
   if (candidates.length !== 1) return false
   const candidate = candidates[0]
-  return withRuntimeLock(
+  await withRuntimeLock(
     runtime,
     "scope-boundary-authorization",
     candidate.value.requestId,
@@ -1293,7 +1294,6 @@ async function consumeScopeBoundaryAuthorization(
       )) as ScopeBoundaryAuthorization | undefined
       if (
         !current ||
-        current.consumedAt ||
         current.workflowId !== binding.workflowId ||
         current.stepId !== binding.stepId ||
         current.attempt !== binding.attempt ||
@@ -1303,17 +1303,65 @@ async function consumeScopeBoundaryAuthorization(
             resourceMatchesScope(resource, pattern),
           ),
         )
-      ) return false
+      ) {
+        throw new Error("Hard-boundary authorization became stale.")
+      }
 
       await ctx.storage.set(candidate.key, {
         ...current,
-        consumedAt: new Date().toISOString(),
-        consumedBySessionId: sessionID,
-        consumedResources: canonical,
+        lastUsedAt: new Date().toISOString(),
+        usedBySessionIds: [
+          ...new Set([...(current.usedBySessionIds ?? []), sessionID]),
+        ].sort(),
       } satisfies ScopeBoundaryAuthorization)
-      return true
     },
   )
+  return true
+}
+
+async function scopeBoundaryMutationWasAuthorized(
+  ctx: any,
+  projectDirectory: string,
+  sessionID: string,
+  agent: string,
+  resources: readonly string[],
+) {
+  const binding = await gitSessionOwnershipBinding(ctx, sessionID)
+  if (!binding) return false
+  const canonical = resources.map((resource) =>
+    resolve(projectDirectory, resource).replaceAll("\\", "/"),
+  )
+  let after: string | undefined
+  do {
+    const page = await ctx.storage.scan({
+      prefix: scopeBoundaryAuthorizationPrefix(
+        binding.workflowId,
+        binding.stepId,
+        binding.attempt,
+      ),
+      limit: 100,
+      ...(after ? { after } : {}),
+    })
+    for (const entry of page.entries) {
+      const authorization = entry.value as ScopeBoundaryAuthorization
+      if (
+        authorization?.requestId &&
+        authorization.agent === agent &&
+        authorization.workflowId === binding.workflowId &&
+        authorization.stepId === binding.stepId &&
+        authorization.attempt === binding.attempt &&
+        canonical.every((resource) =>
+          authorization.patterns.some((pattern) =>
+            resourceMatchesScope(resource, pattern),
+          ),
+        )
+      ) {
+        return true
+      }
+    }
+    after = page.next
+  } while (after)
+  return false
 }
 
 function latestObservedUserMessage(messages: unknown): Omit<ObservedUserMessage, "observedAt"> | undefined {
@@ -7506,7 +7554,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       addLoomTool({
         name: "scope_authorize_once",
         description:
-          "General only. Consume an approved exact Loom hard-boundary question and authorize that request for one mutation attempt on the same current step attempt. This authorization is never remembered or generalized; resume/redispatch the child only after this tool reports authorized=true.",
+          "General only. Consume an approved exact Loom hard-boundary question and authorize those exact paths for the current step attempt. The approval never carries into another attempt/workflow and is never remembered or generalized; resume/redispatch the child only after this tool reports authorized=true.",
         input: {
           type: "object",
           properties: {
@@ -7648,7 +7696,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 paths: authorization.patterns,
                 rememberChoiceAllowed: false,
                 requiredAction:
-                  "Resume or redispatch the authorized child on this same step attempt. The authorization is consumed by one matching mutation attempt and is never remembered.",
+                  "Resume or redispatch the authorized child on this same step attempt. The authorization remains limited to these exact path patterns and expires with this step attempt; it is never remembered.",
               }),
             }
           } catch (error) {
