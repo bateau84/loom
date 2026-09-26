@@ -18,8 +18,8 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_IMAGES = {
-    "opencode": "ghcr.io/bateau84/opencode-eval-runner@sha256:40bc3b97069719b8ad1d0c16f160b2077b4c3064b97597ed6570957eb8d0e6c5",
-    "github-copilot-cli": "ghcr.io/bateau84/opencode-eval-runner@sha256:cfcdb43cf982302942d5e124a131fc838642bf1862350c6c58392a9e0cfce897",
+    "opencode": "ghcr.io/bateau84/opencode-eval-runner@sha256:4dd282f5a5605b90e3bf87e290dcfe7407d7f45ebd58f7307151d77ae41ca180",
+    "github-copilot-cli": "ghcr.io/bateau84/opencode-eval-runner@sha256:6aa4a6104761f10036d8a45f98cc2764d72cb0dc6d67722bd4cfb35187720e74",
 }
 PROVIDER_ENVS = ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "OPENROUTER_API_KEY")
 COPILOT_ENVS = ("COPILOT_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN")
@@ -342,6 +342,26 @@ def case_target_kind(case: dict[str, Any]) -> str:
 
 def case_target_name(case: dict[str, Any]) -> str:
     return str(case.get("skill") or case["agent"])
+
+
+def requested_reasoning(args: argparse.Namespace, role: str) -> str | None:
+    override = getattr(args, f"{role}_reasoning", None)
+    common = getattr(args, "reasoning", None)
+    return override if override is not None else common
+
+
+def reasoning_provenance(
+    model: str,
+    transport: str,
+    requested: str | None,
+) -> tuple[str, str]:
+    if requested:
+        return requested, "explicit"
+    if transport == "opencode" and "#" in model:
+        _, variant = model.rsplit("#", 1)
+        if variant:
+            return variant, "model-variant"
+    return "provider-default", "provider-default"
 
 
 def case_selectors(case: dict[str, Any]) -> set[str]:
@@ -908,6 +928,36 @@ def prepare_transport_result(result: dict[str, Any], secrets: list[str]) -> dict
     }
 
 
+def enforce_reasoning_contract(
+    result: dict[str, Any],
+    requested: str | None,
+) -> dict[str, Any]:
+    if not requested:
+        return result
+    if (
+        result.get("reasoning") == requested
+        and result.get("reasoning_source") == "explicit"
+    ):
+        return result
+
+    observed = result.get("reasoning", "<missing>")
+    source = result.get("reasoning_source", "<missing>")
+    detail = (
+        "reasoning control mismatch: requested "
+        + repr(requested)
+        + ", transport reported reasoning="
+        + repr(observed)
+        + ", reasoning_source="
+        + repr(source)
+    )
+    prior = str(result.get("stderr") or "").strip()
+    return {
+        **result,
+        "infrastructure_error": True,
+        "stderr": detail + (("\n" + prior) if prior else ""),
+    }
+
+
 def prepare_node_modules_mount(project: Path, source: Path | None) -> Path | None:
     if source is None:
         return None
@@ -969,6 +1019,7 @@ def invoke_container(
     extra_envs: list[str],
     skill: str | None = None,
     network: str | None = None,
+    reasoning: str | None = None,
 ) -> dict[str, Any]:
     node_modules = prepare_node_modules_mount(
         project,
@@ -1010,6 +1061,8 @@ def invoke_container(
             ]
             if network:
                 command += ["--network", network]
+            if reasoning:
+                command += ["--reasoning", reasoning]
             if agent:
                 command += ["--agent", agent]
             if skill:
@@ -1078,7 +1131,10 @@ def invoke_container(
                     "stdout": redacted_prefix(proc.stdout, secrets, 100000),
                     "infrastructure_error": True,
                 }, secrets)
-            return prepare_transport_result(result, secrets)
+            return enforce_reasoning_contract(
+                prepare_transport_result(result, secrets),
+                reasoning,
+            )
 
     with tempfile.TemporaryDirectory(prefix="loom-eval-invoke-") as tmp:
         root = Path(tmp)
@@ -1141,6 +1197,8 @@ def invoke_container(
             "--env",
             f"EVAL_MODEL={model}",
             "--env",
+            f"EVAL_REASONING={reasoning or ''}",
+            "--env",
             f"EVAL_AGENT={agent}",
             "--env",
             f"EVAL_SKILL={skill or ''}",
@@ -1196,7 +1254,10 @@ def invoke_container(
                 "stdout": "",
                 "infrastructure_error": True,
             }, secrets)
-        return prepare_transport_result(result, secrets)
+        return enforce_reasoning_contract(
+            prepare_transport_result(result, secrets),
+            reasoning,
+        )
 
 
 def normalize_tool(value: str) -> str:
@@ -1635,6 +1696,14 @@ def run_skill_ablation_case(
         else None
     )
     judge_model = args.judge_model or args.model
+    target_reasoning = requested_reasoning(args, "target")
+    judge_reasoning = requested_reasoning(args, "judge")
+    target_reasoning_label, target_reasoning_source = reasoning_provenance(
+        args.model, args.target_transport, target_reasoning
+    )
+    judge_reasoning_label, judge_reasoning_source = reasoning_provenance(
+        judge_model, args.judge_transport, judge_reasoning
+    )
     if args.judge_transport != args.target_transport and not args.judge_model:
         raise RuntimeError("--judge-model is required when target and judge transports differ")
 
@@ -1666,7 +1735,11 @@ def run_skill_ablation_case(
         "target_transport": args.target_transport,
         "judge_transport": args.judge_transport,
         "model": args.model,
+        "reasoning": target_reasoning_label,
+        "reasoning_source": target_reasoning_source,
         "judge_model": judge_model,
+        "judge_reasoning": judge_reasoning_label,
+        "judge_reasoning_source": judge_reasoning_source,
         "classification": "non-evidence",
         "passed": False,
         "baseline": {},
@@ -1710,6 +1783,7 @@ def run_skill_ablation_case(
             extra_envs=args.env,
             skill=skill if with_skill and args.target_transport == "opencode" else None,
             network=args.network,
+            reasoning=target_reasoning,
         )
 
     def run_judge(target: dict[str, Any]) -> tuple[dict[str, Any] | None, dict[str, Any] | None, str | None]:
@@ -1735,6 +1809,7 @@ def run_skill_ablation_case(
             extra_envs=args.env,
             skill=None,
             network=args.network,
+            reasoning=judge_reasoning,
         )
         error = transport_error(result)
         if error:
@@ -1964,6 +2039,14 @@ def run_case(
         else None
     )
     judge_model = args.judge_model or args.model
+    target_reasoning = requested_reasoning(args, "target")
+    judge_reasoning = requested_reasoning(args, "judge")
+    target_reasoning_label, target_reasoning_source = reasoning_provenance(
+        args.model, args.target_transport, target_reasoning
+    )
+    judge_reasoning_label, judge_reasoning_source = reasoning_provenance(
+        judge_model, args.judge_transport, judge_reasoning
+    )
 
     if args.judge_transport != args.target_transport and not args.judge_model:
         raise RuntimeError("--judge-model is required when target and judge transports differ")
@@ -2034,6 +2117,7 @@ def run_case(
                 else None
             ),
             network=args.network,
+            reasoning=target_reasoning,
         )
         target_seconds = time.perf_counter() - target_started
         target_error = transport_error(target)
@@ -2093,6 +2177,7 @@ def run_case(
                 extra_envs=args.env,
                 skill=None,
                 network=args.network,
+                reasoning=judge_reasoning,
             )
             judge_seconds = time.perf_counter() - judge_started
             judge_error = transport_error(judge_result)
@@ -2132,7 +2217,11 @@ def run_case(
             "target_transport": args.target_transport,
             "judge_transport": args.judge_transport,
             "model": args.model,
+            "reasoning": target_reasoning_label,
+            "reasoning_source": target_reasoning_source,
             "judge_model": judge_model,
+            "judge_reasoning": judge_reasoning_label,
+            "judge_reasoning_source": judge_reasoning_source,
             "timing": {
                 "target_seconds": round(target_seconds, 3),
                 "judge_seconds": round(judge_seconds, 3),
@@ -2212,6 +2301,21 @@ def main() -> int:
     parser.add_argument("--target", default="", help="Comma-separated agent/skill target names.")
     parser.add_argument("--model")
     parser.add_argument("--judge-model")
+    parser.add_argument(
+        "--reasoning",
+        metavar="LEVEL",
+        help="Reasoning level for both target and judge. Omit to use each transport/provider default.",
+    )
+    parser.add_argument(
+        "--target-reasoning",
+        metavar="LEVEL",
+        help="Override --reasoning for target invocations.",
+    )
+    parser.add_argument(
+        "--judge-reasoning",
+        metavar="LEVEL",
+        help="Override --reasoning for judge invocations.",
+    )
     parser.add_argument("--target-transport", choices=("opencode", "github-copilot-cli"), default="opencode")
     parser.add_argument("--judge-transport", choices=("opencode", "github-copilot-cli"), default="opencode")
     parser.add_argument("--engine", choices=("auto", "podman", "docker"), default="auto")

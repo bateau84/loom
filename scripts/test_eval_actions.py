@@ -64,6 +64,18 @@ class WorkflowCredentialTests(unittest.TestCase):
         self.assertNotIn("actions/upload-artifact@v4", live)
         self.assertNotIn("- run: bun install\n", live + ci)
 
+    def test_live_workflow_exposes_reasoning_controls(self):
+        workflow = (
+            RUN_EVALS.ROOT / ".github" / "workflows" / "loom-live-evals.yml"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("      reasoning:", workflow)
+        self.assertIn("      target_reasoning:", workflow)
+        self.assertIn("      judge_reasoning:", workflow)
+        self.assertIn('args+=(--reasoning "$EVAL_REASONING")', workflow)
+        self.assertIn('args+=(--target-reasoning "$TARGET_REASONING")', workflow)
+        self.assertIn('args+=(--judge-reasoning "$JUDGE_REASONING")', workflow)
+
     def test_opencode_host_and_plugin_api_share_compat_version(self):
         workflow = (
             RUN_EVALS.ROOT / ".github" / "workflows" / "loom-ci.yml"
@@ -87,14 +99,14 @@ class WorkflowCredentialTests(unittest.TestCase):
         ci = (
             RUN_EVALS.ROOT / ".github" / "workflows" / "loom-ci.yml"
         ).read_text(encoding="utf-8")
-        expected_action = "bateau84/opencode-eval-runner@e59d6d016e5b33bdf9832d8808512bd007fa49e1"
+        expected_action = "bateau84/opencode-eval-runner@c4d583478c246f34e4373b1a77b52484620448cd"
         expected_image = (
             "ghcr.io/bateau84/opencode-eval-runner@"
-            "sha256:40bc3b97069719b8ad1d0c16f160b2077b4c3064b97597ed6570957eb8d0e6c5"
+            "sha256:4dd282f5a5605b90e3bf87e290dcfe7407d7f45ebd58f7307151d77ae41ca180"
         )
         expected_copilot_image = (
             "ghcr.io/bateau84/opencode-eval-runner@"
-            "sha256:cfcdb43cf982302942d5e124a131fc838642bf1862350c6c58392a9e0cfce897"
+            "sha256:6aa4a6104761f10036d8a45f98cc2764d72cb0dc6d67722bd4cfb35187720e74"
         )
 
         for workflow in (live, ci):
@@ -927,6 +939,113 @@ class ActionAssertionTests(unittest.TestCase):
         self.assertIn("--network", command)
         self.assertEqual(command[command.index("--network") + 1], "host")
 
+    def test_fallback_container_forwards_explicit_reasoning_env(self):
+        class Result:
+            returncode = 0
+            stdout = '{"exit_code":0,"text":"ok","tools":[],"actions":[],"reasoning":"high","reasoning_source":"explicit"}'
+            stderr = ""
+
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            with patch.object(RUN_EVALS.shutil, "which", return_value=None), \
+                 patch.object(RUN_EVALS.subprocess, "run", return_value=Result()) as run:
+                result = RUN_EVALS.invoke_container(
+                    engine="podman",
+                    image="test-image",
+                    transport="opencode",
+                    model="openai/test",
+                    agent="general",
+                    prompt="test",
+                    system="",
+                    project=project,
+                    auth=None,
+                    config=None,
+                    models_catalog=None,
+                    database_seed=None,
+                    config_root=None,
+                    expected_plugin=None,
+                    timeout=30,
+                    container_timeout=60,
+                    mount_node_modules=False,
+                    workspace_mode="ro",
+                    extra_envs=[],
+                    reasoning="high",
+                )
+
+        command = run.call_args.args[0]
+        rendered = " ".join(command)
+        self.assertIn("--env EVAL_REASONING=high", rendered)
+        self.assertNotIn("--reasoning", command)
+        self.assertFalse(result.get("infrastructure_error", False))
+
+    def test_explicit_reasoning_fails_closed_when_transport_does_not_confirm_it(self):
+        result = RUN_EVALS.enforce_reasoning_contract(
+            {"exit_code": 0, "text": "ok", "stderr": ""},
+            "high",
+        )
+        self.assertTrue(result["infrastructure_error"])
+        self.assertIn("reasoning control mismatch", result["stderr"])
+
+    def test_invoke_container_omits_reasoning_for_provider_default(self):
+        class Result:
+            returncode = 0
+            stdout = '{"exit_code":0,"text":"ok","tools":[],"actions":[]}'
+            stderr = ""
+
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            with patch.object(RUN_EVALS.shutil, "which", return_value=None), \
+                 patch.object(RUN_EVALS.subprocess, "run", return_value=Result()) as run:
+                RUN_EVALS.invoke_container(
+                    engine="podman",
+                    image="test-image",
+                    transport="opencode",
+                    model="openai/test",
+                    agent="general",
+                    prompt="test",
+                    system="",
+                    project=project,
+                    auth=None,
+                    config=None,
+                    models_catalog=None,
+                    database_seed=None,
+                    config_root=None,
+                    expected_plugin=None,
+                    timeout=30,
+                    container_timeout=60,
+                    mount_node_modules=False,
+                    workspace_mode="ro",
+                    extra_envs=[],
+                )
+
+        self.assertIn("--env EVAL_REASONING=", " ".join(run.call_args.args[0]))
+
+    def test_reasoning_resolution_supports_common_and_role_overrides(self):
+        args = argparse.Namespace(reasoning="medium", target_reasoning=None, judge_reasoning=None)
+        self.assertEqual(RUN_EVALS.requested_reasoning(args, "target"), "medium")
+        self.assertEqual(RUN_EVALS.requested_reasoning(args, "judge"), "medium")
+
+        args.target_reasoning = "low"
+        args.judge_reasoning = "high"
+        self.assertEqual(RUN_EVALS.requested_reasoning(args, "target"), "low")
+        self.assertEqual(RUN_EVALS.requested_reasoning(args, "judge"), "high")
+        self.assertEqual(
+            RUN_EVALS.reasoning_provenance("openai/gpt-5.6-luna", "opencode", None),
+            ("provider-default", "provider-default"),
+        )
+        self.assertEqual(
+            RUN_EVALS.reasoning_provenance("openai/gpt-5.6-luna#high", "opencode", None),
+            ("high", "model-variant"),
+        )
+        self.assertEqual(
+            RUN_EVALS.reasoning_provenance("gpt-5.6-luna", "github-copilot-cli", None),
+            ("provider-default", "provider-default"),
+        )
+        self.assertEqual(
+            RUN_EVALS.reasoning_provenance("openai/gpt-5.6-luna#high", "opencode", "medium"),
+            ("medium", "explicit"),
+        )
+
     def test_invoke_container_leaves_network_default_when_unset(self):
         class Result:
             returncode = 0
@@ -1020,6 +1139,65 @@ class ActionAssertionTests(unittest.TestCase):
         self.assertEqual(result["exit_code"], 0)
         self.assertIn("--expected-plugin", seen)
         self.assertEqual(seen[seen.index("--expected-plugin") + 1], "loom")
+
+    def test_eval_runner_cli_receives_explicit_reasoning(self):
+        class Result:
+            returncode = 0
+            stdout = ""
+            stderr = ""
+
+        seen: list[str] = []
+
+        def fake_run(command, **kwargs):
+            seen.extend(command)
+            output = Path(command[command.index("--output") + 1])
+            output.write_text(
+                json.dumps({
+                    "exit_code": 0,
+                    "text": "ok",
+                    "tools": [],
+                    "actions": [],
+                    "skills_loaded": [],
+                    "reasoning": "high",
+                    "reasoning_source": "explicit",
+                }),
+                encoding="utf-8",
+            )
+            return Result()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            with patch.object(
+                RUN_EVALS.shutil,
+                "which",
+                side_effect=lambda name: "/usr/bin/opencode-eval-runner" if name == "opencode-eval-runner" else None,
+            ), patch.object(RUN_EVALS.subprocess, "run", side_effect=fake_run):
+                result = RUN_EVALS.invoke_container(
+                    engine="podman",
+                    image="test-image",
+                    transport="opencode",
+                    model="openai/test",
+                    agent="general",
+                    prompt="test",
+                    system="",
+                    project=project,
+                    auth=None,
+                    config=None,
+                    models_catalog=None,
+                    database_seed=None,
+                    config_root=None,
+                    expected_plugin=None,
+                    timeout=30,
+                    container_timeout=60,
+                    mount_node_modules=False,
+                    workspace_mode="ro",
+                    extra_envs=[],
+                    reasoning="high",
+                )
+
+        self.assertIn("--reasoning", seen)
+        self.assertEqual(seen[seen.index("--reasoning") + 1], "high")
+        self.assertFalse(result.get("infrastructure_error", False))
 
     def test_eval_runner_cli_receives_explicit_network_mode(self):
         class Result:

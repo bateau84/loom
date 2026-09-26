@@ -11,6 +11,21 @@ on:
         description: Optional judge model. Required when judge transport differs from target transport.
         required: false
         type: string
+      reasoning:
+        description: Optional reasoning level applied to both target and judge unless overridden.
+        required: false
+        default: ""
+        type: string
+      target_reasoning:
+        description: Optional target-only reasoning override.
+        required: false
+        default: ""
+        type: string
+      judge_reasoning:
+        description: Optional judge-only reasoning override.
+        required: false
+        default: ""
+        type: string
       target_transport:
         description: Target model transport. Skill-owned suites support OpenCode or GitHub Copilot; native skill-routing cases require OpenCode.
         required: true
@@ -68,6 +83,9 @@ jobs:
     env:
       EVAL_MODEL: ${{ inputs.model }}
       JUDGE_MODEL: ${{ inputs.judge_model }}
+      EVAL_REASONING: ${{ inputs.reasoning }}
+      TARGET_REASONING: ${{ inputs.target_reasoning }}
+      JUDGE_REASONING: ${{ inputs.judge_reasoning }}
       TARGET_TRANSPORT: ${{ inputs.target_transport }}
       JUDGE_TRANSPORT: ${{ inputs.judge_transport }}
       EVAL_TARGET_KIND: ${{ inputs.target_kind }}
@@ -121,11 +139,11 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
-        uses: bateau84/opencode-eval-runner@e59d6d016e5b33bdf9832d8808512bd007fa49e1
+        uses: bateau84/opencode-eval-runner@c4d583478c246f34e4373b1a77b52484620448cd
         with:
           engine: docker
-          opencode-image: ghcr.io/bateau84/opencode-eval-runner@sha256:40bc3b97069719b8ad1d0c16f160b2077b4c3064b97597ed6570957eb8d0e6c5
-          copilot-image: ghcr.io/bateau84/opencode-eval-runner@sha256:cfcdb43cf982302942d5e124a131fc838642bf1862350c6c58392a9e0cfce897
+          opencode-image: ghcr.io/bateau84/opencode-eval-runner@sha256:4dd282f5a5605b90e3bf87e290dcfe7407d7f45ebd58f7307151d77ae41ca180
+          copilot-image: ghcr.io/bateau84/opencode-eval-runner@sha256:6aa4a6104761f10036d8a45f98cc2764d72cb0dc6d67722bd4cfb35187720e74
           prepare-opencode: ${{ inputs.target_transport == 'opencode' || inputs.judge_transport == 'opencode' }}
           prepare-copilot: ${{ inputs.target_transport == 'github-copilot-cli' || inputs.judge_transport == 'github-copilot-cli' }}
           artifact-dir: .loom-evals
@@ -144,6 +162,15 @@ jobs:
             fi
             if [[ -n "$JUDGE_MODEL" ]]; then
               args+=(--judge-model "$JUDGE_MODEL")
+            fi
+            if [[ -n "$EVAL_REASONING" ]]; then
+              args+=(--reasoning "$EVAL_REASONING")
+            fi
+            if [[ -n "$TARGET_REASONING" ]]; then
+              args+=(--target-reasoning "$TARGET_REASONING")
+            fi
+            if [[ -n "$JUDGE_REASONING" ]]; then
+              args+=(--judge-reasoning "$JUDGE_REASONING")
             fi
             if [[ -n "${OPENCODE_API_KEY:-}" ]]; then
               args+=(--env OPENCODE_API_KEY)
