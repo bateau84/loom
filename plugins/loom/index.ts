@@ -6819,7 +6819,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             const scope: TaskScope = {
               workflowId: value.workflowId,
               stepId: value.stepId,
-              write: [...new Set(value.write)].sort(),
+              write: [...new Set(value.write)],
               ...(previous?.elevations?.length
                 ? { elevations: previous.elevations }
                 : {}),
@@ -6842,7 +6842,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               scopeSemantics: "starting-expectation-with-runtime-elevation",
               scopeNote:
                 "The write list is General's current expected mutation surface, not a claim that every required file is known up front. " +
-                "The attached agent may call loom_scope_elevate when implementation/discovery reveals additional project-local paths; each elevation is recorded. " +
+                "acceptedAuthority identifies the governing source. The attached agent may call loom_scope_elevate when implementation/discovery reveals additional project-local paths; each elevation is recorded. " +
                 "Hard-boundary elevation returns continue=false and requires an explicit one-time user decision before work may resume.",
             }),
           }
@@ -8533,6 +8533,15 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             "Ephemeral report mutation is producer-scoped. Each report-producing role may edit only its own ephemeral-reports/<role>/ namespace."
           return
         }
+        if (
+          reportResources.length > 0 &&
+          reportResources.length === event.resources.length
+        ) {
+          // Ephemeral reports are intentionally outside product write/commit
+          // scope. A producer may write its own report namespace without a
+          // product-step scope or Git authority.
+          return
+        }
       }
 
       if (
@@ -9139,7 +9148,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         if (totalMatches !== 1) {
           throw new Error(
             totalMatches === 0
-              ? "OpenCode question tool is reserved for the exact current Loom approval question."
+              ? "OpenCode question tool is reserved for the exact current Loom budget approval question or scope approval question."
               : "OpenCode question tool matched multiple active Loom approvals; refusing ambiguous user authority.",
           )
         }
