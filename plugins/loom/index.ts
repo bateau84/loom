@@ -7252,7 +7252,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               ...(upgradeActions?.length ? { upgradeActions } : {}),
               ...(scope ? {
                 write: scope.write,
-                scopeSemantics: "mutation-boundary-only",
+                scopeSemantics: "starting-expectation-with-runtime-elevation",
                 scopeNote: taskOutcome
                   ? "The attached write scope is the current mutation surface, not a prediction that every needed file is already known. taskOutcome is the bounded completion target and planContext preserves the parent goal, accepted authority, constraints, acceptance criteria, integration, dependencies, risks, and downstream acceptance context. Discover freely; call loom_scope_elevate before mutating additional project-local paths. Same-attempt admitted bytes are automatically commit-authorized across redispatch."
                   : acceptedOutcome
