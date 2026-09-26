@@ -2361,10 +2361,6 @@ Verdict: FAIL
         })
       }
 
-      // Simulate one path changing outside the admitted specialist mutation
-      // after its same-attempt provenance was recorded.
-      await writeFile(join(h.root, write[1]), "changed-outside-admission\n")
-
       const freshGrant = await h.call(
         "dispatch_grant",
         { workflowId, stepId: "specifier" },
@@ -2397,7 +2393,7 @@ Verdict: FAIL
         {
           workflowId,
           stepId: "specifier",
-          paths: [write[0], write[2]],
+          paths: write,
           reason: "Continue the same pending Specifier step in a fresh session.",
         },
         "specifier",
@@ -2405,14 +2401,17 @@ Verdict: FAIL
       )
       expect(adopted.error).toBeUndefined()
       expect(adopted.adopted).toBe(true)
-      expect(adopted.paths).toEqual([write[0], write[2]])
+      expect(adopted.paths).toEqual(write)
       expect(adopted.sourceSessions).toEqual([firstSession])
       expect(await readFile(join(h.root, write[0]), "utf8")).toBe("owned-0\n")
       expect(await readFile(join(h.root, write[2]), "utf8")).toBe("owned-2\n")
       expect((await git(h.root, ["diff", "--cached", "--name-only"])).stdout.trim()).toBe("")
 
       const allowedAfterAdoption: any = {
-        ...deniedBeforeAdoption,
+        agent: "specifier",
+        action: "shell",
+        resources: [`git add -- ${write.join(" ")}`],
+        sessionID: freshSession,
         effect: "ask",
       }
       await evaluate(allowedAfterAdoption)
@@ -2432,6 +2431,9 @@ Verdict: FAIL
       expect(stagedAdoption.error).toContain("refuses already-staged paths")
       await git(h.root, ["reset", "--", write[0]])
 
+      // A later out-of-band change invalidates the recorded same-attempt
+      // fingerprint even though the fresh session previously adopted it.
+      await writeFile(join(h.root, write[1]), "changed-outside-admission\n")
       const changed = await h.call(
         "git_ownership_adopt",
         {
