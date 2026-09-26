@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import {
+  absoluteResourceMatchesScope,
   committableWriteScope,
   mergeWriteScope,
   resourceMatchesScope,
@@ -24,9 +25,12 @@ describe("Loom write scope", () => {
     ])
   })
 
-  test("rejects repository-wide starting scope", () => {
+  test("rejects repository-wide and wildcard-root starting scope", () => {
     expect(() => validateWriteScope(["*"])).toThrow()
     expect(() => validateWriteScope(["**"])).toThrow()
+    expect(() => validateWriteScope(["**/foo.ts"])).toThrow()
+    expect(() => validateScopeElevation(["src/**"])).not.toThrow()
+    expect(() => validateScopeElevation(["*/foo.ts"])).toThrow()
   })
 
   test("rejects path escape from normal project-local scope", () => {
@@ -82,5 +86,13 @@ describe("Loom write scope", () => {
   test("all edited resources must fit current scope", () => {
     expect(resourcesWithinScope(["src/a.go", "src/b.go"], ["src/**"])).toBe(true)
     expect(resourcesWithinScope(["src/a.go", "README.md"], ["src/**"])).toBe(false)
+  })
+
+  test("hard-boundary matching is anchored to the approved absolute path", () => {
+    expect(absoluteResourceMatchesScope("/tmp/shared.json", "/tmp/shared.json")).toBe(true)
+    expect(absoluteResourceMatchesScope("/other/tmp/shared.json", "/tmp/shared.json")).toBe(false)
+    expect(absoluteResourceMatchesScope("/tmp/shared/a.json", "/tmp/shared/**")).toBe(true)
+    expect(absoluteResourceMatchesScope("/other/tmp/shared/a.json", "/tmp/shared/**")).toBe(false)
+    expect(absoluteResourceMatchesScope("/tmp/shared/a.json", "tmp/shared/**")).toBe(false)
   })
 })
