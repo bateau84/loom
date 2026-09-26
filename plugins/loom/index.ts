@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto"
 import { lstat, readFile, readlink } from "node:fs/promises"
-import { join } from "node:path"
+import { isAbsolute, join, relative, resolve } from "node:path"
 import { execFile } from "node:child_process"
 import { promisify } from "node:util"
 import { captureEvidenceAdmission, observationCallKey, persistEvidenceObservation, sessionAttachmentKey, type EvidenceAdmission } from "./evidence-admission"
@@ -1035,6 +1035,285 @@ function budgetQuestionDecision(result: unknown): BudgetQuestionDecisionValue | 
     answer,
     approved: answer === BUDGET_CONTINUATION_ALLOW,
   }
+}
+
+
+type ScopeBoundaryRequest = {
+  requestId: string
+  approvalRef: string
+  workflowId: string
+  stepId: string
+  attempt: number
+  agent: string
+  requestedBySessionId: string
+  generalSessionId: string
+  paths: string[]
+  reason: string
+  requestedAt: string
+  questionStartedAt?: string
+  questionOwnerInstanceId?: string
+  resolvedAt?: string
+}
+
+type ScopeBoundaryDecision = {
+  requestId: string
+  callID?: string
+  answer: string
+  approved: boolean
+  decidedAt: string
+}
+
+type ScopeBoundaryAuthorization = {
+  requestId: string
+  workflowId: string
+  stepId: string
+  attempt: number
+  agent: string
+  patterns: string[]
+  authorizedAt: string
+  authorizedBySessionId: string
+  consumedAt?: string
+  consumedBySessionId?: string
+  consumedResources?: string[]
+}
+
+const SCOPE_BOUNDARY_ALLOW = "Allow once"
+const SCOPE_BOUNDARY_DENY = "Deny"
+
+function scopeBoundaryRequestPrefix(generalSessionId: string) {
+  return `scope-boundary-request/${encodeURIComponent(generalSessionId)}/`
+}
+
+function scopeBoundaryRequestKey(generalSessionId: string, requestId: string) {
+  return scopeBoundaryRequestPrefix(generalSessionId) + encodeURIComponent(requestId)
+}
+
+function scopeBoundaryDecisionKey(generalSessionId: string, requestId: string) {
+  return `scope-boundary-question-decision/${encodeURIComponent(generalSessionId)}/${encodeURIComponent(requestId)}`
+}
+
+function scopeBoundaryAuthorizationPrefix(
+  workflowId: string,
+  stepId: string,
+  attempt: number,
+) {
+  return [
+    "scope-boundary-authorization",
+    encodeURIComponent(workflowId),
+    encodeURIComponent(stepId),
+    String(attempt),
+  ].join("/") + "/"
+}
+
+function scopeBoundaryAuthorizationKey(
+  workflowId: string,
+  stepId: string,
+  attempt: number,
+  requestId: string,
+) {
+  return scopeBoundaryAuthorizationPrefix(workflowId, stepId, attempt) +
+    encodeURIComponent(requestId)
+}
+
+function classifyScopeTarget(projectDirectory: string, raw: string) {
+  const requested = raw.trim()
+  if (!requested) throw new Error("Scope elevation paths must not be empty.")
+  const absolute = resolve(projectDirectory, requested)
+  const projectRelative = relative(projectDirectory, absolute).replaceAll("\\", "/")
+  const outside =
+    !projectRelative ||
+    projectRelative === ".." ||
+    projectRelative.startsWith("../") ||
+    isAbsolute(projectRelative)
+
+  if (outside) {
+    return {
+      kind: "hard-boundary" as const,
+      path: absolute.replaceAll("\\", "/"),
+      reason: "outside-current-project",
+    }
+  }
+
+  const path = normalizeRepoPath(projectRelative)
+  if (path === ".git" || path.startsWith(".git/")) {
+    return {
+      kind: "hard-boundary" as const,
+      path: absolute.replaceAll("\\", "/"),
+      reason: "repository-internal-state",
+    }
+  }
+
+  return { kind: "project" as const, path }
+}
+
+export function scopeBoundaryQuestionInput(target: {
+  approvalRef: string
+  agent: string
+  paths: string[]
+  reason: string
+}) {
+  return {
+    questions: [{
+      header: `Scope ${target.approvalRef}`,
+      question:
+        `${target.agent} requested one-time write access across Loom's hard boundary for: ${target.paths.join(", ")}. Reason: ${target.reason}. Choose "${SCOPE_BOUNDARY_ALLOW}" to authorize exactly this request for the current step attempt. This decision is never remembered. "${SCOPE_BOUNDARY_DENY}" or any custom answer grants no access.`,
+      options: [
+        {
+          label: SCOPE_BOUNDARY_ALLOW,
+          description: "Authorize these exact hard-boundary path patterns once for the current step attempt.",
+        },
+        {
+          label: SCOPE_BOUNDARY_DENY,
+          description: "Do not authorize the requested hard-boundary access.",
+        },
+      ],
+      multiple: false,
+    }],
+  }
+}
+
+function matchesScopeBoundaryQuestion(input: unknown, target: ScopeBoundaryRequest) {
+  const actual = (input as any)?.questions
+  const expected = scopeBoundaryQuestionInput(target).questions[0]
+  if (!Array.isArray(actual) || actual.length !== 1) return false
+  const question = actual[0]
+  if (
+    question?.header !== expected.header ||
+    question?.question !== expected.question ||
+    question?.multiple === true
+  ) return false
+  if (!Array.isArray(question?.options) || question.options.length !== expected.options.length) return false
+  return expected.options.every((option, index) =>
+    question.options[index]?.label === option.label &&
+    question.options[index]?.description === option.description
+  )
+}
+
+function scopeBoundaryQuestionDecision(result: unknown) {
+  let value = result as any
+  if (typeof value === "string") {
+    try { value = JSON.parse(value) } catch { return undefined }
+  }
+  const answers = value?.metadata?.answers ?? value?.result?.metadata?.answers ?? value?.answers
+  if (!Array.isArray(answers) || answers.length !== 1) return undefined
+  const selected = answers[0]
+  if (!Array.isArray(selected) || selected.length !== 1 || typeof selected[0] !== "string") {
+    return undefined
+  }
+  const answer = selected[0]
+  if (!answer) return undefined
+  return { answer, approved: answer === SCOPE_BOUNDARY_ALLOW }
+}
+
+async function matchingActiveScopeBoundaryRequests(
+  ctx: any,
+  generalSessionId: string,
+  input: unknown,
+) {
+  const activeWorkflowId = (await ctx.storage.get(
+    sessionKey(generalSessionId),
+  )) as string | undefined
+  if (!activeWorkflowId) return []
+
+  const matches: ScopeBoundaryRequest[] = []
+  let after: string | undefined
+  do {
+    const page = await ctx.storage.scan({
+      prefix: scopeBoundaryRequestPrefix(generalSessionId),
+      limit: 100,
+      ...(after ? { after } : {}),
+    })
+    for (const entry of page.entries) {
+      const request = entry.value as ScopeBoundaryRequest
+      if (
+        !request?.requestId ||
+        request.resolvedAt ||
+        request.workflowId !== activeWorkflowId
+      ) continue
+      if (matchesScopeBoundaryQuestion(input, request)) matches.push(request)
+    }
+    after = page.next
+  } while (after)
+  return matches
+}
+
+async function consumeScopeBoundaryAuthorization(
+  ctx: any,
+  runtime: LoomRuntimeIdentity,
+  projectDirectory: string,
+  sessionID: string,
+  agent: string,
+  resources: readonly string[],
+) {
+  const binding = await gitSessionOwnershipBinding(ctx, sessionID)
+  if (!binding) return false
+
+  const canonical = resources.map((resource) =>
+    resolve(projectDirectory, resource).replaceAll("\\", "/"),
+  )
+  let after: string | undefined
+  const candidates: Array<{ key: string; value: ScopeBoundaryAuthorization }> = []
+  do {
+    const page = await ctx.storage.scan({
+      prefix: scopeBoundaryAuthorizationPrefix(
+        binding.workflowId,
+        binding.stepId,
+        binding.attempt,
+      ),
+      limit: 100,
+      ...(after ? { after } : {}),
+    })
+    for (const entry of page.entries) {
+      const authorization = entry.value as ScopeBoundaryAuthorization
+      if (
+        authorization?.requestId &&
+        !authorization.consumedAt &&
+        authorization.agent === agent &&
+        canonical.every((resource) =>
+          authorization.patterns.some((pattern) =>
+            resourceMatchesScope(resource, pattern),
+          ),
+        )
+      ) {
+        candidates.push({ key: entry.key, value: authorization })
+      }
+    }
+    after = page.next
+  } while (after)
+
+  if (candidates.length !== 1) return false
+  const candidate = candidates[0]
+  return withRuntimeLock(
+    runtime,
+    "scope-boundary-authorization",
+    candidate.value.requestId,
+    async () => {
+      const current = (await ctx.storage.get(
+        candidate.key,
+      )) as ScopeBoundaryAuthorization | undefined
+      if (
+        !current ||
+        current.consumedAt ||
+        current.workflowId !== binding.workflowId ||
+        current.stepId !== binding.stepId ||
+        current.attempt !== binding.attempt ||
+        current.agent !== agent ||
+        !canonical.every((resource) =>
+          current.patterns.some((pattern) =>
+            resourceMatchesScope(resource, pattern),
+          ),
+        )
+      ) return false
+
+      await ctx.storage.set(candidate.key, {
+        ...current,
+        consumedAt: new Date().toISOString(),
+        consumedBySessionId: sessionID,
+        consumedResources: canonical,
+      } satisfies ScopeBoundaryAuthorization)
+      return true
+    },
+  )
 }
 
 function latestObservedUserMessage(messages: unknown): Omit<ObservedUserMessage, "observedAt"> | undefined {
