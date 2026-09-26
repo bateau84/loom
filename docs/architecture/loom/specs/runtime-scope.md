@@ -255,13 +255,27 @@ On first initialization only:
 
 Every later process sharing that durable Loom state reads and uses the persisted root regardless of its own `XDG_RUNTIME_DIR`. A process that cannot access the persisted installation root cannot mutate shared Loom state; it MUST NOT silently choose another lock root.
 
-The lock layout is:
+The normal project lock layout is:
 
 ```text
 <loom-runtime-or-state-root>/locks/<installationId>/<projectId>/<aggregate>/<resourceHash>.lock
 ```
 
-`resourceHash` is a digest of the complete scoped aggregate identity. Resource locks are therefore independent across projects even when local Objective/Task IDs match.
+`resourceHash` is a digest of the complete scoped aggregate identity. Normal
+repository/workflow resources are therefore independent across projects even
+when local Objective/Task IDs match.
+
+A user-approved hard-boundary write can target a resource shared by multiple
+projects, so its file-write lock is installation-scoped instead:
+
+```text
+<loom-runtime-or-state-root>/locks/<installationId>/installation/file-write/<resourceHash>.lock
+```
+
+The resource identity includes the canonical absolute hard-boundary path. Two
+projects in the same Loom installation attempting the same approved external
+write MUST therefore contend rather than mutate that external resource
+concurrently.
 
 Multi-resource operations:
 
