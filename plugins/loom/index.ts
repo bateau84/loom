@@ -750,8 +750,9 @@ async function commitScopeError(
   requireExplicitOwnership = true,
 ) {
   try {
-    const [ownership, staged] = await Promise.all([
+    const [ownership, binding, staged] = await Promise.all([
       gitSessionOwnership(ctx, sessionID),
+      gitSessionOwnershipBinding(ctx, sessionID),
       stagedGitPaths(projectDirectory),
     ])
     if (staged.length === 0) return "Git commit denied: no staged repository changes."
@@ -776,6 +777,48 @@ async function commitScopeError(
       }
       if (changedIndex.length > 0) {
         return `Git commit denied: staged content changed after this role/session staged it: ${changedIndex.join(", ")}`
+      }
+
+      const unstagedAfterStage = await gitCommandPaths(
+        projectDirectory,
+        ["diff", "--no-renames", "--name-only", "-z", "--", ...staged],
+      )
+      if (unstagedAfterStage.length > 0) {
+        return (
+          "Git commit denied: these staged paths have newer unstaged worktree changes; " +
+          "stage the latest admitted bytes before committing: " +
+          unstagedAfterStage.join(", ")
+        )
+      }
+
+      if (binding) {
+        const staleProvenance: string[] = []
+        for (const raw of staged) {
+          const path = normalizeRepoPath(raw)
+          const provenance = (await ctx.storage.get(
+            gitStepAttemptOwnedPathKey(
+              binding.workflowId,
+              binding.stepId,
+              binding.attempt,
+              path,
+            ),
+          )) as GitStepAttemptOwnedPath | undefined
+          const current = await worktreeFingerprint(projectDirectory, path)
+          if (
+            provenance?.schemaVersion !== 1 ||
+            provenance.authorityId !== binding.authorityId ||
+            provenance.fingerprint !== current
+          ) {
+            staleProvenance.push(path)
+          }
+        }
+        if (staleProvenance.length > 0) {
+          return (
+            "Git commit denied: staged paths no longer match the latest admitted " +
+            "bytes for this Loom step attempt: " +
+            staleProvenance.join(", ")
+          )
+        }
       }
     }
     return undefined
