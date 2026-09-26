@@ -3706,7 +3706,7 @@ Verdict: FAIL
       }
       await h.permissionHooks.get("evaluate")!(staleAttempt)
       expect(staleAttempt.effect).toBe("deny")
-      expect(staleAttempt.message).toContain("current Loom step attempt")
+      expect(staleAttempt.message).toContain("current runnable Loom step attempt")
     } finally {
       h.restore()
     }
