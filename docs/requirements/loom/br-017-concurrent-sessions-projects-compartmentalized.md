@@ -41,6 +41,7 @@ The same relative Anchor path, Objective id, Task id, or other local identifier 
 
 17. A cross-process mutation commit is crash-safe at the durable-record boundary: observers after abrupt process loss see either the complete previous generation or the complete new generation, never a torn/partial record.
 18. Overlapping bounded file write scopes MAY coexist. Dirty or historically modified files do not become permanently owned by a session. Actual concurrent file mutation is serialized with a project-scoped active write lock; a second live writer receives a clear retryable lock error, while an inactive writer cannot leave a permanent file lock.
+19. An artifact-producing specialist step MAY receive a bounded explicit write scope over artifacts already owned by that role. Such a scope may narrow but MUST NOT expand the role's artifact/authority ceiling. The attached specialist remains responsible for validating, staging, and committing its own admitted durable artifacts; publication MUST NOT require laundering those artifacts through Worker. Worker write scope remains explicitly implementation-only and cannot grant accepted Anchor, design, requirements, or architecture authority.
 
 ## Architectural realization
 

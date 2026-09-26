@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { resourceMatchesScope, resourcesWithinScope, validateWriteScope } from "./scope"
+import { resourceMatchesScope, resourcesWithinScope, validateStepWriteScope, validateWriteScope } from "./scope"
 
 describe("Loom worker write scopes", () => {
   test("accepts bounded product paths", () => {
@@ -36,5 +36,36 @@ describe("Loom worker write scopes", () => {
   test("all edited resources must fit declared scope", () => {
     expect(resourcesWithinScope(["src/a.go", "src/b.go"], ["src/**"])).toBe(true)
     expect(resourcesWithinScope(["src/a.go", "README.md"], ["src/**"])).toBe(false)
+  })
+})
+
+describe("Loom specialist step write scopes", () => {
+  const specifierCeiling = ["docs/requirements/**"]
+
+  test("allows exact files and bounded subpaths inside the role ceiling", () => {
+    expect(validateStepWriteScope(
+      ["docs/requirements/feature/br-050.md", "docs/requirements/feature/**"],
+      specifierCeiling,
+    )).toEqual([
+      "docs/requirements/feature/br-050.md",
+      "docs/requirements/feature/**",
+    ])
+  })
+
+  test("cannot expand the role ceiling", () => {
+    expect(() => validateStepWriteScope(["src/**"], specifierCeiling)).toThrow(
+      "may narrow role authority but cannot grant",
+    )
+    expect(() => validateStepWriteScope(["docs/architecture/**"], specifierCeiling)).toThrow()
+  })
+
+  test("keeps the same bounded and project-relative floor", () => {
+    expect(() => validateStepWriteScope(["**"], specifierCeiling)).toThrow()
+    expect(() => validateStepWriteScope(["../docs/requirements/**"], specifierCeiling)).toThrow()
+  })
+
+  test("supports exact-file role ceilings", () => {
+    expect(validateStepWriteScope(["README.md"], ["README.md"])).toEqual(["README.md"])
+    expect(() => validateStepWriteScope(["README.md/**"], ["README.md"])).toThrow()
   })
 })

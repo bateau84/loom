@@ -1965,6 +1965,141 @@ Verdict: FAIL
     }
   })
 
+  test("lets General scope a Specifier's own artifacts without a Worker handoff", async () => {
+    const h = await harness()
+    try {
+      const started = await h.call(
+        "start",
+        { request: "Specify one bounded lifecycle meaning." },
+        "general",
+        "specifier-scope-general",
+      )
+      const workflowId = String(started.workflowId)
+      expect((await h.call(
+        "route",
+        {
+          humanFacing: false,
+          behavioral: true,
+          structural: false,
+          externalUnknown: false,
+          diagnostic: false,
+          productOutcome: false,
+          implementationRequested: true,
+          executionDepth: "change",
+        },
+        "general",
+        "specifier-scope-general",
+      )).error).toBeUndefined()
+
+      const write = [
+        "docs/requirements/lifecycle/br-050.md",
+        "docs/requirements/lifecycle/oc-025.md",
+        "docs/requirements/lifecycle/index.md",
+      ]
+      const scoped = await h.call(
+        "step_scope",
+        { workflowId, stepId: "specifier", write },
+        "general",
+        "specifier-scope-general",
+      )
+      expect(scoped.error).toBeUndefined()
+      expect(scoped.scope.write).toEqual(write)
+      expect(scoped.roleWriteCeiling).toEqual(["docs/requirements/**"])
+
+      // Legacy callers that know loom_task_scope must not hit the old
+      // Worker-only dead end.
+      expect((await h.call(
+        "task_scope",
+        { workflowId, stepId: "specifier", write },
+        "general",
+        "specifier-scope-general",
+      )).error).toBeUndefined()
+
+      const escaped = await h.call(
+        "step_scope",
+        { workflowId, stepId: "specifier", write: ["src/**"] },
+        "general",
+        "specifier-scope-general",
+      )
+      expect(escaped.error).toContain("may narrow role authority but cannot grant")
+
+      const grant = await h.call(
+        "dispatch_grant",
+        { workflowId, stepId: "specifier" },
+        "general",
+        "specifier-scope-general",
+      )
+      expect(grant.error).toBeUndefined()
+      expect((await h.call(
+        "attach",
+        { grantId: grant.grantId, workflowId, stepId: "specifier" },
+        "specifier",
+        "specifier-scope-author",
+      )).attached).toBe(true)
+
+      const evaluate = h.permissionHooks.get("evaluate")!
+      const inScope: any = {
+        agent: "specifier",
+        action: "edit",
+        resources: [write[0]],
+        sessionID: "specifier-scope-author",
+        effect: "ask",
+      }
+      await evaluate(inScope)
+      expect(inScope.effect).not.toBe("deny")
+
+      const sameRoleButOutsideStep: any = {
+        agent: "specifier",
+        action: "edit",
+        resources: ["docs/requirements/lifecycle/unassigned.md"],
+        sessionID: "specifier-scope-author",
+        effect: "ask",
+      }
+      await evaluate(sameRoleButOutsideStep)
+      expect(sameRoleButOutsideStep.effect).toBe("deny")
+      expect(sameRoleButOutsideStep.message).toContain("declared Loom step write scope")
+
+      await mkdir(join(h.root, "docs", "requirements", "lifecycle"), { recursive: true })
+      const editEvent = {
+        tool: "edit",
+        callID: "specifier-owned-edit",
+        messageID: "specifier-owned-message",
+        sessionID: "specifier-scope-author",
+        agent: "specifier",
+        input: { filePath: join(h.root, write[0]), oldString: "", newString: "owned\n" },
+      }
+      await h.toolHooks.get("execute.before")!(editEvent)
+      await writeFile(join(h.root, write[0]), "owned\n")
+      await h.toolHooks.get("execute.after")!({
+        ...editEvent,
+        status: "completed",
+        result: "updated",
+      })
+
+      const stageOwned: any = {
+        agent: "specifier",
+        action: "shell",
+        resources: [`git add ${write[0]}`],
+        sessionID: "specifier-scope-author",
+        effect: "ask",
+      }
+      await evaluate(stageOwned)
+      expect(stageOwned.effect).toBe("allow")
+
+      const stageOutside: any = {
+        agent: "specifier",
+        action: "shell",
+        resources: ["git add docs/requirements/lifecycle/unassigned.md"],
+        sessionID: "specifier-scope-author",
+        effect: "ask",
+      }
+      await evaluate(stageOutside)
+      expect(stageOutside.effect).toBe("deny")
+    } finally {
+      h.restore()
+    }
+  })
+
   test("allows scoped repair of pre-existing dirty files without absorbing untouched changes", async () => {
     const h = await harness()
     try {
