@@ -84,6 +84,7 @@ import {
   type ProgressSignal,
 } from "./budget"
 import {
+  absoluteResourceMatchesScope,
   committableWriteScope,
   mergeWriteScope,
   resourceMatchesScope,
@@ -1287,7 +1288,7 @@ async function useScopeBoundaryAuthorization(
         authorization.attempt === binding.attempt &&
         canonical.every((resource) =>
           authorization.patterns.some((pattern) =>
-            resourceMatchesScope(resource, pattern),
+            absoluteResourceMatchesScope(resource, pattern),
           ),
         )
       ) {
@@ -1315,7 +1316,7 @@ async function useScopeBoundaryAuthorization(
         current.agent !== agent ||
         !canonical.every((resource) =>
           current.patterns.some((pattern) =>
-            resourceMatchesScope(resource, pattern),
+            absoluteResourceMatchesScope(resource, pattern),
           ),
         )
       ) {
@@ -1367,7 +1368,7 @@ async function scopeBoundaryMutationWasAuthorized(
         authorization.attempt === binding.attempt &&
         canonical.every((resource) =>
           authorization.patterns.some((pattern) =>
-            resourceMatchesScope(resource, pattern),
+            absoluteResourceMatchesScope(resource, pattern),
           ),
         )
       ) {
