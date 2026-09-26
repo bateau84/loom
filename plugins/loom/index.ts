@@ -387,6 +387,13 @@ async function projectDirtyPaths(projectDirectory: string) {
   return [...new Set([...unstaged, ...staged, ...untracked])].sort()
 }
 
+function mutationLockIdentity(path: string) {
+  if (isAbsolute(path)) {
+    return `hard-boundary:${resolve(path).replaceAll("\\", "/")}`
+  }
+  return safeOwnedRepoPath(path)
+}
+
 function toolMutationLockPaths(
   tool: string,
   input: unknown,
@@ -399,7 +406,7 @@ function toolMutationLockPaths(
       paths.push(...(scopedGitAddTargets(command) ?? []))
     }
   }
-  return [...new Set(paths.map(safeOwnedRepoPath))].sort()
+  return [...new Set(paths.map(mutationLockIdentity))].sort()
 }
 
 function toolNeedsGitIndexLock(tool: string, input: unknown) {
@@ -677,7 +684,7 @@ function projectRelativeMutationPath(projectDirectory: string, value: string) {
   const project = projectDirectory.replaceAll("\\", "/").replace(/\/$/, "")
   if (normalized === project) return undefined
   if (normalized.startsWith(project + "/")) return normalized.slice(project.length + 1)
-  if (normalized.startsWith("/")) return undefined
+  if (normalized.startsWith("/")) return resolve(normalized).replaceAll("\\", "/")
   return normalizeRepoPath(normalized)
 }
 
@@ -2170,7 +2177,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       paths: readonly string[],
       lockGitIndex: boolean,
     ) => {
-      const normalized = [...new Set(paths.map(safeOwnedRepoPath))].sort()
+      const normalized = [...new Set(paths)].sort()
       const sessionID = typeof raw.sessionID === "string" ? raw.sessionID : ""
       const workflowId = sessionID
         ? (await ctx.storage.get(sessionKey(sessionID))) as string | undefined
