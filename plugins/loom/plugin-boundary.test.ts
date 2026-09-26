@@ -2266,7 +2266,7 @@ Verdict: FAIL
       // same file is dirty again in the reopened step.
       await writeFile(join(h.root, write[0]), "dirty-in-attempt-1\n")
       const priorAttemptAdoption = await h.call(
-        "git_ownership_adopt",
+        "scope_request",
         {
           workflowId,
           stepId: "specifier",
@@ -2386,10 +2386,10 @@ Verdict: FAIL
       }
       await evaluate(deniedBeforeAdoption)
       expect(deniedBeforeAdoption.effect).toBe("deny")
-      expect(deniedBeforeAdoption.message).toContain("loom_git_ownership_adopt")
+      expect(deniedBeforeAdoption.message).toContain("loom_scope_request")
 
       const adopted = await h.call(
-        "git_ownership_adopt",
+        "scope_request",
         {
           workflowId,
           stepId: "specifier",
@@ -2400,6 +2400,7 @@ Verdict: FAIL
         freshSession,
       )
       expect(adopted.error).toBeUndefined()
+      expect(adopted.resolved).toBe(true)
       expect(adopted.adopted).toBe(true)
       expect(adopted.paths).toEqual([...write].sort())
       expect(adopted.sourceSessions).toEqual([firstSession])
@@ -2419,7 +2420,7 @@ Verdict: FAIL
 
       await git(h.root, ["add", write[0]])
       const stagedAdoption = await h.call(
-        "git_ownership_adopt",
+        "scope_request",
         {
           workflowId,
           stepId: "specifier",
@@ -2435,7 +2436,7 @@ Verdict: FAIL
       // fingerprint even though the fresh session previously adopted it.
       await writeFile(join(h.root, write[1]), "changed-outside-admission\n")
       const changed = await h.call(
-        "git_ownership_adopt",
+        "scope_request",
         {
           workflowId,
           stepId: "specifier",
@@ -2455,7 +2456,7 @@ Verdict: FAIL
         generalSession,
       )).error).toBeUndefined()
       const noProvenance = await h.call(
-        "git_ownership_adopt",
+        "scope_request",
         {
           workflowId,
           stepId: "specifier",
@@ -2467,7 +2468,7 @@ Verdict: FAIL
       expect(noProvenance.error).toContain("No admitted same-attempt Git provenance exists")
 
       const outsideScope = await h.call(
-        "git_ownership_adopt",
+        "scope_request",
         {
           workflowId,
           stepId: "specifier",
@@ -2476,7 +2477,8 @@ Verdict: FAIL
         "specifier",
         freshSession,
       )
-      expect(outsideScope.error).toContain("effective step write scope")
+      expect(outsideScope.error).toContain("outside the current effective Loom step write scope")
+      expect(outsideScope.error).toContain("General")
     } finally {
       h.restore()
     }

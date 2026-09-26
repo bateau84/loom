@@ -1790,7 +1790,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         )
         if (unowned.length > 0) {
           throw new Error(
-            "Git staging denied: stage only files changed by this role/task session.",
+            "Git staging denied: stage only files changed by this role/task session. If these exact in-scope bytes were admitted by an earlier session on this same Loom step attempt, call loom_scope_request for those paths.",
           )
         }
         const changed = await changedOwnedPaths(
@@ -6838,10 +6838,10 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 write: scope.write,
                 scopeSemantics: "mutation-boundary-only",
                 scopeNote: taskOutcome
-                  ? "Write scope limits mutation only; taskOutcome is the bounded completion target. planContext preserves the parent goal, accepted authority, constraints, acceptance criteria, integration, dependencies, risks, and downstream acceptance context. Prove the Task end to end and request scope extension when another load-bearing write is required."
+                  ? "Write scope limits mutation only; taskOutcome is the bounded completion target. planContext preserves the parent goal, accepted authority, constraints, acceptance criteria, integration, dependencies, risks, and downstream acceptance context. Prove the Task end to end. If exact current in-scope bytes were admitted by an earlier session on this same step attempt, call loom_scope_request; return any actual write-scope extension to General."
                   : acceptedOutcome
-                    ? "Write scope limits mutation only; acceptedOutcome is the bounded completion target and acceptedAuthority is its governing source. Prove the outcome with read-only discovery beyond the write list and request scope extension when another load-bearing write is required."
-                    : "Write scope limits mutation only; acceptedAuthority identifies the governing source. Read that authority as needed, prove the assigned outcome beyond the write list, and request scope extension when another load-bearing write is required.",
+                    ? "Write scope limits mutation only; acceptedOutcome is the bounded completion target and acceptedAuthority is its governing source. Prove the outcome with read-only discovery beyond the write list. If exact current in-scope bytes were admitted by an earlier session on this same step attempt, call loom_scope_request; return any actual write-scope extension to General."
+                    : "Write scope limits mutation only; acceptedAuthority identifies the governing source. Read that authority as needed and prove the assigned outcome beyond the write list. If exact current in-scope bytes were admitted by an earlier session on this same step attempt, call loom_scope_request; return any actual write-scope extension to General.",
               } : {}),
               ...(task ? { task } : {}),
               ...(producerSkills ? { producerSkills } : {}),
@@ -6885,9 +6885,9 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       })
 
       addLoomTool({
-        name: "git_ownership_adopt",
+        name: "scope_request",
         description:
-          "Adopt exact current dirty bytes previously admitted under this same Loom workflow step attempt into the current attached specialist session's Git staging ownership. Spoke-side handoff only: this does not edit, stage, or commit files and cannot cross step attempts, role ceilings, or declared write scope.",
+          "Spoke-side mutation-scope continuity request for the current attached specialist step. When exact current dirty, unstaged bytes were previously admitted under this same Loom workflow step attempt and remain inside the current effective write scope, Loom resolves the request by adopting staging ownership into this session. This never widens scope, edits, stages, or commits files; out-of-scope writes return to General, while missing provenance requires General's explicit user-authorized recovery path.",
         input: {
           type: "object",
           properties: {
@@ -6905,7 +6905,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             return {
               content: renderToolOutput({
                 error:
-                  "General does not adopt specialist Git ownership. Dispatch/attach the specialist and let that spoke adopt same-attempt provenance directly.",
+                  "General owns scope definition directly. Dispatch/attach the specialist and let that spoke call loom_scope_request for same-attempt continuity.",
               }),
             }
           }
@@ -6929,12 +6929,12 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           try {
             normalized = [...new Set(value.paths.map(safeOwnedRepoPath))].sort()
             if (normalized.length === 0) {
-              throw new Error("Git ownership adoption paths must not be empty.")
+              throw new Error("Scope request paths must not be empty.")
             }
             validateStepWriteScope(
               normalized,
               roleWriteCeiling,
-              "Git ownership adoption",
+              "Scope request",
             )
           } catch (error) {
             return {
@@ -6972,7 +6972,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 ))
               ) {
                 throw new Error(
-                  "Git ownership adoption requires this specialist session to be attached to the exact current Loom step attempt.",
+                  "Scope request requires this specialist session to be attached to the exact current Loom step attempt.",
                 )
               }
 
@@ -6993,7 +6993,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 )
               ) {
                 throw new Error(
-                  "Git ownership adoption requires the exact currently runnable pending step.",
+                  "Scope request requires the exact currently runnable pending step.",
                 )
               }
 
@@ -7005,7 +7005,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 : roleWriteCeiling
               if (!resourcesWithinScope(normalized, effectiveWriteScope)) {
                 throw new Error(
-                  "Git ownership adoption paths must all be inside the current effective step write scope.",
+                  "Requested paths are outside the current effective Loom step write scope. Return them to General for loom_step_scope before retrying loom_scope_request.",
                 )
               }
 
@@ -7017,7 +7017,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               )
               if (alreadyStaged.length > 0) {
                 throw new Error(
-                  "Git ownership adoption refuses already-staged paths: " +
+                  "Scope request refuses already-staged paths: " +
                     alreadyStaged.join(", "),
                 )
               }
@@ -7028,7 +7028,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               const notDirty = normalized.filter((path) => !dirty.has(path))
               if (notDirty.length > 0) {
                 throw new Error(
-                  "Git ownership adoption requires current uncommitted changes for every path: " +
+                  "Scope request requires current uncommitted changes for every path: " +
                     notDirty.join(", "),
                 )
               }
@@ -7081,7 +7081,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 .map(([path]) => path)
               if (changed.length > 0) {
                 throw new Error(
-                  "Git ownership adoption refused files whose bytes changed after the last admitted same-attempt mutation: " +
+                  "Scope request refused files whose bytes changed after the last admitted same-attempt mutation: " +
                     changed.join(", "),
                 )
               }
@@ -7092,7 +7092,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               )
               if (ownership.authorityId !== binding.authorityId) {
                 throw new Error(
-                  "Git ownership adoption authority changed concurrently; retry after reattaching.",
+                  "Scope request authority changed concurrently; retry after reattaching.",
                 )
               }
               ownership.paths = [
@@ -7122,6 +7122,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
             return {
               content: renderToolOutput({
+                resolved: true,
                 adopted: true,
                 workflowId: value.workflowId,
                 stepId: value.stepId,
@@ -7131,7 +7132,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                   ? { reason: value.reason.trim() }
                   : {}),
                 note:
-                  "Adoption transfers staging authority for exact same-attempt bytes into this session; it does not claim that this session historically authored them.",
+                  "Scope request resolved by transferring staging authority for exact same-attempt bytes into this session; it does not widen write scope or claim that this session historically authored them.",
               }),
             }
           } catch (error) {
@@ -7851,7 +7852,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           ) {
             event.effect = "deny"
             event.message =
-              "Git staging denied: stage only files authored or explicitly adopted by this role/session. If these exact dirty bytes were admitted by an earlier dispatch of the same step attempt, call loom_git_ownership_adopt for the paths."
+              "Git staging denied: stage only files authored or explicitly adopted by this role/session. If these exact in-scope bytes were admitted by an earlier session on the same step attempt, call loom_scope_request for the paths."
             return
           }
           const changed = await changedOwnedPaths(
