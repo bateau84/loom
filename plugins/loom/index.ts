@@ -1019,6 +1019,12 @@ function budgetQuestionDecision(result: unknown): BudgetQuestionDecisionValue | 
 }
 
 
+type ScopeBoundaryDetail = {
+  path: string
+  kind: "outside-current-project" | "repository-internal-state" | "symlink-escape"
+  resolvedExistingTarget?: string
+}
+
 type ScopeBoundaryRequest = {
   requestId: string
   approvalRef: string
@@ -1029,6 +1035,7 @@ type ScopeBoundaryRequest = {
   requestedBySessionId: string
   generalSessionId: string
   paths: string[]
+  boundaryDetails?: ScopeBoundaryDetail[]
   reason: string
   requestedAt: string
   questionStartedAt?: string
@@ -1180,13 +1187,31 @@ export function scopeBoundaryQuestionInput(target: {
   approvalRef: string
   agent: string
   paths: string[]
+  boundaryDetails?: ScopeBoundaryDetail[]
   reason: string
 }) {
+  const boundarySummary = (target.boundaryDetails?.length
+    ? target.boundaryDetails
+    : target.paths.map((path) => ({
+        path,
+        kind: "outside-current-project" as const,
+      })))
+    .map((detail) => {
+      if (detail.kind === "symlink-escape") {
+        return `${detail.path} (symlink escape; existing path resolves outside the project${detail.resolvedExistingTarget ? ` via ${detail.resolvedExistingTarget}` : ""})`
+      }
+      if (detail.kind === "repository-internal-state") {
+        return `${detail.path} (repository-internal .git state)`
+      }
+      return `${detail.path} (outside the current project)`
+    })
+    .join(", ")
+
   return {
     questions: [{
       header: `Scope ${target.approvalRef}`,
       question:
-        `${target.agent} requested one-time write access across Loom's hard boundary for: ${target.paths.join(", ")}. Reason: ${target.reason}. Choose "${SCOPE_BOUNDARY_ALLOW}" to authorize exactly this request for the current step attempt. This decision is never remembered. "${SCOPE_BOUNDARY_DENY}" or any custom answer grants no access.`,
+        `${target.agent} requested one-time write access across Loom's hard boundary for: ${boundarySummary}. Reason: ${target.reason}. Choose "${SCOPE_BOUNDARY_ALLOW}" to authorize exactly this request for the current step attempt. This decision is never remembered. "${SCOPE_BOUNDARY_DENY}" or any custom answer grants no access.`,
       options: [
         {
           label: SCOPE_BOUNDARY_ALLOW,
@@ -7571,13 +7596,23 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 .map((entry) => entry.path),
             ),
           ].sort()
+          const hardBoundaryClassifications = classified.filter(
+            (entry) => entry.kind === "hard-boundary",
+          )
           const hardBoundaryPaths = [
             ...new Set(
-              classified
-                .filter((entry) => entry.kind === "hard-boundary")
-                .map((entry) => entry.path),
+              hardBoundaryClassifications.map((entry) => entry.path),
             ),
           ].sort()
+          const hardBoundaryDetails: ScopeBoundaryDetail[] =
+            hardBoundaryClassifications.map((entry) => ({
+              path: entry.path,
+              kind: entry.reason,
+              ...("resolvedExistingTarget" in entry &&
+              entry.resolvedExistingTarget
+                ? { resolvedExistingTarget: entry.resolvedExistingTarget }
+                : {}),
+            }))
 
           const roleWriteDefault = artifactWriteDefaults[tool.agent] ?? []
           if (!productScopeElevatingAgents.has(tool.agent)) {
@@ -7725,6 +7760,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                       requestedBySessionId: tool.sessionID,
                       generalSessionId: workflow.createdBySession,
                       paths: hardBoundaryPaths,
+                      boundaryDetails: hardBoundaryDetails,
                       reason,
                       requestedAt: new Date().toISOString(),
                     }
@@ -7769,6 +7805,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                     requestId: result.boundaryRequest.requestId,
                     approvalRef: result.boundaryRequest.approvalRef,
                     paths: result.boundaryRequest.paths,
+                    boundaryDetails: result.boundaryRequest.boundaryDetails ?? [],
                     reason,
                     question,
                     rememberChoiceAllowed: false,
