@@ -8870,51 +8870,112 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           throw new Error("OpenCode question tool is reserved for admitted Loom General interactions.")
         }
         await dashboardPublisher.publish()
-        const matches = await matchingActiveBudgetBlockedTargets(ctx, sessionID, toolHookInput(raw))
-        if (matches.length !== 1) {
+
+        const input = toolHookInput(raw)
+        const [budgetMatches, scopeMatches] = await Promise.all([
+          matchingActiveBudgetBlockedTargets(ctx, sessionID, input),
+          matchingActiveScopeBoundaryRequests(ctx, sessionID, input),
+        ])
+        const totalMatches = budgetMatches.length + scopeMatches.length
+        if (totalMatches !== 1) {
           throw new Error(
-            matches.length === 0
-              ? "OpenCode question tool is reserved for the exact current Loom budget approval question."
-              : "OpenCode question tool matched multiple active budget denials; refusing ambiguous user authority.",
+            totalMatches === 0
+              ? "OpenCode question tool is reserved for the exact current Loom approval question."
+              : "OpenCode question tool matched multiple active Loom approvals; refusing ambiguous user authority.",
           )
         }
-        const blocked = matches[0]
-        const blockedKey = budgetContinuationTargetKey(
-          sessionID,
-          blocked.workflowId,
-          { stepId: blocked.stepId, questionId: blocked.questionId },
-        )
-        if (!blockedKey) throw new Error("Budget question admission lost its exact target.")
-        await withRuntimeLock(
-          runtime,
-          "budget-continuation-question-admission",
-          `${sessionID}:${blocked.denialId}`,
-          async () => {
-            const current = (await ctx.storage.get(blockedKey)) as BudgetBlockedTarget | undefined
-            if (
-              !current ||
-              current.denialId !== blocked.denialId ||
-              current.resolvedAt ||
-              !matchesBudgetContinuationQuestion(toolHookInput(raw), current)
-            ) {
-              throw new Error("OpenCode budget question became stale before admission.")
-            }
-            if (current.questionStartedAt) {
-              const sameOwner = current.questionOwnerInstanceId === runtime.instanceId
-              const ownerLive = current.questionOwnerInstanceId
-                ? await runtimeInstanceIsLive(runtime, current.questionOwnerInstanceId)
-                : false
-              if (sameOwner || ownerLive) {
-                throw new Error("This Loom budget approval question is already active.")
+
+        if (scopeMatches.length === 1) {
+          const request = scopeMatches[0]
+          const requestKey = scopeBoundaryRequestKey(sessionID, request.requestId)
+          await withRuntimeLock(
+            runtime,
+            "scope-boundary-question-admission",
+            `${sessionID}:${request.requestId}`,
+            async () => {
+              const current = (await ctx.storage.get(
+                requestKey,
+              )) as ScopeBoundaryRequest | undefined
+              if (
+                !current ||
+                current.resolvedAt ||
+                !matchesScopeBoundaryQuestion(input, current)
+              ) {
+                throw new Error("OpenCode scope-boundary question became stale before admission.")
               }
-            }
-            await ctx.storage.set(blockedKey, {
-              ...current,
-              questionStartedAt: new Date().toISOString(),
-              questionOwnerInstanceId: runtime.instanceId,
-            })
-          },
-        )
+              if (current.questionStartedAt) {
+                const sameOwner =
+                  current.questionOwnerInstanceId === runtime.instanceId
+                const ownerLive = current.questionOwnerInstanceId
+                  ? await runtimeInstanceIsLive(
+                      runtime,
+                      current.questionOwnerInstanceId,
+                    )
+                  : false
+                if (sameOwner || ownerLive) {
+                  throw new Error(
+                    "This Loom scope-boundary approval question is already active.",
+                  )
+                }
+              }
+              await ctx.storage.set(requestKey, {
+                ...current,
+                questionStartedAt: new Date().toISOString(),
+                questionOwnerInstanceId: runtime.instanceId,
+              } satisfies ScopeBoundaryRequest)
+            },
+          )
+        } else {
+          const blocked = budgetMatches[0]
+          const blockedKey = budgetContinuationTargetKey(
+            sessionID,
+            blocked.workflowId,
+            { stepId: blocked.stepId, questionId: blocked.questionId },
+          )
+          if (!blockedKey) {
+            throw new Error("Budget question admission lost its exact target.")
+          }
+          await withRuntimeLock(
+            runtime,
+            "budget-continuation-question-admission",
+            `${sessionID}:${blocked.denialId}`,
+            async () => {
+              const current = (await ctx.storage.get(
+                blockedKey,
+              )) as BudgetBlockedTarget | undefined
+              if (
+                !current ||
+                current.denialId !== blocked.denialId ||
+                current.resolvedAt ||
+                !matchesBudgetContinuationQuestion(input, current)
+              ) {
+                throw new Error(
+                  "OpenCode budget question became stale before admission.",
+                )
+              }
+              if (current.questionStartedAt) {
+                const sameOwner =
+                  current.questionOwnerInstanceId === runtime.instanceId
+                const ownerLive = current.questionOwnerInstanceId
+                  ? await runtimeInstanceIsLive(
+                      runtime,
+                      current.questionOwnerInstanceId,
+                    )
+                  : false
+                if (sameOwner || ownerLive) {
+                  throw new Error(
+                    "This Loom budget approval question is already active.",
+                  )
+                }
+              }
+              await ctx.storage.set(blockedKey, {
+                ...current,
+                questionStartedAt: new Date().toISOString(),
+                questionOwnerInstanceId: runtime.instanceId,
+              })
+            },
+          )
+        }
       }
       const key = observationCallKey(raw)
       const mutationNeedsLock = mutationLockPaths.length > 0 || lockGitIndex
@@ -8972,9 +9033,83 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       if (tool === "question" && raw.sessionID) {
         const sessionID = String(raw.sessionID)
         const input = toolHookInput(raw)
-        const matches = await matchingActiveBudgetBlockedTargets(ctx, sessionID, input)
-        if (matches.length === 1) {
-          const blocked = matches[0]
+        const [budgetMatches, scopeMatches] = await Promise.all([
+          matchingActiveBudgetBlockedTargets(ctx, sessionID, input),
+          matchingActiveScopeBoundaryRequests(ctx, sessionID, input),
+        ])
+
+        if (scopeMatches.length === 1 && budgetMatches.length === 0) {
+          const request = scopeMatches[0]
+          const requestKey = scopeBoundaryRequestKey(
+            sessionID,
+            request.requestId,
+          )
+          if (raw.status === "error") {
+            await withRuntimeLock(
+              runtime,
+              "scope-boundary-question-admission",
+              `${sessionID}:${request.requestId}`,
+              async () => {
+                const current = (await ctx.storage.get(
+                  requestKey,
+                )) as ScopeBoundaryRequest | undefined
+                if (current?.requestId === request.requestId && !current.resolvedAt) {
+                  const {
+                    questionStartedAt: _questionStartedAt,
+                    questionOwnerInstanceId: _questionOwnerInstanceId,
+                    ...retryable
+                  } = current
+                  await ctx.storage.set(requestKey, retryable)
+                }
+              },
+            )
+          } else {
+            const decision = scopeBoundaryQuestionDecision(
+              raw.result ??
+                (raw.metadata ? { metadata: raw.metadata } : raw.output),
+            )
+            if (decision) {
+              const callID = String(raw.callID ?? "").trim()
+              const decidedAt = new Date().toISOString()
+              await ctx.storage.set(
+                scopeBoundaryDecisionKey(sessionID, request.requestId),
+                {
+                  requestId: request.requestId,
+                  ...(callID ? { callID } : {}),
+                  answer: decision.answer,
+                  approved: decision.approved,
+                  decidedAt,
+                } satisfies ScopeBoundaryDecision,
+              )
+              if (!decision.approved) {
+                await ctx.storage.set(requestKey, {
+                  ...request,
+                  resolvedAt: decidedAt,
+                } satisfies ScopeBoundaryRequest)
+              }
+            } else {
+              await withRuntimeLock(
+                runtime,
+                "scope-boundary-question-admission",
+                `${sessionID}:${request.requestId}`,
+                async () => {
+                  const current = (await ctx.storage.get(
+                    requestKey,
+                  )) as ScopeBoundaryRequest | undefined
+                  if (current?.requestId === request.requestId && !current.resolvedAt) {
+                    const {
+                      questionStartedAt: _questionStartedAt,
+                      questionOwnerInstanceId: _questionOwnerInstanceId,
+                      ...retryable
+                    } = current
+                    await ctx.storage.set(requestKey, retryable)
+                  }
+                },
+              )
+            }
+          }
+        } else if (budgetMatches.length === 1 && scopeMatches.length === 0) {
+          const blocked = budgetMatches[0]
           const blockedKey = budgetContinuationTargetKey(
             sessionID,
             blocked.workflowId,
@@ -8986,8 +9121,13 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               "budget-continuation-question-admission",
               `${sessionID}:${blocked.denialId}`,
               async () => {
-                const current = (await ctx.storage.get(blockedKey)) as BudgetBlockedTarget | undefined
-                if (current?.denialId === blocked.denialId && !current.resolvedAt) {
+                const current = (await ctx.storage.get(
+                  blockedKey,
+                )) as BudgetBlockedTarget | undefined
+                if (
+                  current?.denialId === blocked.denialId &&
+                  !current.resolvedAt
+                ) {
                   await ctx.storage.set(blockedKey, {
                     ...current,
                     resolvedAt: new Date().toISOString(),
@@ -8996,24 +9136,38 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               },
             )
           } else if (raw.status !== "error") {
-            const decision = budgetQuestionDecision(raw.result ?? (raw.metadata ? { metadata: raw.metadata } : raw.output))
+            const decision = budgetQuestionDecision(
+              raw.result ??
+                (raw.metadata ? { metadata: raw.metadata } : raw.output),
+            )
             if (decision) {
               const callID = String(raw.callID ?? "").trim()
               const decidedAt = new Date().toISOString()
-              await ctx.storage.set(sessionBudgetQuestionDecisionKey(sessionID, blocked.denialId), {
-                workflowId: blocked.workflowId,
-                agent: blocked.agent,
-                ...(blocked.stepId ? { stepId: blocked.stepId } : {}),
-                ...(blocked.questionId ? { questionId: blocked.questionId } : {}),
-                approvalRef: blocked.approvalRef,
-                denialId: blocked.denialId,
-                ...(callID ? { callID } : {}),
-                answer: decision.answer,
-                approved: decision.approved,
-                decidedAt,
-              } satisfies BudgetQuestionDecision)
+              await ctx.storage.set(
+                sessionBudgetQuestionDecisionKey(
+                  sessionID,
+                  blocked.denialId,
+                ),
+                {
+                  workflowId: blocked.workflowId,
+                  agent: blocked.agent,
+                  ...(blocked.stepId ? { stepId: blocked.stepId } : {}),
+                  ...(blocked.questionId
+                    ? { questionId: blocked.questionId }
+                    : {}),
+                  approvalRef: blocked.approvalRef,
+                  denialId: blocked.denialId,
+                  ...(callID ? { callID } : {}),
+                  answer: decision.answer,
+                  approved: decision.approved,
+                  decidedAt,
+                } satisfies BudgetQuestionDecision,
+              )
               if (!decision.approved && blockedKey) {
-                await ctx.storage.set(blockedKey, { ...blocked, resolvedAt: decidedAt })
+                await ctx.storage.set(blockedKey, {
+                  ...blocked,
+                  resolvedAt: decidedAt,
+                })
               }
             } else if (blockedKey) {
               await withRuntimeLock(
@@ -9021,8 +9175,13 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 "budget-continuation-question-admission",
                 `${sessionID}:${blocked.denialId}`,
                 async () => {
-                  const current = (await ctx.storage.get(blockedKey)) as BudgetBlockedTarget | undefined
-                  if (current?.denialId === blocked.denialId && !current.resolvedAt) {
+                  const current = (await ctx.storage.get(
+                    blockedKey,
+                  )) as BudgetBlockedTarget | undefined
+                  if (
+                    current?.denialId === blocked.denialId &&
+                    !current.resolvedAt
+                  ) {
                     const {
                       questionStartedAt: _questionStartedAt,
                       questionOwnerInstanceId: _questionOwnerInstanceId,
