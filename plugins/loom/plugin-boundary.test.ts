@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test"
+import { createHash } from "node:crypto"
 import { execFile } from "node:child_process"
 import { promisify } from "node:util"
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
+import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
 import loomPlugin from "./index"
@@ -2260,6 +2261,103 @@ Verdict: FAIL
       await evaluate(priorAttemptStage)
       expect(priorAttemptStage.effect).toBe("deny")
       expect(priorAttemptStage.message).toContain("stage only files authored")
+    } finally {
+      h.restore()
+    }
+  })
+
+  test("migrates matching legacy Git ownership without losing in-flight authorship", async () => {
+    const h = await harness()
+    try {
+      await initializeGitFixture(h.root)
+      const generalSession = "legacy-ownership-general"
+      const childSession = "legacy-ownership-specifier"
+      const started = await h.call(
+        "start",
+        { request: "Preserve one in-flight requirements artifact across runtime upgrade." },
+        "general",
+        generalSession,
+      )
+      const workflowId = String(started.workflowId)
+      expect((await h.call(
+        "route",
+        {
+          humanFacing: false,
+          behavioral: true,
+          structural: false,
+          externalUnknown: false,
+          diagnostic: false,
+          productOutcome: false,
+          implementationRequested: true,
+          executionDepth: "change",
+        },
+        "general",
+        generalSession,
+      )).error).toBeUndefined()
+
+      const path = "docs/requirements/lifecycle/br-legacy.md"
+      expect((await h.call(
+        "step_scope",
+        { workflowId, stepId: "specifier", write: [path] },
+        "general",
+        generalSession,
+      )).error).toBeUndefined()
+      const grant = await h.call(
+        "dispatch_grant",
+        { workflowId, stepId: "specifier" },
+        "general",
+        generalSession,
+      )
+      expect((await h.call(
+        "attach",
+        { grantId: grant.grantId, workflowId, stepId: "specifier" },
+        "specifier",
+        childSession,
+      )).attached).toBe(true)
+
+      await mkdir(join(h.root, "docs", "requirements", "lifecycle"), { recursive: true })
+      await writeFile(join(h.root, path), "legacy-owned\n")
+      const attachmentId = await h.durableStorage.get(
+        `session-attachment/${childSession}`,
+      )
+      const info = await stat(join(h.root, path))
+      const hash = createHash("sha256")
+        .update("file\0")
+        .update(String(info.mode))
+        .update("\0")
+        .update(await readFile(join(h.root, path)))
+        .digest("hex")
+      await h.durableStorage.set(
+        `git-session-ownership/${encodeURIComponent(childSession)}`,
+        {
+          schemaVersion: 2,
+          attachmentId,
+          paths: [path],
+          worktreeFingerprints: { [path]: hash },
+          stagedFingerprints: {},
+        },
+      )
+
+      const stage: any = {
+        agent: "specifier",
+        action: "shell",
+        resources: [`git add ${path}`],
+        sessionID: childSession,
+        effect: "ask",
+      }
+      await h.permissionHooks.get("evaluate")!(stage)
+      expect(stage.effect).toBe("allow")
+
+      const migrated = await h.durableStorage.get(
+        `git-session-ownership/${encodeURIComponent(childSession)}`,
+      )
+      expect(migrated).toMatchObject({
+        schemaVersion: 3,
+        paths: [path],
+      })
+      expect(migrated.authorityId).toContain(
+        `step:${encodeURIComponent(workflowId)}:specifier:0`,
+      )
     } finally {
       h.restore()
     }

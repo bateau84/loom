@@ -229,6 +229,14 @@ type GitSessionOwnership = {
   stagedFingerprints: Record<string, string>
 }
 
+type LegacyGitSessionOwnership = {
+  schemaVersion: 2
+  attachmentId?: string
+  paths: string[]
+  worktreeFingerprints: Record<string, string>
+  stagedFingerprints: Record<string, string>
+}
+
 function gitSessionOwnershipKey(sessionID: string) {
   return `git-session-ownership/${encodeURIComponent(sessionID)}`
 }
@@ -393,12 +401,33 @@ async function gitSessionOwnership(
   sessionID: string,
 ): Promise<GitSessionOwnership> {
   const key = gitSessionOwnershipKey(sessionID)
-  const authorityId = await gitSessionOwnershipAuthority(ctx, sessionID)
-  const existing = (await ctx.storage.get(key)) as GitSessionOwnership | undefined
+  const [authorityId, attachmentId] = await Promise.all([
+    gitSessionOwnershipAuthority(ctx, sessionID),
+    ctx.storage.get(sessionAttachmentKey(sessionID)),
+  ])
+  const existing = (await ctx.storage.get(key)) as
+    | GitSessionOwnership
+    | LegacyGitSessionOwnership
+    | undefined
   if (
     existing?.schemaVersion === 3 &&
     existing.authorityId === authorityId
   ) return existing
+
+  if (
+    existing?.schemaVersion === 2 &&
+    existing.attachmentId === attachmentId
+  ) {
+    const migrated: GitSessionOwnership = {
+      schemaVersion: 3,
+      ...(authorityId ? { authorityId } : {}),
+      paths: [...existing.paths],
+      worktreeFingerprints: { ...existing.worktreeFingerprints },
+      stagedFingerprints: { ...existing.stagedFingerprints },
+    }
+    await ctx.storage.set(key, migrated)
+    return migrated
+  }
 
   const ownership: GitSessionOwnership = {
     schemaVersion: 3,
@@ -6949,13 +6978,16 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 })
               }
 
-              await recordGitSessionOwnership(
-                ctx,
-                value.targetSessionId,
-                ctx.location.directory,
-                normalized,
-              )
               const ownership = await gitSessionOwnership(ctx, value.targetSessionId)
+              ownership.paths = [...new Set([...ownership.paths, ...normalized])].sort()
+              for (const path of normalized) {
+                ownership.worktreeFingerprints[path] = currentFingerprints[path]
+                delete ownership.stagedFingerprints[path]
+              }
+              await ctx.storage.set(
+                gitSessionOwnershipKey(value.targetSessionId),
+                ownership,
+              )
               return {
                 paths: normalized,
                 fingerprints: currentFingerprints,
