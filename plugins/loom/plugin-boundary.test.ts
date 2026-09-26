@@ -1684,6 +1684,16 @@ Verdict: FAIL
       expect(requested.continue).toBe(false)
       expect(requested.hardBoundary.rememberChoiceAllowed).toBe(false)
       expect(requested.hardBoundary.paths[0]).toContain("linked-external")
+      expect(requested.hardBoundary.boundaryDetails[0]).toMatchObject({
+        kind: "symlink-escape",
+        resolvedExistingTarget: externalRoot,
+      })
+      expect(
+        requested.hardBoundary.question.questions[0].question,
+      ).toContain(externalRoot)
+      expect(
+        requested.hardBoundary.question.questions[0].question,
+      ).toContain("symlink escape")
     } finally {
       h.restore()
     }
