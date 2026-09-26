@@ -2270,6 +2270,9 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           ...normalized.map((path) => ({
             aggregate: "file-write",
             resourceIdentity: path,
+            ...(path.startsWith("hard-boundary:")
+              ? { scope: "installation" as const }
+              : {}),
           })),
           ...(lockGitIndex
             ? [{
