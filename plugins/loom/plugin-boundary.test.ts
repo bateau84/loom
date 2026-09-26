@@ -2401,7 +2401,7 @@ Verdict: FAIL
       )
       expect(adopted.error).toBeUndefined()
       expect(adopted.adopted).toBe(true)
-      expect(adopted.paths).toEqual(write)
+      expect(adopted.paths).toEqual([...write].sort())
       expect(adopted.sourceSessions).toEqual([firstSession])
       expect(await readFile(join(h.root, write[0]), "utf8")).toBe("owned-0\n")
       expect(await readFile(join(h.root, write[2]), "utf8")).toBe("owned-2\n")
