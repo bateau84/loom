@@ -28,7 +28,7 @@ import {
 } from "./upgrade-actions"
 
 export const LOOM_NATIVE_TOOL_GUIDANCE =
-  "Loom control-plane tools are available through two equivalent OpenCode surfaces: native loom_* tools and Code Mode mirrors under tools.loom.code.*. Use either surface directly according to the active tool paradigm. If using Code Mode, search for Loom tools and invoke the returned tools.loom.code.* signatures; do not fall back to shell/filesystem discovery for Loom commands. Reviewer/Critic methodology uses a two-part contract: load practitioner guidance with OpenCode's native skill tool, then consume the role companion through loom_assessment or loom_qa; a plain ASSESSMENT.md/QA.md read is artifact inspection, not methodology loading. Interactive status is dashboard-first and does not depend on model prose: the Loom sidebar exposes a stable workflow dashboard URL, while loom_status may also return presentation metadata. Desktop browser preview is optional metadata only; do not invoke tools.browser.preview merely because presentation metadata exists. When a role owns a repository commit, load git-commit-discipline before committing so the commit remains coherent and reviewable. Loom admits bounded role commits only through `git -c core.hooksPath=/dev/null commit -m ...`; plain `git commit` is intentionally denied so repository hooks cannot change the staged scope after Loom validates it."
+  "Loom control-plane tools are available through two equivalent OpenCode surfaces: native loom_* tools and Code Mode mirrors under tools.loom.code.*. Use either surface directly according to the active tool paradigm. If using Code Mode, search for Loom tools and invoke the returned tools.loom.code.* signatures; do not fall back to shell/filesystem discovery for Loom commands. Reviewer/Critic methodology uses a two-part contract: load practitioner guidance with OpenCode's native skill tool, then consume the role companion through loom_assessment or loom_qa; a plain ASSESSMENT.md/QA.md read is artifact inspection, not methodology loading. Interactive status is dashboard-first and does not depend on model prose: the Loom sidebar exposes a stable workflow dashboard URL, while loom_status may also return presentation metadata. Desktop browser preview is optional metadata only; do not invoke tools.browser.preview merely because presentation metadata exists. When a role owns a repository commit, load git-commit-discipline before committing so the commit remains coherent and reviewable. Loom admits bounded role commits only through `git -c core.hooksPath=/dev/null commit -m ...`; plain `git commit` is intentionally denied so repository hooks cannot change the staged scope after Loom validates it. Runtime write scope is discoverable: an attached child that needs additional project-local files calls loom_scope_elevate and continues immediately when granted. If any Loom tool returns continue=false, the child MUST stop its current turn and return control immediately; it must not retry the blocked mutation or continue assuming authority will arrive later."
 import {
   assertWorkflowNotCancelled,
   WorkflowCancelledError,
@@ -83,7 +83,17 @@ import {
   type ExecutionLimits,
   type ProgressSignal,
 } from "./budget"
-import { resourceMatchesScope, resourcesWithinScope, validateStepWriteScope, validateWriteScope, type TaskScope } from "./scope"
+import {
+  committableWriteScope,
+  mergeWriteScope,
+  resourceMatchesScope,
+  resourcesWithinScope,
+  validateScopeElevation,
+  validateStepWriteScope,
+  validateWriteScope,
+  type ScopeElevation,
+  type TaskScope,
+} from "./scope"
 import {
   authorGitShellResourcesAllowed,
   diagnosticExecutionShellResourcesAllowed,
@@ -660,25 +670,25 @@ async function resolveGitStagingOwnership(
     const ownsPath = ownership.paths.includes(path)
     if (ownsPath && ownership.worktreeFingerprints[path] === current) continue
 
-    const adoption = binding
+    const provenance = binding
       ? (await ctx.storage.get(
-          gitScopeStagingAdoptionKey(
-            sessionID,
-            binding.authorityId,
+          gitStepAttemptOwnedPathKey(
+            binding.workflowId,
+            binding.stepId,
+            binding.attempt,
             path,
           ),
-        )) as GitScopeStagingAdoption | undefined
+        )) as GitStepAttemptOwnedPath | undefined
       : undefined
-    const validAdoption =
-      adoption?.schemaVersion === 1 &&
-      adoption.sessionId === sessionID &&
-      adoption.authorityId === binding?.authorityId &&
-      adoption.workflowId === binding?.workflowId &&
-      adoption.stepId === binding?.stepId &&
-      adoption.attempt === binding?.attempt &&
-      adoption.path === path
+    const validProvenance =
+      provenance?.schemaVersion === 1 &&
+      provenance.authorityId === binding?.authorityId &&
+      provenance.workflowId === binding?.workflowId &&
+      provenance.stepId === binding?.stepId &&
+      provenance.attempt === binding?.attempt &&
+      provenance.path === path
 
-    if (validAdoption && adoption.fingerprint === current) {
+    if (validProvenance && provenance.fingerprint === current) {
       ownership.paths = [...new Set([...ownership.paths, path])].sort()
       ownership.worktreeFingerprints[path] = current
       delete ownership.stagedFingerprints[path]
@@ -686,8 +696,8 @@ async function resolveGitStagingOwnership(
       continue
     }
 
-    if (!ownsPath) unowned.push(path)
-    else changed.push(path)
+    if (validProvenance || ownsPath) changed.push(path)
+    else unowned.push(path)
   }
 
   if (restored) {
@@ -1822,66 +1832,35 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         sessionStepKey(sessionID),
       )) as string | undefined
 
-      if (raw.agent === "worker") {
-        if (
-          !workflowId ||
-          !stepId ||
-          !(await exactStepBinding(ctx, sessionID, workflowId, stepId))
-        ) {
-          throw new Error(
-            "Worker mutation requires the exact attached Loom workflow step.",
-          )
-        }
-        await assertWorkerWorkClaim(ctx, workflowId, stepId)
-        const scope = (await ctx.storage.get(
-          scopeKey(workflowId, stepId),
-        )) as TaskScope | undefined
-        if (
-          !scope ||
-          !resourcesWithinScope(directMutationPaths, scope.write)
-        ) {
-          throw new Error(
-            "Worker mutation is outside the current declared Loom task scope.",
-          )
-        }
-        return
-      }
-
       if (!raw.agent || raw.agent === "general") return
       const agent = String(raw.agent)
-      const durableScope = durableAuthorGitScopes[agent]
-      const touchesDurableArtifact = Boolean(
-        durableScope?.length &&
-        directMutationPaths.some((path) =>
-          resourcesWithinScope([path], durableScope),
-        ),
-      )
-      const exactAttempt = Boolean(
-        workflowId &&
-        stepId &&
-        await exactStepAttemptBinding(ctx, sessionID, workflowId, stepId),
-      )
-      const declaredScope =
-        workflowId && stepId
-          ? (await ctx.storage.get(scopeKey(workflowId, stepId))) as TaskScope | undefined
-          : undefined
-      if (declaredScope?.write.length && !exactAttempt) {
-        throw new Error(
-          "Scoped specialist mutation requires a fresh attachment to the current Loom step attempt.",
-        )
-      }
-      if (touchesDurableArtifact && !exactAttempt) {
-        throw new Error(
-          "Durable specialist artifact mutation requires the role's exact attached Loom workflow step at the current Loom step attempt.",
-        )
-      }
+      if (!loomAgents.has(agent)) return
+
       if (
-        exactAttempt &&
-        declaredScope?.write.length &&
-        !resourcesWithinScope(directMutationPaths, declaredScope.write)
+        !workflowId ||
+        !stepId ||
+        !(await exactStepAttemptBinding(ctx, sessionID, workflowId, stepId))
       ) {
         throw new Error(
-          "Specialist mutation is outside the current declared Loom step write scope.",
+          `${agent} mutation requires the exact attached current Loom step attempt.`,
+        )
+      }
+      if (agent === "worker") {
+        await assertWorkerWorkClaim(ctx, workflowId, stepId)
+      }
+
+      const declaredScope = (await ctx.storage.get(
+        scopeKey(workflowId, stepId),
+      )) as TaskScope | undefined
+      const effectiveWriteScope = declaredScope?.write.length
+        ? declaredScope.write
+        : (artifactWriteCeilings[agent] ?? [])
+      if (
+        effectiveWriteScope.length === 0 ||
+        !resourcesWithinScope(directMutationPaths, effectiveWriteScope)
+      ) {
+        throw new Error(
+          `${agent} mutation is outside the current Loom write scope. Call loom_scope_elevate for the additional project-local paths before retrying.`,
         )
       }
     }
@@ -1895,7 +1874,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       if (typeof command !== "string") return
 
       const agent = String(raw.agent ?? "")
-      if (agent !== "general" && durableAuthorGitScopes[agent]) {
+      if (agent !== "general" && loomAgents.has(agent)) {
         const sessionID = String(raw.sessionID ?? "")
         const workflowId = (await ctx.storage.get(sessionKey(sessionID))) as string | undefined
         const stepId = (await ctx.storage.get(sessionStepKey(sessionID))) as string | undefined
@@ -1920,13 +1899,13 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         )
         if (stage.unowned.length > 0) {
           throw new Error(
-            "Git staging denied: stage only files changed by this role/task session or explicitly adopted with loom_scope_request for this exact session/step attempt: " +
+            "Git staging denied: stage only exact bytes previously admitted by this current Loom step attempt: " +
             stage.unowned.join(", "),
           )
         }
         if (stage.changed.length > 0) {
           throw new Error(
-            "Git staging denied: these files changed after this role/task's last admitted mutation or scope adoption: " +
+            "Git staging denied: these files changed after this step attempt's last admitted mutation: " +
             stage.changed.join(", "),
           )
         }
@@ -1935,22 +1914,24 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       if (!isAllowedGitCommit(command)) return
 
       let writeScope: string[] | undefined =
-        durableAuthorGitScopes[String(raw.agent ?? "")]
+        raw.agent === "general"
+          ? durableAuthorGitScopes.general
+          : (artifactWriteCeilings[String(raw.agent ?? "")] ?? [])
       const workflowId = (await ctx.storage.get(
         sessionKey(String(raw.sessionID)),
       )) as string | undefined
       const stepId = (await ctx.storage.get(
         sessionStepKey(String(raw.sessionID)),
       )) as string | undefined
-      if (workflowId && stepId && (raw.agent === "worker" || writeScope)) {
+      if (workflowId && stepId && raw.agent !== "general") {
         const scope = (await ctx.storage.get(
           scopeKey(workflowId, stepId),
         )) as TaskScope | undefined
         if (scope?.write.length) writeScope = scope.write
-        else if (raw.agent === "worker") writeScope = undefined
       }
 
-      if (!writeScope?.length) return
+      writeScope = committableWriteScope(writeScope ?? [])
+      if (!writeScope.length) return
       const error = await commitScopeError(
         ctx,
         String(raw.sessionID),
