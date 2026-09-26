@@ -1065,6 +1065,7 @@ type ScopeBoundaryAuthorization = {
   attempt: number
   agent: string
   patterns: string[]
+  boundaryDetails: ScopeBoundaryDetail[]
   authorizedAt: string
   authorizedBySessionId: string
   lastUsedAt?: string
@@ -1299,6 +1300,69 @@ async function matchingActiveScopeBoundaryRequests(
   return matches
 }
 
+function resolvedTargetWithinApprovedRoot(
+  currentResolvedTarget: string,
+  approvedResolvedTarget: string,
+) {
+  const current = resolve(currentResolvedTarget)
+  const approved = resolve(approvedResolvedTarget)
+  const rel = relative(approved, current)
+  return (
+    rel === "" ||
+    (rel !== ".." && !rel.startsWith("../") && !isAbsolute(rel))
+  )
+}
+
+async function boundaryAuthorizationCoversResources(
+  projectDirectory: string,
+  authorization: ScopeBoundaryAuthorization,
+  resources: readonly string[],
+) {
+  const canonical = resources.map((resource) =>
+    resolve(projectDirectory, resource).replaceAll("\\", "/"),
+  )
+  if (
+    !canonical.every((resource) =>
+      authorization.patterns.some((pattern) =>
+        absoluteResourceMatchesScope(resource, pattern),
+      ),
+    )
+  ) {
+    return false
+  }
+
+  for (const resource of canonical) {
+    const detail = authorization.boundaryDetails.find((candidate) =>
+      absoluteResourceMatchesScope(resource, candidate.path),
+    )
+    if (!detail) return false
+
+    const current = await classifyScopeTarget(projectDirectory, resource)
+    if (
+      current.kind !== "hard-boundary" ||
+      current.reason !== detail.kind
+    ) {
+      return false
+    }
+
+    if (detail.kind === "symlink-escape") {
+      if (
+        !detail.resolvedExistingTarget ||
+        !("resolvedExistingTarget" in current) ||
+        !current.resolvedExistingTarget ||
+        !resolvedTargetWithinApprovedRoot(
+          current.resolvedExistingTarget,
+          detail.resolvedExistingTarget,
+        )
+      ) {
+        return false
+      }
+    }
+  }
+
+  return true
+}
+
 async function useScopeBoundaryAuthorization(
   ctx: any,
   runtime: LoomRuntimeIdentity,
@@ -1341,10 +1405,10 @@ async function useScopeBoundaryAuthorization(
         authorization.workflowId === binding.workflowId &&
         authorization.stepId === binding.stepId &&
         authorization.attempt === binding.attempt &&
-        canonical.every((resource) =>
-          authorization.patterns.some((pattern) =>
-            absoluteResourceMatchesScope(resource, pattern),
-          ),
+        await boundaryAuthorizationCoversResources(
+          projectDirectory,
+          authorization,
+          canonical,
         )
       ) {
         candidates.push({ key: entry.key, value: authorization })
@@ -1369,11 +1433,11 @@ async function useScopeBoundaryAuthorization(
         current.stepId !== binding.stepId ||
         current.attempt !== binding.attempt ||
         current.agent !== agent ||
-        !canonical.every((resource) =>
-          current.patterns.some((pattern) =>
-            absoluteResourceMatchesScope(resource, pattern),
-          ),
-        )
+        !(await boundaryAuthorizationCoversResources(
+          projectDirectory,
+          current,
+          canonical,
+        ))
       ) {
         throw new Error("Hard-boundary authorization became stale.")
       }
@@ -1429,10 +1493,10 @@ async function scopeBoundaryMutationWasAuthorized(
         authorization.workflowId === binding.workflowId &&
         authorization.stepId === binding.stepId &&
         authorization.attempt === binding.attempt &&
-        canonical.every((resource) =>
-          authorization.patterns.some((pattern) =>
-            absoluteResourceMatchesScope(resource, pattern),
-          ),
+        await boundaryAuthorizationCoversResources(
+          projectDirectory,
+          authorization,
+          canonical,
         )
       ) {
         return true
@@ -7955,6 +8019,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                   attempt: request.attempt,
                   agent: request.agent,
                   patterns: request.paths,
+                  boundaryDetails: request.boundaryDetails ?? [],
                   authorizedAt: new Date().toISOString(),
                   authorizedBySessionId: tool.sessionID,
                 }
