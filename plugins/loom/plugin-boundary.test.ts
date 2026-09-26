@@ -1694,8 +1694,12 @@ Verdict: FAIL
     const h = await harness()
     try {
       const externalRoot = await mkdtemp(join(tmpdir(), "loom-scope-external-"))
-      roots.push(externalRoot)
-      await symlink(externalRoot, join(h.root, "linked-external"), "dir")
+      const replacementExternalRoot = await mkdtemp(
+        join(tmpdir(), "loom-scope-external-replacement-"),
+      )
+      roots.push(externalRoot, replacementExternalRoot)
+      const linkedExternal = join(h.root, "linked-external")
+      await symlink(externalRoot, linkedExternal, "dir")
 
       const generalSession = "scope-symlink-general"
       const childSession = "scope-symlink-specifier"
@@ -1761,6 +1765,52 @@ Verdict: FAIL
       expect(
         requested.hardBoundary.question.questions[0].question,
       ).toContain("symlink escape")
+
+      const questionEvent = {
+        tool: "question",
+        callID: "scope-symlink-question-call",
+        messageID: "scope-symlink-question-message",
+        sessionID: generalSession,
+        agent: "general",
+        input: requested.hardBoundary.question,
+      }
+      await h.toolHooks.get("execute.before")!(questionEvent)
+      await h.toolHooks.get("execute.after")!({
+        ...questionEvent,
+        status: "completed",
+        result: { metadata: { answers: [["Allow once"]] } },
+      })
+      expect((await h.call(
+        "scope_authorize_once",
+        {
+          workflowId,
+          requestId: requested.hardBoundary.requestId,
+        },
+        "general",
+        generalSession,
+      )).authorized).toBe(true)
+
+      const targetFile = join(linkedExternal, "schema.json")
+      const beforeRetarget: any = {
+        agent: "specifier",
+        action: "edit",
+        resources: [targetFile],
+        sessionID: childSession,
+        effect: "ask",
+      }
+      await h.permissionHooks.get("evaluate")!(beforeRetarget)
+      expect(beforeRetarget.effect).toBe("allow")
+
+      await rm(linkedExternal, { force: true })
+      await symlink(replacementExternalRoot, linkedExternal, "dir")
+
+      const afterRetarget: any = {
+        ...beforeRetarget,
+        effect: "ask",
+      }
+      await h.permissionHooks.get("evaluate")!(afterRetarget)
+      expect(afterRetarget.effect).toBe("deny")
+      expect(afterRetarget.message).toContain("loom_scope_elevate")
     } finally {
       h.restore()
     }
