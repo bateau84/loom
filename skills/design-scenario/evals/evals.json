@@ -1,24 +1,25 @@
 {
   "skill": "design-scenario",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "shape": 1,
   "cases": [
     {
       "id": "SC-01",
       "name": "interrupted-delete-recovery",
       "trap": "The scenario is happy-path-only or prescribes a confirmation modal/undo toast rather than describing the human situation, failure/edge condition, and observable recovery outcome.",
-      "prompt": "Create a Design Scenario from this accepted human-facing intent: a user managing personal tasks can accidentally delete a task and the accepted product capability allows recovery for at least 30 seconds in the same running session. Recovery restores the same task and displayed position and must not rewrite unrelated task history. The interface mechanism is deliberately open. Produce the durable SC content.",
+      "prompt": "Create a Design Scenario from this accepted human-facing intent: a user managing personal tasks can accidentally delete a task and the accepted product capability allows recovery for at least 30 seconds in the same running session. Recovery restores the same task and displayed position and must not rewrite unrelated task history. The interface mechanism is deliberately open. Accepted authority does not define an exact recovery expiry after 30 seconds and does not promise cross-restart recovery; do not invent either. Produce the durable SC content.",
       "expectations": [
         "Provides concrete context and a human goal around accidental deletion and regaining control, without assuming a particular modal/toast/button interaction.",
         "Describes a human-visible journey/situation from deletion through noticing the mistake and attempting recovery within the accepted same-session window.",
-        "Includes a meaningful edge/failure condition, such as discovering the mistake near/after the recovery window or interruption before recovery, without inventing unsupported cross-restart recovery.",
-        "Defines observable outcome including restoration of the same task/position when recovery is available and truthful behavior when it is not.",
+        "Includes a meaningful failure/interruption/edge condition that can affect the experience, such as distraction or interruption before recovery, while staying inside accepted authority and not inventing an exact recovery expiry or unsupported cross-restart behavior.",
+        "Defines the observable successful recovery outcome: restoration of the same task/position without rewriting unrelated task history. If the scenario discusses recovery outside the accepted same-session/minimum-window guarantee, it marks availability as unknown/conditional rather than inventing product semantics.",
         "Keeps backend/storage mechanics out and traces the scenario to accepted human-facing authority."
       ],
       "negative_expectations": [
         "Must not require a confirmation dialog or undo toast as the only valid design.",
         "Must not invent cross-restart or permanent-retention behavior.",
-        "Must not stop at a happy-path 'user deletes then restores task' narrative with no edge/failure condition."
+        "Must not stop at a happy-path 'user deletes then restores task' narrative with no edge/failure condition.",
+        "Must not invent an exact recovery-expiry point merely to manufacture an unavailable-recovery state."
       ]
     },
     {

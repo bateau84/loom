@@ -238,6 +238,10 @@ Each skill-owned case therefore makes four model calls per iteration: baseline t
 
 Reasoning effort is part of benchmark provenance. Use `--reasoning LEVEL` to pin the same explicit level for target and judge, or `--target-reasoning` / `--judge-reasoning` to override either side. Loom forwards the requested level to the eval runner, which maps it to the transport-native control (OpenCode model variant or Copilot reasoning effort). If no reasoning flag is supplied, Loom sends no override. For OpenCode, an explicit `#variant` already present in the model reference is recorded with source `model-variant`; otherwise the artifact records `provider-default` rather than inferring the provider's current default. Artifacts also record target/judge reasoning source. Skill-ablation baseline and candidate always share the same resolved target reasoning level.
 
+By default, each live invocation writes into `.loom-evals/<eval_run_id>/`; an explicit `--artifact-dir` opts into a caller-chosen single-run destination that must be empty.
+
+Each live eval invocation also receives a unique `eval_run_id`. Every case artifact records that run ID plus a SHA-256 `artifact_evidence_id` over the complete artifact content (excluding the evidence-ID field itself). Before printing PASS/FAIL/ERROR, the harness re-reads the durable artifact and verifies the run ID, evidence ID, and reporting fields against the in-memory result. The console header prints the run ID and each final case line prints the evidence-ID prefix, so copied console output can be correlated with the exact durable artifact. The harness generates a fresh run ID for every live invocation and atomically claims the artifact directory with a persistent `.loom-eval-run-id` owner file before execution. A second invocation cannot add, replace, or mix case artifacts in a directory owned by another run. First ownership also requires the destination to contain no pre-existing entries, so unowned artifacts from older harness versions cannot be absorbed into a new run; stale or overlapping destinations fail closed and require a clean/distinct directory instead of silently replacing or combining evidence.
+
 Example:
 
 ```bash
@@ -369,7 +373,7 @@ bun run eval:live -- --all --model <provider/model>
 
 For each case, Loom creates separate target and judge projects. Runtime targets receive the checked-out Loom plugin/skills plus a read-only mount of the checked-out `node_modules`; judges receive only the judge agent. Container-local HOME/XDG/session state is discarded after every invocation.
 
-Each container emits one JSON result on stdout. The Loom host harness writes `.loom-evals/<CASE>.json` itself, so target/judge containers do not require a writable host bind mount. Infrastructure/provider failures are classified as **non-evidence**, not behavioral FAIL.
+Each container emits one JSON result on stdout. The Loom host harness writes case JSON into the current run-owned artifact directory (by default `.loom-evals/<eval_run_id>/`), so target/judge containers do not require a writable host bind mount. Infrastructure/provider failures are classified as **non-evidence**, not behavioral FAIL.
 
 ## Cost control
 

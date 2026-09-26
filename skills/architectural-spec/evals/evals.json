@@ -1,25 +1,26 @@
 {
   "skill": "architectural-spec",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "shape": 1,
   "cases": [
     {
       "id": "Spec-01",
       "name": "idempotent-submit-contract",
       "trap": "The spec is precise on HTTP happy-path fields but leaves atomicity, ambiguous timeouts, duplicate semantics, and caller-safe retry behavior underspecified, allowing two conforming implementations to disagree.",
-      "prompt": "Write the implementation-facing specification for an already accepted SubmitJob interface. Parent architecture has fixed HTTP+JSON and these semantics: the client supplies an idempotency key; the server durably creates the logical job before acknowledging success; retrying the same key with the same semantic request returns the same logical job; the same key with a different semantic request is rejected; a client may retry after a timeout because it cannot know whether the prior request committed. The semantic job payload is already specified elsewhere and is intentionally opaque in this decision: represent it as a required `job` object and do not invent its internal fields. This task specifies the SubmitJob transport/idempotency envelope. Do not change those semantics or introduce a new protocol family. Specify the contract closely enough for an independent client and server implementation to interoperate.",
+      "prompt": "Write the implementation-facing specification for an already accepted SubmitJob interface. Parent architecture has fixed HTTP+JSON and these semantics: the client supplies an idempotency key; the server durably creates the logical job before acknowledging success; retrying the same key with the same semantic request returns the same logical job; the same key with a different semantic request is rejected; a client may retry after a timeout because it cannot know whether the prior request committed. The semantic job payload is already specified elsewhere and is intentionally opaque in this decision: represent it as a required `job` object and do not invent its internal fields. Accepted request identity for this envelope is also fixed: compute RFC 8785 canonical JSON bytes for the opaque `job` value and define its request identity as the SHA-256 digest of those bytes. Two requests are treated as the same semantic request iff those identity digests are equal; the idempotency record stores that digest. No idempotency-key retention/expiry policy has been accepted; do not invent expiry or key-reuse semantics. This task specifies the SubmitJob transport/idempotency envelope. Do not change those semantics or introduce a new protocol family. Specify the contract closely enough for an independent client and server implementation to interoperate.",
       "expectations": [
         "Defines exact operation/path/method, envelope request and response fields/types/requiredness, identifiers, validation rules, and error representation needed for independent client/server implementation, while treating the already-specified `job` payload as an opaque required object rather than inventing its internal schema.",
         "Defines the atomicity boundary between idempotency-key claim, durable job creation, and success acknowledgement so a crash cannot create two logical jobs or acknowledge before durability.",
-        "Defines same-key/same-semantic-request replay versus same-key/different-request conflict precisely, including how semantic equality or a stable request identity is determined without leaving it to each implementation.",
+        "Carries the accepted request-identity rule exactly: RFC 8785 canonicalize the opaque `job` value, compute its SHA-256 identity digest, and use digest equality for same-key/same-request replay versus same-key/different-request conflict; does not invent a competing equality rule.",
         "Defines caller-safe behavior after transport timeout/uncertain response and makes retry/idempotency guarantees precise rather than treating timeout as ordinary failure.",
-        "Defines ordering/concurrency behavior for simultaneous requests using the same idempotency key and what result losing contenders observe.",
+        "Defines deterministic arbitration and observable outcomes for simultaneous requests using the same idempotency key, covering both equivalent requests and conflicting requests so every contender knows whether it receives the committed job or a conflict.",
         "Separates normative contract from examples and names conformance evidence that exercises retries, crashes/uncertain responses, conflicts, and at least one real client/server composition path rather than only one-sided or schema-level checks."
       ],
       "negative_expectations": [
         "Must not stop at a JSON schema and 200/400 examples while leaving duplicate/concurrent/timeout behavior implicit.",
         "Must not invent a second queue, store, or protocol mechanism outside the settled parent architecture.",
-        "Must not allow two implementations to choose incompatible meanings for same-request comparison while both claiming conformance."
+        "Must not allow two implementations to choose incompatible meanings for same-request comparison while both claiming conformance.",
+        "Must not invent idempotency-key expiry/retention or post-expiry key-reuse semantics that accepted authority did not define."
       ]
     },
     {

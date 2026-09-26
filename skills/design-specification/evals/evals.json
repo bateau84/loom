@@ -1,6 +1,6 @@
 {
   "skill": "design-specification",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "shape": 1,
   "cases": [
     {
@@ -25,20 +25,21 @@
     {
       "id": "DesignSpec-02",
       "name": "destructive-bulk-action-with-interruption",
-      "trap": "The design jumps to a confirmation dialog and table layout but omits selection continuity, partial/failed action semantics, keyboard/focus behavior, mobile/touch adaptation, and the capability gap if atomic bulk behavior is not accepted.",
-      "prompt": "Produce an implementation-ready human-facing design handoff for bulk deletion in a record-management web app. Accepted product meaning: users may select multiple records and request deletion; records that are not permitted to be deleted must not be removed and the user must be told which requested records were not deleted. The product does not promise atomic all-or-nothing deletion or undo. Users may select dozens of records, use keyboard or touch, and may navigate away before acting. Do not invent backend transaction semantics.",
+      "trap": "The design jumps to a confirmation dialog and table layout but omits selection continuity, partial/failed action semantics, keyboard/focus behavior, mobile/touch adaptation, or the per-record outcome information dependency; alternatively it invents a missing backend capability that the supplied context does not establish.",
+      "prompt": "Produce an implementation-ready human-facing design handoff for bulk deletion in a record-management web app. Accepted product meaning: users may select multiple records and request deletion; records that are not permitted to be deleted must not be removed and the user must be told which requested records were not deleted. The product does not promise atomic all-or-nothing deletion or undo. Users may select dozens of records, use keyboard or touch, and may navigate away before acting. The context does not establish whether the current backend already provides per-record outcomes; do not invent a capability gap. Do not invent backend transaction semantics.",
       "expectations": [
         "Defines selection, review/request, result, and re-entry/abandonment behavior without assuming atomic all-or-nothing semantics or undo.",
         "Makes the mixed-result state explicit: users can tell which records were deleted and which were not, while remaining truthful about unspecified backend ordering/atomicity.",
         "Specifies selection-state continuity when users navigate/return or cancel before acting to the extent design can decide without inventing product guarantees.",
         "Integrates keyboard/focus semantics and touch/mobile alternatives for selection and destructive action rather than designing only mouse/desktop interaction.",
         "Records the destructive-action safeguard/rationale and distinguishes design choice from backend semantics.",
-        "Leaves structural deletion protocol/transaction realization to Architect and raises any capability dependency instead of masking it with UI."
+        "Makes the human-facing information dependency explicit—for example, that the result experience requires per-record outcome information—while leaving how that information is produced or transported to Architect. Only surfaces a capability gap if supplied evidence establishes that the capability is absent."
       ],
       "negative_expectations": [
         "Must not promise atomic deletion, rollback, or undo when product authority does not.",
         "Must not reduce mixed results to a generic success/failure toast.",
-        "Must not make hover-only or mouse-only controls the sole mobile/touch path."
+        "Must not make hover-only or mouse-only controls the sole mobile/touch path.",
+        "Must not claim the backend lacks per-record outcome capability when the supplied context does not establish that absence."
       ]
     }
   ]
