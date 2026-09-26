@@ -222,6 +222,17 @@ const artifactWriteDefaults: Record<string, string[]> = {
   diagnostic: ["ephemeral-reports/diagnostic/**"],
 }
 
+// These roles produce mutable repository artifacts as part of their assigned
+// professional work. Independent/advisory roles remain bounded to their own
+// output surface even though that surface can still be narrowed and re-expanded.
+const productScopeElevatingAgents = new Set([
+  "designer",
+  "specifier",
+  "architect",
+  "documenter",
+  "worker",
+])
+
 const generalGitWriteScope = ["docs/anchors/**"]
 
 type GitSessionOwnership = {
@@ -7512,6 +7523,25 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             ),
           ].sort()
 
+          const roleWriteDefault = artifactWriteDefaults[tool.agent] ?? []
+          if (!productScopeElevatingAgents.has(tool.agent)) {
+            const outsideRoleOutput =
+              hardBoundaryPaths.length > 0 ||
+              projectPaths.some(
+                (path) =>
+                  !resourcesWithinScope([path], roleWriteDefault),
+              )
+            if (outsideRoleOutput) {
+              return {
+                content: renderToolOutput({
+                  error:
+                    `${tool.agent} is an independent/advisory role and cannot self-elevate into product or hard-boundary mutation authority. Keep writes inside its role-owned output surface or return the implementation work to a producing role.`,
+                  roleWriteDefault,
+                }),
+              }
+            }
+          }
+
           try {
             if (projectPaths.length > 0) validateScopeElevation(projectPaths)
 
@@ -7563,7 +7593,6 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 const existing = (await ctx.storage.get(
                   scopeKey(value.workflowId, value.stepId),
                 )) as TaskScope | undefined
-                const roleWriteDefault = artifactWriteDefaults[step.agent] ?? []
                 const currentWrite = existing?.write.length
                   ? existing.write
                   : roleWriteDefault
