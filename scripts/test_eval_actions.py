@@ -494,6 +494,10 @@ class SkillOwnedEvalDiscoveryTests(unittest.TestCase):
             )
             self.assertIn("normal model capability", baseline_agent)
             self.assertIn("Load the native skill `web-ui-design` before answering", candidate_agent)
+            self.assertIn('action: shell\n    resource: "*"\n    effect: deny', baseline_agent)
+            self.assertIn('action: shell\n    resource: "*"\n    effect: deny', candidate_agent)
+            self.assertIn("Return the complete requested result inline", baseline_agent)
+            self.assertIn("return the complete artifact inline", candidate_agent)
         finally:
             import shutil
             shutil.rmtree(temp, ignore_errors=True)

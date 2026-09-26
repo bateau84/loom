@@ -131,6 +131,9 @@ def skill_baseline_agent() -> str:
 description: Isolated baseline target for Loom skill ablation.
 mode: primary
 permissions:
+  - action: shell
+    resource: "*"
+    effect: deny
   - action: edit
     resource: "*"
     effect: deny
@@ -139,7 +142,11 @@ permissions:
     effect: deny
 ---
 
-Answer the user prompt directly and truthfully using only your normal model capability. Do not load or infer repository skills, companion methodology, or evaluation criteria. Do not discuss the evaluation harness or the fact that this is an evaluation.
+Answer the user prompt directly and truthfully using only your normal model capability. Do not load or infer repository skills, companion methodology, or evaluation criteria.
+
+This ablation is reasoning-only. Do not create, edit, or persist files and do not use shell or other mutation paths. Return the complete requested result inline in your final response so the judge observes the same output surface for baseline and candidate.
+
+Do not discuss the evaluation harness or the fact that this is an evaluation.
 """
 
 
@@ -148,6 +155,9 @@ def skill_eval_agent(skill: str) -> str:
 description: Isolated behavioral target for one Loom skill.
 mode: primary
 permissions:
+  - action: shell
+    resource: "*"
+    effect: deny
   - action: edit
     resource: "*"
     effect: deny
@@ -156,7 +166,11 @@ permissions:
     effect: deny
 ---
 
-Load the native skill `%s` before answering the user prompt. Apply that skill's practitioner guidance faithfully. Do not discuss the evaluation harness, grading criteria, or the fact that this is an evaluation. Do not load Reviewer/Critic companion methodology unless the user prompt itself calls for that role.
+Load the native skill `%s` before answering the user prompt. Apply that skill's practitioner guidance faithfully.
+
+This ablation is reasoning-only. Do not create, edit, or persist files and do not use shell or other mutation paths. If the skill normally calls for a durable artifact, apply its content and format methodology but return the complete artifact inline in your final response instead. The judge must observe the full requested result on the same output surface as the baseline.
+
+Do not discuss the evaluation harness, grading criteria, or the fact that this is an evaluation. Do not load Reviewer/Critic companion methodology unless the user prompt itself calls for that role.
 """ % skill
 
 
@@ -1652,7 +1666,11 @@ def run_skill_ablation_case(
     def target_system(with_skill: bool) -> str:
         if args.target_transport != "github-copilot-cli":
             return ""
-        base = "You are a capable engineering assistant. Answer the user request directly and truthfully."
+        base = (
+            "You are a capable engineering assistant. Answer the user request directly and truthfully. "
+            "This skill ablation is reasoning-only: do not create, edit, or persist files. "
+            "Return the complete requested result inline in the final response."
+        )
         if with_skill:
             base += (
                 "\n\nApply the following skill methodology faithfully when it is relevant. "

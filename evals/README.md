@@ -230,6 +230,8 @@ A single baseline/candidate pair is one stochastic observation, not proof of sta
 
 With OpenCode, the baseline project contains no target skill and the candidate project contains only that skill; candidate evidence must confirm a completed native `skill` load. With GitHub Copilot CLI, Loom supplies no skill methodology to the baseline and injects the target `SKILL.md` only into the candidate system context. This preserves the same controlled baseline/candidate contrast across transports.
 
+Skill ablation is deliberately **reasoning-only**. Baseline and candidate projects are mounted read-only; their wrappers also deny shell/edit mutation and require the complete requested result inline in the final response. A skill that normally persists a durable artifact should apply its content/format methodology without writing the artifact during ablation. This keeps the judge's evidence surface identical for baseline and candidate and prevents a production-oriented persistence instruction from scoring as an apparent regression merely because the judge cannot see a container-local file.
+
 Central native skill-routing cases still require `--target-transport opencode` because they assert real production-role `skill` loading and companion-file behavior. Skill-owned ablation suites are provider-neutral and may use OpenCode or GitHub Copilot CLI for target and judge.
 
 Each skill-owned case therefore makes four model calls per iteration: baseline target, baseline judge, candidate target, and candidate judge.
