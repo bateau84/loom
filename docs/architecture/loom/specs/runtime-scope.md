@@ -139,9 +139,12 @@ than showing only the apparently project-local symlink path. Allow once
 authorizes only the requested path patterns for that exact current runnable
 Workflow step attempt. It does not become project policy, does not survive step
 completion or a new attempt/workflow, and MUST NOT expose a "remember my choice"
-path. A custom answer grants no authority. Hard-boundary authorization MUST be
-revalidated while holding the step mutation guard immediately before the write,
-so completion/reopen cannot race between permission admission and execution.
+path. A custom answer grants no authority. For symlink escapes, authorization is additionally
+bound to the resolved external target disclosed in the approval question; if
+the symlink is retargeted, the prior approval no longer authorizes the write.
+Hard-boundary authorization MUST be revalidated while holding the step mutation
+guard immediately before the write, so completion/reopen or boundary retargeting
+cannot race between permission admission and execution.
 
 ## Git authorship continuity and bounded recovery
 
