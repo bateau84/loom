@@ -6844,6 +6844,16 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             }
             validateScopeElevation(value.write)
             const roleWriteDefault = artifactWriteDefaults[step.agent]
+            if (!productScopeElevatingAgents.has(step.agent)) {
+              if (
+                !roleWriteDefault?.length ||
+                !resourcesWithinScope(value.write, roleWriteDefault)
+              ) {
+                throw new Error(
+                  `${step.agent} is an independent/advisory role and its declared write scope must remain inside its role-owned output surface: ${roleWriteDefault?.join(", ") || "<none>"}.`,
+                )
+              }
+            }
             const previous = (await ctx.storage.get(
               scopeKey(value.workflowId, value.stepId),
             )) as TaskScope | undefined
