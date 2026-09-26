@@ -1430,6 +1430,20 @@ Verdict: FAIL
       expect(grant.error).toBeUndefined()
       expect(grant.expectedAgent).toBe("worker")
 
+      const evaluate = h.permissionHooks.get("evaluate")!
+      const dispatch: any = {
+        agent: "general",
+        action: "subagent",
+        resources: ["worker"],
+        sessionID: generalSession,
+        source: {
+          messageID: "scope-before-grant-message",
+          id: "scope-before-grant-dispatch",
+        },
+      }
+      await evaluate(dispatch)
+      expect(dispatch.effect).not.toBe("deny")
+
       const attached = await h.call(
         "attach",
         { grantId: grant.grantId, workflowId, stepId: "worker" },
@@ -1438,7 +1452,6 @@ Verdict: FAIL
       )
       expect(attached.attached).toBe(true)
 
-      const evaluate = h.permissionHooks.get("evaluate")!
       const beforeElevation: any = {
         agent: "worker",
         action: "edit",
