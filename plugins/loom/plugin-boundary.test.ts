@@ -3522,7 +3522,7 @@ Verdict: FAIL
 
       await expect(
         h.toolHooks.get("execute.before")!(racedEditEvent),
-      ).rejects.toThrow("outside the current declared Loom step write scope")
+      ).rejects.toThrow("outside the current Loom write scope")
 
       const completed = await h.call(
         "complete",
