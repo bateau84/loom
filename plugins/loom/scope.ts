@@ -46,7 +46,9 @@ export function validateWriteScope(paths: string[]) {
   return validateBoundedWriteScope(paths, "Worker starting write scope")
 }
 
-function globRegex(pattern: string) {
+function escapedGlob(pattern: string) {
+  return normalize(pattern)
+    .replace(/[.*+?^$()|[\]\\{}]/g, "\\function globRegex(pattern: string) {
   const escaped = normalize(pattern)
     .replace(/[.*+?^$()|[\]\\{}]/g, "\\$&")
     .replaceAll("\\*\\*", ".*")
@@ -58,6 +60,29 @@ function globRegex(pattern: string) {
 
 export function resourceMatchesScope(resource: string, pattern: string) {
   return globRegex(pattern).test(normalize(resource))
+}")
+    .replaceAll("\\*\\*", ".*")
+    .replaceAll("\\*", ".*")
+    .replaceAll("\\?", ".")
+}
+
+function globRegex(pattern: string) {
+  return new RegExp("^(?:.*/)?" + escapedGlob(pattern) + "$")
+}
+
+export function resourceMatchesScope(resource: string, pattern: string) {
+  return globRegex(pattern).test(normalize(resource))
+}
+
+export function absoluteResourceMatchesScope(
+  resource: string,
+  absolutePattern: string,
+) {
+  const normalizedPattern = normalize(absolutePattern)
+  if (!normalizedPattern.startsWith("/")) return false
+  return new RegExp("^" + escapedGlob(normalizedPattern) + "$").test(
+    normalize(resource),
+  )
 }
 
 export function resourcesWithinScope(resources: readonly string[], patterns: string[]) {
