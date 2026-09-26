@@ -2265,6 +2265,176 @@ Verdict: FAIL
     }
   })
 
+  test("General can recover lost same-attempt specialist Git authorship with exact user authority", async () => {
+    const h = await harness()
+    try {
+      await initializeGitFixture(h.root)
+      const generalSession = "specifier-recovery-general"
+      const childSession = "specifier-recovery-author"
+      const started = await h.call(
+        "start",
+        { request: "Recover one bounded requirements artifact after provenance loss." },
+        "general",
+        generalSession,
+      )
+      const workflowId = String(started.workflowId)
+      expect((await h.call(
+        "route",
+        {
+          humanFacing: false,
+          behavioral: true,
+          structural: false,
+          externalUnknown: false,
+          diagnostic: false,
+          productOutcome: false,
+          implementationRequested: true,
+          executionDepth: "change",
+        },
+        "general",
+        generalSession,
+      )).error).toBeUndefined()
+
+      const path = "docs/requirements/lifecycle/br-050.md"
+      expect((await h.call(
+        "step_scope",
+        { workflowId, stepId: "specifier", write: [path] },
+        "general",
+        generalSession,
+      )).error).toBeUndefined()
+      const grant = await h.call(
+        "dispatch_grant",
+        { workflowId, stepId: "specifier" },
+        "general",
+        generalSession,
+      )
+      expect((await h.call(
+        "attach",
+        { grantId: grant.grantId, workflowId, stepId: "specifier" },
+        "specifier",
+        childSession,
+      )).attached).toBe(true)
+
+      await mkdir(join(h.root, "docs", "requirements", "lifecycle"), { recursive: true })
+      const editEvent = {
+        tool: "edit",
+        callID: "specifier-recovery-edit",
+        messageID: "specifier-recovery-edit-message",
+        sessionID: childSession,
+        agent: "specifier",
+        input: { filePath: join(h.root, path), oldString: "", newString: "owned\n" },
+      }
+      await h.toolHooks.get("execute.before")!(editEvent)
+      await writeFile(join(h.root, path), "owned\n")
+      await h.toolHooks.get("execute.after")!({
+        ...editEvent,
+        status: "completed",
+        result: "updated",
+      })
+
+      // Emulate the pre-fix guard having erased the session's ownership record
+      // after a fresh attachment.
+      await h.durableStorage.set(
+        `git-session-ownership/${encodeURIComponent(childSession)}`,
+        {
+          schemaVersion: 2,
+          attachmentId: "lost-attachment",
+          paths: [],
+          worktreeFingerprints: {},
+          stagedFingerprints: {},
+        },
+      )
+
+      const evaluate = h.permissionHooks.get("evaluate")!
+      const deniedStage: any = {
+        agent: "specifier",
+        action: "shell",
+        resources: [`git add ${path}`],
+        sessionID: childSession,
+        effect: "ask",
+      }
+      await evaluate(deniedStage)
+      expect(deniedStage.effect).toBe("deny")
+      expect(deniedStage.message).toContain("stage only files authored")
+
+      const confirmation = "Recover Git ownership for this exact Specifier file."
+      await h.sessionHooks.get("context")!({
+        sessionID: generalSession,
+        system: [],
+        messages: [{
+          id: "git-recovery-user-message",
+          role: "user",
+          content: [{ type: "text", text: confirmation }],
+        }],
+      })
+
+      const before = await readFile(join(h.root, path), "utf8")
+      const recovered = await h.call(
+        "git_ownership_recover",
+        {
+          workflowId,
+          stepId: "specifier",
+          targetSessionId: childSession,
+          paths: [path],
+          reason: "Regression recovery for ownership erased by attachment rotation.",
+          confirmation,
+        },
+        "general",
+        generalSession,
+      )
+      expect(recovered.error).toBeUndefined()
+      expect(recovered.recovered).toBe(true)
+      expect(recovered.reusedAuthorization).toBe(false)
+      expect(recovered.paths).toEqual([path])
+      expect(recovered.authorityId).toContain(`step:${encodeURIComponent(workflowId)}:specifier:0`)
+      expect(await readFile(join(h.root, path), "utf8")).toBe(before)
+      expect((await git(h.root, ["diff", "--cached", "--name-only"])).stdout.trim()).toBe("")
+
+      const allowedStage: any = {
+        agent: "specifier",
+        action: "shell",
+        resources: [`git add ${path}`],
+        sessionID: childSession,
+        effect: "ask",
+      }
+      await evaluate(allowedStage)
+      expect(allowedStage.effect).toBe("allow")
+
+      const replay = await h.call(
+        "git_ownership_recover",
+        {
+          workflowId,
+          stepId: "specifier",
+          targetSessionId: childSession,
+          paths: [path],
+          reason: "Idempotent retry.",
+          confirmation,
+        },
+        "general",
+        generalSession,
+      )
+      expect(replay.error).toBeUndefined()
+      expect(replay.reusedAuthorization).toBe(true)
+
+      await writeFile(join(h.root, path), "changed-after-recovery\n")
+      const changedReplay = await h.call(
+        "git_ownership_recover",
+        {
+          workflowId,
+          stepId: "specifier",
+          targetSessionId: childSession,
+          paths: [path],
+          reason: "Must not adopt changed bytes.",
+          confirmation,
+        },
+        "general",
+        generalSession,
+      )
+      expect(changedReplay.error).toContain("changed after this user authorization")
+    } finally {
+      h.restore()
+    }
+  })
+
   test("specialist completion rechecks repository cleanliness after an active mutation", async () => {
     const h = await harness()
     try {

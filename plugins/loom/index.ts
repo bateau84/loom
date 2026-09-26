@@ -621,6 +621,10 @@ function continuationAuthorizationUseKey(sessionID: string, userMessageId: strin
   return `budget-continuation-user-message/${encodeURIComponent(sessionID)}/${encodeURIComponent(userMessageId)}`
 }
 
+function gitOwnershipRecoveryAuthorizationKey(sessionID: string, userMessageId: string) {
+  return `git-ownership-recovery-user-message/${encodeURIComponent(sessionID)}/${encodeURIComponent(userMessageId)}`
+}
+
 function continuationQuestionAuthorizationUseKey(sessionID: string, denialId: string) {
   return `budget-continuation-question/${encodeURIComponent(sessionID)}/${encodeURIComponent(denialId)}`
 }
@@ -6756,6 +6760,223 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 ? { roleWriteCeiling: artifactWriteCeilings[step.agent] }
                 : {}),
             }),
+          }
+        },
+      })
+
+      addLoomTool({
+        name: "git_ownership_recover",
+        description:
+          "Recover lost Git authorship provenance for exact current dirty bytes after a guard/runtime defect. General only and requires the exact latest user message as authorization. This does not edit, stage, or commit files; it adopts only current fingerprints for the target session's exact current step attempt inside its declared specialist scope.",
+        input: {
+          type: "object",
+          properties: {
+            workflowId: { type: "string" },
+            stepId: { type: "string" },
+            targetSessionId: { type: "string" },
+            paths: { type: "array", items: { type: "string" } },
+            reason: { type: "string" },
+            confirmation: {
+              type: "string",
+              description: "Exact latest real user message explicitly authorizing recovery of these current files.",
+            },
+          },
+          required: ["workflowId", "stepId", "targetSessionId", "paths", "reason", "confirmation"],
+          additionalProperties: false,
+        },
+        options: { namespace: "loom", codemode: false },
+        execute: async (input, tool) => {
+          if (tool.agent !== "general") {
+            return { content: renderToolOutput({ error: "Only general may recover Git authorship provenance." }) }
+          }
+
+          const value = input as {
+            workflowId: string
+            stepId: string
+            targetSessionId: string
+            paths: string[]
+            reason: string
+            confirmation: string
+          }
+          const observedUserMessage = (await ctx.storage.get(
+            sessionUserMessageKey(tool.sessionID),
+          )) as ObservedUserMessage | undefined
+          if (!observedUserMessage) {
+            return { content: renderToolOutput({ error: "No current observed user message is available to authorize Git ownership recovery." }) }
+          }
+          if (value.confirmation.trim() !== observedUserMessage.text.trim()) {
+            return {
+              content: renderToolOutput({
+                error: "Git ownership recovery confirmation must match the latest observed user message exactly.",
+                authorizationUserMessageId: observedUserMessage.messageId,
+              }),
+            }
+          }
+
+          let normalized: string[]
+          try {
+            normalized = [...new Set(value.paths.map(safeOwnedRepoPath))].sort()
+            if (normalized.length === 0) throw new Error("Git ownership recovery paths must not be empty.")
+          } catch (error) {
+            return { content: renderToolOutput({ error: error instanceof Error ? error.message : String(error) }) }
+          }
+
+          const recoveryKey = gitOwnershipRecoveryAuthorizationKey(
+            tool.sessionID,
+            observedUserMessage.messageId,
+          )
+          const resources = [
+            { aggregate: "workflow", resourceIdentity: value.workflowId },
+            stepAuthorityResource(value.workflowId, value.stepId),
+            { aggregate: "git-index", resourceIdentity: "__repository_index__" },
+            {
+              aggregate: "git-ownership-recovery",
+              resourceIdentity: `${tool.sessionID}:${observedUserMessage.messageId}`,
+            },
+            ...normalized.map((path) => ({
+              aggregate: "file-write",
+              resourceIdentity: path,
+            })),
+          ]
+
+          try {
+            const recovered = await withRuntimeLocks(runtime, resources, async () => {
+              const latestUserMessage = (await ctx.storage.get(
+                sessionUserMessageKey(tool.sessionID),
+              )) as ObservedUserMessage | undefined
+              if (
+                !latestUserMessage ||
+                latestUserMessage.messageId !== observedUserMessage.messageId ||
+                latestUserMessage.text.trim() !== value.confirmation.trim()
+              ) {
+                throw new Error("User authorization changed before Git ownership recovery could commit.")
+              }
+
+              const currentBinding = (await ctx.storage.get(sessionKey(tool.sessionID))) as string | undefined
+              if (currentBinding !== value.workflowId) {
+                throw new Error("General is no longer bound to this workflow.")
+              }
+              const workflow = await readWorkflow(ctx, value.workflowId)
+              if (!workflow) throw new Error("Workflow not found.")
+              const step = workflow.steps.find((candidate) => candidate.id === value.stepId)
+              if (!step || step.status !== "pending" || !runnable(workflow).some((candidate) => candidate.id === step.id)) {
+                throw new Error("Git ownership recovery requires the exact currently runnable pending step.")
+              }
+
+              const roleWriteCeiling = durableAuthorGitScopes[step.agent]
+              if (!roleWriteCeiling) {
+                throw new Error(`Step ${value.stepId} (${step.agent}) is not a durable Git-authoring specialist.`)
+              }
+              validateStepWriteScope(normalized, roleWriteCeiling, "Git ownership recovery")
+              const scope = (await ctx.storage.get(
+                scopeKey(value.workflowId, value.stepId),
+              )) as TaskScope | undefined
+              if (!scope?.write.length || !resourcesWithinScope(normalized, scope.write)) {
+                throw new Error("Git ownership recovery paths must all be inside the step's declared write scope.")
+              }
+              if (!(await exactStepAttemptBinding(
+                ctx,
+                value.targetSessionId,
+                value.workflowId,
+                value.stepId,
+              ))) {
+                throw new Error("Target session is not attached to the exact current Loom step attempt.")
+              }
+
+              const staged = new Set(await stagedGitPaths(ctx.location.directory))
+              const alreadyStaged = normalized.filter((path) => staged.has(path))
+              if (alreadyStaged.length > 0) {
+                throw new Error(
+                  "Git ownership recovery refuses already-staged paths: " + alreadyStaged.join(", "),
+                )
+              }
+              const dirty = new Set(await projectDirtyPaths(ctx.location.directory))
+              const notDirty = normalized.filter((path) => !dirty.has(path))
+              if (notDirty.length > 0) {
+                throw new Error(
+                  "Git ownership recovery requires current uncommitted changes for every path: " + notDirty.join(", "),
+                )
+              }
+
+              const currentFingerprints = Object.fromEntries(
+                await Promise.all(
+                  normalized.map(async (path) => [
+                    path,
+                    await worktreeFingerprint(ctx.location.directory, path),
+                  ] as const),
+                ),
+              )
+              const prior = (await ctx.storage.get(recoveryKey)) as
+                | {
+                    workflowId: string
+                    stepId: string
+                    targetSessionId: string
+                    paths: string[]
+                    fingerprints: Record<string, string>
+                    userMessageId: string
+                    recoveredAt: string
+                    reason: string
+                  }
+                | undefined
+
+              if (prior) {
+                const sameRequest =
+                  prior.workflowId === value.workflowId &&
+                  prior.stepId === value.stepId &&
+                  prior.targetSessionId === value.targetSessionId &&
+                  JSON.stringify(prior.paths) === JSON.stringify(normalized)
+                if (!sameRequest) {
+                  throw new Error("This user authorization was already used for a different Git ownership recovery.")
+                }
+                const changed = normalized.filter(
+                  (path) => prior.fingerprints[path] !== currentFingerprints[path],
+                )
+                if (changed.length > 0) {
+                  throw new Error(
+                    "Recovered files changed after this user authorization: " + changed.join(", "),
+                  )
+                }
+              } else {
+                await ctx.storage.set(recoveryKey, {
+                  workflowId: value.workflowId,
+                  stepId: value.stepId,
+                  targetSessionId: value.targetSessionId,
+                  paths: normalized,
+                  fingerprints: currentFingerprints,
+                  userMessageId: observedUserMessage.messageId,
+                  recoveredAt: new Date().toISOString(),
+                  reason: value.reason,
+                })
+              }
+
+              await recordGitSessionOwnership(
+                ctx,
+                value.targetSessionId,
+                ctx.location.directory,
+                normalized,
+              )
+              const ownership = await gitSessionOwnership(ctx, value.targetSessionId)
+              return {
+                paths: normalized,
+                fingerprints: currentFingerprints,
+                authorityId: ownership.authorityId,
+                reusedAuthorization: Boolean(prior),
+              }
+            })
+
+            return {
+              content: renderToolOutput({
+                recovered: true,
+                workflowId: value.workflowId,
+                stepId: value.stepId,
+                targetSessionId: value.targetSessionId,
+                authorizationUserMessageId: observedUserMessage.messageId,
+                ...recovered,
+                note: "Recovered authorship adopts the exact current uncommitted bytes; it does not assert that historical provenance survived the earlier guard defect.",
+              }),
+            }
+          } catch (error) {
+            return { content: renderToolOutput({ error: error instanceof Error ? error.message : String(error) }) }
           }
         },
       })
