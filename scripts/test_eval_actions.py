@@ -1017,7 +1017,22 @@ class ActionAssertionTests(unittest.TestCase):
         args.judge_reasoning = "high"
         self.assertEqual(RUN_EVALS.requested_reasoning(args, "target"), "low")
         self.assertEqual(RUN_EVALS.requested_reasoning(args, "judge"), "high")
-        self.assertEqual(RUN_EVALS.reasoning_label(None), "provider-default")
+        self.assertEqual(
+            RUN_EVALS.reasoning_provenance("openai/gpt-5.6-luna", "opencode", None),
+            ("provider-default", "provider-default"),
+        )
+        self.assertEqual(
+            RUN_EVALS.reasoning_provenance("openai/gpt-5.6-luna#high", "opencode", None),
+            ("high", "model-variant"),
+        )
+        self.assertEqual(
+            RUN_EVALS.reasoning_provenance("gpt-5.6-luna", "github-copilot-cli", None),
+            ("provider-default", "provider-default"),
+        )
+        self.assertEqual(
+            RUN_EVALS.reasoning_provenance("openai/gpt-5.6-luna#high", "opencode", "medium"),
+            ("medium", "explicit"),
+        )
 
     def test_invoke_container_leaves_network_default_when_unset(self):
         class Result:

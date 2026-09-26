@@ -350,8 +350,18 @@ def requested_reasoning(args: argparse.Namespace, role: str) -> str | None:
     return override if override is not None else common
 
 
-def reasoning_label(value: str | None) -> str:
-    return value if value else "provider-default"
+def reasoning_provenance(
+    model: str,
+    transport: str,
+    requested: str | None,
+) -> tuple[str, str]:
+    if requested:
+        return requested, "explicit"
+    if transport == "opencode" and "#" in model:
+        _, variant = model.rsplit("#", 1)
+        if variant:
+            return variant, "model-variant"
+    return "provider-default", "provider-default"
 
 
 def case_selectors(case: dict[str, Any]) -> set[str]:
@@ -1688,6 +1698,12 @@ def run_skill_ablation_case(
     judge_model = args.judge_model or args.model
     target_reasoning = requested_reasoning(args, "target")
     judge_reasoning = requested_reasoning(args, "judge")
+    target_reasoning_label, target_reasoning_source = reasoning_provenance(
+        args.model, args.target_transport, target_reasoning
+    )
+    judge_reasoning_label, judge_reasoning_source = reasoning_provenance(
+        judge_model, args.judge_transport, judge_reasoning
+    )
     if args.judge_transport != args.target_transport and not args.judge_model:
         raise RuntimeError("--judge-model is required when target and judge transports differ")
 
@@ -1719,9 +1735,11 @@ def run_skill_ablation_case(
         "target_transport": args.target_transport,
         "judge_transport": args.judge_transport,
         "model": args.model,
-        "reasoning": reasoning_label(target_reasoning),
+        "reasoning": target_reasoning_label,
+        "reasoning_source": target_reasoning_source,
         "judge_model": judge_model,
-        "judge_reasoning": reasoning_label(judge_reasoning),
+        "judge_reasoning": judge_reasoning_label,
+        "judge_reasoning_source": judge_reasoning_source,
         "classification": "non-evidence",
         "passed": False,
         "baseline": {},
@@ -2023,6 +2041,12 @@ def run_case(
     judge_model = args.judge_model or args.model
     target_reasoning = requested_reasoning(args, "target")
     judge_reasoning = requested_reasoning(args, "judge")
+    target_reasoning_label, target_reasoning_source = reasoning_provenance(
+        args.model, args.target_transport, target_reasoning
+    )
+    judge_reasoning_label, judge_reasoning_source = reasoning_provenance(
+        judge_model, args.judge_transport, judge_reasoning
+    )
 
     if args.judge_transport != args.target_transport and not args.judge_model:
         raise RuntimeError("--judge-model is required when target and judge transports differ")
@@ -2193,9 +2217,11 @@ def run_case(
             "target_transport": args.target_transport,
             "judge_transport": args.judge_transport,
             "model": args.model,
-            "reasoning": reasoning_label(target_reasoning),
+            "reasoning": target_reasoning_label,
+            "reasoning_source": target_reasoning_source,
             "judge_model": judge_model,
-            "judge_reasoning": reasoning_label(judge_reasoning),
+            "judge_reasoning": judge_reasoning_label,
+            "judge_reasoning_source": judge_reasoning_source,
             "timing": {
                 "target_seconds": round(target_seconds, 3),
                 "judge_seconds": round(judge_seconds, 3),

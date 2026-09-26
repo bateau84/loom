@@ -236,7 +236,7 @@ Central native skill-routing cases still require `--target-transport opencode` b
 
 Each skill-owned case therefore makes four model calls per iteration: baseline target, baseline judge, candidate target, and candidate judge.
 
-Reasoning effort is part of benchmark provenance. Use `--reasoning LEVEL` to pin the same explicit level for target and judge, or `--target-reasoning` / `--judge-reasoning` to override either side. Loom forwards the requested level to the eval runner, which maps it to the transport-native control (OpenCode model variant or Copilot reasoning effort). If no reasoning flag is supplied, Loom sends no override and records `provider-default` in the artifact rather than inferring the provider's current default. Skill-ablation baseline and candidate always share the same resolved target reasoning level.
+Reasoning effort is part of benchmark provenance. Use `--reasoning LEVEL` to pin the same explicit level for target and judge, or `--target-reasoning` / `--judge-reasoning` to override either side. Loom forwards the requested level to the eval runner, which maps it to the transport-native control (OpenCode model variant or Copilot reasoning effort). If no reasoning flag is supplied, Loom sends no override. For OpenCode, an explicit `#variant` already present in the model reference is recorded with source `model-variant`; otherwise the artifact records `provider-default` rather than inferring the provider's current default. Artifacts also record target/judge reasoning source. Skill-ablation baseline and candidate always share the same resolved target reasoning level.
 
 Example:
 
