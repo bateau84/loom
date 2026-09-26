@@ -1529,7 +1529,9 @@ Verdict: FAIL
         childSession,
       )).attached).toBe(true)
 
-      const external = join(h.root, "..", "loom-shared-schema.json")
+      const externalRoot = await mkdtemp(join(tmpdir(), "loom-hard-boundary-"))
+      roots.push(externalRoot)
+      const external = join(externalRoot, "schema.json")
       const requested = await h.call(
         "scope_elevate",
         {
@@ -1609,9 +1611,34 @@ Verdict: FAIL
       await h.permissionHooks.get("evaluate")!(allowed)
       expect(allowed.effect).toBe("allow")
 
+      const externalEdit = {
+        tool: "edit",
+        callID: "scope-boundary-external-edit",
+        messageID: "scope-boundary-external-edit-message",
+        sessionID: childSession,
+        agent: "specifier",
+        input: {
+          filePath: external,
+          oldString: "",
+          newString: "approved\n",
+        },
+      }
+      await h.toolHooks.get("execute.before")!(externalEdit)
+      await writeFile(external, "approved\n")
+      await h.toolHooks.get("execute.after")!({
+        ...externalEdit,
+        status: "completed",
+        result: "updated",
+      })
+      expect(await readFile(external, "utf8")).toBe("approved\n")
+      const ownership = await h.durableStorage.get(
+        `git-session-ownership/${encodeURIComponent(childSession)}`,
+      ) as any
+      expect(ownership?.paths ?? []).not.toContain(external)
+
       const differentExternal: any = {
         ...allowed,
-        resources: [join(h.root, "..", "different-external.json")],
+        resources: [join(externalRoot, "different-external.json")],
         effect: "ask",
       }
       await h.permissionHooks.get("evaluate")!(differentExternal)
