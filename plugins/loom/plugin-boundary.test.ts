@@ -1968,6 +1968,7 @@ Verdict: FAIL
   test("lets General scope a Specifier's own artifacts without a Worker handoff", async () => {
     const h = await harness()
     try {
+      await initializeGitFixture(h.root)
       const started = await h.call(
         "start",
         { request: "Specify one bounded lifecycle meaning." },
@@ -2023,6 +2024,18 @@ Verdict: FAIL
       )
       expect(escaped.error).toContain("may narrow role authority but cannot grant")
 
+      const evaluate = h.permissionHooks.get("evaluate")!
+      const unattachedMutation: any = {
+        agent: "specifier",
+        action: "edit",
+        resources: [write[0]],
+        sessionID: "specifier-scope-author",
+        effect: "ask",
+      }
+      await evaluate(unattachedMutation)
+      expect(unattachedMutation.effect).toBe("deny")
+      expect(unattachedMutation.message).toContain("exact attached Loom workflow step")
+
       const grant = await h.call(
         "dispatch_grant",
         { workflowId, stepId: "specifier" },
@@ -2030,14 +2043,17 @@ Verdict: FAIL
         "specifier-scope-general",
       )
       expect(grant.error).toBeUndefined()
-      expect((await h.call(
+      const attached = await h.call(
         "attach",
         { grantId: grant.grantId, workflowId, stepId: "specifier" },
         "specifier",
         "specifier-scope-author",
-      )).attached).toBe(true)
+      )
+      expect(attached.attached).toBe(true)
+      expect(attached.write).toEqual(write)
+      expect(attached.scopeSemantics).toBe("mutation-boundary-only")
 
-      const evaluate = h.permissionHooks.get("evaluate")!
+
       const inScope: any = {
         agent: "specifier",
         action: "edit",
@@ -2095,6 +2111,64 @@ Verdict: FAIL
       }
       await evaluate(stageOutside)
       expect(stageOutside.effect).toBe("deny")
+
+      const stageEvent = {
+        tool: "shell",
+        callID: "specifier-stage",
+        messageID: "specifier-stage-message",
+        sessionID: "specifier-scope-author",
+        agent: "specifier",
+        input: { command: `git add ${write[0]}` },
+      }
+      await h.toolHooks.get("execute.before")!(stageEvent)
+      await git(h.root, ["add", write[0]])
+      await h.toolHooks.get("execute.after")!({
+        ...stageEvent,
+        status: "completed",
+        result: "staged",
+      })
+
+      const commitCommand =
+        "git -c core.hooksPath=/dev/null commit -m 'test: scoped specifier artifact'"
+      const commitPermission: any = {
+        agent: "specifier",
+        action: "shell",
+        resources: [commitCommand],
+        sessionID: "specifier-scope-author",
+        effect: "ask",
+      }
+      await evaluate(commitPermission)
+      expect(commitPermission.effect).toBe("allow")
+      const commitEvent = {
+        tool: "shell",
+        callID: "specifier-commit",
+        messageID: "specifier-commit-message",
+        sessionID: "specifier-scope-author",
+        agent: "specifier",
+        input: { command: commitCommand },
+      }
+      await h.toolHooks.get("execute.before")!(commitEvent)
+      await git(h.root, [
+        "-c",
+        "core.hooksPath=/dev/null",
+        "commit",
+        "-m",
+        "test: scoped specifier artifact",
+        "-q",
+      ])
+      await h.toolHooks.get("execute.after")!({
+        ...commitEvent,
+        status: "completed",
+        result: "committed",
+      })
+
+      const completed = await h.call(
+        "complete",
+        { workflowId, stepId: "specifier", summary: "requirements committed" },
+        "specifier",
+        "specifier-scope-author",
+      )
+      expect(completed.error).toBeUndefined()
     } finally {
       h.restore()
     }

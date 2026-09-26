@@ -6324,8 +6324,11 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                   }
                 }
 
+                scope = (await ctx.storage.get(
+                  scopeKey(value.workflowId, value.stepId),
+                )) as TaskScope | undefined
+
                 if (tool.agent === "worker") {
-                  scope = (await ctx.storage.get(scopeKey(value.workflowId, value.stepId))) as TaskScope | undefined
                   if (!scope) throw new Error("Worker step has no declared task scope.")
 
                   if (step.task && workflow.work && work) {
@@ -7109,13 +7112,27 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         const stepId = (await ctx.storage.get(
           sessionStepKey(event.sessionID),
         )) as string | undefined
-        if (
+        const exactAttachment = Boolean(
           workflowId &&
           stepId &&
-          await exactStepBinding(ctx, event.sessionID, workflowId, stepId)
-        ) {
+          await exactStepBinding(ctx, event.sessionID, workflowId, stepId),
+        )
+        const durableScope = durableAuthorGitScopes[String(event.agent ?? "")]
+        const touchesDurableArtifact = Boolean(
+          durableScope?.length &&
+          event.resources.some((resource: string) =>
+            resourcesWithinScope([resource], durableScope),
+          ),
+        )
+        if (touchesDurableArtifact && !exactAttachment) {
+          event.effect = "deny"
+          event.message =
+            "Durable specialist artifact mutation requires the role's exact attached Loom workflow step."
+          return
+        }
+        if (exactAttachment) {
           const declaredScope = (await ctx.storage.get(
-            scopeKey(workflowId, stepId),
+            scopeKey(workflowId!, stepId!),
           )) as TaskScope | undefined
           if (
             declaredScope?.write.length &&
