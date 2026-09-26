@@ -1691,7 +1691,7 @@ class ActionAssertionTests(unittest.TestCase):
                 RUN_EVALS.claim_artifact_directory(root, "run-new")
 
             owner = root / ".loom-eval-run-id"
-            self.assertEqual(owner.read_text(encoding="utf-8").strip(), "run-new")
+            self.assertFalse(owner.exists())
             self.assertTrue((root / "stale-case.json").is_file())
 
     def test_run_case_reports_phase_progress_and_records_timings(self):

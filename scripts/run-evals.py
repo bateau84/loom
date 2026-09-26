@@ -1732,15 +1732,20 @@ def claim_artifact_directory(artifact_dir: Path, run_id: str) -> None:
             )
         return
 
-    with os.fdopen(fd, "w", encoding="utf-8") as stream:
-        stream.write(run_id + "\n")
-        stream.flush()
-        os.fsync(stream.fileno())
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            stream.write(run_id + "\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+    except Exception:
+        owner.unlink(missing_ok=True)
+        raise
 
     stale_entries = sorted(
         item.name for item in artifact_dir.iterdir() if item != owner
     )
     if stale_entries:
+        owner.unlink(missing_ok=True)
         raise RuntimeError(
             f"eval artifact directory {artifact_dir} was not empty before run {run_id!r}; "
             f"existing entries: {stale_entries[:20]}; use a clean or distinct artifact directory"
