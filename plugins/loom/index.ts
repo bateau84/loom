@@ -2727,13 +2727,11 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
           if (resolvedOutcome === "complete") {
             let ownedWriteScope: string[] | undefined = durableAuthorGitScopes[tool.agent]
-            const declaredScope = (await ctx.storage.get(
-              scopeKey(workflowId, stepId),
-            )) as TaskScope | undefined
-            if (declaredScope?.write.length) {
-              ownedWriteScope = declaredScope.write
-            } else if (tool.agent === "worker") {
-              ownedWriteScope = undefined
+            if (tool.agent === "worker") {
+              const declaredScope = (await ctx.storage.get(
+                scopeKey(workflowId, stepId),
+              )) as TaskScope | undefined
+              ownedWriteScope = declaredScope?.write
             }
             if (ownedWriteScope?.length) {
               const repositoryError = await uncommittedOwnedChangesError(

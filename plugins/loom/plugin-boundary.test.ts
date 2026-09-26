@@ -2174,6 +2174,99 @@ Verdict: FAIL
     }
   })
 
+  test("narrowing a specialist step cannot hide its earlier admitted dirty artifact", async () => {
+    const h = await harness()
+    try {
+      await initializeGitFixture(h.root)
+      const started = await h.call(
+        "start",
+        { request: "Specify one bounded lifecycle meaning." },
+        "general",
+        "specifier-narrow-general",
+      )
+      const workflowId = String(started.workflowId)
+      expect((await h.call(
+        "route",
+        {
+          humanFacing: false,
+          behavioral: true,
+          structural: false,
+          externalUnknown: false,
+          diagnostic: false,
+          productOutcome: false,
+          implementationRequested: true,
+          executionDepth: "change",
+        },
+        "general",
+        "specifier-narrow-general",
+      )).error).toBeUndefined()
+
+      const grant = await h.call(
+        "dispatch_grant",
+        { workflowId, stepId: "specifier" },
+        "general",
+        "specifier-narrow-general",
+      )
+      expect(grant.error).toBeUndefined()
+      expect((await h.call(
+        "attach",
+        { grantId: grant.grantId, workflowId, stepId: "specifier" },
+        "specifier",
+        "specifier-narrow-author",
+      )).attached).toBe(true)
+
+      const earlier = "docs/requirements/lifecycle/earlier.md"
+      const later = "docs/requirements/lifecycle/later.md"
+      await mkdir(join(h.root, "docs", "requirements", "lifecycle"), { recursive: true })
+
+      const evaluate = h.permissionHooks.get("evaluate")!
+      const earlierEdit: any = {
+        agent: "specifier",
+        action: "edit",
+        resources: [earlier],
+        sessionID: "specifier-narrow-author",
+        effect: "ask",
+      }
+      await evaluate(earlierEdit)
+      expect(earlierEdit.effect).not.toBe("deny")
+
+      const editEvent = {
+        tool: "edit",
+        callID: "specifier-earlier-edit",
+        messageID: "specifier-earlier-message",
+        sessionID: "specifier-narrow-author",
+        agent: "specifier",
+        input: { filePath: join(h.root, earlier), oldString: "", newString: "earlier\n" },
+      }
+      await h.toolHooks.get("execute.before")!(editEvent)
+      await writeFile(join(h.root, earlier), "earlier\n")
+      await h.toolHooks.get("execute.after")!({
+        ...editEvent,
+        status: "completed",
+        result: "updated",
+      })
+
+      const narrowed = await h.call(
+        "step_scope",
+        { workflowId, stepId: "specifier", write: [later] },
+        "general",
+        "specifier-narrow-general",
+      )
+      expect(narrowed.error).toBeUndefined()
+
+      const completed = await h.call(
+        "complete",
+        { workflowId, stepId: "specifier", summary: "specifier work complete" },
+        "specifier",
+        "specifier-narrow-author",
+      )
+      expect(completed.error).toContain("uncommitted changes")
+      expect(completed.error).toContain(earlier)
+    } finally {
+      h.restore()
+    }
+  })
+
   test("allows scoped repair of pre-existing dirty files without absorbing untouched changes", async () => {
     const h = await harness()
     try {
