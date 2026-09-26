@@ -1501,6 +1501,72 @@ Verdict: FAIL
     }
   })
 
+  test("Loom internal project state is a user-only hard boundary", async () => {
+    const h = await harness()
+    try {
+      const generalSession = "scope-loom-state-general"
+      const childSession = "scope-loom-state-worker"
+      const started = await h.call(
+        "start",
+        { request: "Implement one bounded change without rewriting Loom identity." },
+        "general",
+        generalSession,
+      )
+      const workflowId = String(started.workflowId)
+      expect((await h.call(
+        "route",
+        {
+          humanFacing: false,
+          behavioral: false,
+          structural: false,
+          externalUnknown: false,
+          diagnostic: false,
+          productOutcome: false,
+          implementationRequested: true,
+          executionDepth: "task",
+        },
+        "general",
+        generalSession,
+      )).error).toBeUndefined()
+
+      const grant = await h.call(
+        "dispatch_grant",
+        { workflowId, stepId: "worker" },
+        "general",
+        generalSession,
+      )
+      expect((await h.call(
+        "attach",
+        { grantId: grant.grantId, workflowId, stepId: "worker" },
+        "worker",
+        childSession,
+      )).attached).toBe(true)
+
+      const requested = await h.call(
+        "scope_elevate",
+        {
+          workflowId,
+          stepId: "worker",
+          paths: [".loom/project-id"],
+          reason: "Attempt to change Loom project identity.",
+        },
+        "worker",
+        childSession,
+      )
+      expect(requested.status).toBe("user_authorization_required")
+      expect(requested.continue).toBe(false)
+      expect(requested.hardBoundary.boundaryDetails[0]).toMatchObject({
+        kind: "loom-internal-state",
+      })
+      expect(
+        requested.hardBoundary.question.questions[0].question,
+      ).toContain("Loom internal project state")
+      expect(requested.hardBoundary.rememberChoiceAllowed).toBe(false)
+    } finally {
+      h.restore()
+    }
+  })
+
   test("hard-boundary scope elevation forces an exact non-remembered user decision", async () => {
     const h = await harness()
     try {
