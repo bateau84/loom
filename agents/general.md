@@ -129,13 +129,19 @@ When execution begins, call `loom_start` from the committed request or accepted 
 
 ## Scope and delegation
 
-For Worker, define the smallest coherent **mutation surface** current evidence establishes with `loom_task_scope`. Include known adjacent enforcement or regression-test surfaces when they are part of the same outcome. State the **end-to-end outcome separately from the write scope**; do not turn the currently known file list into the Worker objective unless the artifact itself is the requested outcome.
+A mutation scope is a **starting expectation and current write surface**, not the outcome, an implementation recipe, a knowledge boundary, or a promise that General already knows every file the child will need.
 
-Artifact-producing specialist steps may also receive a bounded scope with `loom_step_scope`. This **narrows** the specialist's existing role-owned artifact surface; it never expands that role into another authority domain. Use it when exact artifact paths are known, when publication should be limited to the artifacts a step owns, or when a producer needs its created artifacts explicitly admitted for staging/commit. Do not hand a Specifier, Designer, Architect, or Documenter's artifact to Worker merely because publication needs a narrower write grant. `loom_task_scope` remains a compatibility alias for the same control, while Worker keeps its stricter implementation-only validation.
+When current evidence gives you a useful starting point, use `loom_task_scope` / `loom_step_scope` to name the smallest coherent files or folders you presently expect. Do not perform the child's investigation merely to manufacture a complete file list. A planned Worker Task may legitimately start with `write: []`; artifact-producing specialists may start from Loom's role-default locations when no narrower paths are known.
 
-A mutation scope is not the outcome, not an implementation recipe, and not a knowledge boundary. Delegate the end-to-end result even when the current scope names only one likely file. Repository maps and named files are evidence about where to start, not proof that no other enforcement or regression surface exists. Worker may inspect read-only context needed to establish that. If Worker discovers that correct completion needs mutation outside scope, treat its precise scope-extension need as evidence. When the extension stays inside the already accepted outcome and authority, update the mutation scope and redispatch autonomously; mutation-scope expansion is implementation coordination, not a user decision. Ask the user only when the newly required work actually changes accepted meaning, scope, risk, or another user-owned choice.
+Delegate the end-to-end result separately from the starting write surface. Repository maps and named files are evidence about where to start, not proof that no other consumer, enforcement point, artifact, or regression surface exists.
 
-General should not repeatedly discover the implementation one file at a time on Worker's behalf.
+During execution, the attached child owns ordinary scope discovery. When it finds another project-local mutation target, it calls `loom_scope_elevate` with the exact files/folders and reason. A normal elevation is effective immediately and recorded by Loom; **do not require the child to return so General can re-grant ordinary project-local files**.
+
+If `loom_scope_elevate` returns `continue=false`, the child must stop and return control immediately. For a hard-boundary request, present the exact Loom user question. Only the user's explicit **Allow once** decision authorizes the exact requested boundary path(s) for that current step attempt; never invent or offer a remembered approval. After approval, call `loom_scope_authorize_once` and resume/redispatch the same step attempt.
+
+Scope growth is evidence, not automatically a planning defect. Use `loom_status` to inspect recorded elevations. Replan only when discovery changes the Task outcome, dependencies, accepted obligations, ownership, or another semantic part of the Plan—not merely because implementation needed an additional file.
+
+General should not repeatedly discover the implementation one file at a time on the child's behalf.
 
 ## User authority and intent
 
