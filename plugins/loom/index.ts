@@ -6955,6 +6955,25 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         return
       }
 
+      if (
+        event.action === "edit" &&
+        event.agent !== "general" &&
+        event.agent !== "worker" &&
+        loomAgents.has(String(event.agent ?? ""))
+      ) {
+        const agent = String(event.agent)
+        const roleCeiling = artifactWriteCeilings[agent]
+        if (
+          !roleCeiling ||
+          !resourcesWithinScope(event.resources, roleCeiling)
+        ) {
+          event.effect = "deny"
+          event.message =
+            "Specialist edit is outside this role's Loom artifact ceiling."
+          return
+        }
+      }
+
       if (event.action === "shell") {
         const roleAuthorScope = durableAuthorGitScopes[String(event.agent ?? "")]
         const gitAuthoring = event.resources.some((resource: string) =>

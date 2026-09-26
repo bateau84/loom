@@ -2075,6 +2075,19 @@ Verdict: FAIL
       expect(sameRoleButOutsideStep.effect).toBe("deny")
       expect(sameRoleButOutsideStep.message).toContain("declared Loom step write scope")
 
+      const escapedRoleCeiling: any = {
+        agent: "specifier",
+        action: "edit",
+        resources: ["src/escaped.ts"],
+        sessionID: "specifier-scope-author",
+        // Simulate a future/static permission layer accidentally allowing it:
+        // the Loom runtime ceiling must still fail closed.
+        effect: "allow",
+      }
+      await evaluate(escapedRoleCeiling)
+      expect(escapedRoleCeiling.effect).toBe("deny")
+      expect(escapedRoleCeiling.message).toContain("role's Loom artifact ceiling")
+
       await mkdir(join(h.root, "docs", "requirements", "lifecycle"), { recursive: true })
       const editEvent = {
         tool: "edit",

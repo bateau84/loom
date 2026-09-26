@@ -49,7 +49,7 @@ const PROJECT_PREFIX = "project/"
 const GLOBAL_PREFIXES = ["installation/", "episode/", "heuristic/"]
 
 export const RUNTIME_BASELINE_VERSION = 1
-export const RUNTIME_STATE_VERSION = 5
+export const RUNTIME_STATE_VERSION = 6
 
 export type RuntimeUpgradePhase =
   | "canonical-upgrade"
@@ -123,6 +123,14 @@ const RUNTIME_UPGRADE_STEPS: RuntimeUpgradeStep[] = [{
   // No durable record shape changes. Advancing the runtime version fences
   // already-running v4 writers that do not participate in file-write locks.
   applyInstallation: async () => ({ scopedFileWriteLocks: true }),
+}, {
+  id: "specialist-step-scopes-v6",
+  fromVersion: 5,
+  toVersion: 6,
+  // The TaskScope payload shape is unchanged, but v5 processes do not enforce
+  // specialist step scopes. Fence them before the new authorization protocol
+  // can become authoritative in shared runtime state.
+  applyInstallation: async () => ({ specialistStepScopes: true }),
 }]
 
 function sha256(value: string) {

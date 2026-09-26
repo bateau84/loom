@@ -67,7 +67,7 @@ OpenCode plugin hooks enforce:
 
 Permission hooks combine **role artifact authority** with the exact attached workflow step.
 
-Static agent permissions define the hard ceiling for each artifact-producing specialist. General may add a bounded step write scope to narrow that ceiling to the exact artifacts owned by the current step; the scope can never expand the role into another artifact/authority domain. Worker remains stricter: it has no normative-artifact ceiling and requires an explicit implementation write scope before dispatch, with accepted authority roots excluded.
+Static agent permissions and Loom's runtime artifact policy form two independent hard ceilings for each specialist; disagreement fails closed. General may add a bounded step write scope to narrow their intersection to the exact artifacts owned by the current step; the scope can never expand the role into another artifact/authority domain. Worker remains stricter: it has no normative-artifact ceiling and requires an explicit implementation write scope before dispatch, with accepted authority roots excluded.
 
 The effective mutation surface is therefore the role ceiling intersected with any declared step scope. Specialist authors can create, validate, stage, and commit their own admitted artifacts without transferring publication to Worker. Git publication still requires exact attachment, explicit file staging, same-session mutation ownership, and the role's existing durable-author capability.
 
