@@ -3551,9 +3551,8 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           }
           if (
             stepId !== "review-plan" &&
-            tool.agent !== "worker" &&
             tool.agent !== "general" &&
-            artifactWriteCeilings[tool.agent] &&
+            loomAgents.has(String(tool.agent)) &&
             !(await exactStepAttemptBinding(ctx, tool.sessionID, workflowId, stepId))
           ) {
             return {
@@ -3669,7 +3668,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             if (
               stepId !== "review-plan" &&
               tool.agent !== "general" &&
-              artifactWriteCeilings[tool.agent] &&
+              loomAgents.has(String(tool.agent)) &&
               !(await exactStepAttemptBinding(ctx, tool.sessionID, workflowId, stepId))
             ) {
               throw new Error(
