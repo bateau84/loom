@@ -7676,14 +7676,16 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             ),
           ].sort()
           const hardBoundaryDetails: ScopeBoundaryDetail[] =
-            hardBoundaryClassifications.map((entry) => ({
-              path: entry.path,
-              kind: entry.reason,
-              ...("resolvedExistingTarget" in entry &&
-              entry.resolvedExistingTarget
-                ? { resolvedExistingTarget: entry.resolvedExistingTarget }
-                : {}),
-            }))
+            hardBoundaryClassifications.map(
+              (entry): ScopeBoundaryDetail => ({
+                path: entry.path,
+                kind: entry.reason as ScopeBoundaryDetail["kind"],
+                ...("resolvedExistingTarget" in entry &&
+                entry.resolvedExistingTarget
+                  ? { resolvedExistingTarget: entry.resolvedExistingTarget }
+                  : {}),
+              }),
+            )
 
           const roleWriteDefault = artifactWriteDefaults[tool.agent] ?? []
           if (!productScopeElevatingAgents.has(tool.agent)) {
