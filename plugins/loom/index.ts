@@ -1581,7 +1581,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       )
       if (touchesDurableArtifact && !exactAttempt) {
         throw new Error(
-          "Durable specialist artifact mutation requires the role's exact current Loom step attempt.",
+          "Durable specialist artifact mutation requires the role's exact attached Loom workflow step at the current Loom step attempt.",
         )
       }
       if (exactAttempt) {
@@ -2822,6 +2822,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             return { content: renderToolOutput({ error: "Step completion requires the exact attached workflow step." }) }
           }
           if (
+            stepId !== "review-plan" &&
             tool.agent !== "worker" &&
             tool.agent !== "general" &&
             artifactWriteCeilings[tool.agent] &&
@@ -7101,25 +7102,6 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         return
       }
 
-      if (
-        event.action === "edit" &&
-        event.agent !== "general" &&
-        event.agent !== "worker" &&
-        loomAgents.has(String(event.agent ?? ""))
-      ) {
-        const agent = String(event.agent)
-        const roleCeiling = artifactWriteCeilings[agent]
-        if (
-          !roleCeiling ||
-          !resourcesWithinScope(event.resources, roleCeiling)
-        ) {
-          event.effect = "deny"
-          event.message =
-            "Specialist edit is outside this role's Loom artifact ceiling."
-          return
-        }
-      }
-
       if (event.action === "shell") {
         const roleAuthorScope = durableAuthorGitScopes[String(event.agent ?? "")]
         const gitAuthoring = event.resources.some((resource: string) =>
@@ -7268,6 +7250,26 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         }
       }
 
+      if (
+        event.action === "edit" &&
+        event.agent !== "general" &&
+        event.agent !== "worker" &&
+        loomAgents.has(String(event.agent ?? ""))
+      ) {
+        const agent = String(event.agent)
+        const roleCeiling = artifactWriteCeilings[agent]
+        if (
+          !roleCeiling ||
+          !resourcesWithinScope(event.resources, roleCeiling)
+        ) {
+          event.effect = "deny"
+          event.message =
+            "Specialist edit is outside this role's Loom artifact ceiling."
+          return
+        }
+      }
+
+
       if (event.action === "edit" && event.agent !== "worker" && event.agent !== "general") {
         const workflowId = (await ctx.storage.get(
           sessionKey(event.sessionID),
@@ -7290,7 +7292,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         if (touchesDurableArtifact && !exactAttachment) {
           event.effect = "deny"
           event.message =
-            "Durable specialist artifact mutation requires the role's exact current Loom step attempt."
+            "Durable specialist artifact mutation requires the role's exact attached Loom workflow step at the current Loom step attempt."
           return
         }
         if (exactAttachment) {
