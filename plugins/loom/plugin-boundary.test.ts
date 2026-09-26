@@ -1617,6 +1617,33 @@ Verdict: FAIL
       await h.permissionHooks.get("evaluate")!(differentExternal)
       expect(differentExternal.effect).toBe("deny")
       expect(differentExternal.message).toContain("loom_scope_elevate")
+
+      expect((await h.call(
+        "complete",
+        {
+          workflowId,
+          stepId: "specifier",
+          summary: "Hard-boundary access was approved but no external mutation was needed.",
+        },
+        "specifier",
+        childSession,
+      )).error).toBeUndefined()
+
+      const lateExternalEdit = {
+        tool: "edit",
+        callID: "scope-boundary-late-edit",
+        messageID: "scope-boundary-late-edit-message",
+        sessionID: childSession,
+        agent: "specifier",
+        input: {
+          filePath: external,
+          oldString: "",
+          newString: "late\n",
+        },
+      }
+      await expect(
+        h.toolHooks.get("execute.before")!(lateExternalEdit),
+      ).rejects.toThrow("Hard-boundary mutation is not authorized")
     } finally {
       h.restore()
     }
