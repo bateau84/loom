@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test"
 import { createHash } from "node:crypto"
 import { execFile } from "node:child_process"
 import { promisify } from "node:util"
-import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises"
+import { chmod, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
 import loomPlugin from "./index"
@@ -1601,6 +1601,73 @@ Verdict: FAIL
       await h.permissionHooks.get("evaluate")!(differentExternal)
       expect(differentExternal.effect).toBe("deny")
       expect(differentExternal.message).toContain("loom_scope_elevate")
+    } finally {
+      h.restore()
+    }
+  })
+
+
+  test("project-relative symlink escape is a user-only hard boundary", async () => {
+    const h = await harness()
+    try {
+      const externalRoot = await mkdtemp(join(tmpdir(), "loom-scope-external-"))
+      roots.push(externalRoot)
+      await symlink(externalRoot, join(h.root, "linked-external"), "dir")
+
+      const generalSession = "scope-symlink-general"
+      const childSession = "scope-symlink-specifier"
+      const started = await h.call(
+        "start",
+        { request: "Specify one behavior without escaping the current project." },
+        "general",
+        generalSession,
+      )
+      const workflowId = String(started.workflowId)
+      expect((await h.call(
+        "route",
+        {
+          humanFacing: false,
+          behavioral: true,
+          structural: false,
+          externalUnknown: false,
+          diagnostic: false,
+          productOutcome: false,
+          implementationRequested: true,
+          executionDepth: "change",
+        },
+        "general",
+        generalSession,
+      )).error).toBeUndefined()
+
+      const grant = await h.call(
+        "dispatch_grant",
+        { workflowId, stepId: "specifier" },
+        "general",
+        generalSession,
+      )
+      expect((await h.call(
+        "attach",
+        { grantId: grant.grantId, workflowId, stepId: "specifier" },
+        "specifier",
+        childSession,
+      )).attached).toBe(true)
+
+      const requested = await h.call(
+        "scope_elevate",
+        {
+          workflowId,
+          stepId: "specifier",
+          paths: ["linked-external/**"],
+          reason: "Discovery found a path that looks project-local but resolves through a symlink.",
+        },
+        "specifier",
+        childSession,
+      )
+      expect(requested.error).toBeUndefined()
+      expect(requested.status).toBe("user_authorization_required")
+      expect(requested.continue).toBe(false)
+      expect(requested.hardBoundary.rememberChoiceAllowed).toBe(false)
+      expect(requested.hardBoundary.paths[0]).toContain("linked-external")
     } finally {
       h.restore()
     }
