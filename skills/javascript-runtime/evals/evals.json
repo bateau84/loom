@@ -1,0 +1,55 @@
+{
+  "skill": "javascript-runtime",
+  "version": "1.0.0",
+  "shape": 1,
+  "cases": [
+    {
+      "id": "JavaScriptRuntime-01",
+      "name": "preserve-valid-zero-with-nullish-default",
+      "trap": "Using || treats a valid zero timeout as missing and silently changes behavior.",
+      "prompt": "A config supports timeoutMs=0 to mean 'do not wait'. The code reads `const timeoutMs = config.timeoutMs || 5000`. Fix the bug and explain why.",
+      "expectations": [
+        "Uses nullish semantics such as config.timeoutMs ?? 5000 when only null/undefined mean missing.",
+        "Explains that 0 is falsy but is a valid configured value.",
+        "Does not replace the domain rule with generic truthiness."
+      ],
+      "negative_expectations": [
+        "Must not keep || as the defaulting operator.",
+        "Must not reject timeoutMs=0 merely to make the existing expression correct."
+      ]
+    },
+    {
+      "id": "JavaScriptRuntime-02",
+      "name": "recognize-shallow-copy-aliasing",
+      "trap": "Object spread looks like a copy but leaves nested arrays shared.",
+      "prompt": "Why does this mutate both values, and how should the ownership bug be fixed?\n\n`const next = { ...state }; next.queue.push(job);`",
+      "expectations": [
+        "Identifies object spread as shallow and state.queue/next.queue as the same array.",
+        "Fixes the specific nested ownership boundary, for example by constructing a new queue array.",
+        "Avoids proposing a generic JSON deep clone as the default solution."
+      ]
+    },
+    {
+      "id": "JavaScriptRuntime-03",
+      "name": "microtask-before-timer",
+      "trap": "Source order makes the zero-delay timer look earlier than the Promise reaction.",
+      "prompt": "What is the output order and why?\n\n`console.log('A'); setTimeout(() => console.log('B'), 0); Promise.resolve().then(() => console.log('C')); console.log('D');`",
+      "expectations": [
+        "Gives A, D, C, B as the ordinary output order.",
+        "Explains run-to-completion for the current stack and microtasks before the later timer task.",
+        "Does not claim setTimeout with zero delay runs immediately."
+      ]
+    },
+    {
+      "id": "JavaScriptRuntime-04",
+      "name": "finally-does-not-mask-primary-error",
+      "trap": "A return in finally silently replaces both successful returns and thrown errors.",
+      "prompt": "Review this helper: `async function load(){ try { return await read(); } finally { return fallback; } }`. What is wrong and what should change?",
+      "expectations": [
+        "Identifies that return in finally overrides the try result and masks read() rejection.",
+        "Keeps cleanup in finally only if needed, without returning a replacement result there.",
+        "Preserves the primary failure unless an explicit accepted policy says to replace it."
+      ]
+    }
+  ]
+}

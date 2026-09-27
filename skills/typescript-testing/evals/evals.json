@@ -1,0 +1,51 @@
+{
+  "skill": "typescript-testing",
+  "version": "1.0.0",
+  "shape": 1,
+  "cases": [
+    {
+      "id": "TypeScriptTesting-01",
+      "name": "await-rejection-assertion",
+      "trap": "An un-awaited rejects matcher can let the test finish before the failure is observed.",
+      "prompt": "Review this test: `test('rejects bad token', () => { expect(parseToken('bad')).rejects.toThrow('invalid') })`. What must change?",
+      "expectations": [
+        "Awaits or returns the rejection assertion so it belongs to the test lifetime.",
+        "Explains the false-green or unhandled-rejection risk of leaving the matcher floating.",
+        "Keeps the assertion on the real parseToken behavior."
+      ]
+    },
+    {
+      "id": "TypeScriptTesting-02",
+      "name": "restore-fake-timers",
+      "trap": "A timer test leaves fake timers enabled and makes later tests order-dependent.",
+      "prompt": "Write or describe a deterministic test for a 5-second debounce using the repository runner's fake timers. Include cleanup obligations.",
+      "expectations": [
+        "Uses fake timers rather than a real 5-second sleep.",
+        "Advances the relevant timer and awaits or drains resulting async work as required by the runner.",
+        "Restores real timers in cleanup so later tests are not contaminated."
+      ]
+    },
+    {
+      "id": "TypeScriptTesting-03",
+      "name": "do-not-mock-parser-under-test",
+      "trap": "Mocking the parser to return the expected object proves only the mock while the real parser may be broken.",
+      "prompt": "You need a regression test for a bug where parseConfig accepted malformed persisted JSON. A teammate suggests mocking parseConfig to return a Config and testing the caller. Is that valid evidence for the parser bug?",
+      "expectations": [
+        "Rejects mocking parseConfig when parser correctness is the behavior being verified.",
+        "Feeds malformed and valid serialized input through the real parser or boundary.",
+        "Allows mocking a lower external filesystem/read boundary if needed without bypassing parsing."
+      ]
+    },
+    {
+      "id": "TypeScriptTesting-04",
+      "name": "tests-must-not-depend-on-singleton-order",
+      "trap": "One test initializes module-level state and another passes only because it runs later.",
+      "prompt": "Two tests share a module singleton. Test B fails alone but passes after Test A initializes it. What should the test suite or implementation do?",
+      "expectations": [
+        "Treats this as invalid test coupling rather than requiring a fixed execution order.",
+        "Resets or constructs required state within each test, or provides an explicit reversible setup boundary.",
+        "Checks that each test passes independently and cleanup restores singleton or global state."
+      ]
+    }
+  ]
+}
