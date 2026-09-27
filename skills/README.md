@@ -43,6 +43,8 @@ Absence of `ASSESSMENT.md` or `QA.md` is intentional and valid. Do not invent ge
 
 For Python tasks, use `python-how-to` / `python-common-practice` to select the relevant Python family.
 
+For TypeScript tasks, use `typescript-common-practice` as the language baseline and add `typescript-type-safety`, `typescript-async`, or `typescript-testing` only when that concern is material. Load `javascript-runtime` when JavaScript execution semantics are load-bearing, and `browser-runtime` for direct Web API work. Existing design, accessibility, observability, performance, and UI skills remain the owners of those cross-cutting concerns.
+
 For human-facing work, combine cross-surface skills (`information-architecture`, `interaction-design`, `user-flow-design`, `visual-interface-design`) only when that dimension is actually in scope, plus the relevant surface skill.
 
 See `PORTING.md` for provenance and deferred source skills.

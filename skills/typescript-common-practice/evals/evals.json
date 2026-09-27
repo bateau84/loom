@@ -1,0 +1,54 @@
+{
+  "skill": "typescript-common-practice",
+  "version": "1.0.0",
+  "shape": 1,
+  "cases": [
+    {
+      "id": "TypeScriptCommon-01",
+      "name": "do-not-weaken-strictness",
+      "trap": "Turning off strictNullChecks makes the local error disappear but weakens the whole project contract.",
+      "prompt": "A strict TypeScript project reports that a value can be undefined after your change. A teammate suggests disabling strictNullChecks in tsconfig because the code worked before. What do you do?",
+      "expectations": [
+        "Keeps the repository's strictness enabled and fixes/models the undefined case in code.",
+        "Treats tsconfig strictness as part of the project contract rather than a local inconvenience.",
+        "Uses type-safety narrowing/modeling if that concern is load-bearing."
+      ],
+      "negative_expectations": [
+        "Must not disable strictNullChecks or strict mode to make the patch compile."
+      ]
+    },
+    {
+      "id": "TypeScriptCommon-02",
+      "name": "satisfies-retains-useful-literals",
+      "trap": "A broad annotation can erase useful literal key/value information; an assertion can skip checking entirely.",
+      "prompt": "You have a literal route table that must conform to Record<string, { method: 'GET' | 'POST'; path: string }> but callers also need its exact keys inferred. What TypeScript construct is a good fit?",
+      "expectations": [
+        "Recommends satisfies for checking conformance while retaining useful inferred literal/key information.",
+        "Does not use a broad assertion as the primary solution.",
+        "Explains the difference between checking conformance and replacing inference with a broad annotation."
+      ]
+    },
+    {
+      "id": "TypeScriptCommon-03",
+      "name": "resist-speculative-type-architecture",
+      "trap": "TypeScript makes it easy to add generic factories/interfaces for a one-implementation module.",
+      "prompt": "A small module has one concrete parser and no planned alternate implementation. A teammate proposes ParserFactory<T>, AbstractParser<T>, ParserRegistry<T>, and a re-export barrel before adding one new parse option. How should the change be structured?",
+      "expectations": [
+        "Keeps the change within the existing module unless a real substitution boundary already exists.",
+        "Rejects speculative generic/factory layers added only for hypothetical future implementations.",
+        "Keeps implementation-only types private and the public surface small."
+      ]
+    },
+    {
+      "id": "TypeScriptCommon-04",
+      "name": "typescript-verification-loop",
+      "trap": "Tests can pass while the changed file is not typechecked; editor diagnostics are not repository verification.",
+      "prompt": "You changed TypeScript source in a project with package scripts for lint, typecheck, and test. What TypeScript-specific checks do you require before calling the change verified?",
+      "expectations": [
+        "Runs the repository's configured typecheck and confirms the changed files are included.",
+        "Runs relevant tests plus configured lint/format verification using the project's package manager/scripts.",
+        "Does not substitute editor diagnostics or an arbitrary global TypeScript version for the pinned project toolchain."
+      ]
+    }
+  ]
+}

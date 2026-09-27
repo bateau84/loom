@@ -45,6 +45,7 @@ The baseline includes reusable methodology for:
 - Git commit/conflict/PR discipline;
 - Go implementation, testing, debugging, TUI, database, concurrency, observability, security, performance, and common libraries/tooling;
 - Python implementation, async, database/ORM, FastAPI, Pydantic, testing, linting, typing, observability, and error handling;
+- JavaScript runtime semantics plus TypeScript common practice, type safety, async correctness, testing, and browser Web API implementation;
 - observability/infrastructure: Prometheus, PromQL, Loki, Mimir, OpenTelemetry, dashboards, infrastructure telemetry;
 - Terraform module/provider testing and provider resources/actions/docs;
 - MCP server construction;
