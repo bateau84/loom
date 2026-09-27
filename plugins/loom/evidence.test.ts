@@ -35,11 +35,59 @@ describe("Loom evidence ledger", () => {
     expect(safeInputSummary("skill", { name: "software-engineering" })).toEqual({ skill: "software-engineering", methodology: "practitioner" })
     expect(safeInputSummary("loom_assessment", { skill: "software-engineering" })).toEqual({ skill: "software-engineering", methodology: "assessment", path: "skills/software-engineering/ASSESSMENT.md" })
     expect(safeInputSummary("loom_qa", { skill: "software-engineering" })).toEqual({ skill: "software-engineering", methodology: "qa", path: "skills/software-engineering/QA.md" })
+    expect(safeInputSummary("loom_diagnostic_sandbox_exec", {
+      sandboxId: "s1",
+      command: "TOKEN=secret go test ./...",
+    })).toEqual({ command: "TOKEN=[REDACTED] go test ./..." })
+    expect(safeInputSummary("loom_code_diagnostic_sandbox_exec", {
+      sandboxId: "s1",
+      command: "API_KEY=secret go test ./...",
+    })).toEqual({ command: "API_KEY=[REDACTED] go test ./..." })
+    expect(safeInputSummary("loom.code.diagnostic_sandbox_exec", {
+      sandboxId: "s1",
+      command: "PASSWORD=secret go test ./...",
+    })).toEqual({ command: "PASSWORD=[REDACTED] go test ./..." })
     expect(safeResultSummary("skill", {
       metadata: { metadata: { directory: "/workspace/.opencode/skills/software-engineering" } },
     })).toEqual({ skillDirectory: "/workspace/.opencode/skills/software-engineering" })
     expect(safeResultSummary("skill", "Base directory for this skill: /tmp/skills/software-engineering\n")).toEqual({
       skillDirectory: "/tmp/skills/software-engineering",
+    })
+    expect(safeResultSummary("loom_diagnostic_sandbox_exec", JSON.stringify({
+      sandboxId: "s1",
+      ok: false,
+      exitCode: 2,
+      signal: null,
+      timedOut: false,
+      stdout: "sensitive output",
+      stderr: "sensitive error",
+    }))).toEqual({
+      diagnosticSandbox: {
+        id: "s1",
+        ok: false,
+        exitCode: 2,
+        signal: null,
+        timedOut: false,
+      },
+    })
+    expect(safeResultSummary(
+      "loom.code.diagnostic_sandbox_exec",
+      [
+        "- **Sandbox ID:** `s2`",
+        "- **Ok:** Yes",
+        "- **Exit Code:** 0",
+        "- **Timed Out:** No",
+        "- **Stdout:**",
+        "",
+        "do not persist me",
+      ].join("\n"),
+    )).toEqual({
+      diagnosticSandbox: {
+        id: "s2",
+        ok: true,
+        exitCode: 0,
+        timedOut: false,
+      },
     })
   })
 

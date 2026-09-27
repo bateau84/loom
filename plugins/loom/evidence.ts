@@ -23,6 +23,13 @@ export type EvidenceObservation = {
   skill?: string
   skillDirectory?: string
   methodology?: "practitioner" | "assessment" | "qa"
+  diagnosticSandbox?: {
+    id: string
+    ok: boolean
+    exitCode?: number | string | null
+    signal?: string | null
+    timedOut: boolean
+  }
   reportPromotion?: {
     id: string
     source: string
@@ -82,7 +89,10 @@ export function safeInputSummary(tool: string, input: unknown) {
     return { command: redactCommand(value.command).slice(0, 1000) }
   }
 
-  const loomTool = tool.replace(/^loom[._]/, "")
+  const loomTool = tool.replace(/^loom[._](?:code[._])?/, "")
+  if (loomTool === "diagnostic_sandbox_exec" && typeof value.command === "string") {
+    return { command: redactCommand(value.command).slice(0, 1000) }
+  }
   if ((loomTool === "assessment" || loomTool === "qa") && typeof value.skill === "string") {
     const skill = value.skill.slice(0, 200)
     const methodology = loomTool === "assessment" ? "assessment" as const : "qa" as const
@@ -140,10 +150,81 @@ function resultDirectory(value: unknown): string | undefined {
   return undefined
 }
 
+function resultObject(result: unknown): Record<string, unknown> | undefined {
+  if (result && typeof result === "object" && !Array.isArray(result)) {
+    return result as Record<string, unknown>
+  }
+  if (typeof result !== "string") return undefined
+
+  try {
+    const parsed = JSON.parse(result)
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>
+    }
+  } catch {
+    // Markdown is the normal interactive rendering; parse only the stable
+    // scalar fields needed for safe evidence metadata.
+  }
+
+  const field = (name: string) => {
+    const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+    const match = result.match(new RegExp("^- \\*\\*" + escaped + ":\\*\\*\\s+(.+)$", "mi"))
+    if (!match) return undefined
+    return match[1]!.trim().replace(/^`|`$/g, "")
+  }
+  const sandboxId = field("Sandbox ID")
+  const ok = field("Ok")
+  const timedOut = field("Timed Out")
+  if (!sandboxId || !ok || !timedOut) return undefined
+
+  const exitCode = field("Exit Code")
+  const signal = field("Signal")
+  return {
+    sandboxId,
+    ok: ok === "Yes",
+    timedOut: timedOut === "Yes",
+    ...(exitCode === undefined || exitCode === "None"
+      ? {}
+      : { exitCode: /^-?\\d+$/.test(exitCode) ? Number(exitCode) : exitCode }),
+    ...(signal === undefined || signal === "None" ? {} : { signal }),
+  }
+}
+
 export function safeResultSummary(tool: string, result: unknown) {
-  if (tool !== "skill") return {}
-  const skillDirectory = resultDirectory(result)
-  return skillDirectory ? { skillDirectory: skillDirectory.slice(0, 2000) } : {}
+  if (tool === "skill") {
+    const skillDirectory = resultDirectory(result)
+    return skillDirectory ? { skillDirectory: skillDirectory.slice(0, 2000) } : {}
+  }
+
+  const loomTool = tool.replace(/^loom[._](?:code[._])?/, "")
+  if (loomTool === "diagnostic_sandbox_exec") {
+    const value = resultObject(result)
+    const sandboxId = typeof value?.sandboxId === "string" ? value.sandboxId.slice(0, 200) : undefined
+    if (
+      sandboxId &&
+      typeof value?.ok === "boolean" &&
+      typeof value?.timedOut === "boolean"
+    ) {
+      const exitCode =
+        typeof value.exitCode === "number" || typeof value.exitCode === "string" || value.exitCode === null
+          ? value.exitCode
+          : undefined
+      const signal = typeof value.signal === "string" || value.signal === null
+        ? value.signal
+        : undefined
+      return {
+        diagnosticSandbox: {
+          id: sandboxId,
+          ok: value.ok,
+          timedOut: value.timedOut,
+          ...(exitCode === undefined ? {} : { exitCode }),
+          ...(signal === undefined ? {} : { signal }),
+        },
+      }
+    }
+  }
+
+  return {}
 }
 
 function shellObservation(observation: EvidenceObservation) {

@@ -8249,4 +8249,95 @@ describe("Skill methodology evidence lifecycle", () => {
     const page=await h.durableStorage.scan({prefix:"evidence-session/standalone-critic/"}); const records=await Promise.all(page.entries.map(async(entry:any)=>h.durableStorage.get(`evidence/${entry.value}`)))
     expect(records.filter((record:any)=>record?.methodology==="assessment")).toHaveLength(0)
   } finally { h.restore() } })
+  test("Diagnostic sandbox tools require current Diagnostic attempt provenance", async () => {
+    const h = await harness()
+    try {
+      const unattached = await h.call(
+        "diagnostic_sandbox_start",
+        { image: "local/toolchain:test", network: "none" },
+        "diagnostic",
+        "sandbox-unattached",
+      )
+      expect(unattached.error).toContain("require attachment")
+
+      const generalSession = "sandbox-provenance-general"
+      const diagnosticSession = "sandbox-provenance-diagnostic"
+      const started = await h.call(
+        "start",
+        { request: "Diagnose one bounded causal failure." },
+        "general",
+        generalSession,
+      )
+      const workflowId = String(started.workflowId)
+      expect((await h.call(
+        "route",
+        {
+          humanFacing: false,
+          behavioral: false,
+          structural: false,
+          externalUnknown: false,
+          diagnostic: true,
+          productOutcome: false,
+          implementationRequested: false,
+          executionDepth: "task",
+        },
+        "general",
+        generalSession,
+      )).error).toBeUndefined()
+
+      const grant = await h.call(
+        "dispatch_grant",
+        { workflowId, stepId: "diagnostic" },
+        "general",
+        generalSession,
+      )
+      expect((await h.call(
+        "attach",
+        { grantId: grant.grantId, workflowId, stepId: "diagnostic" },
+        "diagnostic",
+        diagnosticSession,
+      )).attached).toBe(true)
+
+      const staleId = "77777777-7777-4777-8777-777777777777"
+      await h.durableStorage.set(
+        `diagnostic-sandbox/${encodeURIComponent(diagnosticSession)}`,
+        {
+          schemaVersion: 1,
+          id: staleId,
+          sessionId: diagnosticSession,
+          workflowId: "older-workflow",
+          stepId: "diagnostic",
+          attempt: 0,
+          projectId: h.runtime.projectId,
+          rootPath: "/not-used",
+          workspacePath: "/not-used/workspace",
+          baselineGitPath: "/not-used/baseline.git",
+          image: "local/toolchain:test",
+          engine: "docker",
+          network: "none",
+          createdAt: "2026-09-27T00:00:00.000Z",
+          active: true,
+        },
+      )
+
+      const staleExec = await h.call(
+        "diagnostic_sandbox_exec",
+        { sandboxId: staleId, command: "true" },
+        "diagnostic",
+        diagnosticSession,
+      )
+      expect(staleExec.error).toContain("older or different step attempt")
+
+      const staleDiff = await h.call(
+        "diagnostic_sandbox_diff",
+        { sandboxId: staleId },
+        "diagnostic",
+        diagnosticSession,
+      )
+      expect(staleDiff.error).toContain("older or different step attempt")
+    } finally {
+      h.restore()
+    }
+  })
+
 })

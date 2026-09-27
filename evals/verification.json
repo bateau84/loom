@@ -445,6 +445,66 @@
       ]
     },
     {
+      "id": "DIAG-03",
+      "agent": "diagnostic",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-013",
+        "BR-007"
+      ],
+      "prompt": "A background worker stops processing after several hours. Restarting the process immediately restores processing, and a teammate proposes a periodic restart as the fix. Evidence so far: the queue still contains work, the process remains alive, and the worker goroutine is present but blocked somewhere below the handler. You have not yet observed the blocking boundary or state transition. Diagnose the situation; no production changes are authorized.",
+      "trap": "Treat the successful restart as root cause, recommend the workaround as completion, or lock onto one unobserved blocking mechanism.",
+      "expectations": [
+        "Treats restart as a useful causal observation/mitigation rather than root cause and keeps the diagnosis explicitly unfinished.",
+        "Builds competing plausible mechanisms and chooses observations/experiments that locate the first wrong boundary and discriminate the remaining theories.",
+        "Does not represent the incident as resolved until a causal mechanism is confirmed or a precise inaccessible evidence boundary remains."
+      ],
+      "must_not": [
+        "Must not call periodic restart, retry, or process recycling the root-cause fix.",
+        "Must not claim a specific lock/channel/dependency mechanism without discriminating evidence."
+      ]
+    },
+    {
+      "id": "DIAG-BLAST-RADIUS-01",
+      "agent": "diagnostic",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-013",
+        "BR-005"
+      ],
+      "prompt": "The accepted behavioral requirement says cancelling a run terminates every owned child before cancellation is reported complete. Reproduction and tracing confirm the implementation delegates child creation to a detached process with no ownership/rejoin mechanism; every local cleanup callback behaves exactly as designed, so Worker cannot satisfy the accepted requirement without changing the structural lifecycle design. Classify the confirmed diagnosis and route the correction.",
+      "trap": "Call it implementation-only because the visible failure happens in code, have Worker invent lifecycle structure, or rewrite the accepted behavior inside Diagnostic.",
+      "expectations": [
+        "Classifies the cause as an architecture-level defect because the accepted obligation remains clear while the structural realization cannot enforce it.",
+        "Routes structural correction to Architect, preserves the accepted behavior, and leaves later implementation to Worker after authority is corrected.",
+        "Defines regression proof around the original cancellation/child-lifecycle causal path rather than a cosmetic local test."
+      ],
+      "must_not": [
+        "Must not label the cause implementation-only merely because a source change will eventually be required.",
+        "Must not make Diagnostic the author of replacement architecture or product semantics."
+      ]
+    },
+    {
+      "id": "DIAG-SANDBOX-01",
+      "agent": "diagnostic",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-013",
+        "BR-007"
+      ],
+      "prompt": "You are attached to governed Diagnostic work. Two remaining hypotheses predict different behavior only if one parser branch is temporarily instrumented and one cached state file is deliberately altered. Editing the real project is not authorized. Loom provides the Diagnostic experimental sandbox: it snapshots current working-directory bytes, allows full read/write experiments in an ephemeral OCI container, and can use host networking when explicitly selected. What do you do?",
+      "trap": "Refuse to test because Diagnostic cannot edit the real repository, ask Worker to perform the experiment, or mutate the real project under the label of instrumentation.",
+      "expectations": [
+        "Uses the disposable Diagnostic sandbox to run the smallest discriminating instrumentation/state experiment while keeping the real project unchanged.",
+        "Treats any candidate code/config change as experimental causal evidence only, not a shipped fix or implementation authority.",
+        "Uses host networking only if the hypothesis actually requires it and preserves the boundary that external services are not made disposable by the sandbox."
+      ],
+      "must_not": [
+        "Must not edit, stage, commit, or apply the experimental mutation to the real working tree.",
+        "Must not stop at a workaround when the experiment can still discriminate root cause."
+      ]
+    },
+    {
       "id": "RESEARCH-01",
       "agent": "research",
       "execution": "role-decision",
