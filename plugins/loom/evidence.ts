@@ -185,7 +185,7 @@ function resultObject(result: unknown): Record<string, unknown> | undefined {
     timedOut: timedOut === "Yes",
     ...(exitCode === undefined || exitCode === "None"
       ? {}
-      : { exitCode: /^-?\\d+$/.test(exitCode) ? Number(exitCode) : exitCode }),
+      : { exitCode: /^-?\d+$/.test(exitCode) ? Number(exitCode) : exitCode }),
     ...(signal === undefined || signal === "None" ? {} : { signal }),
   }
 }
