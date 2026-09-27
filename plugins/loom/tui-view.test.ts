@@ -12,7 +12,7 @@ describe("selectedModelText", () => {
       model: {
         current: () => ({ providerID: "openai", modelID: "gpt-5.6-luna" }),
       },
-    })).toBe("Model: openai/gpt-5.6-luna")
+    })).toBe("Prompt model: openai/gpt-5.6-luna")
   })
 
   test("adds the selected variant when one is active", () => {
@@ -24,6 +24,6 @@ describe("selectedModelText", () => {
           variant: "high",
         }),
       },
-    })).toBe("Model: openai/gpt-5.6-luna#high")
+    })).toBe("Prompt model: openai/gpt-5.6-luna#high")
   })
 })

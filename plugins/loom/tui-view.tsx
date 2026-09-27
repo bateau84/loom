@@ -25,7 +25,7 @@ type SelectedModelUI = {
 export function selectedModelText(ui: SelectedModelUI) {
   const model = ui.model?.current()
   if (!model) return
-  return `Model: ${model.providerID}/${model.modelID}${model.variant ? `#${model.variant}` : ""}`
+  return `Prompt model: ${model.providerID}/${model.modelID}${model.variant ? `#${model.variant}` : ""}`
 }
 
 function taskGlyph(status: LoomSidebarTaskStatus) {
