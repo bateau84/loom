@@ -8826,23 +8826,24 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           reportResources.length > 0 &&
           reportResources.length === event.resources.length
         ) {
-          // Ephemeral reports are intentionally outside product write/commit
-          // scope. Conversational producers may write their own namespace
-          // without governed scope. A producer still attached to an active
-          // workflow, however, must not use this shortcut to survive a
-          // reopen/reroute attempt change.
+          // Ephemeral reports remain non-committable, but governed child steps
+          // still honor their current write surface. Conversation-only report
+          // producers (and General's own report namespace) keep the broader
+          // role-owned report surface because no step scope exists there.
+          if (reportAgent === "general") return
+
           const workflow = await activeWorkflow(
             ctx,
             event.sessionID,
             ensureLegacySession,
           )
+          if (!workflow || workflowBindingTerminal(workflow)) return
+
           const attachedStepId = (await ctx.storage.get(
             sessionStepKey(event.sessionID),
           )) as string | undefined
           if (
-            workflow &&
-            !workflowBindingTerminal(workflow) &&
-            attachedStepId &&
+            !attachedStepId ||
             !(await exactRunnableStepAttemptBinding(
               ctx,
               event.sessionID,
@@ -8853,6 +8854,22 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             event.effect = "deny"
             event.message =
               "Ephemeral report mutation requires a fresh attachment to the current runnable Loom step attempt."
+            return
+          }
+
+          const declaredScope = (await ctx.storage.get(
+            scopeKey(workflow.id, attachedStepId),
+          )) as TaskScope | undefined
+          const effectiveWrite = declaredScope?.write.length
+            ? declaredScope.write
+            : (artifactWriteDefaults[reportAgent] ?? [])
+          if (
+            effectiveWrite.length === 0 ||
+            !resourcesWithinScope(reportResources, effectiveWrite)
+          ) {
+            event.effect = "deny"
+            event.message =
+              "Ephemeral report mutation is outside the current Loom write scope. Call loom_scope_elevate for the additional role-owned report path before retrying."
             return
           }
           return
