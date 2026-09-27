@@ -4146,6 +4146,16 @@ Verdict: FAIL
         },
       }
       await h.toolHooks.get("execute.before")!(activeReopenEdit)
+      await mkdir(join(h.root, "docs", "requirements", "lifecycle"), { recursive: true })
+      await writeFile(join(h.root, secondPath), "active\n")
+      h.setSessionContext("specifier-transition-author", [{
+        id: "specifier-reopen-transition-message",
+        parts: [{
+          type: "tool", callID: "specifier-reopen-transition-active", tool: "edit",
+          messageID: "specifier-reopen-transition-message", state: { status: "running" },
+        }],
+      }])
+      await h.emitEvent({ type: "session.idle", properties: { sessionID: "specifier-transition-author" } })
 
       let reopenSettled = false
       const reopenPromise = h.call(
@@ -4168,11 +4178,14 @@ Verdict: FAIL
       await new Promise((resolve) => setTimeout(resolve, 30))
       expect(reopenSettled).toBe(false)
 
-      await h.toolHooks.get("execute.after")!({
-        ...activeReopenEdit,
-        status: "error",
-        error: new Error("synthetic stop before reopen"),
-      })
+      h.setSessionContext("specifier-transition-author", [{
+        id: "specifier-reopen-transition-message",
+        parts: [{
+          type: "tool", callID: "specifier-reopen-transition-active", tool: "edit",
+          messageID: "specifier-reopen-transition-message", state: { status: "completed" },
+        }],
+      }])
+      await h.emitEvent({ type: "session.idle", properties: { sessionID: "specifier-transition-author" } })
       expect((await reopenPromise).error).toBeUndefined()
 
       const staleAttempt: any = {
