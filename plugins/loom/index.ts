@@ -66,6 +66,7 @@ import {
   observationsSupportKind,
   observationMatchesStep,
   safeInputSummary,
+  safeResultError,
   safeResultSummary,
   type EvidenceClaim,
   type EvidenceKind,
@@ -93,6 +94,16 @@ import {
   type ScopeElevation,
   type TaskScope,
 } from "./scope"
+import {
+  allocateDiagnosticSandbox,
+  destroyDiagnosticSandbox,
+  diffDiagnosticSandbox,
+  executeDiagnosticSandbox,
+  materializeDiagnosticSandbox,
+  resolveDiagnosticSandboxRuntime,
+  type DiagnosticSandboxNetwork,
+  type DiagnosticSandboxRecord,
+} from "./diagnostic-sandbox"
 import {
   authorGitShellResourcesAllowed,
   diagnosticExecutionShellResourcesAllowed,
@@ -2059,6 +2070,10 @@ function sessionKey(id: string) {
   return `session/${id}`
 }
 
+function diagnosticSandboxSessionKey(sessionID: string) {
+  return `diagnostic-sandbox/${encodeURIComponent(sessionID)}`
+}
+
 function bindingReleaseKey(workflowId: string, sessionID: string) {
   return `binding-release/${workflowId}/${sessionID}`
 }
@@ -2472,16 +2487,27 @@ async function bindSessionEvidence(ctx: any, sessionID: string, workflowId: stri
   return bound
 }
 
-const evidenceObservedLoomToolNames = new Set(["find", "grep", "select", "stats", "report_promote"])
+const evidenceObservedLoomToolNames = new Set([
+  "find",
+  "grep",
+  "select",
+  "stats",
+  "report_promote",
+  "diagnostic_sandbox_exec",
+  "diagnostic_sandbox_diff",
+])
 
 function isLoomToolName(tool: string) {
   return tool.startsWith("loom_") || tool.startsWith("loom.")
 }
 
+function loomToolLeaf(tool: string) {
+  return tool.replace(/^loom[._](?:code[._])?/, "")
+}
+
 function isEvidenceObservedLoomToolName(tool: string) {
   if (!isLoomToolName(tool)) return false
-  const leaf = tool.replace(/^loom[._]/, "")
-  return evidenceObservedLoomToolNames.has(leaf)
+  return evidenceObservedLoomToolNames.has(loomToolLeaf(tool))
 }
 
 function skipLoomEvidence(tool: string) {
@@ -2833,6 +2859,44 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       }
     }
 
+    const cleanupDiagnosticSandboxesForWorkflow = async (workflowId: string) => {
+      const destroyed: string[] = []
+      const errors: Array<{ sandboxId: string; error: string }> = []
+      let after: string | undefined
+      do {
+        const page = await ctx.storage.scan({
+          prefix: "diagnostic-sandbox/",
+          limit: 100,
+          ...(after ? { after } : {}),
+        })
+        for (const entry of page.entries) {
+          const observed = entry.value as DiagnosticSandboxRecord | undefined
+          if (!observed?.active || observed.workflowId !== workflowId) continue
+          try {
+            await withRuntimeAdvisoryLock(
+              runtime,
+              "diagnostic-sandbox-instance",
+              observed.id,
+              async () => {
+                const sandbox = (await ctx.storage.get(entry.key)) as DiagnosticSandboxRecord | undefined
+                if (!sandbox?.active || sandbox.id !== observed.id || sandbox.workflowId !== workflowId) return
+                await destroyDiagnosticSandbox(sandbox)
+                await ctx.storage.set(entry.key, sandbox)
+                destroyed.push(sandbox.id)
+              },
+            )
+          } catch (error) {
+            errors.push({
+              sandboxId: observed.id,
+              error: error instanceof Error ? error.message : String(error),
+            })
+          }
+        }
+        after = page.next
+      } while (after)
+      return { destroyed, errors }
+    }
+
     await ctx.rpc.register(LoomRpc, {
       sidebar: async (input) => {
         const { sessionID } = input as { sessionID: string }
@@ -3003,6 +3067,374 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         execute: async (input) => ({
           content: renderToolOutput(await statPaths(ctx.location.directory, input as StatsOptions)),
         }),
+      })
+
+      addLoomTool({
+        name: "diagnostic_sandbox_start",
+        description:
+          "Diagnostic-only governed experiment sandbox. Snapshot the current working directory into Loom runtime storage, give that copy full read/write access inside an ephemeral OCI container, and optionally use host networking. The real project and its Git/Loom metadata are never mounted into the container.",
+        input: {
+          type: "object",
+          properties: {
+            image: {
+              type: "string",
+              description:
+                "Locally available OCI image for the experiment. Loom never pulls it implicitly; prefer a project-declared/toolchain-matching trusted image so reproduction conditions are explicit.",
+            },
+            network: {
+              type: "string",
+              enum: ["none", "host"],
+              description:
+                "Container network mode. Use host only when the hypothesis requires access to host/local network services.",
+            },
+          },
+          required: ["image", "network"],
+          additionalProperties: false,
+        },
+        options: { namespace: "loom", codemode: false },
+        execute: async (input, tool) => {
+          if (tool.agent !== "diagnostic") {
+            return { content: renderToolOutput({ error: "Only Diagnostic may create a diagnostic experiment sandbox." }) }
+          }
+
+          const workflowId = (await ctx.storage.get(sessionKey(tool.sessionID))) as string | undefined
+          const stepId = (await ctx.storage.get(sessionStepKey(tool.sessionID))) as string | undefined
+          if (
+            !workflowId ||
+            !stepId ||
+            !(await exactRunnableStepAttemptBinding(ctx, tool.sessionID, workflowId, stepId))
+          ) {
+            return {
+              content: renderToolOutput({
+                error:
+                  "Diagnostic sandbox experiments require attachment to the exact current runnable Diagnostic step attempt.",
+              }),
+            }
+          }
+
+          const workflow = await readWorkflow(ctx, workflowId)
+          const step = workflow?.steps.find((candidate) => candidate.id === stepId)
+          if (!step || step.agent !== "diagnostic") {
+            return { content: renderToolOutput({ error: "Current attached step is not owned by Diagnostic." }) }
+          }
+
+          return withRuntimeAdvisoryLock(
+            runtime,
+            "diagnostic-sandbox",
+            tool.sessionID,
+            async () => {
+              const key = diagnosticSandboxSessionKey(tool.sessionID)
+              const existing = (await ctx.storage.get(key)) as DiagnosticSandboxRecord | undefined
+              if (existing?.active) {
+                return {
+                  content: renderToolOutput({
+                    error: "This Diagnostic session already has an active experiment sandbox. Reuse or destroy it before creating another.",
+                    sandboxId: existing.id,
+                  }),
+                }
+              }
+
+              const value = input as { image: string; network: DiagnosticSandboxNetwork }
+              let sandbox: DiagnosticSandboxRecord | undefined
+              try {
+                const resolvedRuntime = await resolveDiagnosticSandboxRuntime(
+                  value.image,
+                )
+                sandbox = allocateDiagnosticSandbox({
+                  runtimeRoot: runtime.runtimeRoot,
+                  projectId: runtime.projectId,
+                  sessionId: tool.sessionID,
+                  workflowId,
+                  stepId,
+                  attempt: step.attempt ?? 0,
+                  image: resolvedRuntime.reference,
+                  imageId: resolvedRuntime.id,
+                  network: value.network,
+                  engine: resolvedRuntime.engine,
+                })
+
+                const registered = await withRuntimeLock(
+                  runtime,
+                  "workflow",
+                  workflowId,
+                  async () => {
+                    if (!(await exactRunnableStepAttemptBinding(
+                      ctx,
+                      tool.sessionID,
+                      workflowId,
+                      stepId,
+                    ))) return false
+                    await ctx.storage.set(key, sandbox!)
+                    return true
+                  },
+                )
+                if (!registered) {
+                  return {
+                    content: renderToolOutput({
+                      error:
+                        "Diagnostic step changed before sandbox creation began. Attach to the current attempt before creating a new sandbox.",
+                    }),
+                  }
+                }
+
+                return withRuntimeAdvisoryLock(
+                  runtime,
+                  "diagnostic-sandbox-instance",
+                  sandbox.id,
+                  async () => {
+                    const current = (await ctx.storage.get(key)) as DiagnosticSandboxRecord | undefined
+                    if (!current?.active || current.id !== sandbox!.id) {
+                      return {
+                        content: renderToolOutput({
+                          error:
+                            "Diagnostic sandbox creation was cancelled before project bytes were copied.",
+                        }),
+                      }
+                    }
+
+                    try {
+                      await materializeDiagnosticSandbox(current, ctx.location.directory)
+                      await ctx.storage.set(key, current)
+                    } catch (error) {
+                      current.active = false
+                      current.destroyedAt = new Date().toISOString()
+                      await ctx.storage.set(key, current).catch(() => undefined)
+                      throw error
+                    }
+
+                    if (!(await exactRunnableStepAttemptBinding(
+                      ctx,
+                      tool.sessionID,
+                      workflowId,
+                      stepId,
+                    ))) {
+                      try {
+                        await destroyDiagnosticSandbox(current)
+                        await ctx.storage.set(key, current)
+                      } catch (cleanupError) {
+                        await ctx.storage.set(key, current).catch(() => undefined)
+                        throw new Error(
+                          "Diagnostic step changed while the sandbox snapshot was being created, and sandbox cleanup failed: " +
+                          (cleanupError instanceof Error ? cleanupError.message : String(cleanupError)),
+                        )
+                      }
+                      throw new Error(
+                        "Diagnostic step changed while the sandbox snapshot was being created. Attach to the current attempt before creating a new sandbox.",
+                      )
+                    }
+
+                    return {
+                      content: renderToolOutput({
+                        sandboxId: current.id,
+                        snapshotTree: current.snapshotTree,
+                        snapshotDigest: current.snapshotDigest,
+                        image: current.image,
+                        imageId: current.imageId,
+                        engine: current.engine,
+                        network: current.network,
+                        projectSnapshot: "current working-directory bytes at sandbox creation",
+                        writable: true,
+                        realProjectMounted: false,
+                        hostEnvironmentInherited: false,
+                      }),
+                    }
+                  },
+                )
+              } catch (error) {
+                return { content: renderToolOutput({ error: error instanceof Error ? error.message : String(error) }) }
+              }
+            },
+          )
+        },
+      })
+
+      addLoomTool({
+        name: "diagnostic_sandbox_exec",
+        description:
+          "Run one hypothesis experiment inside the current Diagnostic sandbox. Mutations persist only in the sandbox copy between calls. Command failure is returned as diagnostic evidence rather than applied to the real project.",
+        input: {
+          type: "object",
+          properties: {
+            sandboxId: { type: "string" },
+            command: { type: "string" },
+            timeoutSeconds: {
+              type: "number",
+              description: "Experiment timeout in seconds, 1-600. Defaults to 120.",
+            },
+          },
+          required: ["sandboxId", "command"],
+          additionalProperties: false,
+        },
+        options: { namespace: "loom", codemode: false },
+        execute: async (input, tool) => {
+          if (tool.agent !== "diagnostic") {
+            return { content: renderToolOutput({ error: "Only Diagnostic may execute diagnostic sandbox experiments." }) }
+          }
+          const value = input as { sandboxId: string; command: string; timeoutSeconds?: number }
+          const sandbox = (await ctx.storage.get(
+            diagnosticSandboxSessionKey(tool.sessionID),
+          )) as DiagnosticSandboxRecord | undefined
+          if (!sandbox?.active || sandbox.id !== value.sandboxId) {
+            return { content: renderToolOutput({ error: "Active Diagnostic sandbox not found for this session." }) }
+          }
+
+          return withRuntimeAdvisoryLock(
+            runtime,
+            "diagnostic-sandbox-instance",
+            sandbox.id,
+            async () => {
+              const currentSandbox = (await ctx.storage.get(
+                diagnosticSandboxSessionKey(tool.sessionID),
+              )) as DiagnosticSandboxRecord | undefined
+              if (!currentSandbox?.active || currentSandbox.id !== value.sandboxId) {
+                return { content: renderToolOutput({ error: "Active Diagnostic sandbox not found for this session." }) }
+              }
+
+              const workflowId = (await ctx.storage.get(sessionKey(tool.sessionID))) as string | undefined
+              const stepId = (await ctx.storage.get(sessionStepKey(tool.sessionID))) as string | undefined
+              const workflow = workflowId ? await readWorkflow(ctx, workflowId) : undefined
+              const step = workflow?.steps.find((candidate) => candidate.id === stepId)
+              if (
+                !workflowId ||
+                !stepId ||
+                workflowId !== currentSandbox.workflowId ||
+                stepId !== currentSandbox.stepId ||
+                (step?.attempt ?? -1) !== currentSandbox.attempt ||
+                !(await exactRunnableStepAttemptBinding(ctx, tool.sessionID, workflowId, stepId))
+              ) {
+                return {
+                  content: renderToolOutput({
+                    error:
+                      "Diagnostic sandbox belongs to an older or different step attempt. Destroy it and attach to current diagnosis before further experiments.",
+                  }),
+                }
+              }
+
+              const result = await executeDiagnosticSandbox(currentSandbox, {
+                command: value.command,
+                timeoutSeconds: value.timeoutSeconds,
+              })
+              return { content: renderToolOutput(result) }
+            },
+          )
+        },
+      })
+
+      addLoomTool({
+        name: "diagnostic_sandbox_diff",
+        description:
+          "Inspect the experiment delta against the sandbox's private creation-time Git baseline. This never reads or mutates the real project's Git index.",
+        input: {
+          type: "object",
+          properties: {
+            sandboxId: { type: "string" },
+            includePatch: { type: "boolean" },
+          },
+          required: ["sandboxId"],
+          additionalProperties: false,
+        },
+        options: { namespace: "loom", codemode: false },
+        execute: async (input, tool) => {
+          if (tool.agent !== "diagnostic") {
+            return { content: renderToolOutput({ error: "Only Diagnostic may inspect a diagnostic sandbox." }) }
+          }
+          const value = input as { sandboxId: string; includePatch?: boolean }
+          const sandbox = (await ctx.storage.get(
+            diagnosticSandboxSessionKey(tool.sessionID),
+          )) as DiagnosticSandboxRecord | undefined
+          if (!sandbox?.active || sandbox.id !== value.sandboxId) {
+            return { content: renderToolOutput({ error: "Active Diagnostic sandbox not found for this session." }) }
+          }
+
+          return withRuntimeAdvisoryLock(
+            runtime,
+            "diagnostic-sandbox-instance",
+            sandbox.id,
+            async () => {
+              const currentSandbox = (await ctx.storage.get(
+                diagnosticSandboxSessionKey(tool.sessionID),
+              )) as DiagnosticSandboxRecord | undefined
+              if (!currentSandbox?.active || currentSandbox.id !== value.sandboxId) {
+                return { content: renderToolOutput({ error: "Active Diagnostic sandbox not found for this session." }) }
+              }
+
+              const workflowId = (await ctx.storage.get(sessionKey(tool.sessionID))) as string | undefined
+              const stepId = (await ctx.storage.get(sessionStepKey(tool.sessionID))) as string | undefined
+              const workflow = workflowId ? await readWorkflow(ctx, workflowId) : undefined
+              const step = workflow?.steps.find((candidate) => candidate.id === stepId)
+              if (
+                !workflowId ||
+                !stepId ||
+                workflowId !== currentSandbox.workflowId ||
+                stepId !== currentSandbox.stepId ||
+                (step?.attempt ?? -1) !== currentSandbox.attempt ||
+                !(await exactRunnableStepAttemptBinding(ctx, tool.sessionID, workflowId, stepId))
+              ) {
+                return {
+                  content: renderToolOutput({
+                    error:
+                      "Diagnostic sandbox belongs to an older or different step attempt. Historical sandbox evidence cannot be rebound into the current diagnosis.",
+                  }),
+                }
+              }
+
+              try {
+                return {
+                  content: renderToolOutput(await diffDiagnosticSandbox(currentSandbox, Boolean(value.includePatch))),
+                }
+              } catch (error) {
+                return { content: renderToolOutput({ error: error instanceof Error ? error.message : String(error) }) }
+              }
+            },
+          )
+        },
+      })
+
+      addLoomTool({
+        name: "diagnostic_sandbox_destroy",
+        description:
+          "Destroy this Diagnostic session's disposable experiment sandbox. Cleanup remains allowed after cancellation/reopen because sandbox bytes never carry product authority.",
+        input: {
+          type: "object",
+          properties: {
+            sandboxId: { type: "string" },
+          },
+          required: ["sandboxId"],
+          additionalProperties: false,
+        },
+        options: { namespace: "loom", codemode: false },
+        execute: async (input, tool) => {
+          if (tool.agent !== "diagnostic") {
+            return { content: renderToolOutput({ error: "Only Diagnostic may destroy a diagnostic sandbox." }) }
+          }
+          const value = input as { sandboxId: string }
+          const key = diagnosticSandboxSessionKey(tool.sessionID)
+          const sandbox = (await ctx.storage.get(key)) as DiagnosticSandboxRecord | undefined
+          if (!sandbox || sandbox.id !== value.sandboxId) {
+            return { content: renderToolOutput({ error: "Diagnostic sandbox not found for this session." }) }
+          }
+          return withRuntimeAdvisoryLock(
+            runtime,
+            "diagnostic-sandbox-instance",
+            sandbox.id,
+            async () => {
+              const current = (await ctx.storage.get(key)) as DiagnosticSandboxRecord | undefined
+              if (!current || current.id !== value.sandboxId) {
+                return { content: renderToolOutput({ error: "Diagnostic sandbox not found for this session." }) }
+              }
+              if (!current.active) {
+                return { content: renderToolOutput({ sandboxId: current.id, destroyed: true, alreadyDestroyed: true }) }
+              }
+              try {
+                const result = await destroyDiagnosticSandbox(current)
+                await ctx.storage.set(key, current)
+                return { content: renderToolOutput(result) }
+              } catch (error) {
+                return { content: renderToolOutput({ error: error instanceof Error ? error.message : String(error) }) }
+              }
+            },
+          )
+        },
       })
 
       addLoomTool({
@@ -4175,6 +4607,16 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             const currentBlocking = blockingQuestionsForStep(currentQuestions, stepId)
             if (currentBlocking.length > 0) {
               throw new Error("Step has unresolved blocking questions.")
+            }
+
+            if (tool.agent === "diagnostic" && resolvedOutcome === "complete") {
+              const cleanup = await cleanupDiagnosticSandboxesForWorkflow(workflowId)
+              if (cleanup.errors.length > 0) {
+                throw new Error(
+                  "Diagnostic completion requires every active experiment sandbox for this workflow to be destroyed. Cleanup failed for: " +
+                  cleanup.errors.map((entry) => entry.sandboxId).join(", "),
+                )
+              }
             }
 
             const reviewedWave = workflow.steps.some((candidate) => candidate.id === "review-implementation" && candidate.status === "passed")
@@ -6875,7 +7317,9 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         execute: async (input, tool) => {
           try {
             await ensureLegacySession(tool.sessionID)
-            return { content: renderToolOutput(await cancelWorkflow(ctx.storage as any, runtime, input as CancelWorkflowInput, tool)) }
+            const cancelled = await cancelWorkflow(ctx.storage as any, runtime, input as CancelWorkflowInput, tool)
+            const cleanup = await cleanupDiagnosticSandboxesForWorkflow((input as CancelWorkflowInput).workflowId)
+            return { content: renderToolOutput({ ...cancelled, diagnosticSandboxCleanup: cleanup }) }
           } catch (error) {
             return { content: renderToolOutput({ error: error instanceof Error ? error.message : String(error) }) }
           }
@@ -10253,10 +10697,13 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       }
 
       const summary = pending?.summary ?? safeInputSummary(tool, input)
+      const returnedResult = raw.result ?? raw.output
+      const reportedError =
+        raw.status === "completed" ? safeResultError(returnedResult) : undefined
       const resultSummary =
-        raw.status === "completed" ? safeResultSummary(tool, raw.result ?? raw.output) : {}
+        raw.status === "completed" && !reportedError ? safeResultSummary(tool, returnedResult) : {}
       let reportPromotion: EvidenceObservation["reportPromotion"]
-      const loomTool = tool.replace(/^loom[._]/, "")
+      const loomTool = loomToolLeaf(tool)
       if (
         raw.status === "completed" &&
         loomTool === "report_promote" &&
@@ -10293,11 +10740,15 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         sessionID: String(raw.sessionID),
         ...(raw.agent ? { agent: String(raw.agent) } : {}),
         tool,
-        status: raw.status === "error" ? "error" : "completed",
+        status: raw.status === "error" || reportedError ? "error" : "completed",
         observedAt: new Date().toISOString(),
         ...((pending?.inputDigest ?? inputDigest) === undefined ? {} : { inputDigest: pending?.inputDigest ?? inputDigest }),
         ...(raw.status === "completed" ? { resultDigest: await digest(raw.result) } : {}),
-        ...(raw.status === "error" ? { error: String(raw.error?.message ?? raw.error ?? "tool error").slice(0, 1000) } : {}),
+        ...(raw.status === "error"
+          ? { error: String(raw.error?.message ?? raw.error ?? "tool error").slice(0, 1000) }
+          : reportedError
+            ? { error: reportedError }
+            : {}),
         ...summary,
         ...resultSummary,
         ...(reportPromotion ? { reportPromotion } : {}),

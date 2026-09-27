@@ -14,7 +14,10 @@ const readTools = new Set([
   "find", "grep", "select", "stats", "status", "work_status", "upgrade_status", "task_status", "scope_status",
   "oq_list", "evidence_list", "evidence_observations", "knowledge_status", "pa_status",
   "budget_status", "intent_status", "learn_query", "learn_get", "assessment", "qa",
+  "diagnostic_sandbox_diff",
 ])
+
+const cleanupTools = new Set(["diagnostic_sandbox_destroy"])
 
 function loomToolLeaf(name: string) {
   return name.replace(/^tools\./, "").replace(/^loom[._](?:code[._])?/, "")
@@ -35,7 +38,7 @@ export async function assertLoomToolAdmission(
   const deletedFence = !workflow
     ? await storage.get(`session-deletion-fence/${actor.sessionID}`) as { workflowId?: string } | undefined
     : undefined
-  if (deletedFence && name !== "attach") {
+  if (deletedFence && name !== "attach" && !cleanupTools.has(name)) {
     throw new Error(
       `Workflow ${deletedFence.workflowId ?? "previously attached"} was deleted. Attach to current work before mutating Loom state.`,
     )
@@ -43,7 +46,7 @@ export async function assertLoomToolAdmission(
   const parentConversation = actor.agent === "general" && workflow?.createdBySession === actor.sessionID &&
     (name === "start" || name === "cancel" || name.startsWith("intent_") || name === "report_promote")
   // A new exact grant is the only route for reusing a cancelled child session.
-  if (workflow?.cancellation && name !== "attach" && !parentConversation) {
+  if (workflow?.cancellation && name !== "attach" && !parentConversation && !cleanupTools.has(name)) {
     throw new WorkflowCancelledError(workflow.id)
   }
   const id = (input as { workflowId?: string } | undefined)?.workflowId
@@ -65,18 +68,18 @@ export async function assertCancelledChildToolAdmission(
   const name = loomToolLeaf(tool)
   if (deletedFence) {
     const isLoom = /^(?:tools\.)?loom[._]/.test(tool)
-    if (isLoom && (readOnlyTool(name, input) || name === "attach")) return
+    if (isLoom && (readOnlyTool(name, input) || cleanupTools.has(name) || name === "attach")) return
     const recovery = tool === "execute" ? recoveryCodeCall(input) : undefined
-    if (recovery && (recovery.name === "attach" || readOnlyTool(recovery.name, recovery.input))) return
+    if (recovery && (recovery.name === "attach" || cleanupTools.has(recovery.name) || readOnlyTool(recovery.name, recovery.input))) return
     throw new Error(
       `Workflow ${deletedFence.workflowId ?? "previously attached"} was deleted. This old child session may only inspect state or attach to newly granted work.`,
     )
   }
   if (!workflow?.cancellation || workflow.createdBySession === sessionID) return
   const isLoom = /^(?:tools\.)?loom[._]/.test(tool)
-  if (isLoom && (readOnlyTool(name, input) || name === "attach")) return
+  if (isLoom && (readOnlyTool(name, input) || cleanupTools.has(name) || name === "attach")) return
   const recovery = tool === "execute" ? recoveryCodeCall(input) : undefined
-  if (recovery && (recovery.name === "attach" || readOnlyTool(recovery.name, recovery.input))) return
+  if (recovery && (recovery.name === "attach" || cleanupTools.has(recovery.name) || readOnlyTool(recovery.name, recovery.input))) return
   throw new WorkflowCancelledError(workflow.id)
 }
 

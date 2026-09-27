@@ -353,6 +353,28 @@ Legacy OpenCode plugin storage is treated as baseline-version input even when it
 5. Add deterministic multi-project, multi-session, multi-process, path-reuse, worktree, move, copy-collision, and migration tests.
 6. Only after this contract is proven may dashboard aggregation rely on compartment identity.
 
+## Diagnostic experimental sandbox
+
+Root-cause diagnosis sometimes requires controlled mutation, instrumentation, alternate dependencies, or failure injection. Granting that freedom directly in the product working tree would collapse Diagnostic into an implementation role, so Loom isolates the experiment instead.
+
+For an attached governed Diagnostic step:
+
+1. Loom snapshots the current working-directory bytes into installation runtime storage under the current project epoch.
+2. Host Git administration metadata (`.git`) and Loom's operational non-Git project marker (`.loom/project-id`) are excluded from the snapshot. Other project-owned `.loom/**` files are preserved.
+3. Loom creates a private disposable Git baseline **outside** the writable snapshot. The container may inspect that baseline read-only. Git status/stat/patch provide the human-readable experiment view, while Loom's raw snapshot/workspace SHA-256 digests are the authoritative byte-level changed/unchanged signal.
+4. Each experiment runs in an ephemeral Podman/Docker container with the snapshot bind-mounted read/write at `/workspace` and Loom's runtime-owned private Git baseline bind-mounted read-only at `/diagnostic-git`. The real project and its Git administration directory are never mounted.
+5. The requested OCI image must already exist locally; Loom does not implicitly pull it. At sandbox creation Loom resolves the reference to the container engine's immutable local image ID, stores both values, and executes every experiment by that ID so retagging/rebuilding a mutable local tag cannot change an existing sandbox's runtime. Loom overrides the image entrypoint, drops Linux capabilities, runs the container root filesystem read-only, and does not intentionally inherit host environment variables, provider/Git credentials, or the container-engine socket. The snapshot may itself contain project-local secret files, so sandbox images MUST be treated as trusted execution dependencies and those bytes remain sensitive.
+6. Network mode is explicit per sandbox: `none` or `host`. Host networking is diagnostic reachability, not permission to mutate external/production services.
+7. Sandbox bytes may persist across experiment calls for one Diagnostic session/step attempt so competing hypotheses can be tested against the same starting snapshot.
+8. Reopen/reroute advances the Diagnostic step attempt; the old sandbox cannot execute further experiments under the new attempt.
+9. Sandbox mutation is evidence only. It never creates Git authorship, staging/commit authority, product mutation provenance, or permission to copy a candidate fix back into the real project.
+10. Sandbox identity, paths, ownership, and intended image/network are durably registered before any project bytes are copied. Creation, execution, diff, and destruction serialize through one cross-process per-sandbox lock. If the creating process dies, the active preregistration remains discoverable and cleanup can remove a partial snapshot without requiring a container to have existed. After copying, Loom keeps the private baseline Git tree for diff mechanics but records a separate raw SHA-256 filesystem digest as the exact snapshot identity. The raw digest covers paths, file bytes, executable bits, symlink targets, and empty directories while excluding only the same host metadata omitted from the copy. Loom hashes the source, then the copied workspace, then the source again; any byte-level drift makes creation fail rather than publish a torn snapshot.
+11. Sandbox execution uses a deterministic per-sandbox container name. Destruction first force-removes that container when materialization completed, then removes the snapshot.
+12. Workflow cancellation scans active Diagnostic sandboxes, attempts to destroy them, and returns any cleanup failures explicitly; cancellation authority is not rolled back merely because the external container engine is unavailable. Successful governed Diagnostic completion is stricter: it does not publish step completion unless any still-active sandbox is destroyed. Cleanup remains callable after terminal/cancelled boundaries.
+13. Sandbox execution/diff tool results are admitted into Loom evidence so causal claims can reference the actual experiment rather than model recollection. Diff evidence carries both baseline and current raw digests plus an explicit raw-changed signal, so Git normalization cannot turn byte-level mutation into false unchanged evidence.
+
+This provides Diagnostic with strong experimental freedom while preserving the real working directory as a non-destructive boundary.
+
 ## Related decisions and specification
 
 - [Project Epoch Identity](decisions/project-epoch-identity.md)
@@ -376,4 +398,5 @@ This design does not:
 - [BR-001](../../requirements/loom/br-001-run-autonomously-to-real-boundary.md)
 - [BR-007](../../requirements/loom/br-007-evidence-outranks-model-claims.md)
 - [BR-008](../../requirements/loom/br-008-bounded-autonomy-and-progress.md)
+- [BR-013](../../requirements/loom/br-013-diagnose-root-causes.md)
 - [BR-017](../../requirements/loom/br-017-concurrent-sessions-projects-compartmentalized.md)
