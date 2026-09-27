@@ -13,7 +13,7 @@ jobs:
   scope-live-evals:
     if: github.event.pull_request.number == 87
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
 
@@ -26,58 +26,24 @@ jobs:
       - name: Validate corpus
         run: bun run eval:validate
 
-      - name: Materialize optional OpenCode auth
-        shell: bash
-        env:
-          OPENCODE_AUTH_JSON: ${{ secrets.OPENCODE_AUTH_JSON }}
-        run: |
-          set -euo pipefail
-          if [[ -n "${OPENCODE_AUTH_JSON:-}" ]]; then
-            install -m 700 -d "$RUNNER_TEMP/loom-opencode-auth"
-            printf '%s' "$OPENCODE_AUTH_JSON" > "$RUNNER_TEMP/loom-opencode-auth/auth.json"
-            chmod 600 "$RUNNER_TEMP/loom-opencode-auth/auth.json"
-            echo "OPENCODE_EVAL_RUNNER_AUTH=$RUNNER_TEMP/loom-opencode-auth/auth.json" >> "$GITHUB_ENV"
-          fi
-
-      - name: Materialize optional OpenCode model catalog
-        shell: bash
-        env:
-          OPENCODE_MODELS_JSON: ${{ secrets.OPENCODE_MODELS_JSON }}
-        run: |
-          set -euo pipefail
-          if [[ -n "${OPENCODE_MODELS_JSON:-}" ]]; then
-            install -m 700 -d "$RUNNER_TEMP/loom-opencode-models"
-            printf '%s' "$OPENCODE_MODELS_JSON" > "$RUNNER_TEMP/loom-opencode-models/models.json"
-            chmod 600 "$RUNNER_TEMP/loom-opencode-models/models.json"
-            echo "OPENCODE_EVAL_RUNNER_MODELS=$RUNNER_TEMP/loom-opencode-models/models.json" >> "$GITHUB_ENV"
-          fi
-
       - name: Run focused scope/autonomy live evals
-        env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
         uses: bateau84/opencode-eval-runner@c4d583478c246f34e4373b1a77b52484620448cd
         with:
           engine: docker
-          opencode-image: ghcr.io/bateau84/opencode-eval-runner@sha256:4dd282f5a5605b90e3bf87e290dcfe7407d7f45ebd58f7307151d77ae41ca180
-          prepare-opencode: true
+          copilot-image: ghcr.io/bateau84/opencode-eval-runner@sha256:6aa4a6104761f10036d8a45f98cc2764d72cb0dc6d67722bd4cfb35187720e74
+          prepare-opencode: false
+          prepare-copilot: true
           artifact-dir: .loom-evals-pr87
           command: |
-            args=(
-              python3 scripts/run-evals.py
-              --engine docker
-              --model openai/gpt-5.6-luna
-              --judge-model openai/gpt-5.6-luna
-              --target-transport opencode
-              --judge-transport opencode
-              --target-kind agent
-              --iterations 1
-              --cases "PRO-AUTONOMY-WORKER-01,PRO-AUTONOMY-WORKER-SCOPE-HANDOFF-01,PRO-AUTONOMY-GENERAL-SCOPE-APPROVAL-01,PRO-AUTONOMY-RUNTIME-02"
-            )
-            if [[ -n "${OPENCODE_API_KEY:-}" ]]; then
-              args+=(--env OPENCODE_API_KEY)
-            fi
-            "${args[@]}"
+            python3 scripts/run-evals.py \
+              --engine docker \
+              --model gpt-5.4 \
+              --judge-model gpt-5.4 \
+              --target-transport github-copilot-cli \
+              --judge-transport github-copilot-cli \
+              --target-kind agent \
+              --iterations 1 \
+              --cases "PRO-AUTONOMY-WORKER-01,PRO-AUTONOMY-WORKER-SCOPE-HANDOFF-01,PRO-AUTONOMY-GENERAL-SCOPE-APPROVAL-01"
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
