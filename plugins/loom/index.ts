@@ -3199,31 +3199,45 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             return { content: renderToolOutput({ error: "Active Diagnostic sandbox not found for this session." }) }
           }
 
-          const workflowId = (await ctx.storage.get(sessionKey(tool.sessionID))) as string | undefined
-          const stepId = (await ctx.storage.get(sessionStepKey(tool.sessionID))) as string | undefined
-          const workflow = workflowId ? await readWorkflow(ctx, workflowId) : undefined
-          const step = workflow?.steps.find((candidate) => candidate.id === stepId)
-          if (
-            !workflowId ||
-            !stepId ||
-            workflowId !== sandbox.workflowId ||
-            stepId !== sandbox.stepId ||
-            (step?.attempt ?? -1) !== sandbox.attempt ||
-            !(await exactRunnableStepAttemptBinding(ctx, tool.sessionID, workflowId, stepId))
-          ) {
-            return {
-              content: renderToolOutput({
-                error:
-                  "Diagnostic sandbox belongs to an older or different step attempt. Destroy it and attach to current diagnosis before further experiments.",
-              }),
-            }
-          }
+          return withRuntimeAdvisoryLock(
+            runtime,
+            "diagnostic-sandbox-exec",
+            sandbox.id,
+            async () => {
+              const currentSandbox = (await ctx.storage.get(
+                diagnosticSandboxSessionKey(tool.sessionID),
+              )) as DiagnosticSandboxRecord | undefined
+              if (!currentSandbox?.active || currentSandbox.id !== value.sandboxId) {
+                return { content: renderToolOutput({ error: "Active Diagnostic sandbox not found for this session." }) }
+              }
 
-          const result = await executeDiagnosticSandbox(sandbox, {
-            command: value.command,
-            timeoutSeconds: value.timeoutSeconds,
-          })
-          return { content: renderToolOutput(result) }
+              const workflowId = (await ctx.storage.get(sessionKey(tool.sessionID))) as string | undefined
+              const stepId = (await ctx.storage.get(sessionStepKey(tool.sessionID))) as string | undefined
+              const workflow = workflowId ? await readWorkflow(ctx, workflowId) : undefined
+              const step = workflow?.steps.find((candidate) => candidate.id === stepId)
+              if (
+                !workflowId ||
+                !stepId ||
+                workflowId !== currentSandbox.workflowId ||
+                stepId !== currentSandbox.stepId ||
+                (step?.attempt ?? -1) !== currentSandbox.attempt ||
+                !(await exactRunnableStepAttemptBinding(ctx, tool.sessionID, workflowId, stepId))
+              ) {
+                return {
+                  content: renderToolOutput({
+                    error:
+                      "Diagnostic sandbox belongs to an older or different step attempt. Destroy it and attach to current diagnosis before further experiments.",
+                  }),
+                }
+              }
+
+              const result = await executeDiagnosticSandbox(currentSandbox, {
+                command: value.command,
+                timeoutSeconds: value.timeoutSeconds,
+              })
+              return { content: renderToolOutput(result) }
+            },
+          )
         },
       })
 
@@ -3253,33 +3267,47 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             return { content: renderToolOutput({ error: "Active Diagnostic sandbox not found for this session." }) }
           }
 
-          const workflowId = (await ctx.storage.get(sessionKey(tool.sessionID))) as string | undefined
-          const stepId = (await ctx.storage.get(sessionStepKey(tool.sessionID))) as string | undefined
-          const workflow = workflowId ? await readWorkflow(ctx, workflowId) : undefined
-          const step = workflow?.steps.find((candidate) => candidate.id === stepId)
-          if (
-            !workflowId ||
-            !stepId ||
-            workflowId !== sandbox.workflowId ||
-            stepId !== sandbox.stepId ||
-            (step?.attempt ?? -1) !== sandbox.attempt ||
-            !(await exactRunnableStepAttemptBinding(ctx, tool.sessionID, workflowId, stepId))
-          ) {
-            return {
-              content: renderToolOutput({
-                error:
-                  "Diagnostic sandbox belongs to an older or different step attempt. Historical sandbox evidence cannot be rebound into the current diagnosis.",
-              }),
-            }
-          }
+          return withRuntimeAdvisoryLock(
+            runtime,
+            "diagnostic-sandbox-exec",
+            sandbox.id,
+            async () => {
+              const currentSandbox = (await ctx.storage.get(
+                diagnosticSandboxSessionKey(tool.sessionID),
+              )) as DiagnosticSandboxRecord | undefined
+              if (!currentSandbox?.active || currentSandbox.id !== value.sandboxId) {
+                return { content: renderToolOutput({ error: "Active Diagnostic sandbox not found for this session." }) }
+              }
 
-          try {
-            return {
-              content: renderToolOutput(await diffDiagnosticSandbox(sandbox, Boolean(value.includePatch))),
-            }
-          } catch (error) {
-            return { content: renderToolOutput({ error: error instanceof Error ? error.message : String(error) }) }
-          }
+              const workflowId = (await ctx.storage.get(sessionKey(tool.sessionID))) as string | undefined
+              const stepId = (await ctx.storage.get(sessionStepKey(tool.sessionID))) as string | undefined
+              const workflow = workflowId ? await readWorkflow(ctx, workflowId) : undefined
+              const step = workflow?.steps.find((candidate) => candidate.id === stepId)
+              if (
+                !workflowId ||
+                !stepId ||
+                workflowId !== currentSandbox.workflowId ||
+                stepId !== currentSandbox.stepId ||
+                (step?.attempt ?? -1) !== currentSandbox.attempt ||
+                !(await exactRunnableStepAttemptBinding(ctx, tool.sessionID, workflowId, stepId))
+              ) {
+                return {
+                  content: renderToolOutput({
+                    error:
+                      "Diagnostic sandbox belongs to an older or different step attempt. Historical sandbox evidence cannot be rebound into the current diagnosis.",
+                  }),
+                }
+              }
+
+              try {
+                return {
+                  content: renderToolOutput(await diffDiagnosticSandbox(currentSandbox, Boolean(value.includePatch))),
+                }
+              } catch (error) {
+                return { content: renderToolOutput({ error: error instanceof Error ? error.message : String(error) }) }
+              }
+            },
+          )
         },
       })
 
