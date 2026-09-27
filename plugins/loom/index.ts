@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto"
 import { lstat, readFile, readlink, realpath } from "node:fs/promises"
 import { dirname, isAbsolute, join, relative, resolve } from "node:path"
-import { execFile } from "node:child_process"
+import { execFile, spawn } from "node:child_process"
 import { promisify } from "node:util"
 import { captureEvidenceAdmission, observationCallKey, persistEvidenceObservation, sessionAttachmentKey, type EvidenceAdmission } from "./evidence-admission"
 import type * as OpenCodePlugin from "@opencode/plugin"
@@ -105,6 +105,7 @@ import {
   workerShellResourcesAllowed,
 } from "./shell"
 import { prepareReportPromotion, publishPreparedReport, reconcilePendingReportPromotion, type ReportPromotionInput, type ReportPromotionRecord } from "./reports"
+import { projectDisjointTextDelta } from "./git-delta"
 import {
   findPaths,
   grepText,
@@ -210,6 +211,25 @@ const reportProducerAgents = new Set([
 
 const execFileAsync = promisify(execFile)
 
+function gitHashBlob(projectDirectory: string, bytes: Buffer) {
+  return new Promise<string>((resolveHash, reject) => {
+    const child = spawn("git", ["hash-object", "-w", "--stdin"], { cwd: projectDirectory })
+    const output: Buffer[] = []
+    const errors: Buffer[] = []
+    child.stdout.on("data", (chunk: Buffer) => output.push(chunk))
+    child.stderr.on("data", (chunk: Buffer) => errors.push(chunk))
+    child.once("error", reject)
+    child.once("close", (code) => {
+      if (code !== 0) {
+        reject(new Error(Buffer.concat(errors).toString("utf8") || `git hash-object exited ${code}`))
+        return
+      }
+      resolveHash(Buffer.concat(output).toString("utf8").trim())
+    })
+    child.stdin.end(bytes)
+  })
+}
+
 const artifactWriteDefaults: Record<string, string[]> = {
   designer: ["docs/design/**", "ephemeral-reports/designer/**"],
   specifier: ["docs/requirements/**"],
@@ -267,6 +287,53 @@ type GitStepAttemptOwnedPath = {
   path: string
   fingerprint: string
   sourceSessionId: string
+}
+
+type GitDeltaReceipt = {
+  schemaVersion: 1
+  authorityId: string
+  workflowId: string
+  stepId: string
+  attempt: number
+  attachmentId: string
+  sourceSessionId: string
+  path: string
+  revision: number
+  head: string
+  headMode: string
+  headContent: string
+  indexEntry: string
+  foreign: string
+  aggregate: string
+  projection: string
+  updatedAt: string
+}
+
+type GitMutationSnapshot = {
+  path: string
+  bytes: string
+  mode: number
+  head: string
+  headMode: string
+  indexEntry: string
+  baseline: string
+  foreign: string
+}
+
+function gitDeltaReceiptKey(binding: GitOwnershipBinding, path: string) {
+  return `git-delta/${encodeURIComponent(binding.workflowId)}/${encodeURIComponent(binding.stepId)}/${binding.attempt}/${encodeURIComponent(safeOwnedRepoPath(path))}`
+}
+
+function gitDeltaStageKey(binding: GitOwnershipBinding, path: string) {
+  return `${gitDeltaReceiptKey(binding, path)}/staged`
+}
+
+function gitDeltaPublishedKey(binding: GitOwnershipBinding, path: string) {
+  return `${gitDeltaReceiptKey(binding, path)}/published`
+}
+
+function gitDeltaUnprovenKey(binding: GitOwnershipBinding, path: string) {
+  return `git-delta-unproven/${encodeURIComponent(binding.workflowId)}/${encodeURIComponent(binding.stepId)}/${binding.attempt}/${encodeURIComponent(safeOwnedRepoPath(path))}`
 }
 
 function gitSessionOwnershipKey(sessionID: string) {
@@ -492,6 +559,107 @@ async function recordGitStepAttemptOwnedFingerprints(
   )
 }
 
+async function snapshotGitMutation(
+  projectDirectory: string,
+  path: string,
+): Promise<GitMutationSnapshot> {
+  const normalized = safeOwnedRepoPath(path)
+  const info = await lstat(join(projectDirectory, normalized))
+  if (!info.isFile() || info.isSymbolicLink()) {
+    throw new Error(`Owned-delta recording currently requires a regular tracked text file: ${normalized}`)
+  }
+  const bytes = await readFile(join(projectDirectory, normalized))
+  if (bytes.length > 1024 * 1024 || bytes.includes(0)) {
+    throw new Error(`Owned-delta recording refuses binary or oversized file: ${normalized}`)
+  }
+  const [head, headBytes, indexEntry, headEntry] = await Promise.all([
+    execFileAsync("git", ["rev-parse", "HEAD"], { cwd: projectDirectory, encoding: "utf8" }),
+    execFileAsync("git", ["show", `HEAD:${normalized}`], { cwd: projectDirectory, encoding: "buffer" }),
+    execFileAsync("git", ["ls-files", "-s", "--", normalized], { cwd: projectDirectory, encoding: "utf8" }),
+    execFileAsync("git", ["ls-tree", "HEAD", "--", normalized], { cwd: projectDirectory, encoding: "utf8" }),
+  ])
+  const indexRecord = String(indexEntry.stdout).trim()
+  const headRecord = String(headEntry.stdout).trim()
+  const headMode = headRecord.split(/\s+/)[0]
+  if (
+    !indexRecord || !headMode ||
+    indexRecord.split(/\s+/)[1] !== headRecord.split(/\s+/)[2] ||
+    info.mode.toString(8) !== headMode
+  ) {
+    throw new Error(`Owned-delta recording requires an unchanged Git index baseline: ${normalized}`)
+  }
+  const baseline = Buffer.from(headBytes.stdout as Buffer)
+  const indexFingerprint = createHash("sha256").update(indexRecord).digest("hex")
+  return {
+    path: normalized,
+    bytes: bytes.toString("base64"),
+    mode: info.mode,
+    head: String(head.stdout).trim(),
+    headMode,
+    indexEntry: indexFingerprint,
+    baseline: baseline.toString("base64"),
+    foreign: bytes.toString("base64"),
+  }
+}
+
+async function recordGitMutationDelta(
+  ctx: any,
+  sessionID: string,
+  projectDirectory: string,
+  snapshot: GitMutationSnapshot,
+) {
+  const binding = await gitSessionOwnershipBinding(ctx, sessionID)
+  const attachmentId = await ctx.storage.get(sessionAttachmentKey(sessionID))
+  if (!binding || typeof attachmentId !== "string" || !attachmentId) {
+    throw new Error("Owned-delta provenance requires an exact live step attachment.")
+  }
+  const after = await readFile(join(projectDirectory, snapshot.path))
+  const info = await lstat(join(projectDirectory, snapshot.path))
+  if (
+    !info.isFile() || info.isSymbolicLink() || info.mode !== snapshot.mode ||
+    after.length > 1024 * 1024 || after.includes(0)
+  ) {
+    throw new Error(`Owned-delta recording refuses unsupported postimage: ${snapshot.path}`)
+  }
+  const prior = await ctx.storage.get(gitDeltaReceiptKey(binding, snapshot.path)) as GitDeltaReceipt | undefined
+  const preimage = Buffer.from(snapshot.bytes, "base64")
+  const foreign = prior ? Buffer.from(prior.foreign, "base64") : Buffer.from(snapshot.foreign, "base64")
+  if (prior && (
+    prior.schemaVersion !== 1 || prior.authorityId !== binding.authorityId ||
+    prior.workflowId !== binding.workflowId || prior.stepId !== binding.stepId ||
+    prior.attempt !== binding.attempt ||
+    prior.head !== snapshot.head || prior.indexEntry !== snapshot.indexEntry ||
+    !Buffer.from(prior.aggregate, "base64").equals(preimage)
+  )) {
+    throw new Error(`Owned-delta baseline or prior aggregate became stale: ${snapshot.path}`)
+  }
+  const result = projectDisjointTextDelta(
+    Buffer.from(snapshot.baseline, "base64"),
+    foreign,
+    after,
+  )
+  if (!result) {
+    throw new Error(`Owned mutation cannot be separated from foreign bytes without ambiguity: ${snapshot.path}`)
+  }
+  const receipt: GitDeltaReceipt = {
+    schemaVersion: 1,
+    ...binding,
+    attachmentId,
+    sourceSessionId: sessionID,
+    path: snapshot.path,
+    revision: (prior?.revision ?? 0) + 1,
+    head: snapshot.head,
+    headMode: snapshot.headMode,
+    headContent: snapshot.baseline,
+    indexEntry: snapshot.indexEntry,
+    foreign: foreign.toString("base64"),
+    aggregate: after.toString("base64"),
+    projection: result.projection.toString("base64"),
+    updatedAt: new Date().toISOString(),
+  }
+  await ctx.storage.set(gitDeltaReceiptKey(binding, snapshot.path), receipt)
+}
+
 async function gitSessionOwnership(
   ctx: any,
   sessionID: string,
@@ -631,7 +799,14 @@ async function resolveGitStagingOwnership(
   const changed: string[] = []
   let restored = false
 
+  if (binding) {
+    for (const path of normalized) {
+      if (await ctx.storage.get(gitDeltaUnprovenKey(binding, path))) changed.push(path)
+    }
+  }
+
   for (const path of normalized) {
+    if (changed.includes(path)) continue
     const current = await worktreeFingerprint(projectDirectory, path)
     const ownsPath = ownership.paths.includes(path)
     if (ownsPath && ownership.worktreeFingerprints[path] === current) continue
@@ -787,6 +962,127 @@ async function gitIndexMatchesWorktree(
   } catch (error: any) {
     if (Number(error?.code) === 1) return false
     throw error
+  }
+}
+
+async function projectStagedGitDeltas(
+  ctx: any,
+  sessionID: string,
+  projectDirectory: string,
+  paths: readonly string[],
+) {
+  const binding = await gitSessionOwnershipBinding(ctx, sessionID)
+  if (!binding) return
+  for (const raw of paths) {
+    const path = safeOwnedRepoPath(raw)
+    const receipt = await ctx.storage.get(gitDeltaReceiptKey(binding, path)) as GitDeltaReceipt | undefined
+    if (!receipt) continue
+    if (
+      receipt.schemaVersion !== 1 || receipt.authorityId !== binding.authorityId ||
+      receipt.workflowId !== binding.workflowId || receipt.stepId !== binding.stepId ||
+      receipt.attempt !== binding.attempt || receipt.path !== path
+    ) throw new Error(`Git staging denied: owned-delta receipt is stale or cross-session for ${path}.`)
+    const [head, aggregate, staged, worktreeInfo] = await Promise.all([
+      execFileAsync("git", ["rev-parse", "HEAD"], { cwd: projectDirectory, encoding: "utf8" }),
+      readFile(join(projectDirectory, path)),
+      execFileAsync("git", ["show", `:${path}`], { cwd: projectDirectory, encoding: "buffer" }),
+      lstat(join(projectDirectory, path)),
+    ])
+    if (
+      String(head.stdout).trim() !== receipt.head ||
+      worktreeInfo.mode.toString(8) !== receipt.headMode ||
+      !aggregate.equals(Buffer.from(receipt.aggregate, "base64")) ||
+      !Buffer.from(staged.stdout as Buffer).equals(aggregate)
+    ) throw new Error(`Git staging denied: aggregate, index, or HEAD changed after the admitted mutation for ${path}.`)
+    const projection = Buffer.from(receipt.projection, "base64")
+    const oid = await gitHashBlob(projectDirectory, projection)
+    await execFileAsync("git", ["update-index", "--add", "--cacheinfo", `${receipt.headMode},${oid},${path}`], {
+      cwd: projectDirectory,
+      encoding: "utf8",
+    })
+    const stagedProjection = await execFileAsync("git", ["show", `:${path}`], { cwd: projectDirectory, encoding: "buffer" })
+    if (!Buffer.from(stagedProjection.stdout as Buffer).equals(projection)) {
+      throw new Error(`Git staging denied: index did not retain the exact owned projection for ${path}.`)
+    }
+    await ctx.storage.set(gitDeltaStageKey(binding, path), {
+      schemaVersion: 1,
+      authorityId: binding.authorityId,
+      workflowId: binding.workflowId,
+      stepId: binding.stepId,
+      attempt: binding.attempt,
+      sourceSessionId: sessionID,
+      path,
+      head: receipt.head,
+      headMode: receipt.headMode,
+      headContent: receipt.headContent,
+      aggregate: receipt.aggregate,
+      foreign: receipt.foreign,
+      projection: receipt.projection,
+      projectionOid: oid,
+      stagedFingerprint: await stagedFingerprint(projectDirectory, path),
+    })
+  }
+}
+
+async function reconcileCommittedGitDeltas(
+  ctx: any,
+  sessionID: string,
+  projectDirectory: string,
+) {
+  const binding = await gitSessionOwnershipBinding(ctx, sessionID)
+  if (!binding) return
+  const prefix = `git-delta/${encodeURIComponent(binding.workflowId)}/${encodeURIComponent(binding.stepId)}/${binding.attempt}/`
+  const entries = await ctx.storage.scan({ prefix, limit: 500 })
+  const candidates = entries.entries.filter((entry: any) =>
+    entry.value?.schemaVersion === 1 && typeof entry.value?.projection === "string" &&
+    typeof entry.value?.projectionOid === "string" && Boolean(entry.value?.path),
+  )
+  if (candidates.length === 0) return
+  const commit = String((await execFileAsync("git", ["rev-parse", "HEAD"], {
+    cwd: projectDirectory, encoding: "utf8",
+  })).stdout).trim()
+  const parent = String((await execFileAsync("git", ["rev-parse", "HEAD^"], {
+    cwd: projectDirectory, encoding: "utf8",
+  })).stdout).trim()
+  for (const entry of candidates) {
+    const stage = entry.value as any
+    if (stage?.schemaVersion !== 1 || typeof stage.projection !== "string" || !stage.path) continue
+    if (await ctx.storage.get(gitDeltaPublishedKey(binding, stage.path))) continue
+    if (
+      stage.authorityId !== binding.authorityId || stage.workflowId !== binding.workflowId ||
+      stage.stepId !== binding.stepId || stage.attempt !== binding.attempt ||
+      stage.head !== parent
+    ) continue
+    const [committed, aggregate] = await Promise.all([
+      execFileAsync("git", ["show", `HEAD:${stage.path}`], { cwd: projectDirectory, encoding: "buffer" }),
+      readFile(join(projectDirectory, stage.path)),
+    ])
+    const projection = Buffer.from(stage.projection, "base64")
+    const recomposed = projectDisjointTextDelta(
+      Buffer.from(stage.headContent, "base64"),
+      Buffer.from(stage.foreign, "base64"),
+      Buffer.from(stage.aggregate, "base64"),
+    )
+    if (
+      !Buffer.from(committed.stdout as Buffer).equals(projection) ||
+      !aggregate.equals(Buffer.from(stage.aggregate, "base64")) ||
+      !recomposed?.projection.equals(projection)
+    ) throw new Error(`Git commit reconciliation failed for owned delta ${stage.path}; completion remains blocked.`)
+    await ctx.storage.set(gitDeltaPublishedKey(binding, stage.path), {
+      schemaVersion: 1,
+      authorityId: binding.authorityId,
+      workflowId: binding.workflowId,
+      stepId: binding.stepId,
+      attempt: binding.attempt,
+      path: stage.path,
+      commit,
+      parent,
+      projection: stage.projection,
+      headMode: stage.headMode,
+      aggregate: stage.aggregate,
+      foreign: stage.foreign,
+      headContent: stage.headContent,
+    })
   }
 }
 
@@ -947,6 +1243,15 @@ async function commitScopeError(
       return `Git commit denied: staged changes outside the current role/task write scope: ${outside.join(", ")}`
     }
     if (requireExplicitOwnership) {
+      if (binding) {
+        const unproven = []
+        for (const path of staged) {
+          if (await ctx.storage.get(gitDeltaUnprovenKey(binding, path))) unproven.push(path)
+        }
+        if (unproven.length > 0) {
+          return `Git commit denied: admitted mutations lack complete delta provenance: ${unproven.join(", ")}`
+        }
+      }
       const unowned = staged.filter(
         (path) => !ownership.paths.includes(normalizeRepoPath(path)),
       )
@@ -955,11 +1260,36 @@ async function commitScopeError(
       }
 
       const changedIndex: string[] = []
+      const deltaPublishedPaths = new Set<string>()
+      if (binding) {
+        for (const path of staged) {
+          const receipt = await ctx.storage.get(gitDeltaStageKey(binding, path)) as any
+          if (!receipt) continue
+          const head = String((await execFileAsync("git", ["rev-parse", "HEAD"], {
+            cwd: projectDirectory, encoding: "utf8",
+          })).stdout).trim()
+          if (
+            receipt?.schemaVersion === 1 && receipt.authorityId === binding.authorityId &&
+            receipt.workflowId === binding.workflowId && receipt.stepId === binding.stepId &&
+            receipt.attempt === binding.attempt && receipt.path === path && receipt.head === head &&
+            receipt.stagedFingerprint === await stagedFingerprint(projectDirectory, path) &&
+            (await readFile(join(projectDirectory, path))).toString("base64") === receipt.aggregate &&
+            (await execFileAsync("git", ["show", `:${path}`], { cwd: projectDirectory, encoding: "buffer" })).stdout.toString("base64") === receipt.projection
+          ) deltaPublishedPaths.add(path)
+        }
+      }
+      if (
+        deltaPublishedPaths.size > 0 &&
+        staged.some((path) => !deltaPublishedPaths.has(path))
+      ) {
+        return "Git commit denied: unrelated staged entries cannot be included with an owned-delta publication."
+      }
       let recoveredStagedFingerprint = false
       for (const raw of staged) {
         const path = normalizeRepoPath(raw)
         const expected = ownership.stagedFingerprints[path]
         const actual = await stagedFingerprint(projectDirectory, path)
+        if (deltaPublishedPaths.has(path)) continue
         if (expected === actual) continue
 
         // A missing session-local fingerprint may be recovered only when the
@@ -1004,11 +1334,12 @@ async function commitScopeError(
         projectDirectory,
         ["diff", "--no-renames", "--name-only", "-z", "--", ...staged],
       )
-      if (unstagedAfterStage.length > 0) {
+      const unstagedOwned = unstagedAfterStage.filter((path) => !deltaPublishedPaths.has(path))
+      if (unstagedOwned.length > 0) {
         return (
           "Git commit denied: these staged paths have newer unstaged worktree changes; " +
           "stage the latest admitted bytes before committing: " +
-          unstagedAfterStage.join(", ")
+          unstagedOwned.join(", ")
         )
       }
 
@@ -1057,6 +1388,7 @@ async function uncommittedOwnedChangesError(
   let dirty: string[]
   try {
     if (!await projectHasGitWorktree(projectDirectory)) return undefined
+    await reconcileCommittedGitDeltas(ctx, sessionID, projectDirectory)
     dirty = await projectDirtyPaths(projectDirectory)
   } catch (error) {
     return `Cannot verify repository completion state: ${error instanceof Error ? error.message : String(error)}`
@@ -1074,6 +1406,40 @@ async function uncommittedOwnedChangesError(
     // current attempt, later scope narrowing must not make those dirty bytes
     // disappear from the completion fence.
     if (binding) {
+      if (await ctx.storage.get(gitDeltaUnprovenKey(binding, path))) {
+        dirtyOwned.push(path)
+        continue
+      }
+      const published = await ctx.storage.get(gitDeltaPublishedKey(binding, path)) as any
+      if (
+        published?.schemaVersion === 1 && published.authorityId === binding.authorityId &&
+        published.workflowId === binding.workflowId && published.stepId === binding.stepId &&
+        published.attempt === binding.attempt && published.path === path
+      ) {
+        try {
+          const [headContent, foreign, aggregate, headPath, worktreeInfo] = await Promise.all([
+            Promise.resolve(Buffer.from(published.headContent, "base64")),
+            Promise.resolve(Buffer.from(published.foreign, "base64")),
+            readFile(join(projectDirectory, path)),
+            execFileAsync("git", ["show", `HEAD:${path}`], { cwd: projectDirectory, encoding: "buffer" }),
+            lstat(join(projectDirectory, path)),
+          ])
+          const replay = projectDisjointTextDelta(headContent, foreign, aggregate)
+          const unstaged = await gitIndexMatchesWorktree(projectDirectory, path)
+          const staged = await execFileAsync("git", ["diff", "--cached", "--quiet", "--", path], {
+            cwd: projectDirectory, encoding: "utf8",
+          }).then(() => true).catch((error: any) => Number(error?.code) === 1 ? false : Promise.reject(error))
+          if (
+            replay?.projection.toString("base64") === published.projection &&
+            aggregate.toString("base64") === published.aggregate &&
+            Buffer.from(headPath.stdout as Buffer).toString("base64") === published.projection &&
+            worktreeInfo.mode.toString(8) === published.headMode &&
+            unstaged === false && staged
+          ) continue
+        } catch {
+          // A stale, malformed, or incomplete publication receipt is not proof.
+        }
+      }
       const provenance = (await ctx.storage.get(
         gitStepAttemptOwnedPathKey(
           binding.workflowId,
@@ -9859,6 +10225,8 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         ambiguous: boolean; ready: boolean; inputDigest?: string
         summary?: ReturnType<typeof safeInputSummary>; admission?: EvidenceAdmission
         gitStageBefore?: GitStageSnapshot
+        gitMutationBefore?: GitMutationSnapshot[]
+        gitMutationCaptureError?: string
       } = { ambiguous: false, ready: false }
       pendingObservations.set(key, pending)
       if (pendingObservations.size > 1024) pendingObservations.delete(pendingObservations.keys().next().value!)
@@ -9871,6 +10239,29 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         try {
           await acquireGitWriteLocks(raw, mutationLockPaths, lockGitIndex)
           await revalidateDirectMutationUnderLock(raw, directMutationPaths)
+          if (directMutationPaths.length > 0 && await gitSessionOwnershipBinding(ctx, String(raw.sessionID ?? ""))) {
+            try {
+              pending.gitMutationBefore = await Promise.all(
+                directMutationPaths.map((path) => snapshotGitMutation(
+                  ctx.location.directory,
+                  path,
+                )),
+              )
+            } catch (error) {
+              const tracked = await Promise.all(directMutationPaths.map(async (path) => {
+                if (!await projectHasGitWorktree(ctx.location.directory)) return false
+                try {
+                  await execFileAsync("git", ["ls-files", "--error-unmatch", "--", safeOwnedRepoPath(path)], {
+                    cwd: ctx.location.directory, encoding: "utf8",
+                  })
+                  return true
+                } catch { return false }
+              }))
+              if (tracked.some(Boolean)) {
+                pending.gitMutationCaptureError = error instanceof Error ? error.message : String(error)
+              }
+            }
+          }
           if (lockGitIndex) {
             await revalidateGitMutationUnderLock(raw)
             const command =
@@ -9886,6 +10277,17 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 ctx.location.directory,
                 addTargets,
               )
+              const binding = await gitSessionOwnershipBinding(ctx, String(raw.sessionID ?? ""))
+              if (binding) {
+                for (const path of addTargets) {
+                  if (
+                    pending.gitStageBefore[path] &&
+                    await ctx.storage.get(gitDeltaReceiptKey(binding, path))
+                  ) {
+                    throw new Error(`Git staging denied: a foreign staged entry already exists for owned-delta path ${path}.`)
+                  }
+                }
+              }
             }
           }
         } catch (error) {
@@ -10121,7 +10523,10 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               ? (scopedGitAddTargets(command) ?? []).filter((path) =>
                   resourcesWithinScope([path], generalScope),
                 )
-              : []
+                : []
+          if (raw.status === "completed" && staged.length > 0) {
+            await projectStagedGitDeltas(ctx, sessionID, ctx.location.directory, staged)
+          }
           await recordGitSessionStagingResult(
             ctx,
             sessionID,
@@ -10135,6 +10540,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             typeof command === "string" &&
             isAllowedGitCommit(command)
           ) {
+            await reconcileCommittedGitDeltas(ctx, sessionID, ctx.location.directory)
             await clearGitSessionStaging(ctx, sessionID)
           }
         }
@@ -10190,12 +10596,51 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                   resourcesWithinScope([path], writeScope!),
               )
               if (owned.length > 0) {
+                const deltaOwned: string[] = []
+                if (pending.gitMutationCaptureError) {
+                  for (const path of owned) await ctx.storage.set(
+                    gitDeltaUnprovenKey({
+                      workflowId: admission.workflowId,
+                      stepId: admission.stepId,
+                      attempt: admission.attempt,
+                      authorityId: `step:${encodeURIComponent(admission.workflowId)}:${encodeURIComponent(admission.stepId)}:${admission.attempt}`,
+                    }, path),
+                    { authorityId: `step:${encodeURIComponent(admission.workflowId)}:${encodeURIComponent(admission.stepId)}:${admission.attempt}`, reason: pending.gitMutationCaptureError, sourceSessionId: sessionID },
+                  )
+                } else if (pending.gitMutationBefore) {
+                  for (const snapshot of pending.gitMutationBefore) {
+                    const mutated = await worktreeFingerprint(ctx.location.directory, snapshot.path) !==
+                      createHash("sha256").update("file\0").update(String(snapshot.mode)).update("\0").update(Buffer.from(snapshot.bytes, "base64")).digest("hex")
+                    if (mutated) {
+                      await recordGitMutationDelta(ctx, sessionID, ctx.location.directory, snapshot)
+                      deltaOwned.push(snapshot.path)
+                    }
+                  }
+                }
+                const ownershipPaths = pending.gitMutationBefore && !pending.gitMutationCaptureError
+                  ? deltaOwned
+                  : owned
                 await recordGitSessionOwnership(
                   ctx,
                   sessionID,
                   ctx.location.directory,
-                  owned,
+                  ownershipPaths,
                 )
+              }
+            }
+
+            if (raw.status === "error" && pending.gitMutationBefore) {
+              const binding = await gitSessionOwnershipBinding(ctx, sessionID)
+              if (binding) {
+                for (const snapshot of pending.gitMutationBefore) {
+                  const current = await worktreeFingerprint(ctx.location.directory, snapshot.path).catch(() => "unreadable")
+                  const original = createHash("sha256").update("file\0").update(String(snapshot.mode)).update("\0").update(Buffer.from(snapshot.bytes, "base64")).digest("hex")
+                  if (current !== original) await ctx.storage.set(gitDeltaUnprovenKey(binding, snapshot.path), {
+                    authorityId: binding.authorityId,
+                    sourceSessionId: sessionID,
+                    reason: "The admitted mutation tool returned an error after changing its target.",
+                  })
+                }
               }
             }
 
@@ -10209,7 +10654,10 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                   ? (scopedGitAddTargets(command) ?? []).filter((path) =>
                       resourcesWithinScope([path], writeScope!),
                     )
-                  : []
+                    : []
+              if (raw.status === "completed" && staged.length > 0) {
+                await projectStagedGitDeltas(ctx, sessionID, ctx.location.directory, staged)
+              }
               await recordGitSessionStagingResult(
                 ctx,
                 sessionID,
@@ -10223,6 +10671,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 typeof command === "string" &&
                 isAllowedGitCommit(command)
               ) {
+                await reconcileCommittedGitDeltas(ctx, sessionID, ctx.location.directory)
                 await clearGitSessionStaging(ctx, sessionID)
               }
             }

@@ -11,6 +11,7 @@ import { createWorkHierarchy, materializeWorkPlan, claimWorkflowWave, syncWorkTa
   completeWaveForTasks, releaseCancelledWorkflowClaims, reopenWaveForTasks } from "./work"
 import { buildSidebarSnapshot } from "./sidebar"
 import { prepareReportPromotion, publishPreparedReport, type ReportPromotionRecord } from "./reports"
+import { projectDisjointTextDelta } from "./git-delta"
 import {
   RUNTIME_STATE_VERSION,
   createProjectStorage,
@@ -211,6 +212,32 @@ afterEach(async () => {
 })
 
 describe("Loom registered plugin boundary", () => {
+  test("owned delta projection preserves separated foreign bytes and rejects ambiguous edits", () => {
+    const head = Buffer.from("before\nowned-old\nafter\n")
+    const foreign = Buffer.from("before\nforeign\nowned-old\nafter\n")
+    const aggregate = Buffer.from("before\nforeign\nowned-new\nafter\n")
+    const projected = projectDisjointTextDelta(head, foreign, aggregate)
+    expect(projected?.projection.toString()).toBe("before\nowned-new\nafter\n")
+    expect(projected?.aggregate.equals(aggregate)).toBe(true)
+    expect(projected?.foreign.equals(foreign)).toBe(true)
+
+    expect(projectDisjointTextDelta(
+      Buffer.from("one\ntwo\n"),
+      Buffer.from("one\nforeign\n"),
+      Buffer.from("one\nowned\n"),
+    )).toBeUndefined()
+    expect(projectDisjointTextDelta(
+      Buffer.from("same\nx\nsame\n"),
+      Buffer.from("same\ny\nsame\n"),
+      Buffer.from("same\nz\nsame\n"),
+    )).toBeUndefined()
+    expect(projectDisjointTextDelta(
+      Buffer.from([0, 1]),
+      Buffer.from([0, 2]),
+      Buffer.from([0, 3]),
+    )).toBeUndefined()
+  })
+
   test("registers equivalent Code Mode mirrors without removing native Loom tools", async () => {
     const { registered, namespaces, restore } = await harness()
     try {
@@ -3102,7 +3129,7 @@ Verdict: FAIL
       }
       await h.permissionHooks.get("evaluate")!(staleCommit)
       expect(staleCommit.effect).toBe("deny")
-      expect(staleCommit.message).toContain("newer unstaged worktree changes")
+      expect(staleCommit.message).toContain("delta provenance")
     } finally {
       h.restore()
     }
@@ -4224,7 +4251,69 @@ Verdict: FAIL
     }
   })
 
-  test("allows scoped repair of pre-existing dirty files without absorbing untouched changes", async () => {
+  test("publishes the admitted projection while preserving a pre-existing foreign hunk", async () => {
+    const h = await harness()
+    try {
+      await initializeGitFixture(h.root)
+      await writeFile(join(h.root, "src", "shared.ts"), "alpha\nold\nomega\n")
+      await git(h.root, ["add", "src/shared.ts"])
+      await git(h.root, ["commit", "-m", "baseline"])
+      // Session X's already-present work is the frozen foreign contribution.
+      await writeFile(join(h.root, "src", "shared.ts"), "alpha\nforeign\nold\nomega\n")
+      const started = await h.call("start", { request: "Publish one owned text edit safely." }, "general", "delta-general")
+      const workflowId = String(started.workflowId)
+      expect((await h.call("route", {
+        humanFacing: false, behavioral: false, structural: false, externalUnknown: false,
+        diagnostic: false, productOutcome: false, implementationRequested: true, executionDepth: "task",
+      }, "general", "delta-general")).error).toBeUndefined()
+      expect((await h.call("task_scope", {
+        workflowId, stepId: "worker", write: ["src/shared.ts"],
+      }, "general", "delta-general")).error).toBeUndefined()
+      const grant = await h.call("dispatch_grant", { workflowId, stepId: "worker" }, "general", "delta-general")
+      expect((await h.call("attach", { grantId: grant.grantId, workflowId, stepId: "worker" }, "worker", "delta-worker")).attached).toBe(true)
+
+      const mutation = {
+        tool: "edit", callID: "owned-delta-edit", sessionID: "delta-worker", agent: "worker",
+        input: { filePath: join(h.root, "src", "shared.ts") },
+      }
+      await h.toolHooks.get("execute.before")?.(mutation)
+      await writeFile(join(h.root, "src", "shared.ts"), "alpha\nforeign\nnew\nomega\n")
+      await h.toolHooks.get("execute.after")?.({ ...mutation, status: "completed", result: "updated" })
+
+      const evaluate = h.permissionHooks.get("evaluate")!
+      const stageCommand = "git add -- src/shared.ts"
+      const stagePermission: any = { agent: "worker", action: "shell", resources: [stageCommand], sessionID: "delta-worker" }
+      await evaluate(stagePermission)
+      expect(stagePermission.effect).toBe("allow")
+      const stageEvent = { tool: "shell", callID: "owned-delta-stage", sessionID: "delta-worker", agent: "worker", input: { command: stageCommand } }
+      await h.toolHooks.get("execute.before")?.(stageEvent)
+      await git(h.root, ["add", "--", "src/shared.ts"])
+      await h.toolHooks.get("execute.after")?.({ ...stageEvent, status: "completed", result: "staged" })
+      expect((await git(h.root, ["show", ":src/shared.ts"])).stdout).toBe("alpha\nnew\nomega\n")
+      expect(await readFile(join(h.root, "src", "shared.ts"), "utf8")).toBe("alpha\nforeign\nnew\nomega\n")
+
+      const commitCommand = "git -c core.hooksPath=/dev/null commit -m 'test: publish owned delta'"
+      const commitPermission: any = { agent: "worker", action: "shell", resources: [commitCommand], sessionID: "delta-worker" }
+      await evaluate(commitPermission)
+      expect(commitPermission.effect).toBe("allow")
+      const commitEvent = { tool: "shell", callID: "owned-delta-commit", sessionID: "delta-worker", agent: "worker", input: { command: commitCommand } }
+      await h.toolHooks.get("execute.before")?.(commitEvent)
+      await git(h.root, ["-c", "core.hooksPath=/dev/null", "commit", "-m", "test: publish owned delta"])
+      await h.toolHooks.get("execute.after")?.({ ...commitEvent, status: "completed", result: "committed" })
+      expect((await git(h.root, ["show", "HEAD:src/shared.ts"])).stdout).toBe("alpha\nnew\nomega\n")
+      expect((await git(h.root, ["diff", "--", "src/shared.ts"])).stdout).toContain("+foreign")
+      await writeFile(join(h.root, "src", "shared.ts"), "alpha\nintruder\nnew\nomega\n")
+      const staleCompletion = await h.call("complete", { workflowId, stepId: "worker", summary: "Must reject changed foreign bytes." }, "worker", "delta-worker")
+      expect(staleCompletion.error).toContain("uncommitted changes")
+      await writeFile(join(h.root, "src", "shared.ts"), "alpha\nforeign\nnew\nomega\n")
+      const completed = await h.call("complete", { workflowId, stepId: "worker", summary: "Published only the admitted edit." }, "worker", "delta-worker")
+      expect(completed.error).toBeUndefined()
+    } finally {
+      h.restore()
+    }
+  })
+
+  test("refuses ambiguous repair of pre-existing dirt while preserving unrelated ownership checks", async () => {
     const h = await harness()
     try {
       await initializeGitFixture(h.root)
@@ -4355,41 +4444,9 @@ Verdict: FAIL
         effect: "ask",
       }
       await evaluate!(repairedStage)
-      expect(repairedStage.effect).toBe("allow")
-      const repairedStageEvent = {
-        tool: "shell",
-        callID: "stage-repaired-preexisting",
-        sessionID: "git-ownership-worker",
-        agent: "worker",
-        input: { command: "git add src/preexisting.ts" },
-      }
-      await h.toolHooks.get("execute.before")?.(repairedStageEvent)
-      await git(h.root, ["add", "src/preexisting.ts"])
-      await h.toolHooks.get("execute.after")?.({
-        ...repairedStageEvent,
-        status: "completed",
-        result: "staged",
-      })
-
-      const repairedCommit: any = {
-        agent: "worker",
-        action: "shell",
-        resources: [
-          "git -c core.hooksPath=/dev/null commit -m 'test: repair preexisting'",
-        ],
-        sessionID: "git-ownership-worker",
-        effect: "ask",
-      }
-      await evaluate!(repairedCommit)
-      expect(repairedCommit.effect).toBe("allow")
-      await git(h.root, [
-        "-c",
-        "core.hooksPath=/dev/null",
-        "commit",
-        "-m",
-        "test: repair preexisting",
-        "-q",
-      ])
+      expect(repairedStage.effect).toBe("deny")
+      expect(repairedStage.message).toContain("changed after this step attempt")
+      await git(h.root, ["reset", "--", "src/preexisting.ts"])
 
       const ownedEdit: any = {
         agent: "worker",
@@ -4642,7 +4699,7 @@ Verdict: FAIL
         "worker",
         "git-ownership-worker",
       )
-      expect(completed.error).toBeUndefined()
+      expect(completed.error).toContain("src/preexisting.ts")
     } finally {
       h.restore()
     }
