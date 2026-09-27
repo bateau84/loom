@@ -6,7 +6,7 @@ import {
   reconcileQuestion,
   reopenQuestion,
 } from "./oq"
-import { buildSteps, type Workflow } from "./workflow"
+import { buildSteps, finishStep, runnable, type Workflow } from "./workflow"
 
 function workflow(): Workflow {
   return {
@@ -196,6 +196,44 @@ describe("Loom shared OQ board", () => {
     reconcileQuestion(q, w, "architect", "architect", "unaffected", "already matches", "t3")
     expect(q.status).toBe("closed")
     expect(blockingQuestionsForStep([q], "specifier")).toHaveLength(0)
+  })
+
+  test("upstream completion needs its reconciliation, not downstream aggregate closure", () => {
+    const w = workflow()
+    w.steps = [
+      { id: "specifier", agent: "specifier", kind: "work", dependsOn: [], status: "pending" },
+      { id: "architect", agent: "architect", kind: "work", dependsOn: ["specifier"], status: "pending" },
+    ]
+    const q = raiseQuestion({
+      id: "q-upstream-downstream",
+      workflow: w,
+      question: "Question",
+      raisedByAgent: "specifier",
+      raisedByStepId: "specifier",
+      requiredAuthority: "architect",
+      blocking: true,
+      consumerStepIds: ["architect"],
+      now: "now",
+    })
+    answerQuestion(q, "architect", "agent", "answer", [], "later")
+
+    // The upstream step remains gated until it has consumed the answer.
+    expect(blockingQuestionsForStep([q], "specifier")).toHaveLength(1)
+
+    reconcileQuestion(q, w, "specifier", "specifier", "incorporated", "updated requirement", "t2")
+
+    // The downstream step is not reconciled yet, so aggregate closure remains
+    // pending, but this must not keep the already-reconciled upstream step from
+    // completing and thereby making the downstream step runnable.
+    expect(q.status).toBe("answered")
+    expect(blockingQuestionsForStep([q], "specifier")).toHaveLength(0)
+    expect(blockingQuestionsForStep([q], "architect")).toHaveLength(1)
+    finishStep(w, "specifier", "specifier", "complete", "finished")
+    expect(runnable(w).map((step) => step.id)).toEqual(["architect"])
+
+    reconcileQuestion(q, w, "architect", "architect", "unaffected", "already matches", "t3")
+    expect(q.status).toBe("closed")
+    expect(blockingQuestionsForStep([q], "architect")).toHaveLength(0)
   })
 
   test("user-owned answer can only be recorded by general as user source", () => {
