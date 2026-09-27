@@ -1,0 +1,55 @@
+{
+  "skill": "typescript-type-safety",
+  "version": "1.0.0",
+  "shape": 1,
+  "cases": [
+    {
+      "id": "TypeScriptTypeSafety-01",
+      "name": "json-cast-is-not-validation",
+      "trap": "Casting JSON.parse output to the desired interface makes the compiler green without checking runtime data.",
+      "prompt": "Review: `const state = JSON.parse(raw) as WorkflowState; return state.steps.length;`. raw comes from a persisted file that may be old or corrupted. Is this type-safe? Show the correct boundary approach.",
+      "expectations": [
+        "States that an assertion to WorkflowState performs no runtime validation.",
+        "Keeps the parsed value unknown or opaque until a parser, schema, or explicit guard establishes WorkflowState.",
+        "Places validation at the persistence boundary so downstream code receives trusted state."
+      ],
+      "negative_expectations": [
+        "Must not claim the assertion validates or converts the JSON.",
+        "Must not solve the problem with a double assertion."
+      ]
+    },
+    {
+      "id": "TypeScriptTypeSafety-02",
+      "name": "reject-dishonest-type-guard",
+      "trap": "A predicate can claim a full type after checking only one convenient field; TypeScript trusts the claim.",
+      "prompt": "Is this guard sound? `function isUser(v: unknown): v is User { return typeof (v as any)?.id === 'string' }` where User also requires name:string and roles:string[]. Fix the approach.",
+      "expectations": [
+        "Rejects the predicate as unsound because it does not prove the full User shape.",
+        "Validates name and roles as well as id, or delegates to an authoritative schema/parser.",
+        "Avoids using any as the core proof mechanism."
+      ]
+    },
+    {
+      "id": "TypeScriptTypeSafety-03",
+      "name": "exhaustive-discriminated-union",
+      "trap": "A default branch returning a generic value hides newly added states from the compiler.",
+      "prompt": "A closed state type is `{kind:'idle'} | {kind:'running'; startedAt:number} | {kind:'failed'; error:Error}`. Write or describe a formatter so adding a new variant forces every formatter to revisit it.",
+      "expectations": [
+        "Switches or narrows on the discriminant kind.",
+        "Uses an exhaustive never-style check after handling all current variants.",
+        "Does not use a generic default branch that silently accepts future variants."
+      ]
+    },
+    {
+      "id": "TypeScriptTypeSafety-04",
+      "name": "partial-patch-preserves-falsy-values",
+      "trap": "Truthiness-based patch application silently drops valid 0, false, and empty-string updates.",
+      "prompt": "Fix this patch logic: `type Patch = Partial<Config>; if (patch.retries) current.retries = patch.retries;` where retries=0 is valid and omission means leave unchanged.",
+      "expectations": [
+        "Checks property presence or undefined according to the declared patch contract rather than truthiness.",
+        "Preserves retries=0 as a valid update.",
+        "Explains that Partial<Config> alone does not define omitted-versus-undefined runtime semantics."
+      ]
+    }
+  ]
+}
