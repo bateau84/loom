@@ -86,8 +86,11 @@ async function harness(
   const sessionContexts = new Map<string, unknown>()
   const queuedEvents: Array<{ event: unknown; processed: () => void }> = []
   const eventWaiters: Array<(item: { event: unknown; processed: () => void } | undefined) => void> = []
+  let hasEventSubscriber = false
   let notifyEventSubscription!: () => void
-  const eventSubscribed = new Promise<void>((resolve) => { notifyEventSubscription = resolve })
+  const eventSubscribed = new Promise<void>((resolve) => {
+    notifyEventSubscription = () => { hasEventSubscriber = true; resolve() }
+  })
   const projectID = "opencode-project-a"
   await seed?.(storage, root, projectID)
 
@@ -229,6 +232,7 @@ async function harness(
   }
 
   const emitEvent = async (event: unknown) => {
+    if (!hasEventSubscriber) return
     await eventSubscribed
     await new Promise<void>((resolve) => {
       const item = { event, processed: resolve }
@@ -4149,14 +4153,6 @@ Verdict: FAIL
       await h.toolHooks.get("execute.before")!(activeReopenEdit)
       await mkdir(join(h.root, "docs", "requirements", "lifecycle"), { recursive: true })
       await writeFile(join(h.root, secondPath), "active\n")
-      h.setSessionContext("specifier-transition-author", [{
-        id: "specifier-reopen-transition-message",
-        parts: [{
-          type: "tool", callID: "specifier-reopen-transition-active", tool: "edit",
-          messageID: "specifier-reopen-transition-message", state: { status: "running" },
-        }],
-      }])
-      await h.emitEvent({ type: "session.idle", properties: { sessionID: "specifier-transition-author" } })
 
       let reopenSettled = false
       const reopenPromise = h.call(
@@ -4179,14 +4175,7 @@ Verdict: FAIL
       await new Promise((resolve) => setTimeout(resolve, 30))
       expect(reopenSettled).toBe(false)
 
-      h.setSessionContext("specifier-transition-author", [{
-        id: "specifier-reopen-transition-message",
-        parts: [{
-          type: "tool", callID: "specifier-reopen-transition-active", tool: "edit",
-          messageID: "specifier-reopen-transition-message", state: { status: "completed" },
-        }],
-      }])
-      await h.emitEvent({ type: "session.idle", properties: { sessionID: "specifier-transition-author" } })
+      await h.toolHooks.get("execute.after")!({ ...activeReopenEdit, status: "completed", result: "active" })
       expect((await reopenPromise).error).toBeUndefined()
 
       const staleAttempt: any = {
@@ -4829,7 +4818,7 @@ Verdict: FAIL
     }
   })
 
-  test("a lost post-stage hook stays locked until the exact tool result is terminal", async () => {
+  test("a lost post-stage hook stays unproven until its exact after callback", async () => {
     const h = await harness()
     try {
       await initializeGitFixture(h.root)
@@ -4863,29 +4852,15 @@ Verdict: FAIL
       const stage = { tool: "shell", callID: "stage-crash-add", messageID: "stage-crash-message", sessionID: worker, agent: "worker", input: { command: stageCommand } }
       await h.toolHooks.get("execute.before")?.(stage)
       await git(h.root, ["add", "--", "src/stage-crash.ts"])
-      h.setSessionContext(worker, [{
-        id: "stage-crash-message",
-        parts: [{ type: "tool", callID: "stage-crash-add", tool: "shell", messageID: "stage-crash-message", state: { status: "running" } }],
-      }])
-      await h.emitEvent({ type: "session.idle", properties: { sessionID: worker } })
-      const retry = {
-        tool: "shell", callID: "stage-crash-retry", sessionID: worker, agent: "worker",
-        input: { command: stageCommand },
-      }
-      await expect(h.toolHooks.get("execute.before")?.(retry)).rejects.toThrow("locked for write by another agent")
-
-      h.setSessionContext(worker, [{
-        id: "stage-crash-message",
-        parts: [{ type: "tool", callID: "stage-crash-add", tool: "shell", messageID: "stage-crash-message", state: { status: "completed" } }],
-      }])
-      await h.emitEvent({ type: "session.idle", properties: { sessionID: worker } })
-      await expect(h.toolHooks.get("execute.before")?.(retry)).rejects.toThrow("owned-delta HEAD/index baseline changed")
       expect((await git(h.root, ["show", ":src/stage-crash.ts"])).stdout).toBe("foreign\nbase\nseparator\nnew\n")
       const commit = "git -c core.hooksPath=/dev/null commit -m 'test: reject interrupted stage'"
       const commitPermission: any = { agent: "worker", action: "shell", resources: [commit], sessionID: worker }
       await h.permissionHooks.get("evaluate")!(commitPermission)
       expect(commitPermission.effect).toBe("deny")
-      expect(commitPermission.message).toContain("admitted mutations lack complete delta provenance")
+      expect(commitPermission.message).toContain("owned-delta projection receipt is missing")
+      // The exact late after callback is the only in-process cleanup signal;
+      // host idle plus a persisted terminal part is deliberately insufficient.
+      await h.toolHooks.get("execute.after")?.({ ...stage, status: "completed", result: "late terminal result" })
     } finally {
       h.restore()
     }
@@ -5373,31 +5348,11 @@ Verdict: FAIL
         )
 
       await writeFile(join(h.root, "src", "shared.ts"), "a\n")
-      h.setSessionContext(workerA, [{
-        id: "overlap-message-a",
-        parts: [{
-          type: "tool", callID: "overlap-write-a", tool: "edit", messageID: "overlap-message-a",
-          state: { status: "running" },
-        }],
-      }])
-      await h.emitEvent({ type: "session.idle", properties: { sessionID: workerA } })
-      let teardownSettled = false
-      const teardown = h.cleanup!().then(() => { teardownSettled = true })
-      expect(teardownSettled).toBe(false)
       await expect(h.toolHooks.get("execute.before")?.(second)).rejects.toThrow(
         "src/shared.ts is locked for write by another agent",
       )
 
-      h.setSessionContext(workerA, [{
-        id: "overlap-message-a",
-        parts: [{
-          type: "tool", callID: "overlap-write-a", tool: "edit", messageID: "overlap-message-a",
-          state: { status: "completed" },
-        }],
-      }])
-      await h.emitEvent({ type: "session.idle", properties: { sessionID: workerA } })
-      await teardown
-      expect(teardownSettled).toBe(true)
+      await h.toolHooks.get("execute.after")?.({ ...first, status: "completed", result: "a" })
 
       await expect(h.toolHooks.get("execute.before")?.(second)).resolves.toBeUndefined()
       await h.toolHooks.get("execute.after")?.({ ...first, status: "completed", result: "late duplicate callback" })

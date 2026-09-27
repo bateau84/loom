@@ -372,29 +372,6 @@ function safeOwnedRepoPath(value: string) {
   return normalized
 }
 
-function sessionHasTerminalToolCall(
-  messages: unknown,
-  call: { callID: string; tool: string; messageID?: string },
-) {
-  if (!Array.isArray(messages)) return false
-  const matches: Array<{ message: Record<string, unknown>; part: Record<string, unknown> }> = []
-  for (const candidate of messages) {
-    if (!candidate || typeof candidate !== "object") continue
-    const message = candidate as Record<string, unknown>
-    if (!Array.isArray(message.parts)) continue
-    for (const rawPart of message.parts) {
-      if (!rawPart || typeof rawPart !== "object") continue
-      const part = rawPart as Record<string, unknown>
-      if (part.type !== "tool" || part.callID !== call.callID || part.tool !== call.tool) continue
-      if (call.messageID && (part.messageID ?? message.id) !== call.messageID) continue
-      matches.push({ message, part })
-    }
-  }
-  if (matches.length !== 1) return false
-  const status = (matches[0].part.state as Record<string, unknown> | undefined)?.status
-  return status === "completed" || status === "error"
-}
-
 async function worktreeFingerprint(projectDirectory: string, value: string) {
   const path = safeOwnedRepoPath(value)
   const absolute = join(projectDirectory, path)
@@ -3053,77 +3030,6 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         }
       }
     }
-
-    const reconcileQuiescentCall = async (call: ActiveGitWriteCall) => {
-      const pending = call.pending
-      if (call.binding) {
-        for (const path of pending?.gitMutationPaths ?? []) {
-          if (isAbsolute(path) || path.startsWith("hard-boundary:")) continue
-          const before = pending?.gitMutationFingerprints?.[path]
-          const current = await worktreeFingerprint(ctx.location.directory, path).catch(() => "unreadable")
-          if (pending?.gitMutationCaptureError || before === undefined || current !== before) {
-            await ctx.storage.set(gitDeltaUnprovenKey(call.binding, path), {
-              authorityId: call.binding.authorityId,
-              sourceSessionId: call.sessionID,
-              reason: "The exact tool call settled without Loom's after-hook mutation receipt.",
-            })
-          }
-        }
-        for (const path of pending?.gitStageTargets ?? []) {
-          const before = pending?.gitStageBefore?.[path]
-          const after = await gitStageSnapshot(ctx.location.directory, [path])
-          if (before !== after[path]) {
-            await ctx.storage.set(gitDeltaUnprovenKey(call.binding, path), {
-              authorityId: call.binding.authorityId,
-              sourceSessionId: call.sessionID,
-              reason: "The exact tool call changed the Git index without Loom's after-hook staging receipt.",
-            })
-          }
-        }
-      }
-      await releaseGitWriteLocks({
-        sessionID: call.sessionID,
-        messageID: call.messageID,
-        callID: call.callID,
-        tool: call.tool,
-      })
-      pendingObservations.delete(call.pendingKey)
-    }
-
-    const eventAbort = new AbortController()
-    const eventConsumer = ctx.event?.subscribe
-      ? (async () => {
-          try {
-            for await (const event of ctx.event.subscribe({ signal: eventAbort.signal })) {
-              if (event?.type !== "session.idle") continue
-              const properties = event.properties
-              const sessionID = properties && typeof properties === "object" &&
-                typeof properties.sessionID === "string"
-                ? properties.sessionID
-                : undefined
-              if (!sessionID) continue
-              const calls = [...activeGitWriteCalls.values()].filter((call) => call.sessionID === sessionID)
-              if (calls.length === 0) continue
-              let messages: unknown
-              try {
-                messages = await ctx.session.context({ sessionID })
-              } catch {
-                // Idle alone is not proof of executor quiescence. Keep every
-                // lease until its exact after callback or a later verified event.
-                continue
-              }
-              for (const call of calls) {
-                if (!sessionHasTerminalToolCall(messages, call)) continue
-                await reconcileQuiescentCall(call)
-              }
-            }
-          } catch (error) {
-            if (!eventAbort.signal.aborted) {
-              console.error("Loom tool-call lock reconciliation event stream failed:", error)
-            }
-          }
-        })()
-      : undefined
 
     const waitForGitWriteQuiescence = async () => {
       while (activeGitWriteCalls.size > 0) {
@@ -10951,13 +10857,11 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       }
     })
 
-    return async () => {
-      // Do not drop a live helper merely because plugin registrations are being
-      // disposed. Wait for exact after callbacks or a terminal session event
-      // whose persisted tool part proves this call is complete/error.
-      await waitForGitWriteQuiescence()
-      eventAbort.abort()
-      await eventConsumer
+    return () => {
+      // Plugin teardown cannot release or await an active lease without a
+      // verified per-call quiescence signal. Leave its keeper alive; exact
+      // after callbacks release normally, otherwise owner-process exit closes
+      // the pipe and the OS releases the flock.
     }
   },
 }
