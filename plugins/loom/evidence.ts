@@ -26,6 +26,7 @@ export type EvidenceObservation = {
   diagnosticSandbox?: {
     id: string
     snapshotTree?: string
+    snapshotDigest?: string
     image?: string
     imageId?: string
     engine?: string
@@ -181,6 +182,7 @@ function resultObject(result: unknown): Record<string, unknown> | undefined {
   if (!sandboxId) return undefined
 
   const snapshotTree = field("Snapshot Tree")
+  const snapshotDigest = field("Snapshot Digest")
   const image = field("Image")
   const imageId = field("Image ID")
   const engine = field("Engine")
@@ -192,6 +194,7 @@ function resultObject(result: unknown): Record<string, unknown> | undefined {
   return {
     sandboxId,
     ...(snapshotTree ? { snapshotTree } : {}),
+    ...(snapshotDigest ? { snapshotDigest } : {}),
     ...(image ? { image } : {}),
     ...(imageId ? { imageId } : {}),
     ...(engine ? { engine } : {}),
@@ -252,6 +255,7 @@ export function safeResultSummary(tool: string, result: unknown) {
         diagnosticSandbox: {
           id: sandboxId,
           ...(typeof value.snapshotTree === "string" ? { snapshotTree: value.snapshotTree.slice(0, 128) } : {}),
+          ...(typeof value.snapshotDigest === "string" ? { snapshotDigest: value.snapshotDigest.slice(0, 128) } : {}),
           ...(typeof value.image === "string" ? { image: value.image.slice(0, 512) } : {}),
           ...(typeof value.imageId === "string" ? { imageId: value.imageId.slice(0, 128) } : {}),
           ...(typeof value.engine === "string" ? { engine: value.engine.slice(0, 32) } : {}),
@@ -275,6 +279,7 @@ export function safeResultSummary(tool: string, result: unknown) {
         diagnosticSandbox: {
           id: sandboxId,
           snapshotTree,
+          ...(typeof value?.snapshotDigest === "string" ? { snapshotDigest: value.snapshotDigest.slice(0, 128) } : {}),
           ...(typeof value?.image === "string" ? { image: value.image.slice(0, 512) } : {}),
           ...(typeof value?.imageId === "string" ? { imageId: value.imageId.slice(0, 128) } : {}),
           ...(typeof value?.engine === "string" ? { engine: value.engine.slice(0, 32) } : {}),

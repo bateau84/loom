@@ -3227,6 +3227,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                       content: renderToolOutput({
                         sandboxId: current.id,
                         snapshotTree: current.snapshotTree,
+                        snapshotDigest: current.snapshotDigest,
                         image: current.image,
                         imageId: current.imageId,
                         engine: current.engine,

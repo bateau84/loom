@@ -157,6 +157,7 @@ describe("Loom evidence ledger", () => {
       JSON.stringify({
         sandboxId: "s3",
         snapshotTree: "cccccccccccccccccccccccccccccccccccccccc",
+        snapshotDigest: "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
         image: "local/toolchain:test",
         imageId: "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
         engine: "podman",
@@ -168,6 +169,7 @@ describe("Loom evidence ledger", () => {
       diagnosticSandbox: {
         id: "s3",
         snapshotTree: "cccccccccccccccccccccccccccccccccccccccc",
+        snapshotDigest: "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
         image: "local/toolchain:test",
         imageId: "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
         engine: "podman",

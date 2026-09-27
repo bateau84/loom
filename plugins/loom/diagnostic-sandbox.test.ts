@@ -79,6 +79,7 @@ describe("Diagnostic sandbox", () => {
 
     const diff = await diffDiagnosticSandbox(sandbox)
     expect(diff.imageId).toBe(sandbox.imageId)
+    expect(diff.snapshotDigest).toBe(sandbox.snapshotDigest)
     expect(diff.status).toContain("M src/value.txt")
     expect(diff.status).toContain("M cache/state.db")
     expect(diff.status).toContain("!! cache/new-state.db")
@@ -208,6 +209,7 @@ describe("Diagnostic sandbox", () => {
     expect(record.materialized).toBe(true)
     expect(record.materializedAt).toBeDefined()
     expect(record.snapshotTree).toMatch(/^[0-9a-f]{40,64}$/)
+    expect(record.snapshotDigest).toMatch(/^sha256:[0-9a-f]{64}$/)
     expect(await readFile(join(record.workspacePath, "state.txt"), "utf8")).toBe("before\n")
   })
 
@@ -246,6 +248,47 @@ describe("Diagnostic sandbox", () => {
     ).rejects.toThrow("changed while")
     expect(record.materialized).toBe(false)
     expect(record.snapshotTree).toBeUndefined()
+    expect(record.snapshotDigest).toBeUndefined()
+    await expect(stat(record.rootPath)).rejects.toThrow()
+  })
+
+  test("rejects raw byte drift that Git text normalization would consider clean", async () => {
+    const root = await tempRoot()
+    const project = join(root, "project")
+    await mkdir(project, { recursive: true })
+    await writeFile(join(project, ".gitattributes"), "*.txt text\n")
+    await writeFile(join(project, "state.txt"), "a\r\nb\n")
+    const record = allocateDiagnosticSandbox({
+      runtimeRoot: join(root, "runtime"),
+      projectId: "project-1",
+      sessionId: "session-1",
+      workflowId: "workflow-1",
+      stepId: "diagnostic",
+      attempt: 0,
+      image: "local/toolchain:test",
+      imageId: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      network: "none",
+      engine: "docker",
+      id: "13131313-1313-4313-8313-131313131313",
+      now: "2026-09-27T00:00:00.000Z",
+    })
+
+    let mutated = false
+    const run = async (file: string, args: string[], options?: any) => {
+      const result = await execFileAsync(file, args, options)
+      if (!mutated && file === "git" && args.includes("commit")) {
+        mutated = true
+        // Same size and same Git-clean normalized content, different raw bytes.
+        await writeFile(join(project, "state.txt"), "a\nb\r\n")
+      }
+      return result
+    }
+
+    await expect(
+      materializeDiagnosticSandbox(record, project, run as any),
+    ).rejects.toThrow("bytes changed while")
+    expect(record.materialized).toBe(false)
+    expect(record.snapshotDigest).toBeUndefined()
     await expect(stat(record.rootPath)).rejects.toThrow()
   })
 
@@ -268,6 +311,7 @@ describe("Diagnostic sandbox", () => {
       createdAt: "2026-09-27T00:00:00.000Z",
       materialized: true,
       snapshotTree: "1111111111111111111111111111111111111111",
+      snapshotDigest: "sha256:1111111111111111111111111111111111111111111111111111111111111111",
       active: true,
     }
 

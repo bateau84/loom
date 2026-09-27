@@ -1,6 +1,7 @@
-import { randomUUID } from "node:crypto"
+import { createHash, randomUUID } from "node:crypto"
 import { execFile } from "node:child_process"
-import { cp, mkdir, rm, writeFile } from "node:fs/promises"
+import { createReadStream } from "node:fs"
+import { cp, lstat, mkdir, readdir, readlink, rm, writeFile } from "node:fs/promises"
 import { relative, resolve, join } from "node:path"
 import { promisify } from "node:util"
 
@@ -28,6 +29,7 @@ export type DiagnosticSandboxRecord = {
   materialized: boolean
   materializedAt?: string
   snapshotTree?: string
+  snapshotDigest?: string
   active: boolean
   destroyedAt?: string
 }
@@ -40,6 +42,7 @@ export type DiagnosticSandboxExecInput = {
 export type DiagnosticSandboxExecResult = {
   sandboxId: string
   snapshotTree: string
+  snapshotDigest: string
   image: string
   imageId: string
   engine: DiagnosticSandboxEngine
@@ -116,6 +119,63 @@ function validateRelativeWorkdirCopy(sourceRoot: string, path: string) {
   if (parts.includes(".git")) return false
   if (rel === ".loom/project-id") return false
   return true
+}
+
+async function rawSnapshotDigest(root: string) {
+  const hash = createHash("sha256")
+
+  const walk = async (absolute: string, relativePath: string): Promise<void> => {
+    if (relativePath && !validateRelativeWorkdirCopy(root, absolute)) return
+    const info = await lstat(absolute)
+    const normalized = relativePath.replaceAll("\\", "/")
+
+    if (info.isDirectory()) {
+      if (normalized) hash.update("dir\0").update(normalized).update("\0")
+      const entries = await readdir(absolute, { withFileTypes: true })
+      entries.sort((left, right) =>
+        left.name < right.name ? -1 : left.name > right.name ? 1 : 0
+      )
+      for (const entry of entries) {
+        const childRelative = normalized
+          ? `${normalized}/${entry.name}`
+          : entry.name
+        await walk(join(absolute, entry.name), childRelative)
+      }
+      return
+    }
+
+    if (info.isSymbolicLink()) {
+      hash
+        .update("symlink\0")
+        .update(normalized)
+        .update("\0")
+        .update(await readlink(absolute))
+        .update("\0")
+      return
+    }
+
+    if (!info.isFile()) {
+      throw new Error(
+        `Diagnostic sandbox snapshot contains unsupported filesystem entry: ${normalized || "."}`,
+      )
+    }
+
+    hash
+      .update("file\0")
+      .update(normalized)
+      .update("\0")
+      .update(String(info.mode & 0o111))
+      .update("\0")
+      .update(String(info.size))
+      .update("\0")
+    for await (const chunk of createReadStream(absolute)) {
+      hash.update(chunk)
+    }
+    hash.update("\0")
+  }
+
+  await walk(root, "")
+  return `sha256:${hash.digest("hex")}`
 }
 
 export function validateDiagnosticSandboxImage(image: string) {
@@ -411,42 +471,25 @@ export async function materializeDiagnosticSandbox(
       throw new Error("Diagnostic sandbox could not establish an exact snapshot tree identity.")
     }
 
-    const sourceStatusArgs = [
-      "status",
-      "--porcelain=v1",
-      "--untracked-files=all",
-      "--ignored=matching",
-      "--",
-      ".",
-      ":(exclude).loom/project-id",
-    ]
-    const sourceStatusFirst = await sandboxGit(
-      record.baselineGitPath,
-      sourceRoot,
-      sourceStatusArgs,
-      run,
-    )
-    const sourceStatusSecond = await sandboxGit(
-      record.baselineGitPath,
-      sourceRoot,
-      sourceStatusArgs,
-      run,
-    )
+    const sourceDigestFirst = await rawSnapshotDigest(sourceRoot)
+    const snapshotDigest = await rawSnapshotDigest(record.workspacePath)
+    const sourceDigestSecond = await rawSnapshotDigest(sourceRoot)
     if (
-      String(sourceStatusFirst.stdout ?? "").trim() ||
-      String(sourceStatusSecond.stdout ?? "").trim()
+      sourceDigestFirst !== snapshotDigest ||
+      sourceDigestSecond !== snapshotDigest
     ) {
       throw new Error(
-        "Project working directory changed while the Diagnostic sandbox snapshot was being captured. Retry after the source state is stable.",
+        "Project working directory bytes changed while the Diagnostic sandbox snapshot was being captured. Retry after the source state is stable.",
       )
     }
     record.snapshotTree = snapshotTree
+    record.snapshotDigest = snapshotDigest
   } catch (error) {
     await rm(record.rootPath, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }).catch(() => undefined)
     throw error
   }
 
-  if (!record.snapshotTree) {
+  if (!record.snapshotTree || !record.snapshotDigest) {
     throw new Error("Diagnostic sandbox snapshot provenance is missing.")
   }
   record.materialized = true
@@ -549,7 +592,7 @@ export function diagnosticSandboxContainerArgs(
   command: string,
 ) {
   if (!record.active) throw new Error("Diagnostic sandbox is no longer active.")
-  if (!record.materialized || !record.snapshotTree) {
+  if (!record.materialized || !record.snapshotTree || !record.snapshotDigest) {
     throw new Error("Diagnostic sandbox creation did not complete with snapshot provenance. Destroy it and create a new sandbox.")
   }
   const safeCommand = validateDiagnosticSandboxCommand(command)
@@ -608,6 +651,7 @@ export async function executeDiagnosticSandbox(
     return {
       sandboxId: record.id,
       snapshotTree: record.snapshotTree!,
+      snapshotDigest: record.snapshotDigest!,
       image: record.image,
       imageId: record.imageId,
       engine: record.engine,
@@ -639,6 +683,7 @@ export async function executeDiagnosticSandbox(
     return {
       sandboxId: record.id,
       snapshotTree: record.snapshotTree!,
+      snapshotDigest: record.snapshotDigest!,
       image: record.image,
       imageId: record.imageId,
       engine: record.engine,
@@ -661,7 +706,7 @@ export async function diffDiagnosticSandbox(
 ) {
   sandboxId(record.id)
   if (!record.active) throw new Error("Diagnostic sandbox is no longer active.")
-  if (!record.materialized || !record.snapshotTree) {
+  if (!record.materialized || !record.snapshotTree || !record.snapshotDigest) {
     throw new Error("Diagnostic sandbox creation did not complete with snapshot provenance. Destroy it and create a new sandbox.")
   }
 
@@ -676,6 +721,7 @@ export async function diffDiagnosticSandbox(
   return {
     sandboxId: record.id,
     snapshotTree: record.snapshotTree,
+    snapshotDigest: record.snapshotDigest,
     image: record.image,
     imageId: record.imageId,
     engine: record.engine,
