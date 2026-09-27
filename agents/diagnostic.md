@@ -118,7 +118,7 @@ For an attached governed Diagnostic step, you may use Loom's diagnostic sandbox 
 The sandbox is an **experimental laboratory**, not a delivery path:
 
 - `loom_diagnostic_sandbox_start` snapshots the current working-directory bytes into Loom runtime storage and gives that copy a private Git baseline.
-- The real project's Git/Loom metadata is not copied into the sandbox.
+- The real project's Git administration directory and Loom's operational project marker are not copied into the sandbox; other project-owned `.loom/**` files remain part of the snapshot.
 - `loom_diagnostic_sandbox_exec` runs commands in an ephemeral OCI container with the copy mounted read/write. Changes persist in the copy between experiments.
 - Network mode is explicit. Use `host` only when the hypothesis genuinely requires host/local network access. Host networking does **not** make external services disposable; do not perform destructive production actions.
 - The image must already exist locally: Loom never pulls an image implicitly, overrides its configured entrypoint, drops Linux capabilities, and uses a read-only container root. No host environment/provider credentials or container-engine socket are intentionally inherited. The working-directory snapshot itself may contain project-local secrets; use only trusted/toolchain images and treat those bytes as sensitive.
