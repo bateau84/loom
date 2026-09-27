@@ -85,36 +85,100 @@ consumingSessionId?
 
 Grant consumption is atomic under the workflow mutation guard.
 
-A project-local session has at most one current workflow binding. Step attachment also records the exact workflow-step attempt when the attachment is consumed. Rebinding is permitted only through a Loom-controlled transition after the previous binding is terminal or explicitly released. Rebinding atomically clears the old step/OQ/attempt attachment before installing the new workflow binding; old selectors remain historical and do not authorize current access. Reopening or rerouting a step advances its attempt, so attempt-bound mutation requires a fresh attachment before it can resume.
+A project-local session has at most one current workflow binding. Step attachment also records the exact workflow-step attempt when the attachment is consumed. Rebinding is permitted only through a Loom-controlled transition after the previous binding is terminal or explicitly released. Rebinding atomically clears the old step/OQ/attempt attachment before installing the new workflow binding; old selectors remain historical and do not authorize current access. Mutation and Git authoring require that attached attempt to remain the **current runnable pending** step attempt; completion, PASS/FAIL, cancellation, reopen, or reroute therefore removes mutation authority immediately. Reopening or rerouting also advances the attempt, so resumed mutation requires a fresh attachment.
+
+## Runtime write scope and elevation
+
+A step's write scope is a **starting expectation and current mutation surface**,
+not a claim that General or Planner can predict every file the child will need
+before execution begins.
+
+General MAY declare one or more exact files or bounded folders before dispatch.
+Artifact-producing roles also have role-default locations that provide a useful
+initial surface when General does not narrow it. A Worker MAY start with an empty
+write list so it can inspect the repository before it knows the implementation
+surface.
+
+An attached child that discovers an additional project-local mutation target
+MAY call `loom_scope_elevate` with the exact files/folders and a reason. Loom
+MUST require the exact current runnable step attempt, append a durable elevation
+record to the step scope, and make the expanded scope effective immediately.
+Successful project-local elevation returns `continue=true`; the child continues
+in the same session without a General round trip.
+
+For product-producing roles (Designer, Specifier, Architect, Documenter, and
+Worker), role-default paths are observability defaults rather than hard mutation
+ceilings. Crossing a role default is recorded explicitly on the elevation so
+General, status tooling, and later review can distinguish expected work from
+scope growth.
+
+Independent/advisory roles (Reviewer, Critic, Research, Diagnostic, and
+Acceptance) do not gain implementation authority through scope elevation. They
+may re-expand a narrowed step only inside their role-owned output surface.
+Product rules that are independent of role defaults remain hard rules; for
+example durable reports remain promotion-only and ephemeral report namespaces
+remain producer-scoped.
+
+The following are **hard boundaries**, not self-elevatable project scope:
+
+- a path lexically outside the current project;
+- a project-relative path whose existing symlink ancestry resolves outside the
+  current project;
+- repository-internal `.git` state;
+- Loom internal project state such as `.loom/project-id`.
+
+For a hard-boundary request, `loom_scope_elevate` MUST return
+`status=user_authorization_required` and `continue=false`, together with the
+exact user question. The child MUST stop its current turn immediately and return
+control to General. It MUST NOT retry the write or continue on the assumption
+that access will be granted later.
+
+General presents the exact Loom question with only an **Allow once** or **Deny**
+decision. The question MUST include Loom's own hard-boundary classification. For
+a symlink escape it MUST disclose the existing resolved external target rather
+than showing only the apparently project-local symlink path. Allow once
+authorizes only the requested path patterns for that exact current runnable
+Workflow step attempt. It does not become project policy, does not survive step
+completion or a new attempt/workflow, and MUST NOT expose a "remember my choice"
+path. A custom answer grants no authority. For symlink escapes, authorization is additionally
+bound to the resolved external target disclosed in the approval question; if
+the symlink is retargeted, the prior approval no longer authorizes the write.
+Hard-boundary authorization MUST be revalidated while holding the step mutation
+guard immediately before the write, so completion/reopen or boundary retargeting
+cannot race between permission admission and execution.
 
 ## Git authorship continuity and bounded recovery
 
-Git staging ownership is session-local and step-attempt-bound, while admitted
-worktree fingerprints are also recorded per exact Workflow step attempt and path
-as handoff provenance. A fresh one-use dispatch grant or attachment for the same
-OpenCode session, Workflow step, and unchanged step attempt MUST NOT erase
-session-local fingerprints.
+For product artifacts, admitted write authority and commit authority are the
+same scope: if a step may write a product path, it may stage and commit the exact
+bytes Loom admitted for that path. A separate per-session scope-adoption
+ceremony is not part of the authority model.
 
-A fresh specialist session attached to that same current step attempt MAY call
-`loom_scope_request` for exact current dirty, unstaged paths. This is a
-spoke-side continuity request, not scope expansion. Loom resolves it locally only
-when the paths remain inside both the role ceiling and effective declared step
-write scope and the current fingerprints exactly match the last admitted
-same-attempt mutation in the step-attempt provenance ledger. Resolution records
-a session- and attempt-bound staging adoption for those exact fingerprints and
-also refreshes the session-local ownership cache. The Git staging guard consumes
-the durable adoption directly if that cache is subsequently lost or reset.
-Resolution transfers only staging authority into the requesting session; it does
-not assert that the session historically authored those bytes. Out-of-scope writes return to
-General for `loom_step_scope`; missing provenance remains eligible only for the
-separate explicit-user recovery path. Reopen/reroute advances the attempt and
-therefore makes prior-attempt provenance ineligible for handoff.
+Loom records the resulting worktree fingerprint per exact Workflow step attempt
+and path. Session-local Git ownership is only a cache. A fresh or resumed child
+attached to the same Workflow step attempt MAY stage exact current bytes when
+they match the durable step-attempt provenance record. No
+`loom_scope_request` handoff is required. Reopen/reroute advances the attempt,
+so prior-attempt provenance cannot authorize staging in the new attempt.
 
-If a runtime/guard defect has already destroyed all usable provenance, Loom MAY
-recover it only as an explicit user-authorized adoption of the **current**
-uncommitted bytes. Recovery is General-owned, bound to one exact latest real user
-message, one current runnable specialist step attempt, one attached target
-session, and paths inside both the role ceiling and declared step write scope.
+Scope alone never proves authorship. A path that was elevated into the write
+surface but whose current bytes were not produced by an admitted mutation cannot
+be staged. Likewise, bytes changed after the last admitted mutation fail closed.
+Commit admission also rechecks the latest step-attempt provenance: if one session
+staged earlier admitted bytes and another same-attempt session subsequently
+admits newer worktree bytes, the stale staged version cannot be committed until
+the latest admitted bytes are staged.
+
+Ephemeral reports are intentionally different: `ephemeral-reports/**` may be
+written under its producer rules but is removed from committable scope. Durable
+retention of a report uses the report-promotion path instead of ordinary Git
+authorship.
+
+If a runtime/guard defect has destroyed all usable product-byte provenance,
+Loom MAY recover it only as an explicit user-authorized adoption of the
+**current** uncommitted bytes. Recovery is General-owned, bound to one exact
+latest real user message, one current runnable step attempt, one attached target
+session, and paths inside that step's current committable write scope.
 Already-staged or clean paths are ineligible. Loom records exact current
 fingerprints and makes replay with the same authorization idempotent only while
 the requested paths and fingerprints remain identical. Recovery itself does not
@@ -131,8 +195,10 @@ project/<projectId>/session/<sessionId>/workflow
 project/<projectId>/session/<sessionId>/step
 project/<projectId>/session/<sessionId>/step-attempt
 project/<projectId>/git-step-attempt-owned/<workflowId>/<stepId>/<attempt>/<path>
-project/<projectId>/git-scope-staging-adoption/<sessionId>/<authorityId>/<path>
 project/<projectId>/git-ownership-recovery-user-message/<generalSessionId>/<messageId>
+project/<projectId>/scope-boundary-request/<generalSessionId>/<requestId>
+project/<projectId>/scope-boundary-question-decision/<generalSessionId>/<requestId>
+project/<projectId>/scope-boundary-authorization/<workflowId>/<stepId>/<attempt>/<requestId>
 project/<projectId>/intent/<intentId>
 project/<projectId>/session/<sessionId>/intent
 project/<projectId>/work/<objectiveId>
@@ -163,9 +229,12 @@ For any workflow state access:
 3. load explicit workflow/objective selectors only from the current project namespace;
 4. validate stored project metadata;
 5. require workflow membership for workflow-shared reads;
-6. require exact step attachment plus role authority for step mutation;
-7. for attempt-bound mutation, require the attached attempt to equal the current workflow-step attempt;
-8. reject mismatch without global fallback.
+6. require exact step attachment to the current runnable pending attempt plus the step's current effective write scope for normal project mutation;
+7. permit project-local scope growth only through recorded `loom_scope_elevate` on that exact current runnable step attempt;
+8. require an exact user-approved hard-boundary authorization for external, symlink-escaping, repository-internal, or Loom-internal writes, then revalidate it under the step mutation guard immediately before execution;
+9. treat completed/failed/passed/cancelled/reopened/rerouted step attachments as non-mutating until a new runnable attempt is attached;
+10. for attempt-bound Git provenance, require the attached attempt to equal the current workflow-step attempt;
+11. reject mismatch without global fallback.
 
 Same-workflow cross-session evidence consumption is allowed after legitimate membership. Unrelated workflow/project access is rejected.
 
@@ -191,13 +260,27 @@ On first initialization only:
 
 Every later process sharing that durable Loom state reads and uses the persisted root regardless of its own `XDG_RUNTIME_DIR`. A process that cannot access the persisted installation root cannot mutate shared Loom state; it MUST NOT silently choose another lock root.
 
-The lock layout is:
+The normal project lock layout is:
 
 ```text
 <loom-runtime-or-state-root>/locks/<installationId>/<projectId>/<aggregate>/<resourceHash>.lock
 ```
 
-`resourceHash` is a digest of the complete scoped aggregate identity. Resource locks are therefore independent across projects even when local Objective/Task IDs match.
+`resourceHash` is a digest of the complete scoped aggregate identity. Normal
+repository/workflow resources are therefore independent across projects even
+when local Objective/Task IDs match.
+
+A user-approved hard-boundary write can target a resource shared by multiple
+projects, so its file-write lock is installation-scoped instead:
+
+```text
+<loom-runtime-or-state-root>/locks/<installationId>/installation/file-write/<resourceHash>.lock
+```
+
+The resource identity includes the canonical absolute hard-boundary path. Two
+projects in the same Loom installation attempting the same approved external
+write MUST therefore contend rather than mutate that external resource
+concurrently.
 
 Multi-resource operations:
 
@@ -250,4 +333,24 @@ If durable legacy state already names a different Loom project epoch, neither se
 
 ## Conformance evidence
 
-Deterministic tests must cover transactional upgrade rollback, all-project schema migration, late legacy import after the installation has already advanced (including failed-transform rollback), pre-project-epoch continuity imported into a synthetic newer runtime schema (including failed-transform rollback), a canonical A→B rebind followed by restart with stale legacy A still present, live old/new process version skew with the old writer fenced after upgrade, identical Anchor/objective/task names across projects, same-workflow fresh child sharing, unrelated same-project workflow rejection, controlled session rebinding with prior attachment invalidation, same-session same-attempt redispatch preserving Git staging ownership, fresh-session same-attempt scope request resolved from exact admitted fingerprints (including durable staging-adoption recovery after session-local ownership loss and dirty/staged/scope/fingerprint/attempt/session negatives), exact step-attempt invalidation after reopen/reroute, explicit-user Git-authorship recovery after simulated provenance loss (including scope, dirty/staged, fingerprint-change and authorization-replay negatives), step-scope/lifecycle transitions contending with admitted mutation, cross-project rejection, two-process contention including mixed/missing `XDG_RUNTIME_DIR` environments sharing one durable installation, crash/fault injection during durable commit, project first-open races, path reuse, copied markers, symlinks, Git worktrees, moves, reopen/failure isolation, ambiguous legacy migration, and a real OpenCode host stop/restart where persisted pre-upgrade session IDs reconcile through the upgraded plugin.
+Deterministic tests must cover transactional upgrade rollback, all-project schema
+migration, late legacy import after the installation has already advanced,
+pre-project-epoch continuity, canonical rebinds, live old/new process version
+skew, identical Objective/Task names across projects, same-workflow fresh child
+sharing, unrelated workflow/project rejection, and controlled session rebinding.
+
+Scope/Git conformance MUST additionally cover: Worker dispatch without a guessed
+file list; immediate same-session project-local elevation; durable elevation
+history including role-default crossings; hard-boundary `continue=false`
+control transfer; exact Allow-once/Deny user menus with no remembered choice;
+outside-project and symlink-escape denial before approval; attempt-bound expiry
+of hard-boundary approval; product write-to-commit equivalence; ephemeral report
+non-committability; fresh-session same-attempt staging from exact admitted
+fingerprints without a scope-adoption call; changed/unproven/prior-attempt byte
+rejection; explicit-user Git-provenance recovery after simulated runtime loss;
+and scope/lifecycle transitions contending with admitted mutation.
+
+Cross-process contention, crash/fault injection during durable commit, project
+first-open races, path reuse, copied markers, symlinks, Git worktrees, moves,
+reopen/failure isolation, ambiguous legacy migration, and real OpenCode host
+stop/restart continuity remain required.

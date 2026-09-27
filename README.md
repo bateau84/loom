@@ -36,10 +36,11 @@ Loom currently provides:
 - fresh specialist contexts for design, specification, architecture, research, diagnosis, planning, implementation, review, QA, acceptance, and documentation;
 - bounded Task, Change, and Objective workflows;
 - persistent Objective → Phase → Wave → Task planning;
-- explicit write scopes and exact specialist/step attachment;
+- traceable write scopes that can grow during project-local discovery, with exact specialist/step attachment;
 - independent review and selective adversarial Critic gates;
 - evidence tracking for tests, runtime checks, and acceptance;
 - bounded retry and dispatch budgets;
+- explicit one-time user approval for writes that cross Loom hard boundaries such as the current project or protected runtime/Git state;
 - cross-role open questions without turning every uncertainty into a user question;
 - project/session isolation and durable runtime upgrades;
 - living repository knowledge and evidence-backed learning;

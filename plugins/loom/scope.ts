@@ -1,18 +1,23 @@
+export type ScopeElevation = {
+  id: string
+  attempt: number
+  byAgent: string
+  bySessionId: string
+  paths: string[]
+  reason: string
+  elevatedAt: string
+  crossesRoleDefault?: boolean
+}
+
 export type TaskScope = {
   workflowId: string
   stepId: string
   write: string[]
+  elevations?: ScopeElevation[]
 }
 
-const forbiddenAuthorityRoots = [
-  "docs/anchors/",
-  "docs/design/",
-  "docs/requirements/",
-  "docs/architecture/",
-]
-
 function normalize(value: string) {
-  return value.replaceAll("\\", "/").replace(/^\.\//, "")
+  return value.replaceAll("\\", "/").replace(/^\.\//, "").replace(/\/$/, "")
 }
 
 function validateBoundedWriteScope(paths: string[], label: string) {
@@ -20,11 +25,26 @@ function validateBoundedWriteScope(paths: string[], label: string) {
 
   for (const raw of paths) {
     const path = normalize(raw)
+    const firstSegment = path.split("/")[0] ?? ""
 
-    if (!path || path === "*" || path === "**" || path === "**/*") {
-      throw new Error(`${label} must be bounded; repository-wide wildcards are not allowed.`)
+    if (
+      !path ||
+      path === "." ||
+      path === "*" ||
+      path === "**" ||
+      path === "**/*" ||
+      /[*?\[\]{}]/.test(firstSegment)
+    ) {
+      throw new Error(
+        `${label} must name a bounded project file or folder; repository-wide or wildcard-root scopes are not allowed.`,
+      )
     }
-    if (path.startsWith("/") || path.includes("../")) {
+    if (
+      path.startsWith("/") ||
+      path === ".." ||
+      path.startsWith("../") ||
+      path.split("/").includes("..")
+    ) {
       throw new Error(`${label} must be project-relative: ${raw}`)
     }
   }
@@ -32,66 +52,73 @@ function validateBoundedWriteScope(paths: string[], label: string) {
   return paths
 }
 
-function patternWithinCeiling(pattern: string, ceiling: string) {
-  const normalizedPattern = normalize(pattern)
-  const normalizedCeiling = normalize(ceiling)
-
-  if (normalizedCeiling.endsWith("/**")) {
-    const root = normalizedCeiling.slice(0, -3)
-    return normalizedPattern === root || normalizedPattern.startsWith(root + "/")
-  }
-
-  return normalizedPattern === normalizedCeiling
+/**
+ * Validate a normal in-project runtime scope elevation. Role defaults are
+ * observability defaults, not authority ceilings. Hard-boundary paths are
+ * classified before this helper is called.
+ */
+export function validateScopeElevation(paths: string[]) {
+  return validateBoundedWriteScope(paths, "Scope elevation")
 }
 
-export function validateStepWriteScope(
-  paths: string[],
-  roleCeiling: readonly string[],
-  label = "Step write scope",
+export function mergeWriteScope(
+  current: readonly string[],
+  additions: readonly string[],
 ) {
-  validateBoundedWriteScope(paths, label)
-  if (roleCeiling.length === 0) {
-    throw new Error(`${label} has no role-owned artifact surface.`)
-  }
+  return [...new Set([...current.map(normalize), ...additions.map(normalize)])].sort()
+}
 
-  for (const raw of paths) {
-    if (!roleCeiling.some((ceiling) => patternWithinCeiling(raw, ceiling))) {
-      throw new Error(
-        `${label} may narrow role authority but cannot grant ${raw}; allowed roots: ${roleCeiling.join(", ")}`,
-      )
-    }
-  }
-
+export function committableWriteScope(paths: readonly string[]) {
   return paths
+    .map(normalize)
+    .filter(
+      (path) =>
+        path !== "ephemeral-reports" &&
+        !path.startsWith("ephemeral-reports/"),
+    )
 }
 
 export function validateWriteScope(paths: string[]) {
-  validateBoundedWriteScope(paths, "Worker write scope")
-
-  for (const raw of paths) {
-    const path = normalize(raw)
-    if (forbiddenAuthorityRoots.some((root) => path.startsWith(root))) {
-      throw new Error("Worker may not receive write authority for " + path)
-    }
-  }
-
-  return paths
+  if (paths.length === 0) return paths
+  return validateBoundedWriteScope(paths, "Worker starting write scope")
 }
 
-function globRegex(pattern: string) {
-  const escaped = normalize(pattern)
+function escapedGlob(pattern: string) {
+  return normalize(pattern)
     .replace(/[.*+?^$()|[\]\\{}]/g, "\\$&")
     .replaceAll("\\*\\*", ".*")
     .replaceAll("\\*", ".*")
     .replaceAll("\\?", ".")
+}
 
-  return new RegExp("^(?:.*/)?" + escaped + "$")
+function globRegex(pattern: string) {
+  return new RegExp("^(?:.*/)?" + escapedGlob(pattern) + "$")
 }
 
 export function resourceMatchesScope(resource: string, pattern: string) {
   return globRegex(pattern).test(normalize(resource))
 }
 
-export function resourcesWithinScope(resources: readonly string[], patterns: string[]) {
-  return resources.every((resource) => patterns.some((pattern) => resourceMatchesScope(resource, pattern)))
+/**
+ * Hard-boundary authorizations use canonical absolute paths. Unlike normal
+ * project scope matching, they must never suffix-match another absolute path.
+ */
+export function absoluteResourceMatchesScope(
+  resource: string,
+  absolutePattern: string,
+) {
+  const normalizedPattern = normalize(absolutePattern)
+  if (!normalizedPattern.startsWith("/")) return false
+  return new RegExp("^" + escapedGlob(normalizedPattern) + "$").test(
+    normalize(resource),
+  )
+}
+
+export function resourcesWithinScope(
+  resources: readonly string[],
+  patterns: string[],
+) {
+  return resources.every((resource) =>
+    patterns.some((pattern) => resourceMatchesScope(resource, pattern)),
+  )
 }

@@ -65,11 +65,13 @@ OpenCode plugin hooks enforce:
 
 ### Permission boundary
 
-Permission hooks combine **role artifact authority** with the exact attached workflow step.
+Permission hooks combine the exact attached workflow step with Loom's current runtime write scope.
 
-Static agent permissions and Loom's runtime artifact policy form two independent hard ceilings for each specialist; disagreement fails closed. General may add a bounded step write scope to narrow their intersection to the exact artifacts owned by the current step; the scope can never expand the role into another artifact/authority domain. Worker remains stricter: it has no normative-artifact ceiling and requires an explicit implementation write scope before dispatch, with accepted authority roots excluded.
+Static agent permissions remain host/tool capability boundaries. Loom's role artifact paths are useful **starting defaults**, not hidden hard file ceilings. General may declare a bounded starting write expectation when current evidence makes likely files/folders known; Worker may also start with no guessed file list. An attached child that discovers another project-local mutation target expands its own current surface through `loom_scope_elevate`, which records the agent, session, reason, paths, and step attempt before the elevation becomes effective.
 
-The effective mutation surface is therefore the role ceiling intersected with any declared step scope. Specialist authors can create, validate, stage, and commit their own admitted artifacts without transferring publication to Worker. Durable mutation and Git publication are bound to the exact attached **step attempt**, explicit file staging, same-session mutation ownership, and the role's existing durable-author capability. Scope changes, attachment rotation, completion, rerouting, and reopen transitions serialize with active mutations for the affected step authority, so an admitted write cannot race the authority transition; a reopened step requires a fresh attachment before durable mutation resumes.
+Normal project-local elevation is immediate and returns `continue=true`. Hard-boundary targets—outside the current project, symlink escapes, or repository-internal `.git` state—return `continue=false` and require the exact one-time user approval flow before the child resumes. Product rules that are independent of role defaults, such as producer-scoped ephemeral reports and promotion-only durable reports, remain hard boundaries.
+
+Durable product mutation and Git publication are bound to the exact attached **step attempt**. If Loom admitted the product write, the same effective scope authorizes staging/commit of those exact fingerprints; a fresh child on the same step attempt may recover that provenance without a second scope-adoption ceremony. Scope changes, attachment rotation, completion, rerouting, and reopen transitions serialize with active mutations for the affected step authority, so an admitted write cannot race the authority transition; a reopened step requires a fresh attachment before durable mutation resumes.
 
 ### Evidence capture
 
@@ -293,16 +295,16 @@ V1 validation requires:
 - stable unique task IDs;
 - known acyclic dependencies;
 - at least one verification expectation per task;
-- bounded project-relative write scopes;
-- no Worker authority over accepted Anchor, design, requirements, or architecture;
-- bounded write scopes may overlap; scope grants authorization while runtime path locks serialize actual file mutations.
+- an empty or bounded project-relative **starting** write expectation per Task;
+- no repository-wide or wildcard-root project scope;
+- Task write expectations may overlap and may expand at runtime through recorded `loom_scope_elevate`; path locks serialize actual file mutations.
 
 Accepted tasks become real workflow nodes named `task:<id>`. In reviewed Objective workflows those nodes depend on `review-plan`, so merely compiling them cannot authorize Worker execution.
 
 Each task carries:
 - objective;
 - dependencies;
-- immutable write scope;
+- starting write expectation;
 - suggested skills;
 - verification expectations.
 
@@ -314,22 +316,21 @@ Once task execution starts, completed or claimed Task meaning is not destructive
 
 ## Worker task scopes
 
-For planned product work, the validated task DAG creates each Worker scope mechanically. General cannot widen a planned task's scope ad hoc; changing it requires reopening planning.
+For planned product work, the validated Task DAG may provide a bounded starting write expectation or an empty write list when the implementation surface is genuinely not knowable before inspection. General does not need to predict the final mutation set, and runtime discovery does not require reopening Planner merely because another file is needed.
 
-For the simple non-product `worker` path, General may declare a bounded scope directly.
+For the simple non-product `worker` path, General may likewise declare the best bounded starting scope current evidence supports or dispatch without one.
 
-Repository-wide wildcards and accepted authority roots (`docs/anchors`, `docs/design`, `docs/requirements`, `docs/architecture`) are rejected.
+Repository-wide and wildcard-root project scopes are rejected. The Worker child session must attach to the exact currently runnable workflow step before product mutation.
 
-The Worker child session must attach to the exact currently runnable workflow step before editing. Attachment returns the task envelope for planned work.
+For every Worker edit permission evaluation, Loom checks requested paths against the **current effective** write scope. If correctness requires another project-local path, Worker calls `loom_scope_elevate`; successful elevation is recorded and effective immediately. A hard-boundary result returns `continue=false`; Worker stops and returns control for the exact user approval flow rather than continuing speculatively.
 
-For every Worker edit permission evaluation, Loom checks the requested resource paths against the attached task scope and denies any edit outside that scope.
+Role/product authority still governs **meaning**: runtime path elevation does not let Worker redefine accepted requirements, design, or architecture. It only makes the discovered mutation visible and mechanically attributable.
 
-A write scope is authorization, not exclusive historical ownership. A file may already contain uncommitted changes, and several runnable tasks may hold overlapping write scopes. Loom does not deny an otherwise valid write merely because the file is dirty or was last changed by another session.
+Actual mutation is serialized separately. Edit/write/apply-patch operations and bounded file-mutating shell operations acquire a short-lived project-scoped path lock for the duration of the tool call. If another live Loom agent is already writing the same path, the later writer is rejected with a retryable "locked for write by another agent" error. The OS-backed lock is released when the tool returns and automatically on process exit.
 
-Actual mutation is serialized separately. Edit/write/apply-patch operations and bounded file-mutating shell operations acquire a short-lived project-scoped path lock for the duration of the tool call. If another live Loom agent is already writing the same path, the later writer is rejected with a retryable "locked for write by another agent" error. The OS-backed lock is released when the tool returns and is released automatically if the owning process exits. Git staging and commit provenance remains stricter: a role may stage and commit only paths admitted through its own successful scoped mutation, so a dirty file becomes eligible for delivery after that role actually edits it.
+For product artifacts, write authority and commit authority are the same effective scope for the **exact bytes Loom admitted**. Step-attempt fingerprints are durable provenance; a fresh/resumed child on the same attempt may stage those exact bytes without a separate ownership-adoption request. Scope alone never makes pre-existing or subsequently changed bytes committable. Ephemeral reports are excluded from ordinary Git delivery and remain on their producer/report-promotion path.
 
-This V1 boundary governs OpenCode edit/write/apply-patch permissions. Arbitrary shell side effects are not path-contained by Loom and remain separately restricted through the Worker shell policy.
-
+This V1 boundary governs OpenCode edit/write/apply-patch permissions. Arbitrary shell side effects remain separately restricted through the Worker shell policy.
 
 ## Worker shell boundary
 

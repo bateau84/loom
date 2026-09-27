@@ -44,9 +44,14 @@ describe("Loom task graph", () => {
     expect(() => validateTaskPlan([task("api", { dependsOn: ["missing"] })])).toThrow()
   })
 
-  test("rejects unbounded and authority write scopes", () => {
+  test("rejects unbounded scopes but allows unknown or cross-role starting expectations", () => {
     expect(() => validateTaskPlan([task("api", { write: ["**"] })])).toThrow()
-    expect(() => validateTaskPlan([task("api", { write: ["docs/architecture/**"] })])).toThrow()
+    expect(validateTaskPlan([task("api", { write: [] })])[0].write).toEqual([])
+    expect(
+      validateTaskPlan([
+        task("api", { write: ["docs/architecture/**"] }),
+      ])[0].write,
+    ).toEqual(["docs/architecture/**"])
   })
 
   test("parallel tasks may share write scope because runtime writes are serialized", () => {

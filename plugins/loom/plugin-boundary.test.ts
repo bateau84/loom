@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test"
 import { createHash } from "node:crypto"
 import { execFile } from "node:child_process"
 import { promisify } from "node:util"
-import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises"
+import { chmod, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
 import loomPlugin from "./index"
@@ -927,7 +927,7 @@ describe("Loom registered plugin boundary", () => {
       expect(scoped.error).toBeUndefined()
       expect(scoped).toMatchObject({
         acceptedAuthority: "docs/anchors/test/anchor.md",
-        scopeSemantics: "mutation-boundary-only",
+        scopeSemantics: "starting-expectation-with-runtime-elevation",
       })
       expect(scoped.acceptedOutcome).toBeUndefined()
       expect(scoped.scopeNote).toContain("acceptedAuthority identifies the governing source")
@@ -952,7 +952,7 @@ describe("Loom registered plugin boundary", () => {
         stepId: "worker",
         acceptedAuthority: "docs/anchors/test/anchor.md",
         write: ["src/**"],
-        scopeSemantics: "mutation-boundary-only",
+        scopeSemantics: "starting-expectation-with-runtime-elevation",
       })
       expect(attachedWorker.acceptedOutcome).toBeUndefined()
       expect(attachedWorker.scopeNote).toContain("acceptedAuthority identifies the governing source")
@@ -1391,19 +1391,21 @@ Verdict: FAIL
   })
 
 
-  test("Worker dispatch grant requires declared task scope", async () => {
+  test("Worker can dispatch without guessed scope and self-elevate discovered files", async () => {
     const h = await harness()
     try {
+      const generalSession = "scope-before-grant-general"
+      const workerSession = "scope-before-grant-worker"
       const started = await h.call(
         "start",
         { request: "Apply one bounded implementation change." },
         "general",
-        "scope-before-grant-general",
+        generalSession,
       )
       expect(started.error).toBeUndefined()
       const workflowId = String(started.workflowId)
 
-      const routed = await h.call(
+      expect((await h.call(
         "route",
         {
           humanFacing: false,
@@ -1416,37 +1418,578 @@ Verdict: FAIL
           executionDepth: "task",
         },
         "general",
-        "scope-before-grant-general",
-      )
-      expect(routed.error).toBeUndefined()
+        generalSession,
+      )).error).toBeUndefined()
 
-      const unscoped = await h.call(
+      const grant = await h.call(
         "dispatch_grant",
         { workflowId, stepId: "worker" },
         "general",
-        "scope-before-grant-general",
+        generalSession,
       )
-      expect(unscoped.error).toContain("no declared write scope")
+      expect(grant.error).toBeUndefined()
+      expect(grant.expectedAgent).toBe("worker")
 
-      const scope = await h.call(
-        "task_scope",
-        { workflowId, stepId: "worker", write: ["src/**"] },
+      const evaluate = h.permissionHooks.get("evaluate")!
+      const dispatch: any = {
+        agent: "general",
+        action: "subagent",
+        resources: ["worker"],
+        sessionID: generalSession,
+        source: {
+          messageID: "scope-before-grant-message",
+          id: "scope-before-grant-dispatch",
+        },
+      }
+      await evaluate(dispatch)
+      expect(dispatch.effect).not.toBe("deny")
+
+      const attached = await h.call(
+        "attach",
+        { grantId: grant.grantId, workflowId, stepId: "worker" },
+        "worker",
+        workerSession,
+      )
+      expect(attached.attached).toBe(true)
+
+      const beforeElevation: any = {
+        agent: "worker",
+        action: "edit",
+        resources: ["src/discovered.ts"],
+        sessionID: workerSession,
+        effect: "ask",
+      }
+      await evaluate(beforeElevation)
+      expect(beforeElevation.effect).toBe("deny")
+      expect(beforeElevation.message).toContain("loom_scope_elevate")
+
+      const elevated = await h.call(
+        "scope_elevate",
+        {
+          workflowId,
+          stepId: "worker",
+          paths: ["src/**"],
+          reason: "Implementation discovery located the affected source package.",
+        },
+        "worker",
+        workerSession,
+      )
+      expect(elevated.error).toBeUndefined()
+      expect(elevated.status).toBe("granted")
+      expect(elevated.continue).toBe(true)
+      expect(elevated.scopeAdded).toEqual(["src/**"])
+      expect(elevated.elevation.crossesRoleDefault).toBe(true)
+
+      const afterElevation: any = {
+        ...beforeElevation,
+        effect: "ask",
+      }
+      await evaluate(afterElevation)
+      expect(afterElevation.effect).not.toBe("deny")
+
+      const status = await h.call(
+        "scope_status",
+        { workflowId, stepId: "worker" },
+        "worker",
+        workerSession,
+      )
+      expect(status.effectiveWrite).toEqual(["src/**"])
+      expect(status.elevations).toHaveLength(1)
+      expect(status.elevations[0].reason).toContain("Implementation discovery")
+    } finally {
+      h.restore()
+    }
+  })
+
+  test("symlink aliases into .git remain target-bound hard boundaries", async () => {
+    const h = await harness()
+    try {
+      await initializeGitFixture(h.root)
+      const generalSession = "scope-git-alias-general"
+      const childSession = "scope-git-alias-worker"
+      const started = await h.call(
+        "start",
+        { request: "Implement one bounded change without rewriting Git internals." },
         "general",
-        "scope-before-grant-general",
+        generalSession,
       )
-      expect(scope.error).toBeUndefined()
-      expect(scope.acceptedOutcome).toBe("Apply one bounded implementation change.")
-      expect(scope.acceptedAuthority).toMatch(/^task:/)
-      expect(scope.scopeSemantics).toBe("mutation-boundary-only")
+      const workflowId = String(started.workflowId)
+      expect((await h.call(
+        "route",
+        {
+          humanFacing: false,
+          behavioral: false,
+          structural: false,
+          externalUnknown: false,
+          diagnostic: false,
+          productOutcome: false,
+          implementationRequested: true,
+          executionDepth: "task",
+        },
+        "general",
+        generalSession,
+      )).error).toBeUndefined()
 
-      const scoped = await h.call(
+      const grant = await h.call(
         "dispatch_grant",
         { workflowId, stepId: "worker" },
         "general",
-        "scope-before-grant-general",
+        generalSession,
       )
-      expect(scoped.error).toBeUndefined()
-      expect(scoped.expectedAgent).toBe("worker")
+      expect((await h.call(
+        "attach",
+        { grantId: grant.grantId, workflowId, stepId: "worker" },
+        "worker",
+        childSession,
+      )).attached).toBe(true)
+
+      const alias = join(h.root, "git-internal-alias")
+      const gitConfig = join(h.root, ".git", "config")
+      await symlink(gitConfig, alias)
+
+      const requested = await h.call(
+        "scope_elevate",
+        {
+          workflowId,
+          stepId: "worker",
+          paths: ["git-internal-alias"],
+          reason: "Attempt to mutate Git internal state through an alias.",
+        },
+        "worker",
+        childSession,
+      )
+      expect(requested.status).toBe("user_authorization_required")
+      expect(requested.continue).toBe(false)
+      expect(requested.hardBoundary.boundaryDetails[0]).toMatchObject({
+        kind: "repository-internal-state",
+        resolvedExistingTarget: gitConfig,
+      })
+      expect(
+        requested.hardBoundary.question.questions[0].question,
+      ).toContain(gitConfig)
+
+      const questionEvent = {
+        tool: "question",
+        callID: "scope-git-alias-question",
+        messageID: "scope-git-alias-question-message",
+        sessionID: generalSession,
+        agent: "general",
+        input: requested.hardBoundary.question,
+      }
+      await h.toolHooks.get("execute.before")!(questionEvent)
+      await h.toolHooks.get("execute.after")!({
+        ...questionEvent,
+        status: "completed",
+        result: { metadata: { answers: [["Allow once"]] } },
+      })
+      expect((await h.call(
+        "scope_authorize_once",
+        { workflowId, requestId: requested.hardBoundary.requestId },
+        "general",
+        generalSession,
+      )).authorized).toBe(true)
+
+      const beforeRetarget: any = {
+        agent: "worker",
+        action: "edit",
+        resources: [alias],
+        sessionID: childSession,
+        effect: "ask",
+      }
+      await h.permissionHooks.get("evaluate")!(beforeRetarget)
+      expect(beforeRetarget.effect).toBe("allow")
+
+      await rm(alias, { force: true })
+      await symlink(join(h.root, ".git", "HEAD"), alias)
+
+      const afterRetarget: any = {
+        ...beforeRetarget,
+        effect: "ask",
+      }
+      await h.permissionHooks.get("evaluate")!(afterRetarget)
+      expect(afterRetarget.effect).toBe("deny")
+      expect(afterRetarget.message).toContain("loom_scope_elevate")
+    } finally {
+      h.restore()
+    }
+  })
+
+  test("Loom internal project state is a user-only hard boundary", async () => {
+    const h = await harness()
+    try {
+      const generalSession = "scope-loom-state-general"
+      const childSession = "scope-loom-state-worker"
+      const started = await h.call(
+        "start",
+        { request: "Implement one bounded change without rewriting Loom identity." },
+        "general",
+        generalSession,
+      )
+      const workflowId = String(started.workflowId)
+      expect((await h.call(
+        "route",
+        {
+          humanFacing: false,
+          behavioral: false,
+          structural: false,
+          externalUnknown: false,
+          diagnostic: false,
+          productOutcome: false,
+          implementationRequested: true,
+          executionDepth: "task",
+        },
+        "general",
+        generalSession,
+      )).error).toBeUndefined()
+
+      const grant = await h.call(
+        "dispatch_grant",
+        { workflowId, stepId: "worker" },
+        "general",
+        generalSession,
+      )
+      expect((await h.call(
+        "attach",
+        { grantId: grant.grantId, workflowId, stepId: "worker" },
+        "worker",
+        childSession,
+      )).attached).toBe(true)
+
+      const requested = await h.call(
+        "scope_elevate",
+        {
+          workflowId,
+          stepId: "worker",
+          paths: [".loom/project-id"],
+          reason: "Attempt to change Loom project identity.",
+        },
+        "worker",
+        childSession,
+      )
+      expect(requested.status).toBe("user_authorization_required")
+      expect(requested.continue).toBe(false)
+      expect(requested.hardBoundary.boundaryDetails[0]).toMatchObject({
+        kind: "loom-internal-state",
+      })
+      expect(
+        requested.hardBoundary.question.questions[0].question,
+      ).toContain("Loom internal project state")
+      expect(requested.hardBoundary.rememberChoiceAllowed).toBe(false)
+    } finally {
+      h.restore()
+    }
+  })
+
+  test("hard-boundary scope elevation forces an exact non-remembered user decision", async () => {
+    const h = await harness()
+    try {
+      const generalSession = "scope-boundary-general"
+      const childSession = "scope-boundary-specifier"
+      const started = await h.call(
+        "start",
+        { request: "Specify one behavior and update an explicitly approved external schema if required." },
+        "general",
+        generalSession,
+      )
+      const workflowId = String(started.workflowId)
+      expect((await h.call(
+        "route",
+        {
+          humanFacing: false,
+          behavioral: true,
+          structural: false,
+          externalUnknown: false,
+          diagnostic: false,
+          productOutcome: false,
+          implementationRequested: true,
+          executionDepth: "change",
+        },
+        "general",
+        generalSession,
+      )).error).toBeUndefined()
+
+      const grant = await h.call(
+        "dispatch_grant",
+        { workflowId, stepId: "specifier" },
+        "general",
+        generalSession,
+      )
+      expect((await h.call(
+        "attach",
+        { grantId: grant.grantId, workflowId, stepId: "specifier" },
+        "specifier",
+        childSession,
+      )).attached).toBe(true)
+
+      const externalRoot = await mkdtemp(join(tmpdir(), "loom-hard-boundary-"))
+      roots.push(externalRoot)
+      const external = join(externalRoot, "schema.json")
+      const requested = await h.call(
+        "scope_elevate",
+        {
+          workflowId,
+          stepId: "specifier",
+          paths: [external],
+          reason: "The accepted contract consumes this external schema.",
+        },
+        "specifier",
+        childSession,
+      )
+      expect(requested.error).toBeUndefined()
+      expect(requested.status).toBe("user_authorization_required")
+      expect(requested.continue).toBe(false)
+      expect(requested.requiredAction).toContain("Return control to General immediately")
+      expect(requested.hardBoundary.rememberChoiceAllowed).toBe(false)
+      expect(
+        requested.hardBoundary.question.questions[0].options.map(
+          (option: any) => option.label,
+        ),
+      ).toEqual(["Allow once", "Deny"])
+      expect(requested.hardBoundary.question.questions[0].question).toContain(
+        "never remembered",
+      )
+
+      const repeated = await h.call(
+        "scope_elevate",
+        {
+          workflowId,
+          stepId: "specifier",
+          paths: [external],
+          reason: "The accepted contract consumes this external schema.",
+        },
+        "specifier",
+        childSession,
+      )
+      expect(repeated.continue).toBe(false)
+      expect(repeated.hardBoundary.requestId).toBe(
+        requested.hardBoundary.requestId,
+      )
+
+      const questionEvent = {
+        tool: "question",
+        callID: "scope-boundary-question-call",
+        messageID: "scope-boundary-question-message",
+        sessionID: generalSession,
+        agent: "general",
+        input: requested.hardBoundary.question,
+      }
+      await h.toolHooks.get("execute.before")!(questionEvent)
+      await h.toolHooks.get("execute.after")!({
+        ...questionEvent,
+        status: "completed",
+        result: { metadata: { answers: [["Allow once"]] } },
+      })
+
+      const authorized = await h.call(
+        "scope_authorize_once",
+        {
+          workflowId,
+          requestId: requested.hardBoundary.requestId,
+        },
+        "general",
+        generalSession,
+      )
+      expect(authorized.error).toBeUndefined()
+      expect(authorized.authorized).toBe(true)
+      expect(authorized.rememberChoiceAllowed).toBe(false)
+
+      const allowed: any = {
+        agent: "specifier",
+        action: "edit",
+        resources: [external],
+        sessionID: childSession,
+        effect: "ask",
+      }
+      await h.permissionHooks.get("evaluate")!(allowed)
+      expect(allowed.effect).toBe("allow")
+
+      const externalEdit = {
+        tool: "edit",
+        callID: "scope-boundary-external-edit",
+        messageID: "scope-boundary-external-edit-message",
+        sessionID: childSession,
+        agent: "specifier",
+        input: {
+          filePath: external,
+          oldString: "",
+          newString: "approved\n",
+        },
+      }
+      await h.toolHooks.get("execute.before")!(externalEdit)
+      await writeFile(external, "approved\n")
+      await h.toolHooks.get("execute.after")!({
+        ...externalEdit,
+        status: "completed",
+        result: "updated",
+      })
+      expect(await readFile(external, "utf8")).toBe("approved\n")
+      const ownership = await h.durableStorage.get(
+        `git-session-ownership/${encodeURIComponent(childSession)}`,
+      ) as any
+      expect(ownership?.paths ?? []).not.toContain(external)
+
+      const differentExternal: any = {
+        ...allowed,
+        resources: [join(externalRoot, "different-external.json")],
+        effect: "ask",
+      }
+      await h.permissionHooks.get("evaluate")!(differentExternal)
+      expect(differentExternal.effect).toBe("deny")
+      expect(differentExternal.message).toContain("loom_scope_elevate")
+
+      expect((await h.call(
+        "complete",
+        {
+          workflowId,
+          stepId: "specifier",
+          summary: "Hard-boundary access was approved but no external mutation was needed.",
+        },
+        "specifier",
+        childSession,
+      )).error).toBeUndefined()
+
+      const lateExternalEdit = {
+        tool: "edit",
+        callID: "scope-boundary-late-edit",
+        messageID: "scope-boundary-late-edit-message",
+        sessionID: childSession,
+        agent: "specifier",
+        input: {
+          filePath: external,
+          oldString: "",
+          newString: "late\n",
+        },
+      }
+      await expect(
+        h.toolHooks.get("execute.before")!(lateExternalEdit),
+      ).rejects.toThrow("Hard-boundary mutation is not authorized")
+    } finally {
+      h.restore()
+    }
+  })
+
+
+  test("project-relative symlink escape is a user-only hard boundary", async () => {
+    const h = await harness()
+    try {
+      const externalRoot = await mkdtemp(join(tmpdir(), "loom-scope-external-"))
+      const replacementExternalRoot = await mkdtemp(
+        join(tmpdir(), "loom-scope-external-replacement-"),
+      )
+      roots.push(externalRoot, replacementExternalRoot)
+      const linkedExternal = join(h.root, "linked-external")
+      await symlink(externalRoot, linkedExternal, "dir")
+
+      const generalSession = "scope-symlink-general"
+      const childSession = "scope-symlink-specifier"
+      const started = await h.call(
+        "start",
+        { request: "Specify one behavior without escaping the current project." },
+        "general",
+        generalSession,
+      )
+      const workflowId = String(started.workflowId)
+      expect((await h.call(
+        "route",
+        {
+          humanFacing: false,
+          behavioral: true,
+          structural: false,
+          externalUnknown: false,
+          diagnostic: false,
+          productOutcome: false,
+          implementationRequested: true,
+          executionDepth: "change",
+        },
+        "general",
+        generalSession,
+      )).error).toBeUndefined()
+
+      const grant = await h.call(
+        "dispatch_grant",
+        { workflowId, stepId: "specifier" },
+        "general",
+        generalSession,
+      )
+      expect((await h.call(
+        "attach",
+        { grantId: grant.grantId, workflowId, stepId: "specifier" },
+        "specifier",
+        childSession,
+      )).attached).toBe(true)
+
+      const requested = await h.call(
+        "scope_elevate",
+        {
+          workflowId,
+          stepId: "specifier",
+          paths: ["linked-external/**"],
+          reason: "Discovery found a path that looks project-local but resolves through a symlink.",
+        },
+        "specifier",
+        childSession,
+      )
+      expect(requested.error).toBeUndefined()
+      expect(requested.status).toBe("user_authorization_required")
+      expect(requested.continue).toBe(false)
+      expect(requested.hardBoundary.rememberChoiceAllowed).toBe(false)
+      expect(requested.hardBoundary.paths[0]).toContain("linked-external")
+      expect(requested.hardBoundary.boundaryDetails[0]).toMatchObject({
+        kind: "symlink-escape",
+        resolvedExistingTarget: externalRoot,
+      })
+      expect(
+        requested.hardBoundary.question.questions[0].question,
+      ).toContain(externalRoot)
+      expect(
+        requested.hardBoundary.question.questions[0].question,
+      ).toContain("symlink escape")
+
+      const questionEvent = {
+        tool: "question",
+        callID: "scope-symlink-question-call",
+        messageID: "scope-symlink-question-message",
+        sessionID: generalSession,
+        agent: "general",
+        input: requested.hardBoundary.question,
+      }
+      await h.toolHooks.get("execute.before")!(questionEvent)
+      await h.toolHooks.get("execute.after")!({
+        ...questionEvent,
+        status: "completed",
+        result: { metadata: { answers: [["Allow once"]] } },
+      })
+      expect((await h.call(
+        "scope_authorize_once",
+        {
+          workflowId,
+          requestId: requested.hardBoundary.requestId,
+        },
+        "general",
+        generalSession,
+      )).authorized).toBe(true)
+
+      const targetFile = join(linkedExternal, "schema.json")
+      const beforeRetarget: any = {
+        agent: "specifier",
+        action: "edit",
+        resources: [targetFile],
+        sessionID: childSession,
+        effect: "ask",
+      }
+      await h.permissionHooks.get("evaluate")!(beforeRetarget)
+      expect(beforeRetarget.effect).toBe("allow")
+
+      await rm(linkedExternal, { force: true })
+      await symlink(replacementExternalRoot, linkedExternal, "dir")
+
+      const afterRetarget: any = {
+        ...beforeRetarget,
+        effect: "ask",
+      }
+      await h.permissionHooks.get("evaluate")!(afterRetarget)
+      expect(afterRetarget.effect).toBe("deny")
+      expect(afterRetarget.message).toContain("loom_scope_elevate")
     } finally {
       h.restore()
     }
@@ -1949,7 +2492,7 @@ Verdict: FAIL
       }
       await evaluate!(generalUnknownAdd)
       expect(generalUnknownAdd.effect).toBe("deny")
-      expect(generalUnknownAdd.message).toContain("stage only files authored")
+      expect(generalUnknownAdd.message).toContain("exact bytes previously admitted")
 
       const unattachedWorker: any = {
         agent: "worker",
@@ -1966,15 +2509,17 @@ Verdict: FAIL
     }
   })
 
-  test("lets General scope a Specifier's own artifacts without a Worker handoff", async () => {
+  test("Specifier starts with General's best-known scope and can elevate without returning", async () => {
     const h = await harness()
     try {
       await initializeGitFixture(h.root)
+      const generalSession = "specifier-scope-general"
+      const authorSession = "specifier-scope-author"
       const started = await h.call(
         "start",
         { request: "Specify one bounded lifecycle meaning." },
         "general",
-        "specifier-scope-general",
+        generalSession,
       )
       const workflowId = String(started.workflowId)
       expect((await h.call(
@@ -1990,7 +2535,7 @@ Verdict: FAIL
           executionDepth: "change",
         },
         "general",
-        "specifier-scope-general",
+        generalSession,
       )).error).toBeUndefined()
 
       const write = [
@@ -2002,101 +2547,90 @@ Verdict: FAIL
         "step_scope",
         { workflowId, stepId: "specifier", write },
         "general",
-        "specifier-scope-general",
+        generalSession,
       )
       expect(scoped.error).toBeUndefined()
       expect(scoped.scope.write).toEqual(write)
-      expect(scoped.roleWriteCeiling).toEqual(["docs/requirements/**"])
-
-      // Legacy callers that know loom_task_scope must not hit the old
-      // Worker-only dead end.
-      expect((await h.call(
-        "task_scope",
-        { workflowId, stepId: "specifier", write },
-        "general",
-        "specifier-scope-general",
-      )).error).toBeUndefined()
-
-      const escaped = await h.call(
-        "step_scope",
-        { workflowId, stepId: "specifier", write: ["src/**"] },
-        "general",
-        "specifier-scope-general",
+      expect(scoped.roleWriteDefault).toEqual(["docs/requirements/**"])
+      expect(scoped.scopeSemantics).toBe(
+        "starting-expectation-with-runtime-elevation",
       )
-      expect(escaped.error).toContain("may narrow role authority but cannot grant")
-
-      const evaluate = h.permissionHooks.get("evaluate")!
-      const unattachedMutation: any = {
-        agent: "specifier",
-        action: "edit",
-        resources: [write[0]],
-        sessionID: "specifier-scope-author",
-        effect: "ask",
-      }
-      await evaluate(unattachedMutation)
-      expect(unattachedMutation.effect).toBe("deny")
-      expect(unattachedMutation.message).toContain("exact attached Loom workflow step")
 
       const grant = await h.call(
         "dispatch_grant",
         { workflowId, stepId: "specifier" },
         "general",
-        "specifier-scope-general",
+        generalSession,
       )
-      expect(grant.error).toBeUndefined()
       const attached = await h.call(
         "attach",
         { grantId: grant.grantId, workflowId, stepId: "specifier" },
         "specifier",
-        "specifier-scope-author",
+        authorSession,
       )
       expect(attached.attached).toBe(true)
       expect(attached.write).toEqual(write)
-      expect(attached.scopeSemantics).toBe("mutation-boundary-only")
+      expect(attached.scopeSemantics).toBe(
+        "starting-expectation-with-runtime-elevation",
+      )
 
-
-      const inScope: any = {
-        agent: "specifier",
-        action: "edit",
-        resources: [write[0]],
-        sessionID: "specifier-scope-author",
-        effect: "ask",
+      const evaluate = h.permissionHooks.get("evaluate")!
+      const discoveredRequirement = "docs/requirements/lifecycle/unassigned.md"
+      const discoveredCode = "src/escaped.ts"
+      for (const path of [discoveredRequirement, discoveredCode]) {
+        const denied: any = {
+          agent: "specifier",
+          action: "edit",
+          resources: [path],
+          sessionID: authorSession,
+          effect: "ask",
+        }
+        await evaluate(denied)
+        expect(denied.effect).toBe("deny")
+        expect(denied.message).toContain("loom_scope_elevate")
       }
-      await evaluate(inScope)
-      expect(inScope.effect).not.toBe("deny")
 
-      const sameRoleButOutsideStep: any = {
-        agent: "specifier",
-        action: "edit",
-        resources: ["docs/requirements/lifecycle/unassigned.md"],
-        sessionID: "specifier-scope-author",
-        effect: "ask",
+      const elevated = await h.call(
+        "scope_elevate",
+        {
+          workflowId,
+          stepId: "specifier",
+          paths: [discoveredRequirement, discoveredCode],
+          reason: "Specification discovery exposed one additional requirement artifact and its generated consumer.",
+        },
+        "specifier",
+        authorSession,
+      )
+      expect(elevated.status).toBe("granted")
+      expect(elevated.continue).toBe(true)
+      expect(elevated.elevation.crossesRoleDefault).toBe(true)
+
+      for (const path of [discoveredRequirement, discoveredCode]) {
+        const allowed: any = {
+          agent: "specifier",
+          action: "edit",
+          resources: [path],
+          sessionID: authorSession,
+          effect: "ask",
+        }
+        await evaluate(allowed)
+        expect(allowed.effect).not.toBe("deny")
       }
-      await evaluate(sameRoleButOutsideStep)
-      expect(sameRoleButOutsideStep.effect).toBe("deny")
-      expect(sameRoleButOutsideStep.message).toContain("declared Loom step write scope")
 
-      const escapedRoleCeiling: any = {
-        agent: "specifier",
-        action: "edit",
-        resources: ["src/escaped.ts"],
-        sessionID: "specifier-scope-author",
-        // Simulate a future/static permission layer accidentally allowing it:
-        // the Loom runtime ceiling must still fail closed.
-        effect: "allow",
-      }
-      await evaluate(escapedRoleCeiling)
-      expect(escapedRoleCeiling.effect).toBe("deny")
-      expect(escapedRoleCeiling.message).toContain("role's Loom artifact ceiling")
-
-      await mkdir(join(h.root, "docs", "requirements", "lifecycle"), { recursive: true })
+      await mkdir(join(h.root, "docs", "requirements", "lifecycle"), {
+        recursive: true,
+      })
       const editEvent = {
         tool: "edit",
         callID: "specifier-owned-edit",
         messageID: "specifier-owned-message",
-        sessionID: "specifier-scope-author",
+        sessionID: authorSession,
         agent: "specifier",
-        input: { filePath: join(h.root, write[0]), oldString: "", newString: "owned\n" },
+        input: {
+          filePath: join(h.root, write[0]),
+          oldString: "",
+          newString: "owned\n",
+        },
       }
       await h.toolHooks.get("execute.before")!(editEvent)
       await writeFile(join(h.root, write[0]), "owned\n")
@@ -2106,54 +2640,20 @@ Verdict: FAIL
         result: "updated",
       })
 
-      // A fresh dispatch/attachment to the same logical step attempt must not
-      // erase this session's admitted authorship. Grants are ephemeral execution
-      // capabilities; the step attempt is the mutation-authority epoch.
-      const redispatchGrant = await h.call(
-        "dispatch_grant",
-        { workflowId, stepId: "specifier" },
-        "general",
-        "specifier-scope-general",
-      )
-      expect(redispatchGrant.error).toBeUndefined()
-      const reattached = await h.call(
-        "attach",
-        {
-          grantId: redispatchGrant.grantId,
-          workflowId,
-          stepId: "specifier",
-        },
-        "specifier",
-        "specifier-scope-author",
-      )
-      expect(reattached.attached).toBe(true)
-      expect(reattached.attempt).toBe(0)
-
-      const stageOwned: any = {
+      const stagePermission: any = {
         agent: "specifier",
         action: "shell",
         resources: [`git add ${write[0]}`],
-        sessionID: "specifier-scope-author",
+        sessionID: authorSession,
         effect: "ask",
       }
-      await evaluate(stageOwned)
-      expect(stageOwned.effect).toBe("allow")
-
-      const stageOutside: any = {
-        agent: "specifier",
-        action: "shell",
-        resources: ["git add docs/requirements/lifecycle/unassigned.md"],
-        sessionID: "specifier-scope-author",
-        effect: "ask",
-      }
-      await evaluate(stageOutside)
-      expect(stageOutside.effect).toBe("deny")
-
+      await evaluate(stagePermission)
+      expect(stagePermission.effect).toBe("allow")
       const stageEvent = {
         tool: "shell",
         callID: "specifier-stage",
         messageID: "specifier-stage-message",
-        sessionID: "specifier-scope-author",
+        sessionID: authorSession,
         agent: "specifier",
         input: { command: `git add ${write[0]}` },
       }
@@ -2171,7 +2671,7 @@ Verdict: FAIL
         agent: "specifier",
         action: "shell",
         resources: [commitCommand],
-        sessionID: "specifier-scope-author",
+        sessionID: authorSession,
         effect: "ask",
       }
       await evaluate(commitPermission)
@@ -2180,7 +2680,7 @@ Verdict: FAIL
         tool: "shell",
         callID: "specifier-commit",
         messageID: "specifier-commit-message",
-        sessionID: "specifier-scope-author",
+        sessionID: authorSession,
         agent: "specifier",
         input: { command: commitCommand },
       }
@@ -2199,15 +2699,13 @@ Verdict: FAIL
         result: "committed",
       })
 
-      const completed = await h.call(
+      expect((await h.call(
         "complete",
         { workflowId, stepId: "specifier", summary: "requirements committed" },
         "specifier",
-        "specifier-scope-author",
-      )
-      expect(completed.error).toBeUndefined()
-
-      const reopened = await h.call(
+        authorSession,
+      )).error).toBeUndefined()
+      expect((await h.call(
         "reopen",
         {
           workflowId,
@@ -2219,71 +2717,39 @@ Verdict: FAIL
           reducedUnresolved: false,
         },
         "general",
-        "specifier-scope-general",
-      )
-      expect(reopened.error).toBeUndefined()
-
-      const staleAttempt: any = {
-        agent: "specifier",
-        action: "edit",
-        resources: [write[0]],
-        sessionID: "specifier-scope-author",
-        effect: "ask",
-      }
-      await evaluate(staleAttempt)
-      expect(staleAttempt.effect).toBe("deny")
-      expect(staleAttempt.message).toContain("current Loom step attempt")
+        generalSession,
+      )).error).toBeUndefined()
 
       const freshGrant = await h.call(
         "dispatch_grant",
         { workflowId, stepId: "specifier" },
         "general",
-        "specifier-scope-general",
+        generalSession,
       )
-      expect(freshGrant.error).toBeUndefined()
-      const freshAttach = await h.call(
+      expect((await h.call(
         "attach",
         { grantId: freshGrant.grantId, workflowId, stepId: "specifier" },
         "specifier",
-        "specifier-scope-author",
-      )
-      expect(freshAttach.attached).toBe(true)
-      expect(freshAttach.attempt).toBe(1)
-      expect(freshAttach.write).toEqual(write)
+        authorSession,
+      )).attempt).toBe(1)
 
+      await writeFile(join(h.root, write[0]), "dirty-in-attempt-1\n")
       const priorAttemptStage: any = {
         agent: "specifier",
         action: "shell",
         resources: [`git add ${write[0]}`],
-        sessionID: "specifier-scope-author",
+        sessionID: authorSession,
         effect: "ask",
       }
       await evaluate(priorAttemptStage)
       expect(priorAttemptStage.effect).toBe("deny")
-      expect(priorAttemptStage.message).toContain("stage only files authored")
-
-      // Prior-attempt provenance must not become adoptable merely because the
-      // same file is dirty again in the reopened step.
-      await writeFile(join(h.root, write[0]), "dirty-in-attempt-1\n")
-      const priorAttemptAdoption = await h.call(
-        "scope_request",
-        {
-          workflowId,
-          stepId: "specifier",
-          paths: [write[0]],
-        },
-        "specifier",
-        "specifier-scope-author",
-      )
-      expect(priorAttemptAdoption.error).toContain(
-        "No admitted same-attempt Git provenance exists",
-      )
+      expect(priorAttemptStage.message).toContain("current Loom step attempt")
     } finally {
       h.restore()
     }
   })
 
-  test("fresh same-attempt Specifier can adopt exact prior-dispatch bytes before staging", async () => {
+  test("fresh same-attempt Specifier automatically inherits exact admitted-byte staging authority", async () => {
     const h = await harness()
     try {
       await initializeGitFixture(h.root)
@@ -2338,7 +2804,9 @@ Verdict: FAIL
         firstSession,
       )).attached).toBe(true)
 
-      await mkdir(join(h.root, "docs", "requirements", "lifecycle"), { recursive: true })
+      await mkdir(join(h.root, "docs", "requirements", "lifecycle"), {
+        recursive: true,
+      })
       for (const [index, path] of write.entries()) {
         const editEvent = {
           tool: "edit",
@@ -2376,109 +2844,213 @@ Verdict: FAIL
       expect(attached.attached).toBe(true)
       expect(attached.attempt).toBe(0)
 
-      const evaluate = h.permissionHooks.get("evaluate")!
-      const deniedBeforeAdoption: any = {
-        agent: "specifier",
-        action: "shell",
-        resources: [`git add ${write[0]}`],
-        sessionID: freshSession,
-        effect: "ask",
-      }
-      await evaluate(deniedBeforeAdoption)
-      expect(deniedBeforeAdoption.effect).toBe("deny")
-      expect(deniedBeforeAdoption.message).toContain("loom_scope_request")
-
-      const adopted = await h.call(
-        "scope_request",
+      await h.durableStorage.set(
+        `git-session-ownership/${encodeURIComponent(freshSession)}`,
         {
-          workflowId,
-          stepId: "specifier",
-          paths: write,
-          reason: "Continue the same pending Specifier step in a fresh session.",
+          schemaVersion: 3,
+          paths: [],
+          worktreeFingerprints: {},
+          stagedFingerprints: {},
         },
-        "specifier",
-        freshSession,
       )
-      expect(adopted.error).toBeUndefined()
-      expect(adopted.resolved).toBe(true)
-      expect(adopted.adopted).toBe(true)
-      expect(adopted.paths).toEqual([...write].sort())
-      expect(adopted.sourceSessions).toEqual([firstSession])
-      expect(await readFile(join(h.root, write[0]), "utf8")).toBe("owned-0\n")
-      expect(await readFile(join(h.root, write[2]), "utf8")).toBe("owned-2\n")
-      expect((await git(h.root, ["diff", "--cached", "--name-only"])).stdout.trim()).toBe("")
 
-      const allowedAfterAdoption: any = {
+      const evaluate = h.permissionHooks.get("evaluate")!
+      const inherited: any = {
         agent: "specifier",
         action: "shell",
         resources: [`git add -- ${write.join(" ")}`],
         sessionID: freshSession,
         effect: "ask",
       }
-      await evaluate(allowedAfterAdoption)
-      expect(allowedAfterAdoption.effect).toBe("allow")
+      await evaluate(inherited)
+      expect(inherited.effect).toBe("allow")
 
-      await git(h.root, ["add", write[0]])
-      const stagedAdoption = await h.call(
-        "scope_request",
-        {
-          workflowId,
-          stepId: "specifier",
-          paths: [write[0]],
-        },
-        "specifier",
-        freshSession,
-      )
-      expect(stagedAdoption.error).toContain("refuses already-staged paths")
-      await git(h.root, ["reset", "--", write[0]])
-
-      // A later out-of-band change invalidates the recorded same-attempt
-      // fingerprint even though the fresh session previously adopted it.
       await writeFile(join(h.root, write[1]), "changed-outside-admission\n")
-      const changed = await h.call(
-        "scope_request",
-        {
-          workflowId,
-          stepId: "specifier",
-          paths: [write[1]],
-        },
-        "specifier",
-        freshSession,
-      )
-      expect(changed.error).toContain("bytes changed after the last admitted same-attempt mutation")
+      const changed: any = {
+        agent: "specifier",
+        action: "shell",
+        resources: [`git add -- ${write[1]}`],
+        sessionID: freshSession,
+        effect: "ask",
+      }
+      await evaluate(changed)
+      expect(changed.effect).toBe("deny")
+      expect(changed.message).toContain("changed after")
 
       const unproven = "docs/requirements/lifecycle/unproven.md"
-      await writeFile(join(h.root, unproven), "unproven\n")
-      expect((await h.call(
-        "step_scope",
-        { workflowId, stepId: "specifier", write: [...write, unproven] },
-        "general",
-        generalSession,
-      )).error).toBeUndefined()
-      const noProvenance = await h.call(
-        "scope_request",
+      const elevated = await h.call(
+        "scope_elevate",
         {
           workflowId,
           stepId: "specifier",
           paths: [unproven],
+          reason: "A newly discovered requirement artifact is needed.",
         },
         "specifier",
         freshSession,
       )
-      expect(noProvenance.error).toContain("No admitted same-attempt Git provenance exists")
+      expect(elevated.status).toBe("granted")
+      expect(elevated.continue).toBe(true)
+      await writeFile(join(h.root, unproven), "unproven\n")
 
-      const outsideScope = await h.call(
-        "scope_request",
+      const noProvenance: any = {
+        agent: "specifier",
+        action: "shell",
+        resources: [`git add -- ${unproven}`],
+        sessionID: freshSession,
+        effect: "ask",
+      }
+      await evaluate(noProvenance)
+      expect(noProvenance.effect).toBe("deny")
+      expect(noProvenance.message).toContain("exact bytes previously admitted")
+    } finally {
+      h.restore()
+    }
+  })
+
+  test("same-attempt stale staged bytes cannot commit after a fresher admitted mutation", async () => {
+    const h = await harness()
+    try {
+      await initializeGitFixture(h.root)
+      const generalSession = "same-attempt-stale-general"
+      const firstSession = "same-attempt-stale-first"
+      const freshSession = "same-attempt-stale-fresh"
+      const started = await h.call(
+        "start",
+        { request: "Specify one requirement across a redispatch." },
+        "general",
+        generalSession,
+      )
+      const workflowId = String(started.workflowId)
+      expect((await h.call(
+        "route",
         {
-          workflowId,
-          stepId: "specifier",
-          paths: ["docs/requirements/outside.md"],
+          humanFacing: false,
+          behavioral: true,
+          structural: false,
+          externalUnknown: false,
+          diagnostic: false,
+          productOutcome: false,
+          implementationRequested: true,
+          executionDepth: "change",
         },
+        "general",
+        generalSession,
+      )).error).toBeUndefined()
+
+      const path = "docs/requirements/same-attempt.md"
+      expect((await h.call(
+        "step_scope",
+        { workflowId, stepId: "specifier", write: [path] },
+        "general",
+        generalSession,
+      )).error).toBeUndefined()
+
+      const firstGrant = await h.call(
+        "dispatch_grant",
+        { workflowId, stepId: "specifier" },
+        "general",
+        generalSession,
+      )
+      expect((await h.call(
+        "attach",
+        { grantId: firstGrant.grantId, workflowId, stepId: "specifier" },
+        "specifier",
+        firstSession,
+      )).attached).toBe(true)
+
+      await mkdir(join(h.root, "docs", "requirements"), { recursive: true })
+      const firstEdit = {
+        tool: "edit",
+        callID: "same-attempt-first-edit",
+        messageID: "same-attempt-first-edit-message",
+        sessionID: firstSession,
+        agent: "specifier",
+        input: {
+          filePath: join(h.root, path),
+          oldString: "",
+          newString: "v1\n",
+        },
+      }
+      await h.toolHooks.get("execute.before")!(firstEdit)
+      await writeFile(join(h.root, path), "v1\n")
+      await h.toolHooks.get("execute.after")!({
+        ...firstEdit,
+        status: "completed",
+        result: "updated",
+      })
+
+      const stageCommand = `git add -- ${path}`
+      const stageEvent = {
+        tool: "shell",
+        callID: "same-attempt-first-stage",
+        messageID: "same-attempt-first-stage-message",
+        sessionID: firstSession,
+        agent: "specifier",
+        input: { command: stageCommand },
+      }
+      const stagePermission: any = {
+        agent: "specifier",
+        action: "shell",
+        resources: [stageCommand],
+        sessionID: firstSession,
+        effect: "ask",
+      }
+      await h.permissionHooks.get("evaluate")!(stagePermission)
+      expect(stagePermission.effect).toBe("allow")
+      await h.toolHooks.get("execute.before")!(stageEvent)
+      await git(h.root, ["add", "--", path])
+      await h.toolHooks.get("execute.after")!({
+        ...stageEvent,
+        status: "completed",
+        result: "staged",
+      })
+
+      const freshGrant = await h.call(
+        "dispatch_grant",
+        { workflowId, stepId: "specifier" },
+        "general",
+        generalSession,
+      )
+      expect((await h.call(
+        "attach",
+        { grantId: freshGrant.grantId, workflowId, stepId: "specifier" },
         "specifier",
         freshSession,
-      )
-      expect(outsideScope.error).toContain("outside the current effective Loom step write scope")
-      expect(outsideScope.error).toContain("General")
+      )).attached).toBe(true)
+
+      const freshEdit = {
+        tool: "edit",
+        callID: "same-attempt-fresh-edit",
+        messageID: "same-attempt-fresh-edit-message",
+        sessionID: freshSession,
+        agent: "specifier",
+        input: {
+          filePath: join(h.root, path),
+          oldString: "v1\n",
+          newString: "v2\n",
+        },
+      }
+      await h.toolHooks.get("execute.before")!(freshEdit)
+      await writeFile(join(h.root, path), "v2\n")
+      await h.toolHooks.get("execute.after")!({
+        ...freshEdit,
+        status: "completed",
+        result: "updated",
+      })
+
+      const commitCommand =
+        "git -c core.hooksPath=/dev/null commit -m 'test: stale same-attempt bytes'"
+      const staleCommit: any = {
+        agent: "specifier",
+        action: "shell",
+        resources: [commitCommand],
+        sessionID: firstSession,
+        effect: "ask",
+      }
+      await h.permissionHooks.get("evaluate")!(staleCommit)
+      expect(staleCommit.effect).toBe("deny")
+      expect(staleCommit.message).toContain("newer unstaged worktree changes")
     } finally {
       h.restore()
     }
@@ -2602,28 +3174,6 @@ Verdict: FAIL
         effect: "ask",
       }
       await h.permissionHooks.get("evaluate")!(freshStage)
-      expect(freshStage.effect).toBe("deny")
-      expect(freshStage.message).toContain("loom_scope_request")
-
-      const continued = await h.call(
-        "scope_request",
-        {
-          workflowId,
-          stepId: "specifier",
-          paths: [path],
-          reason: "Continue exact legacy-admitted bytes in a fresh same-attempt Specifier session.",
-        },
-        "specifier",
-        freshSession,
-      )
-      expect(continued.error).toBeUndefined()
-      expect(continued.resolved).toBe(true)
-      expect(continued.adopted).toBe(true)
-      expect(continued.paths).toEqual([path])
-      expect(continued.sourceSessions).toEqual([childSession])
-
-      freshStage.effect = "ask"
-      await h.permissionHooks.get("evaluate")!(freshStage)
       expect(freshStage.effect).toBe("allow")
     } finally {
       h.restore()
@@ -2709,6 +3259,18 @@ Verdict: FAIL
           stagedFingerprints: {},
         },
       )
+      // Session-cache loss alone is no longer a provenance failure: the same
+      // step attempt can recover exact admitted bytes automatically. Simulate
+      // the actual break-glass condition by deleting the durable admitted-byte
+      // record as well.
+      const provenanceKey = [
+        "git-step-attempt-owned",
+        encodeURIComponent(workflowId),
+        encodeURIComponent("specifier"),
+        "0",
+        encodeURIComponent(path),
+      ].join("/")
+      expect(await h.durableStorage.delete?.(provenanceKey)).toBe(true)
 
       const evaluate = h.permissionHooks.get("evaluate")!
       const deniedStage: any = {
@@ -2720,7 +3282,7 @@ Verdict: FAIL
       }
       await evaluate(deniedStage)
       expect(deniedStage.effect).toBe("deny")
-      expect(deniedStage.message).toContain("stage only files authored")
+      expect(deniedStage.message).toContain("exact bytes previously admitted")
 
       const confirmation = "Recover Git ownership for this exact Specifier file."
       await h.sessionHooks.get("context")!({
@@ -2765,7 +3327,7 @@ Verdict: FAIL
         "general",
         generalSession,
       )
-      expect(outsideScope.error).toContain("declared write scope")
+      expect(outsideScope.error).toContain("current committable Loom write scope")
 
       const recovered = await h.call(
         "git_ownership_recover",
@@ -2867,12 +3429,13 @@ Verdict: FAIL
     }
   })
 
-  test("recovered Specifier scope adoption remains stageable after redispatch and session ownership loss", async () => {
+  test("recovered same-attempt provenance is stageable from a fresh Specifier session", async () => {
     const h = await harness()
     try {
       await initializeGitFixture(h.root)
       const generalSession = "specifier-recovered-redispatch-general"
       const authorSession = "specifier-recovered-redispatch-author"
+      const freshSession = "specifier-recovered-redispatch-fresh"
       const started = await h.call(
         "start",
         { request: "Recover and commit stranded lifecycle requirements after a guard defect." },
@@ -2913,22 +3476,22 @@ Verdict: FAIL
         "general",
         generalSession,
       )
-      const initialAttach = await h.call(
+      expect((await h.call(
         "attach",
         { grantId: initialGrant.grantId, workflowId, stepId: "specifier" },
         "specifier",
         authorSession,
-      )
-      expect(initialAttach.attached).toBe(true)
+      )).attached).toBe(true)
 
-      await mkdir(join(h.root, "docs", "requirements", "lifecycle"), { recursive: true })
+      await mkdir(join(h.root, "docs", "requirements", "lifecycle"), {
+        recursive: true,
+      })
       for (const [index, path] of write.entries()) {
-        // Emulate exact stranded pre-fix bytes: dirty in scope, but no admitted
-        // mutation/ownership record survived.
         await writeFile(join(h.root, path), `stranded-${index}\n`)
       }
 
-      const confirmation = "Recover these exact stranded Specifier requirement files."
+      const confirmation =
+        "Recover these exact stranded Specifier requirement files."
       await h.sessionHooks.get("context")!({
         sessionID: generalSession,
         system: [],
@@ -2954,45 +3517,23 @@ Verdict: FAIL
       expect(recovered.error).toBeUndefined()
       expect(recovered.recovered).toBe(true)
 
-      // Mirror the production sequence: a new dispatch reattaches the original
-      // author session before the spoke asks for continuity.
-      const retryGrant = await h.call(
+      const freshGrant = await h.call(
         "dispatch_grant",
         { workflowId, stepId: "specifier" },
         "general",
         generalSession,
       )
-      const retryAttach = await h.call(
+      expect((await h.call(
         "attach",
-        { grantId: retryGrant.grantId, workflowId, stepId: "specifier" },
+        { grantId: freshGrant.grantId, workflowId, stepId: "specifier" },
         "specifier",
-        authorSession,
-      )
-      expect(retryAttach.attached).toBe(true)
-      expect(retryAttach.attempt).toBe(initialAttach.attempt)
+        freshSession,
+      )).attached).toBe(true)
 
-      const adopted = await h.call(
-        "scope_request",
-        {
-          workflowId,
-          stepId: "specifier",
-          paths: write,
-          reason: "Continue the exact recovered bytes in this redispatched Specifier session.",
-        },
-        "specifier",
-        authorSession,
-      )
-      expect(adopted.error).toBeUndefined()
-      expect(adopted.adopted).toBe(true)
-
-      // The production failure occurred after successful adoption. Prove the
-      // staging guard no longer depends on the transient session-ownership copy:
-      // the durable scope-adoption record must restore it.
       await h.durableStorage.set(
-        `git-session-ownership/${encodeURIComponent(authorSession)}`,
+        `git-session-ownership/${encodeURIComponent(freshSession)}`,
         {
           schemaVersion: 3,
-          authorityId: adopted.authorityId,
           paths: [],
           worktreeFingerprints: {},
           stagedFingerprints: {},
@@ -3004,74 +3545,23 @@ Verdict: FAIL
         agent: "specifier",
         action: "shell",
         resources: [command],
-        sessionID: authorSession,
+        sessionID: freshSession,
         effect: "ask",
       }
       await h.permissionHooks.get("evaluate")!(permission)
       expect(permission.effect).toBe("allow")
 
-      const stageEvent = {
-        tool: "shell",
-        callID: "specifier-recovered-redispatch-stage",
-        messageID: "specifier-recovered-redispatch-stage-message",
-        sessionID: authorSession,
-        agent: "specifier",
-        input: { command },
-      }
-      await h.toolHooks.get("execute.before")!(stageEvent)
-      await git(h.root, ["add", "--", ...write])
-      await h.toolHooks.get("execute.after")!({
-        ...stageEvent,
-        status: "completed",
-        result: "staged",
-      })
-      expect(
-        (await git(h.root, ["diff", "--cached", "--name-only"])).stdout
-          .trim()
-          .split("\n")
-          .filter(Boolean)
-          .sort(),
-      ).toEqual([...write].sort())
-
-      // Adoption is exact-byte and session-bound. A later content change cannot
-      // reuse it after unstaging.
-      await git(h.root, ["reset", "--", ...write])
-      await writeFile(join(h.root, write[0]), "changed-after-adoption\n")
-      const changedPermission: any = {
+      await writeFile(join(h.root, write[0]), "changed-after-recovery\n")
+      const changed: any = {
         agent: "specifier",
         action: "shell",
         resources: [`git add -- ${write[0]}`],
-        sessionID: authorSession,
+        sessionID: freshSession,
         effect: "ask",
       }
-      await h.permissionHooks.get("evaluate")!(changedPermission)
-      expect(changedPermission.effect).toBe("deny")
-      expect(changedPermission.message).toContain("changed after")
-
-      await writeFile(join(h.root, write[0]), "stranded-0\n")
-      const otherSession = "specifier-recovered-redispatch-other"
-      const otherGrant = await h.call(
-        "dispatch_grant",
-        { workflowId, stepId: "specifier" },
-        "general",
-        generalSession,
-      )
-      expect((await h.call(
-        "attach",
-        { grantId: otherGrant.grantId, workflowId, stepId: "specifier" },
-        "specifier",
-        otherSession,
-      )).attached).toBe(true)
-      const otherPermission: any = {
-        agent: "specifier",
-        action: "shell",
-        resources: [`git add -- ${write[0]}`],
-        sessionID: otherSession,
-        effect: "ask",
-      }
-      await h.permissionHooks.get("evaluate")!(otherPermission)
-      expect(otherPermission.effect).toBe("deny")
-      expect(otherPermission.message).toContain("loom_scope_request")
+      await h.permissionHooks.get("evaluate")!(changed)
+      expect(changed.effect).toBe("deny")
+      expect(changed.message).toContain("changed after")
     } finally {
       h.restore()
     }
@@ -3167,6 +3657,103 @@ Verdict: FAIL
     }
   })
 
+  test("completed specialist step loses mutation authority until reopened", async () => {
+    const h = await harness()
+    try {
+      await initializeGitFixture(h.root)
+      const generalSession = "completed-authority-general"
+      const childSession = "completed-authority-specifier"
+      const started = await h.call(
+        "start",
+        { request: "Specify one bounded lifecycle behavior." },
+        "general",
+        generalSession,
+      )
+      const workflowId = String(started.workflowId)
+      expect((await h.call(
+        "route",
+        {
+          humanFacing: false,
+          behavioral: true,
+          structural: false,
+          externalUnknown: false,
+          diagnostic: false,
+          productOutcome: false,
+          implementationRequested: true,
+          executionDepth: "change",
+        },
+        "general",
+        generalSession,
+      )).error).toBeUndefined()
+
+      const grant = await h.call(
+        "dispatch_grant",
+        { workflowId, stepId: "specifier" },
+        "general",
+        generalSession,
+      )
+      expect((await h.call(
+        "attach",
+        { grantId: grant.grantId, workflowId, stepId: "specifier" },
+        "specifier",
+        childSession,
+      )).attached).toBe(true)
+
+      const evaluate = h.permissionHooks.get("evaluate")!
+      const before: any = {
+        agent: "specifier",
+        action: "edit",
+        resources: ["docs/requirements/post-complete.md"],
+        sessionID: childSession,
+        effect: "ask",
+      }
+      await evaluate(before)
+      expect(before.effect).not.toBe("deny")
+
+      expect((await h.call(
+        "complete",
+        {
+          workflowId,
+          stepId: "specifier",
+          summary: "Specification step completed without repository mutation.",
+        },
+        "specifier",
+        childSession,
+      )).error).toBeUndefined()
+
+      const after: any = { ...before, effect: "ask" }
+      await evaluate(after)
+      expect(after.effect).toBe("deny")
+      expect(after.message).toContain("current runnable Loom step attempt")
+
+      const elevation = await h.call(
+        "scope_elevate",
+        {
+          workflowId,
+          stepId: "specifier",
+          paths: ["docs/requirements/after-complete.md"],
+          reason: "Attempted late write after completion.",
+        },
+        "specifier",
+        childSession,
+      )
+      expect(elevation.error).toContain("currently runnable pending step")
+
+      const stage: any = {
+        agent: "specifier",
+        action: "shell",
+        resources: ["git add docs/requirements/post-complete.md"],
+        sessionID: childSession,
+        effect: "ask",
+      }
+      await evaluate(stage)
+      expect(stage.effect).toBe("deny")
+      expect(stage.message).toContain("current runnable Loom step attempt")
+    } finally {
+      h.restore()
+    }
+  })
+
   test("reopened scoped Research cannot fall back to its broader report ceiling", async () => {
     const h = await harness()
     try {
@@ -3194,6 +3781,18 @@ Verdict: FAIL
       )).error).toBeUndefined()
 
       const assigned = "ephemeral-reports/research/assigned.md"
+      const invalidProductScope = await h.call(
+        "step_scope",
+        {
+          workflowId,
+          stepId: "research",
+          write: ["src/research-should-not-edit.ts"],
+        },
+        "general",
+        "research-scope-general",
+      )
+      expect(invalidProductScope.error).toContain("independent/advisory role")
+
       expect((await h.call(
         "step_scope",
         { workflowId, stepId: "research", write: [assigned] },
@@ -3225,6 +3824,49 @@ Verdict: FAIL
       await evaluate(current)
       expect(current.effect).not.toBe("deny")
 
+      const extraReport = "ephemeral-reports/research/other.md"
+      const outsideAssigned: any = {
+        agent: "research",
+        action: "edit",
+        resources: [extraReport],
+        sessionID: "research-scope-author",
+        effect: "ask",
+      }
+      await evaluate(outsideAssigned)
+      expect(outsideAssigned.effect).toBe("deny")
+      expect(outsideAssigned.message).toContain("loom_scope_elevate")
+
+      const reportElevation = await h.call(
+        "scope_elevate",
+        {
+          workflowId,
+          stepId: "research",
+          paths: [extraReport],
+          reason: "The investigation needs a second role-owned report artifact.",
+        },
+        "research",
+        "research-scope-author",
+      )
+      expect(reportElevation.error).toBeUndefined()
+      expect(reportElevation.continue).toBe(true)
+
+      outsideAssigned.effect = "ask"
+      await evaluate(outsideAssigned)
+      expect(outsideAssigned.effect).not.toBe("deny")
+
+      const productElevation = await h.call(
+        "scope_elevate",
+        {
+          workflowId,
+          stepId: "research",
+          paths: ["src/research-should-not-edit.ts"],
+          reason: "Research should not become the implementation role.",
+        },
+        "research",
+        "research-scope-author",
+      )
+      expect(productElevation.error).toContain("independent/advisory role")
+
       expect((await h.call(
         "reopen",
         {
@@ -3243,13 +3885,30 @@ Verdict: FAIL
       const stale: any = {
         agent: "research",
         action: "edit",
-        resources: ["ephemeral-reports/research/other.md"],
+        resources: [extraReport],
         sessionID: "research-scope-author",
         effect: "ask",
       }
       await evaluate(stale)
       expect(stale.effect).toBe("deny")
       expect(stale.message).toContain("fresh attachment")
+
+      const freshGrant = await h.call(
+        "dispatch_grant",
+        { workflowId, stepId: "research" },
+        "general",
+        "research-scope-general",
+      )
+      expect((await h.call(
+        "attach",
+        { grantId: freshGrant.grantId, workflowId, stepId: "research" },
+        "research",
+        "research-scope-author",
+      )).attached).toBe(true)
+
+      stale.effect = "ask"
+      await evaluate(stale)
+      expect(stale.effect).not.toBe("deny")
     } finally {
       h.restore()
     }
@@ -3389,7 +4048,7 @@ Verdict: FAIL
       }
       await h.permissionHooks.get("evaluate")!(staleAttempt)
       expect(staleAttempt.effect).toBe("deny")
-      expect(staleAttempt.message).toContain("current Loom step attempt")
+      expect(staleAttempt.message).toContain("current runnable Loom step attempt")
     } finally {
       h.restore()
     }
@@ -3486,7 +4145,19 @@ Verdict: FAIL
 
       await expect(
         h.toolHooks.get("execute.before")!(racedEditEvent),
-      ).rejects.toThrow("outside the current declared Loom step write scope")
+      ).rejects.toThrow("outside the current Loom write scope")
+
+      const staleStageEvent = {
+        tool: "shell",
+        callID: "specifier-narrow-stale-stage",
+        messageID: "specifier-narrow-stale-stage-message",
+        sessionID: "specifier-narrow-author",
+        agent: "specifier",
+        input: { command: `git add ${earlier}` },
+      }
+      await expect(
+        h.toolHooks.get("execute.before")!(staleStageEvent),
+      ).rejects.toThrow("outside the current committable Loom write scope")
 
       const completed = await h.call(
         "complete",
@@ -3586,7 +4257,7 @@ Verdict: FAIL
       }
       await evaluate!(delayedStage)
       expect(delayedStage.effect).toBe("deny")
-      expect(delayedStage.message).toContain("stage only files authored")
+      expect(delayedStage.message).toContain("exact bytes previously admitted")
 
       const preExistingEdit: any = {
         agent: "worker",
@@ -3716,7 +4387,7 @@ Verdict: FAIL
       }
       await evaluate!(foreignStage)
       expect(foreignStage.effect).toBe("deny")
-      expect(foreignStage.message).toContain("changed after this task")
+      expect(foreignStage.message).toContain("changed after this step attempt")
 
       // Restore the exact content produced by the admitted Worker mutation.
       await writeFile(join(h.root, "src", "owned.ts"), "owned\n")
@@ -3731,7 +4402,7 @@ Verdict: FAIL
       }
       await evaluate!(foreignModeStage)
       expect(foreignModeStage.effect).toBe("deny")
-      expect(foreignModeStage.message).toContain("changed after this task")
+      expect(foreignModeStage.message).toContain("changed after this step attempt")
 
       await chmod(join(h.root, "src", "owned.ts"), 0o644)
 
@@ -3753,7 +4424,7 @@ Verdict: FAIL
           agent: "worker",
           input: { command: "git add src/owned.ts" },
         }),
-      ).rejects.toThrow("changed after this role/task's last admitted mutation")
+      ).rejects.toThrow("changed after this step attempt's last admitted mutation")
       await writeFile(join(h.root, "src", "owned.ts"), "owned\n")
 
       const incomplete = await h.call(

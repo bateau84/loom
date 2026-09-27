@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, rename, rm, symlink, writeFile } from "node:f
 import { join } from "node:path"
 import { tmpdir } from "node:os"
 import { fileURLToPath } from "node:url"
-import { RUNTIME_STATE_VERSION, consumeDispatchGrant, createProjectStorage, createTransactionalStorage, ensureRuntimeStateVersion, findUsableDispatchGrant, importLegacyPluginStorage, issueDispatchGrant, migrateLegacySessionState, resolveRuntimeIdentity, sessionBoundToOq, sessionBoundToStep, sessionBoundToWorkflow } from "./runtime"
+import { RUNTIME_STATE_VERSION, consumeDispatchGrant, createProjectStorage, createTransactionalStorage, ensureRuntimeStateVersion, findUsableDispatchGrant, importLegacyPluginStorage, issueDispatchGrant, migrateLegacySessionState, resolveRuntimeIdentity, sessionBoundToOq, sessionBoundToStep, sessionBoundToWorkflow, tryAcquireRuntimeLocks } from "./runtime"
 
 // These identity fixtures intentionally model the pre-upgrade v1 store.
 // Schema transformation/replay is tested separately above and at the plugin boundary.
@@ -1903,6 +1903,51 @@ describe("Loom runtime identity and scoped storage", () => {
     })
   })
 
+  test("installation-scoped hard-boundary locks contend across projects", async () => {
+    await withRoots(async (root) => {
+      const projectA = join(root, "external-lock-project-a")
+      const projectB = join(root, "external-lock-project-b")
+      await mkdir(projectA, { recursive: true })
+      await mkdir(projectB, { recursive: true })
+
+      const runtimeA = await resolveRuntimeIdentity(projectA, new MemoryStorage())
+      const runtimeB = await resolveRuntimeIdentity(projectB, new MemoryStorage())
+      expect(runtimeA.installationId).toBe(runtimeB.installationId)
+      expect(runtimeA.runtimeRoot).toBe(runtimeB.runtimeRoot)
+      expect(runtimeA.projectId).not.toBe(runtimeB.projectId)
+
+      const externalResource = "hard-boundary:/tmp/loom-shared-external.json"
+      const held = await tryAcquireRuntimeLocks(runtimeA, [{
+        aggregate: "file-write",
+        resourceIdentity: externalResource,
+        scope: "installation",
+      }])
+      expect("release" in held).toBe(true)
+
+      const blocked = await tryAcquireRuntimeLocks(runtimeB, [{
+        aggregate: "file-write",
+        resourceIdentity: externalResource,
+        scope: "installation",
+      }])
+      expect(blocked).toEqual({ busyResource: externalResource })
+
+      if ("release" in held) await held.release()
+
+      const projectAOnly = await tryAcquireRuntimeLocks(runtimeA, [{
+        aggregate: "file-write",
+        resourceIdentity: "src/shared.ts",
+      }])
+      const projectBOnly = await tryAcquireRuntimeLocks(runtimeB, [{
+        aggregate: "file-write",
+        resourceIdentity: "src/shared.ts",
+      }])
+      expect("release" in projectAOnly).toBe(true)
+      expect("release" in projectBOnly).toBe(true)
+      if ("release" in projectBOnly) await projectBOnly.release()
+      if ("release" in projectAOnly) await projectAOnly.release()
+    })
+  })
+
   test("one installation persists one lock root across different process runtime environments", async () => {
     await withRoots(async (root) => {
       const project = join(root, "project")
@@ -2253,7 +2298,7 @@ describe("Loom runtime identity and scoped storage", () => {
 
 
 describe("production runtime writer fencing", () => {
-  test("legacy records survive v6 and all older fence-capable writers are rejected", async () => {
+  test("legacy records survive v7 and all older fence-capable writers are rejected", async () => {
     await withRoots(async (root) => {
       const project = join(root, "holistic-plan-upgrade")
       await mkdir(project, { recursive: true })
@@ -2280,11 +2325,15 @@ describe("production runtime writer fencing", () => {
       const priorV5 = createProjectStorage(raw, runtime.projectId, { expectedRuntimeVersion: 5 })
       expect(await priorV5.get("workflow/before-upgrade")).toEqual(history)
 
+      await ensureRuntimeStateVersion(raw, runtime, { targetVersion: 6 })
+      const priorV6 = createProjectStorage(raw, runtime.projectId, { expectedRuntimeVersion: 6 })
+      expect(await priorV6.get("workflow/before-upgrade")).toEqual(history)
+
       const schema = await ensureRuntimeStateVersion(raw, runtime)
       expect(schema.currentVersion).toBe(RUNTIME_STATE_VERSION)
-      expect(schema.lastUpgradeId).toBe("specialist-step-scopes-v6")
+      expect(schema.lastUpgradeId).toBe("traceable-scope-elevation-v7")
 
-      for (const stale of [old, draftV2, priorV3, priorV4, priorV5]) {
+      for (const stale of [old, draftV2, priorV3, priorV4, priorV5, priorV6]) {
         await expect(stale.set("workflow/before-upgrade", { overwritten: true })).rejects.toThrow("does not match")
         await expect(stale.get("workflow/before-upgrade")).rejects.toThrow("does not match")
       }
@@ -2292,7 +2341,7 @@ describe("production runtime writer fencing", () => {
       const current = createProjectStorage(raw, runtime.projectId, { expectedRuntimeVersion: RUNTIME_STATE_VERSION })
       expect(await current.get("workflow/before-upgrade")).toEqual(history)
       const receipts = await raw.scan({ prefix: "installation/runtime-upgrades/" })
-      expect(receipts.entries).toHaveLength(5)
+      expect(receipts.entries).toHaveLength(6)
       await ensureRuntimeStateVersion(raw, runtime)
       expect(await raw.scan({ prefix: "installation/runtime-upgrades/" })).toEqual(receipts)
       expect(await current.get("workflow/before-upgrade")).toEqual(history)

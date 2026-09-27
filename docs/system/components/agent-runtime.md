@@ -37,12 +37,15 @@ Each subagent runs fresh and is given only its bounded objective/context.
 
 Loom derives ordinary repository capability from the already-attached role; it does not issue a second per-command grant.
 
-- **Worker** may inspect, build, test, run, stage files inside its Task write scope, commit only scoped staged changes through Loom's hook-isolated commit form, rebase, push, create PRs, and inspect CI. Dangerous broad staging, plain force-push, arbitrary shell composition, and PR merge remain blocked.
-- **Diagnostic** may inspect, build/test through the existing verification allowlist, and inspect Git/PR/CI state conversationally. Arbitrary project execution is allowed only after attachment to a governed Diagnostic step, because raw project code can have host or external side effects even though repository/delivery mutation remains outside Diagnostic authority.
-- **Designer, Specifier, Architect, Documenter, and General** may stage and commit only their fixed durable authoring scopes. Loom snapshots pre-existing dirty paths when the role takes ownership, refuses to absorb those paths, and admits a commit only when every staged path belongs to the role.
-- Downstream roles never inherit ownership of unrelated dirty or staged files. `loom_complete` rejects new uncommitted changes created in the role's owned scope.
+- **Worker** may inspect, build, test, and run within its execution policy. Its Task write paths are a starting expectation; when implementation discovery finds another project-local mutation target, Worker calls `loom_scope_elevate` and continues immediately when `continue=true`.
+- **Designer, Specifier, Architect, Documenter, Worker, and other attached producer roles** mutate product files only under the exact current step attempt and current effective Loom write scope. Role artifact paths are defaults for expected work, not hidden hard file ceilings. Crossing a role default is recorded as scope activity for General/review visibility.
+- **Hard-boundary writes** outside the project, through a symlink escape, or into repository-internal state return `continue=false`. The child stops; only the exact user **Allow once** decision can authorize those requested paths for that step attempt. The decision is never remembered.
+- **Git delivery follows product write authority.** Loom records exact admitted file fingerprints per step attempt. Those exact bytes may be staged/committed; a fresh session on the same attempt can use the durable provenance without a separate adoption tool. Untouched, unproven, or subsequently changed dirty bytes remain ineligible.
+- **Ephemeral reports** are a separate output class: producer-scoped and intentionally non-committable. Durable retention uses report promotion.
+- **Diagnostic** may inspect, build/test through the existing verification allowlist, and inspect Git/PR/CI state conversationally. Arbitrary project execution remains governed because raw project code can have host/external side effects.
+- Dangerous broad staging, plain force-push, arbitrary shell composition, and PR merge remain blocked unless a separate explicit capability authorizes them.
 
-This keeps delivery ownership with the role that authored the durable change without adding extra Loom workflow ceremony.
+`loom_complete` rejects admitted product changes that remain uncommitted. Reopen/reroute advances the step attempt, so prior-attempt write/Git provenance cannot silently carry into new work.
 
 ## Source
 

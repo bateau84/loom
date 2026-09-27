@@ -106,7 +106,19 @@ It should ask you when the unresolved choice is genuinely user-owned, such as:
 - changing the product goal or material scope;
 - choosing subjective product behavior not already settled;
 - weakening an accepted guarantee;
-- accepting material security, privacy, legal, financial, or destructive-operation risk.
+- accepting material security, privacy, legal, financial, or destructive-operation risk;
+- authorizing a hard capability boundary that Loom deliberately cannot grant to itself.
+
+### Write-scope discovery and hard boundaries
+
+Loom does not require General to predict every file an implementation will need before work starts. Inside the current project, an attached producing agent can expand its write scope when discovery reveals another required file or folder; Loom records that elevation and the agent continues in the same session.
+
+Some paths are deliberately different. Writes outside the current project, through a symlink that resolves outside it, or into protected Git/Loom runtime state require an explicit user decision. Loom returns control and presents an exact menu:
+
+- **Allow once** — authorize only the disclosed path(s) for that current step attempt;
+- **Deny** — keep the boundary closed.
+
+This approval is never remembered and does not become a standing policy.
 
 ## 5. Inspect progress
 

@@ -49,7 +49,7 @@ const PROJECT_PREFIX = "project/"
 const GLOBAL_PREFIXES = ["installation/", "episode/", "heuristic/"]
 
 export const RUNTIME_BASELINE_VERSION = 1
-export const RUNTIME_STATE_VERSION = 6
+export const RUNTIME_STATE_VERSION = 7
 
 export type RuntimeUpgradePhase =
   | "canonical-upgrade"
@@ -131,6 +131,19 @@ const RUNTIME_UPGRADE_STEPS: RuntimeUpgradeStep[] = [{
   // specialist step scopes. Fence them before the new authorization protocol
   // can become authoritative in shared runtime state.
   applyInstallation: async () => ({ specialistStepScopes: true }),
+}, {
+  id: "traceable-scope-elevation-v7",
+  fromVersion: 6,
+  toVersion: 7,
+  // No legacy project record rewrite is required. Advancing the runtime
+  // version fences already-running v6 writers that lack self-elevation,
+  // runnable-attempt mutation expiry, and installation-scoped hard-boundary
+  // write locks.
+  applyInstallation: async () => ({
+    traceableScopeElevation: true,
+    runnableAttemptMutationFence: true,
+    installationScopedHardBoundaryLocks: true,
+  }),
 }]
 
 function sha256(value: string) {
@@ -374,6 +387,7 @@ async function acquireFlock(
 type RuntimeLockResource = {
   aggregate: string
   resourceIdentity: string
+  scope?: "project" | "installation"
 }
 
 function runtimeLockPath(runtime: LoomRuntimeIdentity, resource: RuntimeLockResource) {
@@ -381,7 +395,7 @@ function runtimeLockPath(runtime: LoomRuntimeIdentity, resource: RuntimeLockReso
     runtime.runtimeRoot,
     "locks",
     runtime.installationId,
-    runtime.projectId,
+    resource.scope === "installation" ? "installation" : runtime.projectId,
     resource.aggregate,
     `${sha256(resource.resourceIdentity)}.lock`,
   )
@@ -488,14 +502,11 @@ export async function withInstallationRuntimeLock<T>(
   resourceIdentity: string,
   fn: () => Promise<T>,
 ): Promise<T> {
-  const lockPath = join(
-    runtime.runtimeRoot,
-    "locks",
-    runtime.installationId,
-    "installation",
+  const lockPath = runtimeLockPath(runtime, {
     aggregate,
-    `${sha256(resourceIdentity)}.lock`,
-  )
+    resourceIdentity,
+    scope: "installation",
+  })
   return withRuntimeLockPaths(runtime, [lockPath], fn, { enforceRuntimeVersion: false })
 }
 
