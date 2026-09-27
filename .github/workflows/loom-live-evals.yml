@@ -1,8 +1,6 @@
 name: Loom Live Behavioral Evals
 
 on:
-  push:
-    branches: [feat/restore-diagnostic-root-cause]
   workflow_dispatch:
     inputs:
       model:
@@ -80,7 +78,6 @@ permissions:
 
 jobs:
   eval:
-    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 90
     env:
@@ -189,55 +186,6 @@ jobs:
         if: always()
         with:
           name: loom-live-evals
-          path: .loom-evals/
-          if-no-files-found: warn
-          include-hidden-files: true
-
-
-
-
-  diagnostic-readiness:
-    if: github.event_name == 'push'
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-        with:
-          persist-credentials: false
-
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
-        with:
-          bun-version: 1.4.2
-
-      - run: bun install --frozen-lockfile
-      - run: bun run eval:validate
-
-      - name: Run Diagnostic Product Readiness evals
-        env:
-          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
-        uses: bateau84/opencode-eval-runner@ad4d6a26fc137202e4f35f2a14503f53b81991ca
-        with:
-          engine: docker
-          prepare-opencode: true
-          prepare-copilot: false
-          opencode-image: ghcr.io/bateau84/opencode-eval-runner@sha256:68ef7322c75aede0e8cc76d0e3531e8b82dd417bbb5e5100264a89eab7fe8627
-          artifact-dir: .loom-evals
-          command: |
-            python3 scripts/run-evals.py \
-              --engine docker \
-              --model opencode/gpt-5.6-luna \
-              --judge-model opencode/gpt-5.6-luna \
-              --target-transport opencode \
-              --judge-transport opencode \
-              --target-kind agent \
-              --target diagnostic \
-              --iterations 1 \
-              --env OPENCODE_API_KEY
-
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        if: always()
-        with:
-          name: diagnostic-product-readiness
           path: .loom-evals/
           if-no-files-found: warn
           include-hidden-files: true
