@@ -1,0 +1,51 @@
+{
+  "skill": "typescript-async",
+  "version": "1.0.0",
+  "shape": 1,
+  "cases": [
+    {
+      "id": "TypeScriptAsync-01",
+      "name": "async-foreach-does-not-wait",
+      "trap": "forEach ignores returned Promises, so the outer function can finish before saves finish and rejections may be unowned.",
+      "prompt": "Fix: `async function saveAll(items){ items.forEach(async item => { await save(item) }); }`. The contract requires saveAll to resolve only after every save succeeds, failing if any save fails.",
+      "expectations": [
+        "Replaces async forEach with an owned Promise pattern such as awaiting Promise.all over mapped saves when saves are independent.",
+        "Makes saveAll wait for all requested work under the stated fail-fast contract.",
+        "Keeps save rejections attached to saveAll rather than floating."
+      ]
+    },
+    {
+      "id": "TypeScriptAsync-02",
+      "name": "revalidate-state-after-await",
+      "trap": "A pre-await generation or current pointer can become stale while external work is in flight.",
+      "prompt": "A cache refresh reads `const generation = state.generation`, awaits fetchRemote(), then always writes the result into state. Another refresh may advance generation while the fetch is pending. What must the implementation do?",
+      "expectations": [
+        "Recognizes that shared state may change across await.",
+        "Re-checks a generation/token/current request identity before committing, or serializes through an existing accepted mutation boundary.",
+        "Prevents an older completion from overwriting newer state."
+      ]
+    },
+    {
+      "id": "TypeScriptAsync-03",
+      "name": "promise-race-timeout-does-not-cancel-loser",
+      "trap": "Promise.race returns a timeout but the underlying request continues and may later mutate state.",
+      "prompt": "Review a timeout helper implemented as `await Promise.race([fetchAndApply(), delay(1000).then(() => { throw new Error('timeout') })])`. Is the operation actually stopped at one second?",
+      "expectations": [
+        "Explains that Promise.race does not cancel the losing fetchAndApply operation.",
+        "Uses AbortController or another supported cancellation mechanism, or otherwise suppresses/guards late effects.",
+        "Cleans up timeout resources or listeners when the main operation wins."
+      ]
+    },
+    {
+      "id": "TypeScriptAsync-04",
+      "name": "best-effort-needs-all-outcomes",
+      "trap": "Promise.all fails fast and stops reporting later outcomes even though every notification result is required.",
+      "prompt": "Send 20 independent notifications. The requirement is: attempt every notification and return one success/failure result per recipient. Which Promise pattern fits and why?",
+      "expectations": [
+        "Uses Promise.allSettled or an equivalent explicit per-item error collector because all outcomes must be observed.",
+        "Does not use fail-fast Promise.all as the sole collector under this requirement.",
+        "Still considers bounded concurrency if the collection size or resource cost warrants it."
+      ]
+    }
+  ]
+}

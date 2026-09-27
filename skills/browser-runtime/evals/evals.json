@@ -1,0 +1,66 @@
+{
+  "skill": "browser-runtime",
+  "version": "1.0.0",
+  "shape": 1,
+  "cases": [
+    {
+      "id": "BrowserRuntime-01",
+      "name": "fetch-http-error-does-not-reject",
+      "trap": "Catch-only error handling treats HTTP 404 or 500 as success because fetch resolves with a Response.",
+      "prompt": "Review: `try { const r = await fetch(url); return await r.json(); } catch { return null; }`. The application considers any non-2xx response a failure. What is missing?",
+      "expectations": [
+        "Checks response.ok or status before treating the response as success.",
+        "Explains that fetch ordinarily resolves for HTTP 4xx and 5xx while catch handles network or abort-style rejection instead.",
+        "Accounts for response-body parsing separately from HTTP status."
+      ]
+    },
+    {
+      "id": "BrowserRuntime-02",
+      "name": "abort-superseded-request",
+      "trap": "An older search request can finish after a newer request and overwrite the visible results.",
+      "prompt": "A typeahead starts fetch(`/search?q=${q}`) on every input and assigns results when each request completes. Fast typing sometimes shows results for an older query. Fix the browser-runtime lifecycle.",
+      "expectations": [
+        "Uses AbortController or AbortSignal to cancel superseded fetches when appropriate.",
+        "Also ensures a late or stale completion cannot commit over the current query or result owner.",
+        "Treats expected abort separately from a real request failure and cleans up request ownership."
+      ]
+    },
+    {
+      "id": "BrowserRuntime-03",
+      "name": "pushstate-does-not-fire-popstate",
+      "trap": "Code waits for popstate immediately after pushState, so its own programmatic navigation never runs the expected update.",
+      "prompt": "A router calls history.pushState(...), then expects its popstate listener to render the new route immediately. Why is that wrong?",
+      "expectations": [
+        "Explains that pushState adds an entry but does not itself fire popstate.",
+        "Updates or renders the programmatic navigation directly and reserves popstate handling for traversal events.",
+        "Keeps URL and history state ownership explicit rather than relying on an accidental event assumption."
+      ]
+    },
+    {
+      "id": "BrowserRuntime-04",
+      "name": "storage-event-is-cross-document",
+      "trap": "The code writes localStorage then waits for the same tab's storage event to update itself.",
+      "prompt": "Tab A calls localStorage.setItem and relies on its own storage event listener to update in-memory state. Sometimes it never updates. What should the implementation assume?",
+      "expectations": [
+        "States that the storage event is for other relevant documents or contexts, not a reliable self-notification for the writing document.",
+        "Updates Tab A's local in-memory state directly when it writes while using storage events for cross-tab synchronization.",
+        "Handles serialized and parsed storage values as an external persistence boundary."
+      ]
+    },
+    {
+      "id": "BrowserRuntime-05",
+      "name": "remove-listener-matches-capture-not-options-object",
+      "trap": "The code assumes removeEventListener must receive the exact same options object used during registration, obscuring the real matching rule and encouraging unnecessary shared option state.",
+      "prompt": "A listener was registered with `const opts = { capture: true, passive: true }; el.addEventListener('click', onClick, opts)`. A teammate says cleanup must reuse that exact `opts` object or removal will fail. Is that correct? Show the cleanup rule that actually matters.",
+      "expectations": [
+        "Rejects the claim that removeEventListener requires the same options-object identity.",
+        "Uses the same event type and listener with a matching capture=true setting for removal.",
+        "Explains that passive/once and options-object identity are not part of removeEventListener matching, while capture is."
+      ],
+      "negative_expectations": [
+        "Must not require retaining the original options object solely for removeEventListener matching.",
+        "Must not change capture=true to capture=false during removal."
+      ]
+    }
+  ]
+}
