@@ -4512,6 +4512,35 @@ Verdict: FAIL
         result: "staged",
       })
 
+      // Session-local staged fingerprints are a cache. If that entry is lost,
+      // the same step attempt may re-establish it only from its durable byte
+      // provenance and an index entry that still matches the admitted worktree.
+      const ownershipKey = `git-session-ownership/${encodeURIComponent("git-ownership-worker")}`
+      const ownershipBeforeRecovery = await h.durableStorage.get(ownershipKey) as any
+      const admittedStageFingerprint = ownershipBeforeRecovery.stagedFingerprints["src/owned.ts"]
+      delete ownershipBeforeRecovery.stagedFingerprints["src/owned.ts"]
+      await h.durableStorage.set(ownershipKey, ownershipBeforeRecovery)
+
+      const recoveredCommit: any = {
+        agent: "worker",
+        action: "shell",
+        resources: [
+          "git -c core.hooksPath=/dev/null commit -m 'test: recover staged fingerprint'",
+        ],
+        sessionID: "git-ownership-worker",
+        effect: "ask",
+      }
+      await evaluate!(recoveredCommit)
+      expect(recoveredCommit.effect).toBe("allow")
+      const ownershipAfterRecovery = await h.durableStorage.get(ownershipKey) as any
+      expect(ownershipAfterRecovery.stagedFingerprints["src/owned.ts"]).toBe(
+        admittedStageFingerprint,
+      )
+
+      // Loss of the recovered cache entry still cannot bless subsequently
+      // changed index content.
+      delete ownershipAfterRecovery.stagedFingerprints["src/owned.ts"]
+      await h.durableStorage.set(ownershipKey, ownershipAfterRecovery)
       await writeFile(join(h.root, "src", "owned.ts"), "foreign-index\n")
       await git(h.root, ["add", "src/owned.ts"])
       await writeFile(join(h.root, "src", "owned.ts"), "owned\n")

@@ -955,11 +955,46 @@ async function commitScopeError(
       }
 
       const changedIndex: string[] = []
+      let recoveredStagedFingerprint = false
       for (const raw of staged) {
         const path = normalizeRepoPath(raw)
         const expected = ownership.stagedFingerprints[path]
         const actual = await stagedFingerprint(projectDirectory, path)
-        if (!expected || expected !== actual) changedIndex.push(path)
+        if (expected === actual) continue
+
+        // A missing session-local fingerprint may be recovered only when the
+        // current step attempt independently proves the exact worktree bytes
+        // and the staged index still matches those bytes. Never treat a
+        // changed saved fingerprint as cache loss: it is stale provenance.
+        if (!expected && binding) {
+          const provenance = (await ctx.storage.get(
+            gitStepAttemptOwnedPathKey(
+              binding.workflowId,
+              binding.stepId,
+              binding.attempt,
+              path,
+            ),
+          )) as GitStepAttemptOwnedPath | undefined
+          const current = await worktreeFingerprint(projectDirectory, path)
+          if (
+            provenance?.schemaVersion === 1 &&
+            provenance.authorityId === binding.authorityId &&
+            provenance.workflowId === binding.workflowId &&
+            provenance.stepId === binding.stepId &&
+            provenance.attempt === binding.attempt &&
+            provenance.path === path &&
+            provenance.fingerprint === current &&
+            await gitIndexMatchesWorktree(projectDirectory, path)
+          ) {
+            ownership.stagedFingerprints[path] = actual
+            recoveredStagedFingerprint = true
+            continue
+          }
+        }
+        changedIndex.push(path)
+      }
+      if (recoveredStagedFingerprint) {
+        await ctx.storage.set(gitSessionOwnershipKey(sessionID), ownership)
       }
       if (changedIndex.length > 0) {
         return `Git commit denied: staged content changed after this role/session staged it: ${changedIndex.join(", ")}`
