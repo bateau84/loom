@@ -4576,6 +4576,68 @@ Verdict: FAIL
     }
   })
 
+  test("a lost post-stage hook stays locked until the exact tool result is terminal", async () => {
+    const h = await harness()
+    try {
+      await initializeGitFixture(h.root)
+      await writeFile(join(h.root, "src", "stage-crash.ts"), "base\nseparator\nold\n")
+      await git(h.root, ["add", "--", "src/stage-crash.ts"])
+      await git(h.root, ["commit", "-m", "baseline interrupted staging"])
+      await writeFile(join(h.root, "src", "stage-crash.ts"), "foreign\nbase\nseparator\nold\n")
+      const general = "stage-crash-general"
+      const worker = "stage-crash-worker"
+      const started = await h.call("start", { request: "Exercise interrupted owned-delta staging." }, "general", general)
+      const workflowId = String(started.workflowId)
+      expect((await h.call("route", {
+        humanFacing: false, behavioral: false, structural: false, externalUnknown: false,
+        diagnostic: false, productOutcome: false, implementationRequested: true, executionDepth: "task",
+      }, "general", general)).error).toBeUndefined()
+      expect((await h.call("task_scope", {
+        workflowId, stepId: "worker", write: ["src/stage-crash.ts"],
+      }, "general", general)).error).toBeUndefined()
+      const grant = await h.call("dispatch_grant", { workflowId, stepId: "worker" }, "general", general)
+      expect((await h.call("attach", { grantId: grant.grantId, workflowId, stepId: "worker" }, "worker", worker)).attached).toBe(true)
+
+      const mutation = {
+        tool: "edit", callID: "stage-crash-edit", sessionID: worker, agent: "worker",
+        input: { filePath: join(h.root, "src", "stage-crash.ts") },
+      }
+      await h.toolHooks.get("execute.before")?.(mutation)
+      await writeFile(join(h.root, "src", "stage-crash.ts"), "foreign\nbase\nseparator\nnew\n")
+      await h.toolHooks.get("execute.after")?.({ ...mutation, status: "completed", result: "updated" })
+
+      const stageCommand = "git add -- src/stage-crash.ts"
+      const stage = { tool: "shell", callID: "stage-crash-add", messageID: "stage-crash-message", sessionID: worker, agent: "worker", input: { command: stageCommand } }
+      await h.toolHooks.get("execute.before")?.(stage)
+      await git(h.root, ["add", "--", "src/stage-crash.ts"])
+      h.setSessionContext(worker, [{
+        id: "stage-crash-message",
+        parts: [{ type: "tool", callID: "stage-crash-add", tool: "shell", messageID: "stage-crash-message", state: { status: "running" } }],
+      }])
+      await h.emitEvent({ type: "session.idle", properties: { sessionID: worker } })
+      const retry = {
+        tool: "shell", callID: "stage-crash-retry", sessionID: worker, agent: "worker",
+        input: { command: stageCommand },
+      }
+      await expect(h.toolHooks.get("execute.before")?.(retry)).rejects.toThrow("locked for write by another agent")
+
+      h.setSessionContext(worker, [{
+        id: "stage-crash-message",
+        parts: [{ type: "tool", callID: "stage-crash-add", tool: "shell", messageID: "stage-crash-message", state: { status: "completed" } }],
+      }])
+      await h.emitEvent({ type: "session.idle", properties: { sessionID: worker } })
+      await expect(h.toolHooks.get("execute.before")?.(retry)).rejects.toThrow("owned-delta HEAD/index baseline changed")
+      expect((await git(h.root, ["show", ":src/stage-crash.ts"])).stdout).toBe("foreign\nbase\nseparator\nnew\n")
+      const commit = "git -c core.hooksPath=/dev/null commit -m 'test: reject interrupted stage'"
+      const commitPermission: any = { agent: "worker", action: "shell", resources: [commit], sessionID: worker }
+      await h.permissionHooks.get("evaluate")!(commitPermission)
+      expect(commitPermission.effect).toBe("deny")
+      expect(commitPermission.message).toContain("admitted mutations lack complete delta provenance")
+    } finally {
+      h.restore()
+    }
+  })
+
   test("refuses ambiguous repair of pre-existing dirt while preserving unrelated ownership checks", async () => {
     const h = await harness()
     try {
