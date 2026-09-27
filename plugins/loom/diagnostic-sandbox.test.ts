@@ -80,6 +80,66 @@ describe("Diagnostic sandbox", () => {
     await expect(stat(sandbox.rootPath)).rejects.toThrow()
   })
 
+  test("baseline Git ignores host config, templates, hooks, and filters", async () => {
+    const root = await tempRoot()
+    const project = join(root, "project")
+    const runtimeRoot = join(root, "runtime")
+    const template = join(root, "host-template")
+    const hookProof = join(root, "host-hook-ran")
+    const filterProof = join(root, "host-filter-ran")
+    const filterScript = join(root, "host-filter.sh")
+    const hostConfig = join(root, "host-gitconfig")
+
+    await mkdir(join(project, "src"), { recursive: true })
+    await mkdir(join(template, "hooks"), { recursive: true })
+    await writeFile(join(project, ".gitattributes"), "*.txt filter=host-probe\n")
+    await writeFile(join(project, "src", "value.txt"), "before\n")
+    await writeFile(
+      join(template, "hooks", "post-commit"),
+      `#!/bin/sh\nprintf 'hook-ran\\n' > "${hookProof}"\n`,
+      { mode: 0o755 },
+    )
+    await writeFile(
+      filterScript,
+      `#!/bin/sh\nprintf 'filter-ran\\n' > "${filterProof}"\ncat\n`,
+      { mode: 0o755 },
+    )
+    await writeFile(
+      hostConfig,
+      [
+        "[init]",
+        `  templateDir = ${template}`,
+        '[filter "host-probe"]',
+        `  clean = ${filterScript}`,
+        "  required = true",
+        "",
+      ].join("\n"),
+    )
+
+    const previousGlobal = process.env.GIT_CONFIG_GLOBAL
+    process.env.GIT_CONFIG_GLOBAL = hostConfig
+    try {
+      await createDiagnosticSandbox({
+        runtimeRoot,
+        projectDirectory: project,
+        projectId: "project-1",
+        sessionId: "session-1",
+        workflowId: "workflow-1",
+        stepId: "diagnostic",
+        attempt: 0,
+        image: "local/toolchain:test",
+        network: "none",
+        engine: "podman",
+      })
+    } finally {
+      if (previousGlobal === undefined) delete process.env.GIT_CONFIG_GLOBAL
+      else process.env.GIT_CONFIG_GLOBAL = previousGlobal
+    }
+
+    await expect(stat(hookProof)).rejects.toThrow()
+    await expect(stat(filterProof)).rejects.toThrow()
+  })
+
   test("container execution mounts only the sandbox copy read-write and supports explicit host networking", () => {
     const sandbox = {
       schemaVersion: 1 as const,

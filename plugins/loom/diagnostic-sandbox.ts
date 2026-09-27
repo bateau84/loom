@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto"
 import { execFile } from "node:child_process"
-import { cp, mkdir, rm } from "node:fs/promises"
+import { cp, mkdir, rm, writeFile } from "node:fs/promises"
 import { relative, resolve, join } from "node:path"
 import { promisify } from "node:util"
 
@@ -55,6 +55,7 @@ type ExecRunner = (
     timeout?: number
     maxBuffer?: number
     killSignal?: NodeJS.Signals
+    env?: NodeJS.ProcessEnv
   },
 ) => Promise<ExecResult>
 
@@ -176,9 +177,33 @@ export async function assertDiagnosticSandboxImageAvailable(
   return value
 }
 
+function isolatedGitEnvironment(configPath: string): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {}
+  for (const key of [
+    "PATH",
+    "PATHEXT",
+    "SystemRoot",
+    "WINDIR",
+    "ComSpec",
+    "TMP",
+    "TEMP",
+    "TMPDIR",
+    "LANG",
+    "LC_ALL",
+  ]) {
+    if (process.env[key] !== undefined) env[key] = process.env[key]
+  }
+  env.GIT_CONFIG_NOSYSTEM = "1"
+  env.GIT_CONFIG_GLOBAL = configPath
+  env.GIT_ATTR_NOSYSTEM = "1"
+  env.GIT_TERMINAL_PROMPT = "0"
+  return env
+}
+
 async function git(
   cwd: string,
   args: string[],
+  configPath: string,
   run: ExecRunner = execFileAsync as unknown as ExecRunner,
 ) {
   return run("git", args, {
@@ -186,6 +211,7 @@ async function git(
     encoding: "utf8",
     timeout: 60_000,
     maxBuffer: 4 * 1024 * 1024,
+    env: isolatedGitEnvironment(configPath),
   })
 }
 
@@ -195,11 +221,13 @@ async function sandboxGit(
   args: string[],
   run: ExecRunner = execFileAsync as unknown as ExecRunner,
 ) {
+  const configPath = join(resolve(gitDir, ".."), "gitconfig")
   return run("git", ["--git-dir", gitDir, "--work-tree", workTree, ...args], {
     cwd: workTree,
     encoding: "utf8",
     timeout: 60_000,
     maxBuffer: 4 * 1024 * 1024,
+    env: isolatedGitEnvironment(configPath),
   })
 }
 
@@ -229,10 +257,14 @@ export async function createDiagnosticSandbox(input: {
   )
   const workspacePath = join(rootPath, "workspace")
   const baselineGitPath = join(rootPath, "baseline.git")
+  const gitConfigPath = join(rootPath, "gitconfig")
+  const disabledHooksPath = join(rootPath, "hooks-disabled")
   const sourceRoot = resolve(input.projectDirectory)
 
   await mkdir(rootPath, { recursive: true, mode: 0o700 })
   try {
+    await writeFile(gitConfigPath, "", { mode: 0o600 })
+    await mkdir(disabledHooksPath, { mode: 0o700 })
     await cp(sourceRoot, workspacePath, {
       recursive: true,
       force: true,
@@ -244,9 +276,15 @@ export async function createDiagnosticSandbox(input: {
     // Keep the baseline Git database outside the writable workspace. Diagnostic
     // may mutate the copy freely, but cannot move the authority against which
     // Loom later computes the experiment delta.
-    await git(rootPath, ["init", "--quiet", "--bare", baselineGitPath], run)
+    await git(
+      rootPath,
+      ["init", "--quiet", "--bare", "--template=", baselineGitPath],
+      gitConfigPath,
+      run,
+    )
     await sandboxGit(baselineGitPath, workspacePath, ["add", "-f", "-A"], run)
     await sandboxGit(baselineGitPath, workspacePath, [
+      "-c", `core.hooksPath=${disabledHooksPath}`,
       "-c", "user.name=Loom Diagnostic Sandbox",
       "-c", "user.email=diagnostic-sandbox@loom.invalid",
       "commit",
