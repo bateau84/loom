@@ -75,6 +75,31 @@ class ActivationTests(unittest.TestCase):
         self.assertIn("grep -Fxq 'PASS missing plugin rejected'", workflow)
 
 
+class OpenCodeVersionContractTests(unittest.TestCase):
+    def test_primary_host_matches_plugin_dependency(self):
+        package = json.loads((ROOT / "package.json").read_text())
+        plugin_version = package["devDependencies"]["@opencode/plugin"]
+        self.assertRegex(plugin_version, r"^\d+\.\d+\.\d+$")
+
+        workflow = (ROOT / ".github/workflows/loom-ci.yml").read_text()
+        self.assertIn(
+            f"npm install --global @opencode/cli@{plugin_version}",
+            workflow,
+        )
+        self.assertIn(
+            f'opencode --version | grep -F "{plugin_version}"',
+            workflow,
+        )
+        self.assertIn(
+            f'docker run --rm --entrypoint opencode "$OPENCODE_EVAL_RUNNER_OPENCODE_IMAGE" --version | grep -F "{plugin_version}"',
+            workflow,
+        )
+        self.assertIn(
+            f"Verify eval DB sanitizer against a fresh OpenCode {plugin_version} database",
+            workflow,
+        )
+
+
 class UnitDiscoveryTests(unittest.TestCase):
     def fixture(self, root: Path) -> None:
         for directory in RUNNER.UNIT_ROOTS:

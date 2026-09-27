@@ -12,6 +12,22 @@ import { selectSidebarTasks } from "./sidebar"
 
 const MAX_PLAN_ROWS = 12
 
+type SelectedModelUI = {
+  readonly model?: {
+    current(): {
+      readonly providerID: string
+      readonly modelID: string
+      readonly variant?: string
+    } | undefined
+  }
+}
+
+export function selectedModelText(ui: SelectedModelUI) {
+  const model = ui.model?.current()
+  if (!model) return
+  return `Prompt model: ${model.providerID}/${model.modelID}${model.variant ? `#${model.variant}` : ""}`
+}
+
 function taskGlyph(status: LoomSidebarTaskStatus) {
   if (status === "complete") return "✓"
   if (status === "failed") return "!"
@@ -80,6 +96,9 @@ function LoomSidebar(props: { sessionID?: string }) {
           {snapshot()!.state} · {snapshot()!.progress.finished}/{snapshot()!.progress.total}
           {snapshot()!.planningOnly ? " · planning only" : ""}
         </text>
+        <Show when={selectedModelText(context.ui)}>
+          {(label) => <text>{label()}</text>}
+        </Show>
         <Show when={snapshot()!.statusUrl}>
           <text>Dashboard: {snapshot()!.statusUrl}</text>
         </Show>

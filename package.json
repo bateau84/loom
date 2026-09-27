@@ -16,11 +16,11 @@
     "integration:opencode": "bun scripts/opencode-host-integration.ts && python3 scripts/verify_conversation_profile.py"
   },
   "devDependencies": {
-    "@opencode/plugin": "2.0.15",
+    "@opencode/plugin": "2.0.18",
     "@types/bun": "1.4.2",
     "typescript": "7.0.2",
-    "@opentui/core": "^0.5.11",
-    "@opentui/solid": "^0.5.11",
+    "@opentui/core": "^0.5.12",
+    "@opentui/solid": "^0.5.12",
     "solid-js": "^1.9.15"
   }
 }

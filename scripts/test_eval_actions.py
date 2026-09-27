@@ -92,30 +92,34 @@ class WorkflowCredentialTests(unittest.TestCase):
         )
         host_version = install_line.split(install_prefix, 1)[1].strip()
         self.assertEqual(host_version, plugin_version)
-        self.assertEqual(plugin_version, "2.0.15")
 
-    def test_workflows_and_harness_pin_opencode_2_0_15_runner(self):
+    def test_workflows_and_harness_pin_immutable_runner(self):
         live = (
             RUN_EVALS.ROOT / ".github" / "workflows" / "loom-live-evals.yml"
         ).read_text(encoding="utf-8")
         ci = (
             RUN_EVALS.ROOT / ".github" / "workflows" / "loom-ci.yml"
         ).read_text(encoding="utf-8")
-        expected_action = "bateau84/opencode-eval-runner@c4d583478c246f34e4373b1a77b52484620448cd"
+        expected_action = "bateau84/opencode-eval-runner@ad4d6a26fc137202e4f35f2a14503f53b81991ca"
         expected_image = (
             "ghcr.io/bateau84/opencode-eval-runner@"
-            "sha256:4dd282f5a5605b90e3bf87e290dcfe7407d7f45ebd58f7307151d77ae41ca180"
+            "sha256:68ef7322c75aede0e8cc76d0e3531e8b82dd417bbb5e5100264a89eab7fe8627"
         )
         expected_copilot_image = (
             "ghcr.io/bateau84/opencode-eval-runner@"
-            "sha256:6aa4a6104761f10036d8a45f98cc2764d72cb0dc6d67722bd4cfb35187720e74"
+            "sha256:ab10a2865d0cf76306b8a3a07bbf446612c8524e09b197ad82b7d8698e90c477"
         )
 
         for workflow in (live, ci):
             self.assertIn(expected_action, workflow)
             self.assertIn(expected_image, workflow)
             self.assertIn(expected_copilot_image, workflow)
-        self.assertIn('opencode "$OPENCODE_EVAL_RUNNER_OPENCODE_IMAGE" --version | grep -F "2.0.15"', ci)
+        package = json.loads((RUN_EVALS.ROOT / "package.json").read_text(encoding="utf-8"))
+        plugin_version = package["devDependencies"]["@opencode/plugin"]
+        self.assertIn(
+            f'opencode "$OPENCODE_EVAL_RUNNER_OPENCODE_IMAGE" --version | grep -F "{plugin_version}"',
+            ci,
+        )
         self.assertEqual(RUN_EVALS.DEFAULT_IMAGES["opencode"], expected_image)
         self.assertEqual(RUN_EVALS.DEFAULT_IMAGES["github-copilot-cli"], expected_copilot_image)
 
