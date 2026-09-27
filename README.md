@@ -1,8 +1,124 @@
-# loom
+# Loom
 
-## Live behavioral evals
+Loom is a conversation-first agent operating system for [OpenCode](https://opencode.ai/).
 
-Validate the corpus without model calls:
+You talk to **Loom** as one engineering partner. Loom decides when it needs research, design, specification, architecture, planning, implementation, review, QA, documentation, or product acceptance. You should not need to pick agents or manually manage normal handoffs.
+
+Loom is built around one rule: **evidence beats model confidence**. Work is bounded, important changes are independently reviewed, and Loom stops when it cannot safely prove completion.
+
+## What using Loom looks like
+
+You can use Loom for normal engineering conversation without starting a workflow:
+
+- ask questions or compare options;
+- brainstorm an idea;
+- request a deep technical investigation;
+- diagnose a failure;
+- inspect or review something.
+
+When you clearly ask Loom to change the repository — for example **"fix this"**, **"build it"**, or **"create the PR"** — Loom crosses into governed execution and chooses the smallest safe delivery path.
+
+| Work | Typical path |
+| --- | --- |
+| Small, clear change | Worker → Reviewer |
+| Change that needs new UX, behavior, or architecture decisions | Relevant specialist(s) → Worker → Reviewer |
+| Broad product work | Specialists → Critic → Planner → Plan review → Workers → Product Acceptance → product review → final Critic |
+
+These paths are selected automatically. They are not user-facing modes.
+
+For a fuller explanation, see [Getting started](docs/user/getting-started.md).
+
+## Current capabilities
+
+Loom currently provides:
+
+- conversation-first routing with one primary user-facing identity;
+- fresh specialist contexts for design, specification, architecture, research, diagnosis, planning, implementation, review, QA, acceptance, and documentation;
+- bounded Task, Change, and Objective workflows;
+- persistent Objective → Phase → Wave → Task planning;
+- explicit write scopes and exact specialist/step attachment;
+- independent review and selective adversarial Critic gates;
+- evidence tracking for tests, runtime checks, and acceptance;
+- bounded retry and dispatch budgets;
+- cross-role open questions without turning every uncertainty into a user question;
+- project/session isolation and durable runtime upgrades;
+- living repository knowledge and evidence-backed learning;
+- an automatically managed local dashboard for workflow status.
+
+The current system map is in [docs/system/index.md](docs/system/index.md). Product intent is defined by the accepted [Loom Anchor](docs/anchors/loom/anchor.md).
+
+## OpenCode setup
+
+Loom is designed to be the global OpenCode configuration/plugin bundle. The included helpers resolve that configuration from:
+
+```text
+$XDG_CONFIG_HOME/opencode
+```
+
+or, when `XDG_CONFIG_HOME` is not set:
+
+```text
+~/.config/opencode
+```
+
+Keep or link this repository at that configuration root using the setup method that fits your machine. Do not overwrite an existing OpenCode configuration without preserving anything you still need.
+
+Once Loom is available as the OpenCode configuration, start OpenCode normally:
+
+```bash
+opencode
+```
+
+Then talk to Loom normally. No Loom-specific command is required to begin a conversation.
+
+### Optional worktree/profile launcher
+
+The repository includes Bash, Zsh, and Fish helpers under `scripts/ocw.*`. They can create or reuse a Git worktree and start OpenCode with a local model/provider profile.
+
+Example for Bash:
+
+```bash
+source ~/.config/opencode/scripts/ocw.sh
+ocw feature-branch --profile openai
+```
+
+Inspect the resolved profile without starting normal work:
+
+```bash
+ocw --profile openai --explain
+```
+
+Profiles are local OpenCode configuration. The helper expects the selected profile and matching CLI profile to exist under the OpenCode config root.
+
+## Dashboard
+
+The local control panel starts automatically with the Loom plugin.
+
+Default URL:
+
+```text
+http://127.0.0.1:54318
+```
+
+It shows working directories, sessions, workflows, plans, progress, open questions, verification state, and failed/cancelled workflow cleanup.
+
+See [Dashboard guide](docs/user/dashboard.md) for port overrides, foreground/debug operation, cleanup behavior, and the security boundary.
+
+> Do not expose the dashboard directly to the public internet. It is loopback-only by default and does not provide shared-host user authentication.
+
+## User documentation
+
+Start at [docs/user/index.md](docs/user/index.md).
+
+- [Getting started](docs/user/getting-started.md) — how to talk to Loom, when execution begins, what Loom handles, and how to inspect progress.
+- [Dashboard](docs/user/dashboard.md) — control-panel usage and safety.
+- [Runtime upgrades](docs/user/upgrades.md) — upgrade and resumed-session behavior.
+
+## Development and behavioral evals
+
+Install repository dependencies with your normal Bun workflow, then use the repository scripts below.
+
+Validate the eval corpus without model calls:
 
 ```bash
 bun run eval:validate
@@ -14,7 +130,7 @@ List available cases:
 bun run eval:list
 ```
 
-Run one case:
+Run one live case:
 
 ```bash
 bun run eval:live -- \
@@ -22,7 +138,7 @@ bun run eval:live -- \
   --model openai/gpt-5.5
 ```
 
-Run the full behavioral system suite once. The current default suite contains 29 cases:
+Run the full behavioral system suite once:
 
 ```bash
 bun run eval:system -- \
@@ -39,14 +155,14 @@ bun run eval:live -- \
   --parallel 4
 ```
 
-The shorthand stress command is equivalent to three iterations of every case with concurrency capped at four:
+The shorthand stress command runs three iterations of every case with concurrency capped at four:
 
 ```bash
 bun run eval:stress -- \
   --model openai/gpt-5.5
 ```
 
-Use `--parallel` without a number to run the entire selected case × iteration matrix concurrently. Use `--parallel N` to cap concurrency. The default is sequential execution.
+Use `--parallel` without a number for the whole selected matrix, or `--parallel N` to cap concurrency. The default is sequential execution.
 
 Each live invocation gets a generated run ID. Without `--artifact-dir`, artifacts are isolated under:
 
@@ -55,53 +171,16 @@ Each live invocation gets a generated run ID. Without `--artifact-dir`, artifact
 .loom-evals/<RUN-ID>/<CASE>.iteration-<N>.json
 ```
 
-An explicit `--artifact-dir` is treated as a single-run evidence destination and must be empty before the run starts.
+An explicit `--artifact-dir` is a single-run evidence destination and must be empty before the run starts.
 
-Runtime cases use isolated OpenCode target containers with Loom's plugin injected into the standalone runtime. Target and judge run in separate containers.
+Runtime cases use isolated OpenCode target containers with Loom injected into the standalone runtime. Target and judge run separately.
 
+## Repository maps
 
-## Operational dashboard
-
-Loom starts the external read-only dashboard automatically when its OpenCode plugin starts. The first active OpenCode process owns the local HTTP server; other OpenCode processes reuse the published endpoint and can take over after the owner's endpoint lease expires.
-
-It listens on `127.0.0.1:54318` by default and aggregates the bounded Loom snapshots published by active OpenCode+Loom processes. No extra terminal is required. If you need the previous `4318` URL for an existing bookmark or script, set `LOOM_DASHBOARD_PORT=4318`; only do this when that port is not already used by OTLP/HTTP or another local service.
-
-For explicit foreground/debug operation, do not start a second server on the same port while an auto-started owner is active. Start OpenCode with auto-start disabled, then run the dashboard separately:
-
-```bash
-LOOM_DASHBOARD_AUTOSTART=0 opencode
-# in another terminal
-bun run dashboard
-```
-
-Set `LOOM_DASHBOARD_AUTOSTART=0` on OpenCode to disable plugin-managed startup. See `docs/user/dashboard.md` for lifecycle, status and safety semantics.
-
-### Interactive workflow status
-
-The normal interactive status path is Loom's read-only dashboard. It does **not** depend on OpenCode Desktop or on the model copying a link into its reply.
-
-1. Start OpenCode with Loom enabled. The dashboard starts with the plugin; no separate dashboard command is normally required.
-
-2. Open:
-
-   ```text
-   http://127.0.0.1:54318
-   ```
-
-   Active/recent Loom workflows appear automatically and can be opened from Fleet.
-
-3. In the OpenCode terminal client, Loom's sidebar also shows the active workflow's stable dashboard deep link:
-
-   ```text
-   http://127.0.0.1:54318/#/project/<project>/workflow/<workflow>
-   ```
-
-`loom_status` may additionally generate a per-status artifact URL under `/status/...`, but that is a convenience rather than the only route to interactive status.
-
-The running dashboard publishes its effective endpoint into Loom's installation state. OpenCode/Loom processes read that shared endpoint when generating sidebar and status links, so a dashboard started with a non-default `LOOM_DASHBOARD_PORT` does not require restarting OpenCode.
-
-Set `LOOM_DASHBOARD_URL` on the owning OpenCode/dashboard process when the browser reaches it through a tunnel or reverse proxy; that advertised URL is published through the same endpoint lease.
-
-**Do not expose the dashboard directly to the public internet.** The dashboard is intentionally host-local and has no built-in authentication. Loopback is a host boundary, not same-user authentication: on a shared or untrusted multi-user host, disable auto-start or use OS/container isolation. For remote access, use a private tunnel or an authenticated/authorized reverse proxy.
-
-OpenCode Desktop browser preview remains optional. TUI, web, CLI, SSH, container and CI workflows do not require it.
+- [User guides](docs/user/index.md)
+- [System map](docs/system/index.md)
+- [Autonomous product workflow](docs/system/flows/product-workflow.md)
+- [Requirements](docs/requirements/loom/index.md)
+- [Architecture](docs/architecture/loom/index.md)
+- [Design](docs/design/loom/index.md)
+- [Skills and methodology](skills/README.md)

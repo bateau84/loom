@@ -37,8 +37,10 @@ For concurrency, persistence, session attachment, or cross-project behavior, sta
 - `agents/**`
 - `plugins/loom/**`
 - `dashboard/**`
-- `opencode.json`
 
-## User operations
+## User guides
 
-- [Runtime Upgrades](../user/upgrades.md) — versioned state upgrades and resumed-session reconciliation.
+- [User guide index](../user/index.md) — user-facing navigation and common questions.
+- [Getting started](../user/getting-started.md) — conversation-first use, execution boundaries, progress and stopping.
+- [Control panel](../user/dashboard.md) — dashboard lifecycle, status and safety semantics.
+- [Runtime upgrades](../user/upgrades.md) — versioned state upgrades and resumed-session reconciliation.
