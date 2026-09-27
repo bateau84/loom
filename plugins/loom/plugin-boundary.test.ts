@@ -4672,6 +4672,17 @@ Verdict: FAIL
       await writeFile(join(h.root, "src", "stale-head.ts"), "foreign\nbase\nseparator\nnew\n")
       await h.toolHooks.get("execute.after")?.({ ...mutation, status: "completed", result: "updated" })
 
+      await writeFile(join(h.root, "src", "stale-head.ts"), "intruder\nbase\nseparator\nnew\n")
+      const changedForeignStage = {
+        tool: "shell", callID: "changed-foreign-before-stage", sessionID: worker, agent: "worker",
+        input: { command: "git add -- src/stale-head.ts" },
+      }
+      await expect(h.toolHooks.get("execute.before")?.(changedForeignStage)).rejects.toThrow(
+        "changed after this step attempt's last admitted mutation",
+      )
+      expect((await git(h.root, ["diff", "--cached", "--quiet"])).stdout).toBe("")
+      await writeFile(join(h.root, "src", "stale-head.ts"), "foreign\nbase\nseparator\nnew\n")
+
       await git(h.root, ["add", "--", "src/stale-head.ts"])
       const staleIndexStage = {
         tool: "shell", callID: "stale-index-stage", sessionID: worker, agent: "worker",
