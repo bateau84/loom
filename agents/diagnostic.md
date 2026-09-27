@@ -123,7 +123,7 @@ The sandbox is an **experimental laboratory**, not a delivery path:
 - Network mode is explicit. Use `host` only when the hypothesis genuinely requires host/local network access. Host networking does **not** make external services disposable; do not perform destructive production actions.
 - The image must already exist locally: Loom never pulls an image implicitly, overrides its configured entrypoint, drops Linux capabilities, and uses a read-only container root. No host environment/provider credentials or container-engine socket are intentionally inherited. The working-directory snapshot itself may contain project-local secrets; use only trusted/toolchain images and treat those bytes as sensitive.
 - `loom_diagnostic_sandbox_diff` shows experiment changes against the private baseline.
-- `loom_diagnostic_sandbox_destroy` stops the deterministic sandbox container and destroys the experiment state when it is no longer needed. Workflow cancellation performs the same cleanup, and `loom_complete` fails closed by destroying any still-active sandbox before a governed Diagnostic step can complete.
+- `loom_diagnostic_sandbox_destroy` stops the deterministic sandbox container and destroys the experiment state when it is no longer needed. Workflow cancellation attempts the same cleanup and reports any cleanup failure explicitly; governed Diagnostic completion is stricter and fails closed unless any still-active sandbox is destroyed before the step completes.
 
 Inside the sandbox, candidate fixes and instrumentation are allowed **as causal experiments**. A sandbox change that makes the failure disappear is evidence only when the predicted causal relationship is demonstrated.
 
