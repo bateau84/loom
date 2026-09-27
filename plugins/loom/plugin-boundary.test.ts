@@ -3825,6 +3825,17 @@ Verdict: FAIL
       expect(current.effect).not.toBe("deny")
 
       const extraReport = "ephemeral-reports/research/other.md"
+      const outsideAssigned: any = {
+        agent: "research",
+        action: "edit",
+        resources: [extraReport],
+        sessionID: "research-scope-author",
+        effect: "ask",
+      }
+      await evaluate(outsideAssigned)
+      expect(outsideAssigned.effect).toBe("deny")
+      expect(outsideAssigned.message).toContain("loom_scope_elevate")
+
       const reportElevation = await h.call(
         "scope_elevate",
         {
@@ -3838,6 +3849,10 @@ Verdict: FAIL
       )
       expect(reportElevation.error).toBeUndefined()
       expect(reportElevation.continue).toBe(true)
+
+      outsideAssigned.effect = "ask"
+      await evaluate(outsideAssigned)
+      expect(outsideAssigned.effect).not.toBe("deny")
 
       const productElevation = await h.call(
         "scope_elevate",
