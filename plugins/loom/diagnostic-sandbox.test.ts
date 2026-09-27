@@ -3,6 +3,7 @@ import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import {
+  assertDiagnosticSandboxImageAvailable,
   createDiagnosticSandbox,
   destroyDiagnosticSandbox,
   diagnosticSandboxContainerArgs,
@@ -127,6 +128,39 @@ describe("Diagnostic sandbox", () => {
     expect(args).toContain("--entrypoint=sh")
     expect(args).toContain("go test ./...")
     expect(args[args.indexOf(sandbox.image) + 1]).toBe("-lc")
+  })
+
+  test("checks local image availability without pulling", async () => {
+    const calls: Array<{ file: string; args: string[] }> = []
+    const unavailable = async (file: string, args: string[]) => {
+      calls.push({ file, args })
+      throw new Error("missing")
+    }
+
+    await expect(assertDiagnosticSandboxImageAvailable(
+      "docker",
+      "local/toolchain:missing",
+      unavailable,
+    )).rejects.toThrow("will not pull")
+    expect(calls).toEqual([{
+      file: "docker",
+      args: ["image", "inspect", "local/toolchain:missing"],
+    }])
+
+    calls.length = 0
+    const available = async (file: string, args: string[]) => {
+      calls.push({ file, args })
+      return { stdout: "", stderr: "" }
+    }
+    await expect(assertDiagnosticSandboxImageAvailable(
+      "podman",
+      "local/toolchain:ready",
+      available,
+    )).resolves.toBe("local/toolchain:ready")
+    expect(calls).toEqual([{
+      file: "podman",
+      args: ["image", "exists", "local/toolchain:ready"],
+    }])
   })
 
   test("rejects an invalid image before copying any project bytes", async () => {
