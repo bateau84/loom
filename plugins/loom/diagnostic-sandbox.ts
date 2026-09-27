@@ -300,6 +300,7 @@ export function diagnosticSandboxContainerArgs(
     "--env", "HOME=/tmp",
     "--env", "GIT_DIR=/diagnostic-git",
     "--env", "GIT_WORK_TREE=/workspace",
+    "--env", "GIT_OPTIONAL_LOCKS=0",
     "--env", "HTTP_PROXY=",
     "--env", "HTTPS_PROXY=",
     "--env", "ALL_PROXY=",
