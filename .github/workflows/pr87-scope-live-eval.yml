@@ -37,8 +37,8 @@ jobs:
           command: |
             python3 scripts/run-evals.py \
               --engine docker \
-              --model gpt-5.4 \
-              --judge-model gpt-5.4 \
+              --model gpt-4.1 \
+              --judge-model gpt-4.1 \
               --target-transport github-copilot-cli \
               --judge-transport github-copilot-cli \
               --target-kind agent \
