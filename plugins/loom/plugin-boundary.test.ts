@@ -8316,6 +8316,7 @@ describe("Skill methodology evidence lifecycle", () => {
           engine: "docker",
           network: "none",
           createdAt: "2026-09-27T00:00:00.000Z",
+          materialized: true,
           active: true,
         },
       )
@@ -8466,6 +8467,7 @@ describe("Skill methodology evidence lifecycle", () => {
           engine: "docker",
           network: "none",
           createdAt: "2026-09-27T00:00:00.000Z",
+          materialized: true,
           active: true,
         },
       )
@@ -8487,6 +8489,100 @@ describe("Skill methodology evidence lifecycle", () => {
         (await h.durableStorage.get(`workflow/${workflowId}`) as any)
           .steps.find((step: any) => step.id === "diagnostic").status,
       ).not.toBe("complete")
+    } finally {
+      h.restore()
+    }
+  })
+
+
+  test("Diagnostic completion recovers a preregistered sandbox after creation-process death", async () => {
+    const h = await harness()
+    try {
+      const generalSession = "sandbox-crash-general"
+      const diagnosticSession = "sandbox-crash-diagnostic"
+      const started = await h.call(
+        "start",
+        { request: "Diagnose one bounded causal failure." },
+        "general",
+        generalSession,
+      )
+      const workflowId = String(started.workflowId)
+      expect((await h.call(
+        "route",
+        {
+          humanFacing: false,
+          behavioral: false,
+          structural: false,
+          externalUnknown: false,
+          diagnostic: true,
+          productOutcome: false,
+          implementationRequested: false,
+          executionDepth: "task",
+        },
+        "general",
+        generalSession,
+      )).error).toBeUndefined()
+
+      const grant = await h.call(
+        "dispatch_grant",
+        { workflowId, stepId: "diagnostic" },
+        "general",
+        generalSession,
+      )
+      expect((await h.call(
+        "attach",
+        { grantId: grant.grantId, workflowId, stepId: "diagnostic" },
+        "diagnostic",
+        diagnosticSession,
+      )).attached).toBe(true)
+
+      const sandboxId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+      const rootPath = join(
+        h.runtime.runtimeRoot,
+        "diagnostic-sandboxes",
+        h.runtime.projectId,
+        sandboxId,
+      )
+      const workspacePath = join(rootPath, "workspace")
+      await mkdir(workspacePath, { recursive: true })
+      await writeFile(join(workspacePath, "project-secret.txt"), "copied-before-crash\n")
+      const key = `diagnostic-sandbox/${encodeURIComponent(diagnosticSession)}`
+      await h.durableStorage.set(key, {
+        schemaVersion: 1,
+        id: sandboxId,
+        sessionId: diagnosticSession,
+        workflowId,
+        stepId: "diagnostic",
+        attempt: 0,
+        projectId: h.runtime.projectId,
+        rootPath,
+        workspacePath,
+        baselineGitPath: join(rootPath, "baseline.git"),
+        image: "local/toolchain:test",
+        engine: "docker",
+        network: "none",
+        createdAt: "2026-09-27T00:00:00.000Z",
+        materialized: false,
+        active: true,
+      })
+
+      const completion = await h.call(
+        "complete",
+        {
+          workflowId,
+          stepId: "diagnostic",
+          summary: "Diagnosis is complete after recovering the interrupted sandbox.",
+        },
+        "diagnostic",
+        diagnosticSession,
+      )
+      expect(completion.error).toBeUndefined()
+      await expect(stat(rootPath)).rejects.toThrow()
+      expect(await h.durableStorage.get(key)).toMatchObject({
+        id: sandboxId,
+        materialized: false,
+        active: false,
+      })
     } finally {
       h.restore()
     }

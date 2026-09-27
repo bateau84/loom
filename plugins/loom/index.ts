@@ -94,12 +94,13 @@ import {
   type TaskScope,
 } from "./scope"
 import {
+  allocateDiagnosticSandbox,
   assertDiagnosticSandboxImageAvailable,
-  createDiagnosticSandbox,
   destroyDiagnosticSandbox,
   detectDiagnosticContainerEngine,
   diffDiagnosticSandbox,
   executeDiagnosticSandbox,
+  materializeDiagnosticSandbox,
   type DiagnosticSandboxNetwork,
   type DiagnosticSandboxRecord,
 } from "./diagnostic-sandbox"
@@ -2869,15 +2870,24 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           ...(after ? { after } : {}),
         })
         for (const entry of page.entries) {
-          const sandbox = entry.value as DiagnosticSandboxRecord | undefined
-          if (!sandbox?.active || sandbox.workflowId !== workflowId) continue
+          const observed = entry.value as DiagnosticSandboxRecord | undefined
+          if (!observed?.active || observed.workflowId !== workflowId) continue
           try {
-            await destroyDiagnosticSandbox(sandbox)
-            await ctx.storage.set(entry.key, sandbox)
-            destroyed.push(sandbox.id)
+            await withRuntimeAdvisoryLock(
+              runtime,
+              "diagnostic-sandbox-instance",
+              observed.id,
+              async () => {
+                const sandbox = (await ctx.storage.get(entry.key)) as DiagnosticSandboxRecord | undefined
+                if (!sandbox?.active || sandbox.id !== observed.id || sandbox.workflowId !== workflowId) return
+                await destroyDiagnosticSandbox(sandbox)
+                await ctx.storage.set(entry.key, sandbox)
+                destroyed.push(sandbox.id)
+              },
+            )
           } catch (error) {
             errors.push({
-              sandboxId: sandbox.id,
+              sandboxId: observed.id,
               error: error instanceof Error ? error.message : String(error),
             })
           }
@@ -3125,15 +3135,15 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               }
 
               const value = input as { image: string; network: DiagnosticSandboxNetwork }
+              let sandbox: DiagnosticSandboxRecord | undefined
               try {
                 const engine = await detectDiagnosticContainerEngine()
                 const image = await assertDiagnosticSandboxImageAvailable(
                   engine,
                   value.image,
                 )
-                const sandbox = await createDiagnosticSandbox({
+                sandbox = allocateDiagnosticSandbox({
                   runtimeRoot: runtime.runtimeRoot,
-                  projectDirectory: ctx.location.directory,
                   projectId: runtime.projectId,
                   sessionId: tool.sessionID,
                   workflowId,
@@ -3143,7 +3153,8 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                   network: value.network,
                   engine,
                 })
-                const published = await withRuntimeLock(
+
+                const registered = await withRuntimeLock(
                   runtime,
                   "workflow",
                   workflowId,
@@ -3154,38 +3165,79 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                       workflowId,
                       stepId,
                     ))) return false
-                    await ctx.storage.set(key, sandbox)
+                    await ctx.storage.set(key, sandbox!)
                     return true
                   },
                 )
-                if (!published) {
-                  try {
-                    await destroyDiagnosticSandbox(sandbox)
-                  } catch (cleanupError) {
-                    // Keep failed cleanup discoverable so the session can retry
-                    // diagnostic_sandbox_destroy even though this attempt is stale.
-                    await ctx.storage.set(key, sandbox).catch(() => undefined)
-                    throw new Error(
-                      "Diagnostic step changed while the sandbox snapshot was being created, and sandbox cleanup failed: " +
-                      (cleanupError instanceof Error ? cleanupError.message : String(cleanupError)),
-                    )
+                if (!registered) {
+                  return {
+                    content: renderToolOutput({
+                      error:
+                        "Diagnostic step changed before sandbox creation began. Attach to the current attempt before creating a new sandbox.",
+                    }),
                   }
-                  throw new Error(
-                    "Diagnostic step changed while the sandbox snapshot was being created. Attach to the current attempt before creating a new sandbox.",
-                  )
                 }
-                return {
-                  content: renderToolOutput({
-                    sandboxId: sandbox.id,
-                    image: sandbox.image,
-                    engine: sandbox.engine,
-                    network: sandbox.network,
-                    projectSnapshot: "current working-directory bytes at sandbox creation",
-                    writable: true,
-                    realProjectMounted: false,
-                    hostEnvironmentInherited: false,
-                  }),
-                }
+
+                return withRuntimeAdvisoryLock(
+                  runtime,
+                  "diagnostic-sandbox-instance",
+                  sandbox.id,
+                  async () => {
+                    const current = (await ctx.storage.get(key)) as DiagnosticSandboxRecord | undefined
+                    if (!current?.active || current.id !== sandbox!.id) {
+                      return {
+                        content: renderToolOutput({
+                          error:
+                            "Diagnostic sandbox creation was cancelled before project bytes were copied.",
+                        }),
+                      }
+                    }
+
+                    try {
+                      await materializeDiagnosticSandbox(current, ctx.location.directory)
+                      await ctx.storage.set(key, current)
+                    } catch (error) {
+                      current.active = false
+                      current.destroyedAt = new Date().toISOString()
+                      await ctx.storage.set(key, current).catch(() => undefined)
+                      throw error
+                    }
+
+                    if (!(await exactRunnableStepAttemptBinding(
+                      ctx,
+                      tool.sessionID,
+                      workflowId,
+                      stepId,
+                    ))) {
+                      try {
+                        await destroyDiagnosticSandbox(current)
+                        await ctx.storage.set(key, current)
+                      } catch (cleanupError) {
+                        await ctx.storage.set(key, current).catch(() => undefined)
+                        throw new Error(
+                          "Diagnostic step changed while the sandbox snapshot was being created, and sandbox cleanup failed: " +
+                          (cleanupError instanceof Error ? cleanupError.message : String(cleanupError)),
+                        )
+                      }
+                      throw new Error(
+                        "Diagnostic step changed while the sandbox snapshot was being created. Attach to the current attempt before creating a new sandbox.",
+                      )
+                    }
+
+                    return {
+                      content: renderToolOutput({
+                        sandboxId: current.id,
+                        image: current.image,
+                        engine: current.engine,
+                        network: current.network,
+                        projectSnapshot: "current working-directory bytes at sandbox creation",
+                        writable: true,
+                        realProjectMounted: false,
+                        hostEnvironmentInherited: false,
+                      }),
+                    }
+                  },
+                )
               } catch (error) {
                 return { content: renderToolOutput({ error: error instanceof Error ? error.message : String(error) }) }
               }
@@ -3226,7 +3278,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
           return withRuntimeAdvisoryLock(
             runtime,
-            "diagnostic-sandbox-exec",
+            "diagnostic-sandbox-instance",
             sandbox.id,
             async () => {
               const currentSandbox = (await ctx.storage.get(
@@ -3294,7 +3346,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
           return withRuntimeAdvisoryLock(
             runtime,
-            "diagnostic-sandbox-exec",
+            "diagnostic-sandbox-instance",
             sandbox.id,
             async () => {
               const currentSandbox = (await ctx.storage.get(
@@ -3359,16 +3411,27 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           if (!sandbox || sandbox.id !== value.sandboxId) {
             return { content: renderToolOutput({ error: "Diagnostic sandbox not found for this session." }) }
           }
-          if (!sandbox.active) {
-            return { content: renderToolOutput({ sandboxId: sandbox.id, destroyed: true, alreadyDestroyed: true }) }
-          }
-          try {
-            const result = await destroyDiagnosticSandbox(sandbox)
-            await ctx.storage.set(key, sandbox)
-            return { content: renderToolOutput(result) }
-          } catch (error) {
-            return { content: renderToolOutput({ error: error instanceof Error ? error.message : String(error) }) }
-          }
+          return withRuntimeAdvisoryLock(
+            runtime,
+            "diagnostic-sandbox-instance",
+            sandbox.id,
+            async () => {
+              const current = (await ctx.storage.get(key)) as DiagnosticSandboxRecord | undefined
+              if (!current || current.id !== value.sandboxId) {
+                return { content: renderToolOutput({ error: "Diagnostic sandbox not found for this session." }) }
+              }
+              if (!current.active) {
+                return { content: renderToolOutput({ sandboxId: current.id, destroyed: true, alreadyDestroyed: true }) }
+              }
+              try {
+                const result = await destroyDiagnosticSandbox(current)
+                await ctx.storage.set(key, current)
+                return { content: renderToolOutput(result) }
+              } catch (error) {
+                return { content: renderToolOutput({ error: error instanceof Error ? error.message : String(error) }) }
+              }
+            },
+          )
         },
       })
 

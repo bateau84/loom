@@ -24,6 +24,8 @@ export type DiagnosticSandboxRecord = {
   engine: DiagnosticSandboxEngine
   network: DiagnosticSandboxNetwork
   createdAt: string
+  materialized: boolean
+  materializedAt?: string
   active: boolean
   destroyedAt?: string
 }
@@ -231,6 +233,103 @@ async function sandboxGit(
   })
 }
 
+export function allocateDiagnosticSandbox(input: {
+  runtimeRoot: string
+  projectId: string
+  sessionId: string
+  workflowId: string
+  stepId: string
+  attempt: number
+  image: string
+  network: DiagnosticSandboxNetwork
+  engine: DiagnosticSandboxEngine
+  id?: string
+  now?: string
+}): DiagnosticSandboxRecord {
+  const image = validateDiagnosticSandboxImage(input.image)
+  const id = sandboxId(input.id ?? randomUUID())
+  const rootPath = join(
+    input.runtimeRoot,
+    "diagnostic-sandboxes",
+    input.projectId,
+    id,
+  )
+  return {
+    schemaVersion: 1,
+    id,
+    sessionId: input.sessionId,
+    workflowId: input.workflowId,
+    stepId: input.stepId,
+    attempt: input.attempt,
+    projectId: input.projectId,
+    rootPath,
+    workspacePath: join(rootPath, "workspace"),
+    baselineGitPath: join(rootPath, "baseline.git"),
+    image,
+    engine: input.engine,
+    network: input.network,
+    createdAt: input.now ?? new Date().toISOString(),
+    materialized: false,
+    active: true,
+  }
+}
+
+export async function materializeDiagnosticSandbox(
+  record: DiagnosticSandboxRecord,
+  projectDirectory: string,
+  run: ExecRunner = execFileAsync as unknown as ExecRunner,
+): Promise<DiagnosticSandboxRecord> {
+  sandboxId(record.id)
+  if (!record.active) throw new Error("Diagnostic sandbox is no longer active.")
+  if (record.materialized) return record
+
+  const gitConfigPath = join(record.rootPath, "gitconfig")
+  const disabledHooksPath = join(record.rootPath, "hooks-disabled")
+  const sourceRoot = resolve(projectDirectory)
+
+  await mkdir(record.rootPath, { recursive: true, mode: 0o700 })
+  try {
+    await writeFile(gitConfigPath, "", { mode: 0o600 })
+    await mkdir(disabledHooksPath, { mode: 0o700 })
+    await cp(sourceRoot, record.workspacePath, {
+      recursive: true,
+      force: true,
+      preserveTimestamps: true,
+      verbatimSymlinks: true,
+      filter: (source) => validateRelativeWorkdirCopy(sourceRoot, source),
+    })
+
+    // Keep the baseline Git database outside the writable workspace. Diagnostic
+    // may mutate the copy freely, but cannot move the authority against which
+    // Loom later computes the experiment delta.
+    await git(
+      record.rootPath,
+      ["init", "--quiet", "--bare", "--template=", record.baselineGitPath],
+      gitConfigPath,
+      run,
+    )
+    await sandboxGit(record.baselineGitPath, record.workspacePath, ["add", "-f", "-A"], run)
+    await sandboxGit(record.baselineGitPath, record.workspacePath, [
+      "-c", `core.hooksPath=${disabledHooksPath}`,
+      "-c", "user.name=Loom Diagnostic Sandbox",
+      "-c", "user.email=diagnostic-sandbox@loom.invalid",
+      "commit",
+      "--quiet",
+      "--allow-empty",
+      "--no-gpg-sign",
+      "--no-verify",
+      "-m", "diagnostic sandbox baseline",
+    ], run)
+  } catch (error) {
+    await rm(record.rootPath, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }).catch(() => undefined)
+    throw error
+  }
+
+  record.materialized = true
+  record.materializedAt = new Date().toISOString()
+  return record
+}
+
 export async function createDiagnosticSandbox(input: {
   runtimeRoot: string
   projectDirectory: string
@@ -246,76 +345,20 @@ export async function createDiagnosticSandbox(input: {
   run?: ExecRunner
 }): Promise<DiagnosticSandboxRecord> {
   const run = input.run ?? (execFileAsync as unknown as ExecRunner)
-  const image = validateDiagnosticSandboxImage(input.image)
   const engine = input.engine ?? await detectDiagnosticContainerEngine(run)
-  const id = randomUUID()
-  const rootPath = join(
-    input.runtimeRoot,
-    "diagnostic-sandboxes",
-    input.projectId,
-    id,
-  )
-  const workspacePath = join(rootPath, "workspace")
-  const baselineGitPath = join(rootPath, "baseline.git")
-  const gitConfigPath = join(rootPath, "gitconfig")
-  const disabledHooksPath = join(rootPath, "hooks-disabled")
-  const sourceRoot = resolve(input.projectDirectory)
-
-  await mkdir(rootPath, { recursive: true, mode: 0o700 })
-  try {
-    await writeFile(gitConfigPath, "", { mode: 0o600 })
-    await mkdir(disabledHooksPath, { mode: 0o700 })
-    await cp(sourceRoot, workspacePath, {
-      recursive: true,
-      force: true,
-      preserveTimestamps: true,
-      verbatimSymlinks: true,
-      filter: (source) => validateRelativeWorkdirCopy(sourceRoot, source),
-    })
-
-    // Keep the baseline Git database outside the writable workspace. Diagnostic
-    // may mutate the copy freely, but cannot move the authority against which
-    // Loom later computes the experiment delta.
-    await git(
-      rootPath,
-      ["init", "--quiet", "--bare", "--template=", baselineGitPath],
-      gitConfigPath,
-      run,
-    )
-    await sandboxGit(baselineGitPath, workspacePath, ["add", "-f", "-A"], run)
-    await sandboxGit(baselineGitPath, workspacePath, [
-      "-c", `core.hooksPath=${disabledHooksPath}`,
-      "-c", "user.name=Loom Diagnostic Sandbox",
-      "-c", "user.email=diagnostic-sandbox@loom.invalid",
-      "commit",
-      "--quiet",
-      "--allow-empty",
-      "--no-gpg-sign",
-      "--no-verify",
-      "-m", "diagnostic sandbox baseline",
-    ], run)
-  } catch (error) {
-    await rm(rootPath, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }).catch(() => undefined)
-    throw error
-  }
-
-  return {
-    schemaVersion: 1,
-    id,
+  const record = allocateDiagnosticSandbox({
+    runtimeRoot: input.runtimeRoot,
+    projectId: input.projectId,
     sessionId: input.sessionId,
     workflowId: input.workflowId,
     stepId: input.stepId,
     attempt: input.attempt,
-    projectId: input.projectId,
-    rootPath,
-    workspacePath,
-    baselineGitPath,
-    image,
-    engine,
+    image: input.image,
     network: input.network,
-    createdAt: input.now ?? new Date().toISOString(),
-    active: true,
-  }
+    engine,
+    now: input.now,
+  })
+  return materializeDiagnosticSandbox(record, input.projectDirectory, run)
 }
 
 function hostUidArgs(engine: DiagnosticSandboxEngine) {
@@ -357,6 +400,7 @@ export function diagnosticSandboxContainerArgs(
   command: string,
 ) {
   if (!record.active) throw new Error("Diagnostic sandbox is no longer active.")
+  if (!record.materialized) throw new Error("Diagnostic sandbox creation did not complete. Destroy it and create a new sandbox.")
   const safeCommand = validateDiagnosticSandboxCommand(command)
   const name = diagnosticSandboxContainerName(record)
   const args = [
@@ -456,6 +500,7 @@ export async function diffDiagnosticSandbox(
 ) {
   sandboxId(record.id)
   if (!record.active) throw new Error("Diagnostic sandbox is no longer active.")
+  if (!record.materialized) throw new Error("Diagnostic sandbox creation did not complete. Destroy it and create a new sandbox.")
 
   const [status, stat, patch] = await Promise.all([
     sandboxGit(record.baselineGitPath, record.workspacePath, ["status", "--short", "--untracked-files=all", "--ignored=matching"], run),
@@ -479,7 +524,7 @@ export async function destroyDiagnosticSandbox(
   run: ExecRunner = execFileAsync as unknown as ExecRunner,
 ) {
   sandboxId(record.id)
-  await stopDiagnosticSandboxContainer(record, run)
+  if (record.materialized) await stopDiagnosticSandboxContainer(record, run)
   await rm(record.rootPath, {
     recursive: true,
     force: true,

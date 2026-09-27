@@ -3,12 +3,14 @@ import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import {
+  allocateDiagnosticSandbox,
   assertDiagnosticSandboxImageAvailable,
   createDiagnosticSandbox,
   destroyDiagnosticSandbox,
   diagnosticSandboxContainerArgs,
   diagnosticSandboxContainerName,
   diffDiagnosticSandbox,
+  materializeDiagnosticSandbox,
   normalizeDiagnosticSandboxTimeout,
   validateDiagnosticSandboxCommand,
   validateDiagnosticSandboxImage,
@@ -140,6 +142,64 @@ describe("Diagnostic sandbox", () => {
     await expect(stat(filterProof)).rejects.toThrow()
   })
 
+  test("preregistered sandbox cleanup does not require a container engine", async () => {
+    const root = await tempRoot()
+    const record = allocateDiagnosticSandbox({
+      runtimeRoot: join(root, "runtime"),
+      projectId: "project-1",
+      sessionId: "session-1",
+      workflowId: "workflow-1",
+      stepId: "diagnostic",
+      attempt: 0,
+      image: "local/toolchain:test",
+      network: "none",
+      engine: "docker",
+      id: "66666666-6666-4666-8666-666666666666",
+      now: "2026-09-27T00:00:00.000Z",
+    })
+    expect(record.materialized).toBe(false)
+    await expect(stat(record.rootPath)).rejects.toThrow()
+
+    const calls: Array<{ file: string; args: string[] }> = []
+    await destroyDiagnosticSandbox(
+      record,
+      "2026-09-27T00:01:00.000Z",
+      async (file, args) => {
+        calls.push({ file, args })
+        throw new Error("container engine must not be needed")
+      },
+    )
+
+    expect(calls).toHaveLength(0)
+    expect(record.active).toBe(false)
+    await expect(stat(record.rootPath)).rejects.toThrow()
+  })
+
+  test("materialization turns a preregistered sandbox into an executable sandbox", async () => {
+    const root = await tempRoot()
+    const project = join(root, "project")
+    await mkdir(project, { recursive: true })
+    await writeFile(join(project, "state.txt"), "before\n")
+    const record = allocateDiagnosticSandbox({
+      runtimeRoot: join(root, "runtime"),
+      projectId: "project-1",
+      sessionId: "session-1",
+      workflowId: "workflow-1",
+      stepId: "diagnostic",
+      attempt: 0,
+      image: "local/toolchain:test",
+      network: "none",
+      engine: "docker",
+      id: "99999999-9999-4999-8999-999999999999",
+      now: "2026-09-27T00:00:00.000Z",
+    })
+
+    await materializeDiagnosticSandbox(record, project)
+    expect(record.materialized).toBe(true)
+    expect(record.materializedAt).toBeDefined()
+    expect(await readFile(join(record.workspacePath, "state.txt"), "utf8")).toBe("before\n")
+  })
+
   test("container execution mounts only the sandbox copy read-write and supports explicit host networking", () => {
     const sandbox = {
       schemaVersion: 1 as const,
@@ -156,6 +216,7 @@ describe("Diagnostic sandbox", () => {
       engine: "podman" as const,
       network: "host" as const,
       createdAt: "2026-09-27T00:00:00.000Z",
+      materialized: true,
       active: true,
     }
 
@@ -278,6 +339,7 @@ describe("Diagnostic sandbox", () => {
       engine: "podman" as const,
       network: "host" as const,
       createdAt: "2026-09-27T00:00:00.000Z",
+      materialized: true,
       active: true,
     }
     const calls: Array<{ file: string; args: string[] }> = []
@@ -322,6 +384,7 @@ describe("Diagnostic sandbox", () => {
       engine: "docker" as const,
       network: "host" as const,
       createdAt: "2026-09-27T00:00:00.000Z",
+      materialized: true,
       active: true,
     }
     const run = async () => {
@@ -361,6 +424,7 @@ describe("Diagnostic sandbox", () => {
       engine: "podman" as const,
       network: "none" as const,
       createdAt: "2026-09-27T00:00:00.000Z",
+      materialized: true,
       active: true,
     }
     const run = async () => {
