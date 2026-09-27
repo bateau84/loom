@@ -369,7 +369,7 @@ For an attached governed Diagnostic step:
 8. Reopen/reroute advances the Diagnostic step attempt; the old sandbox cannot execute further experiments under the new attempt.
 9. Sandbox mutation is evidence only. It never creates Git authorship, staging/commit authority, product mutation provenance, or permission to copy a candidate fix back into the real project.
 10. Sandbox execution uses a deterministic per-sandbox container name. Destruction first force-removes that container, then removes the snapshot.
-11. Workflow cancellation scans and destroys active Diagnostic sandboxes for that workflow; successful governed Diagnostic completion also destroys any still-active sandbox before publishing the step completion. Cleanup remains callable after terminal/cancelled boundaries.
+11. Workflow cancellation scans active Diagnostic sandboxes, attempts to destroy them, and returns any cleanup failures explicitly; cancellation authority is not rolled back merely because the external container engine is unavailable. Successful governed Diagnostic completion is stricter: it does not publish step completion unless any still-active sandbox is destroyed. Cleanup remains callable after terminal/cancelled boundaries.
 12. Sandbox execution/diff tool results are admitted into Loom evidence so causal claims can reference the actual experiment rather than model recollection.
 
 This provides Diagnostic with strong experimental freedom while preserving the real working directory as a non-destructive boundary.
