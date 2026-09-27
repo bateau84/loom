@@ -7,6 +7,15 @@ export default {
   id: "lifecycleprobe",
   async setup(ctx: any) {
     const directory = join(ctx.location.directory, ".lifecycle-probe")
+    const toolCalls = new Map<string, {
+      sessionID: string
+      messageID?: string
+      callID: string
+      tool: string
+      beforeObserved: boolean
+      afterStatus?: string
+    }>()
+    const controller = new AbortController()
     const wait = async (name: string) => {
       const deadline = Date.now() + 25_000
       while (Date.now() < deadline) {
@@ -36,5 +45,57 @@ export default {
       })
       add("normal", async () => ({ marker: "new-normal-result" }))
     })
+
+    await ctx.tool.hook("execute.before", (event: any) => {
+      if (!String(event.tool ?? "").includes("lifecycleprobe")) return
+      const callID = String(event.callID ?? "")
+      if (!callID || typeof event.sessionID !== "string") return
+      const key = `${event.sessionID}\0${callID}`
+      toolCalls.set(key, {
+        sessionID: event.sessionID,
+        ...(typeof event.messageID === "string" ? { messageID: event.messageID } : {}),
+        callID,
+        tool: String(event.tool),
+        beforeObserved: true,
+      })
+    })
+    await ctx.tool.hook("execute.after", (event: any) => {
+      const key = `${String(event.sessionID ?? "")}\0${String(event.callID ?? "")}`
+      const call = toolCalls.get(key)
+      if (call) call.afterStatus = event.status
+    })
+
+    const eventConsumer = (async () => {
+      for await (const event of ctx.event.subscribe({ signal: controller.signal })) {
+        if (event?.type !== "session.idle") continue
+        const sessionID = event.properties?.sessionID
+        if (typeof sessionID !== "string") continue
+        const candidates = [...toolCalls.values()].filter((call) => call.sessionID === sessionID)
+        const call = candidates.at(-1)
+        if (!call) continue
+        const messages = await ctx.session.context({ sessionID })
+        const matches = messages.flatMap((message: any) =>
+          (message.parts ?? []).filter((part: any) =>
+            part.type === "tool" && part.callID === call.callID && part.tool === call.tool &&
+            (!call.messageID || (part.messageID ?? message.id) === call.messageID),
+          ),
+        )
+        const state = matches.length === 1 ? matches[0].state?.status : undefined
+        await writeFile(join(directory, `quiescence-${sessionID}.json`), JSON.stringify({
+          sessionID,
+          callID: call.callID,
+          tool: call.tool,
+          beforeObserved: call.beforeObserved,
+          afterStatus: call.afterStatus,
+          matchingToolParts: matches.length,
+          persistedState: state,
+          quiescent: matches.length === 1 && (state === "completed" || state === "error"),
+        }))
+      }
+    })()
+    return async () => {
+      controller.abort()
+      await eventConsumer
+    }
   },
 }

@@ -5,6 +5,7 @@ import { promisify } from "node:util"
 import { chmod, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
+import { fileURLToPath } from "node:url"
 import loomPlugin from "./index"
 import { cancelWorkflow } from "./lifecycle"
 import { createWorkHierarchy, materializeWorkPlan, claimWorkflowWave, syncWorkTaskStatuses,
@@ -4426,6 +4427,169 @@ Verdict: FAIL
     }
   })
 
+  test("a separate OS process replays owned-delta receipts after the writer exits", async () => {
+    const h = await harness()
+    const fixture = fileURLToPath(new URL("./plugin-boundary-process-fixture.ts", import.meta.url))
+    const runPhase = async (args: string[]) => {
+      const child = Bun.spawn([process.execPath, fixture, ...args], {
+        env: {
+          ...process.env,
+          XDG_STATE_HOME: join(h.root, "state"),
+          XDG_RUNTIME_DIR: join(h.root, "runtime"),
+          LOOM_TOOL_OUTPUT: "json",
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      })
+      const [stdout, stderr, exitCode] = await Promise.all([
+        new Response(child.stdout).text(),
+        new Response(child.stderr).text(),
+        child.exited,
+      ])
+      if (exitCode !== 0) throw new Error(stderr || `owned-delta process fixture exited ${exitCode}`)
+      return JSON.parse(stdout.trim().split("\n").at(-1)!)
+    }
+    try {
+      await initializeGitFixture(h.root)
+      await writeFile(join(h.root, "src", "shared.ts"), "alpha\nseparator\nold\nomega\n")
+      await git(h.root, ["add", "--", "src/shared.ts"])
+      await git(h.root, ["commit", "-m", "process-restart baseline"])
+      await writeFile(join(h.root, "src", "shared.ts"), "alpha\nforeign\nseparator\nold\nomega\n")
+      h.restore()
+
+      const workerSession = "owned-delta-process-worker"
+      const prepared = await runPhase(["prepare", h.root, "", workerSession])
+      expect(prepared.workflowId).toBeString()
+      expect(await readFile(join(h.root, "src", "shared.ts"), "utf8")).toBe(
+        "alpha\nforeign\nseparator\nnew\nomega\n",
+      )
+
+      // The prepare process has exited. This new OS process reopens the same
+      // SQLite runtime state and must publish only its durable owned projection.
+      const published = await runPhase(["publish", h.root, prepared.workflowId, workerSession])
+      expect(published.completed).toBe(true)
+      expect((await git(h.root, ["show", "HEAD:src/shared.ts"])).stdout).toBe(
+        "alpha\nseparator\nnew\nomega\n",
+      )
+      expect((await git(h.root, ["diff", "--", "src/shared.ts"])).stdout).toContain("+foreign")
+    } finally {
+      h.restore()
+    }
+  })
+
+  test("independent processes race publication without double-committing an owned delta", async () => {
+    const h = await harness()
+    const fixture = fileURLToPath(new URL("./plugin-boundary-process-fixture.ts", import.meta.url))
+    const runPhase = async (args: string[]) => {
+      const child = Bun.spawn([process.execPath, fixture, ...args], {
+        env: {
+          ...process.env,
+          XDG_STATE_HOME: join(h.root, "state"),
+          XDG_RUNTIME_DIR: join(h.root, "runtime"),
+          LOOM_TOOL_OUTPUT: "json",
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      })
+      const [stdout, stderr, exitCode] = await Promise.all([
+        new Response(child.stdout).text(),
+        new Response(child.stderr).text(),
+        child.exited,
+      ])
+      if (exitCode !== 0) throw new Error(stderr || `owned-delta process fixture exited ${exitCode}`)
+      return JSON.parse(stdout.trim().split("\n").at(-1)!)
+    }
+    try {
+      await initializeGitFixture(h.root)
+      await writeFile(join(h.root, "src", "shared.ts"), "alpha\nseparator\nold\nomega\n")
+      await git(h.root, ["add", "--", "src/shared.ts"])
+      await git(h.root, ["commit", "-m", "independent publisher baseline"])
+      await writeFile(join(h.root, "src", "shared.ts"), "alpha\nforeign\nseparator\nold\nomega\n")
+      h.restore()
+
+      const workerSession = "owned-delta-process-race-worker"
+      const prepared = await runPhase(["prepare", h.root, "", workerSession])
+      const attempts = await Promise.allSettled([
+        runPhase(["publish", h.root, prepared.workflowId, workerSession]),
+        runPhase(["publish", h.root, prepared.workflowId, workerSession]),
+      ])
+      const successes = attempts.filter((result) => result.status === "fulfilled")
+      expect(successes).toHaveLength(1)
+      expect((await git(h.root, ["show", "HEAD:src/shared.ts"])).stdout).toBe(
+        "alpha\nseparator\nnew\nomega\n",
+      )
+      expect((await git(h.root, ["diff", "--", "src/shared.ts"])).stdout).toContain("+foreign")
+    } finally {
+      h.restore()
+    }
+  })
+
+  test("independent process reopen waits for a live owned-delta mutation lease", async () => {
+    const h = await harness()
+    const fixture = fileURLToPath(new URL("./plugin-boundary-process-fixture.ts", import.meta.url))
+    const runPhase = async (args: string[]) => {
+      const child = Bun.spawn([process.execPath, fixture, ...args], {
+        env: {
+          ...process.env,
+          XDG_STATE_HOME: join(h.root, "state"),
+          XDG_RUNTIME_DIR: join(h.root, "runtime"),
+          LOOM_TOOL_OUTPUT: "json",
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      })
+      const [stdout, stderr, exitCode] = await Promise.all([
+        new Response(child.stdout).text(),
+        new Response(child.stderr).text(),
+        child.exited,
+      ])
+      if (exitCode !== 0) throw new Error(stderr || `owned-delta process fixture exited ${exitCode}`)
+      return JSON.parse(stdout.trim().split("\n").at(-1)!)
+    }
+    const waitForFile = async (path: string) => {
+      const deadline = Date.now() + 10_000
+      while (Date.now() < deadline) {
+        try { return await readFile(path, "utf8") }
+        catch (error: any) { if (error?.code !== "ENOENT") throw error }
+        await Bun.sleep(20)
+      }
+      throw new Error(`Timed out waiting for process race signal: ${path}`)
+    }
+    try {
+      await initializeGitFixture(h.root)
+      await writeFile(join(h.root, "src", "shared.ts"), "alpha\nseparator\nold\nomega\n")
+      await git(h.root, ["add", "--", "src/shared.ts"])
+      await git(h.root, ["commit", "-m", "process reopen race baseline"])
+      await writeFile(join(h.root, "src", "shared.ts"), "alpha\nforeign\nseparator\nold\nomega\n")
+      h.restore()
+
+      const workerSession = "owned-delta-reopen-process-worker"
+      const prepared = await runPhase(["prepare", h.root, "", workerSession])
+      const signals = join(h.root, ".process-reopen-race")
+      await mkdir(signals, { recursive: true })
+      const held = runPhase(["hold", h.root, prepared.workflowId, workerSession, join(signals, "held"), join(signals, "release")])
+      await waitForFile(join(signals, "held"))
+
+      let reopenSettled = false
+      const reopening = runPhase([
+        "reopen", h.root, prepared.workflowId, prepared.generalSessionID, join(signals, "reopen-started"),
+      ]).then((value) => { reopenSettled = true; return value })
+      await waitForFile(join(signals, "reopen-started"))
+      await Bun.sleep(75)
+      expect(reopenSettled).toBe(false)
+
+      await writeFile(join(signals, "release"), "release")
+      expect((await held).released).toBe(true)
+      const reopened = await reopening
+      expect(reopened.error).toBeUndefined()
+      const staleStage = await runPhase(["stale-stage", h.root, prepared.workflowId, workerSession])
+      expect(staleStage.denied).toBe(true)
+      expect(staleStage.error).toContain("current runnable Loom step attempt")
+    } finally {
+      h.restore()
+    }
+  })
+
   test("a multi-file mutation cannot publish only the path whose delta was separable", async () => {
     const h = await harness()
     try {
@@ -4584,6 +4748,71 @@ Verdict: FAIL
       expect((await git(h.root, ["show", "HEAD:src/created.ts"])).stdout).toBe("created\n")
       expect((await git(h.root, ["ls-tree", "HEAD", "--", "src/created.ts"])).stdout).toContain("100755 blob")
       expect((await h.call("complete", { workflowId, stepId: "worker", summary: "creation delta published" }, "worker", worker)).error).toBeUndefined()
+    } finally {
+      h.restore()
+    }
+  })
+
+  test("unsupported binary, symlink, delete, and tracked-mode mutations remain unproven", async () => {
+    const h = await harness()
+    try {
+      await initializeGitFixture(h.root)
+      const linkTarget = join(h.root, "src", "link-target.txt")
+      const linkPath = join(h.root, "src", "link.txt")
+      const binaryPath = join(h.root, "src", "binary.dat")
+      const deletePath = join(h.root, "src", "delete.txt")
+      const modePath = join(h.root, "src", "mode.txt")
+      const noopPath = join(h.root, "src", "noop.txt")
+      await writeFile(linkTarget, "target\n")
+      await symlink("link-target.txt", linkPath)
+      await writeFile(binaryPath, Buffer.from([0, 1, 2]))
+      await writeFile(deletePath, "delete me\n")
+      await writeFile(modePath, "keep mode\n")
+      await writeFile(noopPath, "unchanged\n")
+      await git(h.root, ["add", "--", "src/link-target.txt", "src/link.txt", "src/binary.dat", "src/delete.txt", "src/mode.txt", "src/noop.txt"])
+      await git(h.root, ["commit", "-m", "unsupported delta matrix baseline"])
+
+      const general = "unsupported-delta-general"
+      const worker = "unsupported-delta-worker"
+      const started = await h.call("start", { request: "Exercise unsupported owned-delta states." }, "general", general)
+      const workflowId = String(started.workflowId)
+      expect((await h.call("route", {
+        humanFacing: false, behavioral: false, structural: false, externalUnknown: false,
+        diagnostic: false, productOutcome: false, implementationRequested: true, executionDepth: "task",
+      }, "general", general)).error).toBeUndefined()
+      const paths = ["src/link.txt", "src/binary.dat", "src/delete.txt", "src/mode.txt", "src/noop.txt"]
+      expect((await h.call("task_scope", { workflowId, stepId: "worker", write: paths }, "general", general)).error).toBeUndefined()
+      const grant = await h.call("dispatch_grant", { workflowId, stepId: "worker" }, "general", general)
+      expect((await h.call("attach", { grantId: grant.grantId, workflowId, stepId: "worker" }, "worker", worker)).attached).toBe(true)
+
+      const admit = async (callID: string, path: string, mutate: () => Promise<void>) => {
+        const event = {
+          tool: "edit", callID, sessionID: worker, agent: "worker",
+          input: { filePath: join(h.root, path) },
+        }
+        await h.toolHooks.get("execute.before")?.(event)
+        await mutate()
+        return h.toolHooks.get("execute.after")?.({ ...event, status: "completed", result: "matrix mutation" })
+      }
+
+      await admit("unsupported-noop", "src/noop.txt", async () => {})
+      const noopReceipt = `git-delta/${encodeURIComponent(workflowId)}/worker/0/${encodeURIComponent("src/noop.txt")}`
+      expect(await h.durableStorage.get(noopReceipt)).toBeUndefined()
+
+      await admit("unsupported-binary", "src/binary.dat", async () => writeFile(binaryPath, Buffer.from([0, 4, 5])))
+      await admit("unsupported-symlink", "src/link.txt", async () => writeFile(linkTarget, "changed target\n"))
+      await expect(admit("unsupported-mode", "src/mode.txt", async () => {
+        await writeFile(modePath, "changed mode\n")
+        await chmod(modePath, 0o755)
+      }))
+        .rejects.toThrow("unsupported postimage")
+      await expect(admit("unsupported-delete", "src/delete.txt", async () => rm(deletePath)))
+        .rejects.toThrow()
+
+      for (const path of ["src/binary.dat", "src/link.txt", "src/mode.txt", "src/delete.txt"]) {
+        const unproven = `git-delta-unproven/${encodeURIComponent(workflowId)}/worker/0/${encodeURIComponent(path)}`
+        expect(await h.durableStorage.get(unproven)).toBeDefined()
+      }
     } finally {
       h.restore()
     }
