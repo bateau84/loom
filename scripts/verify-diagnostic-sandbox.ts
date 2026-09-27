@@ -19,7 +19,9 @@ const runtimeRoot = join(root, "runtime")
 let sandbox: DiagnosticSandboxRecord | undefined
 
 try {
-  await mkdir(project, { recursive: true })
+  await mkdir(join(project, "cache"), { recursive: true })
+  await writeFile(join(project, ".gitignore"), "cache/**\n")
+  await writeFile(join(project, "cache", "state.db"), "cache-original\n")
   await writeFile(join(project, "state.txt"), "host-original\n")
 
   sandbox = await createDiagnosticSandbox({
@@ -49,6 +51,8 @@ try {
       'test -z "${all_proxy:-}"',
       "git rev-parse --verify HEAD >/dev/null",
       "printf 'sandbox-mutated\\n' > state.txt",
+      "printf 'cache-mutated\\n' > cache/state.db",
+      "printf 'new-cache\\n' > cache/new-state.db",
       "printf 'container-proof\\n' > proof.txt",
       "if git add state.txt 2>/dev/null; then echo 'sandbox baseline became writable' >&2; exit 42; fi",
     ].join(" && "),
@@ -57,7 +61,9 @@ try {
   assert.equal(result.ok, true, result.stderr || result.cleanupError || "sandbox execution failed")
 
   assert.equal(await readFile(join(project, "state.txt"), "utf8"), "host-original\n")
+  assert.equal(await readFile(join(project, "cache", "state.db"), "utf8"), "cache-original\n")
   assert.equal(await readFile(join(sandbox.workspacePath, "state.txt"), "utf8"), "sandbox-mutated\n")
+  assert.equal(await readFile(join(sandbox.workspacePath, "cache", "state.db"), "utf8"), "cache-mutated\n")
   assert.equal(await readFile(join(sandbox.workspacePath, "proof.txt"), "utf8"), "container-proof\n")
 
   const second = await executeDiagnosticSandbox(sandbox, {
@@ -70,6 +76,8 @@ try {
 
   const diff = await diffDiagnosticSandbox(sandbox)
   assert.match(diff.status, /M state\.txt/)
+  assert.match(diff.status, /M cache\/state\.db/)
+  assert.match(diff.status, /!! cache\/new-state\.db/)
   assert.match(diff.status, /\?\? proof\.txt/)
 
   const sandboxRoot = sandbox.rootPath
