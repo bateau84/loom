@@ -10612,8 +10612,18 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                     const mutated = await worktreeFingerprint(ctx.location.directory, snapshot.path) !==
                       createHash("sha256").update("file\0").update(String(snapshot.mode)).update("\0").update(Buffer.from(snapshot.bytes, "base64")).digest("hex")
                     if (mutated) {
-                      await recordGitMutationDelta(ctx, sessionID, ctx.location.directory, snapshot)
-                      deltaOwned.push(snapshot.path)
+                      try {
+                        await recordGitMutationDelta(ctx, sessionID, ctx.location.directory, snapshot)
+                        deltaOwned.push(snapshot.path)
+                      } catch (error) {
+                        const binding = await gitSessionOwnershipBinding(ctx, sessionID)
+                        if (binding) await ctx.storage.set(gitDeltaUnprovenKey(binding, snapshot.path), {
+                          authorityId: binding.authorityId,
+                          sourceSessionId: sessionID,
+                          reason: error instanceof Error ? error.message : String(error),
+                        })
+                        throw error
+                      }
                     }
                   }
                 }
