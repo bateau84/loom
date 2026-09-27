@@ -41,6 +41,7 @@ describe("Diagnostic sandbox", () => {
     await writeFile(join(project, "src", "value.txt"), "before\n")
     await writeFile(join(project, ".git", "host-secret"), "do-not-copy\n")
     await writeFile(join(project, ".loom", "project-id"), "host-project\n")
+    await writeFile(join(project, ".loom", "diagnostic-fixture.json"), "{\"relevant\":true}\n")
 
     const sandbox = await createDiagnosticSandbox({
       runtimeRoot,
@@ -59,6 +60,7 @@ describe("Diagnostic sandbox", () => {
     await expect(stat(join(sandbox.workspacePath, ".git", "host-secret"))).rejects.toThrow()
     await expect(stat(join(sandbox.workspacePath, ".git"))).rejects.toThrow()
     await expect(stat(join(sandbox.workspacePath, ".loom", "project-id"))).rejects.toThrow()
+    expect(await readFile(join(sandbox.workspacePath, ".loom", "diagnostic-fixture.json"), "utf8")).toBe("{\"relevant\":true}\n")
     expect((await stat(sandbox.baselineGitPath)).isDirectory()).toBe(true)
 
     await writeFile(join(sandbox.workspacePath, "src", "value.txt"), "experiment\n")
