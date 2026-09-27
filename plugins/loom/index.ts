@@ -97,11 +97,10 @@ import {
 import {
   allocateDiagnosticSandbox,
   destroyDiagnosticSandbox,
-  detectDiagnosticContainerEngine,
   diffDiagnosticSandbox,
   executeDiagnosticSandbox,
   materializeDiagnosticSandbox,
-  resolveDiagnosticSandboxImage,
+  resolveDiagnosticSandboxRuntime,
   type DiagnosticSandboxNetwork,
   type DiagnosticSandboxRecord,
 } from "./diagnostic-sandbox"
@@ -3138,9 +3137,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               const value = input as { image: string; network: DiagnosticSandboxNetwork }
               let sandbox: DiagnosticSandboxRecord | undefined
               try {
-                const engine = await detectDiagnosticContainerEngine()
-                const resolvedImage = await resolveDiagnosticSandboxImage(
-                  engine,
+                const resolvedRuntime = await resolveDiagnosticSandboxRuntime(
                   value.image,
                 )
                 sandbox = allocateDiagnosticSandbox({
@@ -3150,10 +3147,10 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                   workflowId,
                   stepId,
                   attempt: step.attempt ?? 0,
-                  image: resolvedImage.reference,
-                  imageId: resolvedImage.id,
+                  image: resolvedRuntime.reference,
+                  imageId: resolvedRuntime.id,
                   network: value.network,
-                  engine,
+                  engine: resolvedRuntime.engine,
                 })
 
                 const registered = await withRuntimeLock(

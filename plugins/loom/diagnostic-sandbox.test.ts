@@ -15,6 +15,7 @@ import {
   materializeDiagnosticSandbox,
   normalizeDiagnosticSandboxTimeout,
   resolveDiagnosticSandboxImage,
+  resolveDiagnosticSandboxRuntime,
   validateDiagnosticSandboxCommand,
   validateDiagnosticSandboxImage,
 } from "./diagnostic-sandbox"
@@ -77,6 +78,7 @@ describe("Diagnostic sandbox", () => {
     await writeFile(join(sandbox.workspacePath, "new-evidence.txt"), "new\n")
 
     const diff = await diffDiagnosticSandbox(sandbox)
+    expect(diff.imageId).toBe(sandbox.imageId)
     expect(diff.status).toContain("M src/value.txt")
     expect(diff.status).toContain("M cache/state.db")
     expect(diff.status).toContain("!! cache/new-state.db")
@@ -135,6 +137,7 @@ describe("Diagnostic sandbox", () => {
         stepId: "diagnostic",
         attempt: 0,
         image: "local/toolchain:test",
+        imageId: "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
         network: "none",
         engine: "podman",
       })
@@ -332,6 +335,39 @@ describe("Diagnostic sandbox", () => {
       file: "docker",
       args: ["image", "inspect", "--format", "{{.Id}}", "local/toolchain:latest"],
     }])
+  })
+
+  test("falls back to Docker when Podman exists but does not have the requested image", async () => {
+    const calls: Array<{ file: string; args: string[] }> = []
+    const imageId = "sha256:abababababababababababababababababababababababababababababababab"
+    const run = async (file: string, args: string[]) => {
+      calls.push({ file, args })
+      if (args[0] === "version") return { stdout: "", stderr: "" }
+      if (file === "podman") throw new Error("image not known")
+      return { stdout: imageId + "\n", stderr: "" }
+    }
+
+    await expect(resolveDiagnosticSandboxRuntime(
+      "local/toolchain:test",
+      run,
+    )).resolves.toEqual({
+      engine: "docker",
+      reference: "local/toolchain:test",
+      id: imageId,
+    })
+
+    expect(calls).toEqual([
+      { file: "podman", args: ["version"] },
+      {
+        file: "podman",
+        args: ["image", "inspect", "--format", "{{.Id}}", "local/toolchain:test"],
+      },
+      { file: "docker", args: ["version"] },
+      {
+        file: "docker",
+        args: ["image", "inspect", "--format", "{{.Id}}", "local/toolchain:test"],
+      },
+    ])
   })
 
   test("checks local image availability without pulling", async () => {

@@ -186,6 +186,14 @@ export async function assertDiagnosticSandboxImageAvailable(
   return value
 }
 
+export function validateDiagnosticSandboxImageId(imageId: string) {
+  const value = imageId.trim()
+  if (!/^(?:sha256:)?[0-9a-f]{64}$/i.test(value)) {
+    throw new Error("Diagnostic sandbox image ID must be one immutable 64-hex image identifier.")
+  }
+  return value
+}
+
 export async function resolveDiagnosticSandboxImage(
   engine: DiagnosticSandboxEngine,
   image: string,
@@ -202,16 +210,49 @@ export async function resolveDiagnosticSandboxImage(
         maxBuffer: 512_000,
       },
     )
-    const id = String(result.stdout ?? "").trim()
-    if (!/^(?:sha256:)?[0-9a-f]{64}$/i.test(id)) {
-      throw new Error("container engine returned an invalid image ID")
-    }
+    const id = validateDiagnosticSandboxImageId(String(result.stdout ?? ""))
     return { reference, id }
   } catch (error) {
     throw new Error(
       `Diagnostic sandbox image is not available as a stable local image for ${engine}: ${reference}. Loom will not pull images implicitly. ${error instanceof Error ? error.message : String(error)}`,
     )
   }
+}
+
+export async function resolveDiagnosticSandboxRuntime(
+  image: string,
+  run: ExecRunner = execFileAsync as unknown as ExecRunner,
+) {
+  const reference = validateDiagnosticSandboxImage(image)
+  const failures: string[] = []
+
+  for (const engine of ["podman", "docker"] as const) {
+    try {
+      await run(engine, ["version"], {
+        encoding: "utf8",
+        timeout: 5_000,
+        maxBuffer: 512_000,
+      })
+    } catch (error) {
+      failures.push(
+        `${engine}: unavailable (${error instanceof Error ? error.message : String(error)})`,
+      )
+      continue
+    }
+
+    try {
+      const resolved = await resolveDiagnosticSandboxImage(engine, reference, run)
+      return { engine, ...resolved }
+    } catch (error) {
+      failures.push(
+        `${engine}: image unavailable (${error instanceof Error ? error.message : String(error)})`,
+      )
+    }
+  }
+
+  throw new Error(
+    `Diagnostic sandbox image is not available in any supported local container engine: ${reference}. ${failures.join(" | ")}`,
+  )
 }
 
 function isolatedGitEnvironment(configPath: string): NodeJS.ProcessEnv {
@@ -283,6 +324,7 @@ export function allocateDiagnosticSandbox(input: {
   now?: string
 }): DiagnosticSandboxRecord {
   const image = validateDiagnosticSandboxImage(input.image)
+  const imageId = validateDiagnosticSandboxImageId(input.imageId)
   const id = sandboxId(input.id ?? randomUUID())
   const rootPath = join(
     input.runtimeRoot,
@@ -302,7 +344,7 @@ export function allocateDiagnosticSandbox(input: {
     workspacePath: join(rootPath, "workspace"),
     baselineGitPath: join(rootPath, "baseline.git"),
     image,
-    imageId: input.imageId,
+    imageId,
     engine: input.engine,
     network: input.network,
     createdAt: input.now ?? new Date().toISOString(),
@@ -428,10 +470,30 @@ export async function createDiagnosticSandbox(input: {
   run?: ExecRunner
 }): Promise<DiagnosticSandboxRecord> {
   const run = input.run ?? (execFileAsync as unknown as ExecRunner)
-  const engine = input.engine ?? await detectDiagnosticContainerEngine(run)
-  const resolvedImage = input.imageId
-    ? { reference: validateDiagnosticSandboxImage(input.image), id: input.imageId }
-    : await resolveDiagnosticSandboxImage(engine, input.image, run)
+  let engine: DiagnosticSandboxEngine
+  let resolvedImage: { reference: string; id: string }
+  if (input.engine) {
+    engine = input.engine
+    resolvedImage = input.imageId
+      ? {
+          reference: validateDiagnosticSandboxImage(input.image),
+          id: validateDiagnosticSandboxImageId(input.imageId),
+        }
+      : await resolveDiagnosticSandboxImage(engine, input.image, run)
+  } else if (input.imageId) {
+    engine = await detectDiagnosticContainerEngine(run)
+    resolvedImage = {
+      reference: validateDiagnosticSandboxImage(input.image),
+      id: validateDiagnosticSandboxImageId(input.imageId),
+    }
+  } else {
+    const resolvedRuntime = await resolveDiagnosticSandboxRuntime(input.image, run)
+    engine = resolvedRuntime.engine
+    resolvedImage = {
+      reference: resolvedRuntime.reference,
+      id: resolvedRuntime.id,
+    }
+  }
   const record = allocateDiagnosticSandbox({
     runtimeRoot: input.runtimeRoot,
     projectId: input.projectId,
@@ -615,6 +677,7 @@ export async function diffDiagnosticSandbox(
     sandboxId: record.id,
     snapshotTree: record.snapshotTree,
     image: record.image,
+    imageId: record.imageId,
     engine: record.engine,
     network: record.network,
     status: clipped(status.stdout),
