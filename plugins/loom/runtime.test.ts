@@ -1948,6 +1948,22 @@ describe("Loom runtime identity and scoped storage", () => {
     })
   })
 
+  test("owner process death closes flock keepers without stealing a live lock", async () => {
+    await withRoots(async (root) => {
+      const project = join(root, "owner-death-project")
+      await mkdir(project, { recursive: true })
+      const runtime = await resolveRuntimeIdentity(project, new MemoryStorage())
+      const resource = { aggregate: "file-write", resourceIdentity: "src/shared.ts" }
+
+      const ownerExit = await runFixtureExit(["lock-owner-exit", project, resource.aggregate, resource.resourceIdentity], {})
+      expect(ownerExit).toBe(0)
+
+      const available = await tryAcquireRuntimeLocks(runtime, [resource])
+      expect("release" in available).toBe(true)
+      if ("release" in available) await available.release()
+    })
+  })
+
   test("one installation persists one lock root across different process runtime environments", async () => {
     await withRoots(async (root) => {
       const project = join(root, "project")

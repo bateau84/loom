@@ -51,6 +51,14 @@ export function projectDisjointTextDelta(
   aggregate: Buffer,
 ): DeltaProjection | undefined {
   if ([head, foreign, aggregate].some((value) => value.includes(0))) return undefined
+  if (head.length === 0 && foreign.length > 0) return undefined
+  if (head.length === 0 && foreign.length === 0 && aggregate.length > 0) {
+    return {
+      projection: Buffer.from(aggregate),
+      aggregate: Buffer.from(aggregate),
+      foreign: Buffer.from(foreign),
+    }
+  }
 
   const foreignEdit = editBetween(head, foreign)
   const ownedEdit = editBetween(foreign, aggregate)
@@ -87,7 +95,7 @@ export function projectDisjointTextDelta(
     return undefined
   }
   const projection = replace(head, projectedEdit)
-  if (!replace(projection, { ...foreignEdit, start: foreignEdit.start < projectedStart
+  if (!replace(projection, { ...foreignEdit, start: foreignEdit.start <= projectedStart
     ? foreignEdit.start
     : foreignEdit.start + projectedEdit.inserted.length - projectedEdit.removed.length }).equals(aggregate)) {
     return undefined

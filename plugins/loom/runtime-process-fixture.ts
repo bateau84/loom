@@ -1,5 +1,5 @@
 import { readFile, writeFile } from "node:fs/promises"
-import { createProjectStorage, createTransactionalStorage, ensureRuntimeStateVersion, resolveRuntimeIdentity, withRuntimeLock, withRuntimeLocks, type RawStorage } from "./runtime"
+import { createProjectStorage, createTransactionalStorage, ensureRuntimeStateVersion, resolveRuntimeIdentity, tryAcquireRuntimeLocks, withRuntimeLock, withRuntimeLocks, type RawStorage } from "./runtime"
 
 class ProcessStorage implements RawStorage {
   async get(_key: string) { return undefined }
@@ -132,6 +132,17 @@ if (mode === "multi-lock") {
     },
   )
   process.stdout.write("ok\n")
+  process.exit(0)
+}
+
+if (mode === "lock-owner-exit") {
+  const [aggregate, resource] = args
+  if (!aggregate || !resource) throw new Error("lock-owner-exit requires aggregate and resource")
+  const lease = await tryAcquireRuntimeLocks(runtime, [{ aggregate, resourceIdentity: resource }])
+  if (!("release" in lease)) throw new Error(`fixture lock unexpectedly busy: ${lease.busyResource}`)
+  // Deliberately emulate abrupt owner death while the helper still holds the
+  // flock. The parent-owned stdin pipe must close so the keeper exits too.
+  process.stdout.write("owner exiting with lock held\n")
   process.exit(0)
 }
 

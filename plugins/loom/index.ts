@@ -312,6 +312,7 @@ type GitDeltaReceipt = {
 type GitMutationSnapshot = {
   path: string
   bytes: string
+  // Zero records a verified absent worktree preimage for a clean new-file create.
   mode: number
   head: string
   headMode: string
@@ -369,6 +370,29 @@ function safeOwnedRepoPath(value: string) {
     throw new Error("Owned repository path must be project-relative: " + value)
   }
   return normalized
+}
+
+function sessionHasTerminalToolCall(
+  messages: unknown,
+  call: { callID: string; tool: string; messageID?: string },
+) {
+  if (!Array.isArray(messages)) return false
+  const matches: Array<{ message: Record<string, unknown>; part: Record<string, unknown> }> = []
+  for (const candidate of messages) {
+    if (!candidate || typeof candidate !== "object") continue
+    const message = candidate as Record<string, unknown>
+    if (!Array.isArray(message.parts)) continue
+    for (const rawPart of message.parts) {
+      if (!rawPart || typeof rawPart !== "object") continue
+      const part = rawPart as Record<string, unknown>
+      if (part.type !== "tool" || part.callID !== call.callID || part.tool !== call.tool) continue
+      if (call.messageID && (part.messageID ?? message.id) !== call.messageID) continue
+      matches.push({ message, part })
+    }
+  }
+  if (matches.length !== 1) return false
+  const status = (matches[0].part.state as Record<string, unknown> | undefined)?.status
+  return status === "completed" || status === "error"
 }
 
 async function worktreeFingerprint(projectDirectory: string, value: string) {
@@ -564,36 +588,50 @@ async function snapshotGitMutation(
   path: string,
 ): Promise<GitMutationSnapshot> {
   const normalized = safeOwnedRepoPath(path)
-  const info = await lstat(join(projectDirectory, normalized))
-  if (!info.isFile() || info.isSymbolicLink()) {
-    throw new Error(`Owned-delta recording currently requires a regular tracked text file: ${normalized}`)
+  let info: Awaited<ReturnType<typeof lstat>> | undefined
+  try {
+    info = await lstat(join(projectDirectory, normalized))
+  } catch (error: any) {
+    if (error?.code !== "ENOENT") throw error
   }
-  const bytes = await readFile(join(projectDirectory, normalized))
+  if (info && (!info.isFile() || info.isSymbolicLink())) {
+    throw new Error(`Owned-delta recording currently requires a regular text file: ${normalized}`)
+  }
+  const bytes = info ? await readFile(join(projectDirectory, normalized)) : Buffer.alloc(0)
   if (bytes.length > 1024 * 1024 || bytes.includes(0)) {
     throw new Error(`Owned-delta recording refuses binary or oversized file: ${normalized}`)
   }
-  const [head, headBytes, indexEntry, headEntry] = await Promise.all([
+  const [head, indexEntry, headEntry] = await Promise.all([
     execFileAsync("git", ["rev-parse", "HEAD"], { cwd: projectDirectory, encoding: "utf8" }),
-    execFileAsync("git", ["show", `HEAD:${normalized}`], { cwd: projectDirectory, encoding: "buffer" }),
     execFileAsync("git", ["ls-files", "-s", "--", normalized], { cwd: projectDirectory, encoding: "utf8" }),
     execFileAsync("git", ["ls-tree", "HEAD", "--", normalized], { cwd: projectDirectory, encoding: "utf8" }),
   ])
   const indexRecord = String(indexEntry.stdout).trim()
   const headRecord = String(headEntry.stdout).trim()
-  const headMode = headRecord.split(/\s+/)[0]
+  const headMode = headRecord ? headRecord.split(/\s+/)[0] : ""
+  const indexMode = indexRecord ? indexRecord.split(/\s+/)[0] : ""
+  const indexOid = indexRecord ? indexRecord.split(/\s+/)[1] : ""
+  const headOid = headRecord ? headRecord.split(/\s+/)[2] : ""
+  if (!info && (headRecord || indexRecord)) {
+    throw new Error(`Owned-delta recording refuses a missing path with a Git baseline: ${normalized}`)
+  }
   if (
-    !indexRecord || !headMode ||
-    indexRecord.split(/\s+/)[1] !== headRecord.split(/\s+/)[2] ||
-    info.mode.toString(8) !== headMode
+    (Boolean(headRecord) !== Boolean(indexRecord)) ||
+    (headRecord && (indexOid !== headOid || indexMode !== headMode)) ||
+    (headRecord && info && info.mode.toString(8) !== headMode)
   ) {
     throw new Error(`Owned-delta recording requires an unchanged Git index baseline: ${normalized}`)
   }
-  const baseline = Buffer.from(headBytes.stdout as Buffer)
+  const baseline = headRecord
+    ? Buffer.from((await execFileAsync("git", ["show", `HEAD:${normalized}`], {
+        cwd: projectDirectory, encoding: "buffer",
+      })).stdout as Buffer)
+    : Buffer.alloc(0)
   const indexFingerprint = createHash("sha256").update(indexRecord).digest("hex")
   return {
     path: normalized,
     bytes: bytes.toString("base64"),
-    mode: info.mode,
+    mode: info?.mode ?? 0,
     head: String(head.stdout).trim(),
     headMode,
     indexEntry: indexFingerprint,
@@ -616,7 +654,7 @@ async function recordGitMutationDelta(
   const after = await readFile(join(projectDirectory, snapshot.path))
   const info = await lstat(join(projectDirectory, snapshot.path))
   if (
-    !info.isFile() || info.isSymbolicLink() || info.mode !== snapshot.mode ||
+    !info.isFile() || info.isSymbolicLink() || (snapshot.mode !== 0 && info.mode !== snapshot.mode) ||
     after.length > 1024 * 1024 || after.includes(0)
   ) {
     throw new Error(`Owned-delta recording refuses unsupported postimage: ${snapshot.path}`)
@@ -649,7 +687,7 @@ async function recordGitMutationDelta(
     path: snapshot.path,
     revision: (prior?.revision ?? 0) + 1,
     head: snapshot.head,
-    headMode: snapshot.headMode,
+    headMode: snapshot.headMode || info.mode.toString(8),
     headContent: snapshot.baseline,
     indexEntry: snapshot.indexEntry,
     foreign: foreign.toString("base64"),
@@ -1264,7 +1302,12 @@ async function commitScopeError(
       if (binding) {
         for (const path of staged) {
           const receipt = await ctx.storage.get(gitDeltaStageKey(binding, path)) as any
-          if (!receipt) continue
+          if (!receipt) {
+            if (await ctx.storage.get(gitDeltaReceiptKey(binding, path))) {
+              return `Git commit denied: owned-delta projection receipt is missing for staged path ${path}.`
+            }
+            continue
+          }
           const head = String((await execFileAsync("git", ["rev-parse", "HEAD"], {
             cwd: projectDirectory, encoding: "utf8",
           })).stdout).trim()
@@ -2891,23 +2934,40 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
     // Per-plugin-instance, bounded pending observations. Missing/evicted before
     // events remain passive; they are never reconstructed from a later binding.
-    const pendingObservations = new Map<string, {
+    type PendingGitObservation = {
       ambiguous: boolean
       ready: boolean
       inputDigest?: string
       summary?: ReturnType<typeof safeInputSummary>
       admission?: EvidenceAdmission
       gitStageBefore?: GitStageSnapshot
-    }>()
-    const activeGitWriteCalls = new Map<
-      string,
-      { paths: string[]; release: () => Promise<void> }
-    >()
+      gitStageTargets?: string[]
+      gitMutationPaths?: string[]
+      gitMutationBefore?: GitMutationSnapshot[]
+      gitMutationCaptureError?: string
+      gitMutationFingerprints?: Record<string, string>
+    }
+    const pendingObservations = new Map<string, PendingGitObservation>()
+    type ActiveGitWriteCall = {
+      paths: string[]
+      sessionID: string
+      tool: string
+      callID: string
+      messageID?: string
+      pendingKey: string
+      pending: PendingGitObservation
+      binding?: GitOwnershipBinding
+      release: () => Promise<void>
+      releasing?: Promise<void>
+    }
+    const activeGitWriteCalls = new Map<string, ActiveGitWriteCall>()
+    const activeGitWriteDrainers = new Set<() => void>()
 
     const acquireGitWriteLocks = async (
       raw: any,
       paths: readonly string[],
       lockGitIndex: boolean,
+      pending: PendingGitObservation,
     ) => {
       const normalized = [...new Set(paths)].sort()
       const sessionID = typeof raw.sessionID === "string" ? raw.sessionID : ""
@@ -2922,6 +2982,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           ? { aggregate: "step-authority", resourceIdentity: `${workflowId}:${stepId}` }
           : undefined
       if (normalized.length === 0 && !lockGitIndex && !stepAuthority) return
+      const binding = sessionID ? await gitSessionOwnershipBinding(ctx, sessionID) : undefined
       const executionKey = observationCallKey(raw)
       if (!executionKey) {
         throw new Error("Write blocked: Loom could not establish a stable tool-call identity for write locking.")
@@ -2960,8 +3021,16 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         throw new Error(writeLockError([acquired.busyResource]))
       }
 
+      const callID = typeof raw.callID === "string" ? raw.callID : String(raw.id ?? "")
       activeGitWriteCalls.set(executionKey, {
         paths: normalized,
+        sessionID,
+        tool: String(raw.tool ?? ""),
+        callID,
+        ...(typeof raw.messageID === "string" ? { messageID: raw.messageID } : {}),
+        pendingKey: executionKey,
+        pending,
+        ...(binding ? { binding } : {}),
         release: acquired.release,
       })
     }
@@ -2972,9 +3041,93 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       const active = activeGitWriteCalls.get(executionKey)
       if (!active) return
       try {
-        await active.release()
+        active.releasing ??= active.release()
+        await active.releasing
       } finally {
-        activeGitWriteCalls.delete(executionKey)
+        if (activeGitWriteCalls.get(executionKey) === active) {
+          activeGitWriteCalls.delete(executionKey)
+          if (activeGitWriteCalls.size === 0) {
+            for (const resolve of activeGitWriteDrainers) resolve()
+            activeGitWriteDrainers.clear()
+          }
+        }
+      }
+    }
+
+    const reconcileQuiescentCall = async (call: ActiveGitWriteCall) => {
+      const pending = call.pending
+      if (call.binding) {
+        for (const path of pending?.gitMutationPaths ?? []) {
+          if (isAbsolute(path) || path.startsWith("hard-boundary:")) continue
+          const before = pending?.gitMutationFingerprints?.[path]
+          const current = await worktreeFingerprint(ctx.location.directory, path).catch(() => "unreadable")
+          if (pending?.gitMutationCaptureError || before === undefined || current !== before) {
+            await ctx.storage.set(gitDeltaUnprovenKey(call.binding, path), {
+              authorityId: call.binding.authorityId,
+              sourceSessionId: call.sessionID,
+              reason: "The exact tool call settled without Loom's after-hook mutation receipt.",
+            })
+          }
+        }
+        for (const path of pending?.gitStageTargets ?? []) {
+          const before = pending?.gitStageBefore?.[path]
+          const after = await gitStageSnapshot(ctx.location.directory, [path])
+          if (before !== after[path]) {
+            await ctx.storage.set(gitDeltaUnprovenKey(call.binding, path), {
+              authorityId: call.binding.authorityId,
+              sourceSessionId: call.sessionID,
+              reason: "The exact tool call changed the Git index without Loom's after-hook staging receipt.",
+            })
+          }
+        }
+      }
+      await releaseGitWriteLocks({
+        sessionID: call.sessionID,
+        messageID: call.messageID,
+        callID: call.callID,
+        tool: call.tool,
+      })
+      pendingObservations.delete(call.pendingKey)
+    }
+
+    const eventAbort = new AbortController()
+    const eventConsumer = ctx.event?.subscribe
+      ? (async () => {
+          try {
+            for await (const event of ctx.event.subscribe({ signal: eventAbort.signal })) {
+              if (event?.type !== "session.idle") continue
+              const properties = event.properties
+              const sessionID = properties && typeof properties === "object" &&
+                typeof properties.sessionID === "string"
+                ? properties.sessionID
+                : undefined
+              if (!sessionID) continue
+              const calls = [...activeGitWriteCalls.values()].filter((call) => call.sessionID === sessionID)
+              if (calls.length === 0) continue
+              let messages: unknown
+              try {
+                messages = await ctx.session.context({ sessionID })
+              } catch {
+                // Idle alone is not proof of executor quiescence. Keep every
+                // lease until its exact after callback or a later verified event.
+                continue
+              }
+              for (const call of calls) {
+                if (!sessionHasTerminalToolCall(messages, call)) continue
+                await reconcileQuiescentCall(call)
+              }
+            }
+          } catch (error) {
+            if (!eventAbort.signal.aborted) {
+              console.error("Loom tool-call lock reconciliation event stream failed:", error)
+            }
+          }
+        })()
+      : undefined
+
+    const waitForGitWriteQuiescence = async () => {
+      while (activeGitWriteCalls.size > 0) {
+        await new Promise<void>((resolve) => activeGitWriteDrainers.add(resolve))
       }
     }
 
@@ -3112,6 +3265,24 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           throw new Error(
             "Git staging denied: targets are outside the current committable Loom write scope. Re-elevate the needed project-local path before staging.",
           )
+        }
+        const binding = await gitSessionOwnershipBinding(ctx, String(raw.sessionID ?? ""))
+        if (binding) {
+          let currentHead: string | undefined
+          for (const path of addTargets) {
+            const receipt = await ctx.storage.get(gitDeltaReceiptKey(binding, path)) as GitDeltaReceipt | undefined
+            if (!receipt) continue
+            currentHead ??= String((await execFileAsync("git", ["rev-parse", "HEAD"], {
+              cwd: ctx.location.directory, encoding: "utf8",
+            })).stdout).trim()
+            const indexRecord = String((await execFileAsync("git", ["ls-files", "-s", "--", path], {
+              cwd: ctx.location.directory, encoding: "utf8",
+            })).stdout).trim()
+            const currentIndex = createHash("sha256").update(indexRecord).digest("hex")
+            if (currentHead !== receipt.head || currentIndex !== receipt.indexEntry) {
+              throw new Error(`Git staging denied: owned-delta HEAD/index baseline changed for ${path}.`)
+            }
+          }
         }
         const indexConflict = await gitIndexConflictError(
           ctx,
@@ -10221,15 +10392,13 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       }
       // Reserve the key before awaiting storage so concurrent before events do
       // not overwrite each other's admission.
-      const pending: {
-        ambiguous: boolean; ready: boolean; inputDigest?: string
-        summary?: ReturnType<typeof safeInputSummary>; admission?: EvidenceAdmission
-        gitStageBefore?: GitStageSnapshot
-        gitMutationBefore?: GitMutationSnapshot[]
-        gitMutationCaptureError?: string
-      } = { ambiguous: false, ready: false }
+      const pending: PendingGitObservation = { ambiguous: false, ready: false }
       pendingObservations.set(key, pending)
-      if (pendingObservations.size > 1024) pendingObservations.delete(pendingObservations.keys().next().value!)
+      if (pendingObservations.size > 1024) {
+        const activeKeys = new Set([...activeGitWriteCalls.values()].map((call) => call.pendingKey))
+        const evict = [...pendingObservations.keys()].find((candidate) => !activeKeys.has(candidate))
+        if (evict) pendingObservations.delete(evict)
+      }
       pending.admission = await captureEvidenceAdmission(ctx.storage as any, runtime, String(raw.sessionID), String(raw.agent ?? ""))
       pending.inputDigest = raw.input === undefined ? undefined : await digest(raw.input)
       pending.summary = safeInputSummary(tool, raw.input)
@@ -10237,8 +10406,17 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
       if (mutationNeedsLock) {
         try {
-          await acquireGitWriteLocks(raw, mutationLockPaths, lockGitIndex)
+          pending.gitMutationPaths = directMutationPaths
+          await acquireGitWriteLocks(raw, mutationLockPaths, lockGitIndex, pending)
           await revalidateDirectMutationUnderLock(raw, directMutationPaths)
+          if (directMutationPaths.length > 0) {
+            pending.gitMutationFingerprints = Object.fromEntries(await Promise.all(
+              directMutationPaths.filter((path) => !isAbsolute(path) && !path.startsWith("hard-boundary:")).map(async (path) => [
+                path,
+                await worktreeFingerprint(ctx.location.directory, path),
+              ] as const),
+            ))
+          }
           if (directMutationPaths.length > 0 && await gitSessionOwnershipBinding(ctx, String(raw.sessionID ?? ""))) {
             try {
               pending.gitMutationBefore = await Promise.all(
@@ -10273,6 +10451,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 ? (scopedGitAddTargets(command) ?? [])
                 : []
             if (addTargets.length > 0) {
+              pending.gitStageTargets = addTargets
               pending.gitStageBefore = await gitStageSnapshot(
                 ctx.location.directory,
                 addTargets,
@@ -10617,11 +10796,14 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                         deltaOwned.push(snapshot.path)
                       } catch (error) {
                         const binding = await gitSessionOwnershipBinding(ctx, sessionID)
-                        if (binding) await ctx.storage.set(gitDeltaUnprovenKey(binding, snapshot.path), {
-                          authorityId: binding.authorityId,
-                          sourceSessionId: sessionID,
-                          reason: error instanceof Error ? error.message : String(error),
-                        })
+                        if (binding) {
+                          const paths = pending.gitMutationBefore?.map(({ path }) => path) ?? [snapshot.path]
+                          const reason = error instanceof Error ? error.message : String(error)
+                          await Promise.all(paths.map((path) => ctx.storage.set(
+                            gitDeltaUnprovenKey(binding, path),
+                            { authorityId: binding.authorityId, sourceSessionId: sessionID, reason },
+                          )))
+                        }
                         throw error
                       }
                     }
@@ -10768,6 +10950,15 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         await releaseGitWriteLocks(raw)
       }
     })
+
+    return async () => {
+      // Do not drop a live helper merely because plugin registrations are being
+      // disposed. Wait for exact after callbacks or a terminal session event
+      // whose persisted tool part proves this call is complete/error.
+      await waitForGitWriteQuiescence()
+      eventAbort.abort()
+      await eventConsumer
+    }
   },
 }
 

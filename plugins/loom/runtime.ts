@@ -333,7 +333,7 @@ async function acquireFlock(
   const marker = "__LOOM_LOCKED__"
   const proc = spawn(
     "flock",
-    ["-x", ...(nonBlocking ? ["-n"] : []), lockPath, "sh", "-c", `printf '${marker}\\n'; cat >/dev/null`],
+    ["-x", ...(nonBlocking ? ["-n"] : []), "-o", lockPath, "sh", "-c", `printf '${marker}\\n'; cat >/dev/null`],
     { stdio: ["pipe", "pipe", "pipe"] },
   )
 
@@ -373,14 +373,34 @@ async function acquireFlock(
     })
   })
 
-  if (!await acquired) return undefined
+  const closeAndReap = async () => {
+    if (!proc.stdin.destroyed && !proc.stdin.writableEnded) proc.stdin.end()
+    if (proc.exitCode === null && proc.signalCode === null) await once(proc, "close")
+  }
 
-  return async () => {
-    if (!proc.killed) proc.stdin.end()
-    if (proc.exitCode === null) await once(proc, "exit")
-    if (proc.exitCode !== 0) {
-      throw new Error(`Loom advisory lock process exited with ${proc.exitCode}: ${stderr.trim()}`)
-    }
+  let held: boolean
+  try {
+    held = await acquired
+  } catch (error) {
+    // A failed handshake must not strand a keeper that has already acquired
+    // the lock. EOF lets its fixed cat command finish; wait for actual exit.
+    await closeAndReap().catch(() => {})
+    throw error
+  }
+  if (!held) {
+    await closeAndReap()
+    return undefined
+  }
+
+  let releasePromise: Promise<void> | undefined
+  return () => {
+    releasePromise ??= (async () => {
+      await closeAndReap()
+      if (proc.exitCode !== 0) {
+        throw new Error(`Loom advisory lock process exited with ${proc.exitCode}: ${stderr.trim()}`)
+      }
+    })()
+    return releasePromise
   }
 }
 
