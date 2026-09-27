@@ -190,6 +190,27 @@ function resultObject(result: unknown): Record<string, unknown> | undefined {
   }
 }
 
+export function safeResultError(result: unknown) {
+  if (result && typeof result === "object" && !Array.isArray(result)) {
+    const error = (result as Record<string, unknown>).error
+    return typeof error === "string" && error.trim() ? error.trim().slice(0, 1000) : undefined
+  }
+  if (typeof result !== "string") return undefined
+
+  try {
+    const parsed = JSON.parse(result)
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      const error = (parsed as Record<string, unknown>).error
+      if (typeof error === "string" && error.trim()) return error.trim().slice(0, 1000)
+    }
+  } catch {
+    // Normal interactive rendering is Markdown.
+  }
+
+  const match = result.match(/^- \*\*Error:\*\*\s+(.+)$/mi)
+  return match?.[1]?.trim().replace(/^\`|\`$/g, "").slice(0, 1000)
+}
+
 export function safeResultSummary(tool: string, result: unknown) {
   if (tool === "skill") {
     const skillDirectory = resultDirectory(result)
@@ -279,7 +300,13 @@ const commandPatterns: Record<Exclude<EvidenceKind, "runtime" | "integration" | 
 
 export function observationsSupportKind(kind: EvidenceKind, observations: EvidenceObservation[]) {
   if (observations.length === 0) return false
-  if (observations.some((observation) => observation.status !== "completed")) return false
+  if (
+    observations.some(
+      (observation) =>
+        observation.status !== "completed" ||
+        observation.diagnosticSandbox?.ok === false,
+    )
+  ) return false
 
   if (kind === "runtime" || kind === "integration" || kind === "product-acceptance" || kind === "other") {
     return true

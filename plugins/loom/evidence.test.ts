@@ -4,6 +4,7 @@ import {
   observationsSupportKind,
   redactCommand,
   safeInputSummary,
+  safeResultError,
   safeResultSummary,
   type EvidenceObservation,
 } from "./evidence"
@@ -89,6 +90,45 @@ describe("Loom evidence ledger", () => {
         timedOut: false,
       },
     })
+  })
+
+  test("detects inner tool errors even when transport completed", () => {
+    expect(safeResultError(JSON.stringify({ error: "sandbox baseline unreadable" }))).toBe(
+      "sandbox baseline unreadable",
+    )
+    expect(safeResultError("- **Error:** `sandbox baseline unreadable`")).toBe(
+      "sandbox baseline unreadable",
+    )
+    expect(safeResultError(JSON.stringify({ ok: true }))).toBeUndefined()
+  })
+
+  test("failed sandbox experiments cannot support evidence claims", () => {
+    const failedSandbox = observation({
+      tool: "loom_diagnostic_sandbox_exec",
+      command: "false",
+      diagnosticSandbox: {
+        id: "sandbox-1",
+        ok: false,
+        exitCode: 1,
+        signal: null,
+        timedOut: false,
+      },
+    })
+    expect(observationsSupportKind("runtime", [failedSandbox])).toBe(false)
+    expect(observationsSupportKind("other", [failedSandbox])).toBe(false)
+
+    const assertedSandbox = observation({
+      tool: "loom_diagnostic_sandbox_exec",
+      command: "! command-that-must-fail",
+      diagnosticSandbox: {
+        id: "sandbox-1",
+        ok: true,
+        exitCode: 0,
+        signal: null,
+        timedOut: false,
+      },
+    })
+    expect(observationsSupportKind("runtime", [assertedSandbox])).toBe(true)
   })
 
   test("test claim needs an observed test command", () => {

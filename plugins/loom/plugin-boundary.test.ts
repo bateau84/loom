@@ -8342,6 +8342,42 @@ describe("Skill methodology evidence lifecycle", () => {
   })
 
 
+  test("inner Diagnostic sandbox tool errors are failed evidence", async () => {
+    const h = await harness()
+    try {
+      const sessionID = "diagnostic-inner-error-evidence"
+      const event = {
+        tool: "loom_diagnostic_sandbox_diff",
+        callID: "diagnostic-inner-error-call",
+        messageID: "diagnostic-inner-error-message",
+        sessionID,
+        agent: "diagnostic",
+        input: { sandboxId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb" },
+      }
+      await h.toolHooks.get("execute.before")!(event)
+      await h.toolHooks.get("execute.after")!({
+        ...event,
+        status: "completed",
+        result: JSON.stringify({ error: "sandbox baseline unreadable" }),
+      })
+
+      const evidence = await h.call(
+        "evidence_observations",
+        { detail: true },
+        "diagnostic",
+        sessionID,
+      )
+      expect(evidence.observations).toHaveLength(1)
+      expect(evidence.observations[0]).toMatchObject({
+        tool: "loom_diagnostic_sandbox_diff",
+        status: "error",
+        error: "sandbox baseline unreadable",
+      })
+    } finally {
+      h.restore()
+    }
+  })
+
   test("Code Mode Diagnostic sandbox executions remain evidence-observed", async () => {
     const h = await harness()
     try {

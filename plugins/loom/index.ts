@@ -66,6 +66,7 @@ import {
   observationsSupportKind,
   observationMatchesStep,
   safeInputSummary,
+  safeResultError,
   safeResultSummary,
   type EvidenceClaim,
   type EvidenceKind,
@@ -10695,8 +10696,11 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       }
 
       const summary = pending?.summary ?? safeInputSummary(tool, input)
+      const returnedResult = raw.result ?? raw.output
+      const reportedError =
+        raw.status === "completed" ? safeResultError(returnedResult) : undefined
       const resultSummary =
-        raw.status === "completed" ? safeResultSummary(tool, raw.result ?? raw.output) : {}
+        raw.status === "completed" && !reportedError ? safeResultSummary(tool, returnedResult) : {}
       let reportPromotion: EvidenceObservation["reportPromotion"]
       const loomTool = loomToolLeaf(tool)
       if (
@@ -10735,11 +10739,15 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         sessionID: String(raw.sessionID),
         ...(raw.agent ? { agent: String(raw.agent) } : {}),
         tool,
-        status: raw.status === "error" ? "error" : "completed",
+        status: raw.status === "error" || reportedError ? "error" : "completed",
         observedAt: new Date().toISOString(),
         ...((pending?.inputDigest ?? inputDigest) === undefined ? {} : { inputDigest: pending?.inputDigest ?? inputDigest }),
         ...(raw.status === "completed" ? { resultDigest: await digest(raw.result) } : {}),
-        ...(raw.status === "error" ? { error: String(raw.error?.message ?? raw.error ?? "tool error").slice(0, 1000) } : {}),
+        ...(raw.status === "error"
+          ? { error: String(raw.error?.message ?? raw.error ?? "tool error").slice(0, 1000) }
+          : reportedError
+            ? { error: reportedError }
+            : {}),
         ...summary,
         ...resultSummary,
         ...(reportPromotion ? { reportPromotion } : {}),
