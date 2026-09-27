@@ -91,6 +91,10 @@ class OpenCodeVersionContractTests(unittest.TestCase):
             workflow,
         )
         self.assertIn(
+            f'docker run --rm --entrypoint opencode "$OPENCODE_EVAL_RUNNER_OPENCODE_IMAGE" --version | grep -F "{plugin_version}"',
+            workflow,
+        )
+        self.assertIn(
             f"Verify eval DB sanitizer against a fresh OpenCode {plugin_version} database",
             workflow,
         )
