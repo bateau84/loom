@@ -104,7 +104,7 @@ function validateRelativeWorkdirCopy(sourceRoot: string, path: string) {
   if (!rel) return true
   const parts = rel.split("/")
   if (parts.includes(".git")) return false
-  if (parts[0] === ".loom") return false
+  if (rel === ".loom/project-id") return false
   return true
 }
 
