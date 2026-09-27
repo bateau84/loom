@@ -4545,11 +4545,12 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             }
 
             if (tool.agent === "diagnostic" && resolvedOutcome === "complete") {
-              const sandboxKey = diagnosticSandboxSessionKey(tool.sessionID)
-              const sandbox = (await ctx.storage.get(sandboxKey)) as DiagnosticSandboxRecord | undefined
-              if (sandbox?.active) {
-                await destroyDiagnosticSandbox(sandbox)
-                await ctx.storage.set(sandboxKey, sandbox)
+              const cleanup = await cleanupDiagnosticSandboxesForWorkflow(workflowId)
+              if (cleanup.errors.length > 0) {
+                throw new Error(
+                  "Diagnostic completion requires every active experiment sandbox for this workflow to be destroyed. Cleanup failed for: " +
+                  cleanup.errors.map((entry) => entry.sandboxId).join(", "),
+                )
               }
             }
 

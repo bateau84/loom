@@ -8406,4 +8406,90 @@ describe("Skill methodology evidence lifecycle", () => {
       h.restore()
     }
   })
+
+  test("Diagnostic completion fails closed on stale workflow sandbox cleanup", async () => {
+    const h = await harness()
+    try {
+      const generalSession = "sandbox-cleanup-general"
+      const diagnosticSession = "sandbox-cleanup-current"
+      const staleSession = "sandbox-cleanup-stale"
+      const started = await h.call(
+        "start",
+        { request: "Diagnose one bounded causal failure." },
+        "general",
+        generalSession,
+      )
+      const workflowId = String(started.workflowId)
+      expect((await h.call(
+        "route",
+        {
+          humanFacing: false,
+          behavioral: false,
+          structural: false,
+          externalUnknown: false,
+          diagnostic: true,
+          productOutcome: false,
+          implementationRequested: false,
+          executionDepth: "task",
+        },
+        "general",
+        generalSession,
+      )).error).toBeUndefined()
+
+      const grant = await h.call(
+        "dispatch_grant",
+        { workflowId, stepId: "diagnostic" },
+        "general",
+        generalSession,
+      )
+      expect((await h.call(
+        "attach",
+        { grantId: grant.grantId, workflowId, stepId: "diagnostic" },
+        "diagnostic",
+        diagnosticSession,
+      )).attached).toBe(true)
+
+      await h.durableStorage.set(
+        `diagnostic-sandbox/${encodeURIComponent(staleSession)}`,
+        {
+          schemaVersion: 1,
+          id: "invalid-stale-sandbox-id",
+          sessionId: staleSession,
+          workflowId,
+          stepId: "diagnostic",
+          attempt: 0,
+          projectId: h.runtime.projectId,
+          rootPath: "/not-used",
+          workspacePath: "/not-used/workspace",
+          baselineGitPath: "/not-used/baseline.git",
+          image: "local/toolchain:test",
+          engine: "docker",
+          network: "none",
+          createdAt: "2026-09-27T00:00:00.000Z",
+          active: true,
+        },
+      )
+
+      const completion = await h.call(
+        "complete",
+        {
+          workflowId,
+          stepId: "diagnostic",
+          summary: "Diagnosis is complete.",
+        },
+        "diagnostic",
+        diagnosticSession,
+      )
+      expect(completion.error).toContain(
+        "every active experiment sandbox for this workflow",
+      )
+      expect(
+        (await h.durableStorage.get(`workflow/${workflowId}`) as any)
+          .steps.find((step: any) => step.id === "diagnostic").status,
+      ).not.toBe("complete")
+    } finally {
+      h.restore()
+    }
+  })
+
 })
