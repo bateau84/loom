@@ -2183,7 +2183,7 @@ try {
   }
   mock.state.budgetQuestionObserved = true
 
-  // OpenCode serve 2.0.15 has no advertised question-reply or abort API for
+  // OpenCode serve has no advertised question-reply or abort API for
   // this interaction. The real-host proof therefore stops once the question
   // tool is admitted, decoded, persisted, and blocked awaiting user input.
   // The harness-owned server finalizer terminates the blocked request. The

@@ -80,6 +80,14 @@ function LoomSidebar(props: { sessionID?: string }) {
           {snapshot()!.state} · {snapshot()!.progress.finished}/{snapshot()!.progress.total}
           {snapshot()!.planningOnly ? " · planning only" : ""}
         </text>
+        <Show when={context.ui.model.current()}>
+          {(model) => (
+            <text>
+              Model: {model().providerID}/{model().modelID}
+              {model().variant ? `#${model().variant}` : ""}
+            </text>
+          )}
+        </Show>
         <Show when={snapshot()!.statusUrl}>
           <text>Dashboard: {snapshot()!.statusUrl}</text>
         </Show>

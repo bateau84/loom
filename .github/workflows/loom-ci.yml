@@ -67,10 +67,10 @@ jobs:
 
       - name: Install OpenCode V2 for zero-inference host integration
         run: |
-          npm install --global @opencode/cli@2.0.15
-          opencode --version | grep -F "2.0.15"
+          npm install --global @opencode/cli@2.0.18
+          opencode --version | grep -F "2.0.18"
 
-      - name: Verify eval DB sanitizer against a fresh OpenCode 2.0.15 database
+      - name: Verify eval DB sanitizer against a fresh OpenCode 2.0.18 database
         run: |
           set -euo pipefail
           root="$RUNNER_TEMP/opencode-fresh-db"
