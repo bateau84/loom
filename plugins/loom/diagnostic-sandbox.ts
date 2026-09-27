@@ -220,7 +220,7 @@ export async function createDiagnosticSandbox(input: {
     // may mutate the copy freely, but cannot move the authority against which
     // Loom later computes the experiment delta.
     await git(rootPath, ["init", "--quiet", "--bare", baselineGitPath], run)
-    await sandboxGit(baselineGitPath, workspacePath, ["add", "-A"], run)
+    await sandboxGit(baselineGitPath, workspacePath, ["add", "-f", "-A"], run)
     await sandboxGit(baselineGitPath, workspacePath, [
       "-c", "user.name=Loom Diagnostic Sandbox",
       "-c", "user.email=diagnostic-sandbox@loom.invalid",
@@ -379,7 +379,7 @@ export async function diffDiagnosticSandbox(
   if (!record.active) throw new Error("Diagnostic sandbox is no longer active.")
 
   const [status, stat, patch] = await Promise.all([
-    sandboxGit(record.baselineGitPath, record.workspacePath, ["status", "--short", "--untracked-files=all"], run),
+    sandboxGit(record.baselineGitPath, record.workspacePath, ["status", "--short", "--untracked-files=all", "--ignored=matching"], run),
     sandboxGit(record.baselineGitPath, record.workspacePath, ["diff", "--no-ext-diff", "--no-color", "--stat", "HEAD", "--"], run),
     includePatch
       ? sandboxGit(record.baselineGitPath, record.workspacePath, ["diff", "--no-ext-diff", "--no-color", "HEAD", "--"], run)
