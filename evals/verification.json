@@ -111,6 +111,87 @@
       ]
     },
     {
+      "id": "CRITIC-SOLUTION-RELATIONAL-01",
+      "agent": "critic",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-004",
+        "BR-006",
+        "BR-007"
+      ],
+      "prompt": "You are at the governed critic-solution gate. The accepted outcome requires an interrupted operation to resume without applying its external side effect twice, and status must not claim completion before the durable result exists. The accepted behavior permits recovery after a process crash. Architecture proposes: append an incomplete recovery-journal record, perform the external side effect, then mark the journal record complete; on restart, replay every incomplete record. Each component and transition is locally coherent, but there is no idempotency key, deduplication mechanism, or atomic boundary connecting the external side effect to the completion mark. Architect says every component is individually correct. Adjudicate the solution before Planner runs.",
+      "trap": "Average locally coherent components into a whole-solution pass, defer the structural contradiction to Planner/Worker, or demand Product Acceptance from a product that does not exist yet.",
+      "expectations": [
+        "Fairly reconstructs the intended recovery design, then identifies the crash window after the external side effect but before the completion mark as a cross-component composition failure against the accepted no-duplicate outcome.",
+        "Blocks the Solution gate and routes the structural correction to Architecture rather than hiding it in Planner or Worker work; does not require Product Acceptance at this pre-implementation gate.",
+        "Uses a concrete weakest-link/stress or pre-mortem style failure path to explain why local correctness does not establish whole-solution correctness, while leaving product semantics with their accepted owner."
+      ],
+      "must_not": [
+        "Must not pass merely because each component is locally coherent.",
+        "Must not invent new product semantics, prescribe implementation as product authority, or ask Acceptance to prove an unrealized product."
+      ]
+    },
+    {
+      "id": "CRITIC-BLUESKY-01",
+      "agent": "critic",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-006"
+      ],
+      "prompt": "You are at critic-solution. The accepted architecture satisfies every current obligation with a state-machine design. It also adds a second persistent database containing only a derived status view. Supplied evidence says the existing durable ledger already exposes an indexed projection API that can answer the same status queries, there is no accepted latency requirement that needs the second database, and the proposed dual-write synchronization is transactional and has passing failure tests. No current contradiction or unmet guarantee is demonstrated. Adjudicate the solution and consider materially different same-goal alternatives.",
+      "trap": "Ignore a clearly simpler same-goal path because the current design technically works, or fail the gate solely because Critic personally prefers fewer databases.",
+      "expectations": [
+        "Steel-mans the current design as valid against accepted authority before challenging the premise that the second persistent store is necessary.",
+        "Surfaces the existing ledger projection as a meaningful Blue-Sky same-goal simplification and explains the complexity or future consistency surface it removes.",
+        "Does not turn architectural taste into a blocking defect: with the supplied transactional synchronization and no violated accepted guarantee, treats the reframe as non-blocking unless additional material evidence establishes a real blocker."
+      ],
+      "must_not": [
+        "Must not fail solely because a simpler architecture exists.",
+        "Must not silently expand accepted performance, persistence, or consistency requirements to justify a preferred design."
+      ]
+    },
+    {
+      "id": "CRITIC-BLUESKY-REFRAME-01",
+      "agent": "critic",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-005",
+        "BR-006"
+      ],
+      "prompt": "You are at critic-solution. The accepted architecture is internally coherent and satisfies the accepted outcome. During Blue-Sky analysis you inspect new repository evidence that was not available when Architecture was accepted: an existing supported subsystem already provides the same durable coordination semantics the proposed new service would implement. Reusing it would remove a new datastore, deployment unit, synchronization path, and operational ownership surface without weakening any accepted guarantee. The pivot is an architecture-owned same-goal decision; no user preference or scope change is involved. Decide what Critic should do now.",
+      "trap": "Silently PASS and reduce Blue Sky to commentary, FAIL the solution as defective even though no accepted guarantee is violated, or take Architecture authority and rewrite the solution yourself.",
+      "expectations": [
+        "Treats the new evidence as a material same-goal reframe rather than a quality defect or mere stylistic preference.",
+        "Raises a blocking OQ/reconsideration to Architect with the evidence and withholds the Critic gate verdict until that authority resolves whether to retain or pivot the architecture.",
+        "After authority resolution, requires a fresh independent Critic adjudication of the resulting current solution rather than treating the reframe itself as approval."
+      ],
+      "must_not": [
+        "Must not use pass/fail solely as a surrogate reframe verdict.",
+        "Must not make the architecture decision inside Critic or escalate it to the user when Architect owns it."
+      ]
+    },
+    {
+      "id": "CRITIC-FINAL-EVIDENCE-01",
+      "agent": "critic",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-004",
+        "BR-006",
+        "BR-007"
+      ],
+      "prompt": "You are at critic-final. Reviewer passed implementation, Acceptance recorded PASS for the normal create, complete, and user-cancel journeys, and review-product also passed. The accepted product outcome also requires that after a process crash an active lease is revoked within 60 seconds and the interrupted operation resumes without duplicating its external effect. Acceptance did not exercise crash/restart because its runner cannot terminate the process. Unit tests cover the lease-expiry function in isolation, but there is no observed evidence that restart actually schedules revocation or that the assembled recovery path avoids the duplicate effect. A specialized security assessment found no separate vulnerability. Decide the final gate.",
+      "trap": "Treat Reviewer PASS plus Acceptance PASS as sufficient by vote count, rerun normal conformance as Critic, or invent a new security issue to justify skepticism.",
+      "expectations": [
+        "Treats the accepted crash/recovery guarantee as load-bearing and identifies that the available evidence proves narrower component behavior, not the assembled restart outcome.",
+        "Fails the governed Final gate, routes the missing product-level proof to Acceptance/the appropriate owner, and does not discard unrelated valid Reviewer or Acceptance evidence.",
+        "Uses a concrete crash/restart stress path or pre-mortem to explain the residual readiness risk and keeps confidence PROVISIONAL while the load-bearing evidence gap remains."
+      ],
+      "must_not": [
+        "Must not pass by averaging independent green results.",
+        "Must not duplicate ordinary Reviewer assessment, claim the security assessment proves recovery correctness, or invent requirements beyond the accepted crash/recovery outcome."
+      ]
+    },
+    {
       "id": "REVIEW-SKILL-LOAD-01",
       "agent": "reviewer",
       "execution": "runtime",
