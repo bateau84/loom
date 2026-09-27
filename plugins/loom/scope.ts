@@ -1,3 +1,5 @@
+import { isAbsolute } from "node:path"
+
 export type ScopeElevation = {
   id: string
   attempt: number
@@ -91,12 +93,17 @@ function escapedGlob(pattern: string) {
     .replaceAll("\\?", ".")
 }
 
-function globRegex(pattern: string) {
-  return new RegExp("^(?:.*/)?" + escapedGlob(pattern) + "$")
+function globRegex(pattern: string, allowAbsolutePrefix = false) {
+  return new RegExp(
+    (allowAbsolutePrefix ? "^(?:.*/)?" : "^") +
+    escapedGlob(pattern) +
+    "$",
+  )
 }
 
 export function resourceMatchesScope(resource: string, pattern: string) {
-  return globRegex(pattern).test(normalize(resource))
+  const absolute = isAbsolute(resource)
+  return globRegex(pattern, absolute).test(normalize(resource))
 }
 
 /**

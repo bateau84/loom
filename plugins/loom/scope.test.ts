@@ -81,6 +81,13 @@ describe("Loom write scope", () => {
     expect(resourceMatchesScope("src/app/main.go", "src/**")).toBe(true)
     expect(resourceMatchesScope("/workspace/project/src/app/main.go", "src/**")).toBe(true)
     expect(resourceMatchesScope("docs/requirements/x.md", "src/**")).toBe(false)
+    expect(resourceMatchesScope("tmp/src/app/main.go", "src/**")).toBe(false)
+    expect(
+      resourceMatchesScope(
+        "scratch/docs/requirements/x.md",
+        "docs/requirements/**",
+      ),
+    ).toBe(false)
   })
 
   test("all edited resources must fit current scope", () => {
