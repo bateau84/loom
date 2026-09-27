@@ -54,6 +54,7 @@ try {
       "printf 'cache-mutated\\n' > cache/state.db",
       "printf 'new-cache\\n' > cache/new-state.db",
       "printf 'container-proof\\n' > proof.txt",
+      "git status --short >/dev/null",
       "if git add state.txt 2>/dev/null; then echo 'sandbox baseline became writable' >&2; exit 42; fi",
     ].join(" && "),
     timeoutSeconds: 30,
