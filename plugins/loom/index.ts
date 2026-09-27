@@ -94,8 +94,10 @@ import {
   type TaskScope,
 } from "./scope"
 import {
+  assertDiagnosticSandboxImageAvailable,
   createDiagnosticSandbox,
   destroyDiagnosticSandbox,
+  detectDiagnosticContainerEngine,
   diffDiagnosticSandbox,
   executeDiagnosticSandbox,
   type DiagnosticSandboxNetwork,
@@ -3121,6 +3123,11 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
               const value = input as { image: string; network: DiagnosticSandboxNetwork }
               try {
+                const engine = await detectDiagnosticContainerEngine()
+                const image = await assertDiagnosticSandboxImageAvailable(
+                  engine,
+                  value.image,
+                )
                 const sandbox = await createDiagnosticSandbox({
                   runtimeRoot: runtime.runtimeRoot,
                   projectDirectory: ctx.location.directory,
@@ -3129,8 +3136,9 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                   workflowId,
                   stepId,
                   attempt: step.attempt ?? 0,
-                  image: value.image,
+                  image,
                   network: value.network,
+                  engine,
                 })
                 const published = await withRuntimeLock(
                   runtime,
