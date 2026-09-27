@@ -29,7 +29,7 @@ A governed workflow starts when you clearly ask Loom to mutate the repository or
 
 ### When will Loom ask me something?
 
-Loom should resolve technical and implementation questions itself. It should ask you only when the remaining choice is genuinely yours, such as product scope, subjective behavior, weakening an accepted guarantee, or accepting material risk.
+Loom should resolve technical and implementation questions itself. It should ask you only when the remaining choice is genuinely yours, such as product scope, subjective behavior, weakening an accepted guarantee, accepting material risk, or authorizing a hard capability boundary that Loom cannot self-grant.
 
 ### How do I see what it is doing?
 
