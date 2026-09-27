@@ -1,22 +1,22 @@
 # typescript-type-safety Quality Assurance
 
-Critic-only adversarial contract. Assume competent production and normal review have already occurred; attack residual ways the TypeScript proof can be illusory.
+Critic-only adversarial contract. Assume competent production and normal review have already occurred; attack residual false confidence that can survive an apparently clean strict typecheck.
 
 ## QA criteria
 
-Critic asks what runtime value can still violate the static claim:
+Critic attacks the seams where TypeScript's model can be locally correct while the runtime or composed program is still wrong:
 
-- replace asserted/cast input with malformed objects, missing keys, wrong primitive kinds, null, and extra variants;
-- remove or inspect custom type guards and verify their runtime checks justify every property the predicate claims;
-- exercise valid falsy patch values and distinguish omitted keys from explicit undefined;
-- add a new discriminated-union variant and see whether supposedly exhaustive consumers fail to compile or silently fall through;
-- force indexed lookups out of range or missing Map/object keys where callers assume presence;
-- substitute edge-case generic implementations or values and inspect whether a cast is manufacturing the promised type;
-- compare runtime schema definitions, inferred/generated types, and hand-written interfaces for drift;
-- inspect compiler suppressions and ambient declarations to see whether the core path is effectively unchecked.
+- route an object with extra fields through an intermediate variable, generic, spread, or helper before assignment to test whether code mistakes excess-property checking for an exact-object guarantee;
+- substitute a different domain value with the same structural shape and test whether supposedly distinct IDs, tokens, handles, or states can be mixed without the compiler noticing;
+- treat third-party or generated declaration files as potentially wrong evidence: falsify a declared return shape at runtime and verify that trust-sensitive boundaries do not rely on `.d.ts` claims alone;
+- mutate a value through another writable alias after a readonly view, narrowing decision, or validation result has been established and see whether the assumed invariant can become stale;
+- exercise schema defaults, coercions, transforms, stripping/passthrough of unknown keys, and version skew so the runtime value produced by validation is compared with the static type consumers believe they received;
+- introduce duplicate package/schema versions or ambient/global declaration augmentation and check whether two modules compile against different meanings of the same apparent contract;
+- inject a runtime variant that is outside a closed compile-time union and verify that an exhaustive switch is protected by the boundary that creates the union rather than trusted as runtime validation;
+- compile representative external consumers under the actual project-reference and declaration-output configuration, especially when `skipLibCheck`, generated declarations, or library boundaries can hide incompatibility.
 
-Block when a required type-safety claim exists only because the compiler was told to trust code that does not establish it. Explicit, bounded escape hatches at genuinely opaque boundaries are non-blocking when their proof source is real.
+Block when a load-bearing guarantee exists only inside TypeScript's model and no boundary preserves that guarantee in the composed runtime. Do not require nominal or exact typing where structural compatibility and additional properties are intentionally acceptable.
 
 ## QA depth
 
-Increase depth for public/generic APIs, persisted/untrusted data, state machines, patch/update semantics, schema migrations, custom predicates, global declarations, and refactors that rely on types to guarantee broad mechanical safety.
+Increase depth for public libraries, generated clients, schema-driven APIs, branded identities, declaration files, cross-package types, runtime state machines, plugin/tool payloads, and refactors that rely on compiler success as broad mechanical proof.

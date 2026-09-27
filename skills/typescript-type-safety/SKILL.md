@@ -70,6 +70,22 @@ When all variants must be handled, make exhaustiveness explicit. A default branc
 
 Exhaustiveness is useful only when the union is genuinely closed by the owning contract.
 
+
+## Structural typing is not exactness
+
+TypeScript compatibility is structural rather than nominal: values are generally compatible when they provide the members a target type requires.
+
+That has important consequences:
+
+- a value can carry additional properties and still be assignable to a narrower object type;
+- fresh object literals receive excess-property checks, but that is not a general exact-object guarantee — routing the same value through a variable can make the assignment valid;
+- assigning a value to an interface or type alias does not strip extra runtime properties;
+- `satisfies` checks assignability while preserving inference; it does not make the value exact and does not validate runtime data;
+- two domain identities with the same representation remain compatible unless the model deliberately distinguishes them.
+
+Do not fight structural typing when extra properties are harmless. When **exact keys are a runtime contract**, validate or parse that exact boundary instead of relying on an interface. When two same-shaped domain identities must not mix accidentally, a repository-consistent branded or opaque type can provide compile-time separation — but the brand is still not runtime validation and can be defeated by an assertion.
+
+
 ## Optional, missing, and undefined are different
 
 Read the repository compiler options before assuming optional-property behavior.
@@ -132,3 +148,10 @@ Before completing type-safety-sensitive work:
 6. Can indexed access or mutation invalidate a previous assumption?
 7. Do generics express a real relationship rather than manufacture types?
 8. Are runtime validation and static typing backed by one coherent source of truth?
+9. Is code relying on structural compatibility or excess-property checks as though they provided nominal identity or exact runtime shape?
+
+
+## References
+
+- TypeScript Handbook — Type Compatibility: https://www.typescriptlang.org/docs/handbook/type-compatibility
+- TypeScript Handbook — Object Types / Excess Property Checks: https://www.typescriptlang.org/docs/handbook/2/objects

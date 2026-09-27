@@ -50,6 +50,22 @@
         "Preserves retries=0 as a valid update.",
         "Explains that Partial<Config> alone does not define omitted-versus-undefined runtime semantics."
       ]
+    },
+    {
+      "id": "TypeScriptTypeSafety-05",
+      "name": "structural-typing-is-not-exact-object-validation",
+      "trap": "A fresh object literal may get an excess-property error, which tempts developers to believe a TypeScript object type is an exact runtime shape. The same extra field can flow through an intermediate variable because assignability is structural.",
+      "prompt": "A security-sensitive loader eventually calls `start(config: PublicConfig)`, where `type PublicConfig = { mode: 'safe' | 'fast' }`. Another module does this:\n\n```ts\nconst loaded = { mode: 'safe' as const, adminBypass: true };\nstart(loaded);\n```\n\nA teammate says this cannot happen because `PublicConfig` only declares `mode`, so TypeScript will reject or remove `adminBypass`. Assess that claim. If unknown keys are forbidden at this boundary, what should enforce it?",
+      "expectations": [
+        "Explains that TypeScript uses structural assignability, so an intermediate value with the required mode property can be assignable even when it has additional properties.",
+        "Explains that assigning to PublicConfig does not remove adminBypass at runtime and that fresh-literal excess-property checks are not a general exact-object guarantee.",
+        "Requires runtime parsing or validation that rejects or strips unknown keys according to the accepted boundary contract when exact keys are required.",
+        "Does not rely on a type assertion, interface, or satisfies expression as runtime exactness enforcement."
+      ],
+      "negative_expectations": [
+        "Must not claim TypeScript object types are nominal or exact by default.",
+        "Must not claim the extra runtime property disappears merely because a narrower static type is used."
+      ]
     }
   ]
 }

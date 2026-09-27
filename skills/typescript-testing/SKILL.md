@@ -137,7 +137,7 @@ Snapshots are appropriate for stable, reviewable structures. Avoid giant snapsho
 
 While developing, run the focused test first. Before completion, run the relevant containing suite and the repository's TypeScript typecheck and lint checks.
 
-If a test is expected to catch a regression, temporarily break or otherwise falsify the behavior when practical to confirm the test actually fails for the intended reason.
+If a test is expected to catch a regression, temporarily break or otherwise falsify the behavior when practical to confirm the test actually fails for the intended reason. Restore that deliberate mutation before continuing, then rerun the test and inspect the final diff so no falsification change survives into the delivered work.
 
 ## Completion check
 
