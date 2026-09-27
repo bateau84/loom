@@ -171,14 +171,24 @@ describe("Diagnostic sandbox", () => {
     expect(args).toContain("--security-opt=no-new-privileges")
     expect(args).toContain("--read-only")
     expect(args).toContain("--pids-limit=512")
-    expect(args).toContain("type=bind,src=/runtime/diagnostic-sandboxes/project/id/workspace,dst=/workspace")
-    expect(args).toContain("type=bind,src=/runtime/diagnostic-sandboxes/project/id/baseline.git,dst=/diagnostic-git,ro")
+    expect(args).toContain("type=bind,src=/runtime/diagnostic-sandboxes/project/id/workspace,dst=/workspace,relabel=private")
+    expect(args).toContain("type=bind,src=/runtime/diagnostic-sandboxes/project/id/baseline.git,dst=/diagnostic-git,ro,relabel=private")
     expect(args).not.toContain("/real/project")
     expect(args).toContain("HOME=/tmp")
     expect(args).toContain("GIT_DIR=/diagnostic-git")
     expect(args).toContain("GIT_WORK_TREE=/workspace")
     expect(args).toContain("GIT_OPTIONAL_LOCKS=0")
     expect(args).toContain("--http-proxy=false")
+    const dockerArgs = diagnosticSandboxContainerArgs(
+      { ...sandbox, engine: "docker" as const },
+      "go test ./...",
+    ).args
+    expect(dockerArgs).toContain(
+      "type=bind,src=/runtime/diagnostic-sandboxes/project/id/workspace,dst=/workspace",
+    )
+    expect(dockerArgs).not.toContain(
+      "type=bind,src=/runtime/diagnostic-sandboxes/project/id/workspace,dst=/workspace,relabel=private",
+    )
     for (const name of [
       "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY",
       "http_proxy", "https_proxy", "all_proxy", "no_proxy",

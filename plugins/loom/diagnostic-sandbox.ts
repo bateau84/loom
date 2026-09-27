@@ -337,6 +337,21 @@ export function diagnosticSandboxContainerName(record: DiagnosticSandboxRecord) 
   return `loom-diag-${record.id.replaceAll("-", "").slice(0, 16)}`
 }
 
+function diagnosticBindMount(
+  engine: DiagnosticSandboxEngine,
+  source: string,
+  destination: string,
+  readOnly = false,
+) {
+  return [
+    "type=bind",
+    `src=${source}`,
+    `dst=${destination}`,
+    ...(readOnly ? ["ro"] : []),
+    ...(engine === "podman" ? ["relabel=private"] : []),
+  ].join(",")
+}
+
 export function diagnosticSandboxContainerArgs(
   record: DiagnosticSandboxRecord,
   command: string,
@@ -354,8 +369,8 @@ export function diagnosticSandboxContainerArgs(
     "--security-opt=no-new-privileges",
     "--read-only",
     "--pids-limit=512",
-    "--mount", `type=bind,src=${record.workspacePath},dst=/workspace`,
-    "--mount", `type=bind,src=${record.baselineGitPath},dst=/diagnostic-git,ro`,
+    "--mount", diagnosticBindMount(record.engine, record.workspacePath, "/workspace"),
+    "--mount", diagnosticBindMount(record.engine, record.baselineGitPath, "/diagnostic-git", true),
     "--workdir", "/workspace",
     "--tmpfs", "/tmp:rw,exec,nosuid,nodev,mode=1777",
     ...hostUidArgs(record.engine),
