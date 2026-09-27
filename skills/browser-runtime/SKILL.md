@@ -27,7 +27,7 @@ stopPropagation controls propagation. preventDefault controls a cancelable defau
 
 Event delegation relies on propagation and a stable ancestor. When inspecting event targets, account for the difference between target and currentTarget and narrow the target before using element-specific APIs.
 
-Remove listeners with the same function and options identity required by the API, or use AbortSignal-based listener ownership where supported.
+Remove listeners with the same event type and listener plus a matching `capture` setting. The options object itself does not need the same identity, and options such as `passive` or `once` are not part of removal matching. AbortSignal-based listener ownership is often simpler where supported.
 
 Avoid anonymous listener registration when later cleanup is required and no signal owns it.
 
@@ -86,7 +86,7 @@ localStorage:
 
 The storage event is delivered to other relevant documents when storage changes; code should not rely on the same document receiving its own storage event as its local update signal.
 
-sessionStorage is scoped differently and commonly behaves per top-level browsing context or tab rather than as shared application state.
+sessionStorage is partitioned by origin and top-level browsing context: same-origin documents within the same tab can share the relevant page-session storage, while another tab has a separate page session.
 
 For structured values:
 

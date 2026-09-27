@@ -46,6 +46,21 @@
         "Updates Tab A's local in-memory state directly when it writes while using storage events for cross-tab synchronization.",
         "Handles serialized and parsed storage values as an external persistence boundary."
       ]
+    },
+    {
+      "id": "BrowserRuntime-05",
+      "name": "remove-listener-matches-capture-not-options-object",
+      "trap": "The code assumes removeEventListener must receive the exact same options object used during registration, obscuring the real matching rule and encouraging unnecessary shared option state.",
+      "prompt": "A listener was registered with `const opts = { capture: true, passive: true }; el.addEventListener('click', onClick, opts)`. A teammate says cleanup must reuse that exact `opts` object or removal will fail. Is that correct? Show the cleanup rule that actually matters.",
+      "expectations": [
+        "Rejects the claim that removeEventListener requires the same options-object identity.",
+        "Uses the same event type and listener with a matching capture=true setting for removal.",
+        "Explains that passive/once and options-object identity are not part of removeEventListener matching, while capture is."
+      ],
+      "negative_expectations": [
+        "Must not require retaining the original options object solely for removeEventListener matching.",
+        "Must not change capture=true to capture=false during removal."
+      ]
     }
   ]
 }

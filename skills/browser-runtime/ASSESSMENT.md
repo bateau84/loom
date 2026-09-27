@@ -6,7 +6,7 @@ Reviewer-only domain contract. It does not create Loom authority, product meanin
 
 Reviewer verifies browser-facing implementation against real Web API semantics:
 
-- event handlers distinguish propagation from default action, narrow event targets safely, and remove listeners or observers with a reliable ownership mechanism;
+- event handlers distinguish propagation from default action and narrow event targets safely; listener removal uses the same type/listener and matching capture setting rather than relying on full options-object identity; listeners or observers otherwise have a reliable ownership mechanism;
 - fetch code treats HTTP 4xx and 5xx according to response.ok or status rather than assuming catch handles them, and handles empty or one-shot bodies correctly;
 - decoded network and storage payloads receive runtime validation before being treated as trusted TypeScript domain values;
 - AbortSignal is propagated where supported and superseded requests cannot commit stale results after cancellation or replacement;

@@ -21,7 +21,7 @@ Primitive values are copied by value. Objects, arrays, maps, sets, functions, da
 
 - Assignment of an object creates another reference to the same object.
 - Object spread and array spread make shallow copies only. Nested objects remain shared.
-- Map and Set object keys use object identity, not structural equality.
+- Object keys in Map and object values in Set compare by object identity rather than structural equality.
 - Object.freeze is shallow unless nested values are frozen separately.
 - A read-only TypeScript type does not make the runtime object immutable.
 
