@@ -8340,4 +8340,70 @@ describe("Skill methodology evidence lifecycle", () => {
     }
   })
 
+
+  test("Code Mode Diagnostic sandbox executions remain evidence-observed", async () => {
+    const h = await harness()
+    try {
+      const sessionID = "code-mode-diagnostic-evidence"
+      const sandboxId = "88888888-8888-4888-8888-888888888888"
+
+      for (const [tool, callID] of [
+        ["loom_code_diagnostic_sandbox_exec", "code-mode-diag-underscore"],
+        ["loom.code.diagnostic_sandbox_exec", "code-mode-diag-dot"],
+      ] as const) {
+        const event = {
+          tool,
+          callID,
+          messageID: "code-mode-diag-message",
+          sessionID,
+          agent: "diagnostic",
+          input: {
+            sandboxId,
+            command: "printf causal-proof",
+          },
+        }
+        await h.toolHooks.get("execute.before")!(event)
+        await h.toolHooks.get("execute.after")!({
+          ...event,
+          status: "completed",
+          result: JSON.stringify({
+            sandboxId,
+            ok: true,
+            exitCode: 0,
+            signal: null,
+            timedOut: false,
+            stdout: "causal-proof",
+            stderr: "",
+          }),
+        })
+      }
+
+      const evidence = await h.call(
+        "evidence_observations",
+        { detail: true },
+        "diagnostic",
+        sessionID,
+      )
+      expect(evidence.observations).toHaveLength(2)
+      for (const observation of evidence.observations) {
+        expect(observation).toMatchObject({
+          status: "completed",
+          command: "printf causal-proof",
+          diagnosticSandbox: {
+            id: sandboxId,
+            ok: true,
+            exitCode: 0,
+            signal: null,
+            timedOut: false,
+          },
+        })
+      }
+      expect(evidence.observations.map((item: any) => item.tool).sort()).toEqual([
+        "loom.code.diagnostic_sandbox_exec",
+        "loom_code_diagnostic_sandbox_exec",
+      ])
+    } finally {
+      h.restore()
+    }
+  })
 })

@@ -2500,10 +2500,13 @@ function isLoomToolName(tool: string) {
   return tool.startsWith("loom_") || tool.startsWith("loom.")
 }
 
+function loomToolLeaf(tool: string) {
+  return tool.replace(/^loom[._](?:code[._])?/, "")
+}
+
 function isEvidenceObservedLoomToolName(tool: string) {
   if (!isLoomToolName(tool)) return false
-  const leaf = tool.replace(/^loom[._]/, "")
-  return evidenceObservedLoomToolNames.has(leaf)
+  return evidenceObservedLoomToolNames.has(loomToolLeaf(tool))
 }
 
 function skipLoomEvidence(tool: string) {
@@ -10631,7 +10634,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       const resultSummary =
         raw.status === "completed" ? safeResultSummary(tool, raw.result ?? raw.output) : {}
       let reportPromotion: EvidenceObservation["reportPromotion"]
-      const loomTool = tool.replace(/^loom[._]/, "")
+      const loomTool = loomToolLeaf(tool)
       if (
         raw.status === "completed" &&
         loomTool === "report_promote" &&
