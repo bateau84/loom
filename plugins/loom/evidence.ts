@@ -25,6 +25,10 @@ export type EvidenceObservation = {
   methodology?: "practitioner" | "assessment" | "qa"
   diagnosticSandbox?: {
     id: string
+    snapshotTree?: string
+    image?: string
+    engine?: string
+    network?: string
     ok: boolean
     exitCode?: number | string | null
     signal?: string | null
@@ -173,16 +177,24 @@ function resultObject(result: unknown): Record<string, unknown> | undefined {
     return match[1]!.trim().replace(/^`|`$/g, "")
   }
   const sandboxId = field("Sandbox ID")
+  if (!sandboxId) return undefined
+
+  const snapshotTree = field("Snapshot Tree")
+  const image = field("Image")
+  const engine = field("Engine")
+  const network = field("Network")
   const ok = field("Ok")
   const timedOut = field("Timed Out")
-  if (!sandboxId || !ok || !timedOut) return undefined
-
   const exitCode = field("Exit Code")
   const signal = field("Signal")
   return {
     sandboxId,
-    ok: ok === "Yes",
-    timedOut: timedOut === "Yes",
+    ...(snapshotTree ? { snapshotTree } : {}),
+    ...(image ? { image } : {}),
+    ...(engine ? { engine } : {}),
+    ...(network ? { network } : {}),
+    ...(ok ? { ok: ok === "Yes" } : {}),
+    ...(timedOut ? { timedOut: timedOut === "Yes" } : {}),
     ...(exitCode === undefined || exitCode === "None"
       ? {}
       : { exitCode: /^-?\d+$/.test(exitCode) ? Number(exitCode) : exitCode }),
@@ -236,10 +248,34 @@ export function safeResultSummary(tool: string, result: unknown) {
       return {
         diagnosticSandbox: {
           id: sandboxId,
+          ...(typeof value.snapshotTree === "string" ? { snapshotTree: value.snapshotTree.slice(0, 128) } : {}),
+          ...(typeof value.image === "string" ? { image: value.image.slice(0, 512) } : {}),
+          ...(typeof value.engine === "string" ? { engine: value.engine.slice(0, 32) } : {}),
+          ...(typeof value.network === "string" ? { network: value.network.slice(0, 32) } : {}),
           ok: value.ok,
           timedOut: value.timedOut,
           ...(exitCode === undefined ? {} : { exitCode }),
           ...(signal === undefined ? {} : { signal }),
+        },
+      }
+    }
+  }
+
+  if (loomTool === "diagnostic_sandbox_diff") {
+    const value = resultObject(result)
+    const sandboxId = typeof value?.sandboxId === "string" ? value.sandboxId.slice(0, 200) : undefined
+    const snapshotTree =
+      typeof value?.snapshotTree === "string" ? value.snapshotTree.slice(0, 128) : undefined
+    if (sandboxId && snapshotTree) {
+      return {
+        diagnosticSandbox: {
+          id: sandboxId,
+          snapshotTree,
+          ...(typeof value?.image === "string" ? { image: value.image.slice(0, 512) } : {}),
+          ...(typeof value?.engine === "string" ? { engine: value.engine.slice(0, 32) } : {}),
+          ...(typeof value?.network === "string" ? { network: value.network.slice(0, 32) } : {}),
+          ok: true,
+          timedOut: false,
         },
       }
     }

@@ -56,6 +56,10 @@ describe("Loom evidence ledger", () => {
     })
     expect(safeResultSummary("loom_diagnostic_sandbox_exec", JSON.stringify({
       sandboxId: "s1",
+      snapshotTree: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      image: "local/toolchain:test",
+      engine: "docker",
+      network: "none",
       ok: false,
       exitCode: 2,
       signal: null,
@@ -65,6 +69,10 @@ describe("Loom evidence ledger", () => {
     }))).toEqual({
       diagnosticSandbox: {
         id: "s1",
+        snapshotTree: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        image: "local/toolchain:test",
+        engine: "docker",
+        network: "none",
         ok: false,
         exitCode: 2,
         signal: null,
@@ -75,6 +83,10 @@ describe("Loom evidence ledger", () => {
       "loom.code.diagnostic_sandbox_exec",
       [
         "- **Sandbox ID:** `s2`",
+        "- **Snapshot Tree:** `bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb`",
+        "- **Image:** `local/toolchain:test`",
+        "- **Engine:** docker",
+        "- **Network:** none",
         "- **Ok:** Yes",
         "- **Exit Code:** 0",
         "- **Timed Out:** No",
@@ -85,6 +97,10 @@ describe("Loom evidence ledger", () => {
     )).toEqual({
       diagnosticSandbox: {
         id: "s2",
+        snapshotTree: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        image: "local/toolchain:test",
+        engine: "docker",
+        network: "none",
         ok: true,
         exitCode: 0,
         timedOut: false,
@@ -129,6 +145,31 @@ describe("Loom evidence ledger", () => {
       },
     })
     expect(observationsSupportKind("runtime", [assertedSandbox])).toBe(true)
+  })
+
+  test("captures snapshot provenance from sandbox diff evidence", () => {
+    expect(safeResultSummary(
+      "loom_diagnostic_sandbox_diff",
+      JSON.stringify({
+        sandboxId: "s3",
+        snapshotTree: "cccccccccccccccccccccccccccccccccccccccc",
+        image: "local/toolchain:test",
+        engine: "podman",
+        network: "host",
+        status: "M state.txt",
+        stat: "1 file changed",
+      }),
+    )).toEqual({
+      diagnosticSandbox: {
+        id: "s3",
+        snapshotTree: "cccccccccccccccccccccccccccccccccccccccc",
+        image: "local/toolchain:test",
+        engine: "podman",
+        network: "host",
+        ok: true,
+        timedOut: false,
+      },
+    })
   })
 
   test("test claim needs an observed test command", () => {

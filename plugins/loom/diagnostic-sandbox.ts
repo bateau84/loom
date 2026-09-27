@@ -26,6 +26,7 @@ export type DiagnosticSandboxRecord = {
   createdAt: string
   materialized: boolean
   materializedAt?: string
+  snapshotTree?: string
   active: boolean
   destroyedAt?: string
 }
@@ -37,6 +38,10 @@ export type DiagnosticSandboxExecInput = {
 
 export type DiagnosticSandboxExecResult = {
   sandboxId: string
+  snapshotTree: string
+  image: string
+  engine: DiagnosticSandboxEngine
+  network: DiagnosticSandboxNetwork
   ok: boolean
   exitCode?: number | string | null
   signal?: string | null
@@ -320,11 +325,56 @@ export async function materializeDiagnosticSandbox(
       "--no-verify",
       "-m", "diagnostic sandbox baseline",
     ], run)
+
+    const tree = await sandboxGit(
+      record.baselineGitPath,
+      record.workspacePath,
+      ["rev-parse", "HEAD^{tree}"],
+      run,
+    )
+    const snapshotTree = String(tree.stdout ?? "").trim()
+    if (!/^[0-9a-f]{40,64}$/i.test(snapshotTree)) {
+      throw new Error("Diagnostic sandbox could not establish an exact snapshot tree identity.")
+    }
+
+    const sourceStatusArgs = [
+      "status",
+      "--porcelain=v1",
+      "--untracked-files=all",
+      "--ignored=matching",
+      "--",
+      ".",
+      ":(exclude).loom/project-id",
+    ]
+    const sourceStatusFirst = await sandboxGit(
+      record.baselineGitPath,
+      sourceRoot,
+      sourceStatusArgs,
+      run,
+    )
+    const sourceStatusSecond = await sandboxGit(
+      record.baselineGitPath,
+      sourceRoot,
+      sourceStatusArgs,
+      run,
+    )
+    if (
+      String(sourceStatusFirst.stdout ?? "").trim() ||
+      String(sourceStatusSecond.stdout ?? "").trim()
+    ) {
+      throw new Error(
+        "Project working directory changed while the Diagnostic sandbox snapshot was being captured. Retry after the source state is stable.",
+      )
+    }
+    record.snapshotTree = snapshotTree
   } catch (error) {
     await rm(record.rootPath, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }).catch(() => undefined)
     throw error
   }
 
+  if (!record.snapshotTree) {
+    throw new Error("Diagnostic sandbox snapshot provenance is missing.")
+  }
   record.materialized = true
   record.materializedAt = new Date().toISOString()
   return record
@@ -400,7 +450,9 @@ export function diagnosticSandboxContainerArgs(
   command: string,
 ) {
   if (!record.active) throw new Error("Diagnostic sandbox is no longer active.")
-  if (!record.materialized) throw new Error("Diagnostic sandbox creation did not complete. Destroy it and create a new sandbox.")
+  if (!record.materialized || !record.snapshotTree) {
+    throw new Error("Diagnostic sandbox creation did not complete with snapshot provenance. Destroy it and create a new sandbox.")
+  }
   const safeCommand = validateDiagnosticSandboxCommand(command)
   const name = diagnosticSandboxContainerName(record)
   const args = [
@@ -456,6 +508,10 @@ export async function executeDiagnosticSandbox(
     })
     return {
       sandboxId: record.id,
+      snapshotTree: record.snapshotTree!,
+      image: record.image,
+      engine: record.engine,
+      network: record.network,
       ok: true,
       exitCode: 0,
       timedOut: false,
@@ -482,6 +538,10 @@ export async function executeDiagnosticSandbox(
 
     return {
       sandboxId: record.id,
+      snapshotTree: record.snapshotTree!,
+      image: record.image,
+      engine: record.engine,
+      network: record.network,
       ok: false,
       exitCode: error?.code ?? null,
       signal: error?.signal ?? null,
@@ -500,7 +560,9 @@ export async function diffDiagnosticSandbox(
 ) {
   sandboxId(record.id)
   if (!record.active) throw new Error("Diagnostic sandbox is no longer active.")
-  if (!record.materialized) throw new Error("Diagnostic sandbox creation did not complete. Destroy it and create a new sandbox.")
+  if (!record.materialized || !record.snapshotTree) {
+    throw new Error("Diagnostic sandbox creation did not complete with snapshot provenance. Destroy it and create a new sandbox.")
+  }
 
   const [status, stat, patch] = await Promise.all([
     sandboxGit(record.baselineGitPath, record.workspacePath, ["status", "--short", "--untracked-files=all", "--ignored=matching"], run),
@@ -512,6 +574,10 @@ export async function diffDiagnosticSandbox(
 
   return {
     sandboxId: record.id,
+    snapshotTree: record.snapshotTree,
+    image: record.image,
+    engine: record.engine,
+    network: record.network,
     status: clipped(status.stdout),
     stat: clipped(stat.stdout),
     ...(includePatch ? { patch: clipped(patch.stdout, PATCH_LIMIT) } : {}),

@@ -1,7 +1,9 @@
 import { afterEach, describe, expect, test } from "bun:test"
+import { execFile } from "node:child_process"
 import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { promisify } from "node:util"
 import {
   allocateDiagnosticSandbox,
   assertDiagnosticSandboxImageAvailable,
@@ -16,6 +18,7 @@ import {
   validateDiagnosticSandboxImage,
 } from "./diagnostic-sandbox"
 
+const execFileAsync = promisify(execFile)
 const roots: string[] = []
 
 async function tempRoot() {
@@ -197,7 +200,45 @@ describe("Diagnostic sandbox", () => {
     await materializeDiagnosticSandbox(record, project)
     expect(record.materialized).toBe(true)
     expect(record.materializedAt).toBeDefined()
+    expect(record.snapshotTree).toMatch(/^[0-9a-f]{40,64}$/)
     expect(await readFile(join(record.workspacePath, "state.txt"), "utf8")).toBe("before\n")
+  })
+
+  test("rejects a torn snapshot when the source changes during capture", async () => {
+    const root = await tempRoot()
+    const project = join(root, "project")
+    await mkdir(project, { recursive: true })
+    await writeFile(join(project, "state.txt"), "before\n")
+    const record = allocateDiagnosticSandbox({
+      runtimeRoot: join(root, "runtime"),
+      projectId: "project-1",
+      sessionId: "session-1",
+      workflowId: "workflow-1",
+      stepId: "diagnostic",
+      attempt: 0,
+      image: "local/toolchain:test",
+      network: "none",
+      engine: "docker",
+      id: "12121212-1212-4212-8212-121212121212",
+      now: "2026-09-27T00:00:00.000Z",
+    })
+
+    let mutated = false
+    const run = async (file: string, args: string[], options?: any) => {
+      const result = await execFileAsync(file, args, options)
+      if (!mutated && file === "git" && args.includes("commit")) {
+        mutated = true
+        await writeFile(join(project, "state.txt"), "after\n")
+      }
+      return result
+    }
+
+    await expect(
+      materializeDiagnosticSandbox(record, project, run as any),
+    ).rejects.toThrow("changed while")
+    expect(record.materialized).toBe(false)
+    expect(record.snapshotTree).toBeUndefined()
+    await expect(stat(record.rootPath)).rejects.toThrow()
   })
 
   test("container execution mounts only the sandbox copy read-write and supports explicit host networking", () => {
@@ -217,6 +258,7 @@ describe("Diagnostic sandbox", () => {
       network: "host" as const,
       createdAt: "2026-09-27T00:00:00.000Z",
       materialized: true,
+      snapshotTree: "1111111111111111111111111111111111111111",
       active: true,
     }
 
