@@ -360,7 +360,7 @@ Root-cause diagnosis sometimes requires controlled mutation, instrumentation, al
 For an attached governed Diagnostic step:
 
 1. Loom snapshots the current working-directory bytes into installation runtime storage under the current project epoch.
-2. Host Git administration metadata (`.git`) and Loom project/runtime marker metadata (`.loom`) are excluded from the snapshot.
+2. Host Git administration metadata (`.git`) and Loom's operational non-Git project marker (`.loom/project-id`) are excluded from the snapshot. Other project-owned `.loom/**` files are preserved.
 3. Loom creates a private disposable Git baseline **outside** the writable snapshot. The container may inspect that baseline read-only, while only Loom's host-side runtime may use it to calculate authoritative experiment deltas.
 4. Each experiment runs in an ephemeral Podman/Docker container with the snapshot bind-mounted read/write at `/workspace` and Loom's runtime-owned private Git baseline bind-mounted read-only at `/diagnostic-git`. The real project and its Git administration directory are never mounted.
 5. The requested OCI image must already exist locally; Loom does not implicitly pull it. Loom overrides the image entrypoint, drops Linux capabilities, runs the container root filesystem read-only, and does not intentionally inherit host environment variables, provider/Git credentials, or the container-engine socket. The snapshot may itself contain project-local secret files, so sandbox images MUST be treated as trusted execution dependencies and those bytes remain sensitive.
