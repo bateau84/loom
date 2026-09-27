@@ -710,18 +710,21 @@ export async function diffDiagnosticSandbox(
     throw new Error("Diagnostic sandbox creation did not complete with snapshot provenance. Destroy it and create a new sandbox.")
   }
 
-  const [status, stat, patch] = await Promise.all([
+  const [status, stat, patch, workspaceDigest] = await Promise.all([
     sandboxGit(record.baselineGitPath, record.workspacePath, ["status", "--short", "--untracked-files=all", "--ignored=matching"], run),
     sandboxGit(record.baselineGitPath, record.workspacePath, ["diff", "--no-ext-diff", "--no-color", "--stat", "HEAD", "--"], run),
     includePatch
       ? sandboxGit(record.baselineGitPath, record.workspacePath, ["diff", "--no-ext-diff", "--no-color", "HEAD", "--"], run)
       : Promise.resolve({ stdout: "", stderr: "" }),
+    rawSnapshotDigest(record.workspacePath),
   ])
 
   return {
     sandboxId: record.id,
     snapshotTree: record.snapshotTree,
     snapshotDigest: record.snapshotDigest,
+    workspaceDigest,
+    rawChanged: workspaceDigest !== record.snapshotDigest,
     image: record.image,
     imageId: record.imageId,
     engine: record.engine,

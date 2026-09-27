@@ -27,6 +27,8 @@ export type EvidenceObservation = {
     id: string
     snapshotTree?: string
     snapshotDigest?: string
+    workspaceDigest?: string
+    rawChanged?: boolean
     image?: string
     imageId?: string
     engine?: string
@@ -183,6 +185,8 @@ function resultObject(result: unknown): Record<string, unknown> | undefined {
 
   const snapshotTree = field("Snapshot Tree")
   const snapshotDigest = field("Snapshot Digest")
+  const workspaceDigest = field("Workspace Digest")
+  const rawChanged = field("Raw Changed")
   const image = field("Image")
   const imageId = field("Image ID")
   const engine = field("Engine")
@@ -195,6 +199,8 @@ function resultObject(result: unknown): Record<string, unknown> | undefined {
     sandboxId,
     ...(snapshotTree ? { snapshotTree } : {}),
     ...(snapshotDigest ? { snapshotDigest } : {}),
+    ...(workspaceDigest ? { workspaceDigest } : {}),
+    ...(rawChanged ? { rawChanged: rawChanged === "Yes" } : {}),
     ...(image ? { image } : {}),
     ...(imageId ? { imageId } : {}),
     ...(engine ? { engine } : {}),
@@ -280,6 +286,8 @@ export function safeResultSummary(tool: string, result: unknown) {
           id: sandboxId,
           snapshotTree,
           ...(typeof value?.snapshotDigest === "string" ? { snapshotDigest: value.snapshotDigest.slice(0, 128) } : {}),
+          ...(typeof value?.workspaceDigest === "string" ? { workspaceDigest: value.workspaceDigest.slice(0, 128) } : {}),
+          ...(typeof value?.rawChanged === "boolean" ? { rawChanged: value.rawChanged } : {}),
           ...(typeof value?.image === "string" ? { image: value.image.slice(0, 512) } : {}),
           ...(typeof value?.imageId === "string" ? { imageId: value.imageId.slice(0, 128) } : {}),
           ...(typeof value?.engine === "string" ? { engine: value.engine.slice(0, 32) } : {}),

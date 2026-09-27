@@ -292,6 +292,37 @@ describe("Diagnostic sandbox", () => {
     await expect(stat(record.rootPath)).rejects.toThrow()
   })
 
+  test("raw diff change signal survives Git text normalization", async () => {
+    const root = await tempRoot()
+    const project = join(root, "project")
+    const runtimeRoot = join(root, "runtime")
+    await mkdir(project, { recursive: true })
+    await writeFile(join(project, ".gitattributes"), "*.txt text\n")
+    await writeFile(join(project, "state.txt"), "a\r\nb\n")
+
+    const sandbox = await createDiagnosticSandbox({
+      runtimeRoot,
+      projectDirectory: project,
+      projectId: "project-raw-diff",
+      sessionId: "session-raw-diff",
+      workflowId: "workflow-raw-diff",
+      stepId: "diagnostic",
+      attempt: 0,
+      image: "local/toolchain:test",
+      imageId: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      network: "none",
+      engine: "docker",
+    })
+
+    // Same Git-normalized text, different raw bytes.
+    await writeFile(join(sandbox.workspacePath, "state.txt"), "a\nb\r\n")
+    const diff = await diffDiagnosticSandbox(sandbox)
+
+    expect(diff.status).not.toContain("state.txt")
+    expect(diff.rawChanged).toBe(true)
+    expect(diff.workspaceDigest === diff.snapshotDigest).toBe(false)
+  })
+
   test("container execution mounts only the sandbox copy read-write and supports explicit host networking", () => {
     const sandbox = {
       schemaVersion: 1 as const,
