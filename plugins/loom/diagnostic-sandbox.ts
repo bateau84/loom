@@ -151,6 +151,31 @@ export async function detectDiagnosticContainerEngine(
   throw new Error("Diagnostic sandbox requires Podman or Docker on the Loom host.")
 }
 
+export async function assertDiagnosticSandboxImageAvailable(
+  engine: DiagnosticSandboxEngine,
+  image: string,
+  run: ExecRunner = execFileAsync as unknown as ExecRunner,
+) {
+  const value = validateDiagnosticSandboxImage(image)
+  const args =
+    engine === "podman"
+      ? ["image", "exists", value]
+      : ["image", "inspect", value]
+
+  try {
+    await run(engine, args, {
+      encoding: "utf8",
+      timeout: 10_000,
+      maxBuffer: 512_000,
+    })
+  } catch {
+    throw new Error(
+      `Diagnostic sandbox image is not available locally for ${engine}: ${value}. Loom will not pull images implicitly.`,
+    )
+  }
+  return value
+}
+
 async function git(
   cwd: string,
   args: string[],
