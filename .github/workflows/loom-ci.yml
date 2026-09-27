@@ -36,6 +36,11 @@ jobs:
           bun-version: 1.4.2
       - run: bun install --frozen-lockfile
 
+      - name: Verify Diagnostic sandbox real-container isolation
+        run: |
+          set -euo pipefail
+          bun scripts/verify-diagnostic-sandbox.ts "$OPENCODE_EVAL_RUNNER_OPENCODE_IMAGE"
+
       - name: Verify real Loom plugin activation and rejection in pinned eval runner
         run: |
           set -euo pipefail
