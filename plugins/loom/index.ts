@@ -3132,22 +3132,36 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                   image: value.image,
                   network: value.network,
                 })
-                if (!(await exactRunnableStepAttemptBinding(
-                  ctx,
-                  tool.sessionID,
+                const published = await withRuntimeLock(
+                  runtime,
+                  "workflow",
                   workflowId,
-                  stepId,
-                ))) {
-                  await destroyDiagnosticSandbox(sandbox).catch(() => undefined)
+                  async () => {
+                    if (!(await exactRunnableStepAttemptBinding(
+                      ctx,
+                      tool.sessionID,
+                      workflowId,
+                      stepId,
+                    ))) return false
+                    await ctx.storage.set(key, sandbox)
+                    return true
+                  },
+                )
+                if (!published) {
+                  try {
+                    await destroyDiagnosticSandbox(sandbox)
+                  } catch (cleanupError) {
+                    // Keep failed cleanup discoverable so the session can retry
+                    // diagnostic_sandbox_destroy even though this attempt is stale.
+                    await ctx.storage.set(key, sandbox).catch(() => undefined)
+                    throw new Error(
+                      "Diagnostic step changed while the sandbox snapshot was being created, and sandbox cleanup failed: " +
+                      (cleanupError instanceof Error ? cleanupError.message : String(cleanupError)),
+                    )
+                  }
                   throw new Error(
                     "Diagnostic step changed while the sandbox snapshot was being created. Attach to the current attempt before creating a new sandbox.",
                   )
-                }
-                try {
-                  await ctx.storage.set(key, sandbox)
-                } catch (error) {
-                  await destroyDiagnosticSandbox(sandbox).catch(() => undefined)
-                  throw error
                 }
                 return {
                   content: renderToolOutput({
