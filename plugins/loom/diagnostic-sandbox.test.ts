@@ -114,6 +114,7 @@ describe("Diagnostic sandbox", () => {
     expect(args).toContain("HOME=/tmp")
     expect(args).toContain("GIT_DIR=/diagnostic-git")
     expect(args).toContain("GIT_WORK_TREE=/workspace")
+    expect(args).toContain("GIT_OPTIONAL_LOCKS=0")
     expect(args).toContain("--http-proxy=false")
     for (const name of [
       "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY",
