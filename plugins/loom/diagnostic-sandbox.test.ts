@@ -35,6 +35,9 @@ describe("Diagnostic sandbox", () => {
     await mkdir(join(project, "src"), { recursive: true })
     await mkdir(join(project, ".git"), { recursive: true })
     await mkdir(join(project, ".loom"), { recursive: true })
+    await mkdir(join(project, "cache"), { recursive: true })
+    await writeFile(join(project, ".gitignore"), "cache/**\n")
+    await writeFile(join(project, "cache", "state.db"), "cached-before\n")
     await writeFile(join(project, "src", "value.txt"), "before\n")
     await writeFile(join(project, ".git", "host-secret"), "do-not-copy\n")
     await writeFile(join(project, ".loom", "project-id"), "host-project\n")
@@ -59,10 +62,14 @@ describe("Diagnostic sandbox", () => {
     expect((await stat(sandbox.baselineGitPath)).isDirectory()).toBe(true)
 
     await writeFile(join(sandbox.workspacePath, "src", "value.txt"), "experiment\n")
+    await writeFile(join(sandbox.workspacePath, "cache", "state.db"), "cached-after\n")
+    await writeFile(join(sandbox.workspacePath, "cache", "new-state.db"), "new-cache\n")
     await writeFile(join(sandbox.workspacePath, "new-evidence.txt"), "new\n")
 
     const diff = await diffDiagnosticSandbox(sandbox)
     expect(diff.status).toContain("M src/value.txt")
+    expect(diff.status).toContain("M cache/state.db")
+    expect(diff.status).toContain("!! cache/new-state.db")
     expect(diff.status).toContain("?? new-evidence.txt")
     expect(await readFile(join(project, "src", "value.txt"), "utf8")).toBe("before\n")
 
