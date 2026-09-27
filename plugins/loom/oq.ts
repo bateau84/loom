@@ -221,7 +221,7 @@ export function blockingQuestionsForStep(questions: OpenQuestion[], stepId: stri
     (question) =>
       question.blocking &&
       question.consumerStepIds.includes(stepId) &&
-      question.status !== "closed",
+      (!question.answer || !question.reconciliations[stepId]),
   )
 }
 
