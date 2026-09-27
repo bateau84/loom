@@ -397,4 +397,5 @@ This design does not:
 - [BR-001](../../requirements/loom/br-001-run-autonomously-to-real-boundary.md)
 - [BR-007](../../requirements/loom/br-007-evidence-outranks-model-claims.md)
 - [BR-008](../../requirements/loom/br-008-bounded-autonomy-and-progress.md)
+- [BR-013](../../requirements/loom/br-013-diagnose-root-causes.md)
 - [BR-017](../../requirements/loom/br-017-concurrent-sessions-projects-compartmentalized.md)
