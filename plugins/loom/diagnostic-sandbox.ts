@@ -21,6 +21,7 @@ export type DiagnosticSandboxRecord = {
   workspacePath: string
   baselineGitPath: string
   image: string
+  imageId: string
   engine: DiagnosticSandboxEngine
   network: DiagnosticSandboxNetwork
   createdAt: string
@@ -40,6 +41,7 @@ export type DiagnosticSandboxExecResult = {
   sandboxId: string
   snapshotTree: string
   image: string
+  imageId: string
   engine: DiagnosticSandboxEngine
   network: DiagnosticSandboxNetwork
   ok: boolean
@@ -184,6 +186,34 @@ export async function assertDiagnosticSandboxImageAvailable(
   return value
 }
 
+export async function resolveDiagnosticSandboxImage(
+  engine: DiagnosticSandboxEngine,
+  image: string,
+  run: ExecRunner = execFileAsync as unknown as ExecRunner,
+) {
+  const reference = validateDiagnosticSandboxImage(image)
+  try {
+    const result = await run(
+      engine,
+      ["image", "inspect", "--format", "{{.Id}}", reference],
+      {
+        encoding: "utf8",
+        timeout: 10_000,
+        maxBuffer: 512_000,
+      },
+    )
+    const id = String(result.stdout ?? "").trim()
+    if (!/^(?:sha256:)?[0-9a-f]{64}$/i.test(id)) {
+      throw new Error("container engine returned an invalid image ID")
+    }
+    return { reference, id }
+  } catch (error) {
+    throw new Error(
+      `Diagnostic sandbox image is not available as a stable local image for ${engine}: ${reference}. Loom will not pull images implicitly. ${error instanceof Error ? error.message : String(error)}`,
+    )
+  }
+}
+
 function isolatedGitEnvironment(configPath: string): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {}
   for (const key of [
@@ -246,6 +276,7 @@ export function allocateDiagnosticSandbox(input: {
   stepId: string
   attempt: number
   image: string
+  imageId: string
   network: DiagnosticSandboxNetwork
   engine: DiagnosticSandboxEngine
   id?: string
@@ -271,6 +302,7 @@ export function allocateDiagnosticSandbox(input: {
     workspacePath: join(rootPath, "workspace"),
     baselineGitPath: join(rootPath, "baseline.git"),
     image,
+    imageId: input.imageId,
     engine: input.engine,
     network: input.network,
     createdAt: input.now ?? new Date().toISOString(),
@@ -389,6 +421,7 @@ export async function createDiagnosticSandbox(input: {
   stepId: string
   attempt: number
   image: string
+  imageId?: string
   network: DiagnosticSandboxNetwork
   engine?: DiagnosticSandboxEngine
   now?: string
@@ -396,6 +429,9 @@ export async function createDiagnosticSandbox(input: {
 }): Promise<DiagnosticSandboxRecord> {
   const run = input.run ?? (execFileAsync as unknown as ExecRunner)
   const engine = input.engine ?? await detectDiagnosticContainerEngine(run)
+  const resolvedImage = input.imageId
+    ? { reference: validateDiagnosticSandboxImage(input.image), id: input.imageId }
+    : await resolveDiagnosticSandboxImage(engine, input.image, run)
   const record = allocateDiagnosticSandbox({
     runtimeRoot: input.runtimeRoot,
     projectId: input.projectId,
@@ -403,7 +439,8 @@ export async function createDiagnosticSandbox(input: {
     workflowId: input.workflowId,
     stepId: input.stepId,
     attempt: input.attempt,
-    image: input.image,
+    image: resolvedImage.reference,
+    imageId: resolvedImage.id,
     network: input.network,
     engine,
     now: input.now,
@@ -484,7 +521,7 @@ export function diagnosticSandboxContainerArgs(
     "--env", "all_proxy=",
     "--env", "no_proxy=",
     "--entrypoint=sh",
-    record.image,
+    record.imageId,
     "-lc", safeCommand,
   ]
   return { name, args }
@@ -510,6 +547,7 @@ export async function executeDiagnosticSandbox(
       sandboxId: record.id,
       snapshotTree: record.snapshotTree!,
       image: record.image,
+      imageId: record.imageId,
       engine: record.engine,
       network: record.network,
       ok: true,
@@ -540,6 +578,7 @@ export async function executeDiagnosticSandbox(
       sandboxId: record.id,
       snapshotTree: record.snapshotTree!,
       image: record.image,
+      imageId: record.imageId,
       engine: record.engine,
       network: record.network,
       ok: false,

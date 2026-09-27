@@ -14,6 +14,7 @@ import {
   diffDiagnosticSandbox,
   materializeDiagnosticSandbox,
   normalizeDiagnosticSandboxTimeout,
+  resolveDiagnosticSandboxImage,
   validateDiagnosticSandboxCommand,
   validateDiagnosticSandboxImage,
 } from "./diagnostic-sandbox"
@@ -58,6 +59,7 @@ describe("Diagnostic sandbox", () => {
       stepId: "diagnostic",
       attempt: 0,
       image: "docker.io/library/alpine:3.22",
+      imageId: "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
       network: "host",
       engine: "podman",
     })
@@ -155,6 +157,7 @@ describe("Diagnostic sandbox", () => {
       stepId: "diagnostic",
       attempt: 0,
       image: "local/toolchain:test",
+      imageId: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       network: "none",
       engine: "docker",
       id: "66666666-6666-4666-8666-666666666666",
@@ -191,6 +194,7 @@ describe("Diagnostic sandbox", () => {
       stepId: "diagnostic",
       attempt: 0,
       image: "local/toolchain:test",
+      imageId: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       network: "none",
       engine: "docker",
       id: "99999999-9999-4999-8999-999999999999",
@@ -217,6 +221,7 @@ describe("Diagnostic sandbox", () => {
       stepId: "diagnostic",
       attempt: 0,
       image: "local/toolchain:test",
+      imageId: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       network: "none",
       engine: "docker",
       id: "12121212-1212-4212-8212-121212121212",
@@ -254,6 +259,7 @@ describe("Diagnostic sandbox", () => {
       workspacePath: "/runtime/diagnostic-sandboxes/project/id/workspace",
       baselineGitPath: "/runtime/diagnostic-sandboxes/project/id/baseline.git",
       image: "docker.io/library/golang:1.25",
+      imageId: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
       engine: "podman" as const,
       network: "host" as const,
       createdAt: "2026-09-27T00:00:00.000Z",
@@ -300,7 +306,32 @@ describe("Diagnostic sandbox", () => {
     }
     expect(args).toContain("--entrypoint=sh")
     expect(args).toContain("go test ./...")
-    expect(args[args.indexOf(sandbox.image) + 1]).toBe("-lc")
+    expect(args).toContain(sandbox.imageId)
+    expect(args).not.toContain(sandbox.image)
+    expect(args[args.indexOf(sandbox.imageId) + 1]).toBe("-lc")
+  })
+
+  test("resolves mutable image references to immutable local image IDs", async () => {
+    const calls: Array<{ file: string; args: string[] }> = []
+    const run = async (file: string, args: string[]) => {
+      calls.push({ file, args })
+      return {
+        stdout: "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\n",
+        stderr: "",
+      }
+    }
+    await expect(resolveDiagnosticSandboxImage(
+      "docker",
+      "local/toolchain:latest",
+      run,
+    )).resolves.toEqual({
+      reference: "local/toolchain:latest",
+      id: "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    })
+    expect(calls).toEqual([{
+      file: "docker",
+      args: ["image", "inspect", "--format", "{{.Id}}", "local/toolchain:latest"],
+    }])
   })
 
   test("checks local image availability without pulling", async () => {
@@ -352,6 +383,7 @@ describe("Diagnostic sandbox", () => {
       stepId: "diagnostic",
       attempt: 0,
       image: "--privileged",
+      imageId: "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
       network: "none",
       engine: "podman",
     })).rejects.toThrow("image")

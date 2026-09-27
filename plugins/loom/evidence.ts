@@ -27,6 +27,7 @@ export type EvidenceObservation = {
     id: string
     snapshotTree?: string
     image?: string
+    imageId?: string
     engine?: string
     network?: string
     ok: boolean
@@ -181,6 +182,7 @@ function resultObject(result: unknown): Record<string, unknown> | undefined {
 
   const snapshotTree = field("Snapshot Tree")
   const image = field("Image")
+  const imageId = field("Image ID")
   const engine = field("Engine")
   const network = field("Network")
   const ok = field("Ok")
@@ -191,6 +193,7 @@ function resultObject(result: unknown): Record<string, unknown> | undefined {
     sandboxId,
     ...(snapshotTree ? { snapshotTree } : {}),
     ...(image ? { image } : {}),
+    ...(imageId ? { imageId } : {}),
     ...(engine ? { engine } : {}),
     ...(network ? { network } : {}),
     ...(ok ? { ok: ok === "Yes" } : {}),
@@ -250,6 +253,7 @@ export function safeResultSummary(tool: string, result: unknown) {
           id: sandboxId,
           ...(typeof value.snapshotTree === "string" ? { snapshotTree: value.snapshotTree.slice(0, 128) } : {}),
           ...(typeof value.image === "string" ? { image: value.image.slice(0, 512) } : {}),
+          ...(typeof value.imageId === "string" ? { imageId: value.imageId.slice(0, 128) } : {}),
           ...(typeof value.engine === "string" ? { engine: value.engine.slice(0, 32) } : {}),
           ...(typeof value.network === "string" ? { network: value.network.slice(0, 32) } : {}),
           ok: value.ok,
@@ -272,6 +276,7 @@ export function safeResultSummary(tool: string, result: unknown) {
           id: sandboxId,
           snapshotTree,
           ...(typeof value?.image === "string" ? { image: value.image.slice(0, 512) } : {}),
+          ...(typeof value?.imageId === "string" ? { imageId: value.imageId.slice(0, 128) } : {}),
           ...(typeof value?.engine === "string" ? { engine: value.engine.slice(0, 32) } : {}),
           ...(typeof value?.network === "string" ? { network: value.network.slice(0, 32) } : {}),
           ok: true,

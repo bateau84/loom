@@ -96,12 +96,12 @@ import {
 } from "./scope"
 import {
   allocateDiagnosticSandbox,
-  assertDiagnosticSandboxImageAvailable,
   destroyDiagnosticSandbox,
   detectDiagnosticContainerEngine,
   diffDiagnosticSandbox,
   executeDiagnosticSandbox,
   materializeDiagnosticSandbox,
+  resolveDiagnosticSandboxImage,
   type DiagnosticSandboxNetwork,
   type DiagnosticSandboxRecord,
 } from "./diagnostic-sandbox"
@@ -3139,7 +3139,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               let sandbox: DiagnosticSandboxRecord | undefined
               try {
                 const engine = await detectDiagnosticContainerEngine()
-                const image = await assertDiagnosticSandboxImageAvailable(
+                const resolvedImage = await resolveDiagnosticSandboxImage(
                   engine,
                   value.image,
                 )
@@ -3150,7 +3150,8 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                   workflowId,
                   stepId,
                   attempt: step.attempt ?? 0,
-                  image,
+                  image: resolvedImage.reference,
+                  imageId: resolvedImage.id,
                   network: value.network,
                   engine,
                 })
@@ -3230,6 +3231,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                         sandboxId: current.id,
                         snapshotTree: current.snapshotTree,
                         image: current.image,
+                        imageId: current.imageId,
                         engine: current.engine,
                         network: current.network,
                         projectSnapshot: "current working-directory bytes at sandbox creation",
