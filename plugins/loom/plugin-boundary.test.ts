@@ -243,7 +243,6 @@ async function harness(
   }
 
   const emitEvent = async (event: unknown) => {
-    if (!hasEventSubscriber) return
     await eventSubscribed
     await new Promise<void>((resolve) => {
       const item = { event, processed: resolve }
@@ -1588,6 +1587,43 @@ Verdict: FAIL
       await evaluate(afterElevation)
       expect(afterElevation.effect).not.toBe("deny")
 
+      const remoteInspection: any = {
+        agent: "worker",
+        action: "shell",
+        resources: ["git remote -v"],
+        sessionID: workerSession,
+        effect: "ask",
+      }
+      await evaluate(remoteInspection)
+      expect(remoteInspection.effect).toBe("allow")
+
+      const namedRefPush: any = {
+        ...remoteInspection,
+        resources: ["git push origin feature/task"],
+        effect: "ask",
+      }
+      await evaluate(namedRefPush)
+      expect(namedRefPush.effect).toBe("allow")
+
+      const unsafePush: any = {
+        ...remoteInspection,
+        resources: ["git push --force origin main"],
+        effect: "ask",
+      }
+      await evaluate(unsafePush)
+      expect(unsafePush.effect).toBe("deny")
+      expect(unsafePush.message).toContain("command policy")
+      expect(unsafePush.message).not.toContain("loom_scope_elevate")
+
+      const outOfScopeStage: any = {
+        ...remoteInspection,
+        resources: ["git add docs/outside.md"],
+        effect: "ask",
+      }
+      await evaluate(outOfScopeStage)
+      expect(outOfScopeStage.effect).toBe("deny")
+      expect(outOfScopeStage.message).toContain("loom_scope_elevate")
+
       const status = await h.call(
         "scope_status",
         { workflowId, stepId: "worker" },
@@ -1689,6 +1725,20 @@ Verdict: FAIL
         "general",
         generalSession,
       )).authorized).toBe(true)
+
+      const retryElevation = await h.call(
+        "scope_elevate",
+        {
+          workflowId,
+          stepId: "worker",
+          paths: ["git-internal-alias"],
+          reason: "Attempt to mutate Git internal state through an alias.",
+        },
+        "worker",
+        childSession,
+      )
+      expect(retryElevation.status).toBe("granted")
+      expect(retryElevation.continue).toBe(true)
 
       const beforeRetarget: any = {
         agent: "worker",
@@ -6227,6 +6277,169 @@ Verdict: FAIL
     }
   })
 
+  test("a multi-file mutation cannot publish only the path whose delta was separable", async () => {
+    const h = await harness()
+    try {
+      await initializeGitFixture(h.root)
+      await writeFile(join(h.root, "src", "multi-a.ts"), "old-a\n")
+      await writeFile(join(h.root, "src", "multi-b.ts"), "old-b\nline-b\n")
+      await git(h.root, ["add", "--", "src/multi-a.ts", "src/multi-b.ts"])
+      await git(h.root, ["commit", "-m", "baseline multi-file mutation"])
+      await writeFile(join(h.root, "src", "multi-b.ts"), "foreign-b\nold-b\nline-b\n")
+
+      const general = "multi-delta-general"
+      const worker = "multi-delta-worker"
+      const started = await h.call("start", { request: "Exercise multi-file owned-delta admission." }, "general", general)
+      const workflowId = String(started.workflowId)
+      expect((await h.call("route", {
+        humanFacing: false, behavioral: false, structural: false, externalUnknown: false,
+        diagnostic: false, productOutcome: false, implementationRequested: true, executionDepth: "task",
+      }, "general", general)).error).toBeUndefined()
+      expect((await h.call("task_scope", {
+        workflowId, stepId: "worker", write: ["src/multi-a.ts", "src/multi-b.ts"],
+      }, "general", general)).error).toBeUndefined()
+      const grant = await h.call("dispatch_grant", { workflowId, stepId: "worker" }, "general", general)
+      expect((await h.call("attach", { grantId: grant.grantId, workflowId, stepId: "worker" }, "worker", worker)).attached).toBe(true)
+
+      const patch = {
+        tool: "apply_patch", callID: "multi-delta-patch", sessionID: worker, agent: "worker",
+        input: { patchText: "*** Begin Patch\n*** Update File: src/multi-a.ts\n@@\n-old-a\n+new-a\n*** Update File: src/multi-b.ts\n@@\n-foreign-b\n-old-b\n-line-b\n+rewritten-b\n*** End Patch" },
+      }
+      await h.toolHooks.get("execute.before")?.(patch)
+      await writeFile(join(h.root, "src", "multi-a.ts"), "new-a\n")
+      await writeFile(join(h.root, "src", "multi-b.ts"), "rewritten-b\n")
+      await expect(h.toolHooks.get("execute.after")?.({
+        ...patch, status: "completed", result: "patched both paths",
+      })).rejects.toThrow("cannot be separated")
+
+      const completion = await h.call("complete", {
+        workflowId, stepId: "worker", summary: "partial multi-file attribution must block completion",
+      }, "worker", worker)
+      expect(completion.error).toContain("src/multi-a.ts")
+      expect(completion.error).toContain("src/multi-b.ts")
+
+      const add = "git add -- src/multi-a.ts"
+      const stage = { tool: "shell", callID: "multi-delta-stage", sessionID: worker, agent: "worker", input: { command: add } }
+      await expect(h.toolHooks.get("execute.before")?.(stage)).rejects.toThrow(
+        "changed after this step attempt's last admitted mutation",
+      )
+      expect((await git(h.root, ["show", "HEAD:src/multi-a.ts"])).stdout).toBe("old-a\n")
+    } finally {
+      h.restore()
+    }
+  })
+
+  test("a stale HEAD is rejected before an owned-delta git add reaches the index", async () => {
+    const h = await harness()
+    try {
+      await initializeGitFixture(h.root)
+      await writeFile(join(h.root, "src", "stale-head.ts"), "base\nseparator\nold\n")
+      await git(h.root, ["add", "--", "src/stale-head.ts"])
+      await git(h.root, ["commit", "-m", "baseline stale head test"])
+      await writeFile(join(h.root, "src", "stale-head.ts"), "foreign\nbase\nseparator\nold\n")
+      const general = "stale-head-general"
+      const worker = "stale-head-worker"
+      const started = await h.call("start", { request: "Exercise stale owned-delta HEAD protection." }, "general", general)
+      const workflowId = String(started.workflowId)
+      expect((await h.call("route", {
+        humanFacing: false, behavioral: false, structural: false, externalUnknown: false,
+        diagnostic: false, productOutcome: false, implementationRequested: true, executionDepth: "task",
+      }, "general", general)).error).toBeUndefined()
+      expect((await h.call("task_scope", {
+        workflowId, stepId: "worker", write: ["src/stale-head.ts"],
+      }, "general", general)).error).toBeUndefined()
+      const grant = await h.call("dispatch_grant", { workflowId, stepId: "worker" }, "general", general)
+      expect((await h.call("attach", { grantId: grant.grantId, workflowId, stepId: "worker" }, "worker", worker)).attached).toBe(true)
+
+      const mutation = {
+        tool: "edit", callID: "stale-head-edit", sessionID: worker, agent: "worker",
+        input: { filePath: join(h.root, "src", "stale-head.ts") },
+      }
+      await h.toolHooks.get("execute.before")?.(mutation)
+      await writeFile(join(h.root, "src", "stale-head.ts"), "foreign\nbase\nseparator\nnew\n")
+      await h.toolHooks.get("execute.after")?.({ ...mutation, status: "completed", result: "updated" })
+
+      await git(h.root, ["add", "--", "src/stale-head.ts"])
+      const staleIndexStage = {
+        tool: "shell", callID: "stale-index-stage", sessionID: worker, agent: "worker",
+        input: { command: "git add -- src/stale-head.ts" },
+      }
+      await expect(h.toolHooks.get("execute.before")?.(staleIndexStage)).rejects.toThrow(
+        "owned-delta HEAD/index baseline changed",
+      )
+      expect((await git(h.root, ["show", ":src/stale-head.ts"])).stdout).toBe("foreign\nbase\nseparator\nnew\n")
+      await git(h.root, ["reset", "--", "src/stale-head.ts"])
+
+      await writeFile(join(h.root, "src", "head-bump.ts"), "advance\n")
+      await git(h.root, ["add", "--", "src/head-bump.ts"])
+      await git(h.root, ["commit", "-m", "advance HEAD outside Loom"])
+
+      const stage = {
+        tool: "shell", callID: "stale-head-stage", sessionID: worker, agent: "worker",
+        input: { command: "git add -- src/stale-head.ts" },
+      }
+      await expect(h.toolHooks.get("execute.before")?.(stage)).rejects.toThrow(
+        "owned-delta HEAD/index baseline changed",
+      )
+      await expect(git(h.root, ["diff", "--cached", "--quiet"])).resolves.toBeDefined()
+      expect(await readFile(join(h.root, "src", "stale-head.ts"), "utf8")).toBe("foreign\nbase\nseparator\nnew\n")
+    } finally {
+      h.restore()
+    }
+  })
+
+  test("a clean tracked absence is captured as an owned creation delta", async () => {
+    const h = await harness()
+    try {
+      await initializeGitFixture(h.root)
+      await writeFile(join(h.root, "src", "baseline.ts"), "baseline\n")
+      await git(h.root, ["add", "--", "src/baseline.ts"])
+      await git(h.root, ["commit", "-m", "baseline before untracked creation"])
+      const general = "create-delta-general"
+      const worker = "create-delta-worker"
+      const started = await h.call("start", { request: "Create one new owned tracked file safely." }, "general", general)
+      const workflowId = String(started.workflowId)
+      expect((await h.call("route", {
+        humanFacing: false, behavioral: false, structural: false, externalUnknown: false,
+        diagnostic: false, productOutcome: false, implementationRequested: true, executionDepth: "task",
+      }, "general", general)).error).toBeUndefined()
+      expect((await h.call("task_scope", {
+        workflowId, stepId: "worker", write: ["src/created.ts"],
+      }, "general", general)).error).toBeUndefined()
+      const grant = await h.call("dispatch_grant", { workflowId, stepId: "worker" }, "general", general)
+      expect((await h.call("attach", { grantId: grant.grantId, workflowId, stepId: "worker" }, "worker", worker)).attached).toBe(true)
+
+      const mutation = {
+        tool: "write", callID: "create-delta-write", sessionID: worker, agent: "worker",
+        input: { filePath: join(h.root, "src", "created.ts"), content: "created\n" },
+      }
+      await h.toolHooks.get("execute.before")?.(mutation)
+      await writeFile(join(h.root, "src", "created.ts"), "created\n")
+      await chmod(join(h.root, "src", "created.ts"), 0o755)
+      await h.toolHooks.get("execute.after")?.({ ...mutation, status: "completed", result: "created" })
+
+      const key = `git-delta/${encodeURIComponent(workflowId)}/worker/0/${encodeURIComponent("src/created.ts")}`
+      const receipt = await h.durableStorage.get(key) as { projection?: string } | undefined
+      expect(Buffer.from(receipt?.projection ?? "", "base64").toString()).toBe("created\n")
+
+      const stageCommand = "git add -- src/created.ts"
+      const stage = { tool: "shell", callID: "create-delta-stage", sessionID: worker, agent: "worker", input: { command: stageCommand } }
+      await h.toolHooks.get("execute.before")?.(stage)
+      await git(h.root, ["add", "--", "src/created.ts"])
+      await h.toolHooks.get("execute.after")?.({ ...stage, status: "completed", result: "staged" })
+      const commitCommand = "git -c core.hooksPath=/dev/null commit -m 'test: publish owned creation delta'"
+      const commit = { tool: "shell", callID: "create-delta-commit", sessionID: worker, agent: "worker", input: { command: commitCommand } }
+      await h.toolHooks.get("execute.before")?.(commit)
+      await git(h.root, ["-c", "core.hooksPath=/dev/null", "commit", "-m", "test: publish owned creation delta"])
+      await h.toolHooks.get("execute.after")?.({ ...commit, status: "completed", result: "committed" })
+      expect((await git(h.root, ["show", "HEAD:src/created.ts"])).stdout).toBe("created\n")
+      expect((await git(h.root, ["ls-tree", "HEAD", "--", "src/created.ts"])).stdout).toContain("100755 blob")
+      expect((await h.call("complete", { workflowId, stepId: "worker", summary: "creation delta published" }, "worker", worker)).error).toBeUndefined()
+    } finally {
+      h.restore()
+    }
+  })
+
   test("refuses ambiguous repair of pre-existing dirt while preserving unrelated ownership checks", async () => {
     const h = await harness()
     try {
@@ -6708,7 +6921,8 @@ Verdict: FAIL
           "src/shared.ts is locked for write by another agent. Try again later and re-read the file before retrying.",
         )
 
-      expect(h.hasEventSubscriber()).toBe(false)
+      await h.emitEvent({ type: "session.idle", properties: { sessionID: "no-active-call" } })
+      expect(h.hasEventSubscriber()).toBe(true)
       const assertLeaseStillHeld = async () => {
         const probe = { ...second, callID: `overlap-probe-${crypto.randomUUID()}` }
         let acquired = false
@@ -6743,11 +6957,31 @@ Verdict: FAIL
       // Model that the owner could still mutate despite terminal-looking, but
       // untrusted, event/session evidence. The lease must continue to fence it.
       await writeFile(join(h.root, "src", "shared.ts"), "a\n")
+      h.setSessionContext(workerA, [{
+        id: "overlap-message-a",
+        parts: [{
+          type: "tool", callID: "overlap-write-a", tool: "edit", messageID: "overlap-message-a",
+          state: { status: "running" },
+        }],
+      }])
+      await h.emitEvent({ type: "session.idle", properties: { sessionID: workerA } })
+      let teardownSettled = false
+      const teardown = h.cleanup!().then(() => { teardownSettled = true })
+      expect(teardownSettled).toBe(false)
       await expect(h.toolHooks.get("execute.before")?.(second)).rejects.toThrow(
         "src/shared.ts is locked for write by another agent",
       )
 
-      await h.toolHooks.get("execute.after")?.({ ...first, status: "completed", result: "a" })
+      h.setSessionContext(workerA, [{
+        id: "overlap-message-a",
+        parts: [{
+          type: "tool", callID: "overlap-write-a", tool: "edit", messageID: "overlap-message-a",
+          state: { status: "completed" },
+        }],
+      }])
+      await h.emitEvent({ type: "session.idle", properties: { sessionID: workerA } })
+      await teardown
+      expect(teardownSettled).toBe(true)
 
       await expect(h.toolHooks.get("execute.before")?.(second)).resolves.toBeUndefined()
       await h.toolHooks.get("execute.after")?.({ ...first, status: "completed", result: "late duplicate callback" })

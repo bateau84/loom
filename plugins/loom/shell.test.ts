@@ -16,6 +16,7 @@ describe("Loom Worker shell policy", () => {
   test("allows common inspection and verification commands", () => {
     for (const command of [
       "git status --short",
+      "git remote -v",
       "git diff --stat",
       "go test ./...",
       "go build ./...",
@@ -257,7 +258,14 @@ describe("Loom Worker shell policy", () => {
       "git fetch origin main",
       "git rebase origin/main",
       "git rebase --continue",
+      "git -c core.editor=true rebase --continue",
+      "git remote",
+      "git remote -v",
+      "git remote -vv",
       "git push origin HEAD",
+      "git push origin main",
+      "git push origin feature/topic",
+      "git push --set-upstream origin feature/topic",
       "git push --force-with-lease origin HEAD",
       "gh pr create --title 'Fix runtime' --body 'Bounded change'",
     ]) {
@@ -288,8 +296,14 @@ describe("Loom Worker shell policy", () => {
       ),
     ).toBe(false)
     expect(workerShellResourcesAllowed(["git push --force origin HEAD"], scope)).toBe(false)
+    expect(workerShellResourcesAllowed(["git -c core.editor=sh rebase --continue"], scope)).toBe(false)
+    expect(workerShellResourcesAllowed(["git -c core.editor=true rebase --skip"], scope)).toBe(false)
+    expect(workerShellResourcesAllowed(["git push --delete origin main"], scope)).toBe(false)
+    expect(workerShellResourcesAllowed(["git push upstream main"], scope)).toBe(false)
+    expect(workerShellResourcesAllowed(["git push origin main:other"], scope)).toBe(false)
+    expect(workerShellResourcesAllowed(["git push origin -"], scope)).toBe(false)
     expect(workerShellResourcesAllowed(["git push origin :main"], scope)).toBe(false)
-    expect(workerShellResourcesAllowed(["git push origin main"], scope)).toBe(false)
+    expect(workerShellResourcesAllowed(["git remote add attacker https://example.invalid"], scope)).toBe(false)
     expect(workerShellResourcesAllowed(["git fetch ext::helper"], scope)).toBe(false)
     expect(workerShellResourcesAllowed(["git rebase --exec 'touch pwn' origin/main"], scope)).toBe(false)
     expect(workerShellResourcesAllowed(["git rebase --strategy=ours origin/main"], scope)).toBe(false)

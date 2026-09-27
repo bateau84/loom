@@ -449,6 +449,29 @@ function safeOwnedRepoPath(value: string) {
   return normalized
 }
 
+function sessionHasTerminalToolCall(
+  messages: unknown,
+  call: { callID: string; tool: string; messageID?: string },
+) {
+  if (!Array.isArray(messages)) return false
+  const matches: Array<{ message: Record<string, unknown>; part: Record<string, unknown> }> = []
+  for (const candidate of messages) {
+    if (!candidate || typeof candidate !== "object") continue
+    const message = candidate as Record<string, unknown>
+    if (!Array.isArray(message.parts)) continue
+    for (const rawPart of message.parts) {
+      if (!rawPart || typeof rawPart !== "object") continue
+      const part = rawPart as Record<string, unknown>
+      if (part.type !== "tool" || part.callID !== call.callID || part.tool !== call.tool) continue
+      if (call.messageID && (part.messageID ?? message.id) !== call.messageID) continue
+      matches.push({ message, part })
+    }
+  }
+  if (matches.length !== 1) return false
+  const status = (matches[0].part.state as Record<string, unknown> | undefined)?.status
+  return status === "completed" || status === "error"
+}
+
 async function worktreeFingerprint(projectDirectory: string, value: string) {
   const path = safeOwnedRepoPath(value)
   const absolute = join(projectDirectory, path)
@@ -3825,6 +3848,77 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         }
       }
     }
+
+    const reconcileQuiescentCall = async (call: ActiveGitWriteCall) => {
+      const pending = call.pending
+      if (call.binding) {
+        for (const path of pending?.gitMutationPaths ?? []) {
+          if (isAbsolute(path) || path.startsWith("hard-boundary:")) continue
+          const before = pending?.gitMutationFingerprints?.[path]
+          const current = await worktreeFingerprint(ctx.location.directory, path).catch(() => "unreadable")
+          if (pending?.gitMutationCaptureError || before === undefined || current !== before) {
+            await ctx.storage.set(gitDeltaUnprovenKey(call.binding, path), {
+              authorityId: call.binding.authorityId,
+              sourceSessionId: call.sessionID,
+              reason: "The exact tool call settled without Loom's after-hook mutation receipt.",
+            })
+          }
+        }
+        for (const path of pending?.gitStageTargets ?? []) {
+          const before = pending?.gitStageBefore?.[path]
+          const after = await gitStageSnapshot(ctx.location.directory, [path])
+          if (before !== after[path]) {
+            await ctx.storage.set(gitDeltaUnprovenKey(call.binding, path), {
+              authorityId: call.binding.authorityId,
+              sourceSessionId: call.sessionID,
+              reason: "The exact tool call changed the Git index without Loom's after-hook staging receipt.",
+            })
+          }
+        }
+      }
+      await releaseGitWriteLocks({
+        sessionID: call.sessionID,
+        messageID: call.messageID,
+        callID: call.callID,
+        tool: call.tool,
+      })
+      pendingObservations.delete(call.pendingKey)
+    }
+
+    const eventAbort = new AbortController()
+    const eventConsumer = ctx.event?.subscribe
+      ? (async () => {
+          try {
+            for await (const event of ctx.event.subscribe({ signal: eventAbort.signal })) {
+              if (event?.type !== "session.idle") continue
+              const properties = (event as unknown as { properties?: Record<string, unknown> }).properties
+              const sessionID = properties && typeof properties === "object" &&
+                typeof properties.sessionID === "string"
+                ? properties.sessionID
+                : undefined
+              if (!sessionID) continue
+              const calls = [...activeGitWriteCalls.values()].filter((call) => call.sessionID === sessionID)
+              if (calls.length === 0) continue
+              let messages: unknown
+              try {
+                messages = await ctx.session.context({ sessionID })
+              } catch {
+                // Idle alone is not proof of executor quiescence. Keep every
+                // lease until its exact after callback or a later verified event.
+                continue
+              }
+              for (const call of calls) {
+                if (!sessionHasTerminalToolCall(messages, call)) continue
+                await reconcileQuiescentCall(call)
+              }
+            }
+          } catch (error) {
+            if (!eventAbort.signal.aborted) {
+              console.error("Loom tool-call lock reconciliation event stream failed:", error)
+            }
+          }
+        })()
+      : undefined
 
     const waitForGitWriteQuiescence = async () => {
       while (activeGitWriteCalls.size > 0) {
@@ -9822,7 +9916,15 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 }
 
                 let boundaryRequest: ScopeBoundaryRequest | undefined
-                if (hardBoundaryPaths.length > 0) {
+                const alreadyAuthorized = hardBoundaryPaths.length > 0 &&
+                  await scopeBoundaryMutationWasAuthorized(
+                    ctx,
+                    ctx.location.directory,
+                    tool.sessionID,
+                    tool.agent,
+                    hardBoundaryPaths,
+                  )
+                if (hardBoundaryPaths.length > 0 && !alreadyAuthorized) {
                   let after: string | undefined
                   do {
                     const page = await ctx.storage.scan({
@@ -10917,8 +11019,13 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
           if (!authorGitShellResourcesAllowed(event.resources, authorScope)) {
             event.effect = "deny"
-            event.message =
-              "Git authoring is limited to explicit files inside the current committable Loom write scope; broad staging and other Git mutations remain blocked."
+            const outsideScopeTargets = event.resources.flatMap(
+              (resource: string) => scopedGitAddTargets(resource) ?? [],
+            )
+            event.message = outsideScopeTargets.length > 0 &&
+                !resourcesWithinScope(outsideScopeTargets, authorScope)
+              ? "Git staging target is outside the current committable Loom write scope. Call loom_scope_elevate for the additional project-local path before retrying."
+              : "Git authoring command is not permitted by command policy; scope elevation cannot authorize broad staging or other unsafe Git mutations."
             return
           }
           const addTargets = event.resources.flatMap(
@@ -11131,8 +11238,16 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         const scope = (await ctx.storage.get(scopeKey(workflowId, stepId))) as TaskScope | undefined
         if (!workerShellResourcesAllowed(event.resources, scope?.write ?? [])) {
           event.effect = "deny"
-          event.message =
-            "Worker shell is limited to inspection, build/test/run, safe delivery operations, and writes already inside the current Loom scope. Call loom_scope_elevate before retrying a newly discovered project-local write target."
+          const scopeDenied = event.resources.some((resource: string) => {
+            const targets = scopedGofmtWriteTargets(resource) ?? scopedGitAddTargets(resource)
+            return Boolean(
+              targets &&
+              (!scope?.write.length || !resourcesWithinScope(targets, scope.write)),
+            )
+          })
+          event.message = scopeDenied
+            ? "Worker shell write target is outside the current Loom scope. Call loom_scope_elevate for the additional project-local path before retrying."
+            : "Worker shell command is not permitted by command policy; scope elevation cannot authorize unsafe or unrecognized commands."
           return
         }
 
@@ -12229,11 +12344,13 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       }
     })
 
-    return () => {
-      // Plugin teardown cannot release or await an active lease without a
-      // verified per-call quiescence signal. Leave its keeper alive; exact
-      // after callbacks release normally, otherwise owner-process exit closes
-      // the pipe and the OS releases the flock.
+    return async () => {
+      // Do not release an active lease without an exact after callback or a
+      // terminal session event whose persisted tool part proves this call is
+      // complete/error. If neither arrives, keep the lease until process exit.
+      await waitForGitWriteQuiescence()
+      eventAbort.abort()
+      await eventConsumer
     }
   },
 }

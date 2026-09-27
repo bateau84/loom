@@ -30,6 +30,7 @@ const safePatterns = [
   /^git grep(?:\s|$)/,
   /^git ls-files(?:\s|$)/,
   /^git branch --show-current(?:\s|$)/,
+  /^git remote(?:\s+-v{1,2})?$/,
 
   /^go test(?:\s|$)/,
   /^go build \.\/\.\.\.(?:\s|$)/,
@@ -652,6 +653,17 @@ function workerDeliveryAllowed(command: string) {
 
   if (isAllowedGitCommit(command)) return true
 
+  // A fixed no-op editor lets an explicitly authorized rebase continuation
+  // reuse its prepared message without permitting arbitrary editor commands.
+  if (
+    words[0] === "git" &&
+    words[1] === "-c" &&
+    words[2] === "core.editor=true" &&
+    words[3] === "rebase" &&
+    words[4] === "--continue" &&
+    words.length === 5
+  ) return true
+
   if (words[0] === "git" && words[1] === "fetch") {
     const args = words.slice(2)
     const refs = args.filter((word) => !["--prune", "--tags", "--no-tags"].includes(word))
@@ -668,11 +680,14 @@ function workerDeliveryAllowed(command: string) {
 
   if (words[0] === "git" && words[1] === "push") {
     const args = words.slice(2)
-    const positional = args.filter(
-      (word) => !["-u", "--set-upstream", "--force-with-lease"].includes(word),
-    )
+    const allowedFlags = new Set(["-u", "--set-upstream", "--force-with-lease"])
+    const positional = args.filter((word) => !allowedFlags.has(word))
     if (positional.some((word) => word.startsWith("-"))) return false
-    return positional.length === 2 && positional[0] === "origin" && positional[1] === "HEAD"
+    if (positional[0] !== "origin") return false
+    // A single ref is Git's shorthand for pushing that ref to a same-named
+    // remote branch. Two refs explicitly name source and destination.
+    return (positional.length === 2 && safeGitRef(positional[1])) ||
+      (positional.length === 3 && safeGitRef(positional[1]) && safeGitRef(positional[2]))
   }
 
   if (words[0] === "gh" && words[1] === "pr") {
