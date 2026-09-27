@@ -79,7 +79,7 @@ describe("Diagnostic sandbox", () => {
 
     const diff = await diffDiagnosticSandbox(sandbox)
     expect(diff.imageId).toBe(sandbox.imageId)
-    expect(diff.snapshotDigest).toBe(sandbox.snapshotDigest)
+    expect(diff.snapshotDigest === sandbox.snapshotDigest).toBe(true)
     expect(diff.status).toContain("M src/value.txt")
     expect(diff.status).toContain("M cache/state.db")
     expect(diff.status).toContain("!! cache/new-state.db")
@@ -490,6 +490,7 @@ describe("Diagnostic sandbox", () => {
       workspacePath,
       baselineGitPath: join(sandboxRoot, "baseline.git"),
       image: "local/toolchain:test",
+      imageId: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       engine: "podman" as const,
       network: "host" as const,
       createdAt: "2026-09-27T00:00:00.000Z",
@@ -535,6 +536,7 @@ describe("Diagnostic sandbox", () => {
       workspacePath,
       baselineGitPath: join(sandboxRoot, "baseline.git"),
       image: "local/toolchain:test",
+      imageId: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       engine: "docker" as const,
       network: "host" as const,
       createdAt: "2026-09-27T00:00:00.000Z",
@@ -575,6 +577,7 @@ describe("Diagnostic sandbox", () => {
       workspacePath,
       baselineGitPath: join(sandboxRoot, "baseline.git"),
       image: "local/toolchain:test",
+      imageId: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       engine: "podman" as const,
       network: "none" as const,
       createdAt: "2026-09-27T00:00:00.000Z",
