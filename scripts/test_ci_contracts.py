@@ -79,7 +79,7 @@ class OpenCodeVersionContractTests(unittest.TestCase):
     def test_primary_host_matches_plugin_dependency(self):
         package = json.loads((ROOT / "package.json").read_text())
         plugin_version = package["devDependencies"]["@opencode/plugin"]
-        self.assertRegex(plugin_version, r"^\\d+\\.\\d+\\.\\d+$")
+        self.assertRegex(plugin_version, r"^\d+\.\d+\.\d+$")
 
         workflow = (ROOT / ".github/workflows/loom-ci.yml").read_text()
         self.assertIn(
