@@ -606,6 +606,16 @@ async function recordGitSessionStaging(
   await ctx.storage.set(gitSessionOwnershipKey(sessionID), ownership)
 }
 
+async function clearGitSessionStaging(
+  ctx: any,
+  sessionID: string,
+) {
+  const ownership = await gitSessionOwnership(ctx, sessionID)
+  if (Object.keys(ownership.stagedFingerprints).length === 0) return
+  ownership.stagedFingerprints = {}
+  await ctx.storage.set(gitSessionOwnershipKey(sessionID), ownership)
+}
+
 async function resolveGitStagingOwnership(
   ctx: any,
   sessionID: string,
@@ -740,6 +750,182 @@ async function stagedGitPaths(projectDirectory: string) {
     projectDirectory,
     ["diff", "--cached", "--no-renames", "--name-only", "-z"],
   )
+}
+
+type GitStageSnapshot = Record<string, string>
+
+async function gitStageSnapshot(
+  projectDirectory: string,
+  paths: readonly string[],
+): Promise<GitStageSnapshot> {
+  const normalized = [...new Set(paths.map(safeOwnedRepoPath))]
+  if (normalized.length === 0) return {}
+
+  const staged = new Set(await stagedGitPaths(projectDirectory))
+  const entries = await Promise.all(
+    normalized
+      .filter((path) => staged.has(path))
+      .map(async (path) => [
+        path,
+        await stagedFingerprint(projectDirectory, path),
+      ] as const),
+  )
+  return Object.fromEntries(entries)
+}
+
+async function gitIndexMatchesWorktree(
+  projectDirectory: string,
+  path: string,
+) {
+  try {
+    await execFileAsync(
+      "git",
+      ["diff", "--quiet", "--no-ext-diff", "--", safeOwnedRepoPath(path)],
+      { cwd: projectDirectory, encoding: "utf8" },
+    )
+    return true
+  } catch (error: any) {
+    if (Number(error?.code) === 1) return false
+    throw error
+  }
+}
+
+async function changedStagedTargetsSince(
+  projectDirectory: string,
+  paths: readonly string[],
+  before: GitStageSnapshot,
+) {
+  const after = await gitStageSnapshot(projectDirectory, paths)
+  const changed: string[] = []
+  for (const raw of paths) {
+    const path = safeOwnedRepoPath(raw)
+    const next = after[path]
+    if (next === undefined || before[path] === next) continue
+    if (await gitIndexMatchesWorktree(projectDirectory, path)) {
+      changed.push(path)
+    }
+  }
+  return changed
+}
+
+async function gitIndexConflictError(
+  ctx: any,
+  sessionID: string,
+  projectDirectory: string,
+  addTargets: readonly string[],
+) {
+  const staged = await stagedGitPaths(projectDirectory)
+  if (staged.length === 0) return undefined
+
+  const requested = new Set(addTargets.map(safeOwnedRepoPath))
+  const [ownership, binding] = await Promise.all([
+    gitSessionOwnership(ctx, sessionID),
+    gitSessionOwnershipBinding(ctx, sessionID),
+  ])
+  const conflicts: string[] = []
+  let adopted = false
+
+  for (const raw of staged) {
+    const path = safeOwnedRepoPath(raw)
+
+    // An explicit restage is allowed to replace whatever is currently in the
+    // shared index for that exact path. The worktree bytes are provenance-
+    // checked separately before the command runs.
+    if (requested.has(path)) continue
+
+    const actual = await stagedFingerprint(projectDirectory, path)
+    const expected = ownership.stagedFingerprints[path]
+    if (expected && expected === actual) continue
+
+    // Session-local Git state is only a cache. A fresh child attached to the
+    // same step attempt may inherit an already-staged entry when both durable
+    // step-attempt provenance and the current worktree prove those exact bytes.
+    if (binding) {
+      const provenance = (await ctx.storage.get(
+        gitStepAttemptOwnedPathKey(
+          binding.workflowId,
+          binding.stepId,
+          binding.attempt,
+          path,
+        ),
+      )) as GitStepAttemptOwnedPath | undefined
+      const current = await worktreeFingerprint(projectDirectory, path)
+      if (
+        provenance?.schemaVersion === 1 &&
+        provenance.authorityId === binding.authorityId &&
+        provenance.workflowId === binding.workflowId &&
+        provenance.stepId === binding.stepId &&
+        provenance.attempt === binding.attempt &&
+        provenance.path === path &&
+        provenance.fingerprint === current &&
+        await gitIndexMatchesWorktree(projectDirectory, path)
+      ) {
+        ownership.paths = [...new Set([...ownership.paths, path])].sort()
+        ownership.worktreeFingerprints[path] = current
+        ownership.stagedFingerprints[path] = actual
+        adopted = true
+        continue
+      }
+    }
+
+    conflicts.push(path)
+  }
+
+  if (adopted) {
+    await ctx.storage.set(gitSessionOwnershipKey(sessionID), ownership)
+  }
+  if (conflicts.length === 0) return undefined
+  return (
+    "Git staging denied: the shared repository index already contains staged " +
+    "changes owned by another Loom session or an external actor: " +
+    conflicts.join(", ") +
+    ". Finish or clear those staged changes before staging different files. " +
+    "This prevents two agents from contaminating each other's commits."
+  )
+}
+
+async function recordGitSessionStagingResult(
+  ctx: any,
+  sessionID: string,
+  projectDirectory: string,
+  paths: readonly string[],
+  status: string,
+  before?: GitStageSnapshot,
+) {
+  if (paths.length === 0) return
+
+  if (status === "completed") {
+    await recordGitSessionStaging(
+      ctx,
+      sessionID,
+      projectDirectory,
+      paths,
+    )
+    return
+  }
+
+  // A shell chain can fail after git add already changed the index (for
+  // example, git diff --cached --check finding whitespace errors). Preserve
+  // only staging changes we can prove happened during this exact tool call and
+  // whose staged bytes now match the admitted worktree bytes.
+  if (status !== "error" || !before) return
+  try {
+    const changed = await changedStagedTargetsSince(
+      projectDirectory,
+      paths,
+      before,
+    )
+    if (changed.length > 0) {
+      await recordGitSessionStaging(
+        ctx,
+        sessionID,
+        projectDirectory,
+        changed,
+      )
+    }
+  } catch {
+    // Best-effort recovery must never replace the original shell failure.
+  }
 }
 
 async function commitScopeError(
@@ -2310,6 +2496,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       inputDigest?: string
       summary?: ReturnType<typeof safeInputSummary>
       admission?: EvidenceAdmission
+      gitStageBefore?: GitStageSnapshot
     }>()
     const activeGitWriteCalls = new Map<
       string,
@@ -2525,6 +2712,14 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             "Git staging denied: targets are outside the current committable Loom write scope. Re-elevate the needed project-local path before staging.",
           )
         }
+        const indexConflict = await gitIndexConflictError(
+          ctx,
+          String(raw.sessionID),
+          ctx.location.directory,
+          addTargets,
+        )
+        if (indexConflict) throw new Error(indexConflict)
+
         const stage = await resolveGitStagingOwnership(
           ctx,
           String(raw.sessionID),
@@ -9628,6 +9823,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       const pending: {
         ambiguous: boolean; ready: boolean; inputDigest?: string
         summary?: ReturnType<typeof safeInputSummary>; admission?: EvidenceAdmission
+        gitStageBefore?: GitStageSnapshot
       } = { ambiguous: false, ready: false }
       pendingObservations.set(key, pending)
       if (pendingObservations.size > 1024) pendingObservations.delete(pendingObservations.keys().next().value!)
@@ -9640,7 +9836,23 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         try {
           await acquireGitWriteLocks(raw, mutationLockPaths, lockGitIndex)
           await revalidateDirectMutationUnderLock(raw, directMutationPaths)
-          if (lockGitIndex) await revalidateGitMutationUnderLock(raw)
+          if (lockGitIndex) {
+            await revalidateGitMutationUnderLock(raw)
+            const command =
+              raw.input && typeof raw.input === "object"
+                ? (raw.input as any).command
+                : undefined
+            const addTargets =
+              typeof command === "string"
+                ? (scopedGitAddTargets(command) ?? [])
+                : []
+            if (addTargets.length > 0) {
+              pending.gitStageBefore = await gitStageSnapshot(
+                ctx.location.directory,
+                addTargets,
+              )
+            }
+          }
         } catch (error) {
           await releaseGitWriteLocks(raw)
           pendingObservations.delete(key)
@@ -9838,28 +10050,30 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       const eventMatches = Boolean(pending) && inputDigest === pending!.inputDigest
 
       if (
-        raw.status === "completed" &&
         raw.agent === "general" &&
         eventMatches
       ) {
         const generalScope = generalGitWriteScope
         const sessionID = String(raw.sessionID)
-        const owned = successfulMutationPaths(
-          tool,
-          input,
-          ctx.location.directory,
-        ).filter(
-          (path) =>
-            !isAbsolute(path) &&
-            resourcesWithinScope([path], generalScope),
-        )
-        if (owned.length > 0) {
-          await recordGitSessionOwnership(
-            ctx,
-            sessionID,
+
+        if (raw.status === "completed") {
+          const owned = successfulMutationPaths(
+            tool,
+            input,
             ctx.location.directory,
-            owned,
+          ).filter(
+            (path) =>
+              !isAbsolute(path) &&
+              resourcesWithinScope([path], generalScope),
           )
+          if (owned.length > 0) {
+            await recordGitSessionOwnership(
+              ctx,
+              sessionID,
+              ctx.location.directory,
+              owned,
+            )
+          }
         }
 
         if (tool === "shell" || tool === "bash") {
@@ -9873,19 +10087,25 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                   resourcesWithinScope([path], generalScope),
                 )
               : []
-          if (staged.length > 0) {
-            await recordGitSessionStaging(
-              ctx,
-              sessionID,
-              ctx.location.directory,
-              staged,
-            )
+          await recordGitSessionStagingResult(
+            ctx,
+            sessionID,
+            ctx.location.directory,
+            staged,
+            String(raw.status ?? ""),
+            pending?.gitStageBefore,
+          )
+          if (
+            raw.status === "completed" &&
+            typeof command === "string" &&
+            isAllowedGitCommit(command)
+          ) {
+            await clearGitSessionStaging(ctx, sessionID)
           }
         }
       }
 
       if (
-        raw.status === "completed" &&
         raw.agent &&
         eventMatches &&
         pending?.admission
@@ -9924,22 +10144,24 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           )
 
           if (writeScope.length) {
-            const owned = successfulMutationPaths(
-              tool,
-              input,
-              ctx.location.directory,
-            ).filter(
-              (path) =>
-                !isAbsolute(path) &&
-                resourcesWithinScope([path], writeScope!),
-            )
-            if (owned.length > 0) {
-              await recordGitSessionOwnership(
-                ctx,
-                sessionID,
+            if (raw.status === "completed") {
+              const owned = successfulMutationPaths(
+                tool,
+                input,
                 ctx.location.directory,
-                owned,
+              ).filter(
+                (path) =>
+                  !isAbsolute(path) &&
+                  resourcesWithinScope([path], writeScope!),
               )
+              if (owned.length > 0) {
+                await recordGitSessionOwnership(
+                  ctx,
+                  sessionID,
+                  ctx.location.directory,
+                  owned,
+                )
+              }
             }
 
             if (tool === "shell" || tool === "bash") {
@@ -9953,13 +10175,20 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                       resourcesWithinScope([path], writeScope!),
                     )
                   : []
-              if (staged.length > 0) {
-                await recordGitSessionStaging(
-                  ctx,
-                  sessionID,
-                  ctx.location.directory,
-                  staged,
-                )
+              await recordGitSessionStagingResult(
+                ctx,
+                sessionID,
+                ctx.location.directory,
+                staged,
+                String(raw.status ?? ""),
+                pending.gitStageBefore,
+              )
+              if (
+                raw.status === "completed" &&
+                typeof command === "string" &&
+                isAllowedGitCommit(command)
+              ) {
+                await clearGitSessionStaging(ctx, sessionID)
               }
             }
           }

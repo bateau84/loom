@@ -2640,10 +2640,13 @@ Verdict: FAIL
         result: "updated",
       })
 
+      const stageCommand =
+        `git -c core.hooksPath=/dev/null add -- ${write[0]} && ` +
+        "git diff --cached --check && git diff --cached --stat && git diff --cached"
       const stagePermission: any = {
         agent: "specifier",
         action: "shell",
-        resources: [`git add ${write[0]}`],
+        resources: [stageCommand],
         sessionID: authorSession,
         effect: "ask",
       }
@@ -2655,16 +2658,19 @@ Verdict: FAIL
         messageID: "specifier-stage-message",
         sessionID: authorSession,
         agent: "specifier",
-        input: { command: `git add ${write[0]}` },
+        input: { command: stageCommand },
       }
       await h.toolHooks.get("execute.before")!(stageEvent)
       await git(h.root, ["add", write[0]])
       await h.toolHooks.get("execute.after")!({
         ...stageEvent,
-        status: "completed",
-        result: "staged",
+        status: "error",
+        error: new Error("git diff --cached --check found a staged problem"),
       })
 
+      // The chained inspection failed after git add changed the index. Loom
+      // should retain the provable staged fingerprint instead of forcing an
+      // otherwise unnecessary restage before commit.
       const commitCommand =
         "git -c core.hooksPath=/dev/null commit -m 'test: scoped specifier artifact'"
       const commitPermission: any = {
@@ -2829,6 +2835,33 @@ Verdict: FAIL
         })
       }
 
+      const evaluate = h.permissionHooks.get("evaluate")!
+      const firstStageCommand = `git add -- ${write[0]}`
+      const firstStagePermission: any = {
+        agent: "specifier",
+        action: "shell",
+        resources: [firstStageCommand],
+        sessionID: firstSession,
+        effect: "ask",
+      }
+      await evaluate(firstStagePermission)
+      expect(firstStagePermission.effect).toBe("allow")
+      const firstStageEvent = {
+        tool: "shell",
+        callID: "specifier-adopt-first-stage",
+        messageID: "specifier-adopt-first-stage-message",
+        sessionID: firstSession,
+        agent: "specifier",
+        input: { command: firstStageCommand },
+      }
+      await h.toolHooks.get("execute.before")!(firstStageEvent)
+      await git(h.root, ["add", "--", write[0]])
+      await h.toolHooks.get("execute.after")!({
+        ...firstStageEvent,
+        status: "completed",
+        result: "staged",
+      })
+
       const freshGrant = await h.call(
         "dispatch_grant",
         { workflowId, stepId: "specifier" },
@@ -2854,16 +2887,35 @@ Verdict: FAIL
         },
       )
 
-      const evaluate = h.permissionHooks.get("evaluate")!
+      const inheritedCommand = `git add -- ${write.slice(1).join(" ")}`
       const inherited: any = {
         agent: "specifier",
         action: "shell",
-        resources: [`git add -- ${write.join(" ")}`],
+        resources: [inheritedCommand],
         sessionID: freshSession,
         effect: "ask",
       }
       await evaluate(inherited)
       expect(inherited.effect).toBe("allow")
+      const inheritedEvent = {
+        tool: "shell",
+        callID: "specifier-adopt-fresh-stage",
+        messageID: "specifier-adopt-fresh-stage-message",
+        sessionID: freshSession,
+        agent: "specifier",
+        input: { command: inheritedCommand },
+      }
+      await h.toolHooks.get("execute.before")!(inheritedEvent)
+      const adoptedOwnership = await h.durableStorage.get(
+        `git-session-ownership/${encodeURIComponent(freshSession)}`,
+      ) as any
+      expect(adoptedOwnership.stagedFingerprints[write[0]]).toBeDefined()
+      await git(h.root, ["add", "--", ...write.slice(1)])
+      await h.toolHooks.get("execute.after")!({
+        ...inheritedEvent,
+        status: "completed",
+        result: "staged",
+      })
 
       await writeFile(join(h.root, write[1]), "changed-outside-admission\n")
       const changed: any = {
@@ -4898,6 +4950,222 @@ Verdict: FAIL
     } finally {
       secondHarness?.restore()
       firstHarness.restore()
+    }
+  })
+
+  test("keeps the shared Git index single-owner across Loom processes until staged work is committed", async () => {
+    const firstHarness = await harness(async (_storage, root) => {
+      await initializeGitFixture(root)
+      await mkdir(join(root, "docs", "anchors"), { recursive: true })
+    })
+    let secondHarness: Awaited<ReturnType<typeof harness>> | undefined
+    try {
+      secondHarness = await harness(
+        undefined,
+        undefined,
+        { root: firstHarness.root, storage: firstHarness.storage },
+      )
+
+      const admitAnchor = async (
+        h: Awaited<ReturnType<typeof harness>>,
+        sessionID: string,
+        name: string,
+      ) => {
+        const event = {
+          tool: "edit",
+          callID: `shared-index-edit-${sessionID}-${name}`,
+          sessionID,
+          agent: "general",
+          input: {
+            filePath: join(firstHarness.root, "docs", "anchors", `${name}.md`),
+            oldString: "",
+            newString: `${name}\n`,
+          },
+        }
+        await h.toolHooks.get("execute.before")!(event)
+        await writeFile(join(firstHarness.root, "docs", "anchors", `${name}.md`), `${name}\n`)
+        await h.toolHooks.get("execute.after")!({
+          ...event,
+          status: "completed",
+          result: "updated",
+        })
+      }
+
+      await admitAnchor(firstHarness, "index-owner-a", "a")
+      await admitAnchor(firstHarness, "index-owner-a", "c")
+      await admitAnchor(secondHarness, "index-owner-b", "b")
+
+      const stage = async (
+        h: Awaited<ReturnType<typeof harness>>,
+        sessionID: string,
+        name: string,
+        callID: string,
+      ) => {
+        const event = {
+          tool: "shell",
+          callID,
+          sessionID,
+          agent: "general",
+          input: { command: `git add docs/anchors/${name}.md` },
+        }
+        await h.toolHooks.get("execute.before")!(event)
+        await git(firstHarness.root, ["add", `docs/anchors/${name}.md`])
+        await h.toolHooks.get("execute.after")!({
+          ...event,
+          status: "completed",
+          result: "staged",
+        })
+      }
+
+      await stage(firstHarness, "index-owner-a", "a", "shared-index-stage-a")
+
+      // The same Loom session can keep building one coherent staged commit.
+      await stage(firstHarness, "index-owner-a", "c", "shared-index-stage-c")
+
+      const blockedB = {
+        tool: "shell",
+        callID: "shared-index-stage-b",
+        sessionID: "index-owner-b",
+        agent: "general",
+        input: { command: "git add docs/anchors/b.md" },
+      }
+      await expect(secondHarness.toolHooks.get("execute.before")!(blockedB))
+        .rejects.toThrow("shared repository index already contains staged changes")
+
+      const commitA = {
+        tool: "shell",
+        callID: "shared-index-commit-a",
+        sessionID: "index-owner-a",
+        agent: "general",
+        input: {
+          command:
+            "git -c core.hooksPath=/dev/null commit -m 'test: first index owner'",
+        },
+      }
+      await firstHarness.toolHooks.get("execute.before")!(commitA)
+      await git(firstHarness.root, [
+        "-c",
+        "core.hooksPath=/dev/null",
+        "commit",
+        "-m",
+        "test: first index owner",
+        "-q",
+      ])
+      await firstHarness.toolHooks.get("execute.after")!({
+        ...commitA,
+        status: "completed",
+        result: "committed",
+      })
+      const ownershipAfterCommit = await firstHarness.durableStorage.get(
+        `git-session-ownership/${encodeURIComponent("index-owner-a")}`,
+      ) as any
+      expect(ownershipAfterCommit.stagedFingerprints).toEqual({})
+
+      // Once the first owner's staged set is gone, the next process can
+      // immediately take the shared index and publish normally.
+      await stage(secondHarness, "index-owner-b", "b", "shared-index-stage-b")
+
+      const commitB = {
+        tool: "shell",
+        callID: "shared-index-commit-b",
+        sessionID: "index-owner-b",
+        agent: "general",
+        input: {
+          command:
+            "git -c core.hooksPath=/dev/null commit -m 'test: second index owner'",
+        },
+      }
+      await secondHarness.toolHooks.get("execute.before")!(commitB)
+      await git(firstHarness.root, [
+        "-c",
+        "core.hooksPath=/dev/null",
+        "commit",
+        "-m",
+        "test: second index owner",
+        "-q",
+      ])
+      await secondHarness.toolHooks.get("execute.after")!({
+        ...commitB,
+        status: "completed",
+        result: "committed",
+      })
+    } finally {
+      secondHarness?.restore()
+      firstHarness.restore()
+    }
+  })
+
+  test("does not claim staging when a failed chain never changed the index", async () => {
+    const h = await harness()
+    try {
+      await initializeGitFixture(h.root)
+      await mkdir(join(h.root, "docs", "anchors"), { recursive: true })
+
+      const sessionID = "failed-stage-noop-owner"
+      const path = "docs/anchors/noop.md"
+      const editEvent = {
+        tool: "edit",
+        callID: "failed-stage-noop-edit",
+        sessionID,
+        agent: "general",
+        input: {
+          filePath: join(h.root, path),
+          oldString: "",
+          newString: "owned\n",
+        },
+      }
+      await h.toolHooks.get("execute.before")!(editEvent)
+      await writeFile(join(h.root, path), "owned\n")
+      await h.toolHooks.get("execute.after")!({
+        ...editEvent,
+        status: "completed",
+        result: "updated",
+      })
+
+      // Simulate an index entry that already existed before this Loom shell
+      // call. The later shell failure must not cause Loom to claim it staged
+      // those bytes itself.
+      await git(h.root, ["add", path])
+
+      const command = `git add ${path} && git diff --cached --check`
+      const permission: any = {
+        agent: "general",
+        action: "shell",
+        resources: [command],
+        sessionID,
+        effect: "ask",
+      }
+      await h.permissionHooks.get("evaluate")!(permission)
+      expect(permission.effect).toBe("allow")
+
+      const event = {
+        tool: "shell",
+        callID: "failed-stage-noop",
+        sessionID,
+        agent: "general",
+        input: { command },
+      }
+      await h.toolHooks.get("execute.before")!(event)
+      await h.toolHooks.get("execute.after")!({
+        ...event,
+        status: "error",
+        error: new Error("synthetic failure before git add changed the index"),
+      })
+
+      const commit: any = {
+        agent: "general",
+        action: "shell",
+        resources: [
+          "git -c core.hooksPath=/dev/null commit -m 'test: must not adopt'",
+        ],
+        sessionID,
+        effect: "ask",
+      }
+      await h.permissionHooks.get("evaluate")!(commit)
+      expect(commit.effect).toBe("deny")
+      expect(commit.message).toContain("staged content changed")
+    } finally {
+      h.restore()
     }
   })
 

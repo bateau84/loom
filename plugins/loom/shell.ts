@@ -186,6 +186,12 @@ export function isAllowedWorkerShell(command: string) {
     return !/(?:^|\s)-(?:delete|exec|execdir|ok|okdir)(?:\s|$)/.test(parsed.command)
   }
 
+  if (/^git diff(?:\s|$)/.test(parsed.command)) {
+    return !/(?:^|\s)--(?:output(?:=|\s|$)|ext-diff(?:\s|$)|textconv(?:\s|$))/.test(
+      parsed.command,
+    )
+  }
+
   return safePatterns.some((pattern) => pattern.test(parsed.command))
 }
 
@@ -238,20 +244,94 @@ function parsedCommandWords(command: string) {
   return splitShellWords(parsed.command)
 }
 
+function splitSafeAndChain(command: string) {
+  const commands: string[] = []
+  let current = ""
+  let quote: "single" | "double" | undefined
+
+  for (let index = 0; index < command.length; index += 1) {
+    const character = command[index]
+
+    if (character === "\n" || character === "\r" || character === "\0") return undefined
+
+    if (quote === "single") {
+      current += character
+      if (character === "'") quote = undefined
+      continue
+    }
+
+    if (quote === "double") {
+      current += character
+      if (character === '"') {
+        quote = undefined
+        continue
+      }
+      if (character === "$" || character === "`" || character === "\\") return undefined
+      continue
+    }
+
+    if (character === "'") {
+      quote = "single"
+      current += character
+      continue
+    }
+
+    if (character === '"') {
+      quote = "double"
+      current += character
+      continue
+    }
+
+    if (character === "&") {
+      if (command[index + 1] !== "&") return undefined
+      const segment = current.trim()
+      if (!segment) return undefined
+      commands.push(segment)
+      current = ""
+      index += 1
+      continue
+    }
+
+    if (";|<>()".includes(character)) return undefined
+    if (character === "$" || character === "`" || character === "\\") return undefined
+    current += character
+  }
+
+  if (quote) return undefined
+  const segment = current.trim()
+  if (!segment) return undefined
+  commands.push(segment)
+  return commands.length > 1 ? commands : undefined
+}
+
 function safeProjectRelativePath(path: string) {
   const normalized = path.replaceAll("\\", "/").replace(/^\.\//, "")
-  if (!normalized || normalized === "." || normalized.startsWith("/")) return false
+  if (
+    !normalized ||
+    normalized === "." ||
+    normalized.startsWith("/") ||
+    normalized.startsWith(":")
+  ) return false
   if (normalized.split("/").includes("..")) return false
   if (/[*?\[\]{}]/.test(normalized)) return false
   return true
 }
 
-export function scopedGitAddTargets(command: string) {
+function singleScopedGitAddTargets(command: string) {
   const words = parsedCommandWords(command)
-  if (!words || words[0] !== "git" || words[1] !== "add") return undefined
+  if (!words || words[0] !== "git") return undefined
+
+  let addIndex = 1
+  if (
+    words[1] === "-c" &&
+    words[2] === "core.hooksPath=/dev/null"
+  ) {
+    addIndex = 3
+  }
+  if (words[addIndex] !== "add") return undefined
 
   const targets: string[] = []
-  for (const word of words.slice(2)) {
+  for (const word of words.slice(addIndex + 1)) {
     if (word === "--") continue
     if (word.startsWith("-") || !safeProjectRelativePath(word)) return undefined
     targets.push(word)
@@ -259,15 +339,218 @@ export function scopedGitAddTargets(command: string) {
   return targets.length > 0 ? targets : undefined
 }
 
-export function isGitAuthoringShellCommand(command: string) {
+function authoringInspectionAllowed(command: string) {
   const words = parsedCommandWords(command)
   if (!words || words[0] !== "git") return false
-  if (words[1] === "add") return true
-  return (
-    words[1] === "-c" &&
-    words[2] === "core.hooksPath=/dev/null" &&
-    words[3] === "commit"
+
+  if (words[1] === "status") return true
+  if (words[1] !== "diff") return false
+
+  return !words.slice(2).some(
+    (word) =>
+      word === "--output" ||
+      word.startsWith("--output=") ||
+      word === "--ext-diff" ||
+      word === "--textconv",
   )
+}
+
+export function scopedGitAddTargets(command: string) {
+  const direct = singleScopedGitAddTargets(command)
+  if (direct) return direct
+
+  const commands = splitSafeAndChain(command)
+  if (!commands) return undefined
+
+  const targets: string[] = []
+  let sawAdd = false
+  for (const segment of commands) {
+    const addTargets = singleScopedGitAddTargets(segment)
+    if (addTargets) {
+      targets.push(...addTargets)
+      sawAdd = true
+      continue
+    }
+    if (!authoringInspectionAllowed(segment)) return undefined
+  }
+
+  return sawAdd ? [...new Set(targets)] : undefined
+}
+
+function shellSegmentsForAuthoringClassification(command: string) {
+  const segments: string[] = []
+  let current = ""
+  let quote: "single" | "double" | undefined
+
+  const flush = () => {
+    const segment = current.trim()
+    if (segment) segments.push(segment)
+    current = ""
+  }
+
+  for (let index = 0; index < command.length; index += 1) {
+    const character = command[index]
+
+    if (quote === "single") {
+      current += character
+      if (character === "'") quote = undefined
+      continue
+    }
+    if (quote === "double") {
+      current += character
+      if (character === '"') quote = undefined
+      continue
+    }
+    if (character === "'") {
+      quote = "single"
+      current += character
+      continue
+    }
+    if (character === '"') {
+      quote = "double"
+      current += character
+      continue
+    }
+
+    if (
+      character === "&" ||
+      character === "|" ||
+      character === ";" ||
+      character === "\n" ||
+      character === "\r"
+    ) {
+      flush()
+      continue
+    }
+
+    current += character
+  }
+
+  flush()
+  return segments
+}
+
+function gitAuthoringSubcommand(words: readonly string[]) {
+  let executableIndex = 0
+  const skipAssignments = () => {
+    while (
+      executableIndex < words.length &&
+      /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[executableIndex])
+    ) {
+      executableIndex += 1
+    }
+  }
+  skipAssignments()
+
+  if (words[executableIndex] === "command") {
+    executableIndex += 1
+    if (words[executableIndex] === "-v" || words[executableIndex] === "-V") {
+      return undefined
+    }
+    while (
+      words[executableIndex] === "-p" ||
+      words[executableIndex] === "--"
+    ) {
+      executableIndex += 1
+    }
+    skipAssignments()
+  }
+
+  if (words[executableIndex] === "env") {
+    executableIndex += 1
+    while (executableIndex < words.length) {
+      const word = words[executableIndex]
+      if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(word)) {
+        executableIndex += 1
+        continue
+      }
+      if (
+        word === "-i" ||
+        word === "--ignore-environment" ||
+        word === "-0" ||
+        word === "--null"
+      ) {
+        executableIndex += 1
+        continue
+      }
+      if (
+        word === "-u" ||
+        word === "--unset" ||
+        word === "-C" ||
+        word === "--chdir"
+      ) {
+        if (!words[executableIndex + 1]) return undefined
+        executableIndex += 2
+        continue
+      }
+      if (
+        word.startsWith("--unset=") ||
+        word.startsWith("--chdir=")
+      ) {
+        executableIndex += 1
+        continue
+      }
+      break
+    }
+    skipAssignments()
+  }
+
+  const executable = words[executableIndex] ?? ""
+  if (
+    executable !== "git" &&
+    !executable.endsWith("/git") &&
+    !executable.endsWith("\\git.exe") &&
+    !executable.endsWith("/git.exe")
+  ) {
+    return undefined
+  }
+
+  const optionsWithValue = new Set([
+    "-C",
+    "-c",
+    "--git-dir",
+    "--work-tree",
+    "--namespace",
+    "--config-env",
+  ])
+  const terminalInspectionOptions = new Set([
+    "--version",
+    "-v",
+    "--help",
+    "-h",
+    "--exec-path",
+    "--html-path",
+    "--man-path",
+    "--info-path",
+  ])
+
+  let index = executableIndex + 1
+  while (index < words.length) {
+    const word = words[index]
+    if (terminalInspectionOptions.has(word)) return undefined
+
+    if (optionsWithValue.has(word)) {
+      if (!words[index + 1]) return undefined
+      index += 2
+      continue
+    }
+
+    if (word.startsWith("-")) {
+      index += 1
+      continue
+    }
+
+    return word === "add" || word === "commit" ? word : undefined
+  }
+
+  return undefined
+}
+
+export function isGitAuthoringShellCommand(command: string) {
+  return shellSegmentsForAuthoringClassification(command).some((segment) => {
+    const words = splitShellWords(segment)
+    return Boolean(words && gitAuthoringSubcommand(words))
+  })
 }
 
 export function isAllowedGitCommit(command: string) {
@@ -464,7 +747,9 @@ export function authorGitShellResourcesAllowed(
   if (resources.length === 0 || writeScope.length === 0) return false
 
   return resources.every((command) => {
-    if (isAllowedGitCommit(command)) return true
+    if (isAllowedGitCommit(command) || authoringInspectionAllowed(command)) {
+      return true
+    }
     const targets = scopedGitAddTargets(command)
     return Boolean(targets && resourcesWithinScope(targets, writeScope))
   })

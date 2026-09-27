@@ -169,6 +169,22 @@ staged earlier admitted bytes and another same-attempt session subsequently
 admits newer worktree bytes, the stale staged version cannot be committed until
 the latest admitted bytes are staged.
 
+The repository index is one shared mutable surface across Loom sessions and
+processes. Index-mutating Git operations MUST serialize through the project Git
+index guard. Before staging a new target set, Loom MUST reject unrelated staged
+entries unless the current session already owns their exact staged fingerprints
+or the entries can be adopted from exact durable provenance for the same current
+step attempt. Explicit restaging of a requested path remains allowed only after
+the current worktree bytes pass the normal provenance check. Commit admission
+MUST revalidate the complete staged set while the same index guard is held.
+
+A staging command may succeed before a later read-only inspection in the same
+shell call fails. Loom MAY retain staging provenance from that failed call only
+when a before/after index comparison proves the targeted entry changed during
+that exact call and the resulting staged bytes match the admitted worktree
+bytes. The shell call remains failed; this recovery only prevents the successful
+staging side effect from becoming unverifiable.
+
 Ephemeral reports are intentionally different: `ephemeral-reports/**` may be
 written under its producer rules but is removed from committable scope. Durable
 retention of a report uses the report-promotion path instead of ordinary Git
@@ -346,9 +362,12 @@ control transfer; exact Allow-once/Deny user menus with no remembered choice;
 outside-project and symlink-escape denial before approval; attempt-bound expiry
 of hard-boundary approval; product write-to-commit equivalence; ephemeral report
 non-committability; fresh-session same-attempt staging from exact admitted
-fingerprints without a scope-adoption call; changed/unproven/prior-attempt byte
-rejection; explicit-user Git-provenance recovery after simulated runtime loss;
-and scope/lifecycle transitions contending with admitted mutation.
+fingerprints without a scope-adoption call; same-attempt adoption of already
+staged exact bytes; cross-process rejection of unrelated staged-index ownership;
+provable staging retention after a later chained inspection failure without
+false adoption when the index did not change; changed/unproven/prior-attempt
+byte rejection; explicit-user Git-provenance recovery after simulated runtime
+loss; and scope/lifecycle transitions contending with admitted mutation.
 
 Cross-process contention, crash/fault injection during durable commit, project
 first-open races, path reuse, copied markers, symlinks, Git worktrees, moves,

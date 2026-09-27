@@ -5,6 +5,7 @@ import {
   diagnosticShellResourcesAllowed,
   isAllowedGitCommit,
   isAllowedWorkerShell,
+  isGitAuthoringShellCommand,
   scopedGitAddTargets,
   scopedGofmtWriteTargets,
   shellResourcesAllowed,
@@ -119,6 +120,15 @@ describe("Loom Worker shell policy", () => {
     expect(isAllowedWorkerShell("go test ./... && rm -rf src")).toBe(false)
     expect(isAllowedWorkerShell("cat file > other")).toBe(false)
     expect(isAllowedWorkerShell("rg foo src | xargs rm")).toBe(false)
+  })
+
+  test("keeps git diff inspection read-only", () => {
+    expect(isAllowedWorkerShell("git diff --cached --check")).toBe(true)
+    expect(isAllowedWorkerShell("git diff --cached --stat")).toBe(true)
+    expect(isAllowedWorkerShell("git diff --output=diff.txt")).toBe(false)
+    expect(isAllowedWorkerShell("git diff --output diff.txt")).toBe(false)
+    expect(isAllowedWorkerShell("git diff --ext-diff")).toBe(false)
+    expect(isAllowedWorkerShell("git diff --textconv")).toBe(false)
   })
 
   test("rejects common write modes", () => {
@@ -302,6 +312,32 @@ describe("Loom Worker shell policy", () => {
     expect(authorGitShellResourcesAllowed(["git add -- docs/design/runtime.md"], designScope)).toBe(true)
     expect(
       authorGitShellResourcesAllowed(
+        [
+          "git add docs/design/runtime.md && git diff --cached --check && git diff --cached --stat && git diff --cached",
+        ],
+        designScope,
+      ),
+    ).toBe(true)
+    expect(
+      authorGitShellResourcesAllowed(
+        [
+          "git -c core.hooksPath=/dev/null add -- docs/design/runtime.md && git diff --cached --check",
+        ],
+        designScope,
+      ),
+    ).toBe(true)
+    expect(
+      authorGitShellResourcesAllowed(
+        [
+          "git add docs/design/runtime.md",
+          "git diff --cached --stat",
+          "git status --short",
+        ],
+        designScope,
+      ),
+    ).toBe(true)
+    expect(
+      authorGitShellResourcesAllowed(
         ["git -c core.hooksPath=/dev/null commit -m 'docs(design): runtime'"],
         designScope,
       ),
@@ -321,6 +357,127 @@ describe("Loom Worker shell policy", () => {
       "docs/design/a.md",
       "docs/design/b.md",
     ])
+    expect(
+      scopedGitAddTargets(
+        "git add docs/design/a.md docs/design/b.md && git diff --cached --stat && git diff --cached",
+      ),
+    ).toEqual([
+      "docs/design/a.md",
+      "docs/design/b.md",
+    ])
+    expect(
+      scopedGitAddTargets(
+        "git -c core.hooksPath=/dev/null add -- docs/design/a.md && git diff --cached --check",
+      ),
+    ).toEqual(["docs/design/a.md"])
+    expect(
+      isGitAuthoringShellCommand(
+        "git -c core.hooksPath=/dev/null add -- docs/design/a.md && git diff --cached --stat",
+      ),
+    ).toBe(true)
+    expect(isGitAuthoringShellCommand("git add .")).toBe(true)
+    expect(
+      isGitAuthoringShellCommand(
+        "git diff --cached && git -c core.hooksPath=/tmp/hooks add docs/design/a.md",
+      ),
+    ).toBe(true)
+    expect(
+      isGitAuthoringShellCommand(
+        "git add docs/design/a.md; rm docs/design/a.md",
+      ),
+    ).toBe(true)
+    expect(isGitAuthoringShellCommand("git show add")).toBe(false)
+    expect(isGitAuthoringShellCommand("git diff -- commit")).toBe(false)
+    expect(isGitAuthoringShellCommand("git --help add")).toBe(false)
+    expect(
+      isGitAuthoringShellCommand(
+        "git --literal-pathspecs add docs/design/runtime.md",
+      ),
+    ).toBe(true)
+    expect(
+      isGitAuthoringShellCommand(
+        "git -C nested add docs/design/runtime.md",
+      ),
+    ).toBe(true)
+    expect(
+      isGitAuthoringShellCommand(
+        "git --git-dir .git commit -m 'bypass'",
+      ),
+    ).toBe(true)
+    expect(
+      isGitAuthoringShellCommand(
+        "GIT_DIR=.git git add docs/design/runtime.md",
+      ),
+    ).toBe(true)
+    expect(
+      isGitAuthoringShellCommand(
+        "/usr/bin/git add docs/design/runtime.md",
+      ),
+    ).toBe(true)
+    expect(
+      isGitAuthoringShellCommand(
+        "command git add docs/design/runtime.md",
+      ),
+    ).toBe(true)
+    expect(
+      isGitAuthoringShellCommand(
+        "env -i GIT_DIR=.git git add docs/design/runtime.md",
+      ),
+    ).toBe(true)
+    expect(isGitAuthoringShellCommand("command -v git")).toBe(false)
+    expect(
+      authorGitShellResourcesAllowed(
+        ["git add docs/design/runtime.md && git diff --output=docs/design/diff.txt"],
+        designScope,
+      ),
+    ).toBe(false)
+    expect(
+      authorGitShellResourcesAllowed(
+        ["git add docs/design/runtime.md && git diff --cached --ext-diff"],
+        designScope,
+      ),
+    ).toBe(false)
+    expect(
+      authorGitShellResourcesAllowed(
+        ["git add docs/design/runtime.md && git diff --cached --textconv"],
+        designScope,
+      ),
+    ).toBe(false)
+    expect(
+      authorGitShellResourcesAllowed(
+        ["git add docs/design/runtime.md && rm docs/design/runtime.md"],
+        designScope,
+      ),
+    ).toBe(false)
+    expect(
+      authorGitShellResourcesAllowed(
+        [
+          "git add docs/design/runtime.md && git -c core.hooksPath=/dev/null commit -m 'docs: chained'",
+        ],
+        designScope,
+      ),
+    ).toBe(false)
+    expect(
+      scopedGitAddTargets(
+        "git -c core.hooksPath=/tmp/hooks add docs/design/a.md",
+      ),
+    ).toBeUndefined()
+    expect(
+      scopedGitAddTargets(
+        "git add ':(exclude)docs/design/runtime.md'",
+      ),
+    ).toBeUndefined()
+    expect(
+      scopedGitAddTargets(
+        "git add :/docs/design/runtime.md",
+      ),
+    ).toBeUndefined()
+    expect(
+      authorGitShellResourcesAllowed(
+        ["git add ':(exclude)docs/design/runtime.md'"],
+        designScope,
+      ),
+    ).toBe(false)
     expect(scopedGitAddTargets("git add ../outside.md")).toBeUndefined()
     expect(
       isAllowedGitCommit(
