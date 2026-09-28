@@ -963,9 +963,22 @@ async function recordGitSessionStagingResult(
 
 function reviewerAcceptanceLogPath(path: string) {
   const normalized = normalizeRepoPath(path)
-  return /(?:^|\/)(?:changelog|acceptance[-_]?log|change[-_]?log|decision[-_]?log)\.md$/i.test(
+  return /(?:^|\/)(?:changelog|history|changes|acceptance(?:[-_]?log)?|decision(?:s|[-_]?log)?|reviews?)\.md$/i.test(
     normalized,
   )
+}
+
+async function trackedAtHead(projectDirectory: string, path: string) {
+  try {
+    await execFileAsync(
+      "git",
+      ["cat-file", "-e", `HEAD:${safeOwnedRepoPath(path)}`],
+      { cwd: projectDirectory, encoding: "utf8" },
+    )
+    return true
+  } catch {
+    return false
+  }
 }
 
 function reviewerAcceptanceMetadataLine(line: string) {
@@ -998,6 +1011,12 @@ async function reviewerAcceptanceCommitError(
       )
 
     if (reviewerAcceptanceLogPath(path)) {
+      if (!(await trackedAtHead(projectDirectory, path))) {
+        return (
+          "Git commit denied: Reviewer may append only to an existing " +
+          `repository acceptance/change/decision history file; ${path} is new.`
+        )
+      }
       const removed = changed.filter((line) => line.startsWith("-"))
       if (removed.length > 0) {
         return (
