@@ -8,11 +8,9 @@ tags: [requirement, loom, dashboard, control-panel, observability, operations]
 
 ## Statement
 
-Loom MUST expose enough operational state for a local control panel outside the OpenCode TUI to let a developer understand current work using the hierarchy **Working directory → Session → Workflow**, while retaining deeper workflow diagnostics when needed.
+Loom MUST expose enough operational state for a local control panel outside the OpenCode TUI to let a developer inspect work through **Working directory → Session → Workflow**, including deeper workflow diagnostics when needed. Inspection is read-only: viewing any directory, session, workflow, Plan, status, or evidence MUST NOT itself authorize or perform workflow execution or planning mutations.
 
-The projection remains observational and non-authoritative. A narrowly bounded control path MAY delete terminal failed/cancelled workflow execution records so stale attempts do not clutter the UI or interfere with future agent routing.
-
-Loom state remains authoritative in the control plane. Optional OpenCode database enrichment MUST NOT determine Loom workflow truth.
+The control panel MUST permit explicit-confirmation removal of terminal failed/cancelled workflow records, and MUST NOT extend that cleanup capability to active/non-terminal workflows or to project files, retained evidence, or completed work. Loom state remains authoritative in the control plane. Optional OpenCode database enrichment MUST NOT determine Loom workflow truth.
 
 ## Acceptance Criteria
 
@@ -28,16 +26,17 @@ Loom state remains authoritative in the control plane. Optional OpenCode databas
 10. Status meaning is not encoded by color alone and core navigation/actions are keyboard operable.
 11. Background refresh preserves focus and current navigation context when the target still exists.
 12. Legacy dashboard deep links remain valid while the new directory/session hierarchy is introduced.
-13. A user can delete one or more terminal failed/cancelled workflows from the control panel after explicit confirmation.
+13. A user can remove one or more terminal failed/cancelled workflow records from the control panel only after explicitly confirming the selected target(s) and removal.
 14. Workflow deletion MUST NOT modify files in the working directory.
 15. Workflow deletion removes the workflow's execution record, stale session bindings, live work claims, dispatch grants, OQs, scopes, budgets, and other routing/control records that could affect later work.
-16. Evidence observations/claims and completed durable work results are retained.
+16. Evidence observations/claims and completed durable work results are retained; cleanup does not delete or rewrite them.
 17. Active/non-terminal workflows cannot be deleted; they must be cancelled first.
 18. A workflow that owns durable completed-Wave review history cannot be deleted.
 19. A durable deletion record prevents stale publisher snapshots from reintroducing a deleted workflow into the visible control panel.
 20. The mutation endpoint is separate from projection files, is host-local, requires same-origin browser intent plus an unguessable per-server control token, and fails closed.
-21. Cleanup failure does not alter project files or silently report success.
+21. Cleanup failure does not alter project files or silently report success. Rejection, partial/unavailable outcome, or uncertain response is not presented as successful removal.
 22. Secrets, credential material, raw hidden prompts, and unrestricted tool output are not exported by default.
+23. Directory/session/workflow, Plan, status, or evidence inspection does not authorize or perform execution, answer questions, grant authority, cancel work, or edit a Plan.
 
 ## Verification Semantics
 
@@ -49,9 +48,12 @@ Proof includes:
 - four failed workflow attempts deleted in one confirmed action;
 - a rejected active-workflow deletion;
 - retained evidence after deletion;
+- retained completed work and project files after deletion;
 - released claims/session bindings after deletion;
 - stale projected workflow hidden by the deletion record;
 - POST cleanup rejected without the same-origin token;
+- cleanup rejected or unchanged when explicit confirmation is absent or declined;
+- inspection of directory, session, workflow, Plan, status, and evidence leaves canonical execution/planning state unchanged and grants no mutation authority;
 - narrow-layout and keyboard validation.
 
 ## Design and architectural realization
@@ -63,6 +65,7 @@ Technical realization is defined by [Dashboard Observability and Control](../../
 ## Derived from
 
 - [Loom Anchor](../../anchors/loom/anchor.md)
+- User resolution of dashboard scope in OQ `3fb7f28b-e116-4765-9366-d2a84c9f7222` (read-only directory/session/workflow inspection; cleanup limited to explicitly confirmed terminal failed/cancelled workflow records, preserving project files, retained evidence, and completed work).
 
 ## Depends on
 
