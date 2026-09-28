@@ -86,6 +86,8 @@ The smallest Planner-owned unit that should be independently assigned, executed,
 
 A Task may require multiple runtime steps or agent invocations.
 
+**Proposed accountability distinction:** Task identity, obligation ownership, and write scope alone do not establish the accountable *role* or a supported execution/decision path. [BR-024](../../requirements/loom/br-024-preserve-authority-ownership-through-handoffs.md) requires such a role and path for each planned work item, including specialist-owned deliverables and routine execution. The role's decision/output and a cross-role responsibility transfer must be traceable before dependent completion. Specialist authority does not transfer merely because a Worker implements a Task. This design does not prescribe a Task `owner` field or assert that current Plan/Task compilation already meets the requirement; see [Control Plane — Proposed accountable-role admission](control-plane.md#proposed-accountable-role-admission).
+
 ## Plan Semantics Are First-Class
 
 The hierarchy is not only a progress tree. Each plan generation also persists the shared semantic model that explains how accepted authority becomes executable work.
