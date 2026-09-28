@@ -2908,6 +2908,65 @@ Verdict: FAIL
       expect(escaped.error).toContain("independent/advisory role")
       expect(escaped.roleWriteDefault).toEqual(["ephemeral-reports/reviewer/**"])
 
+      const inventedLogPath = "docs/requirements/acceptance.md"
+      const inventedLogEdit = {
+        tool: "edit",
+        callID: "reviewer-invented-log-edit",
+        messageID: "reviewer-invented-log-edit-message",
+        sessionID: reviewerSession,
+        agent: "reviewer",
+        input: { filePath: inventedLogPath, oldString: "", newString: "" },
+      }
+      await h.toolHooks.get("execute.before")!(inventedLogEdit)
+      await writeFile(join(h.root, inventedLogPath), "# Acceptance\n- invented history\n")
+      await h.toolHooks.get("execute.after")!({
+        ...inventedLogEdit,
+        status: "completed",
+        result: "created",
+      })
+      const inventedLogStageCommand =
+        `git -c core.hooksPath=/dev/null add -- ${inventedLogPath}`
+      const inventedLogStagePermission: any = {
+        agent: "reviewer",
+        action: "shell",
+        resources: [inventedLogStageCommand],
+        sessionID: reviewerSession,
+        effect: "ask",
+      }
+      await evaluate(inventedLogStagePermission)
+      expect(inventedLogStagePermission.effect).toBe("allow")
+      const inventedLogStageEvent = {
+        tool: "shell",
+        callID: "reviewer-invented-log-stage",
+        messageID: "reviewer-invented-log-stage-message",
+        sessionID: reviewerSession,
+        agent: "reviewer",
+        input: { command: inventedLogStageCommand },
+      }
+      await h.toolHooks.get("execute.before")!(inventedLogStageEvent)
+      await git(h.root, ["add", inventedLogPath])
+      await h.toolHooks.get("execute.after")!({
+        ...inventedLogStageEvent,
+        status: "completed",
+        result: "staged",
+      })
+      const inventedLogCommitCommand =
+        "git -c core.hooksPath=/dev/null commit -m 'docs: invent acceptance history'"
+      const inventedLogCommit: any = {
+        agent: "reviewer",
+        action: "shell",
+        resources: [inventedLogCommitCommand],
+        sessionID: reviewerSession,
+        effect: "ask",
+      }
+      await evaluate(inventedLogCommit)
+      expect(inventedLogCommit.effect).toBe("deny")
+      expect(inventedLogCommit.message).toContain(
+        "acceptance/change/decision history file",
+      )
+      await git(h.root, ["restore", "--staged", "--", inventedLogPath])
+      await rm(join(h.root, inventedLogPath), { force: true })
+
       const substantiveEditEvent = {
         tool: "edit",
         callID: "reviewer-substantive-edit",
