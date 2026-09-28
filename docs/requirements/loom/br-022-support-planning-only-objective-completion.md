@@ -14,20 +14,17 @@ Completing the planning workflow MUST NOT complete or advance implementation of 
 
 ## Acceptance Criteria
 
-1. Objective depth accepts `productOutcome=true` with `implementationRequested=false` for planning-only work against an accepted Anchor.
-2. The planning-only Objective workflow ends after the required solution/authority work, Planner, and independent `review-plan`; it contains no Worker steps, implementation review, Product Acceptance, or final product gate.
-3. Planner MUST persist a valid holistic Plan with `loom_work_plan`. Planning completion requires that durable Plan but MUST NOT require or create an executable Worker DAG.
-4. `loom_task_plan` mechanically rejects planning-only workflows so no Worker scope, Wave claim, or executable Task can be created accidentally.
-5. Reviewer receives the bounded holistic Plan and can inspect exact semantic Task contracts by Task ID. Missing executable write scopes are not a planning-only defect because scope compilation is intentionally deferred.
-6. A planning-only `review-plan` verdict is fenced to the exact review attempt, Plan generation/revision, and whole-Plan semantic fingerprint so invalidation or same-revision semantic drift cannot reuse a stale verdict. PASS records the reviewed Plan revision/fingerprint on the workflow as a durable receipt, completes only the planning workflow, acquires no Wave claim, and leaves Objective/Task implementation state unchanged. Reopening Plan review clears that receipt until a fresh PASS.
-7. Failed Plan review returns only the affected unconsumed planning work to Planner; it does not create implementation authority.
-8. A later implementation request starts a fresh workflow against the same Objective/Plan. Planner may reuse the current reviewed semantic Plan and compile the first dependency-eligible executable Wave without replacing the Plan unless new evidence requires replanning.
-9. The later implementation workflow receives the normal executable `review-plan` gate; only that PASS may acquire the Wave claim and make Workers runnable.
-10. Status/dashboard/user-facing output distinguishes **planning workflow complete** from **Objective/product complete** and does not imply that this workflow implemented the Objective or that pre-existing implementation state is absent.
+1. A planning-only outcome is available only when the user requests a Plan without authorizing implementation against an accepted Anchor.
+2. Planning is complete only after a durable holistic Plan has received an independent whole-Plan review verdict; an absent or failed review is not reported as a reviewed outcome.
+3. Completing the planning workflow creates no implementation execution, newly runnable implementation work, or claim over work reserved for execution.
+4. Planning completion leaves the parent Objective's implementation status and any pre-existing implementation work unchanged.
+5. A failed review does not grant implementation authority; planning remains incomplete until the Plan is revised as needed and reviewed successfully.
+6. Any later implementation requires a distinct user-authorized transition and the normal independent review boundary before execution begins.
+7. User-facing status distinguishes **planning workflow complete** from **Objective/product complete**, and does not imply that this workflow implemented the Objective or that pre-existing implementation state is absent.
 
 ## Verification Semantics
 
-Use deterministic routing/control-plane tests to prove the planning-only DAG, persistent-Plan requirement, `loom_task_plan` rejection, semantic Task inspection, zero Wave claims, active parent Objective, terminal planning workflow, and later Plan reuse for executable Wave compilation. Use behavioral evaluation to prove General honors an explicit “plan only / do not implement” instruction without dispatching Worker or inventing completion.
+Verify an explicitly plan-only request through completion: a durable holistic Plan exists, an independent review has passed, no implementation work became runnable or claimed, and parent Objective/previous work state is unchanged. Verify a failed Plan review does not enable implementation and that a later separately authorized implementation request crosses its required review boundary. Evaluate that user-facing status calls the Plan outcome planning completion, not Objective or product completion.
 
 ## Derived from
 
