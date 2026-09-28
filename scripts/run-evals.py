@@ -1658,6 +1658,54 @@ def transport_error(result: dict[str, Any]) -> str | None:
     return None
 
 
+def retryable_transport_error(result: dict[str, Any]) -> bool:
+    error = transport_error(result)
+    if not error:
+        return False
+    lowered = error.lower()
+    return "provider.no-route" in lowered and "model unavailable" in lowered
+
+
+def invoke_container_with_retry(
+    *,
+    retries: int = 2,
+    **kwargs: Any,
+) -> dict[str, Any]:
+    if type(retries) is not int or not 0 <= retries <= 5:
+        raise ValueError("transport retries must be an integer from 0 to 5")
+
+    prior_errors: list[str] = []
+    for attempt in range(retries + 1):
+        result = invoke_container(**kwargs)
+        error = transport_error(result)
+        if not error:
+            if not prior_errors:
+                return result
+            return {
+                **result,
+                "transport_retry": {
+                    "attempts": attempt + 1,
+                    "errors": prior_errors,
+                },
+            }
+
+        if not retryable_transport_error(result) or attempt == retries:
+            if not prior_errors:
+                return result
+            return {
+                **result,
+                "transport_retry": {
+                    "attempts": attempt + 1,
+                    "errors": [*prior_errors, error],
+                },
+            }
+
+        prior_errors.append(error)
+        time.sleep(min(2 ** attempt, 2))
+
+    raise AssertionError("unreachable transport retry loop")
+
+
 def case_artifact_path(
     case: dict[str, Any],
     args: argparse.Namespace,
@@ -1926,7 +1974,8 @@ def run_skill_ablation_case(
         return skill_ablation_copilot_system(skill_body, with_skill=with_skill)
 
     def run_target(project: Path, *, with_skill: bool) -> dict[str, Any]:
-        return invoke_container(
+        return invoke_container_with_retry(
+            retries=getattr(args, "transport_retries", 2),
             engine=engine,
             image=target_image,
             transport=args.target_transport,
@@ -1952,7 +2001,8 @@ def run_skill_ablation_case(
         )
 
     def run_judge(target: dict[str, Any]) -> tuple[dict[str, Any] | None, dict[str, Any] | None, str | None]:
-        result = invoke_container(
+        result = invoke_container_with_retry(
+            retries=getattr(args, "transport_retries", 2),
             engine=engine,
             image=judge_image,
             transport=args.judge_transport,
@@ -2248,7 +2298,8 @@ def run_case(
         target_timeout = case_target_timeout_seconds(case, args.timeout_seconds)
         target_container_timeout = case_target_container_timeout(case, args.container_timeout, target_timeout)
         target_started = time.perf_counter()
-        target = invoke_container(
+        target = invoke_container_with_retry(
+            retries=getattr(args, "transport_retries", 2),
             engine=engine,
             image=target_image,
             transport=args.target_transport,
@@ -2314,7 +2365,8 @@ def run_case(
                 flush=True,
             )
             judge_started = time.perf_counter()
-            judge_result = invoke_container(
+            judge_result = invoke_container_with_retry(
+                retries=getattr(args, "transport_retries", 2),
                 engine=engine,
                 image=judge_image,
                 transport=args.judge_transport,
@@ -2503,6 +2555,15 @@ def main() -> int:
     )
     parser.add_argument("--timeout-seconds", type=int, default=240)
     parser.add_argument("--container-timeout", type=int, default=300)
+    parser.add_argument(
+        "--transport-retries",
+        type=int,
+        default=2,
+        help=(
+            "Retry transient provider routing failures such as provider.no-route / "
+            "Model unavailable (default: 2 retries; range: 0-5)."
+        ),
+    )
     parser.add_argument(
         "--iterations",
         type=int,
