@@ -1662,6 +1662,13 @@ def retryable_transport_error(result: dict[str, Any]) -> bool:
     error = transport_error(result)
     if not error:
         return False
+
+    # Retrying a runtime invocation after it already executed tools could replay
+    # side effects. Only retry clean provider-routing failures that happened
+    # before any observable tool action.
+    if result.get("tools") or normalized_target_actions(result):
+        return False
+
     lowered = error.lower()
     return "provider.no-route" in lowered and "model unavailable" in lowered
 
