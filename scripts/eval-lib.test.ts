@@ -87,6 +87,21 @@ describe("conversation-first eval schema", () => {
     suite.cases[0]!.actions!.requires![0]!.arg = "agent"
     expect(validateSuite(suite, root).some((error) => error.includes("cannot be combined"))).toBe(true)
   })
+  test("accepts compound action substring assertions and rejects empty fragments", () => {
+    const suite = fixture()
+    suite.cases = [suite.cases.find((item) => item.id === "CONVERSATION-01")!]
+    suite.cases[0]!.actions = {
+      requires: [{
+        tool: "execute",
+        arg: "code",
+        contains_all: ["tools.loom.code.assessment", "golang-concurrency"],
+      }],
+    }
+    expect(validateSuite(suite, root)).toEqual([])
+
+    suite.cases[0]!.actions!.requires![0]!.contains_all = []
+    expect(validateSuite(suite, root).some((error) => error.includes("contains_all"))).toBe(true)
+  })
   test("rejects invalid response limits", () => {
     const suite = fixture()
     suite.cases[0]!.target_timeout_seconds = 601
