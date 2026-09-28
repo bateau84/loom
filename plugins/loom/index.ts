@@ -961,6 +961,66 @@ async function recordGitSessionStagingResult(
   }
 }
 
+function reviewerAcceptanceLogPath(path: string) {
+  const normalized = normalizeRepoPath(path)
+  return /(?:^|\/)(?:changelog|acceptance[-_]?log|change[-_]?log|decision[-_]?log)\.md$/i.test(
+    normalized,
+  )
+}
+
+function reviewerAcceptanceMetadataLine(line: string) {
+  const value = line.trim()
+  if (!value) return true
+  return (
+    /^(?:\*\*)?status(?:\*\*)?\s*:/i.test(value) ||
+    /^(?:accepted|acceptance|reviewed?)(?:[-_ ](?:at|by|date|commit|reviewer))?\s*:/i.test(value)
+  )
+}
+
+async function reviewerAcceptanceCommitError(
+  projectDirectory: string,
+  staged: readonly string[],
+) {
+  for (const raw of staged) {
+    const path = normalizeRepoPath(raw)
+    const { stdout } = await execFileAsync(
+      "git",
+      ["diff", "--cached", "--unified=0", "--no-renames", "--", path],
+      { cwd: projectDirectory, encoding: "utf8" },
+    )
+    const changed = String(stdout)
+      .split("\n")
+      .filter(
+        (line) =>
+          (line.startsWith("+") || line.startsWith("-")) &&
+          !line.startsWith("+++") &&
+          !line.startsWith("---"),
+      )
+
+    if (reviewerAcceptanceLogPath(path)) {
+      const removed = changed.filter((line) => line.startsWith("-"))
+      if (removed.length > 0) {
+        return (
+          "Git commit denied: Reviewer acceptance history is append-only; " +
+          `${path} removes or rewrites existing history.`
+        )
+      }
+      continue
+    }
+
+    const invalid = changed
+      .map((line) => line.slice(1))
+      .filter((line) => !reviewerAcceptanceMetadataLine(line))
+    if (invalid.length > 0) {
+      return (
+        "Git commit denied: Reviewer acceptance bookkeeping may change only " +
+        `lifecycle/acceptance metadata in ${path}; substantive document content remains producer-owned.`
+      )
+    }
+  }
+  return undefined
+}
+
 async function commitScopeError(
   ctx: any,
   sessionID: string,
