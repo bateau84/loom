@@ -130,27 +130,29 @@ return {attachment, result: unpack(await pending)};`)
       true,
     )
 
+    const raiseInput = {
+      workflowId: oqSetup.workflowId,
+      stepId: "worker",
+      question: "Which exact mode should this Worker use?",
+      responder: "user",
+      blocking: true,
+    }
     const raised = await driver.run(
       oqChild,
-      `return await tools.loom.code.oq_raise(${JSON.stringify({
-        workflowId: "__WORKFLOW__",
-        stepId: "worker",
-        question: "Which exact mode should this Worker use?",
-        responder: "user",
-        blocking: true,
-      }).replace("__WORKFLOW__", "${oqSetup.workflowId}")})`,
+      `return await tools.loom.code.oq_raise(${JSON.stringify(raiseInput)})`,
     )
     assert.ok(raised?.question?.id, `Real-host OQ raise failed: ${JSON.stringify(raised)}`)
 
     const authoritativeAnswer = "Use strict mode from persisted OQ state."
+    const answerInput = {
+      workflowId: oqSetup.workflowId,
+      questionId: raised.question.id,
+      answer: authoritativeAnswer,
+      source: "user",
+    }
     const answered = await driver.run(
       oqParent,
-      `return await tools.loom.code.oq_answer(${JSON.stringify({
-        workflowId: "__WORKFLOW__",
-        questionId: "__QUESTION__",
-        answer: authoritativeAnswer,
-        source: "user",
-      }).replace("__WORKFLOW__", "${oqSetup.workflowId}").replace("__QUESTION__", "${raised.question.id}")})`,
+      `return await tools.loom.code.oq_answer(${JSON.stringify(answerInput)})`,
     )
     assert.deepEqual(answered?.notifications, { notified: ["worker"], failed: [] })
 
@@ -161,12 +163,13 @@ return {attachment, result: unpack(await pending)};`)
     assert.match(wakePrompt, /loom_oq_reconcile/)
     assert.equal(wakePrompt.includes(authoritativeAnswer), false)
 
+    const listInput = {
+      workflowId: oqSetup.workflowId,
+      stepId: "worker",
+    }
     const listed = await driver.run(
       oqChild,
-      `return await tools.loom.code.oq_list(${JSON.stringify({
-        workflowId: "__WORKFLOW__",
-        stepId: "worker",
-      }).replace("__WORKFLOW__", "${oqSetup.workflowId}")})`,
+      `return await tools.loom.code.oq_list(${JSON.stringify(listInput)})`,
     )
     assert.equal(
       listed?.questions?.find((question: any) => question.id === raised.question.id)?.answer?.text,
