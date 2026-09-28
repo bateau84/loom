@@ -33,6 +33,8 @@ tags: [component, loom, agents]
 
 Each subagent runs fresh and is given only its bounded objective/context.
 
+When a shared OQ answer becomes durable, Loom sends a best-effort synthetic steer to the latest session attached to each current consumer step attempt. The wake-up carries only correlation, not answer authority: the child re-reads persisted OQ state and reconciles it before completion. Same-attempt redispatch replaces the session pointer, and reopened attempts use a different pointer, so stale child sessions are not revived.
+
 ## Repository execution and delivery
 
 Loom derives ordinary repository capability from the already-attached role; it does not issue a second per-command grant.
