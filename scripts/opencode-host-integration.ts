@@ -106,6 +106,8 @@ const UPGRADE_WORKFLOW_ID = "legacy-upgrade-workflow"
 
 type MockProviderState = {
   programs: Map<string, { code: string; done: boolean; result?: unknown }>
+  hostProbeSessionID?: string
+  hostProbeCompleted: boolean
   workflowId?: string
   workerGrantId?: string
   reviewerGrantId?: string
@@ -318,13 +320,22 @@ function subagentAction(
   return { name: "subagent", args }
 }
 
-function chooseMockAction(prompt: string, results: Map<string, unknown>, state: MockProviderState) {
+function chooseMockAction(prompt: string, results: Map<string, unknown>, state: MockProviderState, sessionID?: string) {
   const program = state.programs.get(prompt)
   if (program) {
     if (!results.has("execute")) return { name: "execute", args: { code: program.code } }
     program.result = results.get("execute")
     program.done = true
     return null
+  }
+  if (prompt.includes("LOOM_HOST_QUIESCENCE_PROBE") ||
+      (state.hostProbeSessionID && sessionID === state.hostProbeSessionID)) {
+    const result = results.get("lifecycleprobe_hostProbe")
+    if (result !== undefined) {
+      state.hostProbeCompleted = true
+      return null
+    }
+    return { name: "lifecycleprobe_hostProbe", args: {} }
   }
   const startResult = results.get("loom_start") as any
   const grantResult = results.get("loom_dispatch_grant") as any
@@ -833,6 +844,7 @@ function chooseMockAction(prompt: string, results: Map<string, unknown>, state: 
 async function startMockProvider() {
   const state: MockProviderState = {
     programs: new Map(),
+    hostProbeCompleted: false,
     workerAttached: false,
     workerShellObserved: false,
     workerCompleted: false,
@@ -970,7 +982,7 @@ async function startMockProvider() {
           }
         }
       }
-      const action = chooseMockAction(prompt, results, state)
+      const action = chooseMockAction(prompt, results, state, sessionAffinity ?? undefined)
       const model = String(body.model ?? "mock")
       const content = action
         ? null
@@ -1213,7 +1225,8 @@ async function createProject(base: string, name: string, mockBaseUrl: string) {
     "utf8",
   )
   await symlink(join(root, "plugins", "loom"), join(pluginDir, "loom"), "dir")
-  if (name === "project-a") {
+  const withLifecyclePlugin = name === "project-a" || name === "project-lifecycle"
+  if (withLifecyclePlugin) {
     await symlink(join(root, "scripts", "fixtures", "lifecycle-delay-plugin.ts"), join(pluginDir, "lifecycle-delay-plugin.ts"), "file")
   }
   for (const agent of ["general", "worker", "reviewer", "planner", "diagnostic"]) {
@@ -1228,10 +1241,13 @@ async function createProject(base: string, name: string, mockBaseUrl: string) {
     join(project, "opencode.json"),
     JSON.stringify({
       "$schema": "https://opencode.ai/config.json",
-      plugins: ["./.opencode/plugins/loom", ...(name === "project-a" ? ["./.opencode/plugins/lifecycle-delay-plugin.ts"] : [])],
+      plugins: ["./.opencode/plugins/loom", ...(withLifecyclePlugin ? ["./.opencode/plugins/lifecycle-delay-plugin.ts"] : [])],
       model: "loommock/mock",
       enabled_providers: ["loommock"],
       permission: { browser: "allow" },
+      ...(withLifecyclePlugin
+        ? { permissions: [{ action: "lifecycleprobe_hostProbe", resource: "*", effect: "allow" }] }
+        : {}),
       provider: {
         loommock: {
           npm: "@ai-sdk/openai-compatible",
@@ -1879,7 +1895,150 @@ async function waitForSessionToolPart(
       (last instanceof Error ? last.message : JSON.stringify(last)),
   )
 }
-const base = await mkdtemp(join(tmpdir(), "loom-opencode-host-"))
+async function runDirectLifecycleHostProbe(handle: ServerHandle, project: string) {
+  const session = await jsonRequestAny(
+    [`${handle.baseUrl}/api/session`, `${handle.baseUrl}/session`],
+    handle.authorization,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(sessionCreateBody("Exact host quiescence probe", "general")),
+    },
+  )
+  if (!session?.id) throw new Error("OpenCode did not create the exact-call probe session")
+  await jsonRequest(`${handle.baseUrl}/api/rpc/loom.control/sidebar`, handle.authorization, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ input: { sessionID: session.id } }),
+  })
+  await waitForFile(join(project, ".lifecycle-probe", "setup"))
+
+  const readTrace = async () => {
+    const path = join(project, ".lifecycle-probe", "event-trace.json")
+    for (let attempt = 0; attempt < 20; attempt++) {
+      try {
+        return JSON.parse(await readFile(path, "utf8")) as any[]
+      } catch {
+        await Bun.sleep(10)
+      }
+    }
+    return [] as any[]
+  }
+  const baselineTrace = await readTrace()
+  const baselineCount = baselineTrace.filter((event) =>
+    (event.properties ?? event.data)?.sessionID === session.id,
+  ).length
+
+  mock.state.hostProbeSessionID = session.id
+  mock.state.hostProbeCompleted = false
+  const prompt = sendPrompt(handle, session.id, "LOOM_HOST_QUIESCENCE_PROBE")
+  void prompt.catch(() => {})
+  await waitForFile(join(project, ".lifecycle-probe", "host-probe-started.json"))
+  const before = JSON.parse(await readFile(join(project, ".lifecycle-probe", "hook-before.json"), "utf8"))
+  const runningPart = await waitForSessionToolPart(
+    handle,
+    session.id,
+    "lifecycleprobe_hostProbe",
+    (part) => (part.callID ?? part.id) === before.callID && part.state?.status === "running",
+  )
+  await Bun.sleep(200)
+  const beforeReleaseTrace = await readTrace()
+  const duringProbe = beforeReleaseTrace.slice(baselineCount).filter((event) =>
+    (event.properties ?? event.data)?.sessionID === session.id,
+  )
+  const prematureIdle = duringProbe.filter((event) => event.type === "session.idle")
+  const prematureTerminal = duringProbe.filter((event) =>
+    ["session.tool.success", "session.tool.failed"].includes(event.type) &&
+    (event.properties ?? event.data)?.id === before.callID,
+  )
+  if (prematureIdle.length || prematureTerminal.length) {
+    throw new Error(
+      `OpenCode signaled idle/terminal while the real direct tool executor was blocked: ${JSON.stringify({
+        prematureIdle, prematureTerminal, runningPart,
+      })}`,
+    )
+  }
+
+  await writeFile(join(project, ".lifecycle-probe", "host-probe-release"), JSON.stringify({ release: true }))
+  await prompt
+  await waitForCondition(() => mock.state.hostProbeCompleted, "direct host probe result", () => mock.state)
+  const terminalPart = await waitForSessionToolPart(
+    handle,
+    session.id,
+    "lifecycleprobe_hostProbe",
+    (part) => (part.callID ?? part.id) === before.callID && part.state?.status === "completed",
+  )
+  const after = JSON.parse(await readFile(join(project, ".lifecycle-probe", "hook-after.json"), "utf8"))
+  await waitForCondition(async () => {
+    const events = await readTrace()
+    return events.some((event) =>
+      event.type === "session.tool.success" &&
+      (event.properties ?? event.data)?.sessionID === session.id &&
+      (event.properties ?? event.data)?.id === before.callID,
+    )
+  }, "exact V2 session.tool.success event", async () => await readTrace())
+
+  const messagesValue = await jsonRequestAny(
+    [
+      `${handle.baseUrl}/api/session/${encodeURIComponent(session.id)}/message`,
+      `${handle.baseUrl}/session/${encodeURIComponent(session.id)}/message`,
+    ],
+    handle.authorization,
+  )
+  const messages = Array.isArray(messagesValue)
+    ? messagesValue
+    : messagesValue?.messages ?? messagesValue?.data ?? []
+  const matchingParts = messages.flatMap((message: any) =>
+    (message.parts ?? message.content ?? []).filter((part: any) =>
+      part.type === "tool" &&
+      (part.callID ?? part.id) === before.callID &&
+      (part.tool ?? part.name) === "lifecycleprobe_hostProbe",
+    ),
+  )
+  const events = await readTrace()
+  const exactSuccessEvents = events.filter((event) =>
+    event.type === "session.tool.success" &&
+    (event.properties ?? event.data)?.sessionID === session.id &&
+    (event.properties ?? event.data)?.id === before.callID,
+  )
+  const idleEvents = events.filter((event) =>
+    event.type === "session.idle" && (event.properties ?? event.data)?.sessionID === session.id,
+  )
+  if (
+    runningPart.state?.status !== "running" || terminalPart.state?.status !== "completed" ||
+    (runningPart.callID ?? runningPart.id) !== before.callID ||
+    (terminalPart.callID ?? terminalPart.id) !== before.callID ||
+    after.status !== "completed" || matchingParts.length !== 1 ||
+    matchingParts[0].state?.status !== "completed" || exactSuccessEvents.length !== 1
+  ) {
+    throw new Error(`OpenCode did not preserve one exact terminal call: ${JSON.stringify({
+      before, after, runningPart, terminalPart, matchingParts, exactSuccessEvents,
+    })}`)
+  }
+  const proof = {
+    sessionID: session.id,
+    callID: before.callID,
+    tool: "lifecycleprobe_hostProbe",
+    afterHookCallID: after.rawCallID ?? after.id ?? null,
+    afterHookCorrelates: (after.rawCallID ?? after.id) === before.callID,
+    blockedBeforeRelease: true,
+    prematureIdleEvents: prematureIdle.length,
+    prematureTerminalEvents: prematureTerminal.length,
+    executeAfterStatus: after.status,
+    terminalEvent: "session.tool.success",
+    terminalEventCount: exactSuccessEvents.length,
+    persistedToolPartCount: matchingParts.length,
+    persistedState: matchingParts[0].state.status,
+    sessionIdleEventCount: idleEvents.length,
+  }
+  console.log("OPEN_CODE_QUIESCENCE_OBSERVATION", JSON.stringify(proof))
+  return proof
+}
+
+const requestedTempRoot = process.env.LOOM_OPENCODE_HOST_TEST_BASE
+const baseParent = requestedTempRoot ? resolve(requestedTempRoot) : tmpdir()
+await mkdir(baseParent, { recursive: true })
+const base = await mkdtemp(join(baseParent, "loom-opencode-host-"))
 const sharedState = join(base, "shared-state")
 const runtimeA = join(base, "runtime-a")
 const runtimeB = join(base, "runtime-b")
@@ -1887,6 +2046,14 @@ const servers: ServerHandle[] = []
 const mock = await startMockProvider()
 
 try {
+  if (process.argv.includes("--lifecycle-only")) {
+    const project = await createProject(base, "project-lifecycle", mock.baseUrl)
+    const host = await startServer(base, project, sharedState, runtimeA, "lifecycle-only")
+    servers.push(host)
+    const proof = await runDirectLifecycleHostProbe(host, project)
+    console.log("PASS isolated real OpenCode V2 exact-terminal-call probe")
+    console.log(` - session.idle events observed: ${proof.sessionIdleEventCount}`)
+  } else {
   const [projectA, projectB, projectTuiBudget, projectRestartBudget] = await Promise.all([
     createProject(base, "project-a", mock.baseUrl),
     createProject(base, "project-b", mock.baseUrl),
@@ -2483,6 +2650,7 @@ try {
   console.log(` - projected projects: ${fleet.projects.map((project) => project.projectId).join(", ")}`)
   console.log(` - restart reconciliation: ${mock.state.upgradePrimaryResumed}/${mock.state.upgradeSecondaryResumed}`)
   console.log(` - resumed session IDs: ${upgradePrimary.id}, ${upgradeSecondary.id}`)
+  }
 } finally {
   await Promise.allSettled(servers.map(stop))
   mock.server.stop(true)
