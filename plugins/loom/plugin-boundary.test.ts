@@ -4566,6 +4566,142 @@ Verdict: FAIL
     }
   })
 
+  test("completion rejects a clean external aggregate commit without an attempt publication receipt", async () => {
+    const h = await harness()
+    try {
+      await initializeGitFixture(h.root)
+      await writeFile(join(h.root, "src", "shared.ts"), "alpha\nseparator\nold\nomega\n")
+      await git(h.root, ["add", "--", "src/shared.ts"])
+      await git(h.root, ["commit", "-m", "clean aggregate baseline"])
+      await writeFile(join(h.root, "src", "shared.ts"), "alpha\nforeign\nseparator\nold\nomega\n")
+      const general = "clean-aggregate-general"
+      const worker = "clean-aggregate-worker"
+      const started = await h.call("start", { request: "Reject an unreceipted clean aggregate commit." }, "general", general)
+      const workflowId = String(started.workflowId)
+      expect((await h.call("route", {
+        humanFacing: false, behavioral: false, structural: false, externalUnknown: false,
+        diagnostic: false, productOutcome: false, implementationRequested: true, executionDepth: "task",
+      }, "general", general)).error).toBeUndefined()
+      expect((await h.call("task_scope", {
+        workflowId, stepId: "worker", write: ["src/shared.ts"],
+      }, "general", general)).error).toBeUndefined()
+      const grant = await h.call("dispatch_grant", { workflowId, stepId: "worker" }, "general", general)
+      expect((await h.call("attach", { grantId: grant.grantId, workflowId, stepId: "worker" }, "worker", worker)).attached).toBe(true)
+
+      const mutation = {
+        tool: "edit", callID: "clean-aggregate-edit", sessionID: worker, agent: "worker",
+        input: { filePath: join(h.root, "src", "shared.ts") },
+      }
+      await h.toolHooks.get("execute.before")?.(mutation)
+      await writeFile(join(h.root, "src", "shared.ts"), "alpha\nforeign\nseparator\nnew\nomega\n")
+      await h.toolHooks.get("execute.after")?.({ ...mutation, status: "completed", result: "updated" })
+
+      // Bypass the Loom projection and publish aggregate A, which contains X
+      // and Y. The repository is clean afterward, so completion must inspect
+      // attempt-owned records rather than relying on `git status` output.
+      await git(h.root, ["add", "--", "src/shared.ts"])
+      await git(h.root, ["-c", "core.hooksPath=/dev/null", "commit", "-m", "external aggregate shared file"])
+      expect((await git(h.root, ["status", "--porcelain", "--", "src/shared.ts"])).stdout).toBe("")
+      expect((await git(h.root, ["show", "HEAD:src/shared.ts"])).stdout).toBe(
+        "alpha\nforeign\nseparator\nnew\nomega\n",
+      )
+
+      const completion = await h.call(
+        "complete", { workflowId, stepId: "worker", summary: "Must reject unreceipted clean aggregate." },
+        "worker", worker,
+      )
+      expect(completion.error).toBeDefined()
+      expect(String(completion.error)).toContain("src/shared.ts")
+      const publishedKey = `git-delta/${encodeURIComponent(workflowId)}/worker/0/${encodeURIComponent("src/shared.ts")}/published`
+      expect(await h.durableStorage.get(publishedKey)).toBeUndefined()
+    } finally {
+      h.restore()
+    }
+  })
+
+  test("legacy fingerprint-only ownership cannot publish a shared X+Y tracked file", async () => {
+    const h = await harness()
+    try {
+      await initializeGitFixture(h.root)
+      const path = "src/shared.ts"
+      await writeFile(join(h.root, path), "alpha\nseparator\nold\nomega\n")
+      await git(h.root, ["add", "--", path])
+      await git(h.root, ["commit", "-m", "legacy shared-file baseline"])
+      await writeFile(join(h.root, path), "alpha\nforeign\nseparator\nold\nomega\n")
+
+      const general = "legacy-shared-general"
+      const worker = "legacy-shared-worker"
+      const started = await h.call("start", { request: "Reject fingerprint-only ownership of shared file bytes." }, "general", general)
+      const workflowId = String(started.workflowId)
+      expect((await h.call("route", {
+        humanFacing: false, behavioral: false, structural: false, externalUnknown: false,
+        diagnostic: false, productOutcome: false, implementationRequested: true, executionDepth: "task",
+      }, "general", general)).error).toBeUndefined()
+      expect((await h.call("task_scope", { workflowId, stepId: "worker", write: [path] }, "general", general)).error).toBeUndefined()
+      const grant = await h.call("dispatch_grant", { workflowId, stepId: "worker" }, "general", general)
+      expect((await h.call("attach", { grantId: grant.grantId, workflowId, stepId: "worker" }, "worker", worker)).attached).toBe(true)
+
+      const mutation = {
+        tool: "edit", callID: "legacy-shared-edit", sessionID: worker, agent: "worker",
+        input: { filePath: join(h.root, path) },
+      }
+      await h.toolHooks.get("execute.before")?.(mutation)
+      await writeFile(join(h.root, path), "alpha\nforeign\nseparator\nnew\nomega\n")
+      await h.toolHooks.get("execute.after")?.({ ...mutation, status: "completed", result: "updated" })
+
+      const deltaKey = `git-delta/${encodeURIComponent(workflowId)}/worker/0/${encodeURIComponent(path)}`
+      const provenanceKey = ["git-step-attempt-owned", encodeURIComponent(workflowId), "worker", "0", encodeURIComponent(path)].join("/")
+      expect(await h.durableStorage.delete?.(deltaKey)).toBe(true)
+      await h.durableStorage.delete?.(provenanceKey)
+      const attachmentId = await h.durableStorage.get(`session-attachment/${worker}`)
+      const info = await stat(join(h.root, path))
+      const legacyFingerprint = createHash("sha256")
+        .update("file\0")
+        .update(String(info.mode))
+        .update("\0")
+        .update(await readFile(join(h.root, path)))
+        .digest("hex")
+      await h.durableStorage.set(`git-session-ownership/${encodeURIComponent(worker)}`, {
+        schemaVersion: 2,
+        attachmentId,
+        paths: [path],
+        worktreeFingerprints: { [path]: legacyFingerprint },
+        stagedFingerprints: {},
+      })
+
+      const stageCommand = `git add -- ${path}`
+      const evaluate = h.permissionHooks.get("evaluate")!
+      const stagePermission: any = { agent: "worker", action: "shell", resources: [stageCommand], sessionID: worker, effect: "ask" }
+      await evaluate(stagePermission)
+      expect(stagePermission.effect).toBe("allow")
+      const stage = { tool: "shell", callID: "legacy-shared-stage", sessionID: worker, agent: "worker", input: { command: stageCommand } }
+      await h.toolHooks.get("execute.before")?.(stage)
+      await git(h.root, ["add", "--", path])
+      await h.toolHooks.get("execute.after")?.({ ...stage, status: "completed", result: "staged aggregate" })
+
+      const commitCommand = "git -c core.hooksPath=/dev/null commit -m 'test: reject legacy shared aggregate'"
+      const commitPermission: any = { agent: "worker", action: "shell", resources: [commitCommand], sessionID: worker, effect: "ask" }
+      await evaluate(commitPermission)
+      expect(commitPermission.effect).toBe("deny")
+      expect(commitPermission.message).toMatch(/fingerprint-only|exact owned-delta receipt/i)
+
+      // A foreign shell bypasses Loom and commits the aggregate. Even though
+      // both index and worktree are clean, completion must retain the legacy
+      // attempt provenance and fail closed.
+      await git(h.root, ["-c", "core.hooksPath=/dev/null", "commit", "-m", "external legacy aggregate"])
+      expect((await git(h.root, ["status", "--porcelain", "--", path])).stdout).toBe("")
+      const completion = await h.call(
+        "complete", { workflowId, stepId: "worker", summary: "Must reject legacy X+Y aggregate commit." },
+        "worker", worker,
+      )
+      expect(completion.error).toContain(path)
+      const publishedKey = `git-delta/${encodeURIComponent(workflowId)}/worker/0/${encodeURIComponent(path)}/published`
+      expect(await h.durableStorage.get(publishedKey)).toBeUndefined()
+    } finally {
+      h.restore()
+    }
+  })
+
   test("a separate OS process replays owned-delta receipts after the writer exits", async () => {
     const h = await harness()
     const fixture = fileURLToPath(new URL("./plugin-boundary-process-fixture.ts", import.meta.url))

@@ -1609,6 +1609,19 @@ async function commitScopeError(
         return `Git commit denied: staged paths were not authored by this role/session: ${unowned.join(", ")}`
       }
 
+      if (binding) {
+        const fingerprintOnly = []
+        for (const path of staged) {
+          if (!await ctx.storage.get(gitDeltaReceiptKey(binding, path))) fingerprintOnly.push(path)
+        }
+        if (fingerprintOnly.length > 0) {
+          return (
+            "Git commit denied: whole-file fingerprint ownership cannot publish step-attempt bytes " +
+            "without exact owned-delta receipts: " + fingerprintOnly.join(", ")
+          )
+        }
+      }
+
       const changedIndex: string[] = []
       const deltaPublishedPaths = new Set<string>()
       let recoveredStagedFingerprint = false
@@ -1738,6 +1751,125 @@ async function commitScopeError(
   }
 }
 
+async function gitHeadFileFingerprint(projectDirectory: string, value: string) {
+  const path = safeOwnedRepoPath(value)
+  if (await gitHeadIdentity(projectDirectory) === "unborn") return undefined
+  const treeEntry = String((await execFileAsync("git", ["ls-tree", "HEAD", "--", path], {
+    cwd: projectDirectory, encoding: "utf8",
+  })).stdout).trim()
+  if (!treeEntry) return undefined
+  const mode = Number.parseInt(treeEntry.split(/\s+/, 1)[0] ?? "", 8)
+  if (!Number.isSafeInteger(mode)) throw new Error(`Cannot verify HEAD mode for ${path}.`)
+  const content = Buffer.from((await execFileAsync("git", ["show", `HEAD:${path}`], {
+    cwd: projectDirectory, encoding: "buffer",
+  })).stdout as Buffer)
+  return createHash("sha256")
+    .update("file\0")
+    .update(String(mode))
+    .update("\0")
+    .update(content)
+    .digest("hex")
+}
+
+async function unpublishedAttemptGitPaths(
+  ctx: any,
+  binding: GitOwnershipBinding,
+  projectDirectory: string,
+  dirtyPaths: readonly string[],
+) {
+  const unresolved = new Set<string>()
+  const dirty = new Set(dirtyPaths.map(normalizeRepoPath))
+  const deltaPrefix = `git-delta/${encodeURIComponent(binding.workflowId)}/${encodeURIComponent(binding.stepId)}/${binding.attempt}/`
+  let after: string | undefined
+  do {
+    const page: { entries: Array<{ key: string; value: unknown }>; next?: string } = await ctx.storage.scan({
+      prefix: deltaPrefix, limit: 500, ...(after ? { after } : {}),
+    })
+    for (const entry of page.entries ?? []) {
+      const receipt = entry.value as GitDeltaReceipt
+      if (
+        receipt?.schemaVersion !== 1 || receipt.authorityId !== binding.authorityId ||
+        receipt.workflowId !== binding.workflowId || receipt.stepId !== binding.stepId ||
+        receipt.attempt !== binding.attempt || typeof receipt.revision !== "number" ||
+        typeof receipt.projection !== "string" || typeof receipt.headContent !== "string" || !receipt.path
+      ) continue
+      const path = safeOwnedRepoPath(receipt.path)
+      const published = await ctx.storage.get(gitDeltaPublishedKey(binding, path)) as any
+      if (
+        published?.schemaVersion === 1 && published.authorityId === binding.authorityId &&
+        published.workflowId === binding.workflowId && published.stepId === binding.stepId &&
+        published.attempt === binding.attempt && published.path === path
+      ) continue
+      // A net-no-op owned projection has nothing to publish. Every other
+      // admitted delta stays a completion obligation even if a foreign Git
+      // actor advanced HEAD and thereby made status porcelain clean.
+      if (receipt.projection !== receipt.headContent) unresolved.add(path)
+    }
+    after = page.next
+  } while (after)
+
+  const ownedPrefix = [
+    "git-step-attempt-owned",
+    encodeURIComponent(binding.workflowId),
+    encodeURIComponent(binding.stepId),
+    String(binding.attempt),
+  ].join("/") + "/"
+  after = undefined
+  do {
+    const page: { entries: Array<{ key: string; value: unknown }>; next?: string } = await ctx.storage.scan({
+      prefix: ownedPrefix, limit: 500, ...(after ? { after } : {}),
+    })
+    for (const entry of page.entries ?? []) {
+      const provenance = entry.value as GitStepAttemptOwnedPath
+      if (
+        provenance?.schemaVersion !== 1 || provenance.authorityId !== binding.authorityId ||
+        provenance.workflowId !== binding.workflowId || provenance.stepId !== binding.stepId ||
+        provenance.attempt !== binding.attempt || !provenance.path
+      ) continue
+      const path = safeOwnedRepoPath(provenance.path)
+      if (dirty.has(path) || await ctx.storage.get(gitDeltaReceiptKey(binding, path))) continue
+      const published = await ctx.storage.get(gitDeltaPublishedKey(binding, path)) as any
+      if (
+        published?.schemaVersion === 1 && published.authorityId === binding.authorityId &&
+        published.workflowId === binding.workflowId && published.stepId === binding.stepId &&
+        published.attempt === binding.attempt && published.path === path
+      ) continue
+      // A legacy whole-file fingerprint that now exactly matches a clean HEAD
+      // blob is ambiguous: it could be this attempt's aggregate (including
+      // foreign X), not proof of a step-owned delta.
+      if (await gitHeadFileFingerprint(projectDirectory, path) === provenance.fingerprint) unresolved.add(path)
+    }
+    after = page.next
+  } while (after)
+
+  const commitIntents = await scanGitMutationIntents(ctx, binding)
+  for (const { value } of commitIntents) {
+    if (
+      value.authorityId === binding.authorityId && value.workflowId === binding.workflowId &&
+      value.stepId === binding.stepId && value.attempt === binding.attempt && value.commitBefore
+    ) {
+      for (const raw of value.commitBefore.paths) unresolved.add(safeOwnedRepoPath(raw))
+    }
+  }
+
+  const unprovenPrefix = `git-delta-unproven/${encodeURIComponent(binding.workflowId)}/${encodeURIComponent(binding.stepId)}/${binding.attempt}/`
+  after = undefined
+  do {
+    const page: { entries: Array<{ key: string; value: unknown }>; next?: string } = await ctx.storage.scan({
+      prefix: unprovenPrefix, limit: 500, ...(after ? { after } : {}),
+    })
+    for (const entry of page.entries ?? []) {
+      const markerOffset = entry.key.lastIndexOf(unprovenPrefix)
+      if (markerOffset < 0) continue
+      const encodedPath = entry.key.slice(markerOffset + unprovenPrefix.length)
+      try { unresolved.add(safeOwnedRepoPath(decodeURIComponent(encodedPath))) }
+      catch { throw new Error("Cannot reconcile malformed unproven Git path marker.") }
+    }
+    after = page.next
+  } while (after)
+  return [...unresolved].sort()
+}
+
 async function uncommittedOwnedChangesError(
   ctx: any,
   runtime: LoomRuntimeIdentity,
@@ -1826,6 +1958,16 @@ async function uncommittedOwnedChangesError(
       resourcesWithinScope([path], writeScope)
     ) {
       dirtyOwned.push(path)
+    }
+  }
+  if (binding) {
+    try {
+      const unpublished = await unpublishedAttemptGitPaths(ctx, binding, projectDirectory, dirty)
+      for (const path of unpublished) {
+        if (!dirtyOwned.includes(path)) dirtyOwned.push(path)
+      }
+    } catch (error) {
+      return `Cannot verify attempt-owned Git publication state: ${error instanceof Error ? error.message : String(error)}`
     }
   }
   if (dirtyOwned.length === 0) return undefined
