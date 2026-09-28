@@ -3028,6 +3028,161 @@ Verdict: FAIL
     }
   })
 
+  test("Reviewer acceptance scope is recomputed after reroute", async () => {
+    const h = await harness()
+    try {
+      const generalSession = "reviewer-reroute-general"
+      const specifierSession = "reviewer-reroute-specifier"
+      const reviewerSession = "reviewer-reroute-reviewer"
+      const started = await h.call(
+        "start",
+        { request: "Specify one bounded requirement, then narrow the workflow." },
+        "general",
+        generalSession,
+      )
+      const workflowId = String(started.workflowId)
+      expect((await h.call(
+        "route",
+        {
+          humanFacing: false,
+          behavioral: true,
+          structural: false,
+          externalUnknown: false,
+          diagnostic: false,
+          productOutcome: false,
+          implementationRequested: false,
+          executionDepth: "change",
+        },
+        "general",
+        generalSession,
+      )).error).toBeUndefined()
+
+      const specifierGrant = await h.call(
+        "dispatch_grant",
+        { workflowId, stepId: "specifier" },
+        "general",
+        generalSession,
+      )
+      expect((await h.call(
+        "attach",
+        { grantId: specifierGrant.grantId, workflowId, stepId: "specifier" },
+        "specifier",
+        specifierSession,
+      )).attached).toBe(true)
+      expect((await h.call(
+        "complete",
+        { workflowId, stepId: "specifier", summary: "requirements complete" },
+        "specifier",
+        specifierSession,
+      )).error).toBeUndefined()
+
+      const firstReviewerGrant = await h.call(
+        "dispatch_grant",
+        { workflowId, stepId: "review-think" },
+        "general",
+        generalSession,
+      )
+      expect((await h.call(
+        "attach",
+        { grantId: firstReviewerGrant.grantId, workflowId, stepId: "review-think" },
+        "reviewer",
+        reviewerSession,
+      )).attached).toBe(true)
+      const firstScope = await h.call(
+        "scope_status",
+        { workflowId, stepId: "review-think" },
+        "reviewer",
+        reviewerSession,
+      )
+      expect(firstScope.effectiveWrite).toEqual([
+        "docs/requirements/**",
+        "ephemeral-reports/reviewer/**",
+      ])
+
+      expect((await h.call(
+        "complete",
+        {
+          workflowId,
+          stepId: "review-think",
+          outcome: "pass",
+          summary: "requirements accepted",
+        },
+        "reviewer",
+        reviewerSession,
+      )).error).toBeUndefined()
+
+      expect((await h.call(
+        "route",
+        {
+          humanFacing: false,
+          behavioral: false,
+          structural: false,
+          externalUnknown: true,
+          diagnostic: false,
+          productOutcome: false,
+          implementationRequested: false,
+          executionDepth: "change",
+        },
+        "general",
+        generalSession,
+      )).error).toBeUndefined()
+
+      const researchGrant = await h.call(
+        "dispatch_grant",
+        { workflowId, stepId: "research" },
+        "general",
+        generalSession,
+      )
+      expect((await h.call(
+        "attach",
+        { grantId: researchGrant.grantId, workflowId, stepId: "research" },
+        "research",
+        "reviewer-reroute-research",
+      )).attached).toBe(true)
+      expect((await h.call(
+        "complete",
+        { workflowId, stepId: "research", summary: "research complete" },
+        "research",
+        "reviewer-reroute-research",
+      )).error).toBeUndefined()
+
+      const secondReviewerGrant = await h.call(
+        "dispatch_grant",
+        { workflowId, stepId: "review-think" },
+        "general",
+        generalSession,
+      )
+      expect((await h.call(
+        "attach",
+        { grantId: secondReviewerGrant.grantId, workflowId, stepId: "review-think" },
+        "reviewer",
+        reviewerSession,
+      )).attached).toBe(true)
+      const narrowed = await h.call(
+        "scope_status",
+        { workflowId, stepId: "review-think" },
+        "reviewer",
+        reviewerSession,
+      )
+      expect(narrowed.effectiveWrite).toEqual([
+        "ephemeral-reports/reviewer/**",
+      ])
+
+      const staleAuthorityEdit: any = {
+        agent: "reviewer",
+        action: "edit",
+        resources: ["docs/requirements/recovery.md"],
+        sessionID: reviewerSession,
+        effect: "ask",
+      }
+      await h.permissionHooks.get("evaluate")!(staleAuthorityEdit)
+      expect(staleAuthorityEdit.effect).toBe("deny")
+      expect(staleAuthorityEdit.message).toContain("current Loom write scope")
+    } finally {
+      h.restore()
+    }
+  })
+
   test("implementation review remains read-only for authority documents", async () => {
     const h = await harness()
     try {
