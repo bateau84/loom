@@ -49,11 +49,11 @@ If the new test passes immediately, determine why. The behavior may already exis
 
 Write only enough production code to make the current test pass while preserving previous tests.
 
-There are three useful Green strategies:
+There are three classic strategies for moving from a failing example toward general code:
 
 - **Obvious Implementation** — implement the direct solution when it is genuinely obvious and small.
-- **Fake It** — use a deliberately simple or hard-coded implementation to get to green quickly when the design is uncertain.
-- **Triangulate** — add another example that forces an over-fitted implementation to change. Repeat with the smallest useful examples until the implementation expresses the accepted rule rather than a special case.
+- **Fake It** — use a deliberately simple or hard-coded implementation to reach green quickly when the design is uncertain.
+- **Triangulate** — once green, start the next Red with another example that forces an over-fitted implementation to change. Repeat with the smallest useful examples until the implementation expresses the accepted rule rather than a special case.
 
 A temporary Fake It implementation is valid TDD. It is not completion. If the accepted behavior is broader than the example, add the next discriminating test. One added example may only eliminate one fake; keep triangulating when another simple wrong implementation still satisfies the suite. Refactor under green once the tests constrain the accepted rule.
 
