@@ -4465,8 +4465,28 @@ Verdict: FAIL
       const staleCompletion = await h.call("complete", { workflowId, stepId: "worker", summary: "Must reject changed foreign bytes." }, "worker", freshSession)
       expect(staleCompletion.error).toContain("completion remains blocked")
       await writeFile(join(h.root, "src", "shared.ts"), "alpha\nforeign\nseparator\nlatest\nomega\n")
-      const completed = await h.call("complete", { workflowId, stepId: "worker", summary: "Published only the admitted edit." }, "worker", freshSession)
-      expect(completed.error).toBeUndefined()
+
+      // Removing X makes the worktree clean and equal to P, but violates the
+      // frozen foreign residual captured when Y's publication was committed.
+      await writeFile(join(h.root, "src", "shared.ts"), "alpha\nseparator\nlatest\nomega\n")
+      expect((await git(h.root, ["status", "--porcelain", "--", "src/shared.ts"])).stdout).toBe("")
+      const removedForeign = await h.call("complete", {
+        workflowId, stepId: "worker", summary: "Must reject a clean worktree missing foreign X.",
+      }, "worker", freshSession)
+      expect(removedForeign.error).toBeDefined()
+      expect(String(removedForeign.error)).toContain("src/shared.ts")
+
+      // Separately commit X back into the path. The index and worktree are
+      // clean again, but HEAD now contains A rather than the exact P receipt.
+      await writeFile(join(h.root, "src", "shared.ts"), "alpha\nforeign\nseparator\nlatest\nomega\n")
+      await git(h.root, ["add", "--", "src/shared.ts"])
+      await git(h.root, ["-c", "core.hooksPath=/dev/null", "commit", "-m", "external foreign residual commit"])
+      expect((await git(h.root, ["status", "--porcelain", "--", "src/shared.ts"])).stdout).toBe("")
+      const foreignHead = await h.call("complete", {
+        workflowId, stepId: "worker", summary: "Must reject foreign X committed into HEAD.",
+      }, "worker", freshSession)
+      expect(foreignHead.error).toBeDefined()
+      expect(String(foreignHead.error)).toContain("src/shared.ts")
     } finally {
       h.restore()
     }
@@ -4561,6 +4581,86 @@ Verdict: FAIL
       expect(completion.error).toBeDefined()
       const publishedKey = `git-delta/${encodeURIComponent(workflowId)}/worker/0/${encodeURIComponent("src/shared.ts")}/published`
       expect(await h.durableStorage.get(publishedKey)).toBeUndefined()
+    } finally {
+      h.restore()
+    }
+  })
+
+  test("completion revalidates frozen foreign residual and committed projection for clean paths", async () => {
+    const h = await harness()
+    try {
+      await initializeGitFixture(h.root)
+      const path = "src/shared.ts"
+      const headContent = "alpha\nseparator\nold\nomega\n"
+      const foreign = "alpha\nforeign\nseparator\nold\nomega\n"
+      const aggregate = "alpha\nforeign\nseparator\nnew\nomega\n"
+      const projection = "alpha\nseparator\nnew\nomega\n"
+      await writeFile(join(h.root, path), headContent)
+      await git(h.root, ["add", "--", path])
+      await git(h.root, ["commit", "-m", "published receipt revalidation baseline"])
+      await writeFile(join(h.root, path), foreign)
+
+      const general = "published-revalidation-general"
+      const worker = "published-revalidation-worker"
+      const started = await h.call("start", { request: "Revalidate a published delta even when Git is clean." }, "general", general)
+      const workflowId = String(started.workflowId)
+      expect((await h.call("route", {
+        humanFacing: false, behavioral: false, structural: false, externalUnknown: false,
+        diagnostic: false, productOutcome: false, implementationRequested: true, executionDepth: "task",
+      }, "general", general)).error).toBeUndefined()
+      expect((await h.call("task_scope", { workflowId, stepId: "worker", write: [path] }, "general", general)).error).toBeUndefined()
+      const grant = await h.call("dispatch_grant", { workflowId, stepId: "worker" }, "general", general)
+      expect((await h.call("attach", { grantId: grant.grantId, workflowId, stepId: "worker" }, "worker", worker)).attached).toBe(true)
+
+      const mutation = {
+        tool: "edit", callID: "published-revalidation-edit", sessionID: worker, agent: "worker",
+        input: { filePath: join(h.root, path) },
+      }
+      await h.toolHooks.get("execute.before")?.(mutation)
+      await writeFile(join(h.root, path), aggregate)
+      await h.toolHooks.get("execute.after")?.({ ...mutation, status: "completed", result: "updated" })
+      const stageCommand = `git add -- ${path}`
+      const evaluate = h.permissionHooks.get("evaluate")!
+      const stagePermission: any = { agent: "worker", action: "shell", resources: [stageCommand], sessionID: worker, effect: "ask" }
+      await evaluate(stagePermission)
+      expect(stagePermission.effect).toBe("allow")
+      const stage = { tool: "shell", callID: "published-revalidation-stage", sessionID: worker, agent: "worker", input: { command: stageCommand } }
+      await h.toolHooks.get("execute.before")?.(stage)
+      await git(h.root, ["add", "--", path])
+      await h.toolHooks.get("execute.after")?.({ ...stage, status: "completed", result: "staged" })
+      const commitCommand = "git -c core.hooksPath=/dev/null commit -m 'test: publish exact projection'"
+      const commitPermission: any = { agent: "worker", action: "shell", resources: [commitCommand], sessionID: worker, effect: "ask" }
+      await evaluate(commitPermission)
+      expect(commitPermission.effect).toBe("allow")
+      const commitEvent = { tool: "shell", callID: "published-revalidation-commit", sessionID: worker, agent: "worker", input: { command: commitCommand } }
+      await h.toolHooks.get("execute.before")?.(commitEvent)
+      await git(h.root, ["-c", "core.hooksPath=/dev/null", "commit", "-m", "test: publish exact projection"])
+      await h.toolHooks.get("execute.after")?.({ ...commitEvent, status: "completed", result: "committed" })
+      const publishedKey = `git-delta/${encodeURIComponent(workflowId)}/worker/0/${encodeURIComponent(path)}/published`
+      expect(await h.durableStorage.get(publishedKey)).toBeDefined()
+
+      // External removal of X leaves clean P, but violates the frozen foreign
+      // residual in the publication receipt.
+      await writeFile(join(h.root, path), projection)
+      expect((await git(h.root, ["status", "--porcelain", "--", path])).stdout).toBe("")
+      const removedForeign = await h.call(
+        "complete", { workflowId, stepId: "worker", summary: "Foreign residual was removed." }, "worker", worker,
+      )
+      expect(removedForeign.error).toBeDefined()
+      expect(String(removedForeign.error)).toContain(path)
+
+      // A separate external commit can restore the aggregate and make both
+      // index and worktree clean; HEAD must still be exactly the owned P.
+      await writeFile(join(h.root, path), aggregate)
+      await git(h.root, ["add", "--", path])
+      await git(h.root, ["-c", "core.hooksPath=/dev/null", "commit", "-m", "external foreign residual commit"])
+      expect((await git(h.root, ["status", "--porcelain", "--", path])).stdout).toBe("")
+      expect((await git(h.root, ["show", `HEAD:${path}`])).stdout).toBe(aggregate)
+      const foreignHead = await h.call(
+        "complete", { workflowId, stepId: "worker", summary: "Foreign bytes were committed to HEAD." }, "worker", worker,
+      )
+      expect(foreignHead.error).toBeDefined()
+      expect(String(foreignHead.error)).toContain(path)
     } finally {
       h.restore()
     }
@@ -4697,6 +4797,19 @@ Verdict: FAIL
       expect(completion.error).toContain(path)
       const publishedKey = `git-delta/${encodeURIComponent(workflowId)}/worker/0/${encodeURIComponent(path)}/published`
       expect(await h.durableStorage.get(publishedKey)).toBeUndefined()
+
+      // A later foreign commit can replace or remove the saved aggregate.
+      // The legacy attempt remains unresolved even when HEAD no longer matches
+      // its fingerprint and status is clean.
+      await rm(join(h.root, path))
+      await git(h.root, ["add", "--", path])
+      await git(h.root, ["-c", "core.hooksPath=/dev/null", "commit", "-m", "external removal after legacy aggregate"])
+      expect((await git(h.root, ["status", "--porcelain", "--", path])).stdout).toBe("")
+      const removedCompletion = await h.call(
+        "complete", { workflowId, stepId: "worker", summary: "Must reject removed legacy aggregate bytes." },
+        "worker", worker,
+      )
+      expect(removedCompletion.error).toContain(path)
     } finally {
       h.restore()
     }

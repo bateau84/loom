@@ -1751,24 +1751,24 @@ async function commitScopeError(
   }
 }
 
-async function gitHeadFileFingerprint(projectDirectory: string, value: string) {
+async function gitHistoryTracksPath(projectDirectory: string, value: string) {
   const path = safeOwnedRepoPath(value)
-  if (await gitHeadIdentity(projectDirectory) === "unborn") return undefined
-  const treeEntry = String((await execFileAsync("git", ["ls-tree", "HEAD", "--", path], {
+  const head = await gitHeadIdentity(projectDirectory)
+  if (head === "unborn") return false
+  const current = String((await execFileAsync("git", ["ls-tree", "HEAD", "--", path], {
     cwd: projectDirectory, encoding: "utf8",
   })).stdout).trim()
-  if (!treeEntry) return undefined
-  const mode = Number.parseInt(treeEntry.split(/\s+/, 1)[0] ?? "", 8)
-  if (!Number.isSafeInteger(mode)) throw new Error(`Cannot verify HEAD mode for ${path}.`)
-  const content = Buffer.from((await execFileAsync("git", ["show", `HEAD:${path}`], {
-    cwd: projectDirectory, encoding: "buffer",
-  })).stdout as Buffer)
-  return createHash("sha256")
-    .update("file\0")
-    .update(String(mode))
-    .update("\0")
-    .update(content)
-    .digest("hex")
+  if (current) return true
+  const parents = String((await execFileAsync("git", ["rev-list", "--parents", "-n", "1", "HEAD"], {
+    cwd: projectDirectory, encoding: "utf8",
+  })).stdout).trim().split(/\s+/).slice(1)
+  for (const parent of parents) {
+    const previous = String((await execFileAsync("git", ["ls-tree", parent, "--", path], {
+      cwd: projectDirectory, encoding: "utf8",
+    })).stdout).trim()
+    if (previous) return true
+  }
+  return false
 }
 
 async function unpublishedAttemptGitPaths(
@@ -1808,6 +1808,22 @@ async function unpublishedAttemptGitPaths(
     after = page.next
   } while (after)
 
+  after = undefined
+  do {
+    const page: { entries: Array<{ key: string; value: unknown }>; next?: string } = await ctx.storage.scan({
+      prefix: deltaPrefix, limit: 500, ...(after ? { after } : {}),
+    })
+    for (const entry of page.entries ?? []) {
+      const published = entry.value as any
+      if (typeof published?.commit !== "string" || typeof published?.projection !== "string" || !published.path) continue
+      const path = safeOwnedRepoPath(published.path)
+      if (!await publishedGitDeltaMatchesCurrentState(ctx, projectDirectory, binding, path, published)) {
+        unresolved.add(path)
+      }
+    }
+    after = page.next
+  } while (after)
+
   const ownedPrefix = [
     "git-step-attempt-owned",
     encodeURIComponent(binding.workflowId),
@@ -1834,10 +1850,10 @@ async function unpublishedAttemptGitPaths(
         published.workflowId === binding.workflowId && published.stepId === binding.stepId &&
         published.attempt === binding.attempt && published.path === path
       ) continue
-      // A legacy whole-file fingerprint that now exactly matches a clean HEAD
-      // blob is ambiguous: it could be this attempt's aggregate (including
-      // foreign X), not proof of a step-owned delta.
-      if (await gitHeadFileFingerprint(projectDirectory, path) === provenance.fingerprint) unresolved.add(path)
+      // Fingerprint-only legacy records cannot prove which bytes in any
+      // tracked path belong to this attempt. If HEAD currently contains the
+      // path, or a clean commit removed it, publication remains unproven.
+      if (await gitHistoryTracksPath(projectDirectory, path)) unresolved.add(path)
     }
     after = page.next
   } while (after)
@@ -1868,6 +1884,45 @@ async function unpublishedAttemptGitPaths(
     after = page.next
   } while (after)
   return [...unresolved].sort()
+}
+
+async function publishedGitDeltaMatchesCurrentState(
+  ctx: any,
+  projectDirectory: string,
+  binding: GitOwnershipBinding,
+  path: string,
+  published: any,
+) {
+  if (
+    published?.schemaVersion !== 1 || published.authorityId !== binding.authorityId ||
+    published.workflowId !== binding.workflowId || published.stepId !== binding.stepId ||
+    published.attempt !== binding.attempt || published.path !== path ||
+    typeof published.headContent !== "string" || typeof published.foreign !== "string" ||
+    typeof published.aggregate !== "string" || typeof published.projection !== "string" ||
+    typeof published.headMode !== "string"
+  ) return false
+  try {
+    const [head, index, worktree, info] = await Promise.all([
+      execFileAsync("git", ["show", `HEAD:${path}`], { cwd: projectDirectory, encoding: "buffer" }),
+      execFileAsync("git", ["show", `:${path}`], { cwd: projectDirectory, encoding: "buffer" }),
+      readFile(join(projectDirectory, path)),
+      lstat(join(projectDirectory, path)),
+    ])
+    const headContent = Buffer.from(published.headContent, "base64")
+    const foreign = Buffer.from(published.foreign, "base64")
+    const aggregate = Buffer.from(published.aggregate, "base64")
+    const projection = Buffer.from(published.projection, "base64")
+    const recomposed = projectDisjointTextDelta(headContent, foreign, aggregate)
+    return Boolean(
+      recomposed?.projection.equals(projection) &&
+      Buffer.from(head.stdout as Buffer).equals(projection) &&
+      Buffer.from(index.stdout as Buffer).equals(projection) &&
+      worktree.equals(aggregate) &&
+      info.mode.toString(8) === published.headMode,
+    )
+  } catch {
+    return false
+  }
 }
 
 async function uncommittedOwnedChangesError(
