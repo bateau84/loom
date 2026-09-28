@@ -261,6 +261,8 @@ The control plane distinguishes `taskOutcome` from the broader accepted outcome/
 
 ### Proposed accountable-role admission
 
+The role/step architecture below composes with the proposed per-task command, publication and lifecycle fences in [Work Lifecycle, Command Authority, and Publication](work-lifecycle-and-publication.md). None of those additional capabilities is established by the present Worker-only compiler.
+
 [BR-024](../../requirements/loom/br-024-preserve-authority-ownership-through-handoffs.md) proposes that **every planned work item**, including routine work, exposes an accountable role and a supported path for that role's execution or decision. This is not a claim that the current Planner/Worker DAG already provides the path. Plan obligation-to-Task ownership describes *which work* is covered; it does not establish *which role* is accountable. A Worker write scope or runnable Worker node similarly cannot attest that a specialist made a decision.
 
 **Current boundary.** The runtime persists semantic Tasks without an accountable-role assignment. `applyTaskPlan` creates `task:<id>` steps exclusively for `worker` and points `review-implementation` at those steps; route-built Architect, Documenter, General and Reviewer steps are fixed workflow positions, not arbitrary planned-Task execution slots. An OQ can carry Task context to any role, but its answer is not a work-step result or independent gate verdict. Planning-only Objective review proves only a Plan revision and never executes its Tasks. Consequently current `loom_task_plan`, an existing upstream specialist step, a Task-linked OQ, or a prose handoff **cannot** be represented as a complete execution path for a newly planned specialist/General/Reviewer/user-owned Task. Such a Plan may document the gap; present-day Worker compilation must not be reported as its resolution. Nothing in the following proposal is implemented by this documentation change.
@@ -378,6 +380,8 @@ External-directory access is denied for Worker.
 
 This is intentionally restrictive. Mutation-heavy shell operations need a later controlled capability with stronger containment rather than a broader generic shell permission.
 
+**Proposed extension, not present shell capability:** [BR-025](../../requirements/loom/br-025-govern-command-access-and-preserve-work-in-git.md) requires bounded rejected-command elevation and Git publication; [Work Lifecycle, Command Authority, and Publication](work-lifecycle-and-publication.md) defines the proposed containment, user-approval, exact-byte and remote-outcome seams. Project-local `loom_scope_elevate` grants write paths, not generic host command authority. Its current immediate project-local path behavior must not be mistaken for approval of a materially destructive or host-wide command; those commands, and commands outside approved task paths, need the user's explicit approval in the proposed model.
+
 
 ## Living-knowledge synchronization
 
@@ -416,6 +420,8 @@ The control plane refuses a second simultaneous user question and refuses reposi
 
 
 ## Workflow cancellation and reviewed completion
+
+**Current cancellation only.** The proposed pause/backburner/resume, operation-uncertainty register and Archive/Permanent Delete path are described in [Work Lifecycle, Command Authority, and Publication](work-lifecycle-and-publication.md). The current cancellation fence does not establish quiescence, and no current workflow pause or Archive operation is implied here.
 
 `loom_cancel(workflowId, reason, confirmation)` is a General-only lifecycle transition; `confirmation` records the exact explicit user request. The caller must be the workflow's persisted creating/owning session in the same project. A first cancellation of active unreleased work also requires its current binding. The owning General can cancel a failed-terminal or explicitly released historical workflow after rebinding, without changing the replacement. Repeating a completed cancellation returns the original record. Fully successful terminal workflows remain no-ops; a failed-terminal workflow still requires cancellation cleanup, retaining every failed gate verdict unchanged.
 
