@@ -8,7 +8,7 @@ Reviewer verifies that TDD generated discriminating behavioral and design eviden
 
 ### Test selection and sequencing
 
-- a small Test List or equivalent working queue identified the next behaviors without pretending to be a complete up-front test plan;
+- for non-trivial work, a small Test List or equivalent working queue identified the next behaviors without pretending to be a complete up-front test plan; for a genuine single-behavior change, the one next test is sufficient;
 - the defining behavior was driven before exotic cases unless risk justified another order;
 - each cycle handled one conceptual behavior so failures remained diagnostic;
 - additional examples were chosen to force useful generalization, not merely increase test count.
