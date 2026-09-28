@@ -321,6 +321,13 @@ type GitMutationSnapshot = {
   foreign: string
 }
 
+type GitPrecommitSnapshot = {
+  head: string
+  tree: string
+  paths: string[]
+  entries: Record<string, string>
+}
+
 type GitMutationIntent = {
   schemaVersion: 1
   authorityId: string
@@ -336,7 +343,15 @@ type GitMutationIntent = {
   stageTargets?: string[]
   stageBefore?: Record<string, string>
   headBefore?: string
-  commitBefore?: { head: string; tree: string; paths: string[]; entries: Record<string, string> }
+  commitBefore?: {
+    head: string
+    tree: string
+    paths: string[]
+    entries: Record<string, string>
+    sessionID: string
+    attachmentId: string
+    callID: string
+  }
   captureError?: string
   createdAt: string
   resolved?: boolean
@@ -457,12 +472,14 @@ async function reconcileGitMutationIntents(
   binding: GitOwnershipBinding,
   alreadyLockedPaths?: readonly string[],
   stepAuthorityAlreadyLocked = false,
+  gitIndexAlreadyLocked = false,
 ) {
   const initial = await scanGitMutationIntents(ctx, binding)
   if (initial.length === 0) return
   const held = alreadyLockedPaths ? new Set(alreadyLockedPaths.map(safeOwnedRepoPath)) : undefined
   const selected = initial.filter(({ value }) => {
     if (value.commitBefore) return false
+    if (held && value.stageTargets?.length && !gitIndexAlreadyLocked) return false
     const paths = [...new Set([...value.paths, ...(value.stageTargets ?? [])])]
     return paths.length > 0 && (!held || paths.every((path) => held.has(safeOwnedRepoPath(path))))
   })
@@ -472,6 +489,7 @@ async function reconcileGitMutationIntents(
     const pending = await scanGitMutationIntents(ctx, binding)
     for (const { key, value } of pending) {
       if (value.commitBefore) continue
+      if (held && value.stageTargets?.length && !gitIndexAlreadyLocked) continue
       const intentPaths = [...new Set([...value.paths, ...(value.stageTargets ?? [])])]
       if (held && !intentPaths.every((path) => held.has(safeOwnedRepoPath(path)))) continue
       const originalBinding: GitOwnershipBinding = {
@@ -507,7 +525,18 @@ async function reconcileGitMutationIntents(
         }
       }
       if (value.stageTargets?.length && value.stageBefore && value.headBefore) {
-        const restored = await restoreGitStageEntries(projectDirectory, value.stageBefore, value.headBefore)
+        const allowedCurrent = await ownedDeltaTransientIndexEntries(
+          ctx,
+          projectDirectory,
+          originalBinding,
+          value.stageTargets,
+        )
+        const restored = await restoreGitStageEntries(
+          projectDirectory,
+          value.stageBefore,
+          value.headBefore,
+          allowedCurrent,
+        )
         if (!restored) {
           unknown = true
           reason = "An interrupted git add changed its target index entries and could not be safely rolled back."
@@ -543,6 +572,9 @@ async function reconcileGitMutationIntents(
   ))].sort()
   await withRuntimeLocks(runtime, [
     ...paths.map((resourceIdentity) => ({ aggregate: "file-write", resourceIdentity })),
+    ...(selected.some(({ value }) => value.stageTargets?.length)
+      ? [{ aggregate: "git-index", resourceIdentity: "__repository_index__" }]
+      : []),
     ...(!stepAuthorityAlreadyLocked
       ? [{ aggregate: "step-authority", resourceIdentity: `${binding.workflowId}:${binding.stepId}` }]
       : []),
@@ -753,7 +785,7 @@ async function snapshotGitMutation(
   return {
     path: normalized,
     bytes: bytes.toString("base64"),
-    mode: info?.mode ?? 0,
+    mode: info ? Number(info.mode) : 0,
     head,
     headMode,
     indexEntry: indexFingerprint,
@@ -1133,10 +1165,33 @@ async function gitStageEntrySnapshot(projectDirectory: string, paths: readonly s
   return entries
 }
 
+async function ownedDeltaTransientIndexEntries(
+  ctx: any,
+  projectDirectory: string,
+  binding: GitOwnershipBinding,
+  paths: readonly string[],
+) {
+  const allowed: Record<string, string[]> = {}
+  for (const raw of paths) {
+    const path = safeOwnedRepoPath(raw)
+    const receipt = await ctx.storage.get(gitDeltaReceiptKey(binding, path)) as GitDeltaReceipt | undefined
+    if (!receipt || receipt.schemaVersion !== 1 || receipt.authorityId !== binding.authorityId || receipt.path !== path) continue
+    const [aggregateOid, projectionOid] = await Promise.all([
+      gitHashBlob(projectDirectory, Buffer.from(receipt.aggregate, "base64")),
+      gitHashBlob(projectDirectory, Buffer.from(receipt.projection, "base64")),
+    ])
+    allowed[path] = [aggregateOid, projectionOid].map((oid) =>
+      `${receipt.headMode} ${oid} 0\t${path}\0`,
+    )
+  }
+  return allowed
+}
+
 async function restoreGitStageEntries(
   projectDirectory: string,
   before: Record<string, string>,
   headBefore: string,
+  allowedCurrent: Record<string, string[]> = {},
 ) {
   const head = await gitHeadIdentity(projectDirectory)
   if (head !== headBefore) return false
@@ -1149,7 +1204,7 @@ async function restoreGitStageEntries(
     )
     const current = Buffer.from(stdout as Buffer).toString("utf8")
     if (current === prior) continue
-    if (!await gitIndexMatchesWorktree(projectDirectory, path)) return false
+    if (!allowedCurrent[path]?.includes(current) && !await gitIndexMatchesWorktree(projectDirectory, path)) return false
     if (!prior) {
       await execFileAsync("git", ["update-index", "--force-remove", "--", safeOwnedRepoPath(path)], {
         cwd: projectDirectory, encoding: "utf8",
@@ -1196,57 +1251,88 @@ async function projectStagedGitDeltas(
   sessionID: string,
   projectDirectory: string,
   paths: readonly string[],
+  stageEntriesBefore?: Record<string, string>,
+  stageHeadBefore?: string,
 ) {
   const binding = await gitSessionOwnershipBinding(ctx, sessionID)
   if (!binding) return
-  for (const raw of paths) {
-    const path = safeOwnedRepoPath(raw)
-    const receipt = await ctx.storage.get(gitDeltaReceiptKey(binding, path)) as GitDeltaReceipt | undefined
-    if (!receipt) continue
-    if (
-      receipt.schemaVersion !== 1 || receipt.authorityId !== binding.authorityId ||
-      receipt.workflowId !== binding.workflowId || receipt.stepId !== binding.stepId ||
-      receipt.attempt !== binding.attempt || receipt.path !== path
-    ) throw new Error(`Git staging denied: owned-delta receipt is stale or cross-session for ${path}.`)
-    const [head, aggregate, staged, worktreeInfo] = await Promise.all([
-      gitHeadIdentity(projectDirectory),
-      readFile(join(projectDirectory, path)),
-      execFileAsync("git", ["show", `:${path}`], { cwd: projectDirectory, encoding: "buffer" }),
-      lstat(join(projectDirectory, path)),
-    ])
-    if (
-      head !== receipt.head ||
-      worktreeInfo.mode.toString(8) !== receipt.headMode ||
-      !aggregate.equals(Buffer.from(receipt.aggregate, "base64")) ||
-      !Buffer.from(staged.stdout as Buffer).equals(aggregate)
-    ) throw new Error(`Git staging denied: aggregate, index, or HEAD changed after the admitted mutation for ${path}.`)
-    const projection = Buffer.from(receipt.projection, "base64")
-    const oid = await gitHashBlob(projectDirectory, projection)
-    await execFileAsync("git", ["update-index", "--add", "--cacheinfo", `${receipt.headMode},${oid},${path}`], {
-      cwd: projectDirectory,
-      encoding: "utf8",
-    })
-    const stagedProjection = await execFileAsync("git", ["show", `:${path}`], { cwd: projectDirectory, encoding: "buffer" })
-    if (!Buffer.from(stagedProjection.stdout as Buffer).equals(projection)) {
-      throw new Error(`Git staging denied: index did not retain the exact owned projection for ${path}.`)
+  const normalized = [...new Set(paths.map(safeOwnedRepoPath))]
+  const beforeStageReceipts = new Map<string, unknown>()
+  for (const path of normalized) beforeStageReceipts.set(path, await ctx.storage.get(gitDeltaStageKey(binding, path)))
+  try {
+    for (const path of normalized) {
+      const receipt = await ctx.storage.get(gitDeltaReceiptKey(binding, path)) as GitDeltaReceipt | undefined
+      if (!receipt) continue
+      if (
+        receipt.schemaVersion !== 1 || receipt.authorityId !== binding.authorityId ||
+        receipt.workflowId !== binding.workflowId || receipt.stepId !== binding.stepId ||
+        receipt.attempt !== binding.attempt || receipt.path !== path
+      ) throw new Error(`Git staging denied: owned-delta receipt is stale or cross-session for ${path}.`)
+      const [head, aggregate, staged, worktreeInfo] = await Promise.all([
+        gitHeadIdentity(projectDirectory),
+        readFile(join(projectDirectory, path)),
+        execFileAsync("git", ["show", `:${path}`], { cwd: projectDirectory, encoding: "buffer" }),
+        lstat(join(projectDirectory, path)),
+      ])
+      if (
+        head !== receipt.head ||
+        worktreeInfo.mode.toString(8) !== receipt.headMode ||
+        !aggregate.equals(Buffer.from(receipt.aggregate, "base64")) ||
+        !Buffer.from(staged.stdout as Buffer).equals(aggregate)
+      ) throw new Error(`Git staging denied: aggregate, index, or HEAD changed after the admitted mutation for ${path}.`)
+      const projection = Buffer.from(receipt.projection, "base64")
+      const oid = await gitHashBlob(projectDirectory, projection)
+      await execFileAsync("git", ["update-index", "--add", "--cacheinfo", `${receipt.headMode},${oid},${path}`], {
+        cwd: projectDirectory,
+        encoding: "utf8",
+      })
+      const stagedProjection = await execFileAsync("git", ["show", `:${path}`], { cwd: projectDirectory, encoding: "buffer" })
+      if (!Buffer.from(stagedProjection.stdout as Buffer).equals(projection)) {
+        throw new Error(`Git staging denied: index did not retain the exact owned projection for ${path}.`)
+      }
+      await ctx.storage.set(gitDeltaStageKey(binding, path), {
+        schemaVersion: 1,
+        authorityId: binding.authorityId,
+        workflowId: binding.workflowId,
+        stepId: binding.stepId,
+        attempt: binding.attempt,
+        sourceSessionId: sessionID,
+        path,
+        head: receipt.head,
+        headMode: receipt.headMode,
+        headContent: receipt.headContent,
+        aggregate: receipt.aggregate,
+        foreign: receipt.foreign,
+        projection: receipt.projection,
+        projectionOid: oid,
+        stagedFingerprint: await stagedFingerprint(projectDirectory, path),
+      })
     }
-    await ctx.storage.set(gitDeltaStageKey(binding, path), {
-      schemaVersion: 1,
-      authorityId: binding.authorityId,
-      workflowId: binding.workflowId,
-      stepId: binding.stepId,
-      attempt: binding.attempt,
-      sourceSessionId: sessionID,
-      path,
-      head: receipt.head,
-      headMode: receipt.headMode,
-      headContent: receipt.headContent,
-      aggregate: receipt.aggregate,
-      foreign: receipt.foreign,
-      projection: receipt.projection,
-      projectionOid: oid,
-      stagedFingerprint: await stagedFingerprint(projectDirectory, path),
-    })
+  } catch (error) {
+    if (stageEntriesBefore && stageHeadBefore) {
+      try {
+        const allowedCurrent = await ownedDeltaTransientIndexEntries(ctx, projectDirectory, binding, normalized)
+        const restored = await restoreGitStageEntries(
+          projectDirectory,
+          stageEntriesBefore,
+          stageHeadBefore,
+          allowedCurrent,
+        )
+        if (!restored) throw new Error("Pre-call Git index state could not be safely restored.")
+        for (const path of normalized) {
+          const current = await ctx.storage.get(gitDeltaStageKey(binding, path))
+          const before = beforeStageReceipts.get(path)
+          if (current !== before) await ctx.storage.set(gitDeltaStageKey(binding, path), before)
+        }
+      } catch (restoreError) {
+        const reason = `Owned-delta projection failed and exact index rollback was not verified: ${restoreError instanceof Error ? restoreError.message : String(restoreError)}`
+        await Promise.all(normalized.map((path) => ctx.storage.set(
+          gitDeltaUnprovenKey(binding, path),
+          { authorityId: binding.authorityId, sourceSessionId: sessionID, reason },
+        )))
+      }
+    }
+    throw error
   }
 }
 
@@ -1275,9 +1361,35 @@ async function reconcileCommittedGitDeltas(
     cwd: projectDirectory, encoding: "utf8",
   })).stdout).trim()
   const intents = await scanGitMutationIntents(ctx, binding)
-  const commitIntent = intents.find(({ value }) =>
-    value.commitBefore?.head === parent && value.commitBefore.tree === tree,
-  )
+  const currentAttachmentId = await ctx.storage.get(sessionAttachmentKey(sessionID))
+  const exactStages = candidates
+    .map((entry: any) => entry.value)
+    .filter((stage: any) => stage?.schemaVersion === 1 && stage.authorityId === binding.authorityId &&
+      stage.workflowId === binding.workflowId && stage.stepId === binding.stepId &&
+      stage.attempt === binding.attempt && stage.head === parent)
+  const exactStagePaths = [...new Set(exactStages.map((stage: any) => String(stage.path)))].sort()
+  const commitIntent = intents.find(({ key, value }) => {
+    const precommit = value.commitBefore
+    const intentKeyOffset = key.lastIndexOf("git-mutation-intent/")
+    const logicalIntentKey = intentKeyOffset >= 0 ? key.slice(intentKeyOffset) : ""
+    if (
+      !precommit || value.authorityId !== binding.authorityId ||
+      value.workflowId !== binding.workflowId || value.stepId !== binding.stepId ||
+      value.attempt !== binding.attempt || value.sessionID !== sessionID ||
+      value.attachmentId !== currentAttachmentId || !value.callID ||
+      logicalIntentKey !== gitMutationIntentKey(binding, sessionID, value.callID) ||
+      precommit.sessionID !== sessionID || precommit.attachmentId !== currentAttachmentId ||
+      precommit.callID !== value.callID || precommit.head !== parent || precommit.tree !== tree
+    ) return false
+    const precommitPaths = [...new Set(precommit.paths.map(safeOwnedRepoPath))].sort()
+    if (precommitPaths.length !== exactStagePaths.length || precommitPaths.some((path, index) => path !== exactStagePaths[index])) return false
+    if (Object.keys(precommit.entries).sort().some((path, index) => path !== precommitPaths[index]) ||
+      Object.keys(precommit.entries).length !== precommitPaths.length) return false
+    return exactStages.every((stage: any) => {
+      const expected = `${stage.headMode} ${stage.projectionOid} 0\t${safeOwnedRepoPath(stage.path)}\0`
+      return Buffer.from(precommit.entries[safeOwnedRepoPath(stage.path)] ?? "", "base64").toString("utf8") === expected
+    })
+  })
   if (!commitIntent) return
   const precommit = commitIntent.value.commitBefore!
   for (const entry of candidates) {
@@ -10563,6 +10675,8 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               ctx.location.directory,
               mutationBinding,
               lockedRepoPaths,
+              false,
+              lockGitIndex,
             )
           }
           await revalidateDirectMutationUnderLock(raw, directMutationPaths)
@@ -10597,7 +10711,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           const stageTargets = lockGitIndex && typeof command === "string"
             ? (scopedGitAddTargets(command) ?? [])
             : []
-          let commitBefore: GitMutationIntent["commitBefore"]
+          let commitBefore: GitPrecommitSnapshot | undefined
           if (stageTargets.length > 0) {
             pending.gitStageTargets = stageTargets
             pending.gitStageBefore = await gitStageSnapshot(ctx.location.directory, stageTargets)
@@ -10633,7 +10747,9 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                   stageBefore: pending.gitStageEntriesBefore,
                   headBefore: pending.gitStageHeadBefore,
                 } : {}),
-                ...(commitBefore ? { commitBefore } : {}),
+                ...(commitBefore ? {
+                  commitBefore: { ...commitBefore, sessionID, attachmentId, callID },
+                } : {}),
                 ...(pending.gitMutationCaptureError ? { captureError: pending.gitMutationCaptureError } : {}),
                 createdAt: new Date().toISOString(),
               }
@@ -10649,7 +10765,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               if (binding) {
                 for (const path of addTargets) {
                   if (
-                    pending.gitStageBefore[path] &&
+                    pending.gitStageBefore?.[path] &&
                     await ctx.storage.get(gitDeltaReceiptKey(binding, path)) &&
                     await gitIndexMatchesWorktree(ctx.location.directory, path)
                   ) {
@@ -10661,11 +10777,8 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           }
         } catch (error) {
           if (pending.gitMutationIntentKey) {
-            if (ctx.storage.delete) await ctx.storage.delete(pending.gitMutationIntentKey)
-            else {
-              const intent = await ctx.storage.get(pending.gitMutationIntentKey) as GitMutationIntent | undefined
-              if (intent) await ctx.storage.set(pending.gitMutationIntentKey, { ...intent, resolved: true })
-            }
+            const intent = await ctx.storage.get(pending.gitMutationIntentKey) as GitMutationIntent | undefined
+            if (intent) await ctx.storage.set(pending.gitMutationIntentKey, { ...intent, resolved: true })
           }
           await releaseGitWriteLocks(raw)
           pendingObservations.delete(key)
@@ -10901,7 +11014,10 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 )
                 : []
           if (raw.status === "completed" && staged.length > 0) {
-            await projectStagedGitDeltas(ctx, sessionID, ctx.location.directory, staged)
+            await projectStagedGitDeltas(
+              ctx, sessionID, ctx.location.directory, staged,
+              pending?.gitStageEntriesBefore, pending?.gitStageHeadBefore,
+            )
           }
           await recordGitSessionStagingResult(
             ctx,
@@ -11048,7 +11164,10 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                     )
                     : []
               if (raw.status === "completed" && staged.length > 0) {
-                await projectStagedGitDeltas(ctx, sessionID, ctx.location.directory, staged)
+                await projectStagedGitDeltas(
+                  ctx, sessionID, ctx.location.directory, staged,
+                  pending.gitStageEntriesBefore, pending.gitStageHeadBefore,
+                )
               }
               await recordGitSessionStagingResult(
                 ctx,
@@ -11154,8 +11273,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             cwd: ctx.location.directory, encoding: "utf8",
           })).stdout).trim() !== intent.commitBefore.head)
         if (!keepForCommitRecovery) {
-          if (ctx.storage.delete) await ctx.storage.delete(pending.gitMutationIntentKey)
-          else if (intent) await ctx.storage.set(pending.gitMutationIntentKey, { ...intent, resolved: true })
+          if (intent) await ctx.storage.set(pending.gitMutationIntentKey, { ...intent, resolved: true })
         }
       }
       } finally {

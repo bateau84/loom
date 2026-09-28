@@ -134,7 +134,11 @@ try {
       generalSessionID,
       firstWorkerSessionID: sessionID,
     }
-    await new Promise<void>((resolve) => process.stdout.write(JSON.stringify(result) + "\n", resolve))
+    await new Promise<void>((resolve, reject) => process.stdout.write(
+      JSON.stringify(result) + "\n",
+      "utf8",
+      (error) => error ? reject(error) : resolve(),
+    ))
     // Deliberately skip execute.after. Process death must release the flock
     // keeper without creating a delta receipt for the abandoned bytes.
     process.exit(0)
@@ -167,13 +171,25 @@ try {
       sessionID, agent: "worker", input: { command: "git add -- src/shared.ts" },
     }
     await toolHooks.get("execute.before")?.(stage)
+    await (await import("node:fs/promises")).writeFile(
+      join(root, "src", "concurrent.ts"),
+      "preserve concurrent staged\n",
+    )
+    await execFileAsync("git", ["add", "--", "src/concurrent.ts"], { cwd: root })
     await execFileAsync("git", ["add", "--", "src/shared.ts"], { cwd: root })
-    await new Promise<void>((resolve) => process.stdout.write(JSON.stringify({ workflowId: id, generalSessionID }) + "\n", resolve))
+    await new Promise<void>((resolve, reject) => process.stdout.write(
+      JSON.stringify({ workflowId: id, generalSessionID }) + "\n",
+      "utf8",
+      (error) => error ? reject(error) : resolve(),
+    ))
     // Deliberately omit execute.after. The next process must restore the exact
     // pre-call index instead of retaining the shared aggregate.
     process.exit(0)
   } else if (phase === "recover-interrupted-stage") {
     if (!workflowId) throw new Error("recover-interrupted-stage requires workflow ID")
+    const [startedFile] = extra
+    if (!startedFile) throw new Error("recover-interrupted-stage requires a started signal path")
+    await (await import("node:fs/promises")).writeFile(startedFile, "recovering")
     const completion = await call(
       "complete",
       { workflowId, stepId: "worker", summary: "Interrupted staging must leave no aggregate in the index." },
@@ -181,7 +197,8 @@ try {
       sessionID,
     )
     const index = await execFileAsync("git", ["show", ":src/shared.ts"], { cwd: root, encoding: "utf8" })
-    process.stdout.write(JSON.stringify({ completionError: completion.error, index: index.stdout }) + "\n")
+    const concurrentIndex = await execFileAsync("git", ["show", ":src/concurrent.ts"], { cwd: root, encoding: "utf8" })
+    process.stdout.write(JSON.stringify({ completionError: completion.error, index: index.stdout, concurrentIndex: concurrentIndex.stdout }) + "\n")
   } else if (phase === "retry-abandoned") {
     if (!workflowId) throw new Error("retry-abandoned requires workflow ID")
     const [generalSessionID, priorWorkerSessionID] = extra

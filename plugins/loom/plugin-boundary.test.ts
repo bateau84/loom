@@ -18,6 +18,7 @@ import {
   createProjectStorage,
   createTransactionalStorage,
   resolveRuntimeIdentity,
+  tryAcquireRuntimeLocks,
 } from "./runtime"
 
 const roots: string[] = []
@@ -4387,6 +4388,34 @@ Verdict: FAIL
       expect(partialCommitPermission.message).toContain("no staged repository changes")
       await git(h.root, ["reset", "--", "src/shared.ts"])
 
+      // A projection can update the index and still fail before its durable
+      // stage receipt is written. Roll back only this call's target path while
+      // retaining an unrelated entry staged concurrently.
+      await writeFile(join(h.root, "src", "concurrent.ts"), "keep staged\n")
+      const receiptFailureStage = {
+        tool: "shell", callID: "owned-delta-receipt-failure", sessionID: "delta-worker", agent: "worker",
+        input: { command: "git add -- src/shared.ts" },
+      }
+      await h.toolHooks.get("execute.before")?.(receiptFailureStage)
+      await git(h.root, ["add", "--", "src/concurrent.ts"])
+      await git(h.root, ["add", "--", "src/shared.ts"])
+      const rawStorage = await createTransactionalStorage(h.runtime)
+      const originalStorageSet = rawStorage.set.bind(rawStorage)
+      rawStorage.set = async (key: string, value: unknown) => {
+        if (key.endsWith("/staged")) throw new Error("injected stage-receipt persistence failure")
+        return originalStorageSet(key, value)
+      }
+      try {
+        await expect(h.toolHooks.get("execute.after")?.({
+          ...receiptFailureStage, status: "completed", result: "staged",
+        })).rejects.toThrow("injected stage-receipt persistence failure")
+      } finally {
+        rawStorage.set = originalStorageSet
+      }
+      expect((await git(h.root, ["show", ":src/shared.ts"])).stdout).toBe("alpha\nseparator\nold\nomega\n")
+      expect((await git(h.root, ["show", ":src/concurrent.ts"])).stdout).toBe("keep staged\n")
+      await git(h.root, ["reset", "--", "src/concurrent.ts"])
+
       const freshSession = "delta-worker-fresh"
       const freshGrant = await h.call("dispatch_grant", { workflowId, stepId: "worker" }, "general", "delta-general")
       expect((await h.call(
@@ -4419,7 +4448,17 @@ Verdict: FAIL
       await h.toolHooks.get("execute.after")?.({
         ...commitEvent, status: "error", error: new Error("simulated observer crash after commit"),
       })
-      expect(await h.durableStorage.get(commitIntentKey)).toBeDefined()
+      const commitIntent = await h.durableStorage.get(commitIntentKey) as any
+      expect(commitIntent).toMatchObject({
+        sessionID: freshSession,
+        callID: "owned-delta-commit",
+        commitBefore: {
+          sessionID: freshSession,
+          callID: "owned-delta-commit",
+        },
+      })
+      expect(commitIntent.attachmentId).toBe(await h.durableStorage.get(`session-attachment/${freshSession}`))
+      expect(commitIntent.commitBefore.entries["src/shared.ts"]).toBeTruthy()
       expect((await git(h.root, ["show", "HEAD:src/shared.ts"])).stdout).toBe("alpha\nseparator\nlatest\nomega\n")
       expect((await git(h.root, ["diff", "--", "src/shared.ts"])).stdout).toContain("+foreign")
       await writeFile(join(h.root, "src", "shared.ts"), "alpha\nintruder\nseparator\nlatest\nomega\n")
@@ -4470,9 +4509,50 @@ Verdict: FAIL
       await h.toolHooks.get("execute.after")?.({ ...stage, status: "completed", result: "staged" })
       expect((await git(h.root, ["show", ":src/shared.ts"])).stdout).toBe("alpha\nseparator\nnew\nomega\n")
 
+      const precommitHead = String((await git(h.root, ["rev-parse", "HEAD"])).stdout).trim()
+      const precommitTree = String((await git(h.root, ["write-tree"])).stdout).trim()
+      const precommitEntry = String((await git(h.root, ["ls-files", "--stage", "-z", "--", "src/shared.ts"])).stdout)
+      const staleSession = "external-matching-stale-session"
+      const currentAttachmentId = await h.durableStorage.get("session-attachment/external-matching-worker") as string
+      const authorityId = `step:${encodeURIComponent(workflowId)}:worker:0`
+      const staleCommitIdentities = [
+        { keyAttempt: 0, keySession: staleSession, keyCall: "stale-session-call", attempt: 0, sessionID: staleSession, attachmentId: "stale-attachment", callID: "stale-session-call", authorityId },
+        { keyAttempt: 1, keySession: "external-matching-worker", keyCall: "stale-attempt-call", attempt: 1, sessionID: "external-matching-worker", attachmentId: currentAttachmentId, callID: "stale-attempt-call", authorityId },
+        { keyAttempt: 0, keySession: "external-matching-worker", keyCall: "stale-attachment-call", attempt: 0, sessionID: "external-matching-worker", attachmentId: "stale-attachment", callID: "stale-attachment-call", authorityId },
+        { keyAttempt: 0, keySession: "external-matching-worker", keyCall: "stale-call-key", attempt: 0, sessionID: "external-matching-worker", attachmentId: currentAttachmentId, callID: "different-call-id", authorityId },
+      ]
+      for (const stale of staleCommitIdentities) {
+        await h.durableStorage.set(
+          `git-mutation-intent/${encodeURIComponent(workflowId)}/worker/${stale.keyAttempt}/${encodeURIComponent(stale.keySession)}/${encodeURIComponent(stale.keyCall)}`,
+          {
+            schemaVersion: 1,
+            authorityId: stale.authorityId,
+            workflowId,
+            stepId: "worker",
+            attempt: stale.attempt,
+            attachmentId: stale.attachmentId,
+            sessionID: stale.sessionID,
+            callID: stale.callID,
+            tool: "shell",
+            paths: [],
+            beforeFingerprints: {},
+            commitBefore: {
+              head: precommitHead,
+              tree: precommitTree,
+              paths: ["src/shared.ts"],
+              entries: { "src/shared.ts": Buffer.from(precommitEntry).toString("base64") },
+              sessionID: stale.sessionID,
+              attachmentId: stale.attachmentId,
+              callID: stale.callID,
+            },
+            createdAt: new Date().toISOString(),
+          },
+        )
+      }
+
       // This foreign actor publishes the exact projection and parent/blob
-      // expected by Loom, but no admitted execute.before recorded precommit
-      // identity for this commit.
+      // expected by Loom, but only stale/mismatched attempt, authority,
+      // attachment, session, and call identities exist.
       await git(h.root, ["-c", "core.hooksPath=/dev/null", "commit", "-m", "external matching owned delta"])
       const completion = await h.call(
         "complete", { workflowId, stepId: "worker", summary: "Must not adopt an external commit." },
@@ -4628,11 +4708,59 @@ Verdict: FAIL
 
       const workerSession = "interrupted-stage-worker"
       const prepared = await runPhase(["prepare-interrupted-stage", h.root, "", workerSession])
-      const recovered = await runPhase([
-        "recover-interrupted-stage", h.root, prepared.workflowId, workerSession,
+      const signalDirectory = join(h.root, ".interrupted-stage-recovery")
+      const recoveryStarted = join(signalDirectory, "started")
+      await mkdir(signalDirectory, { recursive: true })
+      const processRuntime = await (async () => {
+        const previousStateHome = process.env.XDG_STATE_HOME
+        const previousRuntimeDir = process.env.XDG_RUNTIME_DIR
+        process.env.XDG_STATE_HOME = join(h.root, "state")
+        process.env.XDG_RUNTIME_DIR = join(h.root, "runtime")
+        try {
+          return await resolveRuntimeIdentity(h.root, h.storage)
+        } finally {
+          if (previousStateHome === undefined) delete process.env.XDG_STATE_HOME
+          else process.env.XDG_STATE_HOME = previousStateHome
+          if (previousRuntimeDir === undefined) delete process.env.XDG_RUNTIME_DIR
+          else process.env.XDG_RUNTIME_DIR = previousRuntimeDir
+        }
+      })()
+      const indexLease = await tryAcquireRuntimeLocks(processRuntime, [
+        { aggregate: "git-index", resourceIdentity: "__repository_index__" },
       ])
+      expect("busyResource" in indexLease).toBe(false)
+      const sameRuntimeProbe = await tryAcquireRuntimeLocks(processRuntime, [
+        { aggregate: "git-index", resourceIdentity: "__repository_index__" },
+      ])
+      const sameRuntimeIsBlocked = "busyResource" in sameRuntimeProbe
+      if (!sameRuntimeIsBlocked) await sameRuntimeProbe.release()
+      expect(sameRuntimeIsBlocked).toBe(true)
+      let recoverySettled = false
+      const recovering = runPhase([
+        "recover-interrupted-stage", h.root, prepared.workflowId, workerSession, recoveryStarted,
+      ]).then((result) => { recoverySettled = true; return result })
+      const waitForRecoveryStart = async () => {
+        const deadline = Date.now() + 10_000
+        while (Date.now() < deadline) {
+          try { return await readFile(recoveryStarted, "utf8") }
+          catch (error: any) { if (error?.code !== "ENOENT") throw error }
+          await Bun.sleep(20)
+        }
+        throw new Error("Timed out waiting for the interrupted-stage recovery process.")
+      }
+      let remainedBlocked = false
+      try {
+        await waitForRecoveryStart()
+        await Bun.sleep(75)
+        remainedBlocked = !recoverySettled
+      } finally {
+        if (!("busyResource" in indexLease)) await indexLease.release()
+      }
+      const recovered = await recovering
+      expect(remainedBlocked).toBe(true)
       expect(recovered.completionError).toMatch(/uncommitted changes/i)
       expect(recovered.index).toBe("alpha\nseparator\nold\nomega\n")
+      expect(recovered.concurrentIndex).toBe("preserve concurrent staged\n")
       expect((await git(h.root, ["diff", "--cached", "--", "src/shared.ts"])).stdout).toBe("")
       expect((await git(h.root, ["diff", "--", "src/shared.ts"])).stdout).toContain("+foreign")
     } finally {
