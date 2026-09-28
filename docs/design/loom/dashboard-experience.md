@@ -7,6 +7,8 @@ tags: [design, loom, dashboard, control-panel, ux, ui]
 
 **Status:** proposed
 
+**Accepted scope boundary:** Per user resolution of OQ `3fb7f28b-e116-4765-9366-d2a84c9f7222`, working-directory/session/workflow views are in scope for read-only inspection; the sole dashboard mutation in this design is explicit-confirmation removal of terminal failed/cancelled workflow records. Workflow/Objective plan-only may be shown as a reviewed intermediate outcome; dashboard presentation does not grant execution authority.
+
 ## Experience goal
 
 Loom should feel like a **control panel for the user's work**, not a cockpit for Loom internals.
@@ -56,8 +58,7 @@ A directory page shows:
 - canonical directory path;
 - recent sessions in that directory;
 - a small summary of active and failed work;
-- a route to **Manage workflows**;
-- the Objective → Phase → Wave → Task work map as an advanced disclosure rather than the default content.
+- the Objective → Phase → Wave → Task work map as a read-only advanced disclosure rather than the default content.
 
 ### Session
 
@@ -70,17 +71,17 @@ It shows:
 - workflows contained in the session;
 - simple workflow states: active, blocked, failed, complete, cancelled;
 - open questions or other user-relevant boundaries;
-- cleanup action when the session contains failed/cancelled workflow attempts.
+- a cleanup action only when terminal failed/cancelled workflow records are present.
 
 ### Workflow
 
-Workflow detail remains available for diagnosis. It can expose execution stages, OQs, verification, budget, Product Acceptance, participating sessions, publishers, and technical IDs.
+Workflow detail remains available for diagnosis. It can expose execution stages, OQs, verification, budget, Product Acceptance, participating sessions, publishers, and technical IDs as read-only information.
 
 This is drill-down information, not the default product model.
 
 ## Workflow cleanup
 
-Failed restart attempts create both visual clutter and stale control-plane state. The user must be able to remove them.
+The user may explicitly remove terminal failed/cancelled workflow records from the operational view.
 
 Deletion is available for **terminal failed or cancelled workflows**.
 
@@ -88,18 +89,20 @@ The interaction must:
 
 1. show which workflows will be deleted;
 2. explain that project files are not changed;
-3. explain that retained evidence and durable completed work results are not deleted;
+3. explain that retained evidence and completed work are not deleted;
 4. require an explicit confirmation action;
-5. remove the deleted workflows from normal Loom views immediately after success;
-6. remove stale workflow/session/control-plane bindings so the deleted attempts cannot interfere with later routing;
-7. refuse deletion of active work;
-8. refuse deletion when a durable completed-Wave review receipt still depends on that workflow record;
-9. treat an interrupted/uncertain browser response as unknown rather than failed, and allow a safe retry without duplicating cleanup.
+5. remove the confirmed terminal workflow records from normal operational views after success;
+6. not delete project files, retained evidence, or completed work;
+7. if eligibility or completion is uncertain, state that uncertainty rather than claim success or failure.
 
 Deletion is intentionally different from cancellation:
 
-- **Cancel** stops live work and releases execution authority.
-- **Delete** removes an already-terminal failed/cancelled execution record from active Loom state.
+- **Dashboard inspection** is read-only and does not start, resume, cancel, answer, or otherwise authorize execution.
+- **Delete** removes only explicitly selected and confirmed terminal failed/cancelled workflow records; it is not cancellation and does not remove project files, retained evidence, or completed work.
+
+## Planning-only outcome
+
+The dashboard may display a reviewed Plan and the associated planning workflow's outcome as read-only context. When the user asked for planning only, show that the planning workflow is complete and its Plan was reviewed, while making clear that the product Objective is not thereby complete and implementation has not been authorized or performed. A later implementation request is a distinct authority transition; no dashboard Plan display or review action creates it.
 
 ## Progressive disclosure
 
@@ -107,7 +110,7 @@ Default pages show human concepts first.
 
 Advanced state belongs behind drill-down or disclosure:
 
-- Objective/Phase/Wave/Task plan details;
+- Objective/Phase/Wave/Task plan details and the distinction between reviewed planning outcome and product completion;
 - publishers and projection freshness;
 - workflow revisions and internal IDs;
 - dispatch budget;
@@ -160,11 +163,12 @@ Designer validation should cover:
 
 1. developer switches among several working directories and resumes a recent session;
 2. one session contains several workflows and their relationship is immediately clear;
-3. four failed restart workflows are deleted in one confirmed cleanup action;
+3. several eligible terminal failed/cancelled workflow records are removed in one explicitly confirmed cleanup action;
 4. active workflow deletion is unavailable/refused;
 5. project files remain unchanged after workflow cleanup;
 6. stale projection and consistency conflict remain understandable;
 7. keyboard-only directory → session → workflow → back navigation;
-8. modal open/close/confirmation focus behavior;
+8. modal open/close/cleanup-confirmation focus behavior;
 9. 320 CSS-pixel narrow layout without horizontal overflow;
-10. technical diagnostics remain reachable without dominating normal use.
+10. a reviewed Plan-only workflow is visibly distinct from Objective/product completion and confers no implementation authority;
+11. technical diagnostics remain reachable without dominating normal use.
