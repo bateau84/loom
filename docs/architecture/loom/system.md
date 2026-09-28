@@ -66,6 +66,8 @@ Neither Planner nor Worker gains product or architecture authority from executio
 
 **Proposed accountability boundary:** Every planned work item must have an identifiable accountable role and a supported execution or decision route, including routine work. A specialist-owned decision/deliverable stays attributable to that specialist across handoffs even if another role implements it. Planner's Task decomposition and a Worker's completion cannot stand in for the specialist's authority; unresolved role/path or missing specialist output must remain open and route for correction. This is the proposed realization of [BR-024](../../requirements/loom/br-024-preserve-authority-ownership-through-handoffs.md), not a claim of current capability or a mandated Plan `owner` field. See [Control Plane](control-plane.md#proposed-accountable-role-admission).
 
+The chosen proposed execution seam resolves each planned item to an actual role-owned step or Reviewer gate, materializing one at unclaimed-Wave admission when no existing step matches; user decisions remain explicit blocked boundaries rather than agent work. Mixed-role dependencies and their independent evidence gates precede dependent completion, including a zero-Worker Wave. Current `loom_task_plan` still emits Worker-only `task:<id>` steps; it cannot claim role-only Task execution or Objective completion. A reviewed planning-only Plan closes its workflow, not its Objective. No migration of old Worker results into specialist decisions is implied.
+
 ### Control plane
 
 An OpenCode plugin owns machine-enforced workflow mechanics:
