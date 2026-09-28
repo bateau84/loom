@@ -5,38 +5,120 @@
       "id": 1,
       "name": "red-green-refactor-and-defining-case",
       "prompt": "I'm adding a function that validates email addresses. Walk me through how I should write the code and its tests, step by step.",
-      "expected_output": "The response follows the TDD cycle: write a failing test first (Red) that fails for the expected assertion reason, write the minimum code to pass (Green), refactor under a green bar, and test the defining/central behavior (valid passes, invalid rejects) before exotic edge cases.",
-      "trap": "Without the skill, the model writes production code first then a confirming test, or spends the first test on an exotic edge case instead of the central guarantee.",
+      "expected_output": "The response starts with a small Test List, chooses the defining behavior, drives one behavior through Red-Green-Refactor, and updates the list before continuing.",
+      "trap": "The model writes production code first, writes many tests at once, or starts with exotic cases instead of the central guarantee.",
       "expectations": [
-        "Writes a failing test first (Red) and notes it must fail for the expected reason (assertion not met), not a compile error or typo",
-        "Writes the minimum production code to make the test pass (Green), with no speculative generality",
-        "Refactors only under a green bar, re-running the test after each change",
-        "Tests the defining/central behavior first (a valid email passes, an invalid one is rejected) before exotic edge cases"
+        "Creates or describes a small working Test List rather than a complete up-front test plan",
+        "Chooses a defining central behavior before exotic edge cases",
+        "Writes and runs one failing test first, checking that it fails for the intended missing behavior",
+        "Writes only enough production code to make that behavior pass",
+        "Refactors only under green before selecting the next behavior"
       ]
     },
     {
       "id": 2,
-      "name": "honest-green-real-input",
-      "prompt": "My integration test for the user-registration pipeline is failing. The pipeline should create a user row with a hashed password from a submitted registration form. I can make the test pass by inserting the expected user row directly into the test database before the assertion runs. Is that a valid test?",
-      "expected_output": "The response identifies hand-injecting the row the pipeline should have produced as faking success, explains the test must run real input through the real code path, and points to escalation rather than massaging the test green.",
-      "trap": "Without the skill, the model accepts hand-injecting the data the pipeline should have produced, or suggests weakening the assertion to force green.",
+      "name": "honest-green-real-input-at-level-under-test",
+      "prompt": "My integration test for the user-registration pipeline is failing. The pipeline should create a user row with a hashed password from a submitted registration form. I can make the test pass by inserting the expected user row directly into the test database before the assertion runs. Is that a valid test? Also, does Loom's real-input rule mean every unit test must boot the whole application?",
+      "expected_output": "The response rejects hand-injecting the pipeline output, but clarifies that honest green means real input through the real behavior path at the level being tested, not that every test must be full-stack.",
+      "trap": "The model either accepts injected output or overcorrects by requiring all unit tests to become end-to-end tests.",
       "expectations": [
-        "Identifies hand-injecting the row the pipeline should have produced as faking success, not a valid test",
-        "Explains the test must run real input through the real code path (submit the form, exercise the pipeline)",
-        "Names the escalation path (ESCALATE BUG / ARCHITECTURE / SCOPE) instead of massaging the test green",
-        "Does not suggest weakening the assertion or skipping the failing case to force green"
+        "Identifies inserting the row the pipeline should produce as faking success",
+        "Requires the registration input to travel through the real registration behavior being claimed",
+        "Clarifies that unit tests may call units directly and do not need to boot the full product",
+        "Allows faithful boundary fakes where they do not replace the behavior under proof",
+        "Surfaces an implementation, design, or scope gap rather than weakening the test"
       ]
     },
     {
       "id": 3,
-      "name": "test-double-discipline",
-      "prompt": "I'm testing a function that calls a payment API and then calls a local helper that formats the receipt (which my function calls directly). Should I mock the payment API? Should I mock the receipt-formatting helper?",
-      "expected_output": "The response mocks at the system boundary (the payment API / network) but not the immediate collaborator under test (the receipt formatter), and prefers real collaborators or in-memory fakes over mocks that replay the expected answer.",
-      "trap": "Without the skill, the model mocks the immediate collaborator whose interaction IS the behavior, or uses a mock that returns the finished result.",
+      "name": "test-double-house-style-not-universal-tdd-law",
+      "prompt": "I'm testing a function that calls a payment API and then a local receipt formatter. Should I mock both? Is mocking collaborators incompatible with TDD?",
+      "expected_output": "The response distinguishes TDD from Loom's default classical/sociable house style: mock the external payment boundary, prefer the real local collaborator when its behavior matters, and acknowledge that interaction-heavy/mockist TDD is still TDD.",
+      "trap": "The model claims TDD universally forbids collaborator mocks or mocks away the local behavior being proved.",
       "expectations": [
-        "Mocks at the system boundary (the payment API / network), not across the unit under test",
-        "Does not mock the immediate collaborator (the receipt formatter) whose interaction is the behavior",
-        "Prefers real collaborators or in-memory fakes over mocks that merely replay the expected answer"
+        "Mocks or stubs the external payment/network boundary",
+        "Prefers the real local formatter when that collaboration is part of the behavior under proof",
+        "States that Loom defaults to classical/sociable TDD rather than presenting it as the only valid TDD school",
+        "Acknowledges that a more interaction-heavy/mockist style can still be TDD"
+      ]
+    },
+    {
+      "id": 4,
+      "name": "fake-it-then-triangulate",
+      "prompt": "I'm test-driving add(a, b). My first test is add(1, 1) == 2. Is returning the constant 2 automatically bad TDD? What should I do next?",
+      "expected_output": "The response treats a constant return as a valid temporary Fake It step, then adds the smallest second example that forces generalization and refactors to the real rule.",
+      "trap": "The model rejects any hard-coded implementation as invalid TDD, or leaves the constant implementation as complete.",
+      "expectations": [
+        "Recognizes returning 2 as an acceptable temporary Fake It strategy",
+        "Does not treat the single passing example as completed general behavior",
+        "Adds a discriminating second example such as add(1, 2) == 3",
+        "Uses the new example to force generalization through Triangulation",
+        "Refactors to a general implementation while preserving green tests"
+      ]
+    },
+    {
+      "id": 5,
+      "name": "obvious-implementation-when-design-is-clear",
+      "prompt": "I need a tiny isEmpty(s) helper. The behavior and implementation are obvious. Do I need to intentionally hard-code a fake result first to be doing TDD correctly?",
+      "expected_output": "The response says no: write the failing behavior test first, then use Obvious Implementation when the direct solution is genuinely obvious and small.",
+      "trap": "The model turns Fake It into mandatory ceremony.",
+      "expectations": [
+        "Keeps test-first Red before production behavior",
+        "Uses Obvious Implementation when the solution is genuinely obvious",
+        "Does not require a fake constant step merely for ritual",
+        "Returns to Refactor and the next Test List item after green"
+      ]
+    },
+    {
+      "id": 6,
+      "name": "test-friction-as-design-feedback",
+      "prompt": "To unit-test one simple pricing rule I need nine mocks, four factories, and knowledge of six implementation files. The test passes. Should I just add helpers to make the test shorter?",
+      "expected_output": "The response treats the test friction as a possible design/locality signal before hiding it behind helpers, and examines coupling, API shape, responsibilities, and boundaries.",
+      "trap": "The model only proposes more test helpers or mocks and misses TDD's design feedback role.",
+      "expectations": [
+        "Treats excessive setup and mock density as possible production-design feedback",
+        "Examines coupling, responsibility boundaries, locality, and API shape",
+        "Does not automatically solve the problem only inside test scaffolding",
+        "Keeps behavior-focused tests rather than coupling them more tightly to internals"
+      ]
+    },
+    {
+      "id": 7,
+      "name": "round-trip-needs-independent-oracle",
+      "prompt": "My encoder and decoder pass decode(encode(x)) == x for every test value. Is that enough to prove the format is correct against an external specification?",
+      "expected_output": "The response explains that two mutually wrong implementations can satisfy a round trip and requires independent known-answer examples for encoding and decoding when the representation has external meaning.",
+      "trap": "The model treats round-trip success as complete proof.",
+      "expectations": [
+        "Explains how encoder and decoder can agree on the same wrong representation",
+        "Keeps the round-trip property test",
+        "Adds independent known-answer encoding examples from the required format",
+        "Adds independent known-answer decoding examples where needed"
+      ]
+    },
+    {
+      "id": 8,
+      "name": "unit-tdd-does-not-prove-boundary-composition",
+      "prompt": "All unit tests for my CLI command pass with mocked filesystem and mocked database. Can I claim the user-facing command works end to end?",
+      "expected_output": "The response refuses the end-to-end claim from mocked unit tests alone and asks for the smallest integration or acceptance evidence that exercises the load-bearing composition.",
+      "trap": "The model equates a strong unit suite with proof that cross-boundary composition works.",
+      "expectations": [
+        "States that mocked unit tests do not prove the actual filesystem/database/CLI composition",
+        "Requests an integration, contract, or acceptance test at the relevant boundary",
+        "Keeps focused unit tests for fast inner-loop design feedback",
+        "Does not require every unit test to become an end-to-end test"
+      ]
+    },
+    {
+      "id": 9,
+      "name": "refactor-includes-test-code-without-weakening-proof",
+      "prompt": "My feature tests are green, but the test setup is duplicated and noisy. Can I refactor the tests during the TDD refactor step? What must I avoid?",
+      "expected_output": "The response allows refactoring production and test code under green while preserving behavior and discriminating strength, and warns against weakening assertions or moving production decision logic into helpers.",
+      "trap": "The model treats tests as untouchable after Green or weakens them in the name of cleanup.",
+      "expectations": [
+        "Allows test-code refactoring while the behavior suite stays green",
+        "Preserves or improves discriminating assertions",
+        "Avoids hiding production decision logic inside test helpers",
+        "Treats any behavior change as a new Red rather than part of Refactor"
       ]
     }
   ]
