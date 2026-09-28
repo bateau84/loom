@@ -11,13 +11,13 @@ tags: [requirement, loom, commands, git, authority]
 
 ## Statement
 
-For governed work, Loom MUST provide task-scoped command access analogous to file scope. A rejected command may request elevation; execution may continue immediately only when the requested access is permitted without further approval. Destructive commands and commands operating outside the working directory MUST await explicit General or User approval. Git operations MUST be available through command elevation. Agents MUST commit their work during progress; at conclusion General or an agent MAY create a pull request when an origin exists.
+For governed work, Loom MUST provide task-scoped command access analogous to file scope. A rejected command may request elevation; execution may continue immediately only when the requested access is permitted without further approval. Destructive commands MUST execute only within explicitly accepted User authority for that bounded operation or after explicit User approval; General may grant access only within that authority. Commands operating outside the working directory MUST await explicit General or User approval. Git operations MUST be available through command elevation. Agents MUST commit their work during progress; at conclusion General or an agent MAY create a pull request when an origin exists.
 
 ## Acceptance Criteria
 
 1. A command rejected for insufficient authority can request task-scoped elevation that identifies the request's work context and requested authority; elevation does not implicitly authorize unrelated tasks.
 2. If the requested command is within a boundary eligible for immediate permission, Loom can grant the needed task-scoped elevation and continue that command without an unnecessary approval round-trip.
-3. Destructive commands and commands operating outside the working directory do not execute until General or User explicitly approves that requested access. A rejection, absent approval, or denial prevents execution and is not represented as command success.
+3. Destructive commands do not execute unless they are within already accepted, explicit user authority for that bounded operation or the User explicitly approves the requested risk; General may grant only within such established user authority and cannot create destructive authority by itself. Commands operating outside the working directory require explicit General/User approval before execution. A rejection, absent approval, or denial prevents execution and is not represented as command success.
 4. Git operations, including those that change repository state, are requestable through the same command-elevation path; Git is not categorically denied solely because it mutates repository state.
 5. Agents commit completed work during progress rather than waiting for workflow conclusion. A failed or unavailable commit is reported as uncommitted work, not silently treated as saved progress.
 6. At conclusion, General or an agent can create a PR when an origin exists. If no origin exists, the workflow may conclude without a PR and must not report that one was created.
@@ -25,7 +25,7 @@ For governed work, Loom MUST provide task-scoped command access analogous to fil
 
 ## Verification Semantics
 
-Observe a rejected command request for elevation; verify an eligible request can be granted and resumed immediately, while destructive and out-of-working-directory requests remain blocked until explicit General/User approval and remain blocked if denied. Verify representative read-only and state-changing Git operations can be requested through elevation, within the granted scope. During implementation, observe agents committing work before task conclusion and accurately exposing a failed commit. At conclusion, observe PR creation by General or an agent with an available origin, and no false PR-success claim when origin is absent.
+Observe a rejected command request for elevation; verify an eligible request can be granted and resumed immediately, while destructive requests lacking previously accepted explicit user authority and out-of-working-directory requests remain blocked until the required approval and remain blocked if denied. Verify General cannot authorize destructive access beyond the user's accepted bounded authority. Verify representative read-only and state-changing Git operations can be requested through elevation, within the granted scope. During implementation, observe agents committing work before task conclusion and accurately exposing a failed commit. At conclusion, observe PR creation by General or an agent with an available origin, and no false PR-success claim when origin is absent.
 
 ## Derived from
 
