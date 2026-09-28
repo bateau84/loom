@@ -134,6 +134,7 @@ try {
       generalSessionID,
       firstWorkerSessionID: sessionID,
     }
+
     await new Promise<void>((resolve, reject) => process.stdout.write(
       JSON.stringify(result) + "\n",
       "utf8",
@@ -209,6 +210,7 @@ try {
       "worker",
       priorWorkerSessionID,
     )
+
     const reopened = await call("reopen", {
       workflowId,
       stepId: "worker",
