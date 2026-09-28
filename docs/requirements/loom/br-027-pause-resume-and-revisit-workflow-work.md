@@ -1,7 +1,7 @@
 ---
 type: requirement
 title: BR-027 — Pause, Resume, and Revisit Workflow Work
-description: Pause and resume work around interruptions and unrelated requests, with provenance-preserving backtracking.
+description: Deliberate backburnering, safe pause/resume around interruptions and unrelated requests, and provenance-preserving backtracking.
 tags: [requirement, loom, workflow, recovery, interruption]
 ---
 
@@ -11,21 +11,23 @@ tags: [requirement, loom, workflow, recovery, interruption]
 
 ## Statement
 
-Loom MUST allow active work to pause for intermittent issues and to yield while the user pursues an unrelated request. The unrelated request can proceed while the original work remains paused and later resumable. When new evidence or correction requires backtracking, Loom MUST revisit affected work without losing prior status, provenance, or unaffected completed work.
+Loom MUST allow active work to be deliberately backburnered, paused for intermittent issues, or yielded while the user pursues an unrelated request. The unrelated request can proceed while the original work's context is safely retained. A workflow MUST NOT be represented as paused-and-quiescent while operations from it remain in flight. When new evidence or correction requires backtracking, Loom MUST revisit affected work without losing prior status, provenance, or unaffected completed work.
 
 ## Acceptance Criteria
 
-1. A workflow can pause for an intermittent issue without being misreported as completed, failed, or cancelled; its reason and progress remain inspectable.
-2. When a user makes an unrelated request while work is active, Loom can pause the active work and proceed with the unrelated request without treating it as a change to or completion of the paused work.
-3. A paused workflow can resume after the issue or unrelated request is resolved; its prior status and provenance are preserved, and changed evidence/dependencies are re-evaluated before dependent work continues.
-4. When new evidence or correction invalidates prior work, Loom can backtrack to the affected work and reconsider dependent conclusions; unaffected completed work remains preserved and attributable.
-5. Pause, resume, or backtracking is not by itself workflow/product completion, cancellation, scope expansion, or new implementation authority.
+1. A user can deliberately place active work on the backburner when no failure or unrelated request requires pausing; the work remains resumable with its status, rationale, dependencies, and provenance inspectable.
+2. Work can be paused for an intermittent issue without being misreported as completed, failed, or cancelled; its reason and progress remain inspectable.
+3. When a user makes an unrelated request while work is active, Loom can yield the original work and proceed with the unrelated request while retaining the original work's context; this does not treat the new request as a change to or completion of the original work.
+4. A pause request does not prove that in-flight operations have stopped. Until the original work reaches a safe point where its in-flight operations have resolved or are otherwise known not to continue, status MUST distinguish pause-requested/pausing from paused-and-quiescent, and MUST communicate any known ongoing activity. Loom MUST NOT label work simply “paused” in a way that falsely implies quiescence.
+5. A paused-and-quiescent workflow can resume after the user chooses to resume or its pause condition is resolved. Before dependent work continues, Loom preserves prior status/provenance, checks the outcome of interrupted operations, and reevaluates changed evidence/dependencies without duplicating an operation whose outcome remains uncertain.
+6. When new evidence or correction invalidates prior work, Loom can backtrack to the affected work and reconsider dependent conclusions; the history/status/provenance of superseded work remains inspectable, and unaffected completed work remains preserved and attributable.
+7. Backburnering, pausing, resuming, or backtracking is not by itself workflow/product completion, cancellation, scope expansion, or new implementation authority.
 
 ## Verification Semantics
 
-Exercise an intermittent issue, a user-requested unrelated task during active work, and a correction requiring backtracking. For each, observe explicit paused/resumed state and reason, independent progress on the unrelated request, preserved prior status/provenance, re-evaluation of changed dependencies, and preservation of unaffected completed work. Verify these transitions neither claim completion nor grant new scope/authority.
+Exercise deliberate backburnering without an error, an intermittent issue, a user-requested unrelated task during active work, an in-flight operation when pause is requested, resume after a resolved pause, and a correction requiring backtracking. Verify backburnered work remains resumable with rationale/provenance; the unrelated request proceeds while the original context is retained; and in-flight work is never labeled simply “paused” if that label would imply quiescence. Observe distinct pause-requested/pausing and paused-and-quiescent meaning where operations remain unsettled, accurate reporting of known activity, operation outcomes reconciled before resumption, and no duplicate execution based on uncertain outcomes. After resume/backtracking, verify changed dependencies are reevaluated, superseded work remains attributable, unaffected completed work is preserved, and none of these transitions falsely claims completion or grants scope/authority.
 
 ## Derived from
 
-- User-confirmed workflow behavior: pausing for intermittent issues, pausing active work for an unrelated user request while allowing the unrelated request to proceed, and addressing backtracking while preserving status/provenance.
+- User-confirmed workflow behavior in the authority-reconstruction workflow follow-up request (2026-09-28; no separate OQ ID supplied): deliberate backburnering; pausing for intermittent issues; yielding active work so an unrelated request can proceed; backtracking; and truthful pause/resume boundaries that do not imply in-flight operations are quiescent, while preserving active-work context and provenance.
 - Accepted Loom Anchor, especially AC 2, 12–14, and 24 (autonomy to real boundaries, evidence-led recovery, bounded progress, and truthful inspection).
