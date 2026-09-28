@@ -2758,9 +2758,21 @@ Verdict: FAIL
         error: new Error("git diff --cached --check found a staged problem"),
       })
 
-      // The chained inspection failed after git add changed the index. Loom
-      // should retain the provable staged fingerprint instead of forcing an
-      // otherwise unnecessary restage before commit.
+      // A chained inspection failed after git add changed the index. Loom
+      // rolls back the exact target entry so an aggregate cannot remain staged.
+      expect((await git(h.root, ["diff", "--cached", "--", write[0]])).stdout).toBe("")
+      const retryStageEvent = {
+        ...stageEvent,
+        callID: "specifier-stage-retry",
+      }
+      await h.toolHooks.get("execute.before")!(retryStageEvent)
+      await git(h.root, ["add", "--", write[0]])
+      await h.toolHooks.get("execute.after")!({
+        ...retryStageEvent,
+        status: "completed",
+        result: "restaged after rollback",
+      })
+
       const commitCommand =
         "git -c core.hooksPath=/dev/null commit -m 'test: scoped specifier artifact'"
       const commitPermission: any = {
@@ -4365,13 +4377,14 @@ Verdict: FAIL
       await h.toolHooks.get("execute.after")?.({
         ...partialStage, status: "error", error: new Error("simulated failure after git add"),
       })
+      expect((await git(h.root, ["diff", "--cached", "--", "src/shared.ts"])).stdout).toBe("")
       const partialCommitCommand = "git -c core.hooksPath=/dev/null commit -m 'test: reject partial owned delta'"
       const partialCommitPermission: any = {
         agent: "worker", action: "shell", resources: [partialCommitCommand], sessionID: "delta-worker",
       }
       await evaluate(partialCommitPermission)
       expect(partialCommitPermission.effect).toBe("deny")
-      expect(partialCommitPermission.message).toContain("owned-delta")
+      expect(partialCommitPermission.message).toContain("no staged repository changes")
       await git(h.root, ["reset", "--", "src/shared.ts"])
 
       const freshSession = "delta-worker-fresh"
@@ -4397,6 +4410,8 @@ Verdict: FAIL
       expect(commitPermission.effect).toBe("allow")
       const commitEvent = { tool: "shell", callID: "owned-delta-commit", sessionID: freshSession, agent: "worker", input: { command: commitCommand } }
       await h.toolHooks.get("execute.before")?.(commitEvent)
+      const commitIntentKey = `git-mutation-intent/${encodeURIComponent(workflowId)}/worker/0/${encodeURIComponent(freshSession)}/owned-delta-commit`
+      expect(await h.durableStorage.get(commitIntentKey)).toBeDefined()
       await git(h.root, ["-c", "core.hooksPath=/dev/null", "commit", "-m", "test: publish owned delta"])
       // Model the host dying after Git advanced HEAD but before Loom persisted
       // its publication receipt. The next completion boundary must reconcile
@@ -4404,6 +4419,7 @@ Verdict: FAIL
       await h.toolHooks.get("execute.after")?.({
         ...commitEvent, status: "error", error: new Error("simulated observer crash after commit"),
       })
+      expect(await h.durableStorage.get(commitIntentKey)).toBeDefined()
       expect((await git(h.root, ["show", "HEAD:src/shared.ts"])).stdout).toBe("alpha\nseparator\nlatest\nomega\n")
       expect((await git(h.root, ["diff", "--", "src/shared.ts"])).stdout).toContain("+foreign")
       await writeFile(join(h.root, "src", "shared.ts"), "alpha\nintruder\nseparator\nlatest\nomega\n")
@@ -4412,6 +4428,59 @@ Verdict: FAIL
       await writeFile(join(h.root, "src", "shared.ts"), "alpha\nforeign\nseparator\nlatest\nomega\n")
       const completed = await h.call("complete", { workflowId, stepId: "worker", summary: "Published only the admitted edit." }, "worker", freshSession)
       expect(completed.error).toBeUndefined()
+    } finally {
+      h.restore()
+    }
+  })
+
+  test("matching external commit is not adopted without durable exact precommit identity", async () => {
+    const h = await harness()
+    try {
+      await initializeGitFixture(h.root)
+      await writeFile(join(h.root, "src", "shared.ts"), "alpha\nseparator\nold\nomega\n")
+      await git(h.root, ["add", "--", "src/shared.ts"])
+      await git(h.root, ["commit", "-m", "external matching baseline"])
+      await writeFile(join(h.root, "src", "shared.ts"), "alpha\nforeign\nseparator\nold\nomega\n")
+      const general = "external-matching-general"
+      const started = await h.call("start", { request: "Reject a matching external owned-delta commit." }, "general", general)
+      const workflowId = String(started.workflowId)
+      expect((await h.call("route", {
+        humanFacing: false, behavioral: false, structural: false, externalUnknown: false,
+        diagnostic: false, productOutcome: false, implementationRequested: true, executionDepth: "task",
+      }, "general", general)).error).toBeUndefined()
+      expect((await h.call("task_scope", {
+        workflowId, stepId: "worker", write: ["src/shared.ts"],
+      }, "general", general)).error).toBeUndefined()
+      const grant = await h.call("dispatch_grant", { workflowId, stepId: "worker" }, "general", general)
+      expect((await h.call("attach", { grantId: grant.grantId, workflowId, stepId: "worker" }, "worker", "external-matching-worker")).attached).toBe(true)
+
+      const mutation = {
+        tool: "edit", callID: "external-matching-edit", sessionID: "external-matching-worker", agent: "worker",
+        input: { filePath: join(h.root, "src", "shared.ts") },
+      }
+      await h.toolHooks.get("execute.before")?.(mutation)
+      await writeFile(join(h.root, "src", "shared.ts"), "alpha\nforeign\nseparator\nnew\nomega\n")
+      await h.toolHooks.get("execute.after")?.({ ...mutation, status: "completed", result: "updated" })
+      const stage = {
+        tool: "shell", callID: "external-matching-stage", sessionID: "external-matching-worker", agent: "worker",
+        input: { command: "git add -- src/shared.ts" },
+      }
+      await h.toolHooks.get("execute.before")?.(stage)
+      await git(h.root, ["add", "--", "src/shared.ts"])
+      await h.toolHooks.get("execute.after")?.({ ...stage, status: "completed", result: "staged" })
+      expect((await git(h.root, ["show", ":src/shared.ts"])).stdout).toBe("alpha\nseparator\nnew\nomega\n")
+
+      // This foreign actor publishes the exact projection and parent/blob
+      // expected by Loom, but no admitted execute.before recorded precommit
+      // identity for this commit.
+      await git(h.root, ["-c", "core.hooksPath=/dev/null", "commit", "-m", "external matching owned delta"])
+      const completion = await h.call(
+        "complete", { workflowId, stepId: "worker", summary: "Must not adopt an external commit." },
+        "worker", "external-matching-worker",
+      )
+      expect(completion.error).toBeDefined()
+      const publishedKey = `git-delta/${encodeURIComponent(workflowId)}/worker/0/${encodeURIComponent("src/shared.ts")}/published`
+      expect(await h.durableStorage.get(publishedKey)).toBeUndefined()
     } finally {
       h.restore()
     }
@@ -4505,11 +4574,15 @@ Verdict: FAIL
       )
 
       // The first process died without execute.after. A fresh General process
-      // reopens the step into a new attempt; a newly attached Worker must not
-      // promote the abandoned, unreceipted bytes.
+      // first completes the old attempt, then reopens it. The completion must
+      // reject the changed bytes without an after receipt; the retry must not
+      // promote the abandoned mutation either.
       const retry = await runPhase([
         "retry-abandoned", h.root, abandoned.workflowId, "abandoned-delta-retry", abandoned.generalSessionID,
+        abandoned.firstWorkerSessionID,
       ])
+      expect(retry.sameAttemptCompletionDenied).toBe(true)
+      expect(retry.sameAttemptCompletionError).toMatch(/uncommitted|unproven|delta provenance/i)
       expect(retry.attached).toBe(true)
       expect(retry.attempt).toBe(1)
       expect(retry.stageDenied).toBe(true)
@@ -4518,6 +4591,50 @@ Verdict: FAIL
       expect(retry.stageError).toMatch(/exact bytes previously admitted.*current Loom step attempt/i)
       expect((await git(h.root, ["show", "HEAD:src/shared.ts"])).stdout).toBe("alpha\nseparator\nold\nomega\n")
       expect(retry.index).toBe("alpha\nseparator\nold\nomega\n")
+    } finally {
+      h.restore()
+    }
+  })
+
+  test("an interrupted git add restores the exact prior index before completion checks", async () => {
+    const h = await harness()
+    const fixture = fileURLToPath(new URL("./plugin-boundary-process-fixture.ts", import.meta.url))
+    const runPhase = async (args: string[]) => {
+      const child = Bun.spawn([process.execPath, fixture, ...args], {
+        env: {
+          ...process.env,
+          XDG_STATE_HOME: join(h.root, "state"),
+          XDG_RUNTIME_DIR: join(h.root, "runtime"),
+          LOOM_TOOL_OUTPUT: "json",
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      })
+      const [stdout, stderr, exitCode] = await Promise.all([
+        new Response(child.stdout).text(),
+        new Response(child.stderr).text(),
+        child.exited,
+      ])
+      if (exitCode !== 0) throw new Error(stderr || `interrupted-stage process exited ${exitCode}`)
+      return JSON.parse(stdout.trim().split("\n").at(-1)!)
+    }
+    try {
+      await initializeGitFixture(h.root)
+      await writeFile(join(h.root, "src", "shared.ts"), "alpha\nseparator\nold\nomega\n")
+      await git(h.root, ["add", "--", "src/shared.ts"])
+      await git(h.root, ["commit", "-m", "interrupted stage baseline"])
+      await writeFile(join(h.root, "src", "shared.ts"), "alpha\nforeign\nseparator\nold\nomega\n")
+      h.restore()
+
+      const workerSession = "interrupted-stage-worker"
+      const prepared = await runPhase(["prepare-interrupted-stage", h.root, "", workerSession])
+      const recovered = await runPhase([
+        "recover-interrupted-stage", h.root, prepared.workflowId, workerSession,
+      ])
+      expect(recovered.completionError).toMatch(/uncommitted changes/i)
+      expect(recovered.index).toBe("alpha\nseparator\nold\nomega\n")
+      expect((await git(h.root, ["diff", "--cached", "--", "src/shared.ts"])).stdout).toBe("")
+      expect((await git(h.root, ["diff", "--", "src/shared.ts"])).stdout).toContain("+foreign")
     } finally {
       h.restore()
     }
@@ -4820,12 +4937,14 @@ Verdict: FAIL
       const deletePath = join(h.root, "src", "delete.txt")
       const modePath = join(h.root, "src", "mode.txt")
       const noopPath = join(h.root, "src", "noop.txt")
+      const preexistingUntrackedBinaryPath = join(h.root, "src", "preexisting-untracked.bin")
       await writeFile(linkTarget, "target\n")
       await symlink("link-target.txt", linkPath)
       await writeFile(binaryPath, Buffer.from([0, 1, 2]))
       await writeFile(deletePath, "delete me\n")
       await writeFile(modePath, "keep mode\n")
       await writeFile(noopPath, "unchanged\n")
+      await writeFile(preexistingUntrackedBinaryPath, Buffer.from([0, 9, 0, 7]))
       await git(h.root, ["add", "--", "src/link-target.txt", "src/link.txt", "src/binary.dat", "src/delete.txt", "src/mode.txt", "src/noop.txt"])
       await git(h.root, ["commit", "-m", "unsupported delta matrix baseline"])
 
@@ -4837,7 +4956,7 @@ Verdict: FAIL
         humanFacing: false, behavioral: false, structural: false, externalUnknown: false,
         diagnostic: false, productOutcome: false, implementationRequested: true, executionDepth: "task",
       }, "general", general)).error).toBeUndefined()
-      const paths = ["src/link.txt", "src/binary.dat", "src/delete.txt", "src/mode.txt", "src/noop.txt"]
+      const paths = ["src/link.txt", "src/binary.dat", "src/delete.txt", "src/mode.txt", "src/noop.txt", "src/preexisting-untracked.bin"]
       expect((await h.call("task_scope", { workflowId, stepId: "worker", write: paths }, "general", general)).error).toBeUndefined()
       const grant = await h.call("dispatch_grant", { workflowId, stepId: "worker" }, "general", general)
       expect((await h.call("attach", { grantId: grant.grantId, workflowId, stepId: "worker" }, "worker", worker)).attached).toBe(true)
@@ -4865,11 +4984,25 @@ Verdict: FAIL
         .rejects.toThrow("unsupported postimage")
       await expect(admit("unsupported-delete", "src/delete.txt", async () => rm(deletePath)))
         .rejects.toThrow()
+      await admit("unsupported-untracked-binary", "src/preexisting-untracked.bin", async () =>
+        writeFile(preexistingUntrackedBinaryPath, Buffer.from([0, 8, 0, 6])),
+      )
 
       for (const path of ["src/binary.dat", "src/link.txt", "src/mode.txt", "src/delete.txt"]) {
         const unproven = `git-delta-unproven/${encodeURIComponent(workflowId)}/worker/0/${encodeURIComponent(path)}`
         expect(await h.durableStorage.get(unproven)).toBeDefined()
       }
+      const untrackedPath = "src/preexisting-untracked.bin"
+      const untrackedUnproven = `git-delta-unproven/${encodeURIComponent(workflowId)}/worker/0/${encodeURIComponent(untrackedPath)}`
+      expect(await h.durableStorage.get(untrackedUnproven)).toBeDefined()
+      const ownership = await h.durableStorage.get(`git-session-ownership/${encodeURIComponent(worker)}`) as any
+      expect(ownership?.paths ?? []).not.toContain(untrackedPath)
+      const stage = {
+        tool: "shell", callID: "unsupported-untracked-stage", sessionID: worker, agent: "worker",
+        input: { command: `git add -- ${untrackedPath}` },
+      }
+      await expect(h.toolHooks.get("execute.before")?.(stage)).rejects.toThrow("changed after this step attempt")
+      expect((await git(h.root, ["diff", "--cached", "--", untrackedPath])).stdout).toBe("")
     } finally {
       h.restore()
     }
@@ -5452,11 +5585,11 @@ Verdict: FAIL
         "src/shared.ts is locked for write by another agent",
       )
       await writeFile(join(h.root, "src", "shared.ts"), "b\n")
-      await h.toolHooks.get("execute.after")?.({
+      await expect(h.toolHooks.get("execute.after")?.({
         ...second,
         status: "completed",
         result: "b",
-      })
+      })).rejects.toThrow("cannot be separated from foreign bytes")
 
       const firstWorkflow = (await h.durableStorage.get(`session/${workerA}`)) as string
       const deniedCompletion = await h.call(

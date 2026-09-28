@@ -138,10 +138,60 @@ try {
     // Deliberately skip execute.after. Process death must release the flock
     // keeper without creating a delta receipt for the abandoned bytes.
     process.exit(0)
+  } else if (phase === "prepare-interrupted-stage") {
+    const generalSessionID = `interrupted-stage-general-${sessionID}`
+    const started = await call("start", { request: "Exercise recovery of an interrupted git add." }, "general", generalSessionID)
+    const id = String(started.workflowId)
+    const route = await call("route", {
+      humanFacing: false, behavioral: false, structural: false, externalUnknown: false,
+      diagnostic: false, productOutcome: false, implementationRequested: true, executionDepth: "task",
+    }, "general", generalSessionID)
+    if (route.error) throw new Error(String(route.error))
+    const scope = await call("task_scope", { workflowId: id, stepId: "worker", write: ["src/shared.ts"] }, "general", generalSessionID)
+    if (scope.error) throw new Error(String(scope.error))
+    const grant = await call("dispatch_grant", { workflowId: id, stepId: "worker" }, "general", generalSessionID)
+    const attached = await call("attach", { grantId: grant.grantId, workflowId: id, stepId: "worker" }, "worker", sessionID)
+    if (!attached.attached) throw new Error(`worker attachment failed: ${JSON.stringify(attached)}`)
+
+    const mutation = {
+      tool: "edit", callID: "interrupted-stage-edit", messageID: "interrupted-stage-edit-message",
+      sessionID, agent: "worker", input: { filePath: join(root, "src", "shared.ts") },
+    }
+    await runObserved(mutation, async () => {
+      await (await import("node:fs/promises")).writeFile(
+        join(root, "src", "shared.ts"), "alpha\nforeign\nseparator\nnew\nomega\n",
+      )
+    })
+    const stage = {
+      tool: "shell", callID: "interrupted-stage-add", messageID: "interrupted-stage-add-message",
+      sessionID, agent: "worker", input: { command: "git add -- src/shared.ts" },
+    }
+    await toolHooks.get("execute.before")?.(stage)
+    await execFileAsync("git", ["add", "--", "src/shared.ts"], { cwd: root })
+    await new Promise<void>((resolve) => process.stdout.write(JSON.stringify({ workflowId: id, generalSessionID }) + "\n", resolve))
+    // Deliberately omit execute.after. The next process must restore the exact
+    // pre-call index instead of retaining the shared aggregate.
+    process.exit(0)
+  } else if (phase === "recover-interrupted-stage") {
+    if (!workflowId) throw new Error("recover-interrupted-stage requires workflow ID")
+    const completion = await call(
+      "complete",
+      { workflowId, stepId: "worker", summary: "Interrupted staging must leave no aggregate in the index." },
+      "worker",
+      sessionID,
+    )
+    const index = await execFileAsync("git", ["show", ":src/shared.ts"], { cwd: root, encoding: "utf8" })
+    process.stdout.write(JSON.stringify({ completionError: completion.error, index: index.stdout }) + "\n")
   } else if (phase === "retry-abandoned") {
     if (!workflowId) throw new Error("retry-abandoned requires workflow ID")
-    const [generalSessionID] = extra
-    if (!generalSessionID) throw new Error("retry-abandoned requires General session")
+    const [generalSessionID, priorWorkerSessionID] = extra
+    if (!generalSessionID || !priorWorkerSessionID) throw new Error("retry-abandoned requires General and prior Worker sessions")
+    const sameAttemptCompletion = await call(
+      "complete",
+      { workflowId, stepId: "worker", summary: "completion must reject a missing-after mutation" },
+      "worker",
+      priorWorkerSessionID,
+    )
     const reopened = await call("reopen", {
       workflowId,
       stepId: "worker",
@@ -181,6 +231,8 @@ try {
     const index = await execFileAsync("git", ["show", ":src/shared.ts"], { cwd: root, encoding: "utf8" })
     process.stdout.write(JSON.stringify({
       attached: true,
+      sameAttemptCompletionDenied: Boolean(sameAttemptCompletion.error),
+      sameAttemptCompletionError: sameAttemptCompletion.error,
       attempt: attached.attempt,
       stageDenied,
       ...(stageError ? { stageError } : {}),
