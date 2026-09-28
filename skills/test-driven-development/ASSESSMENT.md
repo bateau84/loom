@@ -16,7 +16,8 @@ Reviewer verifies that TDD generated discriminating behavioral and design eviden
 ### RED evidence
 
 - RED failed because the intended behavior was missing or wrong;
-- failure evidence reached the intended code path and exposed the target signal;
+- when the test was runnable, failure evidence reached the intended code path and exposed the target signal;
+- a deliberate compile/type failure from a not-yet-existing API was attributable to that missing interface and was resolved into behavioral evidence as soon as the interface existed;
 - setup, fixture, import, type, environment, or unrelated dependency failures were not misrepresented as the behavioral Red;
 - an initially passing test was investigated rather than counted as proof without explanation.
 
@@ -24,7 +25,8 @@ Reviewer verifies that TDD generated discriminating behavioral and design eviden
 
 - the implementation is the smallest coherent behavior needed for the accepted contract;
 - Obvious Implementation, Fake It, or Triangulation was used appropriately for the uncertainty at hand;
-- a temporary hard-coded Fake It step is acceptable, but required general behavior is not considered complete until another test or refactor forces it;
+- a temporary hard-coded Fake It step is acceptable, but required general behavior is not considered complete while a simple special-case implementation still satisfies the suite;
+- triangulation continues with additional discriminating examples when one new example merely replaces one fake with another;
 - tests include the counterexamples or invariants needed to reject trivial wrong implementations.
 
 ### REFACTOR evidence
