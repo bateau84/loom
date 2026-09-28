@@ -1042,7 +1042,7 @@ class ActionAssertionTests(unittest.TestCase):
                 code_mode = {
                     "tool": "execute",
                     "arg": "code",
-                    "contains": f"tools.loom.code.{method}",
+                    "contains_all": [f"tools.loom.code.{method}", skill],
                 }
                 self.assertTrue(any(
                     native in group and code_mode in group
@@ -1957,6 +1957,25 @@ class ActionAssertionTests(unittest.TestCase):
         self.assertIn("OBSERVED TOOL ACTIONS:", prompt)
         self.assertIn("docs/architecture/solution.md#dependency-registration", prompt)
         self.assertIn('"stepId": "critic-solution"', prompt)
+
+    def test_action_contains_all_requires_every_fragment_in_one_argument(self):
+        assertion = {
+            "tool": "execute",
+            "arg": "code",
+            "contains_all": ["tools.loom.code.assessment", "golang-concurrency"],
+        }
+        self.assertTrue(RUN_EVALS.action_matches({
+            "tool": "execute",
+            "args": {
+                "code": 'return await tools.loom.code.assessment({skill:"golang-concurrency"})',
+            },
+        }, assertion))
+        self.assertFalse(RUN_EVALS.action_matches({
+            "tool": "execute",
+            "args": {
+                "code": 'return await tools.loom.code.assessment({skill:"github-workflow"})',
+            },
+        }, assertion))
 
     def test_reports_missing_required_and_observed_forbidden_action(self):
         actions = [
