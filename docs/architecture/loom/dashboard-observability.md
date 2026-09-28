@@ -48,6 +48,8 @@ Publication remains atomic and per-publisher generation is monotonic. An expired
 
 ## Bounded control path
 
+This section describes the **current terminal failed/cancelled cleanup path and its earlier terminal-only proposed provenance correction**, not an implementation of all-workflow archival. The newer proposed [BR-026](../../requirements/loom/br-026-archive-or-permanently-delete-workflow-records-safely.md) and [Work Lifecycle, Command Authority, and Publication](work-lifecycle-and-publication.md) separately require Archive (including Active work only after cancellation/revocation), a visible Archived view with in-flight uncertainty, and explicitly confirmed Permanent Delete only after confirmed quiescence while retaining protected history. Current cleanup cannot be relabeled as either operation. The earlier user OQ on terminal-only cleanup remains historical; the later proposed all-workflow direction does not rewrite its answer or replace the accepted Anchor.
+
 Workflow cleanup is deliberately separate from the projection path:
 
 ```text
