@@ -63,6 +63,7 @@ async function harness(
   seed?: (storage: MemoryStorage, root: string, projectID: string) => void | Promise<void>,
   sessionInfo?: (sessionID: string, projectID: string) => { id: string; projectID?: string },
   existing?: { root: string; storage: MemoryStorage },
+  synthetic?: (input: Record<string, any>) => void | Promise<void>,
 ) {
   const root = existing?.root ?? await mkdtemp(join(tmpdir(), "loom-plugin-boundary-"))
   if (!existing) roots.push(root)
@@ -126,6 +127,7 @@ async function harness(
         },
       synthetic: async (input: Record<string, any>) => {
         syntheticMessages.push(input)
+        await synthetic?.(input)
         return {
           id: `synthetic-${syntheticMessages.length}`,
           sessionID: input.sessionID,
@@ -7465,6 +7467,99 @@ test("answered OQ steers only the latest attached consumer session", async () =>
       listed.questions.find((question: any) => question.id === raised.question.id)
         ?.answer?.text,
     ).toBe(authoritativeAnswer)
+  } finally {
+    h.restore()
+  }
+})
+
+test("answered OQ stays durable when synthetic wake-up delivery fails", async () => {
+  const h = await harness(
+    undefined,
+    undefined,
+    undefined,
+    () => {
+      throw new Error("synthetic wake unavailable")
+    },
+  )
+  try {
+    const generalSession = "oq-notify-failure-general"
+    const childSession = "oq-notify-failure-worker"
+    const started = await h.call(
+      "start",
+      { request: "Implement one bounded change after user clarification." },
+      "general",
+      generalSession,
+    )
+    const workflowId = String(started.workflowId)
+    expect((await h.call(
+      "route",
+      {
+        humanFacing: false,
+        behavioral: false,
+        structural: false,
+        externalUnknown: false,
+        diagnostic: false,
+        productOutcome: false,
+        implementationRequested: true,
+        executionDepth: "task",
+      },
+      "general",
+      generalSession,
+    )).error).toBeUndefined()
+
+    const grant = await h.call(
+      "dispatch_grant",
+      { workflowId, stepId: "worker" },
+      "general",
+      generalSession,
+    )
+    expect((await h.call(
+      "attach",
+      { grantId: grant.grantId, workflowId, stepId: "worker" },
+      "worker",
+      childSession,
+    )).attached).toBe(true)
+
+    const raised = await h.call(
+      "oq_raise",
+      {
+        workflowId,
+        stepId: "worker",
+        question: "Which user-selected mode should the implementation use?",
+        responder: "user",
+        blocking: true,
+      },
+      "worker",
+      childSession,
+    )
+    expect(raised.error).toBeUndefined()
+
+    const answer = "Use strict mode."
+    const answered = await h.call(
+      "oq_answer",
+      {
+        workflowId,
+        questionId: raised.question.id,
+        answer,
+        source: "user",
+      },
+      "general",
+      generalSession,
+    )
+    expect(answered.error).toBeUndefined()
+    expect(answered.notifications.notified).toEqual([])
+    expect(answered.notifications.failed).toEqual([
+      {
+        stepId: "worker",
+        error: "synthetic wake unavailable",
+      },
+    ])
+
+    const persisted = await h.durableStorage.get(
+      `oq/${workflowId}/${raised.question.id}`,
+    ) as any
+    expect(persisted.status).toBe("answered")
+    expect(persisted.answer.text).toBe(answer)
   } finally {
     h.restore()
   }
