@@ -31,4 +31,8 @@ tags: [requirements, loom, index]
 - [BR-022 — Support Planning-Only Objective Completion](br-022-support-planning-only-objective-completion.md)
 - [BR-023 — Explain Work State and Genuine Blockers](br-023-explain-work-state-and-blockers.md)
 
+## Obligation contracts
+
+- [OC-001 — Independent Question-Consumer Reconciliation](oc-001-independent-question-consumer-reconciliation.md) — applies across question answer, consumer reconciliation, and readiness decisions; complements BR-017 and BR-021.
+
 Each requirement is its own OKF document so relationships, dependencies, retrieval, and future supersession remain explicit and machine-discoverable.
