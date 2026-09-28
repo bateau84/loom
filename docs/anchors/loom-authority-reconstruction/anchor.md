@@ -1,6 +1,6 @@
 # Loom Product-Authority Reconstruction
 
-**Status:** draft
+**Status:** accepted
 
 ## Goal
 
