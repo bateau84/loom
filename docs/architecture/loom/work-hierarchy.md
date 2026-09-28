@@ -88,6 +88,8 @@ A Task may require multiple runtime steps or agent invocations.
 
 **Proposed accountability distinction:** Task identity, obligation ownership, and write scope alone do not establish the accountable *role* or a supported execution/decision path. [BR-024](../../requirements/loom/br-024-preserve-authority-ownership-through-handoffs.md) requires such a role and path for each planned work item, including specialist-owned deliverables and routine execution. The role's decision/output and a cross-role responsibility transfer must be traceable before dependent completion. Specialist authority does not transfer merely because a Worker implements a Task. This design does not prescribe a Task `owner` field or assert that current Plan/Task compilation already meets the requirement; see [Control Plane — Proposed accountable-role admission](control-plane.md#proposed-accountable-role-admission).
 
+In the proposed realization a Task's completion derives from its **bound execution or decision path**, not from the presence of any `task:<id>` Worker step. Planner compiles mixed-role dependencies for the selected unclaimed Wave; a Task with no existing matching role step gains a real role-owned step before executable review, or an explicit blocked user-decision boundary where only user authority can resolve it. A Reviewer-owned Task binds to an independent gate over other producer work. A pure role-only Wave still needs scoped independent review and evidence before roll-up; a planning-only Objective has no executable Wave at all and ends only its reviewed-Plan workflow. Existing runtime `loom_task_plan` compiles Worker-only steps and does not realize these paths. See [Control Plane](control-plane.md#proposed-accountable-role-admission) for admission, dependency, compatibility and unavailable-role handling.
+
 ## Plan Semantics Are First-Class
 
 The hierarchy is not only a progress tree. Each plan generation also persists the shared semantic model that explains how accepted authority becomes executable work.
@@ -228,13 +230,13 @@ The exact locking/storage mechanism is an implementation decision, but lost-upda
 
 ### Task completion
 
-A Task is complete only when its own required execution and verification evidence are satisfied.
+A Task is complete only when its own required execution or decision, mandatory predecessor and independent-review dependencies, and verification evidence are satisfied. In the proposed mixed-role realization, a missing or unavailable role path cannot become complete through a Worker-only sibling, an OQ answer, or a workflow-level review of unrelated work. The current Worker-only Task compiler does not yet enforce that wider rule.
 
 ### Wave completion
 
 A Wave is complete only when:
 
-- all required active-generation Tasks are complete;
+- all required active-generation Tasks are complete, including role-owned work and user-owned decisions where applicable;
 - required Wave-level review/gates pass;
 - required Wave-level evidence is satisfied.
 
@@ -251,7 +253,7 @@ An Objective is complete only when:
 
 - all required active-generation Phases are complete;
 - no mandatory current child work remains unresolved;
-- Objective-level Product Acceptance is satisfied when applicable;
+- Objective-level Product Acceptance is satisfied when applicable (absence of Worker steps alone neither creates nor waives that obligation);
 - required final review/shipping gates pass.
 
 ## Required Invariant
