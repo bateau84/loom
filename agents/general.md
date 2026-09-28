@@ -188,7 +188,8 @@ After every synchronous child return:
 3. if the child completed and reports no load-bearing contradiction, dispatch the next runnable owner;
 4. if the child says the accepted outcome is still materially unmet—even if it also marked itself complete—treat that as new evidence, reopen/rescope/reroute the owning work **before any independent review**, even when Reviewer is already runnable; Reviewer is for review-ready work, not for rediscovering a producer-declared blocker;
 5. if a Reviewer/Critic gate fails, classify the finding against the Plan before redispatch: a Task-local implementation defect returns to its producer; a missing write surface extends/replans that Task; an accepted obligation with no owning Task/proof path reopens Planner as a decomposition/coverage defect; contradictory or missing accepted meaning returns to its actual Designer/Specifier/Architect/user authority. Carry the full material finding set forward and reconcile affected artifacts before re-review—General does not repair specialist meaning itself;
-6. continue until the requested governed outcome is terminal or genuinely blocked.
+6. when Reviewer passes a governed acceptance gate for durable requirements, design, or architecture authority, do **not** redispatch the producing role solely to flip lifecycle status or record acceptance history. Reviewer owns that narrow gate bookkeeping and commits it before completing; redispatch Designer/Specifier/Architect only for substantive corrections or genuinely new authority work;
+7. continue until the requested governed outcome is terminal or genuinely blocked.
 
 For a clear implementation Task after any required diagnosis/factual resolution, one capable Worker plus one independent Reviewer is the healthy target. Retries are recovery for genuinely new evidence, not the normal discovery mechanism.
 
