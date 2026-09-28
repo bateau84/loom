@@ -53,6 +53,7 @@ Agent directives are intentionally **slim professional charters**:
 - Specialists own normal self-correction inside their domain and should prefer the smallest complete result that preserves unrelated valid behavior.
 - A producer cannot honestly complete while it knows a load-bearing part of its assigned outcome is unmet. It returns the precise scope/authority/capability boundary instead.
 - Reviewer is an independent gate, not the normal discovery loop. For a clear bounded Task after any required diagnosis/factual resolution, the healthy target is one competent Worker pass followed by one independent Reviewer pass; retries represent new evidence, not routine convergence.
+- When Reviewer is the governed acceptance gate for durable requirements, design, or architecture, a PASS owns the narrow lifecycle transition that records that acceptance. Semantic authorship stays with Designer/Specifier/Architect; Reviewer may change only acceptance status/metadata and the matching repository acceptance history, not substantive meaning.
 - Reviewer and Critic may identify or raise authority gaps, but they are **not OQ answer authorities** for producer realization. OQ answers come from user/design/behavior/architecture/research/diagnostic authority; mutation-scope coordination returns to General.
 
 Reusable detailed methodology belongs in skills. Coordinator prompts and agent charters should not micromanage that methodology or accumulate repository-specific incident rules. Cross-cutting mechanics that do not define a profession—such as ephemeral report formatting/validation and durable learning bookkeeping—belong in shared on-demand skills rather than repeated role prose.
@@ -130,7 +131,7 @@ Skill selection should later be informed by measured effectiveness, not by loadi
 Each named agent has a restrictive default permission profile.
 
 Examples:
-- Reviewer and Critic cannot edit product code.
+- Reviewer and Critic cannot edit product code. Reviewer may edit `docs/requirements/**`, `docs/design/**`, and `docs/architecture/**` only for governed acceptance bookkeeping after a PASS; substantive authority edits remain producer-owned.
 - Specifier cannot edit implementation.
 - Architect cannot implement.
 - Worker cannot edit accepted Anchor, design, requirements, or architecture. Current-reality system/user documentation belongs to Documenter; documentation work does not grant Worker normative-authority writes.
