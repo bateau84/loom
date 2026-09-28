@@ -66,6 +66,12 @@ OpenCode plugin storage is used only as the legacy import source during bounded 
 
 Runtime-schema migrations and semantic upgrade actions are separate. Deterministic storage changes run transactionally in the runtime upgrade ledger. Reasoning-required compatibility work is detected from authoritative state and exposed only while pending; successful state transition removes the action automatically for all sessions in that scope.
 
+## Step-owned Git publication
+
+Git publication is tied to the exact mutation delta admitted under the current project, step attempt, attachment, and write scope—not to a whole-file fingerprint or scope membership alone. Loom records before/after states while holding the relevant path and step-authority locks, then compares the edit with the frozen Git and foreign-work baselines. For supported text changes, a controlled publisher stages only the proven, unambiguous step-owned projection; unrelated pre-existing edits remain in the worktree and unstaged. Ambiguous overlap, changed baselines or foreign bytes, stale attempts, missing provenance, and unrelated staged entries fail closed rather than being absorbed or rewritten.
+
+Commit revalidates the exact projection and Git state. Step completion reconciles each owned delta against its commit and verifies that the remaining aggregate still preserves the recorded foreign contribution, so foreign-only dirt does not block completion or become step-owned. These checks cover cooperating Loom mutations; an external Git process can bypass Loom's locks, so detected interference is rejected rather than claimed to be prevented.
+
 ## OpenCode tool presentation
 
 Loom control-plane tools have two equivalent OpenCode access surfaces. Existing native tools remain available as `loom_*`. The plugin also mirrors the same schemas/executors into the Code Mode catalog under `tools.loom.code.*`, preserving the native permission identity. Models can therefore use Loom correctly whether they prefer native tool calls or Code Mode discovery. Interactive status is dashboard-first and does not depend on model-generated presentation prose. The sidebar RPC exposes the active workflow's stable dashboard deep link using the dashboard process's shared advertised-endpoint lease; optional OpenCode Desktop preview metadata is kept separate from the normal execution path.
