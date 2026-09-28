@@ -972,8 +972,8 @@ function reviewerAcceptanceMetadataLine(line: string) {
   const value = line.trim()
   if (!value) return true
   return (
-    /^(?:\*\*)?status(?:\*\*)?\s*:/i.test(value) ||
-    /^(?:accepted|acceptance|reviewed?)(?:[-_ ](?:at|by|date|commit|reviewer))?\s*:/i.test(value)
+    /^(?:\*\*)?status\s*:(?:\*\*)?/i.test(value) ||
+    /^(?:\*\*)?(?:accepted|acceptance|reviewed?)(?:[-_ ](?:at|by|date|commit|reviewer))?\s*:(?:\*\*)?/i.test(value)
   )
 }
 
