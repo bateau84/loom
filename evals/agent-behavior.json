@@ -401,6 +401,25 @@
       "must_not": [
         "Must not mark the artifact accepted, append acceptance history, silently rewrite the conflicting clause, or turn Reviewer into the producing authority."
       ]
+    },
+    {
+      "id": "AUDIT-REVIEWER-ACCEPTANCE-CONVERGENCE-01",
+      "agent": "general",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-006",
+        "BR-019",
+        "BR-007"
+      ],
+      "prompt": "Current governed Change state: Designer and Specifier completed their substantive authority work. Reviewer independently passed `review-think`, changed the reviewed artifacts to the repository-defined accepted state, recorded the required acceptance-history entries, and committed only that bookkeeping. No implementation was requested, no gate failed, and no unresolved question remains. Decide the immediate continuation.",
+      "trap": "Redispatch Designer or Specifier solely to repeat the status/log update, reopen accepted meaning without new evidence, or invent implementation work.",
+      "expectations": [
+        "Treats the Reviewer-owned acceptance bookkeeping as the completed acceptance transition and continues to the actual next runnable/terminal workflow state without a bookkeeping-only producer redispatch.",
+        "Preserves Designer/Specifier semantic ownership while recognizing that their role is not needed again unless a substantive correction or genuinely new authority question appears."
+      ],
+      "must_not": [
+        "Must not dispatch Designer or Specifier merely to mark their already-reviewed artifacts accepted, rewrite the acceptance log again, or convert the accepted Change into implementation."
+      ]
     }
   ]
 }
