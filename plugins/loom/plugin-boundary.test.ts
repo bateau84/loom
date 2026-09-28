@@ -4666,6 +4666,77 @@ Verdict: FAIL
     }
   })
 
+  test("completion rejects an amended replacement commit with the same owned projection tree", async () => {
+    const h = await harness()
+    try {
+      await initializeGitFixture(h.root)
+      const path = "src/shared.ts"
+      await writeFile(join(h.root, path), "alpha\nseparator\nold\nomega\n")
+      await git(h.root, ["add", "--", path])
+      await git(h.root, ["commit", "-m", "amended publication baseline"])
+      await writeFile(join(h.root, path), "alpha\nforeign\nseparator\nold\nomega\n")
+
+      const general = "amended-publication-general"
+      const worker = "amended-publication-worker"
+      const started = await h.call("start", { request: "Fence completion to the exact publication commit." }, "general", general)
+      const workflowId = String(started.workflowId)
+      expect((await h.call("route", {
+        humanFacing: false, behavioral: false, structural: false, externalUnknown: false,
+        diagnostic: false, productOutcome: false, implementationRequested: true, executionDepth: "task",
+      }, "general", general)).error).toBeUndefined()
+      expect((await h.call("task_scope", { workflowId, stepId: "worker", write: [path] }, "general", general)).error).toBeUndefined()
+      const grant = await h.call("dispatch_grant", { workflowId, stepId: "worker" }, "general", general)
+      expect((await h.call("attach", { grantId: grant.grantId, workflowId, stepId: "worker" }, "worker", worker)).attached).toBe(true)
+
+      const mutation = {
+        tool: "edit", callID: "amended-publication-edit", sessionID: worker, agent: "worker",
+        input: { filePath: join(h.root, path) },
+      }
+      await h.toolHooks.get("execute.before")?.(mutation)
+      await writeFile(join(h.root, path), "alpha\nforeign\nseparator\nnew\nomega\n")
+      await h.toolHooks.get("execute.after")?.({ ...mutation, status: "completed", result: "updated" })
+      const stageCommand = `git add -- ${path}`
+      const evaluate = h.permissionHooks.get("evaluate")!
+      const stagePermission: any = { agent: "worker", action: "shell", resources: [stageCommand], sessionID: worker, effect: "ask" }
+      await evaluate(stagePermission)
+      expect(stagePermission.effect).toBe("allow")
+      const stage = { tool: "shell", callID: "amended-publication-stage", sessionID: worker, agent: "worker", input: { command: stageCommand } }
+      await h.toolHooks.get("execute.before")?.(stage)
+      await git(h.root, ["add", "--", path])
+      await h.toolHooks.get("execute.after")?.({ ...stage, status: "completed", result: "staged" })
+      const commitCommand = "git -c core.hooksPath=/dev/null commit -m 'test: exact publication identity'"
+      const commitPermission: any = { agent: "worker", action: "shell", resources: [commitCommand], sessionID: worker, effect: "ask" }
+      await evaluate(commitPermission)
+      expect(commitPermission.effect).toBe("allow")
+      const commitEvent = { tool: "shell", callID: "amended-publication-commit", sessionID: worker, agent: "worker", input: { command: commitCommand } }
+      await h.toolHooks.get("execute.before")?.(commitEvent)
+      await git(h.root, ["-c", "core.hooksPath=/dev/null", "commit", "-m", "test: exact publication identity"])
+      await h.toolHooks.get("execute.after")?.({ ...commitEvent, status: "completed", result: "committed" })
+      const publishedKey = `git-delta/${encodeURIComponent(workflowId)}/worker/0/${encodeURIComponent(path)}/published`
+      const publication = await h.durableStorage.get(publishedKey) as any
+      expect(publication?.commit).toBeDefined()
+      const originalTree = String((await git(h.root, ["rev-parse", "HEAD^{tree}"])).stdout).trim()
+
+      // Replace the publication commit with a different commit object whose
+      // tree/blob are identical. Content checks alone are insufficient: the
+      // durable receipt still names C, while the accepted history now has C2.
+      await git(h.root, ["-c", "core.hooksPath=/dev/null", "commit", "--amend", "-m", "amended external commit identity"])
+      expect((await git(h.root, ["rev-parse", "HEAD^{tree}"])).stdout.trim()).toBe(originalTree)
+      expect((await git(h.root, ["rev-parse", "HEAD"])).stdout.trim()).not.toBe(publication.commit)
+      expect((await git(h.root, ["show", `HEAD:${path}`])).stdout).toBe("alpha\nseparator\nnew\nomega\n")
+      expect((await git(h.root, ["diff", "--", path])).stdout).toContain("+foreign")
+
+      const completion = await h.call(
+        "complete", { workflowId, stepId: "worker", summary: "Must reject an amended publication commit." },
+        "worker", worker,
+      )
+      expect(completion.error).toBeDefined()
+      expect(String(completion.error)).toContain(path)
+    } finally {
+      h.restore()
+    }
+  })
+
   test("completion rejects a clean external aggregate commit without an attempt publication receipt", async () => {
     const h = await harness()
     try {
@@ -4804,12 +4875,19 @@ Verdict: FAIL
       await rm(join(h.root, path))
       await git(h.root, ["add", "--", path])
       await git(h.root, ["-c", "core.hooksPath=/dev/null", "commit", "-m", "external removal after legacy aggregate"])
+      await writeFile(join(h.root, "src", "unrelated-after-removal.ts"), "advance history\n")
+      await git(h.root, ["add", "--", "src/unrelated-after-removal.ts"])
+      await git(h.root, ["commit", "-m", "advance unrelated history"])
       expect((await git(h.root, ["status", "--porcelain", "--", path])).stdout).toBe("")
+      expect((await git(h.root, ["ls-tree", "HEAD", "--", path])).stdout).toBe("")
+      const currentParent = String((await git(h.root, ["rev-list", "--parents", "-n", "1", "HEAD"])).stdout).trim().split(/\s+/)[1]
+      expect((await git(h.root, ["ls-tree", currentParent, "--", path])).stdout).toBe("")
       const removedCompletion = await h.call(
         "complete", { workflowId, stepId: "worker", summary: "Must reject removed legacy aggregate bytes." },
         "worker", worker,
       )
-      expect(removedCompletion.error).toContain(path)
+      expect(removedCompletion.error).toBeDefined()
+      expect(String(removedCompletion.error)).toContain(path)
     } finally {
       h.restore()
     }

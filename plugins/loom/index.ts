@@ -1755,20 +1755,10 @@ async function gitHistoryTracksPath(projectDirectory: string, value: string) {
   const path = safeOwnedRepoPath(value)
   const head = await gitHeadIdentity(projectDirectory)
   if (head === "unborn") return false
-  const current = String((await execFileAsync("git", ["ls-tree", "HEAD", "--", path], {
+  const history = String((await execFileAsync("git", ["--literal-pathspecs", "log", "--format=%H", "--full-history", "HEAD", "--", path], {
     cwd: projectDirectory, encoding: "utf8",
   })).stdout).trim()
-  if (current) return true
-  const parents = String((await execFileAsync("git", ["rev-list", "--parents", "-n", "1", "HEAD"], {
-    cwd: projectDirectory, encoding: "utf8",
-  })).stdout).trim().split(/\s+/).slice(1)
-  for (const parent of parents) {
-    const previous = String((await execFileAsync("git", ["ls-tree", parent, "--", path], {
-      cwd: projectDirectory, encoding: "utf8",
-    })).stdout).trim()
-    if (previous) return true
-  }
-  return false
+  return history.length > 0
 }
 
 async function unpublishedAttemptGitPaths(
@@ -1897,11 +1887,17 @@ async function publishedGitDeltaMatchesCurrentState(
     published?.schemaVersion !== 1 || published.authorityId !== binding.authorityId ||
     published.workflowId !== binding.workflowId || published.stepId !== binding.stepId ||
     published.attempt !== binding.attempt || published.path !== path ||
+    typeof published.commit !== "string" ||
     typeof published.headContent !== "string" || typeof published.foreign !== "string" ||
     typeof published.aggregate !== "string" || typeof published.projection !== "string" ||
     typeof published.headMode !== "string"
   ) return false
   try {
+    // An amend/replacement can preserve tree/blob bytes while removing the
+    // exact publication commit named by the receipt from reachable history.
+    await execFileAsync("git", ["merge-base", "--is-ancestor", published.commit, "HEAD"], {
+      cwd: projectDirectory, encoding: "utf8",
+    })
     const [head, index, worktree, info] = await Promise.all([
       execFileAsync("git", ["show", `HEAD:${path}`], { cwd: projectDirectory, encoding: "buffer" }),
       execFileAsync("git", ["show", `:${path}`], { cwd: projectDirectory, encoding: "buffer" }),
