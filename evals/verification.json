@@ -239,7 +239,7 @@
               "tool": "execute",
               "arg": "code",
               "contains_all": [
-                "tools.loom.code.assessment",
+                "tools.loom.code.assessment(",
                 "golang-concurrency"
               ]
             }
@@ -302,7 +302,7 @@
               "tool": "execute",
               "arg": "code",
               "contains_all": [
-                "tools.loom.code.qa",
+                "tools.loom.code.qa(",
                 "golang-concurrency"
               ]
             }
@@ -734,7 +734,7 @@
               "tool": "execute",
               "arg": "code",
               "contains_all": [
-                "tools.loom.code.assessment",
+                "tools.loom.code.assessment(",
                 "github-workflow"
               ]
             }
@@ -801,7 +801,7 @@
               "tool": "execute",
               "arg": "code",
               "contains_all": [
-                "tools.loom.code.assessment",
+                "tools.loom.code.assessment(",
                 "github-action"
               ]
             }
