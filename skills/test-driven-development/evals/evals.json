@@ -5,38 +5,147 @@
       "id": 1,
       "name": "red-green-refactor-and-defining-case",
       "prompt": "I'm adding a function that validates email addresses. Walk me through how I should write the code and its tests, step by step.",
-      "expected_output": "The response follows the TDD cycle: write a failing test first (Red) that fails for the expected assertion reason, write the minimum code to pass (Green), refactor under a green bar, and test the defining/central behavior (valid passes, invalid rejects) before exotic edge cases.",
-      "trap": "Without the skill, the model writes production code first then a confirming test, or spends the first test on an exotic edge case instead of the central guarantee.",
+      "expected_output": "The response starts with a small Test List, chooses the defining behavior, drives one behavior through Red-Green-Refactor, and updates the list before continuing.",
+      "trap": "The model writes production code first, writes many tests at once, or starts with exotic cases instead of the central guarantee.",
       "expectations": [
-        "Writes a failing test first (Red) and notes it must fail for the expected reason (assertion not met), not a compile error or typo",
-        "Writes the minimum production code to make the test pass (Green), with no speculative generality",
-        "Refactors only under a green bar, re-running the test after each change",
-        "Tests the defining/central behavior first (a valid email passes, an invalid one is rejected) before exotic edge cases"
+        "Creates or describes a small working Test List rather than a complete up-front test plan",
+        "Chooses a defining central behavior before exotic edge cases",
+        "Writes and runs one failing test first, checking that it fails for the intended missing behavior",
+        "Writes only enough production code to make that behavior pass",
+        "Refactors only under green before selecting the next behavior"
       ]
     },
     {
       "id": 2,
-      "name": "honest-green-real-input",
-      "prompt": "My integration test for the user-registration pipeline is failing. The pipeline should create a user row with a hashed password from a submitted registration form. I can make the test pass by inserting the expected user row directly into the test database before the assertion runs. Is that a valid test?",
-      "expected_output": "The response identifies hand-injecting the row the pipeline should have produced as faking success, explains the test must run real input through the real code path, and points to escalation rather than massaging the test green.",
-      "trap": "Without the skill, the model accepts hand-injecting the data the pipeline should have produced, or suggests weakening the assertion to force green.",
+      "name": "honest-green-real-input-at-level-under-test",
+      "prompt": "My integration test for the user-registration pipeline is failing. The pipeline should create a user row with a hashed password from a submitted registration form. I can make the test pass by inserting the expected user row directly into the test database before the assertion runs. Is that a valid test? Also, does Loom's real-input rule mean every unit test must boot the whole application?",
+      "expected_output": "The response rejects hand-injecting the pipeline output, but clarifies that honest green means real input through the real behavior path at the level being tested, not that every test must be full-stack.",
+      "trap": "The model either accepts injected output or overcorrects by requiring all unit tests to become end-to-end tests.",
       "expectations": [
-        "Identifies hand-injecting the row the pipeline should have produced as faking success, not a valid test",
-        "Explains the test must run real input through the real code path (submit the form, exercise the pipeline)",
-        "Names the escalation path (ESCALATE BUG / ARCHITECTURE / SCOPE) instead of massaging the test green",
-        "Does not suggest weakening the assertion or skipping the failing case to force green"
+        "Identifies inserting the row the pipeline should produce as faking success",
+        "Requires the registration input to travel through the real registration behavior being claimed",
+        "Clarifies that unit tests may call units directly and do not need to boot the full product",
+        "Allows faithful boundary fakes where they do not replace the behavior under proof",
+        "Surfaces an implementation, design, or scope gap rather than weakening the test"
       ]
     },
     {
       "id": 3,
-      "name": "test-double-discipline",
-      "prompt": "I'm testing a function that calls a payment API and then calls a local helper that formats the receipt (which my function calls directly). Should I mock the payment API? Should I mock the receipt-formatting helper?",
-      "expected_output": "The response mocks at the system boundary (the payment API / network) but not the immediate collaborator under test (the receipt formatter), and prefers real collaborators or in-memory fakes over mocks that replay the expected answer.",
-      "trap": "Without the skill, the model mocks the immediate collaborator whose interaction IS the behavior, or uses a mock that returns the finished result.",
+      "name": "test-double-house-style-not-universal-tdd-law",
+      "prompt": "I'm testing a function that calls a payment API and then a local receipt formatter. Should I mock both? Is mocking collaborators incompatible with TDD?",
+      "expected_output": "The response distinguishes TDD from Loom's default classical/sociable house style: mock the external payment boundary, prefer the real local collaborator when its behavior matters, and acknowledge that interaction-heavy/mockist TDD is still TDD.",
+      "trap": "The model claims TDD universally forbids collaborator mocks or mocks away the local behavior being proved.",
       "expectations": [
-        "Mocks at the system boundary (the payment API / network), not across the unit under test",
-        "Does not mock the immediate collaborator (the receipt formatter) whose interaction is the behavior",
-        "Prefers real collaborators or in-memory fakes over mocks that merely replay the expected answer"
+        "Mocks or stubs the external payment/network boundary",
+        "Prefers the real local formatter when that collaboration is part of the behavior under proof",
+        "States that Loom defaults to classical/sociable TDD rather than presenting it as the only valid TDD school",
+        "Acknowledges that a more interaction-heavy/mockist style can still be TDD"
+      ]
+    },
+    {
+      "id": 4,
+      "name": "fake-it-then-triangulate",
+      "prompt": "A teammate rejects this TDD sequence during review: first test `add(1, 1) == 2`, then temporarily `return 2`. They say any hard-coded return means the developer has violated TDD and must instead implement the general formula immediately. Is that review correct? Show how you would continue from this point without leaving an over-fitted implementation behind.",
+      "expected_output": "The response recognizes the constant as a valid temporary Fake It step, rejects treating it as completion, and adds discriminating examples until the accepted addition rule rather than a simple special case drives the implementation.",
+      "trap": "The model either treats any Fake It step as invalid TDD, or defends the constant as sufficient once the first test is green.",
+      "expectations": [
+        "Recognizes returning 2 as an acceptable temporary Fake It strategy",
+        "Does not treat the single passing example as completed general behavior",
+        "Adds a discriminating second example such as add(1, 2) == 3 to reject the constant implementation",
+        "Checks whether another simple special-case implementation could still satisfy the examples and adds another case when needed",
+        "Refactors under green once the examples constrain the accepted addition rule"
+      ]
+    },
+    {
+      "id": 5,
+      "name": "obvious-implementation-when-design-is-clear",
+      "prompt": "Our team has adopted a rule that every TDD cycle must use Fake It first, even for a tiny `isEmpty(s)` helper where both behavior and implementation are obvious. They consider going directly from a failing test to `return len(s) == 0` a TDD violation. Review that rule and describe the proper cycle.",
+      "expected_output": "The response rejects mandatory Fake It ceremony: write the failing behavior test first, use Obvious Implementation when the solution is genuinely obvious and small, then refactor/stop or choose the next accepted behavior.",
+      "trap": "The model follows ritual and requires a pointless hard-coded result before the obvious implementation.",
+      "expectations": [
+        "Keeps test-first Red before production behavior",
+        "Rejects the team's rule that Fake It is mandatory in every TDD cycle",
+        "Uses Obvious Implementation when the direct solution is genuinely obvious",
+        "Does not require a pointless constant-return step for ritual",
+        "Refactors under green and stops if no other accepted behavior remains"
+      ]
+    },
+    {
+      "id": 6,
+      "name": "test-friction-as-design-feedback",
+      "prompt": "A pricing rule has a green unit test, but writing that one test requires nine mocks, four factories, and knowledge of six implementation files. A teammate says production design is out of scope for TDD: 'tests only verify behavior, so just hide the setup behind more test helpers.' Review that advice and say what you would inspect before adding more scaffolding.",
+      "expected_output": "The response treats the friction as design feedback, inspecting coupling, responsibility boundaries, API shape, and locality before deciding whether any test helper is appropriate.",
+      "trap": "The model accepts that tests should never influence production design and only proposes more helpers/mocks.",
+      "expectations": [
+        "Treats excessive setup and mock density as possible production-design feedback",
+        "Examines coupling, responsibility boundaries, locality, and API shape",
+        "Does not automatically solve the problem only inside test scaffolding",
+        "Keeps behavior-focused tests rather than coupling them more tightly to internals"
+      ]
+    },
+    {
+      "id": 7,
+      "name": "round-trip-needs-independent-oracle",
+      "prompt": "We implement a wire format defined by an external specification. The encoder and decoder were developed together and every property test currently proves only `decode(encode(x)) == x`. A teammate wants to delete the known-answer fixtures because 'round-trip coverage proves both directions at once.' Is that safe? Explain the smallest test set you would keep.",
+      "expected_output": "The response keeps the round-trip property but also requires independent known-answer encoding/decoding examples anchored to the external specification.",
+      "trap": "The model accepts round-trip-only evidence even though both halves can share the same wrong convention.",
+      "expectations": [
+        "Explains how encoder and decoder can agree on the same wrong representation",
+        "Keeps the round-trip property test",
+        "Adds independent known-answer encoding examples from the required format",
+        "Adds independent known-answer decoding examples where needed"
+      ]
+    },
+    {
+      "id": 8,
+      "name": "unit-tdd-does-not-prove-boundary-composition",
+      "prompt": "A CLI command's unit suite mocks both the filesystem and database. The tests are green, and the team wants to mark the acceptance item 'user can run the command end to end' complete because 'all logic is covered.' Review that evidence claim. What additional test, if any, is required without turning every unit test into E2E?",
+      "expected_output": "The response keeps the fast unit suite but requires the smallest integration/acceptance test that exercises the real load-bearing CLI/filesystem/database composition before making the end-to-end claim.",
+      "trap": "The model upgrades mocked unit evidence into an end-to-end claim or overcorrects by replacing all unit tests with slow full-system tests.",
+      "expectations": [
+        "States that mocked unit tests do not prove the actual filesystem/database/CLI composition",
+        "Requests an integration, contract, or acceptance test at the relevant boundary",
+        "Keeps focused unit tests for fast inner-loop design feedback",
+        "Does not require every unit test to become an end-to-end test"
+      ]
+    },
+    {
+      "id": 9,
+      "name": "refactor-includes-test-code-without-weakening-proof",
+      "prompt": "After a Red→Green cycle, the feature behavior is correct but the test setup is duplicated and noisy. A reviewer says tests are evidence and therefore must never be changed after they first pass; only production code may be refactored. Is that correct? Describe what test refactoring may and may not do.",
+      "expected_output": "The response allows test-code refactoring under green while preserving or improving discriminating strength, and rejects moving production decision logic into helpers or changing behavior during Refactor.",
+      "trap": "The model freezes test code forever or weakens/removes the discriminating assertion in the name of cleanup.",
+      "expectations": [
+        "Allows test-code refactoring while the behavior suite stays green",
+        "Preserves or improves discriminating assertions",
+        "Avoids hiding production decision logic inside test helpers",
+        "Treats any behavior change as a new Red rather than part of Refactor"
+      ]
+    },
+    {
+      "id": 10,
+      "name": "deliberate-missing-api-can-be-red",
+      "prompt": "I write the next test first and it calls a method that does not exist yet, so the project fails to compile. A teammate says this can never count as Red because Red must always be a failing runtime assertion. Another test in the same branch also fails because of a misspelled import. Which failures, if either, count as valid TDD Red, and what should I do next?",
+      "expected_output": "The response distinguishes the deliberate missing-API compile/type failure from unrelated setup breakage: the former can count as Red for the missing interface, while the misspelled import cannot. It then adds only enough API to compile and continues until the test fails on the intended behavior.",
+      "trap": "The model either rejects every compile-time Red or treats any compile/setup failure as valid TDD evidence.",
+      "expectations": [
+        "Accepts a compile/type failure caused specifically by the deliberately not-yet-existing API as valid Red evidence for that missing interface",
+        "Rejects the misspelled import/setup failure as unrelated and therefore not valid Red",
+        "Adds only enough interface/API to make the intended test runnable",
+        "Continues the cycle until the test produces the intended behavioral failure before implementing the behavior"
+      ]
+    },
+    {
+      "id": 11,
+      "name": "test-list-without-ceremony",
+      "prompt": "I'm fixing one tiny, already-understood off-by-one bug. I can express the entire accepted change with one regression test. A teammate insists TDD requires me to first write a formal multi-item Test List and enumerate edge cases that are outside this bug's scope. Do I need that list before I can start?",
+      "expected_output": "The response keeps the TDD discipline but rejects ceremony: for a genuinely single-behavior change, the one regression test can be the entire current Test List. Additional cases are added only if the work exposes a real need.",
+      "trap": "The model turns the Test List into mandatory up-front planning or, conversely, drops test-first discipline because the change is small.",
+      "expectations": [
+        "Rejects a formal multi-item list as unnecessary ceremony for a genuinely single-behavior change",
+        "Treats the one regression test as sufficient current Test List/next behavior",
+        "Still writes and observes the regression test fail before fixing the bug when practical",
+        "Adds more cases only if implementation reveals a real boundary or counterexample within accepted scope"
       ]
     }
   ]
