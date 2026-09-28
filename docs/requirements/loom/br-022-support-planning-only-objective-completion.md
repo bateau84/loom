@@ -36,3 +36,4 @@ Use deterministic routing/control-plane tests to prove the planning-only DAG, pe
 - [BR-008 — Bounded Autonomy and Progress](br-008-bounded-autonomy-and-progress.md)
 - [BR-019 — Keep Workflow Ceremony Proportional](br-019-keep-workflow-ceremony-proportional.md)
 - [BR-021 — Preserve Holistic Plan Context Across Handoffs](br-021-preserve-holistic-plan-context.md)
+- User resolution of planning scope in OQ `3fb7f28b-e116-4765-9366-d2a84c9f7222` (a reviewed planning/plan-only outcome is in scope as an intermediate outcome, distinct from product completion and granting no implementation authority).
