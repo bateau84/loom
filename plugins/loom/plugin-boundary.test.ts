@@ -2765,9 +2765,20 @@ Verdict: FAIL
     }
   })
 
-  test("Reviewer authority gates can mutate only their acceptance-bookkeeping surfaces", async () => {
+  test("Reviewer authority gates scope and commit acceptance bookkeeping", async () => {
     const h = await harness()
     try {
+      await initializeGitFixture(h.root)
+      const requirementPath = "docs/requirements/recovery.md"
+      const logPath = "docs/requirements/CHANGELOG.md"
+      await mkdir(join(h.root, "docs", "requirements"), { recursive: true })
+      await writeFile(join(h.root, requirementPath), "**Status:** proposed\n")
+      await writeFile(join(h.root, logPath), "# Requirements changelog\n")
+      await writeFile(join(h.root, "src", "app.ts"), "export const app = true\n")
+      await git(h.root, ["add", requirementPath, logPath, "src/app.ts"])
+      await git(h.root, ["commit", "-m", "test: reviewer bookkeeping fixture", "-q"])
+      await writeFile(join(h.root, "src", "app.ts"), "export const app = false\n")
+
       const generalSession = "reviewer-bookkeeping-general"
       const specifierSession = "reviewer-bookkeeping-specifier"
       const reviewerSession = "reviewer-bookkeeping-reviewer"
@@ -2844,21 +2855,14 @@ Verdict: FAIL
         "reviewer",
         reviewerSession,
       )
-      expect(scope.roleWriteDefault).toEqual([
+      expect(scope.roleWriteDefault).toEqual(["ephemeral-reports/reviewer/**"])
+      expect(scope.effectiveWrite).toEqual([
         "docs/requirements/**",
-        "docs/design/**",
-        "docs/architecture/**",
         "ephemeral-reports/reviewer/**",
       ])
-      expect(scope.effectiveWrite).toEqual(scope.roleWriteDefault)
 
       const evaluate = h.permissionHooks.get("evaluate")!
-      for (const path of [
-        "docs/requirements/recovery.md",
-        "docs/requirements/CHANGELOG.md",
-        "docs/design/recovery.md",
-        "docs/architecture/runtime.md",
-      ]) {
+      for (const path of [requirementPath, logPath]) {
         const bookkeepingEdit: any = {
           agent: "reviewer",
           action: "edit",
@@ -2870,16 +2874,22 @@ Verdict: FAIL
         expect(bookkeepingEdit.effect).not.toBe("deny")
       }
 
-      const productEdit: any = {
-        agent: "reviewer",
-        action: "edit",
-        resources: ["src/app.ts"],
-        sessionID: reviewerSession,
-        effect: "ask",
+      for (const path of [
+        "docs/design/recovery.md",
+        "docs/architecture/runtime.md",
+        "src/app.ts",
+      ]) {
+        const outsideEdit: any = {
+          agent: "reviewer",
+          action: "edit",
+          resources: [path],
+          sessionID: reviewerSession,
+          effect: "ask",
+        }
+        await evaluate(outsideEdit)
+        expect(outsideEdit.effect).toBe("deny")
+        expect(outsideEdit.message).toContain("current Loom write scope")
       }
-      await evaluate(productEdit)
-      expect(productEdit.effect).toBe("deny")
-      expect(productEdit.message).toContain("current Loom write scope")
 
       const escaped = await h.call(
         "scope_elevate",
@@ -2893,7 +2903,126 @@ Verdict: FAIL
         reviewerSession,
       )
       expect(escaped.error).toContain("independent/advisory role")
-      expect(escaped.roleWriteDefault).toEqual(scope.roleWriteDefault)
+      expect(escaped.roleWriteDefault).toEqual(["ephemeral-reports/reviewer/**"])
+
+      for (const [path, content, callID] of [
+        [requirementPath, "**Status:** accepted\n", "reviewer-status-edit"],
+        [logPath, "# Requirements changelog\n- recovery accepted\n", "reviewer-log-edit"],
+      ] as const) {
+        const editEvent = {
+          tool: "edit",
+          callID,
+          messageID: callID + "-message",
+          sessionID: reviewerSession,
+          agent: "reviewer",
+          input: { filePath: path, oldString: "", newString: content },
+        }
+        await h.toolHooks.get("execute.before")!(editEvent)
+        await writeFile(join(h.root, path), content)
+        await h.toolHooks.get("execute.after")!({
+          ...editEvent,
+          status: "completed",
+          result: "updated",
+        })
+      }
+
+      const dirtyPass = await h.call(
+        "complete",
+        {
+          workflowId,
+          stepId: "review-think",
+          outcome: "pass",
+          summary: "authority accepted",
+        },
+        "reviewer",
+        reviewerSession,
+      )
+      expect(dirtyPass.error).toContain(
+        "Cannot complete while this role has uncommitted changes",
+      )
+      expect(dirtyPass.error).toContain(requirementPath)
+      expect(dirtyPass.error).toContain(logPath)
+
+      for (const [path, callID] of [
+        [requirementPath, "reviewer-status-stage"],
+        [logPath, "reviewer-log-stage"],
+      ] as const) {
+        const command = `git -c core.hooksPath=/dev/null add -- ${path}`
+        const permission: any = {
+          agent: "reviewer",
+          action: "shell",
+          resources: [command],
+          sessionID: reviewerSession,
+          effect: "ask",
+        }
+        await evaluate(permission)
+        expect(permission.effect).toBe("allow")
+        const stageEvent = {
+          tool: "shell",
+          callID,
+          messageID: callID + "-message",
+          sessionID: reviewerSession,
+          agent: "reviewer",
+          input: { command },
+        }
+        await h.toolHooks.get("execute.before")!(stageEvent)
+        await git(h.root, ["add", path])
+        await h.toolHooks.get("execute.after")!({
+          ...stageEvent,
+          status: "completed",
+          result: "staged",
+        })
+      }
+
+      const commitCommand =
+        "git -c core.hooksPath=/dev/null commit -m 'docs: record reviewed acceptance'"
+      const commitPermission: any = {
+        agent: "reviewer",
+        action: "shell",
+        resources: [commitCommand],
+        sessionID: reviewerSession,
+        effect: "ask",
+      }
+      await evaluate(commitPermission)
+      expect(commitPermission.effect).toBe("allow")
+      const commitEvent = {
+        tool: "shell",
+        callID: "reviewer-bookkeeping-commit",
+        messageID: "reviewer-bookkeeping-commit-message",
+        sessionID: reviewerSession,
+        agent: "reviewer",
+        input: { command: commitCommand },
+      }
+      await h.toolHooks.get("execute.before")!(commitEvent)
+      await git(h.root, [
+        "-c",
+        "core.hooksPath=/dev/null",
+        "commit",
+        "-m",
+        "docs: record reviewed acceptance",
+        "-q",
+      ])
+      await h.toolHooks.get("execute.after")!({
+        ...commitEvent,
+        status: "completed",
+        result: "committed",
+      })
+
+      expect((await h.call(
+        "complete",
+        {
+          workflowId,
+          stepId: "review-think",
+          outcome: "pass",
+          summary: "authority accepted and bookkeeping committed",
+        },
+        "reviewer",
+        reviewerSession,
+      )).error).toBeUndefined()
+
+      expect((await git(h.root, ["status", "--porcelain"])).stdout.trim()).toBe(
+        " M src/app.ts",
+      )
     } finally {
       h.restore()
     }
