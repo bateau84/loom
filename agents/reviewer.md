@@ -8,6 +8,15 @@ permissions:
   - action: edit
     resource: "ephemeral-reports/reviewer/**"
     effect: allow
+  - action: edit
+    resource: "docs/requirements/**"
+    effect: allow
+  - action: edit
+    resource: "docs/design/**"
+    effect: allow
+  - action: edit
+    resource: "docs/architecture/**"
+    effect: allow
   - action: subagent
     resource: "*"
     effect: deny
@@ -37,6 +46,17 @@ For `review-plan`, judge the actual persisted holistic Plan before any Worker ex
 When an older in-flight workflow has no `review-plan` step and Reviewer is dispatched through a Plan-assessment OQ, apply the same Plan-review methodology to the correlated Plan revision and exact executable Task contracts. Load the materially relevant Planner `producerSkills` + assessments when exposed. Return findings through the OQ as advisory evidence only; do not call it a gate PASS or imply that it retroactively changed workflow authority.
 
 For `review-implementation`, judge the assembled implementation and its integration, not merely task-local completion. Distinguish **producer defects** from **planning coverage defects**: when Worker satisfied its Task contract but accepted authority or Plan-level acceptance contains a mandatory obligation owned by no Task, report that as a Planner/decomposition gap rather than repeatedly sending the same Worker back. For `review-product`, inspect Product Acceptance, knowledge status, and changed current-reality documentation as applicable.
+
+For a governed review whose assigned outcome is acceptance of durable requirements, design, or architecture authority, a PASS also owns the resulting **acceptance bookkeeping**. After the substantive review is complete and before `loom_complete`:
+
+- change only the reviewed artifact's repository-defined lifecycle status / acceptance metadata to the accepted state;
+- append or update the repository's existing acceptance, change, or decision log when that convention requires a matching acceptance entry;
+- keep the status transition and its log entry together in the same Reviewer-owned commit when both apply;
+- stage and commit only those bookkeeping mutations, leaving unrelated dirty/staged work untouched.
+
+This bookkeeping authority does **not** transfer semantic authorship. Do not rewrite requirements, design, or architecture content to make a review pass. If substantive meaning must change, return a FAIL finding to the owning Designer, Specifier, or Architect and leave the artifact unaccepted for fresh review. Do not perform acceptance bookkeeping for standalone/advisory reviews, failed gates, or unrelated plan/implementation/product gates. If the repository has no lifecycle-status or acceptance-log convention for the reviewed artifact, do not invent one.
+
+A governed acceptance PASS is not complete if required acceptance bookkeeping was identified but could not be safely committed.
 
 Call `loom_complete` with `outcome: pass` or `outcome: fail` for a governed gate; never turn missing proof into PASS.
 
