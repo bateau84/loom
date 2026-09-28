@@ -266,6 +266,28 @@ const productScopeElevatingAgents = new Set([
 
 const generalGitWriteScope = ["docs/anchors/**"]
 
+function reviewerAcceptanceWriteScope(step: Workflow["steps"][number]) {
+  const write = [...(artifactWriteDefaults.reviewer ?? [])]
+  if (step.id === "review-think") {
+    if (step.dependsOn.includes("designer")) write.unshift("docs/design/**")
+    if (step.dependsOn.includes("specifier")) write.unshift("docs/requirements/**")
+  } else if (
+    step.id === "review-architecture" &&
+    step.dependsOn.includes("architect")
+  ) {
+    write.unshift("docs/architecture/**")
+  }
+  return [...new Set(write)]
+}
+
+function reviewerOwnsAcceptanceBookkeeping(
+  step: Workflow["steps"][number],
+) {
+  return reviewerAcceptanceWriteScope(step).some(
+    (path) => !path.startsWith("ephemeral-reports/"),
+  )
+}
+
 type GitSessionOwnership = {
   schemaVersion: 3
   authorityId?: string
@@ -1583,6 +1605,112 @@ async function recordGitSessionStagingResult(
       })
     }
   }
+}
+
+function reviewerAcceptanceLogPath(path: string) {
+  const normalized = normalizeRepoPath(path)
+  return /(?:^|\/)(?:changelog|history|changes|acceptance(?:[-_]?log)?|decision(?:s|[-_]?log)?|reviews?)\.md$/i.test(
+    normalized,
+  )
+}
+
+async function trackedAtHead(projectDirectory: string, path: string) {
+  try {
+    await execFileAsync(
+      "git",
+      ["cat-file", "-e", `HEAD:${safeOwnedRepoPath(path)}`],
+      { cwd: projectDirectory, encoding: "utf8" },
+    )
+    return true
+  } catch {
+    return false
+  }
+}
+
+function reviewerAcceptanceMetadataLine(line: string) {
+  const value = line.trim()
+  if (!value) return true
+  return (
+    /^(?:\*\*)?status\s*:(?:\*\*)?/i.test(value) ||
+    /^(?:\*\*)?(?:accepted|acceptance|reviewed?)(?:[-_ ](?:at|by|date|commit|reviewer))?\s*:(?:\*\*)?/i.test(value)
+  )
+}
+
+async function reviewerAcceptanceCommitError(
+  projectDirectory: string,
+  staged: readonly string[],
+) {
+  for (const raw of staged) {
+    const path = normalizeRepoPath(raw)
+    const { stdout } = await execFileAsync(
+      "git",
+      ["diff", "--cached", "--unified=0", "--no-renames", "--", path],
+      { cwd: projectDirectory, encoding: "utf8" },
+    )
+    const changed = String(stdout)
+      .split("\n")
+      .filter(
+        (line) =>
+          (line.startsWith("+") || line.startsWith("-")) &&
+          !line.startsWith("+++") &&
+          !line.startsWith("---"),
+      )
+
+    if (reviewerAcceptanceLogPath(path)) {
+      if (!(await trackedAtHead(projectDirectory, path))) {
+        return (
+          "Git commit denied: Reviewer may append only to an existing " +
+          `repository acceptance/change/decision history file; ${path} is new.`
+        )
+      }
+      const removed = changed.filter((line) => line.startsWith("-"))
+      if (removed.length > 0) {
+        return (
+          "Git commit denied: Reviewer acceptance history is append-only; " +
+          `${path} removes or rewrites existing history.`
+        )
+      }
+      continue
+    }
+
+    const invalid = changed
+      .map((line) => line.slice(1))
+      .filter((line) => !reviewerAcceptanceMetadataLine(line))
+    if (invalid.length > 0) {
+      return (
+        "Git commit denied: Reviewer acceptance bookkeeping may change only " +
+        `lifecycle/acceptance metadata in ${path}; substantive document content remains producer-owned.`
+      )
+    }
+  }
+  return undefined
+}
+
+async function reviewerAcceptanceStagedCommitError(
+  ctx: any,
+  sessionID: string,
+  projectDirectory: string,
+) {
+  const workflowId = (await ctx.storage.get(
+    sessionKey(sessionID),
+  )) as string | undefined
+  const stepId = (await ctx.storage.get(
+    sessionStepKey(sessionID),
+  )) as string | undefined
+  if (!workflowId || !stepId) return undefined
+
+  const workflow = await readWorkflow(ctx, workflowId)
+  const step = workflow?.steps.find((candidate) => candidate.id === stepId)
+  if (
+    !step ||
+    step.agent !== "reviewer" ||
+    !reviewerOwnsAcceptanceBookkeeping(step)
+  ) {
+    return undefined
+  }
+
+  const staged = await stagedGitPaths(projectDirectory)
+  return reviewerAcceptanceCommitError(projectDirectory, staged)
 }
 
 async function commitScopeError(
@@ -3900,6 +4028,14 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         true,
       )
       if (error) throw new Error(error)
+      if (String(raw.agent ?? "") === "reviewer") {
+        const acceptanceError = await reviewerAcceptanceStagedCommitError(
+          ctx,
+          String(raw.sessionID),
+          ctx.location.directory,
+        )
+        if (acceptanceError) throw new Error(acceptanceError)
+      }
     }
     const legacyCheckedSessions = new Set<string>()
     const ensureLegacySession = async (sessionID: string) => {
@@ -5664,7 +5800,17 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             }
             await validateWorkflowMutationLocked(ctx, runtime, workflow)
 
-            if (resolvedOutcome === "complete") {
+            const currentStep = workflow.steps.find(
+              (candidate) => candidate.id === stepId,
+            )
+            const reviewerAcceptanceVerdict =
+              tool.agent === "reviewer" &&
+              (resolvedOutcome === "pass" || resolvedOutcome === "fail") &&
+              Boolean(
+                currentStep &&
+                reviewerOwnsAcceptanceBookkeeping(currentStep),
+              )
+            if (resolvedOutcome === "complete" || reviewerAcceptanceVerdict) {
               let ownedWriteScope: string[]
               if (tool.agent === "general") {
                 ownedWriteScope = generalGitWriteScope
@@ -9231,6 +9377,21 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 scope = (await ctx.storage.get(
                   scopeKey(value.workflowId, value.stepId),
                 )) as TaskScope | undefined
+                if (tool.agent === "reviewer") {
+                  // Reviewer mutation authority is derived from the exact
+                  // current gate shape, not inherited from a prior attempt.
+                  // Recompute it on every fresh attachment so reopen/reroute
+                  // cannot retain stale acceptance-write authority.
+                  scope = {
+                    workflowId: value.workflowId,
+                    stepId: value.stepId,
+                    write: reviewerAcceptanceWriteScope(step),
+                  }
+                  await ctx.storage.set(
+                    scopeKey(value.workflowId, value.stepId),
+                    scope,
+                  )
+                }
 
                 if (tool.agent === "worker") {
                   if (step.task && workflow.work && work) {
@@ -10799,6 +10960,18 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               event.effect = "deny"
               event.message = error
               return
+            }
+            if (agent === "reviewer") {
+              const acceptanceError = await reviewerAcceptanceStagedCommitError(
+                ctx,
+                event.sessionID,
+                ctx.location.directory,
+              )
+              if (acceptanceError) {
+                event.effect = "deny"
+                event.message = acceptanceError
+                return
+              }
             }
           }
           event.effect = "allow"
