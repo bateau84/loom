@@ -17,3 +17,6 @@ opencode*.jsonc
 profiles/**
 cli/**
 tui/**
+
+## ignore AGENTS.md
+AGENTS.md
