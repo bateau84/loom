@@ -3152,8 +3152,8 @@ Verdict: FAIL
         reviewerSession,
       )).error).toBeUndefined()
 
-      expect((await git(h.root, ["status", "--porcelain"])).stdout.trim()).toBe(
-        " M src/app.ts",
+      expect((await git(h.root, ["status", "--porcelain"])).stdout).toBe(
+        " M src/app.ts\n",
       )
     } finally {
       h.restore()
