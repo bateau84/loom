@@ -7620,11 +7620,21 @@ test("answered OQ never revives a consumer session from an older step attempt", 
     )
     expect(raised.error).toBeUndefined()
 
-    const workflow = await h.durableStorage.get(`workflow/${workflowId}`) as any
-    const step = workflow.steps.find((candidate: any) => candidate.id === "specifier")
-    step.attempt = (step.attempt ?? 0) + 1
-    workflow.revision += 1
-    await h.durableStorage.set(`workflow/${workflowId}`, workflow)
+    const reopened = await h.call(
+      "reopen",
+      {
+        workflowId,
+        stepId: "specifier",
+        reason: "New evidence requires a fresh Specifier attempt before the answer arrives.",
+        newEvidence: true,
+        changedHypothesis: false,
+        changedStrategy: false,
+        reducedUnresolved: false,
+      },
+      "general",
+      generalSession,
+    )
+    expect(reopened.error).toBeUndefined()
 
     const answered = await h.call(
       "oq_answer",
