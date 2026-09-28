@@ -1375,6 +1375,14 @@ def action_matches(action: dict[str, Any], assertion: dict[str, Any]) -> bool:
         return isinstance(value, str) and value.endswith(str(assertion["ends_with"]))
     if "contains" in assertion:
         return isinstance(value, str) and str(assertion["contains"]) in value
+    if "contains_all" in assertion:
+        expected = assertion["contains_all"]
+        return (
+            isinstance(value, str)
+            and isinstance(expected, list)
+            and bool(expected)
+            and all(isinstance(part, str) and part and part in value for part in expected)
+        )
     return False
 
 
@@ -1389,6 +1397,8 @@ def describe_action(assertion: dict[str, Any]) -> str:
         else "ends_with"
         if "ends_with" in assertion
         else "contains"
+        if "contains" in assertion
+        else "contains_all"
     )
     return "%s %s %s %r" % (
         assertion.get("tool"),
