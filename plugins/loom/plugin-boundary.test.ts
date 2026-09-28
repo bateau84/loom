@@ -2765,6 +2765,140 @@ Verdict: FAIL
     }
   })
 
+  test("Reviewer authority gates can mutate only their acceptance-bookkeeping surfaces", async () => {
+    const h = await harness()
+    try {
+      const generalSession = "reviewer-bookkeeping-general"
+      const specifierSession = "reviewer-bookkeeping-specifier"
+      const reviewerSession = "reviewer-bookkeeping-reviewer"
+      const started = await h.call(
+        "start",
+        { request: "Specify and independently accept one bounded requirement." },
+        "general",
+        generalSession,
+      )
+      const workflowId = String(started.workflowId)
+      expect((await h.call(
+        "route",
+        {
+          humanFacing: false,
+          behavioral: true,
+          structural: false,
+          externalUnknown: false,
+          diagnostic: false,
+          productOutcome: false,
+          implementationRequested: false,
+          executionDepth: "change",
+        },
+        "general",
+        generalSession,
+      )).error).toBeUndefined()
+
+      const specifierGrant = await h.call(
+        "dispatch_grant",
+        { workflowId, stepId: "specifier" },
+        "general",
+        generalSession,
+      )
+      expect((await h.call(
+        "attach",
+        {
+          grantId: specifierGrant.grantId,
+          workflowId,
+          stepId: "specifier",
+        },
+        "specifier",
+        specifierSession,
+      )).attached).toBe(true)
+      expect((await h.call(
+        "complete",
+        {
+          workflowId,
+          stepId: "specifier",
+          summary: "requirement ready for independent review",
+        },
+        "specifier",
+        specifierSession,
+      )).error).toBeUndefined()
+
+      const reviewerGrant = await h.call(
+        "dispatch_grant",
+        { workflowId, stepId: "review-think" },
+        "general",
+        generalSession,
+      )
+      expect((await h.call(
+        "attach",
+        {
+          grantId: reviewerGrant.grantId,
+          workflowId,
+          stepId: "review-think",
+        },
+        "reviewer",
+        reviewerSession,
+      )).attached).toBe(true)
+
+      const scope = await h.call(
+        "scope_status",
+        { workflowId, stepId: "review-think" },
+        "reviewer",
+        reviewerSession,
+      )
+      expect(scope.roleWriteDefault).toEqual([
+        "docs/requirements/**",
+        "docs/design/**",
+        "docs/architecture/**",
+        "ephemeral-reports/reviewer/**",
+      ])
+      expect(scope.effectiveWrite).toEqual(scope.roleWriteDefault)
+
+      const evaluate = h.permissionHooks.get("evaluate")!
+      for (const path of [
+        "docs/requirements/recovery.md",
+        "docs/requirements/CHANGELOG.md",
+        "docs/design/recovery.md",
+        "docs/architecture/runtime.md",
+      ]) {
+        const bookkeepingEdit: any = {
+          agent: "reviewer",
+          action: "edit",
+          resources: [path],
+          sessionID: reviewerSession,
+          effect: "ask",
+        }
+        await evaluate(bookkeepingEdit)
+        expect(bookkeepingEdit.effect).not.toBe("deny")
+      }
+
+      const productEdit: any = {
+        agent: "reviewer",
+        action: "edit",
+        resources: ["src/app.ts"],
+        sessionID: reviewerSession,
+        effect: "ask",
+      }
+      await evaluate(productEdit)
+      expect(productEdit.effect).toBe("deny")
+      expect(productEdit.message).toContain("current Loom write scope")
+
+      const escaped = await h.call(
+        "scope_elevate",
+        {
+          workflowId,
+          stepId: "review-think",
+          paths: ["src/app.ts"],
+          reason: "Attempt to turn an acceptance review into implementation.",
+        },
+        "reviewer",
+        reviewerSession,
+      )
+      expect(escaped.error).toContain("independent/advisory role")
+      expect(escaped.roleWriteDefault).toEqual(scope.roleWriteDefault)
+    } finally {
+      h.restore()
+    }
+  })
+
   test("fresh same-attempt Specifier automatically inherits exact admitted-byte staging authority", async () => {
     const h = await harness()
     try {
