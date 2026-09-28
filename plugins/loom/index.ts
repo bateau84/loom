@@ -225,12 +225,7 @@ const artifactWriteDefaults: Record<string, string[]> = {
   designer: ["docs/design/**", "ephemeral-reports/designer/**"],
   specifier: ["docs/requirements/**"],
   architect: ["docs/architecture/**", "docs/dependencies/**"],
-  reviewer: [
-    "docs/requirements/**",
-    "docs/design/**",
-    "docs/architecture/**",
-    "ephemeral-reports/reviewer/**",
-  ],
+  reviewer: ["ephemeral-reports/reviewer/**"],
   critic: ["ephemeral-reports/critic/**"],
   acceptance: ["ephemeral-reports/acceptance/**"],
   documenter: ["docs/system/**", "docs/user/**", "README.md"],
@@ -250,6 +245,28 @@ const productScopeElevatingAgents = new Set([
 ])
 
 const generalGitWriteScope = ["docs/anchors/**"]
+
+function reviewerAcceptanceWriteScope(step: Workflow["steps"][number]) {
+  const write = [...(artifactWriteDefaults.reviewer ?? [])]
+  if (step.id === "review-think") {
+    if (step.dependsOn.includes("designer")) write.unshift("docs/design/**")
+    if (step.dependsOn.includes("specifier")) write.unshift("docs/requirements/**")
+  } else if (
+    step.id === "review-architecture" &&
+    step.dependsOn.includes("architect")
+  ) {
+    write.unshift("docs/architecture/**")
+  }
+  return [...new Set(write)]
+}
+
+function reviewerOwnsAcceptanceBookkeeping(
+  step: Workflow["steps"][number],
+) {
+  return reviewerAcceptanceWriteScope(step).some(
+    (path) => !path.startsWith("ephemeral-reports/"),
+  )
+}
 
 type GitSessionOwnership = {
   schemaVersion: 3
@@ -4691,7 +4708,17 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             }
             await validateWorkflowMutationLocked(ctx, runtime, workflow)
 
-            if (resolvedOutcome === "complete") {
+            const currentStep = workflow.steps.find(
+              (candidate) => candidate.id === stepId,
+            )
+            const reviewerAcceptanceVerdict =
+              tool.agent === "reviewer" &&
+              (resolvedOutcome === "pass" || resolvedOutcome === "fail") &&
+              Boolean(
+                currentStep &&
+                reviewerOwnsAcceptanceBookkeeping(currentStep),
+              )
+            if (resolvedOutcome === "complete" || reviewerAcceptanceVerdict) {
               let ownedWriteScope: string[]
               if (tool.agent === "general") {
                 ownedWriteScope = generalGitWriteScope
@@ -8257,6 +8284,21 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 scope = (await ctx.storage.get(
                   scopeKey(value.workflowId, value.stepId),
                 )) as TaskScope | undefined
+                if (
+                  !scope &&
+                  tool.agent === "reviewer" &&
+                  reviewerOwnsAcceptanceBookkeeping(step)
+                ) {
+                  scope = {
+                    workflowId: value.workflowId,
+                    stepId: value.stepId,
+                    write: reviewerAcceptanceWriteScope(step),
+                  }
+                  await ctx.storage.set(
+                    scopeKey(value.workflowId, value.stepId),
+                    scope,
+                  )
+                }
 
                 if (tool.agent === "worker") {
                   if (step.task && workflow.work && work) {
