@@ -33,6 +33,7 @@ tags: [requirements, loom, index]
 
 ## Obligation contracts
 
+- [OC-001 — Independent Question-Consumer Reconciliation](oc-001-independent-question-consumer-reconciliation.md) — applies across question answer, consumer reconciliation, and readiness decisions; complements BR-017 and BR-021.
 - [OC-001 — Review Repair Ownership and Independent Approval](obligation-contracts/oc-001-review-repair-independence.md)
 
 Each requirement is its own OKF document so relationships, dependencies, retrieval, and future supersession remain explicit and machine-discoverable.

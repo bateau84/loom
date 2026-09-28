@@ -22,22 +22,20 @@ The control panel MUST permit explicit-confirmation removal of terminal failed/c
 6. Multiple repositories remain independently identifiable even when task/workflow names match.
 7. Stale/offline and same-revision consistency-conflict state is explicit and never silently normalized.
 8. Missing/unavailable telemetry is unknown/unavailable, never a healthy zero or inferred success.
-9. A malformed or otherwise unverifiable projection is never presented as valid current state. If the dashboard retains a previously validated view, it identifies that view as last-known and communicates its freshness; otherwise it communicates that the view is unavailable.
-10. Projection publication remains versioned, bounded, atomic, and independent of Loom execution availability.
+9. A malformed or otherwise unverifiable projection is never presented as valid current state. The dashboard retains a previously validated view, including a valid empty view, as last-known and communicates its freshness; if no such view exists, it communicates that the view is unavailable.
+10. A projection shown as current represents one coherent observation; partial or unverifiable data is not combined with validated data and presented as current.
 11. Status meaning is not encoded by color alone and core navigation/actions are keyboard operable.
 12. Background refresh preserves focus and current navigation context when the target still exists.
 13. Legacy dashboard deep links remain valid while the new directory/session hierarchy is introduced.
 14. A user can remove one or more terminal failed/cancelled workflow records from the control panel only after explicitly confirming the selected target(s) and removal.
 15. Workflow deletion MUST NOT modify files in the working directory.
-16. Workflow deletion removes the workflow's execution record, stale session bindings, live work claims, dispatch grants, OQs, scopes, budgets, and other routing/control records that could affect later work.
-17. Evidence observations/claims and completed durable work results are retained; cleanup does not delete or rewrite them.
+16. Workflow cleanup removes routing/control records that could cause the removed workflow to affect later work, including its active question-routing state. It does not require erasing the historical answer/evidence provenance associated with those records.
+17. Evidence observations/claims, question answers and their source attribution, and completed durable work results are retained unchanged and remain attributable to the removed workflow; cleanup does not delete or rewrite them.
 18. Active/non-terminal workflows cannot be deleted; they must be cancelled first.
-19. A workflow that owns durable completed-Wave review history cannot be deleted.
-20. A durable deletion record prevents stale publisher snapshots from reintroducing a deleted workflow into the visible control panel.
-21. The mutation endpoint is separate from projection files, is host-local, requires same-origin browser intent plus an unguessable per-server control token, and fails closed.
-22. Cleanup failure does not alter project files or silently report success. Rejection, partial/unavailable outcome, or uncertain response is not presented as successful removal.
-23. Secrets, credential material, raw hidden prompts, and unrestricted tool output are not exported by default.
-24. Directory/session/workflow, Plan, status, or evidence inspection does not authorize or perform execution, answer questions, grant authority, cancel work, or edit a Plan.
+19. A removed workflow is not represented as current merely because an older observation still contains it.
+20. Cleanup failure does not alter project files or silently report success. Rejection, partial/unavailable outcome, or uncertain response is not presented as successful removal.
+21. Secrets, credential material, raw hidden prompts, and unrestricted tool output are not exported by default.
+22. Directory/session/workflow, Plan, status, or evidence inspection does not authorize or perform execution, answer questions, grant authority, cancel work, or edit a Plan.
 
 ## Verification Semantics
 
@@ -46,14 +44,13 @@ Proof includes:
 - at least two working directories and multiple sessions;
 - directory → session → workflow drill-down and return;
 - stale-source and consistency-conflict fixtures;
-- malformed/unverifiable projection input with and without a previously validated view, proving it is never presented as current/healthy and any retained view is explicitly last-known with freshness state;
+- malformed/unverifiable projection input with and without a previously validated view (including a validated empty view), proving it is never presented as current/healthy and the last-known view is retained with freshness state when one exists;
 - four failed workflow attempts deleted in one confirmed action;
 - a rejected active-workflow deletion;
-- retained evidence after deletion;
+- retained evidence, answered-question provenance, and source attribution after deletion;
 - retained completed work and project files after deletion;
 - released claims/session bindings after deletion;
-- stale projected workflow hidden by the deletion record;
-- POST cleanup rejected without the same-origin token;
+- an older observation cannot make a removed workflow appear current;
 - cleanup rejected or unchanged when explicit confirmation is absent or declined;
 - inspection of directory, session, workflow, Plan, status, and evidence leaves canonical execution/planning state unchanged and grants no mutation authority;
 - narrow-layout and keyboard validation.
