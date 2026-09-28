@@ -1638,6 +1638,13 @@ async function commitScopeError(
           if (
             receipt?.schemaVersion === 1 && receipt.authorityId === binding.authorityId &&
             receipt.workflowId === binding.workflowId && receipt.stepId === binding.stepId &&
+            receipt.attempt === binding.attempt && receipt.path === path && receipt.head !== head
+          ) {
+            return `Git commit denied: owned-delta staged receipt HEAD is stale for ${path}.`
+          }
+          if (
+            receipt?.schemaVersion === 1 && receipt.authorityId === binding.authorityId &&
+            receipt.workflowId === binding.workflowId && receipt.stepId === binding.stepId &&
             receipt.attempt === binding.attempt && receipt.path === path && receipt.head === head &&
             receipt.stagedFingerprint === await stagedFingerprint(projectDirectory, path) &&
             (await readFile(join(projectDirectory, path))).toString("base64") === receipt.aggregate &&

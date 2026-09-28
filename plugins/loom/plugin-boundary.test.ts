@@ -5333,6 +5333,70 @@ Verdict: FAIL
     }
   })
 
+  test("a staged owned-delta receipt with an advanced HEAD is rejected before commit", async () => {
+    const h = await harness()
+    try {
+      await initializeGitFixture(h.root)
+      await writeFile(join(h.root, "src", "shared.ts"), "base\nold\n")
+      await writeFile(join(h.root, "src", "external.ts"), "external baseline\n")
+      await git(h.root, ["add", "--", "src/shared.ts", "src/external.ts"])
+      await git(h.root, ["commit", "-m", "baseline staged HEAD test"])
+
+      const general = "staged-head-general"
+      const worker = "staged-head-worker"
+      const started = await h.call("start", { request: "Reject a stale owned-delta staging receipt." }, "general", general)
+      const workflowId = String(started.workflowId)
+      expect((await h.call("route", {
+        humanFacing: false, behavioral: false, structural: false, externalUnknown: false,
+        diagnostic: false, productOutcome: false, implementationRequested: true, executionDepth: "task",
+      }, "general", general)).error).toBeUndefined()
+      expect((await h.call("task_scope", {
+        workflowId, stepId: "worker", write: ["src/shared.ts"],
+      }, "general", general)).error).toBeUndefined()
+      const grant = await h.call("dispatch_grant", { workflowId, stepId: "worker" }, "general", general)
+      expect((await h.call("attach", { grantId: grant.grantId, workflowId, stepId: "worker" }, "worker", worker)).attached).toBe(true)
+
+      const mutation = {
+        tool: "edit", callID: "staged-head-edit", sessionID: worker, agent: "worker",
+        input: { filePath: join(h.root, "src", "shared.ts") },
+      }
+      await h.toolHooks.get("execute.before")?.(mutation)
+      await writeFile(join(h.root, "src", "shared.ts"), "base\nnew\n")
+      await h.toolHooks.get("execute.after")?.({ ...mutation, status: "completed", result: "updated" })
+
+      const stage = {
+        tool: "shell", callID: "staged-head-stage", sessionID: worker, agent: "worker",
+        input: { command: "git add -- src/shared.ts" },
+      }
+      await h.toolHooks.get("execute.before")?.(stage)
+      await git(h.root, ["add", "--", "src/shared.ts"])
+      await h.toolHooks.get("execute.after")?.({ ...stage, status: "completed", result: "staged" })
+      expect((await git(h.root, ["show", ":src/shared.ts"])).stdout).toBe("base\nnew\n")
+
+      // An unrelated external commit advances HEAD after Y's durable stage receipt.
+      await writeFile(join(h.root, "src", "external.ts"), "external work preserved\n")
+      await git(h.root, ["-c", "core.hooksPath=/dev/null", "commit", "--only", "src/external.ts", "-m", "external unrelated work"])
+      const externalHead = (await git(h.root, ["rev-parse", "HEAD"])).stdout.trim()
+
+      const commitCommand = "git -c core.hooksPath=/dev/null commit -m 'test: reject stale owned delta receipt'"
+      const commit = {
+        tool: "shell", callID: "staged-head-commit", sessionID: worker, agent: "worker",
+        input: { command: commitCommand },
+      }
+      await expect(h.toolHooks.get("execute.before")?.(commit)).rejects.toThrow(
+        "owned-delta staged receipt HEAD is stale",
+      )
+
+      expect((await git(h.root, ["rev-parse", "HEAD"])).stdout.trim()).toBe(externalHead)
+      expect((await git(h.root, ["show", "HEAD:src/external.ts"])).stdout).toBe("external work preserved\n")
+      expect((await git(h.root, ["show", ":src/shared.ts"])).stdout).toBe("base\nnew\n")
+      expect(await readFile(join(h.root, "src", "shared.ts"), "utf8")).toBe("base\nnew\n")
+      expect((await git(h.root, ["status", "--porcelain", "--", "src/external.ts"])).stdout).toBe("")
+    } finally {
+      h.restore()
+    }
+  })
+
   test("a clean tracked absence is captured as an owned creation delta", async () => {
     const h = await harness()
     try {
