@@ -203,7 +203,7 @@
       "trap": "Substitute broad whole-product QA for bounded concurrency conformance, or invent missing product authority.",
       "expectations": [
         "Performs a bounded concurrency review grounded in the implementation and identifies a concrete lifecycle/cancellation or goroutine-ownership concern.",
-        "Uses Reviewer-style conformance reasoning rather than broad holistic QA. Companion loading is checked by the observed skill action plus ASSESSMENT.md read; the companion is a file, not a separately named native skill."
+        "Uses Reviewer-style conformance reasoning rather than broad holistic QA. Companion loading is checked by the observed native skill load plus loom_assessment (or its Code Mode equivalent); a plain ASSESSMENT.md read is not methodology loading."
       ],
       "must_not": [
         "Must not substitute Critic-style systemic red teaming for the normal review."
@@ -218,11 +218,6 @@
           {
             "tool": "read",
             "arg": "filePath",
-            "ends_with": "skills/golang-concurrency/ASSESSMENT.md"
-          },
-          {
-            "tool": "read",
-            "arg": "filePath",
             "ends_with": "pipeline.go"
           }
         ],
@@ -232,6 +227,20 @@
             "arg": "filePath",
             "ends_with": "skills/golang-concurrency/QA.md"
           }
+        ],
+        "any_of": [
+          [
+            {
+              "tool": "loom_assessment",
+              "arg": "skill",
+              "equals": "golang-concurrency"
+            },
+            {
+              "tool": "execute",
+              "arg": "code",
+              "contains": "tools.loom.code.assessment"
+            }
+          ]
         ]
       },
       "fixture_files": [
@@ -253,7 +262,7 @@
       "trap": "Repeat normal conformance as the primary Critic job, or invent product/runtime guarantees to manufacture a finding.",
       "expectations": [
         "Attacks residual concurrency confidence at the systemic/compositional level, such as correlated cancellation, backpressure, lifecycle, or ownership assumptions, grounded in inspected code.",
-        "Treats prior normal review as already performed and does not invent new product authority. Does not stop available artifact inspection solely to demand workflow identifiers absent from this assignment. Companion reads are checked separately by observed actions."
+        "Treats prior normal review as already performed and does not invent new product authority. Does not stop available artifact inspection solely to demand workflow identifiers absent from this assignment. Companion loading is checked by loom_qa (or its Code Mode equivalent), not by a raw QA.md read."
       ],
       "must_not": [
         "Must not make ordinary Reviewer conformance the primary Critic job.",
@@ -269,11 +278,6 @@
           {
             "tool": "read",
             "arg": "filePath",
-            "ends_with": "skills/golang-concurrency/QA.md"
-          },
-          {
-            "tool": "read",
-            "arg": "filePath",
             "ends_with": "pipeline.go"
           }
         ],
@@ -283,6 +287,20 @@
             "arg": "filePath",
             "ends_with": "skills/golang-concurrency/ASSESSMENT.md"
           }
+        ],
+        "any_of": [
+          [
+            {
+              "tool": "loom_qa",
+              "arg": "skill",
+              "equals": "golang-concurrency"
+            },
+            {
+              "tool": "execute",
+              "arg": "code",
+              "contains": "tools.loom.code.qa"
+            }
+          ]
         ]
       },
       "fixture_files": [
@@ -689,11 +707,6 @@
           {
             "tool": "read",
             "arg": "filePath",
-            "ends_with": "skills/github-workflow/ASSESSMENT.md"
-          },
-          {
-            "tool": "read",
-            "arg": "filePath",
             "ends_with": ".github/workflows/pr-admin.yml"
           }
         ],
@@ -703,6 +716,20 @@
             "arg": "filePath",
             "ends_with": "skills/github-workflow/QA.md"
           }
+        ],
+        "any_of": [
+          [
+            {
+              "tool": "loom_assessment",
+              "arg": "skill",
+              "equals": "github-workflow"
+            },
+            {
+              "tool": "execute",
+              "arg": "code",
+              "contains": "tools.loom.code.assessment"
+            }
+          ]
         ]
       },
       "fixture_files": [
@@ -739,11 +766,6 @@
           {
             "tool": "read",
             "arg": "filePath",
-            "ends_with": "skills/github-action/ASSESSMENT.md"
-          },
-          {
-            "tool": "read",
-            "arg": "filePath",
             "ends_with": "action.yml"
           },
           {
@@ -758,6 +780,20 @@
             "arg": "filePath",
             "ends_with": "skills/github-action/QA.md"
           }
+        ],
+        "any_of": [
+          [
+            {
+              "tool": "loom_assessment",
+              "arg": "skill",
+              "equals": "github-action"
+            },
+            {
+              "tool": "execute",
+              "arg": "code",
+              "contains": "tools.loom.code.assessment"
+            }
+          ]
         ]
       },
       "fixture_files": [
