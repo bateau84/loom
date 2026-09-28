@@ -94,7 +94,7 @@ describe("conversation-first eval schema", () => {
       requires: [{
         tool: "execute",
         arg: "code",
-        contains_all: ["tools.loom.code.assessment", "golang-concurrency"],
+        contains_all: ["tools.loom.code.assessment(", "golang-concurrency"],
       }],
     }
     expect(validateSuite(suite, root)).toEqual([])
