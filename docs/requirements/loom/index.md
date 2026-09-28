@@ -29,6 +29,7 @@ tags: [requirements, loom, index]
 - [BR-020 — Conversation Is Loom's Primary Interface](br-020-conversation-is-primary-interface.md)
 - [BR-021 — Preserve Holistic Plan Context Across Handoffs](br-021-preserve-holistic-plan-context.md)
 - [BR-022 — Support Planning-Only Objective Completion](br-022-support-planning-only-objective-completion.md)
+- [BR-023 — Explain Work State and Genuine Blockers](br-023-explain-work-state-and-blockers.md)
 
 ## Obligation contracts
 
