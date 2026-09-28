@@ -26,7 +26,7 @@ Navigation and relationship entry point for Loom's product requirements.
 - [BR-022 — Support Planning-Only Objective Completion](br-022-support-planning-only-objective-completion.md)
 - [BR-023 — Explain Work State and Genuine Blockers](br-023-explain-work-state-and-blockers.md)
 - [BR-024 — Preserve Authority Ownership Through Handoffs](br-024-preserve-authority-ownership-through-handoffs.md) — proposed; makes planned-work accountability and explicit responsibility handoffs observable without fixing a representation.
-- [BR-025 — Govern Command Access and Preserve Work in Git](br-025-govern-command-access-and-preserve-work-in-git.md) — proposed; bounded command elevation, progress commits, and conditional PR creation.
+- [BR-025 — Govern Command Access and Preserve Work in Git](br-025-govern-command-access-and-preserve-work-in-git.md) — proposed; bounded command elevation, user-authorized destructive access, progress commits, and conditional PR creation.
 - [BR-026 — Archive or Permanently Delete Workflow Records Safely](br-026-archive-or-permanently-delete-workflow-records-safely.md) — proposed; all-workflow lifecycle, cancellation/revocation ordering, explicit permanent-delete confirmation, and retained evidence.
 - [BR-027 — Pause, Resume, and Revisit Workflow Work](br-027-pause-resume-and-revisit-workflow-work.md) — proposed; deliberate backburnering, truthful quiescence semantics, unrelated-request yielding, and backtracking.
 
