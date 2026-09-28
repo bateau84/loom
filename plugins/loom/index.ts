@@ -1751,24 +1751,12 @@ async function commitScopeError(
   }
 }
 
-async function gitHistoryTracksPath(projectDirectory: string, value: string) {
-  const path = safeOwnedRepoPath(value)
-  const head = await gitHeadIdentity(projectDirectory)
-  if (head === "unborn") return false
-  const history = String((await execFileAsync("git", ["--literal-pathspecs", "log", "--format=%H", "--full-history", "HEAD", "--", path], {
-    cwd: projectDirectory, encoding: "utf8",
-  })).stdout).trim()
-  return history.length > 0
-}
-
 async function unpublishedAttemptGitPaths(
   ctx: any,
   binding: GitOwnershipBinding,
   projectDirectory: string,
-  dirtyPaths: readonly string[],
 ) {
   const unresolved = new Set<string>()
-  const dirty = new Set(dirtyPaths.map(normalizeRepoPath))
   const deltaPrefix = `git-delta/${encodeURIComponent(binding.workflowId)}/${encodeURIComponent(binding.stepId)}/${binding.attempt}/`
   let after: string | undefined
   do {
@@ -1833,17 +1821,18 @@ async function unpublishedAttemptGitPaths(
         provenance.attempt !== binding.attempt || !provenance.path
       ) continue
       const path = safeOwnedRepoPath(provenance.path)
-      if (dirty.has(path) || await ctx.storage.get(gitDeltaReceiptKey(binding, path))) continue
+      if (await ctx.storage.get(gitDeltaReceiptKey(binding, path))) continue
       const published = await ctx.storage.get(gitDeltaPublishedKey(binding, path)) as any
       if (
         published?.schemaVersion === 1 && published.authorityId === binding.authorityId &&
         published.workflowId === binding.workflowId && published.stepId === binding.stepId &&
         published.attempt === binding.attempt && published.path === path
       ) continue
-      // Fingerprint-only legacy records cannot prove which bytes in any
-      // tracked path belong to this attempt. If HEAD currently contains the
-      // path, or a clean commit removed it, publication remains unproven.
-      if (await gitHistoryTracksPath(projectDirectory, path)) unresolved.add(path)
+      // Attempt-owned fingerprints are durable provenance, but never prove
+      // which bytes were authored. Without an exact delta receipt, retain the
+      // path as unresolved regardless of whether later Git history still
+      // contains it (or how many commits have followed its removal).
+      unresolved.add(path)
     }
     after = page.next
   } while (after)
@@ -2013,7 +2002,7 @@ async function uncommittedOwnedChangesError(
   }
   if (binding) {
     try {
-      const unpublished = await unpublishedAttemptGitPaths(ctx, binding, projectDirectory, dirty)
+      const unpublished = await unpublishedAttemptGitPaths(ctx, binding, projectDirectory)
       for (const path of unpublished) {
         if (!dirtyOwned.includes(path)) dirtyOwned.push(path)
       }

@@ -4861,6 +4861,7 @@ Verdict: FAIL
       // attempt provenance and fail closed.
       await git(h.root, ["-c", "core.hooksPath=/dev/null", "commit", "-m", "external legacy aggregate"])
       expect((await git(h.root, ["status", "--porcelain", "--", path])).stdout).toBe("")
+      expect((await git(h.root, ["--literal-pathspecs", "log", "--format=%H", "--full-history", "HEAD", "--", path])).stdout.trim()).not.toBe("")
       const completion = await h.call(
         "complete", { workflowId, stepId: "worker", summary: "Must reject legacy X+Y aggregate commit." },
         "worker", worker,
@@ -4868,6 +4869,7 @@ Verdict: FAIL
       expect(completion.error).toContain(path)
       const publishedKey = `git-delta/${encodeURIComponent(workflowId)}/worker/0/${encodeURIComponent(path)}/published`
       expect(await h.durableStorage.get(publishedKey)).toBeUndefined()
+      expect(await h.durableStorage.get(provenanceKey)).toBeDefined()
 
       // A later foreign commit can replace or remove the saved aggregate.
       // The legacy attempt remains unresolved even when HEAD no longer matches
@@ -4882,6 +4884,7 @@ Verdict: FAIL
       expect((await git(h.root, ["ls-tree", "HEAD", "--", path])).stdout).toBe("")
       const currentParent = String((await git(h.root, ["rev-list", "--parents", "-n", "1", "HEAD"])).stdout).trim().split(/\s+/)[1]
       expect((await git(h.root, ["ls-tree", currentParent, "--", path])).stdout).toBe("")
+      expect(await h.durableStorage.get(provenanceKey)).toBeDefined()
       const removedCompletion = await h.call(
         "complete", { workflowId, stepId: "worker", summary: "Must reject removed legacy aggregate bytes." },
         "worker", worker,
