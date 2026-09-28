@@ -30,4 +30,5 @@ Exercise deliberate backburnering without an error, an intermittent issue, a use
 ## Derived from
 
 - User-confirmed workflow behavior in the authority-reconstruction workflow follow-up request (2026-09-28; no separate OQ ID supplied): deliberate backburnering; pausing for intermittent issues; yielding active work so an unrelated request can proceed; backtracking; and truthful pause/resume boundaries that do not imply in-flight operations are quiescent, while preserving active-work context and provenance.
+- The user's answer to blocking OQ `b3232418-978f-4209-bdbe-68f3c26814a1` confirms that cancellation does not establish quiescence of previously admitted operations; BR-027 applies the same truthful-state constraint to pause/yield and does not treat a pause request as proof that operations stopped.
 - Accepted Loom Anchor, especially AC 2, 12–14, and 24 (autonomy to real boundaries, evidence-led recovery, bounded progress, and truthful inspection).
