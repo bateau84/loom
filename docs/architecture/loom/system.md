@@ -64,6 +64,8 @@ Planner decomposes an accepted solution into an executable DAG. Workers execute 
 
 Neither Planner nor Worker gains product or architecture authority from execution capability.
 
+**Proposed accountability boundary:** Every planned work item must have an identifiable accountable role and a supported execution or decision route, including routine work. A specialist-owned decision/deliverable stays attributable to that specialist across handoffs even if another role implements it. Planner's Task decomposition and a Worker's completion cannot stand in for the specialist's authority; unresolved role/path or missing specialist output must remain open and route for correction. This is the proposed realization of [BR-024](../../requirements/loom/br-024-preserve-authority-ownership-through-handoffs.md), not a claim of current capability or a mandated Plan `owner` field. See [Control Plane](control-plane.md#proposed-accountable-role-admission).
+
 ### Control plane
 
 An OpenCode plugin owns machine-enforced workflow mechanics:
@@ -83,7 +85,7 @@ Multiple simultaneous OpenCode sessions and repositories are normal operation. M
 
 Loom publishes a bounded read-only operational projection for tools outside the OpenCode TUI.
 
-The projection aggregates explicit compartment identity and workflow status; it never becomes product authority or a workflow mutation surface. A future dashboard may enrich that projection with read-only OpenCode database statistics, but OpenCode messages/database state do not determine Loom workflow truth.
+The projection aggregates explicit compartment identity and workflow status; it never becomes product authority. A narrowly bounded, explicitly confirmed workflow-cleanup command uses a separate canonical-state control path, not the projection as a mutation surface. A future dashboard may enrich the read-only projection with OpenCode database statistics, but OpenCode messages/database state do not determine Loom workflow truth.
 
 See [Runtime Isolation](runtime-isolation.md) and [Dashboard Observability](dashboard-observability.md). Human-facing dashboard behavior is defined separately by [Dashboard Experience Design](../../design/loom/dashboard-experience.md).
 
