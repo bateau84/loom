@@ -1072,7 +1072,7 @@ class ActionAssertionTests(unittest.TestCase):
                 code_mode = {
                     "tool": "execute",
                     "arg": "code",
-                    "contains_all": [f"tools.loom.code.{method}", skill],
+                    "contains_all": [f"tools.loom.code.{method}(", skill],
                 }
                 self.assertTrue(any(
                     native in group and code_mode in group
@@ -1992,7 +1992,7 @@ class ActionAssertionTests(unittest.TestCase):
         assertion = {
             "tool": "execute",
             "arg": "code",
-            "contains_all": ["tools.loom.code.assessment", "golang-concurrency"],
+            "contains_all": ["tools.loom.code.assessment(", "golang-concurrency"],
         }
         self.assertTrue(RUN_EVALS.action_matches({
             "tool": "execute",
