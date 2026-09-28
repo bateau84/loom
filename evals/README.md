@@ -69,6 +69,8 @@ Action assertions are runtime-only. They are evaluated against observed OpenCode
 
 Assertions use stable semantic argument names. The harness currently normalizes OpenCode V2 aliases such as `skill.id` ↔ `skill.name` and `read.path` ↔ `read.filePath`, so behavioral cases do not become coupled to a transport-only parameter rename.
 
+String argument assertions support `contains` for one required fragment and `contains_all` for multiple fragments that must all occur in the **same observed argument value**. Use `contains_all` when a Code Mode assertion must bind an operation to its intended subject, for example both `tools.loom.code.assessment(` and `golang-concurrency`.
+
 Example:
 
 ```json
@@ -204,6 +206,12 @@ bun run eval:live -- \
 ```
 
 Results from `--runtime-parallel >1` are load/stress evidence as well as behavioral evidence. Provider or wall-clock timeout failures from that mode should not be interpreted as a semantic regression without reproducing them under normal serialized runtime execution.
+
+### Transient transport retries
+
+The harness retries only a narrow pre-execution provider-routing failure: `provider.no-route` with `Model unavailable`. The default is two retries and can be changed with `--transport-retries 0..5`.
+
+Retry is allowed only when no tool/action has been observed. If the invocation already used a tool—whether surfaced through the tool list, structured actions, or raw `tool_use` events—it is not retried, because replay could duplicate side effects. Exhausted retries remain non-evidence transport failures; they are never converted into behavioral PASS/FAIL.
 
 Skill evaluation has two complementary sources:
 
