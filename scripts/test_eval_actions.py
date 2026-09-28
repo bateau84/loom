@@ -958,22 +958,52 @@ class TransportDiagnosticTests(unittest.TestCase):
 
 
     def test_model_unavailable_after_tool_use_is_not_retryable(self):
-        result = {
-            "exit_code": 1,
-            "stderr": "",
-            "stdout": json.dumps({
-                "type": "error",
-                "error": {
-                    "type": "provider.no-route",
-                    "message": "Model unavailable: openai/gpt-6-luna",
-                },
-            }),
-            "text": "",
-            "tools": ["loom_status"],
-            "actions": [{"tool": "loom_status", "args": {}}],
-        }
+        error_event = json.dumps({
+            "type": "error",
+            "error": {
+                "type": "provider.no-route",
+                "message": "Model unavailable: openai/gpt-6-luna",
+            },
+        })
+        cases = [
+            {
+                "exit_code": 1,
+                "stderr": "",
+                "stdout": error_event,
+                "text": "",
+                "tools": ["loom_status"],
+                "actions": [],
+            },
+            {
+                "exit_code": 1,
+                "stderr": "",
+                "stdout": error_event,
+                "text": "",
+                "tools": [],
+                "actions": [{"tool": "loom_status", "args": {}}],
+            },
+            {
+                "exit_code": 1,
+                "stderr": "",
+                "stdout": "\n".join([
+                    json.dumps({
+                        "type": "tool_use",
+                        "part": {
+                            "type": "tool",
+                            "tool": "loom_status",
+                            "state": {"input": {}},
+                        },
+                    }),
+                    error_event,
+                ]),
+                "text": "",
+                "tools": [],
+            },
+        ]
 
-        self.assertFalse(RUN_EVALS.retryable_transport_error(result))
+        for result in cases:
+            with self.subTest(result=result):
+                self.assertFalse(RUN_EVALS.retryable_transport_error(result))
 
     def test_transient_transport_retry_recovers_and_records_prior_error(self):
         unavailable = {
