@@ -13,7 +13,7 @@ metadata:
 
 ## Start with a Test List
 
-Before coding, make a small working list of behaviors or examples implied by the accepted contract.
+Before non-trivial coding, make a small working list of behaviors or examples implied by the accepted contract. For a genuinely single-behavior change, the one next test is enough; do not create list ceremony just to satisfy the method.
 
 The Test List is not a complete up-front test plan. It is a queue of useful next questions. Update it whenever implementation teaches you something new.
 
@@ -41,7 +41,7 @@ A useful Red:
 - fails at the meaningful assertion or observable boundary;
 - is small enough that the reason for failure is obvious.
 
-A compile/type error caused by a deliberately not-yet-existing API can be a brief design step, but do not treat setup mistakes, bad imports, broken fixtures, unrelated dependency failures, or an unexplained failure as proof of Red. Resolve those until the failure discriminates the intended missing behavior.
+A compile/type failure caused specifically because the test references the next not-yet-existing API can count as Red: it proves that interface is missing. Add only enough interface to make the test runnable, then continue until the test fails on the intended behavior. Do not count setup mistakes, bad imports, broken fixtures, unrelated dependency failures, or unexplained failures as Red.
 
 If the new test passes immediately, determine why. The behavior may already exist, the assertion may be weak, or the test may not reach the intended path. Do not advance on an unexplained green.
 
