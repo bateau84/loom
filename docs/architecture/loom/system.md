@@ -60,13 +60,13 @@ Evidence + Repository Knowledge + Learning
 
 Fresh bounded execution contexts perform decomposition, implementation, research, diagnostics, migration, Product Acceptance, living-knowledge maintenance, and other technical work.
 
-Planner decomposes an accepted solution into an executable DAG. Workers execute the resulting bounded tasks.
+Planner decomposes an accepted solution into a persistent Plan and, for implementation workflows, an executable DAG. Today `loom_task_plan` compiles Worker-only Task steps; it cannot execute a planned item requiring another role merely because a route-owned specialist step exists elsewhere in the workflow.
 
 Neither Planner nor Worker gains product or architecture authority from execution capability.
 
 **Proposed accountability boundary:** Every planned work item must have an identifiable accountable role and a supported execution or decision route, including routine work. A specialist-owned decision/deliverable stays attributable to that specialist across handoffs even if another role implements it. Planner's Task decomposition and a Worker's completion cannot stand in for the specialist's authority; unresolved role/path or missing specialist output must remain open and route for correction. This is the proposed realization of [BR-024](../../requirements/loom/br-024-preserve-authority-ownership-through-handoffs.md), not a claim of current capability or a mandated Plan `owner` field. See [Control Plane](control-plane.md#proposed-accountable-role-admission).
 
-The chosen proposed execution seam resolves each planned item to an actual role-owned step or Reviewer gate, materializing one at unclaimed-Wave admission when no existing step matches; user decisions remain explicit blocked boundaries rather than agent work. Mixed-role dependencies and their independent evidence gates precede dependent completion, including a zero-Worker Wave. Current `loom_task_plan` still emits Worker-only `task:<id>` steps; it cannot claim role-only Task execution or Objective completion. A reviewed planning-only Plan closes its workflow, not its Objective. No migration of old Worker results into specialist decisions is implied.
+The chosen proposed execution seam resolves each planned item to an actual role-owned step or independent Reviewer gate, materializing a role-owned step at unclaimed-Wave admission when no existing one matches; user decisions remain explicit blocked boundaries rather than agent work. Mixed-role dependencies and their independent evidence gates precede dependent completion, including a zero-Worker Wave. Current `loom_task_plan` still emits Worker-only `task:<id>` steps; it cannot claim role-only Task execution or Objective completion. A reviewed planning-only Plan closes its workflow, not its Objective. General authors a proposed Anchor within accepted scope; independent review precedes the user's separate explicit acceptance, and a reviewed proposal is not yet governing authority. No migration of old Worker results into specialist decisions is implied.
 
 ### Control plane
 
@@ -89,6 +89,8 @@ Loom publishes a bounded read-only operational projection for tools outside the 
 
 The projection aggregates explicit compartment identity and workflow status; it never becomes product authority. A narrowly bounded, explicitly confirmed workflow-cleanup command uses a separate canonical-state control path, not the projection as a mutation surface. A future dashboard may enrich the read-only projection with OpenCode database statistics, but OpenCode messages/database state do not determine Loom workflow truth.
 
+**Cleanup is not yet provenance-safe:** the proposed cleanup boundary retains answered-question text and attribution as historical evidence, with active OQ routing detached; current `workflow-cleanup.ts` instead deletes the answer-bearing OQ records. The user-approved intent to retain evidence and completed work is not proof of current behavior; see [Dashboard Observability](dashboard-observability.md#workflow-deletion-invariants). OQ `closed` is aggregate all-consumer closure, not a prerequisite for an individually reconciled consumer's step completion; see [Control Plane](control-plane.md#oq-board).
+
 See [Runtime Isolation](runtime-isolation.md) and [Dashboard Observability](dashboard-observability.md). Human-facing dashboard behavior is defined separately by [Dashboard Experience Design](../../design/loom/dashboard-experience.md).
 
 ### Knowledge plane
@@ -110,7 +112,7 @@ Fuzzy intent
   -> THINK: research + Designer/Specifier/Architect as required
   -> Reviewer
   -> Critic: assembled solution
-  -> BUILD: Planner DAG + bounded parallel/sequential Workers
+  -> BUILD: Planner DAG + bounded parallel/sequential Workers (current compiler)
   -> VERIFY: observed evidence + implementation Reviewer
   -> Product Acceptance + Designer validation when applicable + knowledge-sync
   -> product Reviewer
@@ -119,6 +121,8 @@ Fuzzy intent
 ```
 
 The flow is conditional. Unneeded specialists are skipped. Missing expertise is routed when evidence requires it.
+
+The BUILD line describes the current usual implementation path, **not** the proposed mixed-role path's delivery readiness. A planning-only Objective stops its workflow at reviewed Plan without entering BUILD or closing the product Objective. In the proposed path, role-owned work and decision dependencies join the Wave DAG; a no-Worker Wave cannot skip its independently scoped proof merely because there are no Worker nodes. General's proposed Anchor needs independent review and then explicit user acceptance before it can govern new work.
 
 ## Design Rule
 
