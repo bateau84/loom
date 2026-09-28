@@ -1,11 +1,6 @@
----
-type: requirement-index
-title: Loom Requirements
-description: Navigation and relationship entry point for Loom's product requirements.
-tags: [requirements, loom, index]
----
-
 # Loom Requirements
+
+Navigation and relationship entry point for Loom's product requirements.
 
 - [BR-001 — Run Autonomously to a Real Boundary](br-001-run-autonomously-to-real-boundary.md)
 - [BR-002 — Route Missing Expertise Explicitly](br-002-route-missing-expertise-explicitly.md)
@@ -30,7 +25,7 @@ tags: [requirements, loom, index]
 - [BR-021 — Preserve Holistic Plan Context Across Handoffs](br-021-preserve-holistic-plan-context.md)
 - [BR-022 — Support Planning-Only Objective Completion](br-022-support-planning-only-objective-completion.md)
 - [BR-023 — Explain Work State and Genuine Blockers](br-023-explain-work-state-and-blockers.md)
-- [BR-024 — Preserve Authority Ownership Through Handoffs](br-024-preserve-authority-ownership-through-handoffs.md)
+- [BR-024 — Preserve Authority Ownership Through Handoffs](br-024-preserve-authority-ownership-through-handoffs.md) — proposed; makes planned-work accountability and explicit responsibility handoffs observable without fixing a representation.
 
 ## Obligation contracts
 
