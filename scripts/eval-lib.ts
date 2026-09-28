@@ -10,6 +10,7 @@ export type ActionAssertion = {
   args?: Record<string, string | number | boolean | null>
   ends_with?: string
   contains?: string
+  contains_all?: string[]
 }
 
 export type EvalCase = {
@@ -155,7 +156,7 @@ export function validateSuite(suite: EvalSuite, repoRoot: string) {
         if (hasArg && (typeof assertion.arg !== "string" || !assertion.arg.trim())) {
           errors.push(`${prefix}.arg must be a non-empty string when present`)
         }
-        const comparatorKeys = (["equals", "ends_with", "contains"] as const).filter((key) => Object.prototype.hasOwnProperty.call(assertion, key))
+        const comparatorKeys = (["equals", "ends_with", "contains", "contains_all"] as const).filter((key) => Object.prototype.hasOwnProperty.call(assertion, key))
         const scalar = (value: unknown) => value === null || typeof value === "string" || typeof value === "boolean" || (typeof value === "number" && Number.isFinite(value))
         if (assertion.args !== undefined) {
           if (hasArg || comparatorKeys.length) errors.push(`${prefix}: args cannot be combined with arg/comparators`)
@@ -164,11 +165,18 @@ export function validateSuite(suite: EvalSuite, repoRoot: string) {
           }
         } else if (hasArg) {
           if (comparatorKeys.length !== 1) {
-            errors.push(`${prefix} with arg requires exactly one comparator: equals, ends_with, or contains`)
+            errors.push(`${prefix} with arg requires exactly one comparator: equals, ends_with, contains, or contains_all`)
           } else {
             const key = comparatorKeys[0]!
-            if (key === "equals" ? !scalar(assertion[key]) : typeof assertion[key] !== "string") {
-              errors.push(`${prefix}: equals requires a JSON scalar; ends_with/contains require strings`)
+            if (key === "equals") {
+              if (!scalar(assertion[key])) errors.push(`${prefix}: equals requires a JSON scalar`)
+            } else if (key === "contains_all") {
+              const value = assertion[key]
+              if (!Array.isArray(value) || value.length === 0 || value.some((part) => typeof part !== "string" || !part)) {
+                errors.push(`${prefix}.contains_all must be a non-empty string array`)
+              }
+            } else if (typeof assertion[key] !== "string") {
+              errors.push(`${prefix}: ends_with/contains require strings`)
             }
           }
         } else if (comparatorKeys.length !== 0) {
