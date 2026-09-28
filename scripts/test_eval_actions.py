@@ -229,6 +229,23 @@ class RuntimeEvalProjectTests(unittest.TestCase):
             import shutil
             shutil.rmtree(temp, ignore_errors=True)
 
+    def test_hidden_workflow_fixture_materializes_at_exact_path(self):
+        case = next(
+            case
+            for case in RUN_EVALS.load_cases()
+            if case["id"] == "REVIEW-GHA-WORKFLOW-01"
+        )
+        temp, target, _ = RUN_EVALS.setup_projects(case)
+        try:
+            workflow = target / ".github" / "workflows" / "pr-admin.yml"
+            self.assertTrue(workflow.is_file())
+            text = workflow.read_text(encoding="utf-8")
+            self.assertIn("pull_request_target:", text)
+            self.assertIn("github.event.pull_request.head.sha", text)
+        finally:
+            import shutil
+            shutil.rmtree(temp, ignore_errors=True)
+
     def test_tracked_401_runtime_materializes_diagnostic_fixture(self):
         case = next(
             case
@@ -906,7 +923,113 @@ class TransportDiagnosticTests(unittest.TestCase):
         )
 
 
+    def test_model_unavailable_provider_route_is_retryable(self):
+        result = {
+            "exit_code": 1,
+            "stderr": "",
+            "stdout": json.dumps({
+                "type": "error",
+                "error": {
+                    "type": "provider.no-route",
+                    "message": "Model unavailable: openai/gpt-6-luna",
+                },
+            }),
+            "text": "",
+        }
+
+        self.assertTrue(RUN_EVALS.retryable_transport_error(result))
+
+    def test_auth_failure_is_not_retryable(self):
+        result = {
+            "exit_code": 1,
+            "stderr": "",
+            "stdout": json.dumps({
+                "type": "error",
+                "error": {
+                    "type": "provider.auth",
+                    "message": "token expired",
+                    "status": 401,
+                },
+            }),
+            "text": "",
+        }
+
+        self.assertFalse(RUN_EVALS.retryable_transport_error(result))
+
+    def test_transient_transport_retry_recovers_and_records_prior_error(self):
+        unavailable = {
+            "exit_code": 1,
+            "stderr": "",
+            "stdout": json.dumps({
+                "type": "error",
+                "error": {
+                    "type": "provider.no-route",
+                    "message": "Model unavailable: openai/gpt-6-luna",
+                },
+            }),
+            "text": "",
+        }
+        success = {
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "",
+            "text": "ok",
+        }
+
+        with patch.object(
+            RUN_EVALS,
+            "invoke_container",
+            side_effect=[unavailable, success],
+        ) as invoke, patch.object(RUN_EVALS.time, "sleep") as sleep:
+            result = RUN_EVALS.invoke_container_with_retry(retries=2)
+
+        self.assertEqual(invoke.call_count, 2)
+        sleep.assert_called_once_with(1)
+        self.assertEqual(result["text"], "ok")
+        self.assertEqual(result["transport_retry"]["attempts"], 2)
+        self.assertEqual(len(result["transport_retry"]["errors"]), 1)
+        self.assertIn("provider.no-route", result["transport_retry"]["errors"][0])
+
+
 class ActionAssertionTests(unittest.TestCase):
+    def test_companion_eval_cases_use_loom_methodology_surfaces(self):
+        suite = json.loads(
+            (RUN_EVALS.ROOT / "evals" / "verification.json").read_text(encoding="utf-8")
+        )
+        cases = {case["id"]: case for case in suite["cases"]}
+        expected = {
+            "REVIEW-SKILL-LOAD-01": ("golang-concurrency", "assessment"),
+            "CRITIC-SKILL-LOAD-01": ("golang-concurrency", "qa"),
+            "REVIEW-GHA-WORKFLOW-01": ("github-workflow", "assessment"),
+            "REVIEW-GHA-ACTION-01": ("github-action", "assessment"),
+        }
+
+        for case_id, (skill, method) in expected.items():
+            with self.subTest(case=case_id):
+                case = cases[case_id]
+                companion = "ASSESSMENT.md" if method == "assessment" else "QA.md"
+                self.assertFalse(any(
+                    item.get("tool") == "read"
+                    and str(item.get("ends_with") or "").endswith(
+                        f"skills/{skill}/{companion}"
+                    )
+                    for item in case["actions"]["requires"]
+                ))
+                native = {
+                    "tool": "loom_assessment" if method == "assessment" else "loom_qa",
+                    "arg": "skill",
+                    "equals": skill,
+                }
+                code_mode = {
+                    "tool": "execute",
+                    "arg": "code",
+                    "contains": f"tools.loom.code.{method}",
+                }
+                self.assertTrue(any(
+                    native in group and code_mode in group
+                    for group in case["actions"]["any_of"]
+                ))
+
     def test_invoke_container_forwards_explicit_network_mode(self):
         class Result:
             returncode = 0
