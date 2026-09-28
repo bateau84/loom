@@ -244,7 +244,8 @@ async function harness(
 
   return {
     root, storage, runtime, projectID, registered, namespaces, sessionHooks, permissionHooks,
-    toolHooks, durableStorage, call, callObserved, setSessionContext: (sessionID: string, value: unknown) => sessionContexts.set(sessionID, value),
+    toolHooks, durableStorage, call, callObserved, hasEventSubscriber: () => hasEventSubscriber,
+    setSessionContext: (sessionID: string, value: unknown) => sessionContexts.set(sessionID, value),
     emitEvent, cleanup, restore,
   }
 }
@@ -4466,6 +4467,62 @@ Verdict: FAIL
     }
   })
 
+  test("owner death releases a missing-after lease but a reopened attempt cannot publish its abandoned bytes", async () => {
+    const h = await harness()
+    const fixture = fileURLToPath(new URL("./plugin-boundary-process-fixture.ts", import.meta.url))
+    const runPhase = async (args: string[]) => {
+      const child = Bun.spawn([process.execPath, fixture, ...args], {
+        env: {
+          ...process.env,
+          XDG_STATE_HOME: join(h.root, "state"),
+          XDG_RUNTIME_DIR: join(h.root, "runtime"),
+          LOOM_TOOL_OUTPUT: "json",
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      })
+      const [stdout, stderr, exitCode] = await Promise.all([
+        new Response(child.stdout).text(),
+        new Response(child.stderr).text(),
+        child.exited,
+      ])
+      if (exitCode !== 0) throw new Error(stderr || `abandoned-delta process fixture exited ${exitCode}`)
+      return JSON.parse(stdout.trim().split("\n").at(-1)!)
+    }
+    try {
+      await initializeGitFixture(h.root)
+      await writeFile(join(h.root, "src", "shared.ts"), "alpha\nseparator\nold\nomega\n")
+      await git(h.root, ["add", "--", "src/shared.ts"])
+      await git(h.root, ["commit", "-m", "abandoned delta baseline"])
+      await writeFile(join(h.root, "src", "shared.ts"), "alpha\nforeign\nseparator\nold\nomega\n")
+      h.restore()
+
+      const firstWorker = "abandoned-delta-owner"
+      const abandoned = await runPhase(["prepare-abandoned", h.root, "", firstWorker])
+      expect(abandoned.workflowId).toBeString()
+      expect(await readFile(join(h.root, "src", "shared.ts"), "utf8")).toBe(
+        "alpha\nforeign\nseparator\nabandoned\nomega\n",
+      )
+
+      // The first process died without execute.after. A fresh General process
+      // reopens the step into a new attempt; a newly attached Worker must not
+      // promote the abandoned, unreceipted bytes.
+      const retry = await runPhase([
+        "retry-abandoned", h.root, abandoned.workflowId, "abandoned-delta-retry", abandoned.generalSessionID,
+      ])
+      expect(retry.attached).toBe(true)
+      expect(retry.attempt).toBe(1)
+      expect(retry.stageDenied).toBe(true)
+      expect(retry.commitEffect).toBe("deny")
+      expect(retry.head).toBe("alpha\nseparator\nold\nomega\n")
+      expect(retry.stageError).toMatch(/exact bytes previously admitted.*current Loom step attempt/i)
+      expect((await git(h.root, ["show", "HEAD:src/shared.ts"])).stdout).toBe("alpha\nseparator\nold\nomega\n")
+      expect(retry.index).toBe("alpha\nseparator\nold\nomega\n")
+    } finally {
+      h.restore()
+    }
+  })
+
   test("independent processes race publication without double-committing an owned delta", async () => {
     const h = await harness()
     const fixture = fileURLToPath(new URL("./plugin-boundary-process-fixture.ts", import.meta.url))
@@ -5347,6 +5404,40 @@ Verdict: FAIL
           "src/shared.ts is locked for write by another agent. Try again later and re-read the file before retrying.",
         )
 
+      expect(h.hasEventSubscriber()).toBe(false)
+      const assertLeaseStillHeld = async () => {
+        const probe = { ...second, callID: `overlap-probe-${crypto.randomUUID()}` }
+        let acquired = false
+        try {
+          await h.toolHooks.get("execute.before")?.(probe)
+          acquired = true
+        } catch (error) {
+          expect(error instanceof Error ? error.message : String(error)).toContain("locked for write by another agent")
+        }
+        if (acquired) await h.toolHooks.get("execute.after")?.({ ...probe, status: "error", error: new Error("test cleanup") })
+        expect(acquired).toBe(false)
+      }
+
+      h.setSessionContext(workerA, [])
+      await h.emitEvent({ type: "session.idle", properties: { sessionID: workerA } })
+      await assertLeaseStillHeld()
+
+      h.setSessionContext(workerA, [
+        { id: "ambiguous-a", parts: [{ type: "tool", callID: first.callID, tool: first.tool, state: { status: "completed" } }] },
+        { id: "ambiguous-b", parts: [{ type: "tool", callID: first.callID, tool: first.tool, state: { status: "completed" } }] },
+      ])
+      await h.emitEvent({ type: "session.idle", properties: { sessionID: workerA } })
+      await assertLeaseStillHeld()
+
+      h.setSessionContext(workerA, [{
+        id: first.messageID,
+        parts: [{ type: "tool", callID: first.callID, tool: first.tool, messageID: first.messageID, state: { status: "completed" } }],
+      }])
+      await h.emitEvent({ type: "session.tool.success", data: { sessionID: workerA, id: first.callID } })
+      await assertLeaseStillHeld()
+
+      // Model that the owner could still mutate despite terminal-looking, but
+      // untrusted, event/session evidence. The lease must continue to fence it.
       await writeFile(join(h.root, "src", "shared.ts"), "a\n")
       await expect(h.toolHooks.get("execute.before")?.(second)).rejects.toThrow(
         "src/shared.ts is locked for write by another agent",

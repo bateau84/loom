@@ -105,6 +105,90 @@ try {
       ))
     })
     process.stdout.write(JSON.stringify({ workflowId: id, sessionID, generalSessionID }) + "\n")
+  } else if (phase === "prepare-abandoned") {
+    const generalSessionID = `abandoned-delta-general-${sessionID}`
+    const started = await call("start", { request: "Exercise owner-death fallback for missing mutation receipt." }, "general", generalSessionID)
+    const id = String(started.workflowId)
+    const route = await call("route", {
+      humanFacing: false, behavioral: false, structural: false, externalUnknown: false,
+      diagnostic: false, productOutcome: false, implementationRequested: true, executionDepth: "task",
+    }, "general", generalSessionID)
+    if (route.error) throw new Error(String(route.error))
+    const scope = await call("task_scope", { workflowId: id, stepId: "worker", write: ["src/shared.ts"] }, "general", generalSessionID)
+    if (scope.error) throw new Error(String(scope.error))
+    const firstGrant = await call("dispatch_grant", { workflowId: id, stepId: "worker" }, "general", generalSessionID)
+    const attached = await call("attach", { grantId: firstGrant.grantId, workflowId: id, stepId: "worker" }, "worker", sessionID)
+    if (!attached.attached) throw new Error(`first worker attachment failed: ${JSON.stringify(attached)}`)
+
+    const mutation = {
+      tool: "edit", callID: "abandoned-delta-edit", messageID: "abandoned-delta-message",
+      sessionID, agent: "worker", input: { filePath: join(root, "src", "shared.ts") },
+    }
+    await toolHooks.get("execute.before")?.(mutation)
+    await (await import("node:fs/promises")).writeFile(
+      join(root, "src", "shared.ts"),
+      "alpha\nforeign\nseparator\nabandoned\nomega\n",
+    )
+    const result = {
+      workflowId: id,
+      generalSessionID,
+      firstWorkerSessionID: sessionID,
+    }
+    await new Promise<void>((resolve) => process.stdout.write(JSON.stringify(result) + "\n", resolve))
+    // Deliberately skip execute.after. Process death must release the flock
+    // keeper without creating a delta receipt for the abandoned bytes.
+    process.exit(0)
+  } else if (phase === "retry-abandoned") {
+    if (!workflowId) throw new Error("retry-abandoned requires workflow ID")
+    const [generalSessionID] = extra
+    if (!generalSessionID) throw new Error("retry-abandoned requires General session")
+    const reopened = await call("reopen", {
+      workflowId,
+      stepId: "worker",
+      reason: "recover after verified owner-process death",
+      newEvidence: true,
+      changedHypothesis: false,
+      changedStrategy: false,
+      reducedUnresolved: false,
+    }, "general", generalSessionID)
+    if (reopened.error) throw new Error(`could not reopen abandoned worker attempt: ${String(reopened.error)}`)
+    const retryGrant = await call("dispatch_grant", { workflowId, stepId: "worker" }, "general", generalSessionID)
+    const attached = await call("attach", { grantId: retryGrant.grantId, workflowId, stepId: "worker" }, "worker", sessionID)
+    if (!attached.attached) throw new Error(`retry worker attachment failed: ${JSON.stringify(attached)}`)
+
+    const stageCommand = "git add -- src/shared.ts"
+    const stagePermission: any = { agent: "worker", action: "shell", resources: [stageCommand], sessionID }
+    await permissionHooks.get("evaluate")!(stagePermission)
+    let stageDenied = stagePermission.effect !== "allow"
+    let stageError = stageDenied ? String(stagePermission.message ?? "stage permission denied") : undefined
+    if (!stageDenied) {
+      const stage = {
+        tool: "shell", callID: "abandoned-delta-retry-stage", messageID: "abandoned-delta-retry-stage-message",
+        sessionID, agent: "worker", input: { command: stageCommand },
+      }
+      try {
+        await runObserved(stage, () => execFileAsync("git", ["add", "--", "src/shared.ts"], { cwd: root }).then(() => {}))
+      } catch (error) {
+        stageDenied = true
+        stageError = error instanceof Error ? error.message : String(error)
+      }
+    }
+
+    const commitCommand = "git -c core.hooksPath=/dev/null commit -m 'test: reject abandoned delta adoption'"
+    const commitPermission: any = { agent: "worker", action: "shell", resources: [commitCommand], sessionID }
+    await permissionHooks.get("evaluate")!(commitPermission)
+    const head = await execFileAsync("git", ["show", "HEAD:src/shared.ts"], { cwd: root, encoding: "utf8" })
+    const index = await execFileAsync("git", ["show", ":src/shared.ts"], { cwd: root, encoding: "utf8" })
+    process.stdout.write(JSON.stringify({
+      attached: true,
+      attempt: attached.attempt,
+      stageDenied,
+      ...(stageError ? { stageError } : {}),
+      commitEffect: commitPermission.effect,
+      commitMessage: commitPermission.message,
+      head: head.stdout,
+      index: index.stdout,
+    }) + "\n")
   } else if (phase === "hold") {
     if (!workflowId) throw new Error("hold phase requires workflow ID")
     const [startedFile, releaseFile] = extra
