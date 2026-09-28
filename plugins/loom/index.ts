@@ -2889,6 +2889,25 @@ function sessionStepAttemptKey(sessionID: string) {
   return `session-step-attempt/${encodeURIComponent(sessionID)}`
 }
 
+type StepSessionBinding = {
+  schemaVersion: 1
+  workflowId: string
+  stepId: string
+  attempt: number
+  sessionID: string
+  agent: string
+  attachedAt: string
+}
+
+function stepSessionBindingKey(workflowId: string, stepId: string, attempt: number) {
+  return [
+    "step-session",
+    encodeURIComponent(workflowId),
+    encodeURIComponent(stepId),
+    String(attempt),
+  ].join("/")
+}
+
 function sessionOqKey(sessionID: string) {
   return `session-oq/${sessionID}`
 }
@@ -3224,6 +3243,94 @@ function questionState(questions: OpenQuestion[], workflow: Workflow) {
     routes,
     reconcile,
   }
+}
+
+async function notifyAnsweredQuestionConsumers(
+  ctx: any,
+  runtime: LoomRuntimeIdentity,
+  question: OpenQuestion,
+) {
+  const notified: string[] = []
+  const failed: Array<{ stepId: string; error: string }> = []
+
+  for (const stepId of question.consumerStepIds) {
+    try {
+      const delivered = await withRuntimeLocks(
+        runtime,
+        [stepAuthorityResource(question.workflowId, stepId)],
+        async () => {
+          const [workflow, currentQuestion] = await Promise.all([
+            readWorkflow(ctx, question.workflowId),
+            ctx.storage.get(oqKey(question.workflowId, question.id)) as Promise<OpenQuestion | undefined>,
+          ])
+          if (
+            !workflow ||
+            workflow.cancellation ||
+            !currentQuestion?.answer ||
+            currentQuestion.reconciliations[stepId]
+          ) {
+            return false
+          }
+
+          const step = workflow.steps.find((candidate) => candidate.id === stepId)
+          if (
+            !step ||
+            step.status !== "pending" ||
+            !runnable(workflow).some((candidate) => candidate.id === stepId)
+          ) {
+            return false
+          }
+
+          const attempt = step.attempt ?? 0
+          const binding = (await ctx.storage.get(
+            stepSessionBindingKey(question.workflowId, stepId, attempt),
+          )) as StepSessionBinding | undefined
+          if (
+            !binding ||
+            binding.schemaVersion !== 1 ||
+            binding.workflowId !== question.workflowId ||
+            binding.stepId !== stepId ||
+            binding.attempt !== attempt ||
+            binding.agent !== step.agent ||
+            !(await exactStepAttemptBinding(
+              ctx,
+              binding.sessionID,
+              question.workflowId,
+              stepId,
+            ))
+          ) {
+            return false
+          }
+
+          await ctx.session.synthetic({
+            sessionID: binding.sessionID,
+            text:
+              `Loom OQ ${question.id} has been answered. Re-read the persisted OQ with loom_oq_list for workflow ${question.workflowId}, incorporate it into step ${stepId}, then call loom_oq_reconcile before completing that step. The persisted OQ state is authoritative; this notification intentionally contains no answer content.`,
+            description: "Loom OQ answered",
+            metadata: {
+              source: "loom",
+              kind: "oq-answered",
+              workflowId: question.workflowId,
+              questionId: question.id,
+              stepId,
+              attempt,
+            },
+            delivery: "steer",
+            resume: true,
+          })
+          return true
+        },
+      )
+      if (delivered) notified.push(stepId)
+    } catch (error) {
+      failed.push({
+        stepId,
+        error: error instanceof Error ? error.message : String(error),
+      })
+    }
+  }
+
+  return { notified, failed }
 }
 
 
@@ -6199,7 +6306,17 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               await bumpWorkflowRevisionLocked(ctx, runtime, value.workflowId)
               return current
             })
-            return { content: renderToolOutput({ question: questionView(question) }) }
+            const notifications = await notifyAnsweredQuestionConsumers(
+              ctx,
+              runtime,
+              question,
+            )
+            return {
+              content: renderToolOutput({
+                question: questionView(question),
+                notifications,
+              }),
+            }
           } catch (error) {
             return { content: renderToolOutput({ error: error instanceof Error ? error.message : String(error) }) }
           }
@@ -9223,6 +9340,24 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 sessionStepAttemptKey(tool.sessionID),
                 value.stepId ? (stepAttempt ?? 0) : null,
               )
+              if (value.stepId) {
+                await ctx.storage.set(
+                  stepSessionBindingKey(
+                    value.workflowId,
+                    value.stepId,
+                    stepAttempt ?? 0,
+                  ),
+                  {
+                    schemaVersion: 1,
+                    workflowId: value.workflowId,
+                    stepId: value.stepId,
+                    attempt: stepAttempt ?? 0,
+                    sessionID: tool.sessionID,
+                    agent: tool.agent,
+                    attachedAt: new Date().toISOString(),
+                  } satisfies StepSessionBinding,
+                )
+              }
               await ctx.storage.set(sessionOqKey(tool.sessionID), value.questionId ?? "")
               if (value.stepId === "review-plan" && planContext) {
                 const planningOnly = planningOnlyObjective(workflow.effects)

@@ -66,6 +66,7 @@ async function harness(
   seed?: (storage: MemoryStorage, root: string, projectID: string) => void | Promise<void>,
   sessionInfo?: (sessionID: string, projectID: string) => { id: string; projectID?: string },
   existing?: { root: string; storage: MemoryStorage },
+  synthetic?: (input: Record<string, any>) => void | Promise<void>,
 ) {
   const root = existing?.root ?? await mkdtemp(join(tmpdir(), "loom-plugin-boundary-"))
   if (!existing) roots.push(root)
@@ -83,6 +84,7 @@ async function harness(
   const sessionHooks = new Map<string, (event: any) => void | Promise<void>>()
   const permissionHooks = new Map<string, (event: any) => void | Promise<void>>()
   const toolHooks = new Map<string, (event: any) => void | Promise<void>>()
+  const syntheticMessages: Array<Record<string, any>> = []
   const storage = existing?.storage ?? new MemoryStorage()
   const sessionContexts = new Map<string, unknown>()
   const queuedEvents: Array<{ event: unknown; processed: () => void }> = []
@@ -135,6 +137,14 @@ async function harness(
           projectID,
         },
       context: async ({ sessionID }: { sessionID: string }) => sessionContexts.get(sessionID) ?? [],
+      synthetic: async (input: Record<string, any>) => {
+        syntheticMessages.push(input)
+        await synthetic?.(input)
+        return {
+          id: `synthetic-${syntheticMessages.length}`,
+          sessionID: input.sessionID,
+        }
+      },
       hook: async (name: string, callback: (event: any) => void | Promise<void>) => {
         sessionHooks.set(name, callback)
         return { dispose: async () => {} }
@@ -245,7 +255,7 @@ async function harness(
 
   return {
     root, storage, runtime, projectID, registered, namespaces, sessionHooks, permissionHooks,
-    toolHooks, durableStorage, call, callObserved, hasEventSubscriber: () => hasEventSubscriber,
+    toolHooks, syntheticMessages, durableStorage, call, callObserved, hasEventSubscriber: () => hasEventSubscriber,
     setSessionContext: (sessionID: string, value: unknown) => sessionContexts.set(sessionID, value),
     emitEvent, cleanup, restore,
   }
@@ -8705,6 +8715,321 @@ describe("cancellation replay and grant boundaries", () => {
       expect((await h.workflow()).cancellation).toBeDefined()
     } finally { h.restore() }
   })
+})
+
+
+test("answered OQ steers only the latest attached consumer session", async () => {
+  const h = await harness()
+  try {
+    const generalSession = "oq-notify-general"
+    const firstSession = "oq-notify-first"
+    const latestSession = "oq-notify-latest"
+    const started = await h.call(
+      "start",
+      { request: "Specify one bounded lifecycle behavior." },
+      "general",
+      generalSession,
+    )
+    const workflowId = String(started.workflowId)
+    expect((await h.call(
+      "route",
+      {
+        humanFacing: false,
+        behavioral: true,
+        structural: false,
+        externalUnknown: false,
+        diagnostic: false,
+        productOutcome: false,
+        implementationRequested: true,
+        executionDepth: "change",
+      },
+      "general",
+      generalSession,
+    )).error).toBeUndefined()
+
+    const firstGrant = await h.call(
+      "dispatch_grant",
+      { workflowId, stepId: "specifier" },
+      "general",
+      generalSession,
+    )
+    expect((await h.call(
+      "attach",
+      { grantId: firstGrant.grantId, workflowId, stepId: "specifier" },
+      "specifier",
+      firstSession,
+    )).attached).toBe(true)
+
+    const latestGrant = await h.call(
+      "dispatch_grant",
+      { workflowId, stepId: "specifier" },
+      "general",
+      generalSession,
+    )
+    expect((await h.call(
+      "attach",
+      { grantId: latestGrant.grantId, workflowId, stepId: "specifier" },
+      "specifier",
+      latestSession,
+    )).attached).toBe(true)
+
+    const raised = await h.call(
+      "oq_raise",
+      {
+        workflowId,
+        stepId: "specifier",
+        question: "Which lifecycle meaning should be normative?",
+        responder: "user",
+        blocking: true,
+      },
+      "specifier",
+      latestSession,
+    )
+    expect(raised.error).toBeUndefined()
+
+    const authoritativeAnswer = "Use the strict lifecycle meaning."
+    const answered = await h.call(
+      "oq_answer",
+      {
+        workflowId,
+        questionId: raised.question.id,
+        answer: authoritativeAnswer,
+        source: "user",
+      },
+      "general",
+      generalSession,
+    )
+    expect(answered.error).toBeUndefined()
+    expect(answered.notifications).toEqual({
+      notified: ["specifier"],
+      failed: [],
+    })
+
+    expect(h.syntheticMessages).toHaveLength(1)
+    expect(h.syntheticMessages[0]).toMatchObject({
+      sessionID: latestSession,
+      description: "Loom OQ answered",
+      delivery: "steer",
+      resume: true,
+      metadata: {
+        source: "loom",
+        kind: "oq-answered",
+        workflowId,
+        questionId: raised.question.id,
+        stepId: "specifier",
+        attempt: 0,
+      },
+    })
+    expect(String(h.syntheticMessages[0]?.text)).toContain(raised.question.id)
+    expect(String(h.syntheticMessages[0]?.text)).toContain("loom_oq_list")
+    expect(String(h.syntheticMessages[0]?.text)).toContain("loom_oq_reconcile")
+    expect(String(h.syntheticMessages[0]?.text)).not.toContain(authoritativeAnswer)
+    expect(h.syntheticMessages.some((message) => message.sessionID === firstSession)).toBe(false)
+
+    const listed = await h.call(
+      "oq_list",
+      { workflowId, stepId: "specifier" },
+      "specifier",
+      latestSession,
+    )
+    expect(
+      listed.questions.find((question: any) => question.id === raised.question.id)
+        ?.answer?.text,
+    ).toBe(authoritativeAnswer)
+  } finally {
+    h.restore()
+  }
+})
+
+test("answered OQ stays durable when synthetic wake-up delivery fails", async () => {
+  const h = await harness(
+    undefined,
+    undefined,
+    undefined,
+    () => {
+      throw new Error("synthetic wake unavailable")
+    },
+  )
+  try {
+    const generalSession = "oq-notify-failure-general"
+    const childSession = "oq-notify-failure-worker"
+    const started = await h.call(
+      "start",
+      { request: "Implement one bounded change after user clarification." },
+      "general",
+      generalSession,
+    )
+    const workflowId = String(started.workflowId)
+    expect((await h.call(
+      "route",
+      {
+        humanFacing: false,
+        behavioral: false,
+        structural: false,
+        externalUnknown: false,
+        diagnostic: false,
+        productOutcome: false,
+        implementationRequested: true,
+        executionDepth: "task",
+      },
+      "general",
+      generalSession,
+    )).error).toBeUndefined()
+
+    const grant = await h.call(
+      "dispatch_grant",
+      { workflowId, stepId: "worker" },
+      "general",
+      generalSession,
+    )
+    expect((await h.call(
+      "attach",
+      { grantId: grant.grantId, workflowId, stepId: "worker" },
+      "worker",
+      childSession,
+    )).attached).toBe(true)
+
+    const raised = await h.call(
+      "oq_raise",
+      {
+        workflowId,
+        stepId: "worker",
+        question: "Which user-selected mode should the implementation use?",
+        responder: "user",
+        blocking: true,
+      },
+      "worker",
+      childSession,
+    )
+    expect(raised.error).toBeUndefined()
+
+    const answer = "Use strict mode."
+    const answered = await h.call(
+      "oq_answer",
+      {
+        workflowId,
+        questionId: raised.question.id,
+        answer,
+        source: "user",
+      },
+      "general",
+      generalSession,
+    )
+    expect(answered.error).toBeUndefined()
+    expect(answered.notifications.notified).toEqual([])
+    expect(answered.notifications.failed).toEqual([
+      {
+        stepId: "worker",
+        error: "synthetic wake unavailable",
+      },
+    ])
+
+    const persisted = await h.durableStorage.get(
+      `oq/${workflowId}/${raised.question.id}`,
+    ) as any
+    expect(persisted.status).toBe("answered")
+    expect(persisted.answer.text).toBe(answer)
+  } finally {
+    h.restore()
+  }
+})
+
+test("answered OQ never revives a consumer session from an older step attempt", async () => {
+  const h = await harness()
+  try {
+    const generalSession = "oq-stale-general"
+    const childSession = "oq-stale-child"
+    const started = await h.call(
+      "start",
+      { request: "Specify one bounded lifecycle behavior." },
+      "general",
+      generalSession,
+    )
+    const workflowId = String(started.workflowId)
+    expect((await h.call(
+      "route",
+      {
+        humanFacing: false,
+        behavioral: true,
+        structural: false,
+        externalUnknown: false,
+        diagnostic: false,
+        productOutcome: false,
+        implementationRequested: true,
+        executionDepth: "change",
+      },
+      "general",
+      generalSession,
+    )).error).toBeUndefined()
+
+    const grant = await h.call(
+      "dispatch_grant",
+      { workflowId, stepId: "specifier" },
+      "general",
+      generalSession,
+    )
+    expect((await h.call(
+      "attach",
+      { grantId: grant.grantId, workflowId, stepId: "specifier" },
+      "specifier",
+      childSession,
+    )).attached).toBe(true)
+
+    const raised = await h.call(
+      "oq_raise",
+      {
+        workflowId,
+        stepId: "specifier",
+        question: "Which lifecycle meaning should be normative?",
+        responder: "user",
+        blocking: true,
+      },
+      "specifier",
+      childSession,
+    )
+    expect(raised.error).toBeUndefined()
+
+    const reopened = await h.call(
+      "reopen",
+      {
+        workflowId,
+        stepId: "specifier",
+        reason: "New evidence requires a fresh Specifier attempt before the answer arrives.",
+        newEvidence: true,
+        changedHypothesis: false,
+        changedStrategy: false,
+        reducedUnresolved: false,
+      },
+      "general",
+      generalSession,
+    )
+    expect(reopened.error).toBeUndefined()
+
+    const answered = await h.call(
+      "oq_answer",
+      {
+        workflowId,
+        questionId: raised.question.id,
+        answer: "Use the strict lifecycle meaning.",
+        source: "user",
+      },
+      "general",
+      generalSession,
+    )
+    expect(answered.error).toBeUndefined()
+    expect(answered.notifications).toEqual({
+      notified: [],
+      failed: [],
+    })
+    expect(h.syntheticMessages).toEqual([])
+
+    const persisted = await h.durableStorage.get(
+      `oq/${workflowId}/${raised.question.id}`,
+    ) as any
+    expect(persisted.answer.text).toBe("Use the strict lifecycle meaning.")
+  } finally {
+    h.restore()
+  }
 })
 
 
