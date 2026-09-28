@@ -1021,6 +1021,33 @@ async function reviewerAcceptanceCommitError(
   return undefined
 }
 
+async function reviewerAcceptanceStagedCommitError(
+  ctx: any,
+  sessionID: string,
+  projectDirectory: string,
+) {
+  const workflowId = (await ctx.storage.get(
+    sessionKey(sessionID),
+  )) as string | undefined
+  const stepId = (await ctx.storage.get(
+    sessionStepKey(sessionID),
+  )) as string | undefined
+  if (!workflowId || !stepId) return undefined
+
+  const workflow = await readWorkflow(ctx, workflowId)
+  const step = workflow?.steps.find((candidate) => candidate.id === stepId)
+  if (
+    !step ||
+    step.agent !== "reviewer" ||
+    !reviewerOwnsAcceptanceBookkeeping(step)
+  ) {
+    return undefined
+  }
+
+  const staged = await stagedGitPaths(projectDirectory)
+  return reviewerAcceptanceCommitError(projectDirectory, staged)
+}
+
 async function commitScopeError(
   ctx: any,
   sessionID: string,
@@ -3004,6 +3031,14 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         true,
       )
       if (error) throw new Error(error)
+      if (String(raw.agent ?? "") === "reviewer") {
+        const acceptanceError = await reviewerAcceptanceStagedCommitError(
+          ctx,
+          String(raw.sessionID),
+          ctx.location.directory,
+        )
+        if (acceptanceError) throw new Error(acceptanceError)
+      }
     }
     const legacyCheckedSessions = new Set<string>()
     const ensureLegacySession = async (sessionID: string) => {
@@ -9927,6 +9962,18 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               event.effect = "deny"
               event.message = error
               return
+            }
+            if (agent === "reviewer") {
+              const acceptanceError = await reviewerAcceptanceStagedCommitError(
+                ctx,
+                event.sessionID,
+                ctx.location.directory,
+              )
+              if (acceptanceError) {
+                event.effect = "deny"
+                event.message = acceptanceError
+                return
+              }
             }
           }
           event.effect = "allow"
