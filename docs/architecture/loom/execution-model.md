@@ -32,7 +32,7 @@ Loom's repository is the global OpenCode config directory. Agent files therefore
 - **research** — sourced investigation and external knowledge.
 - **diagnostic** — root-cause investigation.
 - **acceptance** — executes real end-to-end Product Acceptance scenarios and records observed proof.
-- **planner** — disposable decomposition context that turns an accepted Objective into Phase/Wave/Task decomposition plus a bounded executable Worker DAG.
+- **planner** — disposable decomposition context that turns an accepted Objective into Phase/Wave/Task decomposition; the current executable Task compiler produces a bounded Worker-only DAG. The proposed mixed-role path in [Control Plane](control-plane.md#proposed-accountable-role-admission) is not implemented.
 - **documenter** — maintains current system/user knowledge after implementation changes and verifies it through OKF.
 
 Planner is an execution context, not a product authority or gate owner. Objective identity and completion meaning come from accepted authority before Planner. Planner may decompose inside that Objective, but may not redefine it.
@@ -54,7 +54,7 @@ Agent directives are intentionally **slim professional charters**:
 - A producer cannot honestly complete while it knows a load-bearing part of its assigned outcome is unmet. It returns the precise scope/authority/capability boundary instead.
 - Reviewer is an independent gate, not the normal discovery loop. For a clear bounded Task after any required diagnosis/factual resolution, the healthy target is one competent Worker pass followed by one independent Reviewer pass; retries represent new evidence, not routine convergence.
 - When Reviewer is the governed acceptance gate for durable requirements, design, or architecture, a PASS owns the narrow lifecycle transition that records that acceptance. Semantic authorship stays with Designer/Specifier/Architect; Reviewer may change only acceptance status/metadata and the matching repository acceptance history, not substantive meaning.
-- Reviewer and Critic may identify or raise authority gaps, but they are **not OQ answer authorities** for producer realization. OQ answers come from user/design/behavior/architecture/research/diagnostic authority; mutation-scope coordination returns to General.
+- Reviewer and Critic may identify or raise authority gaps. Any named Loom role, including Reviewer and Critic, may answer a question **within its own domain**; an OQ answer by a gate role is not that role's independent gate verdict and does not transfer producer authority. Product-meaning questions return to the actual product/design/behavior authority, structural questions to Architect, and mutation-scope coordination to General.
 
 Reusable detailed methodology belongs in skills. Coordinator prompts and agent charters should not micromanage that methodology or accumulate repository-specific incident rules. Cross-cutting mechanics that do not define a profession—such as ephemeral report formatting/validation and durable learning bookkeeping—belong in shared on-demand skills rather than repeated role prose.
 
@@ -74,6 +74,7 @@ The transition preserves matching upstream step state and attempt identity. Gene
 Authority and execution subagents run in fresh OpenCode child sessions.
 
 Only the minimum required context is passed:
+
 - objective;
 - Anchor;
 - relevant accepted authority;
@@ -93,19 +94,19 @@ Before dependent work, the control plane records required capabilities.
 
 Typical mapping:
 
-| Meaning affected | Required capability |
-| --- | --- |
-| human-facing behavior | Designer |
-| observable behavior / guarantee | Specifier |
-| topology / interface / persistence / lifecycle | Architect |
-| implementation | Worker |
-| external factual uncertainty | Research |
-| unexplained failure | Diagnostic |
-| assembled-product proof | Acceptance |
-| product implementation decomposition | Planner |
-| implemented-system knowledge sync | Documenter |
-| normal independent check | Reviewer |
-| whole-solution challenge | Critic |
+| Meaning affected                               | Required capability |
+| ---------------------------------------------- | ------------------- |
+| human-facing behavior                          | Designer            |
+| observable behavior / guarantee                | Specifier           |
+| topology / interface / persistence / lifecycle | Architect           |
+| implementation                                 | Worker              |
+| external factual uncertainty                   | Research            |
+| unexplained failure                            | Diagnostic          |
+| assembled-product proof                        | Acceptance          |
+| product implementation decomposition           | Planner             |
+| implemented-system knowledge sync              | Documenter          |
+| normal independent check                       | Reviewer            |
+| whole-solution challenge                       | Critic              |
 
 The coordinator may propose classification. The control plane prevents dependent stages from proceeding when recorded prerequisites are incomplete.
 
@@ -116,6 +117,7 @@ Skills provide methodology, not authority.
 A worker receives only a small relevant set. Skills are loaded on demand through OpenCode's native skill mechanism.
 
 Examples:
+
 - Go implementation;
 - concurrency;
 - database migrations;
@@ -131,6 +133,7 @@ Skill selection should later be informed by measured effectiveness, not by loadi
 Each named agent has a restrictive default permission profile.
 
 Examples:
+
 - Reviewer and Critic cannot edit product code. Reviewer may edit `docs/requirements/**`, `docs/design/**`, and `docs/architecture/**` only for governed acceptance bookkeeping after a PASS; substantive authority edits remain producer-owned.
 - Specifier cannot edit implementation.
 - Architect cannot implement.
@@ -159,7 +162,6 @@ Different-model independence is preferred for holistic review, but absence of a 
 - [BR-014](../../requirements/loom/br-014-support-deliberate-sparring.md)
 - [BR-020](../../requirements/loom/br-020-conversation-is-primary-interface.md)
 
-
 ## Conversation and intent interviewing
 
 Conversation precedes workflow. Loom may discuss ideas, compare alternatives, research, or diagnose without starting an intent session.
@@ -167,6 +169,7 @@ Conversation precedes workflow. Loom may discuss ideas, compare alternatives, re
 Loom loads the `intent-grilling` skill only after the user has committed to execution and product intent remains unresolved.
 
 The interview follows four runtime-enforced rules:
+
 - one unresolved user question at a time;
 - every user question carries a recommended answer and short rationale;
 - repository/research-answerable branches are resolved with evidence rather than sent to the user;
@@ -177,7 +180,6 @@ The interview is ready to draft an Anchor when Goal, observable success, scope, 
 For a newly grilled or still-materially-ambiguous outcome, the user explicitly accepts the complete Anchor before autonomous execution begins.
 
 When prior conversation already resolved the material outcome, a clear build/fix/apply commitment accepts only that established meaning. Task and Change may start request-backed without a new Anchor. Objective depth requires accepted product authority; where a new Anchor is needed, Loom captures the resolved conversation faithfully and records the exact commitment without a second routine confirmation. Newly discovered user-owned meaning remains unresolved until properly accepted.
-
 
 ## Composition with execution depth
 
