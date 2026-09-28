@@ -956,6 +956,25 @@ class TransportDiagnosticTests(unittest.TestCase):
 
         self.assertFalse(RUN_EVALS.retryable_transport_error(result))
 
+
+    def test_model_unavailable_after_tool_use_is_not_retryable(self):
+        result = {
+            "exit_code": 1,
+            "stderr": "",
+            "stdout": json.dumps({
+                "type": "error",
+                "error": {
+                    "type": "provider.no-route",
+                    "message": "Model unavailable: openai/gpt-6-luna",
+                },
+            }),
+            "text": "",
+            "tools": ["loom_status"],
+            "actions": [{"tool": "loom_status", "args": {}}],
+        }
+
+        self.assertFalse(RUN_EVALS.retryable_transport_error(result))
+
     def test_transient_transport_retry_recovers_and_records_prior_error(self):
         unavailable = {
             "exit_code": 1,
