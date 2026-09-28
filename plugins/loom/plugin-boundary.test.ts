@@ -2772,7 +2772,10 @@ Verdict: FAIL
       const requirementPath = "docs/requirements/recovery.md"
       const logPath = "docs/requirements/CHANGELOG.md"
       await mkdir(join(h.root, "docs", "requirements"), { recursive: true })
-      await writeFile(join(h.root, requirementPath), "**Status:** proposed\n")
+      await writeFile(
+        join(h.root, requirementPath),
+        "# Recovery\n\n**Status:** proposed\n\nRecovery semantics remain producer-owned.\n",
+      )
       await writeFile(join(h.root, logPath), "# Requirements changelog\n")
       await writeFile(join(h.root, "src", "app.ts"), "export const app = true\n")
       await git(h.root, ["add", requirementPath, logPath, "src/app.ts"])
@@ -2905,8 +2908,78 @@ Verdict: FAIL
       expect(escaped.error).toContain("independent/advisory role")
       expect(escaped.roleWriteDefault).toEqual(["ephemeral-reports/reviewer/**"])
 
+      const substantiveEditEvent = {
+        tool: "edit",
+        callID: "reviewer-substantive-edit",
+        messageID: "reviewer-substantive-edit-message",
+        sessionID: reviewerSession,
+        agent: "reviewer",
+        input: { filePath: requirementPath, oldString: "", newString: "" },
+      }
+      await h.toolHooks.get("execute.before")!(substantiveEditEvent)
+      await writeFile(
+        join(h.root, requirementPath),
+        "# Recovery\n\n**Status:** accepted\n\nReviewer rewrote substantive semantics.\n",
+      )
+      await h.toolHooks.get("execute.after")!({
+        ...substantiveEditEvent,
+        status: "completed",
+        result: "updated",
+      })
+      const substantiveStageCommand =
+        `git -c core.hooksPath=/dev/null add -- ${requirementPath}`
+      const substantiveStagePermission: any = {
+        agent: "reviewer",
+        action: "shell",
+        resources: [substantiveStageCommand],
+        sessionID: reviewerSession,
+        effect: "ask",
+      }
+      await evaluate(substantiveStagePermission)
+      expect(substantiveStagePermission.effect).toBe("allow")
+      const substantiveStageEvent = {
+        tool: "shell",
+        callID: "reviewer-substantive-stage",
+        messageID: "reviewer-substantive-stage-message",
+        sessionID: reviewerSession,
+        agent: "reviewer",
+        input: { command: substantiveStageCommand },
+      }
+      await h.toolHooks.get("execute.before")!(substantiveStageEvent)
+      await git(h.root, ["add", requirementPath])
+      await h.toolHooks.get("execute.after")!({
+        ...substantiveStageEvent,
+        status: "completed",
+        result: "staged",
+      })
+
+      const blockedCommitCommand =
+        "git -c core.hooksPath=/dev/null commit -m 'docs: rewrite reviewed requirement'"
+      const blockedCommit: any = {
+        agent: "reviewer",
+        action: "shell",
+        resources: [blockedCommitCommand],
+        sessionID: reviewerSession,
+        effect: "ask",
+      }
+      await evaluate(blockedCommit)
+      expect(blockedCommit.effect).toBe("deny")
+      expect(blockedCommit.message).toContain(
+        "substantive document content remains producer-owned",
+      )
+
+      await git(h.root, ["restore", "--staged", "--", requirementPath])
+      await writeFile(
+        join(h.root, requirementPath),
+        "# Recovery\n\n**Status:** proposed\n\nRecovery semantics remain producer-owned.\n",
+      )
+
       for (const [path, content, callID] of [
-        [requirementPath, "**Status:** accepted\n", "reviewer-status-edit"],
+        [
+          requirementPath,
+          "# Recovery\n\n**Status:** accepted\n\nRecovery semantics remain producer-owned.\n",
+          "reviewer-status-edit",
+        ],
         [logPath, "# Requirements changelog\n- recovery accepted\n", "reviewer-log-edit"],
       ] as const) {
         const editEvent = {
