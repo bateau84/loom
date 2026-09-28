@@ -8284,11 +8284,11 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 scope = (await ctx.storage.get(
                   scopeKey(value.workflowId, value.stepId),
                 )) as TaskScope | undefined
-                if (
-                  !scope &&
-                  tool.agent === "reviewer" &&
-                  reviewerOwnsAcceptanceBookkeeping(step)
-                ) {
+                if (tool.agent === "reviewer") {
+                  // Reviewer mutation authority is derived from the exact
+                  // current gate shape, not inherited from a prior attempt.
+                  // Recompute it on every fresh attachment so reopen/reroute
+                  // cannot retain stale acceptance-write authority.
                   scope = {
                     workflowId: value.workflowId,
                     stepId: value.stepId,
