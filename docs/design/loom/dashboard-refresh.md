@@ -148,9 +148,13 @@ paused. Resume requests current data. These controls never pause or resume Loom
 execution. Projection receipt time is not publisher or workflow health.
 
 Distinguish loading, no publishers, no projected workflows, no filter matches, and
-unavailable projection. Failed/malformed refreshes keep the last valid snapshot,
-including an empty one. Retry clears degradation. Invalid hashes get a recovery
-link without rewriting the URL. Missing deep-link targets wait at the exact address;
+unavailable projection. After a failed/malformed refresh, keep and present any last
+validated snapshot—including an empty one—as last-known with explicit freshness /
+degraded state; unavailable is the view state only when no prior validated snapshot
+exists, or when the retained snapshot itself cannot be presented. Do not discard an
+available last-known view merely because refresh validation failed. A valid retry
+updates the view and clears/updates degradation. Invalid hashes get a recovery link
+without rewriting the URL. Missing deep-link targets wait at the exact address;
 repeated reads do not prove deletion.
 
 ## Accessibility and validation
