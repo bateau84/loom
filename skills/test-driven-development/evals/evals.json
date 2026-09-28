@@ -46,14 +46,14 @@
       "id": 4,
       "name": "fake-it-then-triangulate",
       "prompt": "I'm test-driving add(a, b). My first test is add(1, 1) == 2. Is returning the constant 2 automatically bad TDD? What should I do next?",
-      "expected_output": "The response treats a constant return as a valid temporary Fake It step, then adds the smallest second example that forces generalization and refactors to the real rule.",
+      "expected_output": "The response treats a constant return as a valid temporary Fake It step, then adds the smallest next example to reject that fake and keeps triangulating if another simple wrong implementation still survives.",
       "trap": "The model rejects any hard-coded implementation as invalid TDD, or leaves the constant implementation as complete.",
       "expectations": [
         "Recognizes returning 2 as an acceptable temporary Fake It strategy",
         "Does not treat the single passing example as completed general behavior",
-        "Adds a discriminating second example such as add(1, 2) == 3",
-        "Uses the new example to force generalization through Triangulation",
-        "Refactors to a general implementation while preserving green tests"
+        "Adds a discriminating second example such as add(1, 2) == 3 to reject the constant implementation",
+        "Checks whether another simple special-case implementation could still satisfy the examples and adds another case when needed",
+        "Refactors under green once the examples constrain the accepted addition rule"
       ]
     },
     {
