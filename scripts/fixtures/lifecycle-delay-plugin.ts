@@ -106,14 +106,7 @@ export default {
         const candidates = [...toolCalls.values()].filter((call) =>
           call.sessionID === sessionID && (!eventCallID || call.callID === eventCallID),
         )
-        if (candidates.length !== 1) {
-          if (exactToolTerminal) {
-            await writeFile(join(directory, "quiescence-debug.json"), JSON.stringify({
-              eventType: event.type, sessionID, eventCallID, candidates,
-            }))
-          }
-          continue
-        }
+        if (candidates.length !== 1) continue
         const call = candidates[0]
         const messages = await ctx.session.context({ sessionID })
         const matches = messages.flatMap((message: any) =>
@@ -123,17 +116,6 @@ export default {
           ),
         )
         const state = matches.length === 1 ? matches[0].state?.status : undefined
-        if (exactToolTerminal) {
-          await writeFile(join(directory, "quiescence-debug.json"), JSON.stringify({
-            eventType: event.type, sessionID, eventCallID, call, messages: messages.slice(-5).map((message: any) => ({
-              id: message.id,
-              parts: (message.parts ?? []).map((part: any) => ({
-                type: part.type, tool: part.tool, callID: part.callID, messageID: part.messageID,
-                state: part.state?.status,
-              })),
-            })), matches, state,
-          }))
-        }
         await writeFile(join(directory, `quiescence-${sessionID}.json`), JSON.stringify({
           eventType: event.type,
           sessionID,
