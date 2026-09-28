@@ -3028,6 +3028,95 @@ Verdict: FAIL
     }
   })
 
+  test("implementation review remains read-only for authority documents", async () => {
+    const h = await harness()
+    try {
+      const generalSession = "reviewer-readonly-general"
+      const workerSession = "reviewer-readonly-worker"
+      const reviewerSession = "reviewer-readonly-reviewer"
+      const started = await h.call(
+        "start",
+        { request: "Implement one bounded settled change." },
+        "general",
+        generalSession,
+      )
+      const workflowId = String(started.workflowId)
+      expect((await h.call(
+        "route",
+        {
+          humanFacing: false,
+          behavioral: false,
+          structural: false,
+          externalUnknown: false,
+          diagnostic: false,
+          productOutcome: false,
+          implementationRequested: true,
+          executionDepth: "task",
+        },
+        "general",
+        generalSession,
+      )).error).toBeUndefined()
+
+      const workerGrant = await h.call(
+        "dispatch_grant",
+        { workflowId, stepId: "worker" },
+        "general",
+        generalSession,
+      )
+      expect((await h.call(
+        "attach",
+        { grantId: workerGrant.grantId, workflowId, stepId: "worker" },
+        "worker",
+        workerSession,
+      )).attached).toBe(true)
+      expect((await h.call(
+        "complete",
+        { workflowId, stepId: "worker", summary: "implementation ready for review" },
+        "worker",
+        workerSession,
+      )).error).toBeUndefined()
+
+      const reviewerGrant = await h.call(
+        "dispatch_grant",
+        { workflowId, stepId: "review-implementation" },
+        "general",
+        generalSession,
+      )
+      expect((await h.call(
+        "attach",
+        {
+          grantId: reviewerGrant.grantId,
+          workflowId,
+          stepId: "review-implementation",
+        },
+        "reviewer",
+        reviewerSession,
+      )).attached).toBe(true)
+
+      const scope = await h.call(
+        "scope_status",
+        { workflowId, stepId: "review-implementation" },
+        "reviewer",
+        reviewerSession,
+      )
+      expect(scope.roleWriteDefault).toEqual(["ephemeral-reports/reviewer/**"])
+      expect(scope.effectiveWrite).toEqual(["ephemeral-reports/reviewer/**"])
+
+      const authorityEdit: any = {
+        agent: "reviewer",
+        action: "edit",
+        resources: ["docs/requirements/recovery.md"],
+        sessionID: reviewerSession,
+        effect: "ask",
+      }
+      await h.permissionHooks.get("evaluate")!(authorityEdit)
+      expect(authorityEdit.effect).toBe("deny")
+      expect(authorityEdit.message).toContain("current Loom write scope")
+    } finally {
+      h.restore()
+    }
+  })
+
   test("fresh same-attempt Specifier automatically inherits exact admitted-byte staging authority", async () => {
     const h = await harness()
     try {
