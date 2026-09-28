@@ -6,6 +6,7 @@ export type LifecycleHostDriver = {
   project: string
   create: (agent: "general" | "worker", parent?: string) => Promise<string>
   run: (sessionID: string, code: string) => Promise<any>
+  waitForPrompt: (predicate: (prompt: string) => boolean) => Promise<string>
 }
 
 const route = JSON.stringify({
@@ -117,6 +118,65 @@ return {attachment, result: unpack(await pending)};`)
     assert.equal(fresh?.workflowId, next.workflowId)
     assert.ok((await driver.run(child, `return await tools.loom.code.evidence_claim(${JSON.stringify({ ...badProof, statement: "Fresh host operation succeeded", observationIds: [fresh.id] })})`))?.claim)
     assert.equal((await driver.run(child, `return await tools.loom.code.verification(${JSON.stringify({ ...prove, observationIds: [fresh.id] })})`))?.proven, requirement.requirement.id)
+    const oqParent = await driver.create("general")
+    const oqChild = await driver.create("worker", oqParent)
+    const oqSetup = await driver.run(oqParent, setupCode)
+    assert.ok(oqSetup?.grantId, `OQ workflow/grant failed: ${JSON.stringify(oqSetup)}`)
+    assert.equal(
+      (await driver.run(
+        oqChild,
+        `return await tools.loom.code.attach(${JSON.stringify(oqSetup)})`,
+      ))?.attached,
+      true,
+    )
+
+    const raiseInput = {
+      workflowId: oqSetup.workflowId,
+      stepId: "worker",
+      question: "Which exact mode should this Worker use?",
+      responder: "user",
+      blocking: true,
+    }
+    const raised = await driver.run(
+      oqChild,
+      `return await tools.loom.code.oq_raise(${JSON.stringify(raiseInput)})`,
+    )
+    assert.ok(raised?.question?.id, `Real-host OQ raise failed: ${JSON.stringify(raised)}`)
+
+    const authoritativeAnswer = "Use strict mode from persisted OQ state."
+    const answerInput = {
+      workflowId: oqSetup.workflowId,
+      questionId: raised.question.id,
+      answer: authoritativeAnswer,
+      source: "user",
+    }
+    const answered = await driver.run(
+      oqParent,
+      `return await tools.loom.code.oq_answer(${JSON.stringify(answerInput)})`,
+    )
+    assert.deepEqual(answered?.notifications, { notified: ["worker"], failed: [] })
+
+    const wakePrompt = await driver.waitForPrompt(
+      (prompt) => prompt.includes(`Loom OQ ${raised.question.id} has been answered.`),
+    )
+    assert.match(wakePrompt, /loom_oq_list/)
+    assert.match(wakePrompt, /loom_oq_reconcile/)
+    assert.equal(wakePrompt.includes(authoritativeAnswer), false)
+
+    const listInput = {
+      workflowId: oqSetup.workflowId,
+      stepId: "worker",
+    }
+    const listed = await driver.run(
+      oqChild,
+      `return await tools.loom.code.oq_list(${JSON.stringify(listInput)})`,
+    )
+    assert.equal(
+      listed?.questions?.find((question: any) => question.id === raised.question.id)?.answer?.text,
+      authoritativeAnswer,
+    )
+
+    console.log("PASS real-host OQ wake-up: persisted answer steers the attached Worker and the Worker re-reads authoritative OQ state")
     console.log("PASS real-host lifecycle: cancelled Code Mode recovery, invalid/reused grants rejected, delayed old result denied as replacement claim/verification, fresh result accepted")
   } finally {
     // Unblock outstanding fixture calls on assertion failure; no orphan tasks.

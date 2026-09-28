@@ -2458,6 +2458,21 @@ try {
         return program.result
       } finally { mock.state.programs.delete(prompt) }
     },
+    waitForPrompt: async (predicate) => {
+      let observed = ""
+      await waitForCondition(
+        () => {
+          const match = [...mock.state.prompts].reverse().find(predicate)
+          if (!match) return false
+          observed = match
+          return true
+        },
+        "synthetic OQ wake-up reaching the real OpenCode provider turn",
+        () => mock.state.prompts.slice(-20),
+        20_000,
+      )
+      return observed
+    },
   })
 
   console.log("PASS OpenCode host integration")
