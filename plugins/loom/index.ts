@@ -225,7 +225,12 @@ const artifactWriteDefaults: Record<string, string[]> = {
   designer: ["docs/design/**", "ephemeral-reports/designer/**"],
   specifier: ["docs/requirements/**"],
   architect: ["docs/architecture/**", "docs/dependencies/**"],
-  reviewer: ["ephemeral-reports/reviewer/**"],
+  reviewer: [
+    "docs/requirements/**",
+    "docs/design/**",
+    "docs/architecture/**",
+    "ephemeral-reports/reviewer/**",
+  ],
   critic: ["ephemeral-reports/critic/**"],
   acceptance: ["ephemeral-reports/acceptance/**"],
   documenter: ["docs/system/**", "docs/user/**", "README.md"],
