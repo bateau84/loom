@@ -1,6 +1,6 @@
 ---
 name: test-driven-development
-description: "Test-Driven Development workflow for any language — use tests to drive behavior and design through a tight red-green-refactor loop. Use when implementing a feature test-first, choosing the next example, turning a bug into a regression test, evolving an API from tests, deciding when to Fake It or Triangulate, or judging whether a suite really proves behavior. Covers the Test List, Red-Green-Refactor, Obvious Implementation / Fake It / Triangulation, design feedback, refactoring discipline, boundary tests, test doubles, and Loom's honest-green house rule. Pair with the language testing skill for mechanics."
+description: "Test-Driven Development workflow for any language — use tests to drive behavior and design through a tight red-green-refactor loop. Use when implementing a feature test-first, choosing the next example, turning a bug into a regression test, evolving an API from tests, deciding when to Fake It or Triangulate, or judging whether TDD evidence really proves the claimed behavior. Covers the Test List, Red-Green-Refactor, Obvious Implementation / Fake It / Triangulation, design feedback, refactoring discipline, boundary tests, test doubles, and Loom's honest-green house rule. Pair with the language testing skill for mechanics."
 license: MIT
 metadata:
   author: Bateau
@@ -53,9 +53,9 @@ There are three useful Green strategies:
 
 - **Obvious Implementation** — implement the direct solution when it is genuinely obvious and small.
 - **Fake It** — use a deliberately simple or hard-coded implementation to get to green quickly when the design is uncertain.
-- **Triangulate** — add another example that forces an over-fitted implementation to generalize.
+- **Triangulate** — add another example that forces an over-fitted implementation to change. Repeat with the smallest useful examples until the implementation expresses the accepted rule rather than a special case.
 
-A temporary Fake It implementation is valid TDD. It is not completion. If the accepted behavior is broader than the example, add the next discriminating test or refactor until the implementation expresses that broader behavior.
+A temporary Fake It implementation is valid TDD. It is not completion. If the accepted behavior is broader than the example, add the next discriminating test. One added example may only eliminate one fake; keep triangulating when another simple wrong implementation still satisfies the suite. Refactor under green once the tests constrain the accepted rule.
 
 Do not build speculative generality, future options, or cases no accepted behavior requires.
 
@@ -130,7 +130,7 @@ But a round trip can pass when **both sides are wrong in the same way**. When th
 
 A passing test counts only when **real input at the level under test travels through the real behavior path being claimed**.
 
-"Real input" does not mean every unit test must boot the full product. A unit test may call a unit directly; an integration test may use an in-memory database; a boundary test may fake an external service. What must remain real is the behavior whose correctness the test claims to prove.
+"Real input" does not mean every unit test must boot the full product. A unit test may call a unit directly; an integration test may use an in-memory database or faithful fake when database-specific semantics are not the claim; a boundary test may fake an external service. What must remain real is the behavior whose correctness the test claims to prove.
 
 A test is faking success when it:
 
