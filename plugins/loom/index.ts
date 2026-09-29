@@ -3019,13 +3019,14 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         sessionStepKey(sessionID),
       )) as string | undefined
 
-      if (!raw.agent || raw.agent === "general") return
+      if (!raw.agent) return
       const agent = String(raw.agent)
-      if (!loomAgents.has(agent)) return
 
       const commitMessagePaths = directMutationPaths.filter((path) =>
         roleCommitMessagePath(agent, path),
       )
+      if (agent === "general" && commitMessagePaths.length === 0) return
+      if (agent !== "general" && !loomAgents.has(agent)) return
       if (
         commitMessagePaths.length > 0 &&
         commitMessagePaths.length !== directMutationPaths.length
@@ -3071,26 +3072,47 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         )
       }
 
-      if (
-        !workflowId ||
-        !stepId ||
-        !(await exactRunnableStepAttemptBinding(ctx, sessionID, workflowId, stepId))
-      ) {
-        throw new Error(
-          `${agent} mutation requires the exact attached current runnable Loom step attempt.`,
-        )
+      if (agent !== "general") {
+        if (
+          !workflowId ||
+          !stepId ||
+          !(await exactRunnableStepAttemptBinding(ctx, sessionID, workflowId, stepId))
+        ) {
+          throw new Error(
+            `${agent} mutation requires the exact attached current runnable Loom step attempt.`,
+          )
+        }
+        if (agent === "worker") {
+          await assertWorkerWorkClaim(ctx, workflowId, stepId)
+        }
       }
-      if (agent === "worker") {
-        await assertWorkerWorkClaim(ctx, workflowId, stepId)
-      }
-      if (commitMessagePaths.length > 0) return
 
-      const declaredScope = (await ctx.storage.get(
-        scopeKey(workflowId, stepId),
-      )) as TaskScope | undefined
-      const effectiveWriteScope = declaredScope?.write.length
-        ? declaredScope.write
-        : (artifactWriteDefaults[agent] ?? [])
+      const declaredScope =
+        workflowId && stepId && agent !== "general"
+          ? ((await ctx.storage.get(scopeKey(workflowId, stepId))) as TaskScope | undefined)
+          : undefined
+      const effectiveWriteScope =
+        agent === "general"
+          ? generalGitWriteScope
+          : declaredScope?.write.length
+            ? declaredScope.write
+            : (artifactWriteDefaults[agent] ?? [])
+
+      if (commitMessagePaths.length > 0) {
+        if (committableWriteScope(effectiveWriteScope).length === 0) {
+          throw new Error(
+            "Commit-message scratch writes require a current role/step with committable repository scope.",
+          )
+        }
+        for (const path of commitMessagePaths) {
+          await prepareCommitMessageScratchPath(
+            ctx.location.directory,
+            agent,
+            path,
+          )
+        }
+        return
+      }
       if (
         effectiveWriteScope.length === 0 ||
         !resourcesWithinScope(directMutationPaths, effectiveWriteScope)
@@ -3111,12 +3133,18 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
       const agent = String(raw.agent ?? "")
       const commitMessageFile = gitCommitMessageFile(command)
-      if (
-        commitMessageFile &&
-        !roleCommitMessagePath(agent, commitMessageFile)
-      ) {
-        throw new Error(
-          "Git commit message file must be inside the current role's ephemeral-reports/<role>/commit-messages/ namespace.",
+      if (commitMessageFile) {
+        if (!roleCommitMessagePath(agent, commitMessageFile)) {
+          throw new Error(
+            "Git commit message file must be inside the current commit-owning role's ephemeral-reports/<role>/commit-messages/ namespace.",
+          )
+        }
+        await assertOwnedCommitMessageFile(
+          ctx,
+          String(raw.sessionID ?? ""),
+          ctx.location.directory,
+          agent,
+          commitMessageFile,
         )
       }
       if (agent !== "general" && loomAgents.has(agent)) {
