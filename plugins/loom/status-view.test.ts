@@ -3,6 +3,7 @@ import { mkdtemp, readFile, rm, stat } from "node:fs/promises"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
 import {
+  compactWorkflowState,
   dashboardWorkflowUrl,
   renderStatusHtml,
   renderStatusMarkdown,
@@ -11,6 +12,8 @@ import {
   writeStatusArtifact,
   type StatusView,
 } from "./status-view"
+import { DEFAULT_LIMITS } from "./budget"
+import type { Workflow } from "./workflow"
 import type { LoomRuntimeIdentity } from "./runtime"
 import {
   DEFAULT_DASHBOARD_PORT,
@@ -30,6 +33,7 @@ function statusView(): StatusView {
     state: "active",
     progress: { finished: 3, total: 7, failed: 0 },
     now: [{ step: "task:implement", agent: "worker", kind: "work" }],
+    userDecisions: [],
     recent: [],
     upcoming: [{ step: "review", agent: "reviewer", waitsFor: ["task:implement"] }],
     questions: { open: 1, routes: [], reconcile: [] },
@@ -66,6 +70,44 @@ function statusView(): StatusView {
 }
 
 describe("interactive Loom status presentation", () => {
+  test("shows a ready exact user decision before an OQ exists and clears only after completion", () => {
+    const workflow: Workflow = {
+      id: "wf-decision", projectId: "project-test", revision: 0,
+      anchor: "docs/anchors/product/anchor.md", createdBySession: "session-1", createdAt: "now",
+      steps: [{
+        id: "task:decision", agent: "user", kind: "wait", dependsOn: [], status: "waiting",
+        task: {
+          id: "decision", title: "Choose the release mode", objective: "Select staged or immediate release.",
+          rationale: "The rollout behavior must be chosen by the product owner.",
+          acceptanceCriteria: ["Choose staged or immediate."], dependsOn: [], write: [], skills: [],
+          verify: ["Record the user's answer"], role: "user", responsibility: "obtain-user-decision",
+        },
+      }, {
+        id: "review-plan", agent: "reviewer", kind: "gate", dependsOn: ["task:decision"], status: "pending",
+      }],
+    }
+    const project = () => compactWorkflowState(workflow, [], { totalDispatches: 0, byKey: {}, seenDispatches: [] }, DEFAULT_LIMITS)
+    const view = project()
+
+    expect(view.now).toEqual([])
+    expect(view.questions.open).toBe(0)
+    expect(view.userDecisions).toEqual([{
+      step: "task:decision", taskId: "decision", title: "Choose the release mode",
+      objective: "Select staged or immediate release.",
+      rationale: "The rollout behavior must be chosen by the product owner.",
+      acceptanceCriteria: ["Choose staged or immediate."], ready: true, waitsFor: [],
+    }])
+    expect(renderStatusMarkdown({ ...view, work: null })).toContain("ready for your decision")
+    const html = renderStatusHtml({ ...view, work: null })
+    expect(html).toContain("Choose the release mode")
+    expect(html).toContain("Ready for your decision · not dispatchable")
+    expect(html).toContain("The rollout behavior must be chosen by the product owner.")
+    expect(html).toContain("Choose staged or immediate.")
+
+    workflow.steps[0]!.status = "complete"
+    expect(project().userDecisions).toEqual([])
+  })
+
   test("keeps the tool result compact and exposes the browser preview handoff", () => {
     const output = renderStatusMarkdown(statusView(), {
       path: "/tmp/loom-status.html",

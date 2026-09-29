@@ -269,6 +269,31 @@ export function runnable(workflow: Workflow) {
   )
 }
 
+export type UserDecisionWaitStep = Step & {
+  id: string
+  agent: "user"
+  kind: "wait"
+  status: "waiting"
+  task: TaskSpec & { role: "user"; responsibility: "obtain-user-decision" }
+}
+
+/** Decision waits are visible to General when their dependencies are ready, but are never dispatchable. */
+export function userDecisionWaitSteps(workflow: Workflow) {
+  if (workflow.cancellation) return []
+  return workflow.steps
+    .filter((step): step is UserDecisionWaitStep =>
+      step.kind === "wait" && step.status === "waiting" && step.agent === "user" &&
+      step.task?.role === "user" && step.task.responsibility === "obtain-user-decision",
+    )
+    .map((step) => {
+      const waitsFor = step.dependsOn.filter((dependency) => {
+        const upstream = workflow.steps.find((candidate) => candidate.id === dependency)
+        return !upstream || !satisfied(upstream)
+      })
+      return { step, ready: waitsFor.length === 0, waitsFor }
+    })
+}
+
 function work(id: string, agent: string, dependsOn: string[] = []): Step {
   return { id, agent, kind: "work", dependsOn, status: "pending" }
 }

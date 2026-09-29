@@ -11,7 +11,7 @@ import { effectiveTotalDispatchLimit, type BudgetState, type ExecutionLimits } f
 import type { KnowledgeReport } from "./knowledge"
 import type { OpenQuestion } from "./oq"
 import type { LoomRuntimeIdentity } from "./runtime"
-import { planningOnlyObjective, runnable, type Workflow } from "./workflow"
+import { planningOnlyObjective, runnable, userDecisionWaitSteps, type Workflow } from "./workflow"
 import {
   nextRunnableWaves,
   workPlanContext,
@@ -114,6 +114,16 @@ export function compactWorkflowState(
               step.review?.ineligibleIndependentSessionIds ?? [],
           }
         : {}),
+    })),
+    userDecisions: userDecisionWaitSteps(workflow).map(({ step, ready, waitsFor }) => ({
+      step: step.id,
+      taskId: step.task.id,
+      title: step.task.title,
+      objective: step.task.objective,
+      rationale: step.task.rationale,
+      acceptanceCriteria: step.task.acceptanceCriteria ?? [],
+      ready,
+      waitsFor,
     })),
     recent: finished.slice(-5).map((step) => ({
       step: step.id,
@@ -314,6 +324,16 @@ export function renderStatusMarkdown(view: StatusView, artifact?: StatusArtifact
     if (view.now.length > 5) lines.push(`- … +${view.now.length - 5} more runnable steps`)
   }
 
+  if (view.userDecisions.length) {
+    lines.push("", "### User decisions")
+    for (const decision of view.userDecisions) {
+      lines.push(`- **${decision.title}** · ${markdownCode(decision.taskId)}${decision.ready ? " · ready for your decision" : ` · waiting for ${decision.waitsFor.map(markdownCode).join(", ")}`}`)
+      lines.push(`  - ${clippedSummary(decision.objective)}`)
+      if (decision.rationale) lines.push(`  - Why: ${clippedSummary(decision.rationale)}`)
+      for (const criterion of decision.acceptanceCriteria) lines.push(`  - Decision context: ${clippedSummary(criterion)}`)
+    }
+  }
+
   const attention: string[] = []
   if (view.questions.open) attention.push(`${view.questions.open} OQ${view.questions.open === 1 ? "" : "s"}`)
   if (view.verification.open.length) attention.push(`${view.verification.open.length} verification open`)
@@ -453,9 +473,22 @@ function currentHtml(view: StatusView) {
         .join("")
     : '<li class="muted">No blocked upcoming step.</li>'
 
+  const decisions = view.userDecisions.length
+    ? view.userDecisions
+        .map((decision) => `<li>
+          <strong>${esc(decision.title)}</strong> <code>${esc(decision.taskId)}</code>
+          <span class="muted">${decision.ready ? "Ready for your decision · not dispatchable" : `Waiting for ${esc(decision.waitsFor.join(", "))}`}</span>
+          <p>${esc(decision.objective)}</p>
+          ${decision.rationale ? `<p class="muted">Why: ${esc(decision.rationale)}</p>` : ""}
+          ${decision.acceptanceCriteria.length ? `<ul>${decision.acceptanceCriteria.map((criterion) => `<li>${esc(criterion)}</li>`).join("")}</ul>` : ""}
+        </li>`)
+        .join("")
+    : '<li class="muted">No pending user decisions.</li>'
+
   return `<section class="split">
     <div class="panel"><h2>Now</h2><ul class="flat">${current}</ul></div>
     <div class="panel"><h2>Upcoming</h2><ul class="flat">${upcoming}</ul></div>
+    <div class="panel"><h2>User decisions · not dispatchable</h2><ul class="flat">${decisions}</ul></div>
   </section>`
 }
 
