@@ -5666,7 +5666,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       addLoomTool({
         name: "oq_answer",
         description:
-          "Answer a shared question as its named responder role. Any Loom role may be an OQ responder. Reviewer/Critic OQ answers are not gate verdicts. User-owned answers are recorded by General with source=user. A consumer listed in notifications.notified already has a Loom continuation signal scheduled; General must not issue a parallel message, resume, or redispatch merely because the answer succeeded. Recover only after failed/undelivered notification or later evidence that the scheduled continuation failed or stalled, and re-check current workflow state first.",
+          "Answer a shared question as its named responder role. Any Loom role may be an OQ responder. Reviewer/Critic OQ answers are not gate verdicts. User-owned answers are recorded by General with source=user. Answering also attempts runtime continuation of each still-current consumer. `notifications.notified` means that consumer has a Loom continuation signal scheduled; `notifications.failed` is delivery-failure evidence. General must not issue a parallel continuation merely because an answer succeeded, and missing notification output after another responder or a coordinator restart is not proof of failure. Recover only after re-checking current state and positive evidence of delivery failure or a notified child turn ending/failing unreconciled.",
         input: {
           type: "object",
           properties: {

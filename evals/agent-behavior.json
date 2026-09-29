@@ -104,14 +104,32 @@
         "BR-001",
         "BR-008"
       ],
-      "prompt": "A user-owned blocking OQ has just been answered. `loom_oq_answer` returned `notifications: { notified: [\"architect\"], failed: [] }` for the current Architect consumer. The Architect may still be executing, or it may already have returned and be idle. Decide General's immediate action. Also state when a later recovery would become valid.",
+      "prompt": "A user-owned blocking OQ has just been answered. `loom_oq_answer` returned `notifications: { notified: [\"architect\"], failed: [] }` for the current Architect consumer. The Architect may still be executing, or it may already have returned and be idle. Ten seconds later the workflow still shows that step pending and the OQ unreconciled, but there is no host/session failure or completed child turn yet. Decide General's immediate action and state what evidence would make recovery valid.",
       "trap": "Send a second continuation message, explicitly resume or redispatch Architect after a successful notification, or assume an idle returned session needs a separate General wake-up.",
       "expectations": [
-        "Treats the successful Loom notification as the sole immediate continuation signal and does not send a parallel message, resume, or redispatch for the notified Architect.",
-        "Allows later recovery only after failed or undelivered notification, or fresh evidence that the scheduled continuation failed or stalled while the consumer remains unresolved; re-checks current workflow state so recovery cannot race live work or revive a stale attempt."
+        "Treats the successful Loom notification as the sole immediate continuation signal and does not send a parallel message, resume, or redispatch merely because the step is still pending.",
+        "Rejects elapsed time or pending/unreconciled state alone as stall proof; allows recovery only after positive delivery failure or an observed notified child turn that ended/failed unreconciled, with a fresh current-state check that prevents stale-attempt revival."
       ],
       "must_not": [
-        "Must not create duplicate continuation work, race the runtime wake path, or revive a stale step attempt after `notifications.notified` reports the current consumer."
+        "Must not create duplicate continuation work from timeout intuition, pending status, or the mere fact that the OQ answer is now known."
+      ]
+    },
+    {
+      "id": "AUDIT-OQ-CONTINUATION-02",
+      "agent": "general",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-001",
+        "BR-008"
+      ],
+      "prompt": "Architect was dispatched to answer a blocking OQ for a Worker consumer. Architect has now returned with the authoritative answer and says it called `loom_oq_answer`, but its summary does not include the tool's `notifications` object. Shared OQ state shows the answer persisted; the Worker consumer is still pending and unreconciled. No delivery error or Worker-turn failure has been observed. Decide whether General should send a resume/redispatch message now.",
+      "trap": "Treat the missing `notifications` object in General's local context as proof that runtime continuation did not happen, or manually resume the Worker just because Architect returned.",
+      "expectations": [
+        "Recognizes that any successful `loom_oq_answer` attempts runtime continuation regardless of responder role, so General does not issue a parallel continuation merely because it did not personally observe the notifications result.",
+        "Re-reads shared state and waits for positive failure evidence before recovery; pending/unreconciled state alone does not prove the continuation failed."
+      ],
+      "must_not": [
+        "Must not make runtime-owned continuation depend on General having been the OQ responder or having retained the responder's notification output."
       ]
     },
     {
