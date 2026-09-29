@@ -3,6 +3,7 @@ import type { Workflow } from "./workflow"
 export type OQAuthority =
   | "user"
   | "general"
+  | "brainstorm"
   | "designer"
   | "specifier"
   | "architect"
