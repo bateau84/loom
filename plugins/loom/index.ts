@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto"
-import { lstat, readFile, readlink, realpath } from "node:fs/promises"
+import { lstat, mkdir, readFile, readlink, realpath } from "node:fs/promises"
 import { dirname, isAbsolute, join, relative, resolve } from "node:path"
 import { execFile } from "node:child_process"
 import { promisify } from "node:util"
@@ -106,6 +106,7 @@ import {
 } from "./diagnostic-sandbox"
 import {
   authorGitShellResourcesAllowed,
+  commitMessageScratchPath,
   diagnosticExecutionShellResourcesAllowed,
   gitCommitMessageFile,
   diagnosticShellResourcesAllowed,
@@ -247,12 +248,123 @@ const productScopeElevatingAgents = new Set([
 
 const generalGitWriteScope = ["docs/anchors/**"]
 
+const repositoryCommitAgents = new Set([
+  "designer",
+  "specifier",
+  "architect",
+  "reviewer",
+  "documenter",
+  "worker",
+])
+
+function roleCanOwnRepositoryCommit(agent: string) {
+  return agent === "general" || repositoryCommitAgents.has(agent)
+}
+
 function roleCommitMessagePath(agent: string, resource: string) {
-  if (agent !== "general" && !loomAgents.has(agent)) return false
-  return resourceMatchesScope(
-    resource,
-    `ephemeral-reports/${agent}/commit-messages/**`,
+  if (!roleCanOwnRepositoryCommit(agent)) return false
+  const normalized = commitMessageScratchPath(resource)
+  return Boolean(
+    normalized &&
+    normalized.startsWith(`ephemeral-reports/${agent}/commit-messages/`),
   )
+}
+
+async function prepareCommitMessageScratchPath(
+  projectDirectory: string,
+  agent: string,
+  resource: string,
+) {
+  const normalized = commitMessageScratchPath(resource)
+  if (!normalized || !roleCommitMessagePath(agent, normalized)) {
+    throw new Error(
+      "Commit-message scratch path must be a .md file inside the current commit-owning role's ephemeral-reports/<role>/commit-messages/ namespace.",
+    )
+  }
+
+  const parentPaths = [
+    "ephemeral-reports",
+    `ephemeral-reports/${agent}`,
+    `ephemeral-reports/${agent}/commit-messages`,
+  ]
+  for (const path of parentPaths) {
+    try {
+      const info = await lstat(join(projectDirectory, path))
+      if (info.isSymbolicLink() || !info.isDirectory()) {
+        throw new Error(
+          `Commit-message scratch parent must be a real directory, not a symlink or other file: ${path}`,
+        )
+      }
+    } catch (error: any) {
+      if (error?.code !== "ENOENT") throw error
+    }
+  }
+
+  await mkdir(
+    join(projectDirectory, `ephemeral-reports/${agent}/commit-messages`),
+    { recursive: true },
+  )
+
+  for (const path of parentPaths) {
+    const info = await lstat(join(projectDirectory, path))
+    if (info.isSymbolicLink() || !info.isDirectory()) {
+      throw new Error(
+        `Commit-message scratch parent must remain a real directory: ${path}`,
+      )
+    }
+  }
+
+  try {
+    const info = await lstat(join(projectDirectory, normalized))
+    if (info.isSymbolicLink() || !info.isFile()) {
+      throw new Error(
+        "Commit-message scratch file must be a regular file, not a symlink or other file type.",
+      )
+    }
+  } catch (error: any) {
+    if (error?.code !== "ENOENT") throw error
+  }
+
+  return normalized
+}
+
+async function assertOwnedCommitMessageFile(
+  ctx: any,
+  sessionID: string,
+  projectDirectory: string,
+  agent: string,
+  resource: string,
+) {
+  const normalized = await prepareCommitMessageScratchPath(
+    projectDirectory,
+    agent,
+    resource,
+  )
+  const info = await lstat(join(projectDirectory, normalized)).catch(
+    (error: any) => {
+      if (error?.code === "ENOENT") return undefined
+      throw error
+    },
+  )
+  if (!info?.isFile() || info.isSymbolicLink()) {
+    throw new Error(
+      "Git commit message file must exist as a regular file written by this current role/session.",
+    )
+  }
+
+  const ownership = await gitSessionOwnership(ctx, sessionID)
+  const expected = ownership.worktreeFingerprints[normalized]
+  if (!ownership.paths.includes(normalized) || !expected) {
+    throw new Error(
+      "Git commit message file was not authored by this current role/session.",
+    )
+  }
+  const actual = await worktreeFingerprint(projectDirectory, normalized)
+  if (actual !== expected) {
+    throw new Error(
+      "Git commit message file changed after this role/session last wrote it.",
+    )
+  }
 }
 
 function shellUsesOwnedCommitMessageFile(
