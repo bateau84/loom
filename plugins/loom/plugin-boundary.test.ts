@@ -9913,7 +9913,7 @@ describe("Skill methodology evidence lifecycle", () => {
           agent: "specifier",
           input: { command: commitCommand },
         }),
-      ).rejects.toThrow("must exist as a regular file")
+      ).rejects.toThrow("must exist as a single-link regular file")
     } finally {
       h.restore()
     }
