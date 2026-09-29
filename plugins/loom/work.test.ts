@@ -27,6 +27,7 @@ import {
 
 const now = "2026-09-21T00:00:00Z"
 const PLAN_CONTEXT_TEST_MAX = 340
+const graphFingerprint = "a".repeat(64)
 
 function plan(): WorkPlanDefinition {
   const richTask = (id: string, title: string, objective: string, dependsOn: string[]) => ({
@@ -121,6 +122,8 @@ function task(id: string, dependsOn: string[] = []): TaskSpec {
     write: [`internal/${id}/**`],
     skills: ["golang"],
     verify: source.verify,
+    role: source.role,
+    responsibility: source.responsibility,
   }
 }
 
@@ -137,6 +140,19 @@ describe("Loom persistent work hierarchy", () => {
     )
     candidate.phases[0]!.waves[1]!.tasks[0]!.role = "worker"
     expect(validatePlanRoleFeasibility(candidate)).toBe(true)
+  })
+
+  test("legacy role-less Plan Tasks fail executable Wave admission instead of defaulting to Worker", () => {
+    const work = createWorkHierarchy("docs/anchors/product/anchor.md", "wf-legacy", now)
+    materializeWorkPlan(work, "wf-legacy", plan(), now)
+    const snapshot = work.plans?.find((candidate) => candidate.generation === work.generation)
+    const legacyTask = snapshot?.phases[0]?.waves[0]?.tasks.find((candidate) => candidate.id === "a")
+    expect(legacyTask).toBeDefined()
+    delete legacyTask!.role
+    delete legacyTask!.responsibility
+    expect(() => validateWorkflowWave(work, [task("a"), task("b")], false)).toThrow(
+      "Legacy Plan Task a has no accountable role/responsibility; amend and independently review the Plan before admission.",
+    )
   })
   test("rejects oversized persistent Plan identifiers", () => {
     const oversized = plan()
@@ -614,7 +630,7 @@ describe("Loom persistent work hierarchy", () => {
       ],
       now,
     )
-    completeWaveForTasks(work, "wf-1", work.generation, ["a", "b"], now)
+    completeWaveForTasks(work, "wf-1", work.generation, ["a", "b"], now, graphFingerprint)
 
     claimWorkflowWave(work, "wf-2", work.generation, [task("c")], true, now)
     syncWorkTaskStatuses(
@@ -624,7 +640,7 @@ describe("Loom persistent work hierarchy", () => {
       [{ taskId: "c", complete: true }],
       now,
     )
-    completeWaveForTasks(work, "wf-2", work.generation, ["c"], now)
+    completeWaveForTasks(work, "wf-2", work.generation, ["c"], now, graphFingerprint)
 
     expect(workTree(work).phases[0].status).toBe("complete")
     expect(work.objectiveStatus).toBe("active")
@@ -655,7 +671,7 @@ describe("Loom persistent work hierarchy", () => {
       ],
       now,
     )
-    completeWaveForTasks(work, "wf-1", work.generation, ["a", "b"], now)
+    completeWaveForTasks(work, "wf-1", work.generation, ["a", "b"], now, graphFingerprint)
 
     claimWorkflowWave(work, "wf-2", work.generation, [task("c")], true, now)
     syncWorkTaskStatuses(
@@ -665,7 +681,7 @@ describe("Loom persistent work hierarchy", () => {
       [{ taskId: "c", complete: true }],
       now,
     )
-    completeWaveForTasks(work, "wf-2", work.generation, ["c"], now)
+    completeWaveForTasks(work, "wf-2", work.generation, ["c"], now, graphFingerprint)
 
     expect(workTree(work).phases[0].status).toBe("complete")
     expect(() => completeObjective(work, work.generation, now)).toThrow(
@@ -693,7 +709,7 @@ describe("Loom persistent work hierarchy", () => {
     )
     expect(nextRunnableWaves(work)).toHaveLength(0)
 
-    completeWaveForTasks(work, "wf-1", work.generation, ["a", "b"], now)
+    completeWaveForTasks(work, "wf-1", work.generation, ["a", "b"], now, graphFingerprint)
     expect(nextRunnableWaves(work).map((wave) => wave.id)).toEqual(["runtime"])
   })
 
@@ -726,7 +742,7 @@ describe("Loom persistent work hierarchy", () => {
       ],
       now,
     )
-    completeWaveForTasks(work, "wf-1", work.generation, ["a", "b"], now)
+    completeWaveForTasks(work, "wf-1", work.generation, ["a", "b"], now, graphFingerprint)
 
     expect(objectiveWorkLevel(work)).toBe("objective")
   })
@@ -750,7 +766,7 @@ describe("Loom persistent work hierarchy", () => {
       ],
       now,
     )
-    completeWaveForTasks(work, "wf-1", work.generation, ["a", "b"], now)
+    completeWaveForTasks(work, "wf-1", work.generation, ["a", "b"], now, graphFingerprint)
 
     expect(() => validateWorkflowWave(work, [task("c")], true)).not.toThrow()
   })
@@ -792,7 +808,12 @@ describe("Loom persistent work hierarchy", () => {
       ],
       now,
     )
-    completeWaveForTasks(work, "wf-1", work.generation, ["a", "b"], now)
+    completeWaveForTasks(work, "wf-1", work.generation, ["a", "b"], now, graphFingerprint)
+    expect(workTree(work).phases[0].waves[0].status).toBe("complete")
+
+    expect(() => reopenWaveForTasks(work, "wf-1", work.generation, ["a", "b"], "stale-review", "b".repeat(64))).toThrow(
+      "does not match the current Task role/slot graph and independent gates",
+    )
     expect(workTree(work).phases[0].waves[0].status).toBe("complete")
 
     reopenWaveForTasks(work, "wf-1", work.generation, ["a", "b"], "later")
@@ -886,14 +907,17 @@ describe("reviewed Wave history and cancellation claims", () => {
     syncWorkTaskStatuses(work, "wf-1", work.generation, [
       { taskId: "a", complete: true }, { taskId: "b", complete: true },
     ], now)
-    completeWaveForTasks(work, "wf-1", work.generation, ["a", "b"], now)
+    completeWaveForTasks(work, "wf-1", work.generation, ["a", "b"], now, graphFingerprint)
     return work
   }
 
   test("completion proof is exact to owner, generation and reviewed task set", () => {
     const work = completedFoundation()
     const before = structuredClone(work)
-    expect(assertCompletedWaveForTasks(work, "wf-1", work.generation, ["b", "a"]).completion!.provenance).toBe("implementation-review")
+    expect(assertCompletedWaveForTasks(work, "wf-1", work.generation, ["b", "a"], graphFingerprint).completion!.provenance).toBe("implementation-review")
+    expect(() => assertCompletedWaveForTasks(work, "wf-1", work.generation, ["a", "b"], "b".repeat(64))).toThrow(
+      "does not match the current Task role/slot graph and independent gates",
+    )
     for (const ids of [[], ["a"], ["a", "a"], ["a", "c"], ["missing"]]) {
       expect(() => assertCompletedWaveForTasks(work, "wf-1", work.generation, ids)).toThrow()
     }
@@ -917,7 +941,7 @@ describe("reviewed Wave history and cancellation claims", () => {
     expect(releaseCancelledWorkflowClaims(work, "wf-1", "retry")).toEqual([])
     claimWorkflowWave(work, "wf-2", work.generation, [task("b")], false, "resumed")
     syncWorkTaskStatuses(work, "wf-2", work.generation, [{ taskId: "b", complete: true }], "finished")
-    completeWaveForTasks(work, "wf-2", work.generation, ["b"], "reviewed")
+      completeWaveForTasks(work, "wf-2", work.generation, ["b"], "reviewed", graphFingerprint)
     expect(work.nodes.find((node) => node.logicalId === "a")).toEqual(priorTask)
     expect(assertCompletedWaveForTasks(work, "wf-2", work.generation, ["b"]).completion).toMatchObject({
       workflowId: "wf-2", taskIds: ["b"], reviewedTaskIds: ["a", "b"],
@@ -936,7 +960,7 @@ describe("reviewed Wave history and cancellation claims", () => {
     expect(() => reopenWaveForTasks(work, "wf-1", work.generation, ["a", "b"], "bad")).toThrow("downstream")
     expect(work).toEqual(claimed)
     syncWorkTaskStatuses(work, "wf-2", work.generation, [{ taskId: "c", complete: true }], "done")
-    completeWaveForTasks(work, "wf-2", work.generation, ["c"], "reviewed")
+      completeWaveForTasks(work, "wf-2", work.generation, ["c"], "reviewed", graphFingerprint)
     expect(() => reopenWaveForTasks(work, "wf-1", work.generation, ["a", "b"], "bad")).toThrow("downstream")
   })
 

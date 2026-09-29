@@ -56,6 +56,7 @@ import {
   recordReviewerVerdict,
   reviewAssignmentMode,
   reviewerSessionEligibleForIndependentReview,
+  satisfied,
   type Effects,
   type Workflow,
 } from "./workflow"
@@ -64,6 +65,7 @@ import {
   blockingQuestionsForStep,
   raiseQuestion,
   reconcileQuestion,
+  reconcileUserDecisionQuestion,
   relevantQuestions,
   reopenQuestion,
   type OpenQuestion,
@@ -212,16 +214,13 @@ const loomAgents = new Set<string>(LOOM_AGENT_ROLES)
 function plannedTaskSatisfied(workflow: Workflow, step: Workflow["steps"][number]) {
   const task = step.task
   if (!task) return false
+  if (!task.role || !task.responsibility) return false
+  if (task.responsibility === "obtain-user-decision") return step.kind === "wait" && step.status === "complete"
   if (step.kind === "gate") return step.status === "passed"
   if (step.status !== "complete") return false
-  const role = task.role ?? "worker"
-  if (role === "worker") {
-    return workflow.steps.some((candidate) => candidate.id === "review-implementation" && candidate.status === "passed")
-  }
   const handoffGate = workflow.steps.find((candidate) => candidate.id === `task-review:${task.id}`)
-  return handoffGate
-    ? handoffGate.status === "passed"
-    : workflow.steps.some((candidate) => candidate.id === "review-implementation" && candidate.status === "passed")
+  if (handoffGate) return handoffGate.status === "passed"
+  return workflow.steps.some((candidate) => candidate.id === "review-implementation" && candidate.status === "passed")
 }
 
 const reportProducerAgents = new Set([
@@ -5339,12 +5338,15 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 resolvedOutcome === "pass" &&
                 taskIds.length > 0
               ) {
+                const bindingFingerprint = executableTaskPlanFingerprint(workflow)
+                if (!bindingFingerprint) throw new Error("Reviewed Wave receipt requires its admitted Task role/slot graph fingerprint.")
                 completeWaveForTasks(
                   work,
                   workflow.id,
                   workflow.work.generation,
                   taskIds,
                   now,
+                  bindingFingerprint,
                 )
               }
 
@@ -5886,6 +5888,9 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               if (work && workflow.work) {
                 const taskSteps = plannedTaskSteps(workflow)
                 const taskIds = taskSteps.map((taskStep) => taskStep.task!.id)
+                const expectedBindingFingerprint = taskSteps.every((taskStep) => taskStep.task?.role && taskStep.task.responsibility)
+                  ? executableTaskPlanFingerprint(workflow)
+                  : undefined
                 const hasPlanReview = workflow.steps.some((candidate) => candidate.id === "review-plan")
                 const planReviewedAfterReset =
                   !hasPlanReview ||
@@ -5902,7 +5907,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 ) {
                   releaseWorkflowWave(work, workflow.id, workflow.work.generation, taskIds, now)
                 } else if (reset.includes("review-implementation") && taskIds.length > 0) {
-                  reopenWaveForTasks(work, workflow.id, workflow.work.generation, taskIds, now)
+                  reopenWaveForTasks(work, workflow.id, workflow.work.generation, taskIds, now, expectedBindingFingerprint)
                 }
 
                 // Documentation-only reopening does not resurrect the Wave lease.
@@ -5970,7 +5975,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       addLoomTool({
         name: "oq_raise",
         description:
-          "Raise a shared peer OQ to any Loom role or the user. Planned Worker questions inherit their Task automatically; a non-Task step may supply an existing taskId to correlate the OQ with that Plan context. Ask the role that owns or can best answer the specific question; an OQ answer does not substitute for that role's independent gate when one exists. Mutation-scope coordination returns to General directly. Blocking questions automatically make the raising step a required consumer.",
+          "Raise a shared peer OQ to any Loom role or the user. For a user-owned Plan Task wait, General raises a blocking OQ with its exact taskId and sole Task consumerStepId; only the actual user answer recorded with source=user resolves that wait. Other planned Task questions inherit their exact Task context. Ask the role that owns or can best answer the specific question; an OQ answer does not substitute for an independent gate.",
         input: {
           type: "object",
           properties: {
@@ -6062,6 +6067,37 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 throw new Error(`OQ taskId ${requestedTaskId} does not match the attached Task ${inferredTaskId}.`)
               }
               const correlatedTaskId = inferredTaskId ?? requestedTaskId
+              let decisionStepAttempt: number | undefined
+              if (value.responder === "user" && requestedTaskId) {
+                const decisionStep = current.steps.find((candidate) => candidate.task?.id === requestedTaskId)
+                if (decisionStep?.task?.responsibility === "obtain-user-decision") {
+                  if (decisionStep.kind !== "wait" || decisionStep.agent !== "user" || decisionStep.status !== "waiting") {
+                    throw new Error(`User decision Task ${requestedTaskId} is not an unresolved user-owned wait.`)
+                  }
+                  if (!value.blocking || JSON.stringify([...(value.consumerStepIds ?? [])].sort()) !== JSON.stringify([decisionStep.id])) {
+                    throw new Error("User decision OQ must be blocking and name only its exact Task wait as consumer.")
+                  }
+                  if (!decisionStep.dependsOn.every((dependency) => {
+                    const upstream = current.steps.find((candidate) => candidate.id === dependency)
+                    return upstream && satisfied(upstream)
+                  })) {
+                    throw new Error(`User decision Task ${requestedTaskId} is waiting for its planned dependencies.`)
+                  }
+                  if (decisionStep.agent !== "user" || decisionStep.task.role !== "user") {
+                    throw new Error("User-owned decision Task is not bound to the non-agent user wait slot.")
+                  }
+                  decisionStepAttempt = decisionStep.attempt ?? 0
+                }
+              }
+              const userDecisionConsumers = (value.consumerStepIds ?? []).filter((stepId) => {
+                const consumer = current.steps.find((step) => step.id === stepId)
+                return consumer?.kind === "wait" && consumer.task?.responsibility === "obtain-user-decision"
+              })
+              if (userDecisionConsumers.length > 0 &&
+                  (!requestedTaskId || decisionStepAttempt === undefined || userDecisionConsumers.length !== 1 ||
+                    userDecisionConsumers[0] !== `task:${requestedTaskId}`)) {
+                throw new Error("A user-decision Task consumer must be raised with its exact taskId and wait attempt.")
+              }
               if (requestedTaskId && !current.work) {
                 throw new Error("OQ taskId requires a persistent Objective Plan.")
               }
@@ -6078,6 +6114,11 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                       correlatedPlanRevision,
                     )
                   : null
+                const decisionTaskContract = context?.focus?.task
+                if (decisionStepAttempt !== undefined &&
+                    (!decisionTaskContract || decisionTaskContract.role !== "user" || decisionTaskContract.responsibility !== "obtain-user-decision")) {
+                  throw new Error("User-decision OQ does not match the current semantic Plan Task owner/responsibility.")
+                }
                 if (correlatedTaskId && !context?.focus?.task) {
                   const legacyTask = work?.nodes.find(
                     (node) =>
@@ -6114,6 +6155,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                         generation: (parentQuestion?.work ?? current.work)!.generation,
                         ...(correlatedPlanRevision !== undefined ? { revision: correlatedPlanRevision } : {}),
                         ...(correlatedTaskId ? { taskId: correlatedTaskId } : {}),
+                        ...(decisionStepAttempt !== undefined ? { stepAttempt: decisionStepAttempt } : {}),
                       },
                     }
                   : {}),
@@ -6202,21 +6244,97 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           }
 
           try {
-            const question = await withRuntimeLock(runtime, "workflow", value.workflowId, async () => {
-              const current = (await ctx.storage.get(oqKey(value.workflowId, value.questionId))) as OpenQuestion | undefined
-              if (!current) throw new Error("Question not found.")
+            const recordAnswer = async () => {
+              const currentWorkflow = await readWorkflow(ctx, value.workflowId)
+              const currentQuestion = (await ctx.storage.get(oqKey(value.workflowId, value.questionId))) as OpenQuestion | undefined
+              if (!currentWorkflow || !currentQuestion) throw new Error("Workflow or question not found.")
+              const now = new Date().toISOString()
+              const taskId = currentQuestion.work?.taskId
+              let decisionStep: Workflow["steps"][number] | undefined
+              let work: WorkHierarchy | undefined
+              if (currentQuestion.work?.stepAttempt !== undefined) {
+                if (value.source !== "user" || tool.agent !== "general" || currentQuestion.requiredAuthority !== "user") {
+                  throw new Error("A user-decision Task can only resolve from its exact recorded user-owned OQ answer.")
+                }
+                if (!taskId || !currentWorkflow.work || currentWorkflow.work.objectiveId !== currentQuestion.work.objectiveId ||
+                    currentWorkflow.work.generation !== currentQuestion.work.generation) {
+                  throw new Error("User-decision OQ belongs to a stale or different Objective generation.")
+                }
+                const stepId = taskStepId(taskId)
+                decisionStep = currentWorkflow.steps.find((candidate) => candidate.id === stepId)
+                if (!decisionStep || decisionStep.kind !== "wait" || decisionStep.agent !== "user" ||
+                    decisionStep.status !== "waiting" || decisionStep.attempt !== currentQuestion.work.stepAttempt ||
+                    decisionStep.task?.id !== taskId || decisionStep.task.role !== "user" ||
+                    decisionStep.task.responsibility !== "obtain-user-decision" ||
+                    !currentQuestion.blocking || JSON.stringify(currentQuestion.consumerStepIds) !== JSON.stringify([stepId])) {
+                  throw new Error("User-decision OQ is not bound to the exact current wait Task attempt.")
+                }
+                if (!decisionStep.dependsOn.every((dependency) => {
+                  const upstream = currentWorkflow.steps.find((candidate) => candidate.id === dependency)
+                  return upstream && satisfied(upstream)
+                })) {
+                  throw new Error("User-decision Task dependencies are no longer satisfied.")
+                }
+                work = await readWork(ctx, currentWorkflow.work.objectiveId)
+                const plan = work
+                  ? workPlanContext(work, undefined, "focused", currentWorkflow.work.generation)
+                  : null
+                const taskContext = work
+                  ? workPlanContext(work, taskId, "focused", currentWorkflow.work.generation)
+                  : null
+                if (!work || !plan || !taskContext?.focus?.task || plan.revision !== currentQuestion.work.revision ||
+                    taskContext.focus.task.role !== "user" || taskContext.focus.task.responsibility !== "obtain-user-decision") {
+                  throw new Error("User-decision OQ Plan revision is stale; reopen planning and issue a fresh decision wait.")
+                }
+                assertWorkGeneration(work, currentWorkflow.work.generation)
+                assertWaveClaimForTasks(
+                  work,
+                  currentWorkflow.id,
+                  currentWorkflow.work.generation,
+                  plannedTaskSteps(currentWorkflow).map((candidate) => candidate.task!.id),
+                )
+              }
+
               answerQuestion(
-                current,
+                currentQuestion,
                 tool.agent,
                 value.source,
                 value.answer,
                 value.evidence ?? [],
-                new Date().toISOString(),
+                now,
               )
-              await saveQuestion(ctx, current)
-              await bumpWorkflowRevisionLocked(ctx, runtime, value.workflowId)
-              return current
-            })
+              if (decisionStep && work && taskId) {
+                decisionStep.status = "complete"
+                decisionStep.summary = value.answer
+                reconcileUserDecisionQuestion(currentQuestion, decisionStep.id, now)
+                syncWorkTaskStatuses(
+                  work,
+                  currentWorkflow.id,
+                  currentWorkflow.work!.generation,
+                  [{
+                    taskId,
+                    complete: true,
+                    result: {
+                      workflowId: currentWorkflow.id,
+                      summary: value.answer,
+                      evidenceClaimIds: [],
+                      completedAt: now,
+                    },
+                  }],
+                  now,
+                )
+                await ctx.storage.set(workKey(work.objectiveId), work)
+                await saveQuestion(ctx, currentQuestion)
+                await persistWorkflowMutationLocked(ctx, runtime, currentWorkflow)
+              } else {
+                await saveQuestion(ctx, currentQuestion)
+                await bumpWorkflowRevisionLocked(ctx, runtime, value.workflowId)
+              }
+              return currentQuestion
+            }
+            const question = workflow.work
+              ? await withWorkflowWorkLocks(runtime, value.workflowId, workflow.work.objectiveId, recordAnswer)
+              : await withRuntimeLock(runtime, "workflow", value.workflowId, recordAnswer)
             const notifications = await notifyAnsweredQuestionConsumers(
               ctx,
               runtime,
@@ -6321,8 +6439,33 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
           try {
             const question = await withRuntimeLock(runtime, "workflow", value.workflowId, async () => {
+              const currentWorkflow = await readWorkflow(ctx, value.workflowId)
               const current = (await ctx.storage.get(oqKey(value.workflowId, value.questionId))) as OpenQuestion | undefined
-              if (!current) throw new Error("Question not found.")
+              if (!current || !currentWorkflow) throw new Error("Workflow or question not found.")
+              if (current.work?.stepAttempt !== undefined) {
+                if (current.requiredAuthority !== "user" || !current.work.taskId || !currentWorkflow.work ||
+                    currentWorkflow.work.objectiveId !== current.work.objectiveId ||
+                    currentWorkflow.work.generation !== current.work.generation) {
+                  throw new Error("User-decision OQ is not bound to the current Objective generation.")
+                }
+                const decisionStep = currentWorkflow.steps.find((candidate) => candidate.id === taskStepId(current.work!.taskId!))
+                if (!decisionStep || decisionStep.kind !== "wait" || decisionStep.agent !== "user" ||
+                    decisionStep.task?.responsibility !== "obtain-user-decision") {
+                  throw new Error("The exact user-decision wait Task no longer exists.")
+                }
+                if (decisionStep.status === "complete") {
+                  throw new Error("Reopen the exact decision Task first so downstream work and satisfaction are invalidated.")
+                }
+                if (decisionStep.status !== "waiting" || value.preserveAnswer) {
+                  throw new Error("A reopened user-decision Task requires a waiting attempt and must discard its prior answer.")
+                }
+                const work = await readWork(ctx, currentWorkflow.work.objectiveId)
+                const plan = work ? workPlanContext(work, undefined, "focused", currentWorkflow.work.generation) : null
+                if (!plan || plan.revision !== current.work.revision) {
+                  throw new Error("User-decision OQ Plan revision is stale; create a fresh Plan decision question.")
+                }
+                current.work.stepAttempt = decisionStep.attempt ?? 0
+              }
               reopenQuestion(
                 current,
                 tool.agent,
@@ -7858,10 +8001,12 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                   authorityRefs: { type: "array", items: { type: "string" } },
                   constraints: { type: "array", items: { type: "string" } },
                   acceptanceCriteria: { type: "array", items: { type: "string" } },
-                  subtasks: { type: "array", items: { type: "string" } },
-                  integration: { type: "array", items: { type: "string" } },
-                  verify: { type: "array", items: { type: "string" } },
-                },
+                                  subtasks: { type: "array", items: { type: "string" } },
+                                  integration: { type: "array", items: { type: "string" } },
+                                  verify: { type: "array", items: { type: "string" } },
+                                  role: { type: "string" },
+                                  responsibility: { type: "string", enum: ["produce", "execute", "review", "obtain-user-decision"] },
+                                },
                                 required: [
                                   "id", "title", "objective", "rationale", "dependsOn", "authorityRefs",
                                   "constraints", "acceptanceCriteria", "subtasks", "integration",
@@ -8466,6 +8611,8 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                   "write",
                   "skills",
                   "verify",
+                  "role",
+                  "responsibility",
                 ],
                 additionalProperties: false,
               },
@@ -8494,6 +8641,13 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
           const planStep = workflow.steps.find((step) => step.id === "plan")
           if (!planStep) return { content: renderToolOutput({ error: "Workflow has no planning step." }) }
+          if (!workflow.steps.some((step) => step.id === "review-plan" && step.agent === "reviewer" && step.kind === "gate")) {
+            return {
+              content: renderToolOutput({
+                error: "This legacy workflow has no independent review-plan gate and cannot admit Tasks. Re-route through a current Objective workflow so Planner correction and Reviewer review precede Wave claim.",
+              }),
+            }
+          }
           if (!runnable(workflow).some((step) => step.id === "plan")) {
             return { content: renderToolOutput({ error: "Planning step is not currently runnable." }) }
           }
@@ -8559,21 +8713,11 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                   tasks.map((task) => task.id),
                   workflow.work!.generation,
                 )
-                const hasPlanReview = workflow.steps.some((step) => step.id === "review-plan")
-                const wave = hasPlanReview
-                  ? validateWorkflowWave(
-                      work,
-                      tasks,
-                      (workflow.effects?.workLevel ?? "objective") === "objective",
-                    )
-                  : claimWorkflowWave(
-                      work,
-                      workflow.id,
-                      workflow.work!.generation,
-                      tasks,
-                      (workflow.effects?.workLevel ?? "objective") === "objective",
-                      new Date().toISOString(),
-                    )
+                const wave = validateWorkflowWave(
+                  work,
+                  tasks,
+                  (workflow.effects?.workLevel ?? "objective") === "objective",
+                )
 
                 for (const step of steps) {
                   const scope: TaskScope = {
@@ -8589,27 +8733,16 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
                 const persisted = await readWork(ctx, work.objectiveId)
                 if (!persisted) throw new Error("Persistent work hierarchy disappeared after task-plan compilation.")
-                if (hasPlanReview) {
-                  validateWorkflowWave(
-                    persisted,
-                    tasks,
-                    (workflow.effects?.workLevel ?? "objective") === "objective",
-                  )
-                } else {
-                  // Compatibility for already-running workflows created before
-                  // review-plan existed: preserve their historical immediate claim.
-                  assertWaveClaimForTasks(
-                    persisted,
-                    workflow.id,
-                    workflow.work!.generation,
-                    tasks.map((task) => task.id),
-                  )
-                }
+                validateWorkflowWave(
+                  persisted,
+                  tasks,
+                  (workflow.effects?.workLevel ?? "objective") === "objective",
+                )
                 return {
                   work: persisted,
                   wave,
                   steps,
-                  planReviewRequired: hasPlanReview,
+                  planReviewRequired: true,
                   workLevel: workflow.effects?.workLevel ?? "objective",
                   workLevelAuto: Boolean(workflow.effects?.workLevelAuto),
                   autoResolvedWorkLevel,
@@ -8641,7 +8774,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       addLoomTool({
         name: "task_status",
         description:
-          "Inspect exact Task contracts and runtime status. Executable workflows return compiled Worker Tasks. Planning-only Objectives may retrieve one exact semantic Plan Task by taskId before executable scopes exist; use planContext for the bounded Plan map.",
+          "Inspect exact Task contracts and runtime status, including whether a user-decision wait is ready for its exact OQ path. Executable workflows return compiled role-owned Tasks. Planning-only Objectives may retrieve one exact semantic Plan Task by taskId before executable scopes exist; use planContext for the bounded Plan map.",
         input: {
           type: "object",
           properties: {
@@ -8704,6 +8837,15 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 stepId: step.id,
                 status: step.status,
                 runnable: runnableIDs.has(step.id),
+                ...(step.kind === "wait" && step.task?.responsibility === "obtain-user-decision"
+                  ? {
+                      decisionWait: true,
+                      decisionReady: step.dependsOn.every((dependency) => {
+                        const upstream = workflow.steps.find((candidate) => candidate.id === dependency)
+                        return upstream && satisfied(upstream)
+                      }),
+                    }
+                  : {}),
                 dependsOn: step.dependsOn,
                 task: step.task,
                 executable: true,
@@ -8739,6 +8881,9 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
             const step = current.steps.find((candidate) => candidate.id === value.stepId)
             if (!step) throw new Error("Step not found.")
+            if (step.kind === "wait" || step.agent === "user") {
+              throw new Error("User-decision wait steps are non-agent and cannot receive an agent write scope.")
+            }
             if (step.status !== "pending") {
               throw new Error("Step write scope cannot change after the step has finished.")
             }
