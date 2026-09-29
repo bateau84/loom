@@ -122,6 +122,10 @@ Reopening explicitly preserves or invalidates the previous answer. Invalidating 
 
 User-owned questions are the exception: General presents the exact stored question and records the exact user answer as user-sourced authority.
 
+Answering an OQ also drives continuation of current consumers. For each unreconciled consumer, Loom resolves the exact current step attempt and its exact attached session. When that consumer remains pending and runnable, the control plane sends one synthetic OQ-answer input with steering delivery and resume enabled. This single runtime action is the continuation mechanism: it steers an active turn or wakes an idle/returned bound session. Once delivery succeeds, General does not issue a second message, resume, or redispatch for that consumer.
+
+If no valid current binding exists, the step is no longer pending/runnable, the question was already reconciled, or delivery fails, the persisted answer remains authoritative and no stale session is revived. Failed delivery is reported to General, which re-reads current workflow state before any explicit recovery. Exact step-attempt validation prevents an answer from waking a session attached to an older attempt.
+
 ## Progressive Maintenance Routing
 
 For non-product maintenance, migration, and refactor work, Loom distinguishes a **structural change** from an **unresolved structural decision**.

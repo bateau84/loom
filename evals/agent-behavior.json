@@ -97,6 +97,24 @@
       ]
     },
     {
+      "id": "AUDIT-OQ-CONTINUATION-01",
+      "agent": "general",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-001",
+        "BR-008"
+      ],
+      "prompt": "A user-owned blocking OQ has just been answered. `loom_oq_answer` returned `notifications: { notified: [\"architect\"], failed: [] }` for the current Architect consumer. Loom's notification targets the exact current step-attempt session and uses steering delivery with resume enabled. The Architect may still be executing, or it may already have returned and be idle. Decide General's immediate action. Also state the recovery boundary if delivery had failed instead.",
+      "trap": "Send a second continuation message, explicitly resume or redispatch Architect after a successful notification, or assume an idle returned session needs a separate General wake-up.",
+      "expectations": [
+        "Treats the successful Loom notification as the sole continuation signal and does not send another message, resume, or redispatch for the notified Architect.",
+        "Recognizes that resume-enabled steering covers both an active session and an idle/returned bound session; manual recovery is reserved for failed or undelivered notification after re-checking current workflow state."
+      ],
+      "must_not": [
+        "Must not create duplicate continuation work, race the runtime wake path, or revive a stale step attempt after `notifications.notified` reports the current consumer."
+      ]
+    },
+    {
       "id": "AUDIT-FOCUS-01",
       "agent": "general",
       "execution": "role-decision",
