@@ -188,23 +188,22 @@ return {attachment, result: unpack(await pending)};`)
       ))?.attached,
       true,
     )
-    const activeRaised = await driver.run(
-      activeOqChild,
-      `return await tools.loom.code.oq_raise(${JSON.stringify({
-        workflowId: activeOqSetup.workflowId,
-        stepId: "worker",
-        question: "Which exact mode should this active Worker use?",
-        responder: "user",
-        blocking: true,
-      })})`,
-    )
-    assert.ok(activeRaised?.question?.id, `Active real-host OQ raise failed: ${JSON.stringify(activeRaised)}`)
-
     await rm(join(signals, "started"), { force: true })
     await rm(join(signals, "release"), { force: true })
     const activeTurn = await driver.begin(activeOqChild, "return await tools.lifecycleprobe.delayed({})")
     try {
       assert.equal((await waitSignal(signals, "started")).sessionID, activeOqChild)
+      const activeRaised = await driver.run(
+        activeOqParent,
+        `return await tools.loom.code.oq_raise(${JSON.stringify({
+          workflowId: activeOqSetup.workflowId,
+          question: "Which exact mode should this active Worker use?",
+          responder: "user",
+          blocking: true,
+          consumerStepIds: ["worker"],
+        })})`,
+      )
+      assert.ok(activeRaised?.question?.id, `Active real-host OQ raise failed: ${JSON.stringify(activeRaised)}`)
       const activeAnswered = await driver.run(
         activeOqParent,
         `return await tools.loom.code.oq_answer(${JSON.stringify({
