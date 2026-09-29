@@ -2914,13 +2914,13 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       const commitMessagePaths = directMutationPaths.filter((path) =>
         roleCommitMessagePath(agent, path),
       )
-      if (commitMessagePaths.length > 0) {
-        if (commitMessagePaths.length !== directMutationPaths.length) {
-          throw new Error(
-            "Do not mix commit-message scratch writes with product mutations in one tool call.",
-          )
-        }
-        return
+      if (
+        commitMessagePaths.length > 0 &&
+        commitMessagePaths.length !== directMutationPaths.length
+      ) {
+        throw new Error(
+          "Do not mix commit-message scratch writes with product mutations in one tool call.",
+        )
       }
 
       const classifiedMutationPaths = await Promise.all(
@@ -2971,6 +2971,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       if (agent === "worker") {
         await assertWorkerWorkClaim(ctx, workflowId, stepId)
       }
+      if (commitMessagePaths.length > 0) return
 
       const declaredScope = (await ctx.storage.get(
         scopeKey(workflowId, stepId),
@@ -9830,6 +9831,29 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             event.message =
               "Do not mix commit-message scratch writes with other report or product mutations."
             return
+          }
+          if (reportAgent !== "general") {
+            const workflowId = (await ctx.storage.get(
+              sessionKey(event.sessionID),
+            )) as string | undefined
+            const stepId = (await ctx.storage.get(
+              sessionStepKey(event.sessionID),
+            )) as string | undefined
+            if (
+              !workflowId ||
+              !stepId ||
+              !(await exactRunnableStepAttemptBinding(
+                ctx,
+                event.sessionID,
+                workflowId,
+                stepId,
+              ))
+            ) {
+              event.effect = "deny"
+              event.message =
+                "Commit-message scratch writes require the role's exact current runnable Loom step attempt."
+              return
+            }
           }
           event.effect = "allow"
           return
