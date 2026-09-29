@@ -274,7 +274,29 @@ describe("Loom Worker shell policy", () => {
         scope,
       ),
     ).toBe(true)
+    expect(
+      workerShellResourcesAllowed(
+        [
+          "git -c core.hooksPath=/dev/null commit -F ephemeral-reports/worker/commit-messages/runtime.md",
+        ],
+        scope,
+      ),
+    ).toBe(true)
     expect(workerShellResourcesAllowed(["git commit -m 'fix: runtime'"], scope)).toBe(false)
+    expect(
+      workerShellResourcesAllowed(
+        ["git -c core.hooksPath=/dev/null commit -F docs/runtime.md"],
+        scope,
+      ),
+    ).toBe(false)
+    expect(
+      workerShellResourcesAllowed(
+        [
+          "git -c core.hooksPath=/dev/null commit -m 'fix: runtime' -F ephemeral-reports/worker/commit-messages/runtime.md",
+        ],
+        scope,
+      ),
+    ).toBe(false)
     expect(
       workerShellResourcesAllowed(
         ["git -c core.hooksPath=/dev/null commit -a -m 'fix: runtime'"],
@@ -339,6 +361,14 @@ describe("Loom Worker shell policy", () => {
     expect(
       authorGitShellResourcesAllowed(
         ["git -c core.hooksPath=/dev/null commit -m 'docs(design): runtime'"],
+        designScope,
+      ),
+    ).toBe(true)
+    expect(
+      authorGitShellResourcesAllowed(
+        [
+          "git -c core.hooksPath=/dev/null commit -F ephemeral-reports/designer/commit-messages/runtime.md",
+        ],
         designScope,
       ),
     ).toBe(true)
