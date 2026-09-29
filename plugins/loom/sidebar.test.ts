@@ -288,6 +288,8 @@ describe("Loom sidebar snapshot", () => {
       subtasks: [],
       integration: [],
       verify: ["go test ./..."],
+      role: "worker",
+      responsibility: "execute",
     })
     const a = richTask("a", "Task A", "Build A", [])
     const b = richTask("b", "Task B", "Build B", ["a"])

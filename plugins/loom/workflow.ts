@@ -2,8 +2,8 @@ import { createHash } from "node:crypto"
 import { LOOM_AGENT_ROLES, PLAN_PRODUCER_ROLES, taskStepId, type TaskSpec } from "./tasks"
 import type { EvidenceKind } from "./evidence"
 
-export type StepKind = "work" | "gate"
-export type StepStatus = "pending" | "complete" | "passed" | "failed"
+export type StepKind = "work" | "gate" | "wait"
+export type StepStatus = "pending" | "waiting" | "complete" | "passed" | "failed"
 
 export type Step = {
   id: string
@@ -103,7 +103,8 @@ export type Workflow = {
 }
 
 export function satisfied(step: Step) {
-  return step.kind === "gate" ? step.status === "passed" : step.status === "complete"
+  if (step.kind === "gate") return step.status === "passed"
+  return step.status === "complete"
 }
 
 function stepDependsOn(workflow: Workflow, targetId: string, sourceId: string, seen = new Set<string>()): boolean {
@@ -228,7 +229,7 @@ export function runnable(workflow: Workflow) {
   if (workflow.cancellation) return []
   const done = new Set(workflow.steps.filter(satisfied).map((step) => step.id))
   return workflow.steps.filter(
-    (step) => step.status === "pending" && step.dependsOn.every((dependency) => done.has(dependency)),
+    (step) => step.kind !== "wait" && step.status === "pending" && step.dependsOn.every((dependency) => done.has(dependency)),
   )
 }
 
@@ -429,6 +430,7 @@ export function finishStep(
   const step = workflow.steps.find((candidate) => candidate.id === stepId)
   if (!step) throw new Error("Step not found.")
   if (step.agent !== agent) throw new Error(`Step ${stepId} belongs to ${step.agent}, not ${agent}.`)
+  if (step.kind === "wait") throw new Error("User-decision waits resolve only from the exact answered user-owned OQ.")
 
   const available = runnable(workflow).some((candidate) => candidate.id === stepId)
   if (!available) throw new Error("Step is not currently runnable.")
@@ -476,7 +478,7 @@ export function reopenFrom(workflow: Workflow, stepId: string) {
   for (const step of workflow.steps) {
     if (affected.has(step.id)) {
       step.attempt = (step.attempt ?? 0) + 1
-      step.status = "pending"
+      step.status = step.kind === "wait" ? "waiting" : "pending"
       delete step.summary
     }
   }
@@ -490,7 +492,11 @@ export function plannedTaskSteps(workflow: Workflow) {
 }
 
 export function executableTaskPlanFingerprint(workflow: Workflow) {
-  const tasks = workflow.steps.filter((step) => step.task || step.id.startsWith("task-review:")
+  const taskGraph = workflow.steps.filter((step) => step.task || step.id.startsWith("task-review:"))
+  if (taskGraph.length === 0) return undefined
+  const taskGraphIds = new Set(taskGraph.map((step) => step.id))
+  const tasks = workflow.steps.filter((step) => taskGraphIds.has(step.id) ||
+    step.id === "review-plan" || step.id === "review-implementation"
     ).map((step) => ({
       stepId: step.id,
       agent: step.agent,
@@ -499,7 +505,6 @@ export function executableTaskPlanFingerprint(workflow: Workflow) {
       task: step.task,
     }))
     .sort((a, b) => a.stepId.localeCompare(b.stepId))
-  if (tasks.length === 0) return undefined
   return createHash("sha256").update(JSON.stringify(tasks)).digest("hex")
 }
 
@@ -507,52 +512,57 @@ export function applyTaskPlan(workflow: Workflow, tasks: TaskSpec[]) {
   const plan = workflow.steps.find((step) => step.id === "plan")
   if (!plan) throw new Error("Workflow has no planning step.")
   if (plan.status !== "pending") throw new Error("Planning step must be pending before replacing the task graph.")
+  if (!workflow.steps.some((step) => step.id === "review-plan" && step.agent === "reviewer" && step.kind === "gate")) {
+    throw new Error("Legacy workflow cannot admit Plan Tasks without the independent reviewer-owned review-plan gate; re-route to a current Objective workflow.")
+  }
 
   const existing = plannedTaskSteps(workflow)
   if (existing.some((step) => step.status !== "pending")) {
     throw new Error("Task graph cannot change after task execution has started.")
   }
 
-  // New Objective workflows place an independent Plan review between
-  // planning and execution. Legacy/in-flight workflows may not have that
-  // gate yet, so retain their historical dependency on plan.
-  const executionGateId = workflow.steps.some((step) => step.id === "review-plan")
-    ? "review-plan"
-    : "plan"
+  const executionGateId = "review-plan"
   const taskById = new Map(tasks.map((task) => [task.id, task]))
   const taskSteps: Step[] = tasks.map((task) => {
-    const role = task.role ?? "worker" // compatibility for pre-role Worker-only contracts
-    const responsibility = task.responsibility ?? "execute"
+    if (!task.role || !task.responsibility) {
+      throw new Error(`Task ${task.id} requires an accountable role and responsibility; amend and review the Plan before admission.`)
+    }
+    const role = task.role
+    const responsibility = task.responsibility
     const reviewerTask = responsibility === "review"
-    if (!LOOM_AGENT_ROLES.includes(role as (typeof LOOM_AGENT_ROLES)[number])) {
+    const decisionTask = responsibility === "obtain-user-decision"
+    if (decisionTask) {
+      if (role !== "user") throw new Error(`Task ${task.id} user-decision responsibility requires user ownership.`)
+      if (task.write.length > 0) throw new Error(`Task ${task.id} user-decision wait cannot own a write scope.`)
+    } else if (!LOOM_AGENT_ROLES.includes(role as (typeof LOOM_AGENT_ROLES)[number])) {
       throw new Error(`Task ${task.id} role ${role} has no implemented/enabled execution path.`)
     }
     if (reviewerTask && role !== "reviewer") throw new Error(`Task ${task.id} review responsibility requires reviewer ownership.`)
     if (!reviewerTask && role === "reviewer") throw new Error(`Task ${task.id} reviewer ownership requires review responsibility.`)
-    if (!reviewerTask && !PLAN_PRODUCER_ROLES.includes(role as (typeof PLAN_PRODUCER_ROLES)[number])) {
+    if (!reviewerTask && !decisionTask && !PLAN_PRODUCER_ROLES.includes(role as (typeof PLAN_PRODUCER_ROLES)[number])) {
       throw new Error(`Task ${task.id} role ${role} has no supported Task execution slot.`)
     }
     if (reviewerTask && task.dependsOn.length === 0) throw new Error(`Task ${task.id} review Task must name reviewed work as dependencies.`)
-    if (responsibility === "obtain-user-decision") throw new Error(`Task ${task.id} requires an unsupported user-decision wait path.`)
+    if (!decisionTask && role === "user") throw new Error(`Task ${task.id} user ownership requires user-decision responsibility.`)
     const deps = task.dependsOn.map((dependency) => {
       const source = taskById.get(dependency)
-      return source && (source.role ?? "worker") !== "worker" && role !== (source.role ?? "worker") && responsibility !== "review" && source.responsibility !== "review"
+      return source && role !== source.role && responsibility !== "review" && source.responsibility !== "review" && source.responsibility !== "obtain-user-decision"
         ? `task-review:${dependency}`
         : taskStepId(dependency)
     })
     return {
       id: taskStepId(task.id),
       agent: role,
-      kind: reviewerTask ? "gate" : "work",
+      kind: decisionTask ? "wait" : reviewerTask ? "gate" : "work",
       dependsOn: [executionGateId, ...deps],
-      status: "pending",
+      status: decisionTask ? "waiting" : "pending",
       task,
       attempt: (existing.find((step) => step.id === taskStepId(task.id))?.attempt ?? -1) + 1,
     }
   })
   const handoffGates: Step[] = tasks
-    .filter((source) => (source.role ?? "worker") !== "worker" && source.responsibility !== "review" &&
-      tasks.some((target) => (target.role ?? "worker") !== (source.role ?? "worker") && target.responsibility !== "review" && target.dependsOn.includes(source.id)))
+    .filter((source) => source.responsibility !== "review" && source.responsibility !== "obtain-user-decision" &&
+      tasks.some((target) => target.role !== source.role && target.responsibility !== "review" && target.dependsOn.includes(source.id)))
     .map((source) => ({
       id: `task-review:${source.id}`, agent: "reviewer", kind: "gate",
       dependsOn: [taskStepId(source.id)], status: "pending",

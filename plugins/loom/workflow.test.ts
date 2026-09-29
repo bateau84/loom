@@ -3,6 +3,7 @@ import {
   addVerificationRequirement,
   applyTaskPlan,
   buildSteps,
+  executableTaskPlanFingerprint,
   finishStep,
   openVerificationRequirements,
   preserveSatisfied,
@@ -84,6 +85,8 @@ describe("Loom routing DAG", () => {
         write: ["internal/backend/**"],
         skills: ["golang"],
         verify: ["go test ./..."],
+        role: "worker",
+        responsibility: "execute",
       },
       {
         id: "ui",
@@ -93,6 +96,8 @@ describe("Loom routing DAG", () => {
         write: ["web/**"],
         skills: ["frontend"],
         verify: ["bun test"],
+        role: "worker",
+        responsibility: "execute",
       },
     ])
     finishStep(w, "plan", "planner", "complete", "plan ready")
@@ -130,6 +135,8 @@ describe("Loom routing DAG", () => {
       write: ["internal/runtime/**"],
       skills: ["golang"],
       verify: ["go test ./..."],
+      role: "worker",
+      responsibility: "execute",
     }])
     finishStep(w, "plan", "planner", "complete", "plan ready")
 
@@ -141,6 +148,38 @@ describe("Loom routing DAG", () => {
 
     reopenFrom(w, "plan")
     expect(runnable(w).map((step) => step.id)).toEqual(["plan"])
+  })
+
+  test("role-less legacy Task contracts are not admitted with a Worker fallback", () => {
+    const w = workflow(buildSteps({
+      humanFacing: false, behavioral: false, structural: false, externalUnknown: false,
+      diagnostic: false, productOutcome: true, workLevel: "wave",
+    }))
+    finishStep(w, "critic-solution", "critic", "pass", "solution pass")
+    expect(() => applyTaskPlan(w, [{
+      id: "legacy", title: "Legacy", objective: "Unowned legacy Plan Task", dependsOn: [],
+      write: ["src/**"], skills: [], verify: ["test"],
+    }])).toThrow("requires an accountable role and responsibility")
+    expect(w.steps.some((step) => step.id === "task:legacy")).toBe(false)
+  })
+
+  test("user-owned decision Tasks become non-agent waits and cannot be completed by General", () => {
+    const w = workflow(buildSteps({
+      humanFacing: false, behavioral: false, structural: false, externalUnknown: false,
+      diagnostic: false, productOutcome: true, workLevel: "wave",
+    }))
+    finishStep(w, "critic-solution", "critic", "pass", "solution pass")
+    applyTaskPlan(w, [{
+      id: "choice", title: "Choose", objective: "Choose the accepted behavior", dependsOn: [],
+      write: [], skills: [], verify: ["user decision recorded"], role: "user", responsibility: "obtain-user-decision",
+    }])
+    finishStep(w, "plan", "planner", "complete", "plan ready")
+    finishStep(w, "review-plan", "reviewer", "pass", "plan pass")
+    const wait = w.steps.find((step) => step.id === "task:choice")!
+    expect(wait).toMatchObject({ agent: "user", kind: "wait", status: "waiting" })
+    expect(runnable(w)).toHaveLength(0)
+    expect(() => finishStep(w, "task:choice", "general", "complete", "impostor decision")).toThrow("belongs to user")
+    expect(() => finishStep(w, "task:choice", "user", "complete", "synthetic decision")).toThrow("exact answered user-owned OQ")
   })
 
   test("planned Worker dependencies become real workflow dependencies", () => {
@@ -163,6 +202,8 @@ describe("Loom routing DAG", () => {
         write: ["internal/db/**"],
         skills: ["database"],
         verify: ["go test ./..."],
+        role: "worker",
+        responsibility: "execute",
       },
       {
         id: "api",
@@ -172,6 +213,8 @@ describe("Loom routing DAG", () => {
         write: ["internal/api/**"],
         skills: ["golang"],
         verify: ["go test ./..."],
+        role: "worker",
+        responsibility: "execute",
       },
     ])
     finishStep(w, "plan", "planner", "complete", "plan ready")
@@ -201,6 +244,25 @@ describe("Loom routing DAG", () => {
     expect(runnable(w).map((step) => step.id)).toEqual(["task-review:design"])
     finishStep(w, "task-review:design", "reviewer", "pass", "design reviewed")
     expect(runnable(w).map((step) => step.id)).toEqual(["task:build"])
+  })
+
+  test("Worker results require an independent gate before a specialist Task can consume them", () => {
+    const w = workflow(buildSteps({
+      humanFacing: false, behavioral: false, structural: false, externalUnknown: false,
+      diagnostic: false, productOutcome: true, workLevel: "wave",
+    }))
+    finishStep(w, "critic-solution", "critic", "pass", "solution pass")
+    applyTaskPlan(w, [
+      { id: "worker-result", title: "Base", objective: "Create baseline", dependsOn: [], write: ["src/**"], skills: [], verify: ["test"], role: "worker", responsibility: "execute" },
+      { id: "specialist-consumer", title: "Inspect", objective: "Review baseline design", dependsOn: ["worker-result"], write: ["docs/architecture/**"], skills: [], verify: ["review"], role: "architect", responsibility: "produce" },
+    ])
+    expect(w.steps.find((step) => step.id === "task:specialist-consumer")?.dependsOn).toContain("task-review:worker-result")
+    finishStep(w, "plan", "planner", "complete", "plan ready")
+    finishStep(w, "review-plan", "reviewer", "pass", "plan pass")
+    finishStep(w, "task:worker-result", "worker", "complete", "baseline ready")
+    expect(runnable(w).map((step) => step.id)).toEqual(["task-review:worker-result"])
+    finishStep(w, "task-review:worker-result", "reviewer", "pass", "baseline reviewed")
+    expect(runnable(w).map((step) => step.id)).toEqual(["task:specialist-consumer"])
   })
 
   test("structural maintenance receives knowledge sync even without full product acceptance", () => {
@@ -566,6 +628,7 @@ describe("Loom routing DAG", () => {
     expect(planningOnly.steps.some((step) => step.id === "review-implementation")).toBe(false)
     expect(planningOnly.steps.some((step) => step.id === "product-acceptance")).toBe(false)
     expect(planningOnly.steps.some((step) => step.id === "critic-final")).toBe(false)
+    expect(executableTaskPlanFingerprint(planningOnly)).toBeUndefined()
   })
 
   test("changed dependencies invalidate a previously satisfied gate", () => {
