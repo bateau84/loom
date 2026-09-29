@@ -17,7 +17,7 @@ A commit small enough to be safe (§1) is also small enough to explain honestly 
 
 ## Loom-compatible Git commands
 
-When Loom's runtime is active, its Git surface is intentionally narrower than generic Git. Use these forms rather than improvising equivalent commands:
+When Loom's runtime is active, its Git surface is intentionally narrower than generic Git. Use these forms rather than improvising equivalent commands. Outside Loom, use the repository/host's normal approved commit mechanism; this skill does not independently authorize disabling repository hooks.
 
 ```bash
 git status --short
@@ -90,7 +90,9 @@ Never let a multi-wave or multi-task session accumulate uncommitted work. Commit
 
 ```bash
 git add <files you actually touched for this task>   # never -A/. mid-task, see §2
+# Loom runtime:
 git -c core.hooksPath=/dev/null commit -m "<task>: <what changed and why>"
+# Outside Loom: use the repository/host's approved commit command instead.
 ```
 
 A session that commits after every task has a worst-case loss of "one task's work" if something goes wrong - not "everything since the session started." This is the single biggest lever against the incident this skill exists to prevent.
@@ -109,6 +111,7 @@ git diff --stat                 # size/shape per file
 ```bash
 git add path/to/fileA.go path/to/fileA_test.go   # one concern, explicitly named
 git diff --staged                                 # verify ONLY that concern is staged
+# Loom runtime; outside Loom use the repository/host's approved commit command:
 git -c core.hooksPath=/dev/null commit -m "<concern A>: <what and why>"
 
 git add path/to/fileB.go
