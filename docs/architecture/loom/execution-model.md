@@ -15,7 +15,7 @@ Loom's repository is the global OpenCode config directory. Agent files therefore
 
 - **Loom** — the single user-facing conversational engineering partner. The current OpenCode compatibility identifier is `general`.
 - Loom owns exploration, sparring, ordinary problem-solving and synthesis, investigation, the execution transition, autonomous routing, and continuity with the user.
-- **brainstorm** is an optional fresh subagent used as an internal ideation capability; it is not a second primary user mode.
+- **brainstorm** is an available fresh subagent used for advisory ideation; it is not a second primary user mode. For appropriately typed planned work, its bounded output is alternatives, assumptions and trade-offs for the accountable authority to assess, never an accepted decision or generic producer result. A planned Brainstorm Task or Brainstorm-responder OQ path is not yet supported by the current runtime.
 - **research** and **diagnostic** may be used during conversation for bounded fresh-context investigation without implying product mutation. They extend Loom's reasoning; they are not separate user-facing modes.
 
 ### Authority subagents
