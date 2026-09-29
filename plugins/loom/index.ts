@@ -161,7 +161,7 @@ import {
   type AcceptancePlan,
 } from "./acceptance"
 import { loadSkillCompanion, type SkillCompanionKind } from "./methodology"
-import { taskStepId, validateTaskPlan, type TaskSpec } from "./tasks"
+import { LOOM_AGENT_ROLES, taskStepId, validateTaskPlan, type TaskSpec } from "./tasks"
 import {
   amendWorkPlan,
   assertWaveClaimForTasks,
@@ -183,6 +183,7 @@ import {
   workPlanSemanticFingerprint,
   taskSemanticFingerprintAtRevision,
   validateWorkflowWave,
+  validatePlanRoleFeasibility,
   workflowTaskSemanticFingerprint,
   workTree,
   type WorkHierarchy,
@@ -206,19 +207,22 @@ import {
   type IntentSession,
 } from "./intent"
 
-const loomAgents = new Set([
-  "designer",
-  "specifier",
-  "architect",
-  "reviewer",
-  "critic",
-  "acceptance",
-  "planner",
-  "documenter",
-  "worker",
-  "research",
-  "diagnostic",
-])
+const loomAgents = new Set<string>(LOOM_AGENT_ROLES)
+
+function plannedTaskSatisfied(workflow: Workflow, step: Workflow["steps"][number]) {
+  const task = step.task
+  if (!task) return false
+  if (step.kind === "gate") return step.status === "passed"
+  if (step.status !== "complete") return false
+  const role = task.role ?? "worker"
+  if (role === "worker") {
+    return workflow.steps.some((candidate) => candidate.id === "review-implementation" && candidate.status === "passed")
+  }
+  const handoffGate = workflow.steps.find((candidate) => candidate.id === `task-review:${task.id}`)
+  return handoffGate
+    ? handoffGate.status === "passed"
+    : workflow.steps.some((candidate) => candidate.id === "review-implementation" && candidate.status === "passed")
+}
 
 const reportProducerAgents = new Set([
   "general",
@@ -5232,6 +5236,11 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 )
               }
               acceptedPlanReview = binding
+              if (resolvedOutcome === "pass") {
+                const snapshot = currentWork?.plans?.find((candidate) => candidate.generation === workflow.work!.generation)
+                if (!snapshot) throw new Error("Plan role feasibility cannot be checked without the current semantic Plan.")
+                validatePlanRoleFeasibility(snapshot)
+              }
             }
 
             finishStep(workflow, stepId, tool.agent, resolvedOutcome, summary)
@@ -5246,7 +5255,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             }
             evidenceBound = await bindSessionEvidence(ctx, tool.sessionID, workflowId, stepId)
             const completedTaskClaims =
-              step.task && step.status === "complete"
+              step.task && (step.status === "complete" || step.status === "passed")
                 ? await stepClaims(ctx, workflowId, stepId)
                 : []
 
@@ -5309,8 +5318,8 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                   work, workflow.id, workflow.work.generation,
                   taskSteps.map((taskStep) => ({
                     taskId: taskStep.task!.id,
-                    complete: taskStep.status === "complete",
-                    ...(taskStep.id === stepId && taskStep.status === "complete"
+                    complete: plannedTaskSatisfied(workflow, taskStep),
+                    ...(taskStep.id === stepId && (taskStep.status === "complete" || taskStep.status === "passed")
                       ? {
                           result: {
                             workflowId,
@@ -5906,7 +5915,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 ) {
                   syncWorkTaskStatuses(
                     work, workflow.id, workflow.work.generation,
-                    taskSteps.map((taskStep) => ({ taskId: taskStep.task!.id, complete: taskStep.status === "complete" })),
+                    taskSteps.map((taskStep) => ({ taskId: taskStep.task!.id, complete: plannedTaskSatisfied(workflow, taskStep) })),
                     now,
                   )
                 }
@@ -7375,7 +7384,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       addLoomTool({
         name: "work_plan",
         description:
-          "Create or replace the persistent holistic Plan for the accepted Objective: goal, authority, risks, acceptance, relationships, correction routing, and rich Phase/Wave/Task contracts. Planner only. Replacing an existing generation requires its exact current version and a reason.",
+          "Create or replace the persistent holistic Plan for the accepted Objective, including accountable role and responsibility for every Task. Planner only. Replacing an existing generation requires its exact current version and a reason.",
         input: {
           type: "object",
           properties: {
@@ -7492,6 +7501,8 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                               subtasks: { type: "array", items: { type: "string" } },
                               integration: { type: "array", items: { type: "string" } },
                               verify: { type: "array", items: { type: "string" } },
+                              role: { type: "string" },
+                              responsibility: { type: "string", enum: ["produce", "execute", "review", "obtain-user-decision"] },
                             },
                             required: [
                               "id",
@@ -7505,6 +7516,8 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                               "subtasks",
                               "integration",
                               "verify",
+                              "role",
+                              "responsibility",
                             ],
                             additionalProperties: false,
                           },
@@ -7750,6 +7763,8 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                       subtasks: { type: "array", items: { type: "string" } },
                       integration: { type: "array", items: { type: "string" } },
                       verify: { type: "array", items: { type: "string" } },
+                      role: { type: "string" },
+                      responsibility: { type: "string", enum: ["produce", "execute", "review", "obtain-user-decision"] },
                     },
                     additionalProperties: false,
                   },
@@ -7767,11 +7782,13 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                   subtasks: { type: "array", items: { type: "string" } },
                   integration: { type: "array", items: { type: "string" } },
                   verify: { type: "array", items: { type: "string" } },
+                  role: { type: "string" },
+                  responsibility: { type: "string", enum: ["produce", "execute", "review", "obtain-user-decision"] },
                 },
                     required: [
                       "id", "title", "objective", "rationale", "dependsOn", "authorityRefs",
                       "constraints", "acceptanceCriteria", "subtasks", "integration",
-                      "verify",
+                      "verify", "role", "responsibility",
                     ],
                     additionalProperties: false,
                   },
@@ -7798,11 +7815,13 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                   subtasks: { type: "array", items: { type: "string" } },
                   integration: { type: "array", items: { type: "string" } },
                   verify: { type: "array", items: { type: "string" } },
+                  role: { type: "string" },
+                  responsibility: { type: "string", enum: ["produce", "execute", "review", "obtain-user-decision"] },
                 },
                           required: [
                             "id", "title", "objective", "rationale", "dependsOn", "authorityRefs",
                             "constraints", "acceptanceCriteria", "subtasks", "integration",
-                            "verify",
+                            "verify", "role", "responsibility",
                           ],
                           additionalProperties: false,
                         },
@@ -7846,7 +7865,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                                 required: [
                                   "id", "title", "objective", "rationale", "dependsOn", "authorityRefs",
                                   "constraints", "acceptanceCriteria", "subtasks", "integration",
-                                  "verify",
+                                  "verify", "role", "responsibility",
                                 ],
                                 additionalProperties: false,
                               },
@@ -8407,7 +8426,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       addLoomTool({
         name: "task_plan",
         description:
-          "Compile the bounded Worker DAG for exactly one remaining runnable Wave. Planner only. Executable Task semantics must match the persistent rich Task contracts; this adds immutable write scopes and skill recommendations. New workflows do not claim or authorize the Wave until independent review-plan passes.",
+          "Compile exactly one runnable Wave using each Task's persistent accountable role and responsibility. Planner only. Executable semantics must match the persistent Plan; new workflows do not claim or authorize the Wave until independent review-plan passes.",
         input: {
           type: "object",
           properties: {
@@ -8430,6 +8449,8 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                   write: { type: "array", items: { type: "string" } },
                   skills: { type: "array", items: { type: "string" } },
                   verify: { type: "array", items: { type: "string" } },
+                  role: { type: "string" },
+                  responsibility: { type: "string", enum: ["produce", "execute", "review", "obtain-user-decision"] },
                 },
                 required: [
                   "id",
