@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto"
-import { lstat, mkdir, readFile, readlink, realpath } from "node:fs/promises"
+import { lstat, mkdir, readFile, readlink, realpath, unlink } from "node:fs/promises"
 import { dirname, isAbsolute, join, relative, resolve } from "node:path"
 import { execFile } from "node:child_process"
 import { promisify } from "node:util"
@@ -364,6 +364,31 @@ async function assertOwnedCommitMessageFile(
     throw new Error(
       "Git commit message file changed after this role/session last wrote it.",
     )
+  }
+}
+
+async function consumeCommitMessageFile(
+  ctx: any,
+  sessionID: string,
+  projectDirectory: string,
+  resource: string,
+) {
+  const normalized = commitMessageScratchPath(resource)
+  if (!normalized) return
+
+  const ownership = await gitSessionOwnership(ctx, sessionID)
+  ownership.paths = ownership.paths.filter((path) => path !== normalized)
+  delete ownership.worktreeFingerprints[normalized]
+  delete ownership.stagedFingerprints[normalized]
+  await ctx.storage.set(gitSessionOwnershipKey(sessionID), ownership)
+
+  try {
+    await unlink(join(projectDirectory, normalized))
+  } catch (error: any) {
+    if (error?.code !== "ENOENT") {
+      // The commit already succeeded. Invalidated ownership is the correctness
+      // boundary; any leftover ignored scratch file must be rewritten before reuse.
+    }
   }
 }
 
@@ -11135,6 +11160,15 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             isAllowedGitCommit(command)
           ) {
             await clearGitSessionStaging(ctx, sessionID)
+            const messageFile = gitCommitMessageFile(command)
+            if (messageFile) {
+              await consumeCommitMessageFile(
+                ctx,
+                sessionID,
+                ctx.location.directory,
+                messageFile,
+              )
+            }
           }
         }
       }
@@ -11241,6 +11275,15 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 isAllowedGitCommit(command)
               ) {
                 await clearGitSessionStaging(ctx, sessionID)
+                const messageFile = gitCommitMessageFile(command)
+                if (messageFile) {
+                  await consumeCommitMessageFile(
+                    ctx,
+                    sessionID,
+                    ctx.location.directory,
+                    messageFile,
+                  )
+                }
               }
             }
           }
