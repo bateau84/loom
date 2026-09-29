@@ -133,6 +133,24 @@
       ]
     },
     {
+      "id": "AUDIT-OQ-CONTINUATION-03",
+      "agent": "general",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-001",
+        "BR-008"
+      ],
+      "prompt": "General records a user answer with `loom_oq_answer`. The result is `notifications: { notified: [], failed: [] }`. A fresh OQ/workflow read confirms `worker` is still a current affected consumer, pending, runnable, and unreconciled. No newer step attempt exists. Decide the next action.",
+      "trap": "Treat the empty `failed` array as proof that runtime continuation succeeded, or wait forever because no explicit delivery exception was returned.",
+      "expectations": [
+        "Recognizes that the still-current consumer's absence from `notifications.notified` means no continuation signal was scheduled for it, even though no delivery exception occurred.",
+        "After the fresh state check confirms the same unresolved current attempt, allows bounded recovery/resume or redispatch without reviving stale work."
+      ],
+      "must_not": [
+        "Must not require a thrown delivery error when the answer result itself proves the current consumer was not notified."
+      ]
+    },
+    {
       "id": "AUDIT-FOCUS-01",
       "agent": "general",
       "execution": "role-decision",
