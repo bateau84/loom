@@ -64,7 +64,7 @@ Loom's first proving ground is **YuHaul**. Its longer-term target is harder: Loo
 31. A user can deliberately pause/backburner a workflow and resume it later without losing its task, plan, evidence, or provenance. Pause is distinct from cancellation and dashboard-refresh pause. A confirmed pause prevents new workflow operations from being admitted; it does not imply already-admitted host operations have stopped or quiesced. Loom keeps their in-flight/uncertain state and evidence visible and reconciles their outcomes before dependent work resumes.
 32. When the user asks for unrelated work during an active workflow, Loom must confirm the pause boundary for that specific workflow before proceeding with the unrelated request. It preserves separate context and truthfully discloses any already-admitted operation that may still be in flight; uncertainty remains visible until resolved.
 33. Loom can revisit earlier work when current evidence requires it, preserving history and invalidating affected downstream results, claims, and approvals rather than silently treating stale work as current.
-34. An agent can request task-scoped command elevation when a required command is denied. Permitted in-scope commands can continue immediately; destructive, host-wide, and out-of-approved-path commands require explicit user approval. Availability is not blanket execution permission.
+34. No command or Git operation is permanently unavailable solely because of its name. An agent may request task-scoped elevation for any operation needed to complete or recover authorized work. Admission is based on actual effects and established workflow ownership, not a command-name classification: bounded elevation may proceed automatically when the effects remain within workflow-authorized, Loom-owned/recoverable state. Explicit user authorization is required when effects cross that boundary—including unrelated user data, shared or others' branches, or host-wide state—or when ownership or recoverability cannot be established. Availability is not blanket permission to exceed the workflow's authorized effects.
 35. Git commands needed for authorized work can be requested through command elevation with exact authorship and scope preserved. Agents commit their work as it progresses and push to origin when available; General or an authorized agent can create a PR when the work is concluded. Missing origin or rejected commit/push is reported truthfully, not treated as successful publication.
 
 ## Minimal Version
@@ -114,7 +114,7 @@ The user retains authority over:
 - the product goal and material scope;
 - subjective product/taste choices when accepted intent does not resolve them;
 - material weakening of accepted guarantees;
-- explicit acceptance of material security, privacy, legal, financial, or destructive-operation risk;
+- explicit acceptance of material security, privacy, legal, or financial risk, and of effects outside the workflow's already-authorized ownership/recovery boundary;
 - explicit acceptance of any future replacement for this accepted Loom Anchor.
 
 Routine technical, design, implementation, planning, research, and verification choices are not user approval gates when they remain inside accepted authority.
@@ -126,7 +126,7 @@ Routine technical, design, implementation, planning, research, and verification 
 - The user has explicitly directed that planned work make its accountable role clear. Proposed BR-024 and Architect's role-aware execution design capture this target; neither is current implementation authority.
 - The current Plan-to-Worker compiler still routes every executable Plan Task to Worker. The role-aware design is proposed and is a separate future implementation change; this Anchor does not claim the capability exists.
 - Current cleanup code deletes answer-bearing OQ records and attribution despite the accepted retention boundary. This is a known implementation-versus-intent gap, not proof of a historical incident and not authorization to repair code in the current authority-reconstruction effort.
-- Proposed BR-025–027 now record user intent for scoped command elevation and Git publication, workflow Archive/Permanent Delete, pause/resume, unrelated-request yielding, and backtracking; they remain proposed and do not claim the current runtime supports these behaviors.
+- Proposed BR-025–027 record the corresponding user intent for scoped command/Git elevation and publication, workflow Archive/Permanent Delete, pause/resume, unrelated-request yielding, and backtracking; BR-025 must reflect the effect- and ownership-based approval boundary accepted on 2026-09-29. These proposals do not claim the current runtime supports the behaviors.
 - Loom's first end-to-end proving product is YuHaul; Leash is the longer-term capability target.
 - Conversation is the outer interaction loop. The user can spar, research, and debug with Loom naturally, then commit to execution and let Loom choose the engineering process.
 - The system should favor software-enforced workflow, evidence, limits, and state where possible, while using models for judgment, reasoning, creativity, implementation, review, and adversarial challenge.
