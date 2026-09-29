@@ -18,6 +18,7 @@ The Loom plugin exposes tools for:
 - workflow start/routing/status/completion/reopen and explicit user-authorized cancellation;
 - shared OQs;
 - executable task DAGs and task attachment;
+- persistent Objective Plan authoring/amendment and role-safe Plan Task admission/status;
 - one-use child dispatch grants and exact workflow/step/OQ attachment;
 - evidence;
 - Product Acceptance;
@@ -75,6 +76,10 @@ Loom control-plane tools have two equivalent OpenCode access surfaces. Existing 
 The control plane publishes bounded operational snapshots through `plugins/loom/dashboard.ts`. Projection failure is isolated from workflow execution.
 
 `loom_status` builds a compact status read model from current authoritative state. It may also write a user-private, read-only interactive HTML artifact under the Loom runtime root. The external dashboard remains the stable interactive entry point independently of that artifact, and the sidebar RPC exposes a project/workflow deep link derived from authoritative runtime identity. Presentation metadata may add a per-artifact URL plus optional OpenCode Desktop preview metadata. Artifact generation, dashboard availability, or Desktop preview availability is presentation-only and does not alter workflow execution.
+
+For executable Task status, `loom_task_status` reports task/step status, dependencies, and whether a step is runnable; a ready step is not necessarily a dispatch grant. User-decision waits are included as non-agent steps with `decisionWait` and dependency-derived `decisionReady`, while remaining non-runnable. The sidebar/status projection separately presents ready user decisions as “Ready for your decision · not dispatchable” and shows dependencies still blocking other decisions. A planning-only Objective may expose an exact Plan Task contract, but it remains non-executable and has no Worker scope until an implementation workflow compiles a Wave.
+
+Plan admission validates that executable Tasks repeat the current Plan role and responsibility, preserves local and inter-Wave dependency constraints, and requires external dependencies to be complete in a completed/reviewed Wave. Cross-role production dependencies are mediated by independent Reviewer handoffs. These gates preserve the distinction between a persisted Plan, compiled work, completed implementation, and independently reviewed Wave history.
 
 ## Depends on
 
