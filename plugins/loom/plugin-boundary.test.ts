@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test"
 import { createHash } from "node:crypto"
 import { execFile } from "node:child_process"
 import { promisify } from "node:util"
-import { chmod, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises"
+import { chmod, link, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
 import loomPlugin from "./index"
@@ -9759,6 +9759,26 @@ describe("Skill methodology evidence lifecycle", () => {
       })
       await writeFile(join(h.root, scratchPath), "foreign pre-existing message\n")
 
+      const scratchPermission: any = {
+        agent: "specifier",
+        action: "edit",
+        resources: [scratchPath],
+        sessionID: childSession,
+        effect: "ask",
+      }
+      await h.permissionHooks.get("evaluate")!(scratchPermission)
+      expect(scratchPermission.effect).toBe("allow")
+      await expect(
+        h.toolHooks.get("execute.before")!({
+          tool: "write",
+          callID: "commit-file-preexisting-write",
+          messageID: "commit-file-preexisting-write-message",
+          sessionID: childSession,
+          agent: "specifier",
+          input: { filePath: scratchPath, content: longMessage },
+        }),
+      ).rejects.toThrow("already exists but was not authored")
+
       const commitCommand =
         `git -c core.hooksPath=/dev/null commit -F ${scratchPath}`
       const commitPermission: any = {
@@ -9783,16 +9803,24 @@ describe("Skill methodology evidence lifecycle", () => {
       ).rejects.toThrow("was not authored by this current role/session")
 
       await rm(join(h.root, scratchPath), { force: true })
+      const hardlinkSource = join(h.root, "hardlink-source.md")
+      await writeFile(hardlinkSource, "hardlink sentinel\n")
+      await link(hardlinkSource, join(h.root, scratchPath))
+      await expect(
+        h.toolHooks.get("execute.before")!({
+          tool: "write",
+          callID: "commit-file-hardlink",
+          messageID: "commit-file-hardlink-message",
+          sessionID: childSession,
+          agent: "specifier",
+          input: { filePath: scratchPath, content: longMessage },
+        }),
+      ).rejects.toThrow("single-link regular file")
+      expect(await readFile(hardlinkSource, "utf8")).toBe("hardlink sentinel\n")
+      await rm(join(h.root, scratchPath), { force: true })
+      await rm(hardlinkSource, { force: true })
+
       await symlink(join(h.root, productPath), join(h.root, scratchPath))
-      const scratchPermission: any = {
-        agent: "specifier",
-        action: "edit",
-        resources: [scratchPath],
-        sessionID: childSession,
-        effect: "ask",
-      }
-      await h.permissionHooks.get("evaluate")!(scratchPermission)
-      expect(scratchPermission.effect).toBe("allow")
       await expect(
         h.toolHooks.get("execute.before")!({
           tool: "write",
