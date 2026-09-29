@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto"
-import { taskStepId, type TaskSpec } from "./tasks"
+import { LOOM_AGENT_ROLES, PLAN_PRODUCER_ROLES, taskStepId, type TaskSpec } from "./tasks"
 import type { EvidenceKind } from "./evidence"
 
 export type StepKind = "work" | "gate"
@@ -486,13 +486,15 @@ export function reopenFrom(workflow: Workflow, stepId: string) {
 
 
 export function plannedTaskSteps(workflow: Workflow) {
-  return workflow.steps.filter((step) => step.id.startsWith("task:") && step.task)
+  return workflow.steps.filter((step) => step.task)
 }
 
 export function executableTaskPlanFingerprint(workflow: Workflow) {
-  const tasks = plannedTaskSteps(workflow)
-    .map((step) => ({
+  const tasks = workflow.steps.filter((step) => step.task || step.id.startsWith("task-review:")
+    ).map((step) => ({
       stepId: step.id,
+      agent: step.agent,
+      kind: step.kind,
       dependsOn: [...step.dependsOn],
       task: step.task,
     }))
@@ -517,27 +519,57 @@ export function applyTaskPlan(workflow: Workflow, tasks: TaskSpec[]) {
   const executionGateId = workflow.steps.some((step) => step.id === "review-plan")
     ? "review-plan"
     : "plan"
-  const taskSteps: Step[] = tasks.map((task) => ({
-    id: taskStepId(task.id),
-    agent: "worker",
-    kind: "work",
-    dependsOn: [executionGateId, ...task.dependsOn.map(taskStepId)],
-    status: "pending",
-    task,
-    attempt: (existing.find((step) => step.id === taskStepId(task.id))?.attempt ?? -1) + 1,
-  }))
+  const taskById = new Map(tasks.map((task) => [task.id, task]))
+  const taskSteps: Step[] = tasks.map((task) => {
+    const role = task.role ?? "worker" // compatibility for pre-role Worker-only contracts
+    const responsibility = task.responsibility ?? "execute"
+    const reviewerTask = responsibility === "review"
+    if (!LOOM_AGENT_ROLES.includes(role as (typeof LOOM_AGENT_ROLES)[number])) {
+      throw new Error(`Task ${task.id} role ${role} has no implemented/enabled execution path.`)
+    }
+    if (reviewerTask && role !== "reviewer") throw new Error(`Task ${task.id} review responsibility requires reviewer ownership.`)
+    if (!reviewerTask && role === "reviewer") throw new Error(`Task ${task.id} reviewer ownership requires review responsibility.`)
+    if (!reviewerTask && !PLAN_PRODUCER_ROLES.includes(role as (typeof PLAN_PRODUCER_ROLES)[number])) {
+      throw new Error(`Task ${task.id} role ${role} has no supported Task execution slot.`)
+    }
+    if (reviewerTask && task.dependsOn.length === 0) throw new Error(`Task ${task.id} review Task must name reviewed work as dependencies.`)
+    if (responsibility === "obtain-user-decision") throw new Error(`Task ${task.id} requires an unsupported user-decision wait path.`)
+    const deps = task.dependsOn.map((dependency) => {
+      const source = taskById.get(dependency)
+      return source && (source.role ?? "worker") !== "worker" && role !== (source.role ?? "worker") && responsibility !== "review" && source.responsibility !== "review"
+        ? `task-review:${dependency}`
+        : taskStepId(dependency)
+    })
+    return {
+      id: taskStepId(task.id),
+      agent: role,
+      kind: reviewerTask ? "gate" : "work",
+      dependsOn: [executionGateId, ...deps],
+      status: "pending",
+      task,
+      attempt: (existing.find((step) => step.id === taskStepId(task.id))?.attempt ?? -1) + 1,
+    }
+  })
+  const handoffGates: Step[] = tasks
+    .filter((source) => (source.role ?? "worker") !== "worker" && source.responsibility !== "review" &&
+      tasks.some((target) => (target.role ?? "worker") !== (source.role ?? "worker") && target.responsibility !== "review" && target.dependsOn.includes(source.id)))
+    .map((source) => ({
+      id: `task-review:${source.id}`, agent: "reviewer", kind: "gate",
+      dependsOn: [taskStepId(source.id)], status: "pending",
+    }))
 
-  const withoutTasks = workflow.steps.filter((step) => !step.id.startsWith("task:"))
+  const withoutTasks = workflow.steps.filter((step) => !step.task && !step.id.startsWith("task-review:"))
   const insertionIndex = withoutTasks.findIndex((step) => step.id === executionGateId)
   workflow.steps = [
     ...withoutTasks.slice(0, insertionIndex + 1),
     ...taskSteps,
+    ...handoffGates,
     ...withoutTasks.slice(insertionIndex + 1),
   ]
 
   const review = workflow.steps.find((step) => step.id === "review-implementation")
   if (!review) throw new Error("Workflow has no implementation review step.")
-  review.dependsOn = taskSteps.map((step) => step.id)
+  review.dependsOn = [...taskSteps.map((step) => step.id), ...handoffGates.map((step) => step.id)]
 
   return taskSteps
 }

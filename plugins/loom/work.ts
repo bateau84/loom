@@ -1,10 +1,12 @@
 import { createHash } from "node:crypto"
 import {
+  LOOM_AGENT_ROLES,
   MAX_TASKS,
   MAX_TASK_CONTEXT_ITEMS,
   MAX_TASK_TEXT_LENGTH,
   type TaskSpec,
 } from "./tasks"
+import { PLAN_PRODUCER_ROLES } from "./tasks"
 
 export const MAX_WORK_ID_LENGTH = 96
 export const MAX_WORK_PHASES = 32
@@ -39,6 +41,9 @@ export type WorkPlanTask = {
   subtasks: string[]
   integration: string[]
   verify: string[]
+  /** Accountable role; absent only in truthful legacy Plan history. */
+  role?: string
+  responsibility?: "produce" | "execute" | "review" | "obtain-user-decision"
 }
 
 export type WorkPlanObligationDisposition =
@@ -373,6 +378,12 @@ function validateWorkPlanPhases(phases: WorkPlanPhase[]) {
         if (taskIds.has(taskId)) throw new Error(`Work Task ids must be globally unique: ${taskId}`)
         taskIds.add(taskId)
         taskCount++
+        if (taskInput.role && !/^[a-z][a-z0-9-]*$/.test(taskInput.role.trim())) {
+          throw new Error(`Task ${taskId} has invalid accountable role.`)
+        }
+        if (taskInput.responsibility && !["produce", "execute", "review", "obtain-user-decision"].includes(taskInput.responsibility)) {
+          throw new Error(`Task ${taskId} has invalid responsibility.`)
+        }
 
         tasks.push({
           id: taskId,
@@ -392,6 +403,8 @@ function validateWorkPlanPhases(phases: WorkPlanPhase[]) {
           subtasks: normalizedTextList(taskInput.subtasks, `Task ${taskId} subtasks`),
           integration: normalizedTextList(taskInput.integration, `Task ${taskId} integration`),
           verify: normalizedTextList(taskInput.verify, `Task ${taskId} verify`, true),
+          ...(taskInput.role ? { role: taskInput.role.trim() } : {}),
+          ...(taskInput.responsibility ? { responsibility: taskInput.responsibility } : {}),
         })
       }
 
@@ -602,6 +615,28 @@ export function validateWorkPlan(input: WorkPlanDefinition): WorkPlanDefinition 
     correctionRouting,
     phases,
   }
+}
+
+/** Feasibility is checked against routes shipped in this runtime, not proposed architecture. */
+export function validatePlanRoleFeasibility(plan: WorkPlanDefinition) {
+  const producerRoles = new Set<string>(PLAN_PRODUCER_ROLES)
+  for (const phase of plan.phases) for (const wave of phase.waves) for (const task of wave.tasks) {
+    const obligationIds = plan.obligations.filter((obligation) => obligation.taskIds.includes(task.id)).map((obligation) => obligation.id)
+    const fail = (reason: string): never => {
+      throw new Error(`Plan role path unavailable for Task ${task.id} (obligations: ${obligationIds.join(", ") || "none"}) in ${phase.id}/${wave.id}: ${reason}`)
+    }
+    if (!task.role || !task.responsibility) fail("accountable role and responsibility are required")
+    if (!LOOM_AGENT_ROLES.includes("reviewer")) fail("required independent Reviewer gate is unavailable")
+    if (task.responsibility === "review") {
+      if (task.role !== "reviewer") fail(`review responsibility is not owned by ${task.role}`)
+      if (task.dependsOn.length === 0) fail("independent review Task must name the work it reviews as dependencies")
+      continue
+    }
+    if (task.responsibility === "obtain-user-decision") fail("no exact user-decision wait/record route is implemented")
+    if (task.responsibility !== "produce" && task.responsibility !== "execute") fail("unsupported responsibility")
+    if (!producerRoles.has(task.role)) fail(`role ${task.role} has no supported Task execution slot`)
+  }
+  return true
 }
 
 function phaseNodeId(generation: number, phaseId: string) {
@@ -1003,6 +1038,8 @@ export function workPlanContext(
           id: candidateTask.id,
           title: contextText(candidateTask.title, PLAN_CONTEXT_MAP_TEXT_LIMIT),
           objective: contextText(candidateTask.objective, PLAN_CONTEXT_MAP_TEXT_LIMIT),
+          role: candidateTask.role ?? "unassigned (legacy Plan)",
+          responsibility: candidateTask.responsibility ?? "unassigned (legacy Plan)",
           status: taskNodes.get(candidateTask.id)?.status,
           result: contextResult(taskNodes.get(candidateTask.id)?.result),
         })),
@@ -1917,11 +1954,11 @@ export function syncWorkTaskStatuses(
       )
     }
     const next: WorkNodeStatus = entry.complete ? "complete" : "pending"
-    if (!entry.complete && task.result) {
+    if (!entry.complete && !entry.result && task.result) {
       delete task.result
       changed = true
     }
-    if (entry.complete && entry.result && JSON.stringify(task.result) !== JSON.stringify(entry.result)) {
+    if (entry.result && JSON.stringify(task.result) !== JSON.stringify(entry.result)) {
       task.result = entry.result
       changed = true
     }
@@ -2267,6 +2304,8 @@ export function validateWorkflowWave(
     if (!contract) throw new Error(`Workflow Task ${task.id} has no persistent semantic contract.`)
     const exactFields: Array<[string, unknown, unknown]> = [
       ["rationale", task.rationale ?? "", contract.rationale],
+      ["role", task.role ?? "worker", contract.role ?? "worker"],
+      ["responsibility", task.responsibility ?? "execute", contract.responsibility ?? "execute"],
       ["authorityRefs", task.authorityRefs ?? [], contract.authorityRefs],
       ["constraints", task.constraints ?? [], contract.constraints],
       ["acceptanceCriteria", task.acceptanceCriteria ?? [], contract.acceptanceCriteria],

@@ -21,6 +21,7 @@ import {
   workPlanContext,
   workPlanSemanticFingerprint,
   workflowTaskSemanticFingerprint,
+  validatePlanRoleFeasibility,
   type WorkPlanDefinition,
 } from "./work"
 
@@ -40,6 +41,8 @@ function plan(): WorkPlanDefinition {
     subtasks: [`Implement ${title}`],
     integration: [`${title} composes with the surrounding plan.`],
     verify: ["go test ./..."],
+    role: "worker",
+    responsibility: "execute" as const,
   })
 
   return {
@@ -122,6 +125,19 @@ function task(id: string, dependsOn: string[] = []): TaskSpec {
 }
 
 describe("Loom persistent work hierarchy", () => {
+  test("role feasibility examines later Waves and rejects roles without a real runtime route", () => {
+    const candidate = plan()
+    candidate.phases[0]!.waves[1]!.tasks[0] = {
+      ...candidate.phases[0]!.waves[1]!.tasks[0]!,
+      role: "future-specialist",
+      responsibility: "produce",
+    }
+    expect(() => validatePlanRoleFeasibility(candidate)).toThrow(
+      "Plan role path unavailable for Task c (obligations: obl-product) in core/runtime: role future-specialist has no supported Task execution slot",
+    )
+    candidate.phases[0]!.waves[1]!.tasks[0]!.role = "worker"
+    expect(validatePlanRoleFeasibility(candidate)).toBe(true)
+  })
   test("rejects oversized persistent Plan identifiers", () => {
     const oversized = plan()
     oversized.phases[0].id = "p".repeat(97)

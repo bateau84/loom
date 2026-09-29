@@ -6577,6 +6577,8 @@ function richPlanTask(id: string, title: string, objective: string, dependsOn: s
     subtasks: [],
     integration: [],
     verify: ["bun test"],
+    role: "worker",
+    responsibility: "execute",
   }
 }
 
@@ -6610,6 +6612,8 @@ function richWorkPlanInput(workflowId: string, phases: any[], extra: Record<stri
 async function waveLifecycleFixture(
   workLevel: "wave" | "objective" = "wave",
   includeFutureWave = false,
+  taskRole = "worker",
+  includeDependentWorker = false,
 ) {
   const h = await harness()
   try {
@@ -6632,20 +6636,24 @@ async function waveLifecycleFixture(
     }, "general", "parent")
     expect((await finish("critic-solution", "critic", "pass")).error).toBeUndefined()
     const planner = await attach("plan", "planner")
-    const task = richPlanTask("one", "One", "Build one")
+    const task = { ...richPlanTask("one", "One", "Build one"), role: taskRole, responsibility: "execute" }
     const future = richPlanTask("two", "Two", "Build two", ["one"])
+    const dependentWorker = richPlanTask("dependent", "Dependent", "Consume reviewed specialist work", ["one"])
     expect((await h.call("work_plan", richWorkPlanInput(workflowId, [
       {
         id: "core",
         title: "Core",
         waves: [
-          { id: "first", title: "First", tasks: [task] },
+          { id: "first", title: "First", tasks: [task, ...(includeDependentWorker ? [dependentWorker] : [])] },
           ...(includeFutureWave ? [{ id: "second", title: "Second", tasks: [future] }] : []),
         ],
       },
     ]), "planner", planner)).error).toBeUndefined()
     expect((await h.call("task_plan", {
-      workflowId, tasks: [{ ...task, write: ["src/**"], skills: [] }],
+      workflowId, tasks: [
+        { ...task, write: taskRole === "worker" ? ["src/**"] : ["docs/architecture/**"], skills: [] },
+        ...(includeDependentWorker ? [{ ...dependentWorker, write: ["src/**"], skills: [] }] : []),
+      ],
     }, "planner", planner)).error).toBeUndefined()
     expect((await h.call("complete", { workflowId, stepId: "plan", summary: "Planned" }, "planner", planner)).error).toBeUndefined()
     const workflow = () => h.durableStorage.get(`workflow/${workflowId}`) as Promise<any>
@@ -6683,6 +6691,72 @@ async function waveLifecycleFixture(
     throw error
   }
 }
+
+test("role-owned Task dispatch is exact and stays incomplete until its independent Wave review", async () => {
+  const h = await waveLifecycleFixture("wave", false, "architect")
+  try {
+    const grant = await h.call("dispatch_grant", { workflowId: h.workflowId, stepId: "task:one" }, "general", "parent")
+    expect(grant.error).toBeUndefined()
+    const impostor = await h.call("attach", {
+      workflowId: h.workflowId, stepId: "task:one", grantId: grant.grantId,
+    }, "worker", "role-task-impostor")
+    expect(impostor.error).toContain("architect")
+
+    const architect = await h.attach("task:one", "architect", "role-task-architect")
+    expect((await h.call("complete", {
+      workflowId: h.workflowId, stepId: "task:one", summary: "Architecture contribution",
+    }, "architect", architect)).error).toBeUndefined()
+    expect((await h.workflow()).steps.some((step: any) => step.agent === "worker")).toBe(false)
+    let work = await h.work()
+    const workTask = work.nodes.find((node: any) => node.type === "task" && node.logicalId === "one")
+    expect(workTask.status).toBe("pending")
+    expect(workTask.result.summary).toBe("Architecture contribution")
+
+    const reviewer = await h.attach("review-implementation", "reviewer", "role-task-reviewer")
+    expect((await h.call("complete", {
+      workflowId: h.workflowId, stepId: "review-implementation", outcome: "pass", summary: "Role output reviewed",
+    }, "reviewer", reviewer)).error).toBeUndefined()
+    work = await h.work()
+    expect(work.nodes.find((node: any) => node.type === "task" && node.logicalId === "one").status).toBe("complete")
+    expect(work.nodes.find((node: any) => node.type === "wave" && node.logicalId === "first").status).toBe("complete")
+  } finally {
+    h.restore()
+  }
+})
+
+test("same-Wave specialist handoff blocks Worker consumption until its bound Reviewer gate passes", async () => {
+  const h = await waveLifecycleFixture("wave", false, "architect", true)
+  try {
+    const workflow = await h.workflow()
+    const dependent = workflow.steps.find((step: any) => step.id === "task:dependent")
+    expect(dependent.agent).toBe("worker")
+    expect(dependent.dependsOn).toContain("task-review:one")
+    expect((await h.call("dispatch_grant", {
+      workflowId: h.workflowId, stepId: "task:dependent",
+    }, "general", "parent")).error).toContain("not currently runnable")
+
+    const architect = await h.attach("task:one", "architect", "handoff-architect")
+    expect((await h.call("complete", {
+      workflowId: h.workflowId, stepId: "task:one", summary: "Specialist result",
+    }, "architect", architect)).error).toBeUndefined()
+    expect((await h.work()).nodes.find((node: any) => node.type === "task" && node.logicalId === "one").status).toBe("pending")
+    expect((await h.call("dispatch_grant", {
+      workflowId: h.workflowId, stepId: "task:dependent",
+    }, "general", "parent")).error).toContain("not currently runnable")
+
+    const reviewer = await h.attach("task-review:one", "reviewer", "handoff-reviewer")
+    expect((await h.call("complete", {
+      workflowId: h.workflowId, stepId: "task-review:one", outcome: "pass", summary: "Specialist result verified",
+    }, "reviewer", reviewer)).error).toBeUndefined()
+    expect((await h.work()).nodes.find((node: any) => node.type === "task" && node.logicalId === "one").status).toBe("complete")
+    const worker = await h.attach("task:dependent", "worker", "handoff-worker")
+    expect((await h.call("complete", {
+      workflowId: h.workflowId, stepId: "task:dependent", summary: "Consumed reviewed result",
+    }, "worker", worker)).error).toBeUndefined()
+  } finally {
+    h.restore()
+  }
+})
 
 test("planning-only Objective cannot complete or review an invalidated Plan", async () => {
   const h = await harness()
@@ -7098,6 +7172,45 @@ test("planning-only Objective reviews a durable Plan without execution and later
       executionWork.nodes.find((node: any) => node.type === "wave" && node.logicalId === "first-wave")
         .claimedByWorkflowId,
     ).toBe(executionWorkflowId)
+  } finally {
+    h.restore()
+  }
+})
+
+test("planning-only review refuses an unavailable specialist path in a later Wave", async () => {
+  const h = await harness()
+  try {
+    const start = await h.call("start", { anchor: "docs/anchors/test/anchor.md" }, "general", "future-role-general")
+    const workflowId = String(start.workflowId)
+    expect((await h.call("route", {
+      humanFacing: false, behavioral: false, structural: false, externalUnknown: false,
+      diagnostic: false, productOutcome: true, implementationRequested: false, executionDepth: "objective",
+    }, "general", "future-role-general")).error).toBeUndefined()
+    const attach = async (stepId: string, agent: string, session: string) => {
+      const grant = await h.call("dispatch_grant", { workflowId, stepId }, "general", "future-role-general")
+      expect(grant.error).toBeUndefined()
+      expect((await h.call("attach", { workflowId, stepId, grantId: grant.grantId }, agent, session)).error).toBeUndefined()
+    }
+    await attach("critic-solution", "critic", "future-role-critic")
+    expect((await h.call("complete", { workflowId, stepId: "critic-solution", outcome: "pass", summary: "ready" }, "critic", "future-role-critic")).error).toBeUndefined()
+    await attach("plan", "planner", "future-role-planner")
+    const first = richPlanTask("first", "First", "First Wave contribution")
+    const future = { ...richPlanTask("future", "Future", "Later specialist contribution", ["first"]), role: "future-specialist" }
+    expect((await h.call("work_plan", richWorkPlanInput(workflowId, [{
+      id: "phase", title: "Phase", waves: [
+        { id: "first-wave", title: "First", tasks: [first] },
+        { id: "later-wave", title: "Later", tasks: [future] },
+      ],
+    }]), "planner", "future-role-planner")).error).toBeUndefined()
+    expect((await h.call("complete", { workflowId, stepId: "plan", summary: "planned" }, "planner", "future-role-planner")).error).toBeUndefined()
+    await attach("review-plan", "reviewer", "future-role-reviewer")
+    const review = await h.call("complete", {
+      workflowId, stepId: "review-plan", outcome: "pass", summary: "review attempted",
+    }, "reviewer", "future-role-reviewer")
+    expect(review.error).toContain("Task future (obligations: none) in phase/later-wave")
+    expect(review.error).toContain("future-specialist has no supported Task execution slot")
+    const persisted = await h.durableStorage.get(`workflow/${workflowId}`) as any
+    expect(persisted.steps.find((step: any) => step.id === "review-plan").status).toBe("pending")
   } finally {
     h.restore()
   }
