@@ -1,5 +1,5 @@
 import type { OpenQuestion } from "./oq"
-import { plannedTaskSteps, planningOnlyObjective, runnable, type Workflow } from "./workflow"
+import { plannedTaskSteps, planningOnlyObjective, runnable, userDecisionWaitSteps, type Workflow } from "./workflow"
 import { workPlanContext, workTree, type WorkHierarchy } from "./work"
 import type {
   LoomSidebarSnapshot,
@@ -21,6 +21,7 @@ export function buildSidebarSnapshot(
       progress: { finished: 0, total: 0, failed: 0 },
       tasks: [],
       now: [],
+      userDecisions: [],
       openQuestions: 0,
       openVerification: 0,
     }
@@ -132,6 +133,16 @@ export function buildSidebarSnapshot(
         kind: step.kind,
       }]
     }),
+    userDecisions: userDecisionWaitSteps(workflow).map(({ step, ready, waitsFor }) => ({
+      step: step.id,
+      taskId: step.task.id,
+      title: step.task.title,
+      objective: step.task.objective,
+      ...(step.task.rationale ? { rationale: step.task.rationale } : {}),
+      acceptanceCriteria: step.task.acceptanceCriteria ?? [],
+      ready,
+      waitsFor,
+    })),
     openQuestions: questions.filter((question) => question.status !== "closed").length,
     openVerification: (workflow.verification ?? []).filter(
       (requirement) => requirement.status === "open",

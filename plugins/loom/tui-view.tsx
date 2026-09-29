@@ -186,6 +186,23 @@ function LoomSidebar(props: { sessionID?: string }) {
           </box>
         </Show>
 
+        <Show when={snapshot()!.userDecisions.length > 0}>
+          <box flexDirection="column" gap={0} paddingTop={1}>
+            <text fg={context.theme.text.base}>User decision · not dispatchable</text>
+            <For each={snapshot()!.userDecisions}>
+              {(decision) => (
+                <box flexDirection="column" gap={0}>
+                  <text>{decision.ready ? "?" : "○"} {decision.title} · {decision.ready ? "your decision needed" : `waiting for ${decision.waitsFor.join(", ")}`}</text>
+                  <text>  {decision.objective}</text>
+                  <For each={decision.acceptanceCriteria}>
+                    {(criterion) => <text>  Decision context: {criterion}</text>}
+                  </For>
+                </box>
+              )}
+            </For>
+          </box>
+        </Show>
+
         <Show when={snapshot()!.openQuestions > 0 || snapshot()!.openVerification > 0}>
           <box flexDirection="column" gap={0} paddingTop={1}>
             <Show when={snapshot()!.openQuestions > 0}>
