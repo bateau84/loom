@@ -2569,11 +2569,14 @@ try {
       const prompt = `LOOM_PROGRAM_${crypto.randomUUID()}`
       const program: { code: string; done: boolean; result?: unknown } = { code, done: false }
       mock.state.programs.set(prompt, program)
+      if (!waitForProgramDone) {
+        const turn = sendPrompt(serverA, sessionID, prompt)
+          .finally(() => mock.state.programs.delete(prompt))
+        return { wait: async () => { await turn } }
+      }
       try {
         await sendPrompt(serverA, sessionID, prompt)
-        if (waitForProgramDone) {
-          await waitForCondition(() => program.done, "lifecycle host program", () => program, 30_000)
-        }
+        await waitForCondition(() => program.done, "lifecycle host program", () => program, 30_000)
         return program.result
       } finally { mock.state.programs.delete(prompt) }
     },

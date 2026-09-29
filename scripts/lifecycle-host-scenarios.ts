@@ -189,8 +189,7 @@ return {attachment, result: unpack(await pending)};`)
     )
     await rm(join(signals, "started"), { force: true })
     await rm(join(signals, "release"), { force: true })
-    const activeTurn = driver.run(activeOqChild, "return await tools.lifecycleprobe.delayed({})", false)
-    void activeTurn.catch(() => {})
+    const activeTurn = await driver.run(activeOqChild, "return await tools.lifecycleprobe.delayed({})", false)
     try {
       assert.equal((await waitSignal(signals, "started")).sessionID, activeOqChild)
       const activeRaised = await driver.run(
@@ -222,7 +221,7 @@ return {attachment, result: unpack(await pending)};`)
       assert.match(activeSteerPrompt, /loom_oq_reconcile/)
     } finally {
       await writeFile(join(signals, "release"), "true")
-      await activeTurn
+      await activeTurn.wait()
     }
 
     console.log("PASS real-host OQ wake-up: persisted answer steers the attached Worker and the Worker re-reads authoritative OQ state")
