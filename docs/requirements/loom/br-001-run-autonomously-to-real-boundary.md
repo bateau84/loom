@@ -26,7 +26,7 @@ An explicit user cancellation is a separate terminal boundary. It ends that work
 6. An explicit user cancellation works before planning, during execution, and after Wave review has ended its live claim. The owning General session records the reason and exact confirmation; retries do not modify a replacement workflow.
 7. Cancellation preserves completed work, evidence, review outcomes and unfinished obligations, permits a new authorized workflow, and does not imply Objective completion. New dispatches, attachments to the cancelled workflow and late workflow mutations are refused.
 8. Finishing a reviewed Wave does not prevent its remaining documentation or product gates from closing against that Wave's exact reviewed history.
-9. Answering a blocking OQ automatically continues each still-current affected consumer when continuation is possible. A successful automatic continuation is not immediately duplicated by General. If delivery or the resulting continuation later fails while the consumer remains unresolved, the answer and workflow state remain resumable. If delivery status becomes unknowable after coordinator/session loss, Loom preserves a resumable incomplete boundary rather than guessing and creating a duplicate continuation. Superseded consumers are not revived.
+9. Answering a blocking OQ automatically continues each still-current affected consumer when continuation is possible. General does not issue a second continuation for the same current consumer unless fresh evidence establishes that the first continuation was not scheduled, failed, or ended without reconciliation. If delivery or the resulting continuation fails while the consumer remains unresolved, the answer and workflow state remain resumable. If delivery status becomes unknowable after coordinator/session loss, Loom preserves a resumable incomplete boundary rather than guessing and creating a duplicate continuation. Superseded consumers are not revived.
 
 ## Verification Semantics
 
@@ -34,7 +34,7 @@ Verify with workflow traces from representative greenfield and maintenance runs.
 
 Valid proof includes uninterrupted phase progression, automatic expert rerouting, and a deliberate user stop only at a seeded user-owned decision.
 
-Verify the current-consumer continuation contract at the host boundary, including the continuation signal used for an already-active consumer, and exercise a returned/waiting consumer through the real host. Also cover delivery failure and a superseded-consumer case. Valid proof shows automatic continuation for current work, no parallel continuation after successful notification, resumable durable state after failure, and no revival of stale work.
+Verify the current-consumer continuation contract at the host boundary, including the continuation signal used for an already-active consumer, and exercise a returned/waiting consumer through the real host. Also cover delivery failure, a superseded-consumer case, and an OQ answered by another specialist where General does not retain that responder's notification result. Valid proof shows automatic continuation for current work, no parallel continuation without positive recovery evidence, resumable durable state after failure, and no revival of stale work.
 
 A narrated plan, repeated "continue?" prompts, or a trace that returns control at ordinary phase boundaries does not satisfy this requirement.
 
