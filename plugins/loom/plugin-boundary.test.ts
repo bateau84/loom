@@ -8,7 +8,7 @@ import { tmpdir } from "node:os"
 import loomPlugin from "./index"
 import { cancelWorkflow } from "./lifecycle"
 import { createWorkHierarchy, materializeWorkPlan, claimWorkflowWave, syncWorkTaskStatuses,
-  completeWaveForTasks, releaseCancelledWorkflowClaims, reopenWaveForTasks } from "./work"
+  completeWaveForTasks, releaseCancelledWorkflowClaims, reopenWaveForTasks, type WorkPlanTask } from "./work"
 import { buildSidebarSnapshot } from "./sidebar"
 import { prepareReportPromotion, publishPreparedReport, type ReportPromotionRecord } from "./reports"
 import {
@@ -6571,7 +6571,7 @@ describe("dispatch grant target resolution", () => {
   })
 })
 
-function richPlanTask(id: string, title: string, objective: string, dependsOn: string[] = []) {
+function richPlanTask(id: string, title: string, objective: string, dependsOn: string[] = []): WorkPlanTask {
   return {
     id,
     title,
@@ -6645,9 +6645,9 @@ async function waveLifecycleFixture(
     }, "general", "parent")
     expect((await finish("critic-solution", "critic", "pass")).error).toBeUndefined()
     const planner = await attach("plan", "planner")
-    const task = { ...richPlanTask("one", "One", "Build one"), role: taskRole, responsibility: taskResponsibility }
+    const task: WorkPlanTask = { ...richPlanTask("one", "One", "Build one"), role: taskRole, responsibility: taskResponsibility }
     const future = richPlanTask("two", "Two", "Build two", ["one"])
-    const dependentWorker = {
+    const dependentWorker: WorkPlanTask = {
       ...richPlanTask("dependent", "Dependent", "Consume independently reviewed work", ["one"]),
       role: dependentRole,
       responsibility: dependentRole === "reviewer" ? "review" : dependentRole === "user" ? "obtain-user-decision" : dependentRole === "worker" ? "execute" : "produce",

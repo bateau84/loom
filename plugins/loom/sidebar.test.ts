@@ -6,6 +6,7 @@ import {
   createWorkHierarchy,
   materializeWorkPlan,
   syncWorkTaskStatuses,
+  type WorkPlanTask,
 } from "./work"
 
 describe("Loom sidebar snapshot", () => {
@@ -276,7 +277,7 @@ describe("Loom sidebar snapshot", () => {
       ],
     }
 
-    const richTask = (id: string, title: string, objective: string, dependsOn: string[]) => ({
+    const richTask = (id: string, title: string, objective: string, dependsOn: string[]): WorkPlanTask => ({
       id,
       title,
       objective,

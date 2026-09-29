@@ -629,19 +629,23 @@ export function validatePlanRoleFeasibility(plan: WorkPlanDefinition) {
     const fail = (reason: string): never => {
       throw new Error(`Plan role path unavailable for Task ${task.id} (obligations: ${obligationIds.join(", ") || "none"}) in ${phase.id}/${wave.id}: ${reason}`)
     }
-    if (!task.role || !task.responsibility) fail("accountable role and responsibility are required")
+    if (!task.role || !task.responsibility) {
+      throw new Error(`Plan role path unavailable for Task ${task.id} (obligations: ${obligationIds.join(", ") || "none"}) in ${phase.id}/${wave.id}: accountable role and responsibility are required`)
+    }
+    const role = task.role
+    const responsibility = task.responsibility
     if (!LOOM_AGENT_ROLES.includes("reviewer")) fail("required independent Reviewer gate is unavailable")
-    if (task.responsibility === "obtain-user-decision") {
-      if (task.role !== "user") fail(`user-decision responsibility is not owned by user (${task.role ?? "unassigned"})`)
+    if (responsibility === "obtain-user-decision") {
+      if (role !== "user") fail(`user-decision responsibility is not owned by ${role}`)
       continue
     }
-    if (task.responsibility === "review") {
-      if (task.role !== "reviewer") fail(`review responsibility is not owned by ${task.role}`)
+    if (responsibility === "review") {
+      if (role !== "reviewer") fail(`review responsibility is not owned by ${role}`)
       if (task.dependsOn.length === 0) fail("independent review Task must name the work it reviews as dependencies")
       continue
     }
-    if (task.responsibility !== "produce" && task.responsibility !== "execute") fail("unsupported responsibility")
-    if (!producerRoles.has(task.role)) fail(`role ${task.role} has no supported Task execution slot`)
+    if (responsibility !== "produce" && responsibility !== "execute") fail("unsupported responsibility")
+    if (!producerRoles.has(role)) fail(`role ${role} has no supported Task execution slot`)
   }
   for (const phase of plan.phases) for (const wave of phase.waves) for (const task of wave.tasks) {
     for (const dependencyId of task.dependsOn) {
