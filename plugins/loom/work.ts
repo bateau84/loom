@@ -175,6 +175,8 @@ export type WaveCompletion = {
   generation: number
   taskIds: string[]
   reviewedTaskIds: string[]
+  /** Exact compiled role/slot/dependency/review-gate graph accepted by this review. */
+  bindingFingerprint?: string
   at: string
   provenance: "implementation-review" | "legacy-reviewed-workflow"
 }
@@ -620,6 +622,8 @@ export function validateWorkPlan(input: WorkPlanDefinition): WorkPlanDefinition 
 /** Feasibility is checked against routes shipped in this runtime, not proposed architecture. */
 export function validatePlanRoleFeasibility(plan: WorkPlanDefinition) {
   const producerRoles = new Set<string>(PLAN_PRODUCER_ROLES)
+  const allTasks = plan.phases.flatMap((phase) => phase.waves.flatMap((wave) => wave.tasks))
+  const taskById = new Map(allTasks.map((task) => [task.id, task]))
   for (const phase of plan.phases) for (const wave of phase.waves) for (const task of wave.tasks) {
     const obligationIds = plan.obligations.filter((obligation) => obligation.taskIds.includes(task.id)).map((obligation) => obligation.id)
     const fail = (reason: string): never => {
@@ -627,14 +631,27 @@ export function validatePlanRoleFeasibility(plan: WorkPlanDefinition) {
     }
     if (!task.role || !task.responsibility) fail("accountable role and responsibility are required")
     if (!LOOM_AGENT_ROLES.includes("reviewer")) fail("required independent Reviewer gate is unavailable")
+    if (task.responsibility === "obtain-user-decision") {
+      if (task.role !== "user") fail(`user-decision responsibility is not owned by user (${task.role ?? "unassigned"})`)
+      continue
+    }
     if (task.responsibility === "review") {
       if (task.role !== "reviewer") fail(`review responsibility is not owned by ${task.role}`)
       if (task.dependsOn.length === 0) fail("independent review Task must name the work it reviews as dependencies")
       continue
     }
-    if (task.responsibility === "obtain-user-decision") fail("no exact user-decision wait/record route is implemented")
     if (task.responsibility !== "produce" && task.responsibility !== "execute") fail("unsupported responsibility")
     if (!producerRoles.has(task.role)) fail(`role ${task.role} has no supported Task execution slot`)
+  }
+  for (const phase of plan.phases) for (const wave of phase.waves) for (const task of wave.tasks) {
+    for (const dependencyId of task.dependsOn) {
+      const source = taskById.get(dependencyId)
+      if (source?.role && source.responsibility && task.role && task.responsibility && source.role !== task.role &&
+          source.responsibility !== "review" && source.responsibility !== "obtain-user-decision" && task.responsibility !== "review" &&
+          !LOOM_AGENT_ROLES.includes("reviewer")) {
+        throw new Error(`Plan role path unavailable for Task ${task.id} (dependency ${dependencyId}) in ${phase.id}/${wave.id}: required independent Reviewer handoff gate is unavailable`)
+      }
+    }
   }
   return true
 }
@@ -1481,7 +1498,7 @@ function assertAmendOperationShape(operation: WorkPlanAmendOperation) {
       operation.patch as Record<string, unknown>,
       [
         "title", "objective", "rationale", "dependsOn", "authorityRefs", "constraints",
-        "acceptanceCriteria", "subtasks", "integration", "verify",
+        "acceptanceCriteria", "subtasks", "integration", "verify", "role", "responsibility",
       ],
       "patch-task",
     )
@@ -1983,7 +2000,11 @@ export function completeWaveForTasks(
   generation: number,
   taskIds: string[],
   now: string,
+  bindingFingerprint: string,
 ) {
+  if (!/^[a-f0-9]{64}$/.test(bindingFingerprint)) {
+    throw new Error("Wave completion requires a SHA-256 fingerprint of the reviewed Task role/slot graph.")
+  }
   assertWorkGeneration(hierarchy, generation)
   const tasks = activeTaskMap(hierarchy)
   const selected = taskIds.map((id) => tasks.get(id))
@@ -2016,6 +2037,7 @@ export function completeWaveForTasks(
   wave.completion = {
     workflowId, generation, taskIds: [...taskIds].sort(),
     reviewedTaskIds: waveTasks.map((task) => task.logicalId).sort(),
+    bindingFingerprint,
     at: now, provenance: "implementation-review",
   }
   wave.status = "complete"
@@ -2040,7 +2062,11 @@ export function reopenWaveForTasks(
   generation: number,
   taskIds: string[],
   now: string,
+  expectedBindingFingerprint?: string,
 ) {
+  if (expectedBindingFingerprint && !/^[a-f0-9]{64}$/.test(expectedBindingFingerprint)) {
+    throw new Error("Expected Task role/slot graph binding must be a SHA-256 fingerprint.")
+  }
   assertWorkGeneration(hierarchy, generation)
   const tasks = activeTaskMap(hierarchy)
   const selected = taskIds.map((id) => tasks.get(id))
@@ -2051,7 +2077,7 @@ export function reopenWaveForTasks(
   const waveId = [...parentIds][0]!
   const wave = activeNodes(hierarchy).find((node) => node.id === waveId && node.type === "wave")
   if (!wave || wave.status !== "complete") return hierarchy
-  assertCompletedWaveForTasks(hierarchy, workflowId, generation, taskIds)
+  assertCompletedWaveForTasks(hierarchy, workflowId, generation, taskIds, expectedBindingFingerprint)
 
   // Reopening invalidates the whole assembled Wave receipt, not just the
   // Tasks this (possibly partial-recovery) workflow executed. Admission of a
@@ -2120,6 +2146,7 @@ export function assertCompletedWaveForTasks(
   workflowId: string,
   generation: number,
   taskIds: string[],
+  expectedBindingFingerprint?: string,
 ) {
   assertWorkGeneration(hierarchy, generation)
   const tasks = activeTaskMap(hierarchy)
@@ -2136,6 +2163,9 @@ export function assertCompletedWaveForTasks(
   }
   const all = activeNodes(hierarchy).filter((node) => node.type === "task" && node.parentId === wave.id)
   const receipt = wave.completion
+  if (expectedBindingFingerprint && receipt?.bindingFingerprint !== expectedBindingFingerprint) {
+    throw new Error("Completed Wave receipt does not match the current Task role/slot graph and independent gates.")
+  }
   if (!receipt || receipt.workflowId !== workflowId || receipt.generation !== generation ||
       JSON.stringify([...receipt.taskIds].sort()) !== JSON.stringify([...taskIds].sort()) ||
       JSON.stringify([...receipt.reviewedTaskIds].sort()) !== JSON.stringify(all.map((task) => task.logicalId).sort()) ||
@@ -2302,10 +2332,16 @@ export function validateWorkflowWave(
 
     const contract = plannedTask(planSnapshot(hierarchy), task.id)
     if (!contract) throw new Error(`Workflow Task ${task.id} has no persistent semantic contract.`)
+    if (!contract.role || !contract.responsibility) {
+      throw new Error(`Legacy Plan Task ${task.id} has no accountable role/responsibility; amend and independently review the Plan before admission.`)
+    }
+    if (!task.role || !task.responsibility) {
+      throw new Error(`Executable Task ${task.id} must repeat the current Plan role and responsibility.`)
+    }
     const exactFields: Array<[string, unknown, unknown]> = [
       ["rationale", task.rationale ?? "", contract.rationale],
-      ["role", task.role ?? "worker", contract.role ?? "worker"],
-      ["responsibility", task.responsibility ?? "execute", contract.responsibility ?? "execute"],
+      ["role", task.role, contract.role],
+      ["responsibility", task.responsibility, contract.responsibility],
       ["authorityRefs", task.authorityRefs ?? [], contract.authorityRefs],
       ["constraints", task.constraints ?? [], contract.constraints],
       ["acceptanceCriteria", task.acceptanceCriteria ?? [], contract.acceptanceCriteria],
