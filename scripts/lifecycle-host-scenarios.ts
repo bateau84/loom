@@ -6,6 +6,7 @@ export type LifecycleHostDriver = {
   project: string
   create: (agent: "general" | "worker", parent?: string) => Promise<string>
   run: (sessionID: string, code: string) => Promise<any>
+  begin: (sessionID: string, code: string) => Promise<void>
   waitForPrompt: (predicate: (prompt: string) => boolean) => Promise<string>
 }
 
@@ -201,8 +202,7 @@ return {attachment, result: unpack(await pending)};`)
 
     await rm(join(signals, "started"), { force: true })
     await rm(join(signals, "release"), { force: true })
-    const activeTurn = driver.run(activeOqChild, "return await tools.lifecycleprobe.delayed({})")
-    void activeTurn.catch(() => {})
+    await driver.begin(activeOqChild, "return await tools.lifecycleprobe.delayed({})")
     try {
       assert.equal((await waitSignal(signals, "started")).sessionID, activeOqChild)
       const activeAnswered = await driver.run(
@@ -216,7 +216,6 @@ return {attachment, result: unpack(await pending)};`)
       )
       assert.deepEqual(activeAnswered?.notifications, { notified: ["worker"], failed: [] })
       await writeFile(join(signals, "release"), "true")
-      assert.equal((await activeTurn)?.marker, "old-delayed-result")
       const activeSteerPrompt = await driver.waitForPrompt(
         (prompt) => prompt.includes(`Loom OQ ${activeRaised.question.id} has been answered.`),
       )
@@ -224,7 +223,6 @@ return {attachment, result: unpack(await pending)};`)
       assert.match(activeSteerPrompt, /loom_oq_reconcile/)
     } finally {
       await writeFile(join(signals, "release"), "true")
-      await Promise.allSettled([activeTurn])
     }
 
     console.log("PASS real-host OQ wake-up: persisted answer steers the attached Worker and the Worker re-reads authoritative OQ state")

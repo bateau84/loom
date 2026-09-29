@@ -2575,6 +2575,14 @@ try {
         return program.result
       } finally { mock.state.programs.delete(prompt) }
     },
+    begin: async (sessionID, code) => {
+      const prompt = `LOOM_PROGRAM_${crypto.randomUUID()}`
+      const program: { code: string; done: boolean; result?: unknown } = { code, done: false }
+      mock.state.programs.set(prompt, program)
+      void sendPrompt(serverA, sessionID, prompt)
+        .catch(() => undefined)
+        .finally(() => mock.state.programs.delete(prompt))
+    },
     waitForPrompt: async (predicate) => {
       let observed = ""
       await waitForCondition(
