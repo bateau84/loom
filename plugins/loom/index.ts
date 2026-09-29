@@ -11095,7 +11095,10 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           ).filter(
             (path) =>
               !isAbsolute(path) &&
-              resourcesWithinScope([path], generalScope),
+              (
+                resourcesWithinScope([path], generalScope) ||
+                roleCommitMessagePath("general", path)
+              ),
           )
           if (owned.length > 0) {
             await recordGitSessionOwnership(
@@ -11173,6 +11176,24 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               ? declaredScope.write
               : defaultScope,
           )
+
+          if (raw.status === "completed") {
+            const commitMessageOwned = successfulMutationPaths(
+              tool,
+              input,
+              ctx.location.directory,
+            ).filter((path) =>
+              roleCommitMessagePath(String(raw.agent), path),
+            )
+            if (commitMessageOwned.length > 0) {
+              await recordGitSessionOwnership(
+                ctx,
+                sessionID,
+                ctx.location.directory,
+                commitMessageOwned,
+              )
+            }
+          }
 
           if (writeScope.length) {
             if (raw.status === "completed") {
