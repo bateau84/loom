@@ -44,4 +44,4 @@ Inspect roster-discovery and routing observations plus representative plans and 
 
 ## Current implementation context
 
-Current supported role-safe Plan execution exists and has been reviewed. Universal Task routing across Loom subagents and roster/planning-insight discovery are not implemented. This proposed requirement defines the accepted target; it does not claim those gaps are already closed.
+Current supported role-safe Plan execution exists and has been reviewed. Universal Task routing across Loom subagents and roster/planning-insight discovery are not implemented. This requirement specifies the behavior; it does not claim those gaps are already closed.
