@@ -125,7 +125,7 @@ A specialist dispatch is analogous to using a tool:
 - Its output returns to Loom.
 - Loom integrates the result into the conversation or execution state.
 
-When Loom asks the user a user-owned OQ, the user answers it once; specialist-owned OQs are answered by the responsible roles without making the user coordinate them. Once any OQ is answered by its authority, Loom continues the affected specialist without a duplicate coordinator handoff. The same continuation works whether that specialist is still working or has returned and is waiting for the answer. Coordinator recovery is reserved for an observed continuation failure and must not revive superseded work.
+When Loom asks the user a currently open user-owned OQ, one answer is enough to continue that question state; Loom does not ask the user to repeat the same answer merely to resume work. An OQ explicitly reopened because its meaning became stale may legitimately require a new answer. Specialist-owned OQs are answered by the responsible roles without making the user coordinate them. Once any OQ is answered by its authority, Loom continues the affected specialist without a duplicate coordinator handoff. The same continuation works whether that specialist is still working or has returned and is waiting for the answer. Coordinator recovery is reserved for an observed continuation failure and must not revive superseded work.
 
 Independent gates remain genuinely independent; "tool-like" does not mean Loom may dictate their verdict.
 
