@@ -34,7 +34,7 @@ The interface is **everything a caller must know to use the module correctly**. 
 - **Keep implementation detail behind the narrowest useful boundary.**
 - **Avoid shallow indirection.** Wrappers, managers, factories, helpers, adapters, or interfaces that mostly forward calls without hiding complexity add surface without adding leverage.
 - **Do not split one behavior across many files or modules merely to make pieces smaller.**
-- **Use the deletion test.** If removing a module makes its complexity reappear in callers, the module was hiding useful complexity. If the complexity simply disappears, the module may only have been pass-through indirection.
+- **Use the deletion test.** If removing a seam forces callers to absorb meaningful coordination, decisions, invariants, or protocol knowledge, the seam is hiding useful complexity. If callers can use the underlying capability correctly with no material new knowledge or choreography, the seam may only be pass-through indirection.
 - **Treat the interface as the primary test surface.** Important behavior should normally be verifiable through the same seam callers use rather than by reaching through it into implementation details.
 - If a small behavior change requires tracing unrelated layers or widespread implementation knowledge, first consider whether the module boundary is too shallow or the information is too scattered.
 - Preserve an existing good boundary rather than introducing a new abstraction simply because the change touches it.
