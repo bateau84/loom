@@ -9846,6 +9846,18 @@ describe("Skill methodology evidence lifecycle", () => {
         input: { command: commitCommand },
       }
       await h.toolHooks.get("execute.before")!(commitEvent)
+
+      await expect(
+        h.toolHooks.get("execute.before")!({
+          tool: "write",
+          callID: "commit-file-concurrent-rewrite",
+          messageID: "commit-file-concurrent-rewrite-message",
+          sessionID: childSession,
+          agent: "specifier",
+          input: { filePath: scratchPath, content: longMessage + "raced\n" },
+        }),
+      ).rejects.toThrow("locked for write by another agent")
+
       await git(h.root, [
         "-c",
         "core.hooksPath=/dev/null",
