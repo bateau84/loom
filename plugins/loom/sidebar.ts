@@ -26,7 +26,7 @@ export function buildSidebarSnapshot(
     }
   }
 
-  const ready = runnable(workflow)
+  const ready = runnable(workflow).filter((step) => step.kind === "work" || step.kind === "gate")
   const readyIDs = new Set(ready.map((step) => step.id))
   const readyTaskIDs = new Set(
     ready.filter((step) => step.task).map((step) => step.task!.id),
@@ -123,12 +123,15 @@ export function buildSidebarSnapshot(
         status,
       }
     }),
-    now: ready.map((step) => ({
-      id: step.id,
-      label: step.task?.title ?? step.id,
-      agent: step.agent,
-      kind: step.kind,
-    })),
+    now: ready.flatMap((step) => {
+      if (step.kind === "wait") return []
+      return [{
+        id: step.id,
+        label: step.task?.title ?? step.id,
+        agent: step.agent,
+        kind: step.kind,
+      }]
+    }),
     openQuestions: questions.filter((question) => question.status !== "closed").length,
     openVerification: (workflow.verification ?? []).filter(
       (requirement) => requirement.status === "open",
