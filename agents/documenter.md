@@ -14,6 +14,9 @@ permissions:
   - action: edit
     resource: "README.md"
     effect: allow
+  - action: edit
+    resource: "ephemeral-reports/documenter/commit-messages/**"
+    effect: allow
   - action: subagent
     resource: "*"
     effect: deny
