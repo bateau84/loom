@@ -6614,6 +6614,8 @@ async function waveLifecycleFixture(
   includeFutureWave = false,
   taskRole = "worker",
   includeDependentWorker = false,
+  taskResponsibility: "produce" | "execute" | "review" | "obtain-user-decision" = "execute",
+  dependentRole = "worker",
 ) {
   const h = await harness()
   try {
@@ -6636,9 +6638,13 @@ async function waveLifecycleFixture(
     }, "general", "parent")
     expect((await finish("critic-solution", "critic", "pass")).error).toBeUndefined()
     const planner = await attach("plan", "planner")
-    const task = { ...richPlanTask("one", "One", "Build one"), role: taskRole, responsibility: "execute" }
+    const task = { ...richPlanTask("one", "One", "Build one"), role: taskRole, responsibility: taskResponsibility }
     const future = richPlanTask("two", "Two", "Build two", ["one"])
-    const dependentWorker = richPlanTask("dependent", "Dependent", "Consume reviewed specialist work", ["one"])
+    const dependentWorker = {
+      ...richPlanTask("dependent", "Dependent", "Consume independently reviewed work", ["one"]),
+      role: dependentRole,
+      responsibility: dependentRole === "reviewer" ? "review" : dependentRole === "user" ? "obtain-user-decision" : dependentRole === "worker" ? "execute" : "produce",
+    }
     expect((await h.call("work_plan", richWorkPlanInput(workflowId, [
       {
         id: "core",
@@ -6651,8 +6657,8 @@ async function waveLifecycleFixture(
     ]), "planner", planner)).error).toBeUndefined()
     expect((await h.call("task_plan", {
       workflowId, tasks: [
-        { ...task, write: taskRole === "worker" ? ["src/**"] : ["docs/architecture/**"], skills: [] },
-        ...(includeDependentWorker ? [{ ...dependentWorker, write: ["src/**"], skills: [] }] : []),
+        { ...task, write: taskResponsibility === "obtain-user-decision" ? [] : taskRole === "worker" ? ["src/**"] : ["docs/architecture/**"], skills: [] },
+        ...(includeDependentWorker ? [{ ...dependentWorker, write: dependentRole === "user" ? [] : dependentRole === "worker" ? ["src/**"] : ["docs/architecture/**"], skills: [] }] : []),
       ],
     }, "planner", planner)).error).toBeUndefined()
     expect((await h.call("complete", { workflowId, stepId: "plan", summary: "Planned" }, "planner", planner)).error).toBeUndefined()
@@ -6718,7 +6724,21 @@ test("role-owned Task dispatch is exact and stays incomplete until its independe
     }, "reviewer", reviewer)).error).toBeUndefined()
     work = await h.work()
     expect(work.nodes.find((node: any) => node.type === "task" && node.logicalId === "one").status).toBe("complete")
-    expect(work.nodes.find((node: any) => node.type === "wave" && node.logicalId === "first").status).toBe("complete")
+    const wave = work.nodes.find((node: any) => node.type === "wave" && node.logicalId === "first")
+    expect(wave.status).toBe("complete")
+    expect(wave.completion.bindingFingerprint).toMatch(/^[a-f0-9]{64}$/)
+
+    const workflowKey = `workflow/${h.workflowId}`
+    const completedWorkflow = await h.durableStorage.get(workflowKey) as any
+    completedWorkflow.steps.find((step: any) => step.id === "task:one").agent = "designer"
+    await h.durableStorage.set(workflowKey, completedWorkflow)
+    const staleGraphReopen = await h.call("reopen", {
+      workflowId: h.workflowId, stepId: "review-implementation", reason: "Test stale Task role graph receipt.",
+      newEvidence: true, changedHypothesis: false, changedStrategy: false, reducedUnresolved: false,
+    }, "general", "parent")
+    expect(staleGraphReopen.error).toContain("does not match the current Task role/slot graph and independent gates")
+    expect((await h.durableStorage.get(workflowKey) as any).steps.find((step: any) => step.id === "review-implementation").status).toBe("passed")
+    expect((await h.work()).nodes.find((node: any) => node.type === "wave" && node.logicalId === "first").completion.bindingFingerprint).toBe(wave.completion.bindingFingerprint)
   } finally {
     h.restore()
   }
@@ -6753,6 +6773,135 @@ test("same-Wave specialist handoff blocks Worker consumption until its bound Rev
     expect((await h.call("complete", {
       workflowId: h.workflowId, stepId: "task:dependent", summary: "Consumed reviewed result",
     }, "worker", worker)).error).toBeUndefined()
+  } finally {
+    h.restore()
+  }
+})
+
+test("same-Wave Worker result is reviewed before a specialist-dependent Task is dispatched", async () => {
+  const h = await waveLifecycleFixture("wave", false, "worker", true, "execute", "architect")
+  try {
+    const workflow = await h.workflow()
+    const specialist = workflow.steps.find((step: any) => step.id === "task:dependent")
+    expect(specialist.agent).toBe("architect")
+    expect(specialist.dependsOn).toContain("task-review:one")
+    expect((await h.call("dispatch_grant", {
+      workflowId: h.workflowId, stepId: "task:dependent",
+    }, "general", "parent")).error).toContain("not currently runnable")
+
+    const worker = await h.attach("task:one", "worker", "worker-source")
+    expect((await h.call("complete", {
+      workflowId: h.workflowId, stepId: "task:one", summary: "Worker result awaiting independent review",
+    }, "worker", worker)).error).toBeUndefined()
+    expect((await h.call("dispatch_grant", {
+      workflowId: h.workflowId, stepId: "task:dependent",
+    }, "general", "parent")).error).toContain("not currently runnable")
+
+    const reviewer = await h.attach("task-review:one", "reviewer", "worker-result-reviewer")
+    expect((await h.call("complete", {
+      workflowId: h.workflowId, stepId: "task-review:one", outcome: "pass", summary: "Worker result independently reviewed",
+    }, "reviewer", reviewer)).error).toBeUndefined()
+    expect((await h.work()).nodes.find((node: any) => node.type === "task" && node.logicalId === "one").status).toBe("complete")
+    const architect = await h.attach("task:dependent", "architect", "worker-result-architect")
+    expect((await h.call("complete", {
+      workflowId: h.workflowId, stepId: "task:dependent", summary: "Specialist consumed reviewed Worker result",
+    }, "architect", architect)).error).toBeUndefined()
+  } finally {
+    h.restore()
+  }
+})
+
+test("user-owned decision waits resolve only from a blocking exact-task OQ recorded as user", async () => {
+  const h = await waveLifecycleFixture("wave", false, "user", false, "obtain-user-decision")
+  try {
+    const before = await h.workflow()
+    const wait = before.steps.find((step: any) => step.id === "task:one")
+    expect(wait).toMatchObject({ agent: "user", kind: "wait", status: "waiting" })
+    expect((await h.call("task_status", { workflowId: h.workflowId, taskId: "one" }, "general", "parent")).tasks[0]).toMatchObject({
+      decisionWait: true, decisionReady: true, runnable: false,
+    })
+    expect((await h.call("dispatch_grant", {
+      workflowId: h.workflowId, stepId: "task:one",
+    }, "general", "parent")).error).toContain("not currently runnable")
+    expect((await h.call("complete", {
+      workflowId: h.workflowId, stepId: "task:one", summary: "General guesses for user",
+    }, "general", "parent")).error).toContain("exact attached workflow step")
+
+    const raised = await h.call("oq_raise", {
+      workflowId: h.workflowId,
+      taskId: "one",
+      question: "Choose the accepted behavior for this Task.",
+      responder: "user",
+      blocking: true,
+      consumerStepIds: ["task:one"],
+    }, "general", "parent")
+    expect(raised.error).toBeUndefined()
+    expect(raised.question.work.stepAttempt).toBe(wait.attempt ?? 0)
+    const answered = await h.call("oq_answer", {
+      workflowId: h.workflowId, questionId: raised.question.id, answer: "The user-selected behavior.", source: "user",
+    }, "general", "parent")
+    expect(answered.error).toBeUndefined()
+    expect(answered.question.status).toBe("closed")
+    expect(answered.question.answer).toMatchObject({ by: "user", source: "user", text: "The user-selected behavior." })
+    const after = await h.workflow()
+    expect(after.steps.find((step: any) => step.id === "task:one").status).toBe("complete")
+    const task = (await h.work()).nodes.find((node: any) => node.type === "task" && node.logicalId === "one")
+    expect(task.status).toBe("complete")
+    expect(task.result.summary).toBe("The user-selected behavior.")
+    expect((await h.call("oq_reopen", {
+      workflowId: h.workflowId, questionId: raised.question.id, preserveAnswer: false,
+      reason: "A changed decision must reopen its dependent Task first.",
+    }, "general", "parent")).error).toContain("Reopen the exact decision Task first")
+  } finally {
+    h.restore()
+  }
+})
+
+test("Planner amendment schema accepts role corrections and role-owned Tasks in a new Phase", async () => {
+  const h = await harness()
+  try {
+    const start = await h.call("start", { anchor: "docs/anchors/test/anchor.md" }, "general", "role-amend-general")
+    const workflowId = String(start.workflowId)
+    expect((await h.call("route", {
+      humanFacing: false, behavioral: false, structural: false, externalUnknown: false,
+      diagnostic: false, productOutcome: true, implementationRequested: true,
+      executionDepth: "objective", workLevel: "wave",
+    }, "general", "role-amend-general")).error).toBeUndefined()
+    const grant = await h.call("dispatch_grant", { workflowId, stepId: "critic-solution" }, "general", "role-amend-general")
+    const critic = await h.call("attach", { workflowId, stepId: "critic-solution", grantId: grant.grantId }, "critic", "role-amend-critic")
+    expect(critic.error).toBeUndefined()
+    expect((await h.call("complete", { workflowId, stepId: "critic-solution", outcome: "pass", summary: "ready" }, "critic", "role-amend-critic")).error).toBeUndefined()
+    const plannerGrant = await h.call("dispatch_grant", { workflowId, stepId: "plan" }, "general", "role-amend-general")
+    const planner = await h.call("attach", { workflowId, stepId: "plan", grantId: plannerGrant.grantId }, "planner", "role-amend-planner")
+    expect(planner.error).toBeUndefined()
+    const original = richPlanTask("existing", "Existing", "Existing owned contribution")
+    const planned = await h.call("work_plan", richWorkPlanInput(workflowId, [{
+      id: "core", title: "Core", waves: [{ id: "first", title: "First", tasks: [original] }],
+    }]), "planner", "role-amend-planner")
+    expect(planned.error).toBeUndefined()
+    const added = richPlanTask("added", "Added", "New contribution in the amended Phase")
+    const amended = await h.call("work_amend", {
+      workflowId,
+      expectedVersion: planned.version,
+      reason: "Correct the accountable role and add a role-owned future Phase.",
+      operations: [
+        { action: "patch-task", taskId: "existing", patch: { role: "architect", responsibility: "produce" } },
+        { action: "add-phase", phase: {
+          id: "future", title: "Future", objective: "Continue with explicit ownership.", waves: [{
+            id: "later", title: "Later", objective: "Deliver the later contribution.", constraints: [], tasks: [added],
+          }],
+        } },
+      ],
+    }, "planner", "role-amend-planner")
+    expect(amended.error).toBeUndefined()
+    const work = await h.durableStorage.get(`work/${encodeURIComponent(String(planned.objectiveId))}`) as any
+    const currentPlan = work.plans.find((candidate: any) => candidate.generation === work.generation)
+    expect(currentPlan.phases.find((phase: any) => phase.id === "core").waves[0].tasks[0]).toMatchObject({
+      id: "existing", role: "architect", responsibility: "produce",
+    })
+    expect(currentPlan.phases.find((phase: any) => phase.id === "future").waves[0].tasks[0]).toMatchObject({
+      id: "added", role: "worker", responsibility: "execute",
+    })
   } finally {
     h.restore()
   }
@@ -7211,6 +7360,148 @@ test("planning-only review refuses an unavailable specialist path in a later Wav
     expect(review.error).toContain("future-specialist has no supported Task execution slot")
     const persisted = await h.durableStorage.get(`workflow/${workflowId}`) as any
     expect(persisted.steps.find((step: any) => step.id === "review-plan").status).toBe("pending")
+  } finally {
+    h.restore()
+  }
+})
+
+test("reviewed-Objective path requires Planner ownership correction for persisted role-less legacy Tasks", async () => {
+  const h = await harness()
+  try {
+    const start = await h.call("start", { anchor: "docs/anchors/test/anchor.md" }, "general", "legacy-role-general")
+    const workflowId = String(start.workflowId)
+    expect((await h.call("route", {
+      humanFacing: false, behavioral: false, structural: false, externalUnknown: false,
+      diagnostic: false, productOutcome: true, implementationRequested: false, executionDepth: "objective",
+    }, "general", "legacy-role-general")).error).toBeUndefined()
+    const attach = async (stepId: string, agent: string, session: string) => {
+      const grant = await h.call("dispatch_grant", { workflowId, stepId }, "general", "legacy-role-general")
+      expect(grant.error).toBeUndefined()
+      expect((await h.call("attach", { workflowId, stepId, grantId: grant.grantId }, agent, session)).error).toBeUndefined()
+    }
+    await attach("critic-solution", "critic", "legacy-role-critic")
+    expect((await h.call("complete", { workflowId, stepId: "critic-solution", outcome: "pass", summary: "ready" }, "critic", "legacy-role-critic")).error).toBeUndefined()
+    await attach("plan", "planner", "legacy-role-planner")
+    const task = richPlanTask("unowned", "Legacy contribution", "A persisted legacy Plan Task")
+    expect((await h.call("work_plan", richWorkPlanInput(workflowId, [{
+      id: "phase", title: "Phase", waves: [{ id: "wave", title: "Wave", tasks: [task] }],
+    }]), "planner", "legacy-role-planner")).error).toBeUndefined()
+    expect((await h.call("complete", { workflowId, stepId: "plan", summary: "saved" }, "planner", "legacy-role-planner")).error).toBeUndefined()
+
+    const workflow = await h.durableStorage.get(`workflow/${workflowId}`) as any
+    const workKey = `work/${encodeURIComponent(workflow.work.objectiveId)}`
+    const work = await h.durableStorage.get(workKey) as any
+    const snapshot = work.plans.find((candidate: any) => candidate.generation === work.generation)
+    delete snapshot.phases[0].waves[0].tasks[0].role
+    delete snapshot.phases[0].waves[0].tasks[0].responsibility
+    await h.durableStorage.set(workKey, work)
+
+    await attach("review-plan", "reviewer", "legacy-role-reviewer")
+    const review = await h.call("complete", {
+      workflowId, stepId: "review-plan", outcome: "pass", summary: "should refuse unowned legacy Task",
+    }, "reviewer", "legacy-role-reviewer")
+    expect(review.error).toContain("Task unowned (obligations: none) in phase/wave")
+    expect(review.error).toContain("accountable role and responsibility are required")
+    expect((await h.durableStorage.get(`workflow/${workflowId}`) as any).steps.find((step: any) => step.id === "review-plan").status).toBe("pending")
+    expect((await h.durableStorage.get(workKey) as any).nodes.find((node: any) => node.type === "wave").claimedByWorkflowId).toBeUndefined()
+
+    expect((await h.call("reopen", {
+      workflowId, stepId: "plan", reason: "Assign the legacy Task's accountable role before reviewing it.",
+      newEvidence: true, changedHypothesis: false, changedStrategy: false, reducedUnresolved: false,
+    }, "general", "legacy-role-general")).error).toBeUndefined()
+    await attach("plan", "planner", "legacy-role-planner-corrected")
+    const latestWork = await h.durableStorage.get(workKey) as any
+    const correction = await h.call("work_amend", {
+      workflowId, expectedVersion: latestWork.version, reason: "Correct legacy Task ownership.",
+      operations: [{ action: "patch-task", taskId: "unowned", patch: { role: "worker", responsibility: "execute" } }],
+    }, "planner", "legacy-role-planner-corrected")
+    expect(correction.error).toBeUndefined()
+    expect((await h.call("complete", {
+      workflowId, stepId: "plan", summary: "Legacy Plan ownership corrected.",
+    }, "planner", "legacy-role-planner-corrected")).error).toBeUndefined()
+    await attach("review-plan", "reviewer", "legacy-role-reviewer-corrected")
+    expect((await h.call("complete", {
+      workflowId, stepId: "review-plan", outcome: "pass", summary: "Corrected role assignment independently reviewed.",
+    }, "reviewer", "legacy-role-reviewer-corrected")).error).toBeUndefined()
+    const correctedWorkflow = await h.durableStorage.get(`workflow/${workflowId}`) as any
+    expect(correctedWorkflow.steps.find((step: any) => step.id === "review-plan").status).toBe("passed")
+  } finally {
+    h.restore()
+  }
+})
+
+test("legacy Objective workflow without review-plan cannot immediately claim a newly assigned Task Wave", async () => {
+  const h = await harness()
+  try {
+    const start = await h.call("start", { anchor: "docs/anchors/test/anchor.md" }, "general", "legacy-gate-general")
+    const workflowId = String(start.workflowId)
+    expect((await h.call("route", {
+      humanFacing: false, behavioral: false, structural: false, externalUnknown: false,
+      diagnostic: false, productOutcome: true, implementationRequested: true,
+      executionDepth: "objective", workLevel: "wave",
+    }, "general", "legacy-gate-general")).error).toBeUndefined()
+    const criticGrant = await h.call("dispatch_grant", { workflowId, stepId: "critic-solution" }, "general", "legacy-gate-general")
+    expect((await h.call("attach", { workflowId, stepId: "critic-solution", grantId: criticGrant.grantId }, "critic", "legacy-gate-critic")).error).toBeUndefined()
+    expect((await h.call("complete", { workflowId, stepId: "critic-solution", outcome: "pass", summary: "ready" }, "critic", "legacy-gate-critic")).error).toBeUndefined()
+    const plannerGrant = await h.call("dispatch_grant", { workflowId, stepId: "plan" }, "general", "legacy-gate-general")
+    expect((await h.call("attach", { workflowId, stepId: "plan", grantId: plannerGrant.grantId }, "planner", "legacy-gate-planner")).error).toBeUndefined()
+    const task = richPlanTask("legacy", "Legacy", "Newly assigned legacy route task")
+    expect((await h.call("work_plan", richWorkPlanInput(workflowId, [{
+      id: "phase", title: "Phase", waves: [{ id: "wave", title: "Wave", tasks: [task] }],
+    }]), "planner", "legacy-gate-planner")).error).toBeUndefined()
+    const workflowKey = `workflow/${workflowId}`
+    const legacyWorkflow = await h.durableStorage.get(workflowKey) as any
+    legacyWorkflow.steps = legacyWorkflow.steps.filter((step: any) => step.id !== "review-plan")
+    await h.durableStorage.set(workflowKey, legacyWorkflow)
+
+    const attempted = await h.call("task_plan", {
+      workflowId, tasks: [{ ...task, write: ["src/**"], skills: [] }],
+    }, "planner", "legacy-gate-planner")
+    expect(attempted.error).toContain("no independent review-plan gate and cannot admit Tasks")
+    const after = await h.durableStorage.get(workflowKey) as any
+    expect(after.steps.some((step: any) => step.id === "task:legacy")).toBe(false)
+    const work = await h.durableStorage.get(`work/${encodeURIComponent(after.work.objectiveId)}`) as any
+    expect(work.nodes.find((node: any) => node.type === "wave").claimedByWorkflowId).toBeUndefined()
+  } finally {
+    h.restore()
+  }
+})
+
+test("legacy role-less Plan Task is rejected at Task-plan admission with no Worker Step or Wave claim", async () => {
+  const h = await harness()
+  try {
+    const start = await h.call("start", { anchor: "docs/anchors/test/anchor.md" }, "general", "unowned-admission-general")
+    const workflowId = String(start.workflowId)
+    expect((await h.call("route", {
+      humanFacing: false, behavioral: false, structural: false, externalUnknown: false,
+      diagnostic: false, productOutcome: true, implementationRequested: true,
+      executionDepth: "objective", workLevel: "wave",
+    }, "general", "unowned-admission-general")).error).toBeUndefined()
+    const criticGrant = await h.call("dispatch_grant", { workflowId, stepId: "critic-solution" }, "general", "unowned-admission-general")
+    expect((await h.call("attach", { workflowId, stepId: "critic-solution", grantId: criticGrant.grantId }, "critic", "unowned-admission-critic")).error).toBeUndefined()
+    expect((await h.call("complete", { workflowId, stepId: "critic-solution", outcome: "pass", summary: "ready" }, "critic", "unowned-admission-critic")).error).toBeUndefined()
+    const plannerGrant = await h.call("dispatch_grant", { workflowId, stepId: "plan" }, "general", "unowned-admission-general")
+    expect((await h.call("attach", { workflowId, stepId: "plan", grantId: plannerGrant.grantId }, "planner", "unowned-admission-planner")).error).toBeUndefined()
+    const task = richPlanTask("legacy", "Legacy", "An existing role-less Plan Task")
+    expect((await h.call("work_plan", richWorkPlanInput(workflowId, [{
+      id: "phase", title: "Phase", waves: [{ id: "wave", title: "Wave", tasks: [task] }],
+    }]), "planner", "unowned-admission-planner")).error).toBeUndefined()
+    const workflowBefore = await h.durableStorage.get(`workflow/${workflowId}`) as any
+    const workKey = `work/${encodeURIComponent(workflowBefore.work.objectiveId)}`
+    const work = await h.durableStorage.get(workKey) as any
+    const snapshot = work.plans.find((candidate: any) => candidate.generation === work.generation)
+    delete snapshot.phases[0].waves[0].tasks[0].role
+    delete snapshot.phases[0].waves[0].tasks[0].responsibility
+    await h.durableStorage.set(workKey, work)
+
+    const attempt = await h.call("task_plan", {
+      workflowId, tasks: [{ ...task, write: ["src/**"], skills: [] }],
+    }, "planner", "unowned-admission-planner")
+    expect(attempt.error).toContain("Legacy Plan Task legacy has no accountable role/responsibility")
+    const after = await h.durableStorage.get(`workflow/${workflowId}`) as any
+    expect(after.steps.some((step: any) => step.id === "task:legacy")).toBe(false)
+    const afterWork = await h.durableStorage.get(workKey) as any
+    expect(afterWork.nodes.find((node: any) => node.type === "wave").claimedByWorkflowId).toBeUndefined()
   } finally {
     h.restore()
   }
@@ -8601,7 +8892,7 @@ describe("Critic cross-boundary counterexamples", () => {
     releaseCancelledWorkflowClaims(work, "original", now)
     claimWorkflowWave(work, "replacement", 1, [spec(b, [])], false, now)
     syncWorkTaskStatuses(work, "replacement", 1, [{ taskId: "b", complete: true }], now)
-    completeWaveForTasks(work, "replacement", 1, ["b"], now)
+    completeWaveForTasks(work, "replacement", 1, ["b"], now, "a".repeat(64))
     const withoutConsumer = structuredClone(work)
     expect(() => reopenWaveForTasks(withoutConsumer, "replacement", 1, ["b"], now)).not.toThrow()
     claimWorkflowWave(work, "downstream", 1, [spec(c, [])], false, now)
@@ -8873,14 +9164,14 @@ describe("proof-consumer and full-Wave negative controls", () => {
     releaseCancelledWorkflowClaims(work, "original", now)
     claimWorkflowWave(work, "replacement", 1, [spec(b, [])], false, now)
     syncWorkTaskStatuses(work, "replacement", 1, [{ taskId: "b", complete: true }], now)
-    completeWaveForTasks(work, "replacement", 1, ["b"], now)
+    completeWaveForTasks(work, "replacement", 1, ["b"], now, "a".repeat(64))
     claimWorkflowWave(work, "unrelated", 1, [spec(u)], false, now)
     const unrelatedControl = structuredClone(work)
     expect(() => reopenWaveForTasks(unrelatedControl, "replacement", 1, ["b"], now)).not.toThrow()
     expect(unrelatedControl.nodes.find(node => node.logicalId === "u")?.claimedByWorkflowId).toBe("unrelated")
     claimWorkflowWave(work, "consumer", 1, [spec(c, [])], false, now)
     syncWorkTaskStatuses(work, "consumer", 1, [{ taskId: "c", complete: true }], now)
-    completeWaveForTasks(work, "consumer", 1, ["c"], now)
+    completeWaveForTasks(work, "consumer", 1, ["c"], now, "a".repeat(64))
     const beforeCompletedConsumer = structuredClone(work)
     expect(() => reopenWaveForTasks(work, "replacement", 1, ["b"], now)).toThrow("downstream")
     expect(work).toEqual(beforeCompletedConsumer)
