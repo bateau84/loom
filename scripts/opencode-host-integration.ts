@@ -2579,9 +2579,9 @@ try {
       const prompt = `LOOM_PROGRAM_${crypto.randomUUID()}`
       const program: { code: string; done: boolean; result?: unknown } = { code, done: false }
       mock.state.programs.set(prompt, program)
-      void sendPrompt(serverA, sessionID, prompt)
-        .catch(() => undefined)
+      const turn = sendPrompt(serverA, sessionID, prompt)
         .finally(() => mock.state.programs.delete(prompt))
+      return { wait: async () => { await turn } }
     },
     waitForPrompt: async (predicate) => {
       let observed = ""
