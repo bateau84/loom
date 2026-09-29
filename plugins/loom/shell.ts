@@ -557,11 +557,11 @@ type AllowedGitCommit = {
   messageFile?: string
 }
 
-function safeCommitMessagePath(path: string) {
+export function commitMessageScratchPath(path: string) {
   const normalized = path.replaceAll("\\", "/").replace(/^\.\//, "")
   if (!safeProjectRelativePath(normalized)) return undefined
   if (
-    !/^ephemeral-reports\/[A-Za-z0-9_-]+\/commit-messages\/[A-Za-z0-9._/-]+\.md$/.test(
+    !/^ephemeral-reports\/[A-Za-z0-9_-]+\/commit-messages\/[A-Za-z0-9._-]+\.md$/.test(
       normalized,
     )
   ) return undefined
@@ -592,14 +592,14 @@ function parsedAllowedGitCommit(command: string): AllowedGitCommit | undefined {
     if (word === "-F" || word === "--file") {
       const file = words[index + 1]
       if (!file || hasInlineMessage || messageFile) return undefined
-      messageFile = safeCommitMessagePath(file)
+      messageFile = commitMessageScratchPath(file)
       if (!messageFile) return undefined
       index += 1
       continue
     }
     if (word.startsWith("--file=")) {
       if (hasInlineMessage || messageFile) return undefined
-      messageFile = safeCommitMessagePath(word.slice("--file=".length))
+      messageFile = commitMessageScratchPath(word.slice("--file=".length))
       if (!messageFile) return undefined
       continue
     }
