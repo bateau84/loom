@@ -33,7 +33,7 @@ tags: [component, loom, agents]
 
 Each subagent runs fresh and is given only its bounded objective/context.
 
-When a shared OQ answer becomes durable, Loom sends a best-effort synthetic steer to the latest session attached to each current consumer step attempt. The wake-up carries only correlation, not answer authority: the child re-reads persisted OQ state and reconciles it before completion. Same-attempt redispatch replaces the session pointer, and reopened attempts use a different pointer, so stale child sessions are not revived.
+When a shared OQ answer becomes durable, Loom sends a best-effort synthetic steer to the latest session attached to each current consumer step attempt. The wake-up carries only correlation, not answer authority: the child re-reads persisted OQ state and reconciles it before completion. Same-attempt redispatch replaces the session pointer, and reopened attempts use a different pointer, so stale child sessions are not revived. General treats that runtime wake as the first continuation attempt and does not launch a parallel continuation merely because the answer arrived. Recovery is consumer-specific and follows fresh current-state/delivery evidence; when delivery status is genuinely unknowable, the answered OQ remains a resumable incomplete boundary rather than being guessed into a duplicate dispatch.
 
 ## Repository execution and delivery
 
