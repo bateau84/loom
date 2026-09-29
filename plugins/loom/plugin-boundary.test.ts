@@ -2447,6 +2447,45 @@ Verdict: FAIL
       await evaluate!(designerAdd)
       expect(designerAdd.effect).toBe("allow")
 
+      const designerCommitMessageEdit: any = {
+        agent: "designer",
+        action: "edit",
+        resources: [
+          "ephemeral-reports/designer/commit-messages/runtime.md",
+        ],
+        sessionID: "designer-author",
+        effect: "ask",
+      }
+      await evaluate!(designerCommitMessageEdit)
+      expect(designerCommitMessageEdit.effect).toBe("allow")
+
+      const crossRoleCommitMessageEdit: any = {
+        agent: "designer",
+        action: "edit",
+        resources: [
+          "ephemeral-reports/specifier/commit-messages/runtime.md",
+        ],
+        sessionID: "designer-author",
+        effect: "ask",
+      }
+      await evaluate!(crossRoleCommitMessageEdit)
+      expect(crossRoleCommitMessageEdit.effect).toBe("deny")
+
+      const crossRoleCommitMessageShell: any = {
+        agent: "designer",
+        action: "shell",
+        resources: [
+          "git -c core.hooksPath=/dev/null commit -F ephemeral-reports/specifier/commit-messages/runtime.md",
+        ],
+        sessionID: "designer-author",
+        effect: "ask",
+      }
+      await evaluate!(crossRoleCommitMessageShell)
+      expect(crossRoleCommitMessageShell.effect).toBe("deny")
+      expect(crossRoleCommitMessageShell.message).toContain(
+        "current role's ephemeral-reports/<role>/commit-messages/",
+      )
+
       const designerOutside: any = {
         agent: "designer",
         action: "shell",
