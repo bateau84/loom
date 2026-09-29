@@ -198,7 +198,9 @@ import {
   type IntentSession,
 } from "./intent"
 
-const loomAgents = new Set<string>(LOOM_AGENT_ROLES)
+// Brainstorm is an available OQ responder, but deliberately remains outside
+// LOOM_AGENT_ROLES so this does not make Brainstorm a planned Task recipient.
+const loomAgents = new Set<string>([...LOOM_AGENT_ROLES, "brainstorm"])
 
 function plannedTaskSatisfied(workflow: Workflow, step: Workflow["steps"][number]) {
   const task = step.task
@@ -5108,6 +5110,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               enum: [
                 "user",
                 "general",
+                "brainstorm",
                 "designer",
                 "specifier",
                 "architect",
