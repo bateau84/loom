@@ -155,6 +155,7 @@ import { loadSkillCompanion, type SkillCompanionKind } from "./methodology"
 import { LOOM_AGENT_ROLES, taskStepId, validateTaskPlan, type TaskSpec } from "./tasks"
 import {
   amendWorkPlan,
+  assertInvalidatedPlanReopenable,
   assertWaveClaimForTasks,
   assertWorkGeneration,
   attachWorkflowToWork,
@@ -4969,6 +4970,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             let reset: string[] = []
             let hadPlanReviewClaim = false
             let hadTaskExecution = false
+            let invalidatedPlanRecovery = false
             const commitReopen = async () => {
               await validateWorkflowMutationLocked(ctx, runtime, workflow)
 
@@ -4976,7 +4978,19 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               if (workflow.work) {
                 work = await readWork(ctx, workflow.work.objectiveId)
                 if (!work) throw new Error("Persistent work hierarchy not found.")
-                assertWorkGeneration(work, workflow.work.generation)
+                const currentPlan = workPlanContext(work, undefined, "focused", workflow.work.generation)
+                if (currentPlan?.invalidated) {
+                  invalidatedPlanRecovery = true
+                  if (stepId !== "plan") {
+                    throw new Error("Only planning can reopen an invalidated Plan generation.")
+                  }
+                  assertInvalidatedPlanReopenable(work, workflow.work.generation)
+                  if (plannedTaskSteps(workflow).some((taskStep) => taskStep.status !== "pending")) {
+                    throw new Error("Invalidated Plan cannot be reopened after Task execution has started.")
+                  }
+                } else {
+                  assertWorkGeneration(work, workflow.work.generation)
+                }
                 const currentTaskSteps = plannedTaskSteps(workflow)
                 const taskIds = currentTaskSteps.map((taskStep) => taskStep.task!.id)
                 hadTaskExecution = currentTaskSteps.some((taskStep) => taskStep.status === "complete")
@@ -4987,7 +5001,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                     !hasPlanReview ||
                     workflow.steps.some((candidate) => candidate.id === "review-plan" && candidate.status === "passed")
                   if (reviewed) await ensureCompletedWaveHistory(ctx.storage as any, work, workflow)
-                  else if (planReviewed) {
+                  else if (planReviewed && !invalidatedPlanRecovery) {
                     assertWaveClaimForTasks(work, workflow.id, workflow.work.generation, taskIds)
                     hadPlanReviewClaim = hasPlanReview
                   }
@@ -5044,7 +5058,11 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                   !hadTaskExecution
                 ) {
                   releaseWorkflowWave(work, workflow.id, workflow.work.generation, taskIds, now)
-                } else if (reset.includes("review-implementation") && taskIds.length > 0) {
+                } else if (
+                  !invalidatedPlanRecovery &&
+                  reset.includes("review-implementation") &&
+                  taskIds.length > 0
+                ) {
                   reopenWaveForTasks(work, workflow.id, workflow.work.generation, taskIds, now, expectedBindingFingerprint)
                 }
 
@@ -5053,6 +5071,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 // and therefore no runtime Task status to synchronize.
                 if (
                   taskIds.length > 0 &&
+                  !invalidatedPlanRecovery &&
                   planReviewedAfterReset &&
                   !workflow.steps.some((candidate) => candidate.id === "review-implementation" && candidate.status === "passed")
                 ) {
@@ -7394,6 +7413,10 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                   },
                   new Date().toISOString(),
                 )
+                delete workflow.work!.taskPlanRevision
+                delete workflow.work!.taskPlanFingerprint
+                delete workflow.work!.reviewedPlanRevision
+                delete workflow.work!.reviewedPlanFingerprint
                 await ctx.storage.set(workKey(work.objectiveId), work)
                 await persistWorkflowMutationLocked(ctx, runtime, workflow)
                 return invalidated

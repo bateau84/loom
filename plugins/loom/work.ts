@@ -1867,6 +1867,27 @@ export function invalidateWorkPlan(
   return { hierarchy, plan: updated }
 }
 
+/** Permit planning to resume only from an invalidated generation with no consumed or live work. */
+export function assertInvalidatedPlanReopenable(hierarchy: WorkHierarchy, generation: number) {
+  if (generation !== hierarchy.generation) {
+    throw new Error(
+      `Stale workflow generation: workflow=${generation}, current=${hierarchy.generation}. Reconcile/replan before mutating persistent work.`,
+    )
+  }
+  const snapshot = currentPlan(hierarchy)
+  if (!snapshot?.invalidated) {
+    throw new Error("Plan generation is not invalidated and cannot use invalidation recovery.")
+  }
+  const unsafeNode = currentGenerationNodes(hierarchy).find(
+    (node) => node.claimedByWorkflowId || (node.status !== "pending" && node.status !== "superseded"),
+  )
+  if (unsafeNode) {
+    throw new Error(
+      `Invalidated Plan generation ${generation} cannot be reopened after work was consumed or claimed (${unsafeNode.type} ${unsafeNode.logicalId}).`,
+    )
+  }
+}
+
 export function workTree(hierarchy: WorkHierarchy): WorkTree {
   const nodes = activeNodes(hierarchy)
   const phases = nodes.filter((node) => node.type === "phase")
