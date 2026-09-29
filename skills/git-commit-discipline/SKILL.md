@@ -90,10 +90,10 @@ Never let a multi-wave or multi-task session accumulate uncommitted work. Commit
 
 ```bash
 git add <files you actually touched for this task>   # never -A/. mid-task, see §2
-# Loom runtime:
-git -c core.hooksPath=/dev/null commit -m "<task>: <what changed and why>"
-# Outside Loom: use the repository/host's approved commit command instead.
+git commit -m "<task>: <what changed and why>"
 ```
+
+When Loom's runtime is active, use the Loom-compatible hookless commit form documented above instead of plain `git commit`.
 
 A session that commits after every task has a worst-case loss of "one task's work" if something goes wrong - not "everything since the session started." This is the single biggest lever against the incident this skill exists to prevent.
 
@@ -111,15 +111,24 @@ git diff --stat                 # size/shape per file
 ```bash
 git add path/to/fileA.go path/to/fileA_test.go   # one concern, explicitly named
 git diff --staged                                 # verify ONLY that concern is staged
-# Loom runtime; outside Loom use the repository/host's approved commit command:
-git -c core.hooksPath=/dev/null commit -m "<concern A>: <what and why>"
+git commit -m "<concern A>: <what and why>"
 
 git add path/to/fileB.go
 git diff --staged
-git -c core.hooksPath=/dev/null commit -m "<concern B>: <what and why>"
+git commit -m "<concern B>: <what and why>"
 ```
 
-**For a single file mixing two concerns under Loom**, do not use partial staging. Reshape the edit into one coherent file-level checkpoint, or finish one concern and commit it before making the second concern. Loom's provenance model tracks admitted whole-file bytes, so `git add -p` is intentionally unsupported.
+Outside Loom, partial staging is appropriate when one file contains two genuinely independent concerns:
+
+```bash
+git add -p path/to/file.go
+git diff --staged
+git commit -m "<concern A>: <what and why>"
+git add -p path/to/file.go
+git commit -m "<concern B>: <what and why>"
+```
+
+Under Loom, do **not** use partial staging. Reshape the edit into one coherent file-level checkpoint, or finish one concern and commit it before making the second concern. Loom's provenance model tracks admitted whole-file bytes, so `git add -p` is intentionally unsupported. Use the Loom-compatible commit form from the section above for each Loom commit.
 
 **Rule of thumb for "is this one commit or two?":** if you'd write "and" in the commit message ("fix the timeout bug and refactor the client"), it's two commits. Each commit should be revertable on its own without taking an unrelated change down with it.
 
