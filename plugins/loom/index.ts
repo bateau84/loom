@@ -594,6 +594,8 @@ function toolMutationLockPaths(
     const command = (input as any).command
     if (typeof command === "string") {
       paths.push(...(scopedGitAddTargets(command) ?? []))
+      const messageFile = gitCommitMessageFile(command)
+      if (messageFile) paths.push(messageFile)
     }
   }
   return [...new Set(paths.map(mutationLockIdentity))].sort()
