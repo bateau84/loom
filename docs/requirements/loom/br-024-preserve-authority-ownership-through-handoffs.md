@@ -4,7 +4,7 @@ title: BR-024 — Preserve Authority Ownership Through Handoffs
 description: Every Loom role remains eligible for appropriately typed planned work and questions, with accountable authority preserved through supported paths and handoffs.
 tags: [requirement, loom, authority, routing, planning, handoff]
 ---
-**Status:** proposed
+**Status:** accepted
 
 ## Statement
 
