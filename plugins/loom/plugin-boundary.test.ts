@@ -2372,6 +2372,21 @@ Verdict: FAIL
       await evaluate!(governedRun)
       expect(governedRun.effect).toBe("allow")
 
+      const diagnosticCommitScratch: any = {
+        agent: "diagnostic",
+        action: "edit",
+        resources: [
+          "ephemeral-reports/diagnostic/commit-messages/diagnosis.md",
+        ],
+        sessionID: "governed-diagnostic-execute",
+        effect: "ask",
+      }
+      await evaluate!(diagnosticCommitScratch)
+      expect(diagnosticCommitScratch.effect).toBe("deny")
+      expect(diagnosticCommitScratch.message).toContain(
+        "role that can own the repository commit",
+      )
+
       const designStarted = await call(
         "start",
         { request: "Define one bounded user-facing change." },
