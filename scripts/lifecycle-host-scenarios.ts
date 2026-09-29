@@ -5,8 +5,7 @@ import { join } from "node:path"
 export type LifecycleHostDriver = {
   project: string
   create: (agent: "general" | "worker", parent?: string) => Promise<string>
-  run: (sessionID: string, code: string) => Promise<any>
-  begin: (sessionID: string, code: string) => Promise<{ wait: () => Promise<void> }>
+  run: (sessionID: string, code: string, waitForProgramDone?: boolean) => Promise<any>
   waitForPrompt: (predicate: (prompt: string) => boolean) => Promise<string>
 }
 
@@ -190,7 +189,7 @@ return {attachment, result: unpack(await pending)};`)
     )
     await rm(join(signals, "started"), { force: true })
     await rm(join(signals, "release"), { force: true })
-    const activeTurn = await driver.begin(activeOqChild, "return await tools.lifecycleprobe.delayed({})")
+    const activeTurn = driver.run(activeOqChild, "return await tools.lifecycleprobe.delayed({})", false)
     try {
       assert.equal((await waitSignal(signals, "started")).sessionID, activeOqChild)
       const activeRaised = await driver.run(
@@ -222,7 +221,7 @@ return {attachment, result: unpack(await pending)};`)
       assert.match(activeSteerPrompt, /loom_oq_reconcile/)
     } finally {
       await writeFile(join(signals, "release"), "true")
-      await activeTurn.wait()
+      await activeTurn
     }
 
     console.log("PASS real-host OQ wake-up: persisted answer steers the attached Worker and the Worker re-reads authoritative OQ state")

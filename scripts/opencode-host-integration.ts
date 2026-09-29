@@ -2565,23 +2565,17 @@ try {
       if (!session?.id) throw new Error("Lifecycle scenario could not create a real session")
       return session.id
     },
-    run: async (sessionID, code) => {
+    run: async (sessionID, code, waitForProgramDone = true) => {
       const prompt = `LOOM_PROGRAM_${crypto.randomUUID()}`
       const program: { code: string; done: boolean; result?: unknown } = { code, done: false }
       mock.state.programs.set(prompt, program)
       try {
         await sendPrompt(serverA, sessionID, prompt)
-        await waitForCondition(() => program.done, "lifecycle host program", () => program, 30_000)
+        if (waitForProgramDone) {
+          await waitForCondition(() => program.done, "lifecycle host program", () => program, 30_000)
+        }
         return program.result
       } finally { mock.state.programs.delete(prompt) }
-    },
-    begin: async (sessionID, code) => {
-      const prompt = `LOOM_PROGRAM_${crypto.randomUUID()}`
-      const program: { code: string; done: boolean; result?: unknown } = { code, done: false }
-      mock.state.programs.set(prompt, program)
-      const turn = sendPrompt(serverA, sessionID, prompt)
-        .finally(() => mock.state.programs.delete(prompt))
-      return { wait: async () => { await turn } }
     },
     waitForPrompt: async (predicate) => {
       let observed = ""
