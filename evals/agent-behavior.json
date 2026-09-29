@@ -151,6 +151,24 @@
       ]
     },
     {
+      "id": "AUDIT-OQ-CONTINUATION-04",
+      "agent": "general",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-001",
+        "BR-008"
+      ],
+      "prompt": "One blocking OQ has two still-current consumers. `loom_oq_answer` returned `notifications: { notified: [\"specifier\"], failed: [{\"stepId\":\"worker\",\"error\":\"synthetic wake unavailable\"}] }`. A fresh state read confirms both consumers are still pending and unreconciled on their current attempts. Decide General's continuation/recovery actions.",
+      "trap": "Treat notification as all-or-nothing: redispatch both consumers because one failed, or do nothing for the failed Worker because another consumer was notified successfully.",
+      "expectations": [
+        "Leaves the notified Specifier alone because its runtime continuation is already scheduled.",
+        "Handles recovery only for the Worker whose delivery failed, after confirming its current unresolved attempt; does not broaden one consumer's failure into duplicate work for the other."
+      ],
+      "must_not": [
+        "Must not turn a partial notification failure into a blanket retry or blanket wait across all OQ consumers."
+      ]
+    },
+    {
       "id": "AUDIT-FOCUS-01",
       "agent": "general",
       "execution": "role-decision",
