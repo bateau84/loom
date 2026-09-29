@@ -26,7 +26,7 @@ An explicit user cancellation is a separate terminal boundary. It ends that work
 6. An explicit user cancellation works before planning, during execution, and after Wave review has ended its live claim. The owning General session records the reason and exact confirmation; retries do not modify a replacement workflow.
 7. Cancellation preserves completed work, evidence, review outcomes and unfinished obligations, permits a new authorized workflow, and does not imply Objective completion. New dispatches, attachments to the cancelled workflow and late workflow mutations are refused.
 8. Finishing a reviewed Wave does not prevent its remaining documentation or product gates from closing against that Wave's exact reviewed history.
-9. Answering a blocking OQ automatically continues each still-current affected consumer when continuation is possible. Once Loom reports that consumer as successfully notified, General does not issue a second continuation. If continuation is not successfully reported, the answer and workflow state remain resumable, and superseded consumers are not revived.
+9. Answering a blocking OQ automatically continues each still-current affected consumer when continuation is possible. Once Loom reports that consumer as successfully notified, General does not issue a second continuation. If continuation of a still-current consumer cannot be delivered, the answer and workflow state remain resumable. Superseded consumers are not revived.
 
 ## Verification Semantics
 
