@@ -50,7 +50,7 @@ Then use the file as the complete commit message:
 git -c core.hooksPath=/dev/null commit -F ephemeral-reports/<role>/commit-messages/<unique-name>.md
 ```
 
-The scratch file is non-committable. Never stage it. The current commit-owning role/session must write the exact file bytes before using `-F`; Loom rejects a pre-existing, cross-role, stale/changed, symlink, or other non-regular message file. Do not use shell redirection, heredocs, arbitrary `-F` paths, or another role's scratch namespace to construct a commit message.
+The scratch file is non-committable. Never stage it. The current commit-owning role/session must write the exact file bytes before using `-F`; Loom rejects a pre-existing, cross-role, stale/changed, symlink, or other non-regular message file. A successful file-backed commit consumes the scratch file, so write a fresh message file for the next commit. Do not use shell redirection, heredocs, arbitrary `-F` paths, or another role's scratch namespace to construct a commit message.
 
 Loom intentionally rejects plain `git commit`, `git commit -a`, `git add .`, `git add -A`, and partial staging with `git add -p`. Loom tracks admitted whole-file bytes for authorship/provenance, so partial staging does not fit that model.
 
