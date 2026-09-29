@@ -125,7 +125,7 @@ A specialist dispatch is analogous to using a tool:
 - Its output returns to Loom.
 - Loom integrates the result into the conversation or execution state.
 
-When a specialist is waiting on an OQ, the user answers the question once. Loom continues the affected specialist without a second coordinator handoff or duplicate continuation message. The same continuation works whether the specialist is still active or has returned to an idle bound session. Only a genuine continuation failure requires coordinator recovery, and recovery must not revive superseded work.
+When a specialist is waiting on an OQ, the user answers the question once. Loom continues the affected specialist without a second coordinator handoff or duplicate continuation message. The same continuation works whether the specialist is still working or has returned and is waiting for the answer. Only a genuine continuation failure requires coordinator recovery, and recovery must not revive superseded work.
 
 Independent gates remain genuinely independent; "tool-like" does not mean Loom may dictate their verdict.
 
