@@ -8214,6 +8214,91 @@ test("reopened Planner can surgically amend a current Task and must refresh the 
   }
 })
 
+test("released invalidated Plan can recover through a fresh reviewed generation without executing stale Tasks", async () => {
+  const h = await waveLifecycleFixture()
+  try {
+    expect((await h.call("reopen", {
+      workflowId: h.workflowId,
+      stepId: "plan",
+      reason: "A material Plan correction is required before any Task was consumed.",
+      newEvidence: true,
+      changedHypothesis: false,
+      changedStrategy: true,
+      reducedUnresolved: false,
+    }, "general", "parent")).error).toBeUndefined()
+
+    const released = await h.work()
+    expect(released.nodes.find((node: any) => node.type === "wave" && node.logicalId === "first").claimedByWorkflowId).toBeUndefined()
+    const planner1 = "planner-invalidate-recovery-1"
+    const planGrant1 = await h.call("dispatch_grant", { workflowId: h.workflowId, stepId: "plan" }, "general", "parent")
+    expect(planGrant1.error).toBeUndefined()
+    expect((await h.call("attach", { workflowId: h.workflowId, stepId: "plan", grantId: planGrant1.grantId }, "planner", planner1)).attached).toBe(true)
+
+    const invalidated = await h.call("work_invalidate", {
+      workflowId: h.workflowId,
+      expectedVersion: released.version,
+      reason: "The released, unconsumed decomposition is no longer valid.",
+    }, "planner", planner1)
+    expect(invalidated.error).toBeUndefined()
+    const oldDagDenied = await h.call("dispatch_grant", { workflowId: h.workflowId, stepId: "task:one" }, "general", "parent")
+    expect(oldDagDenied.error).toContain("not currently runnable")
+
+    const reopened = await h.call("reopen", {
+      workflowId: h.workflowId,
+      stepId: "plan",
+      reason: "Resume planning from the explicitly invalidated, unconsumed generation.",
+      newEvidence: true,
+      changedHypothesis: false,
+      changedStrategy: true,
+      reducedUnresolved: false,
+    }, "general", "parent")
+    expect(reopened.error).toBeUndefined()
+
+    const planner2 = "planner-invalidate-recovery-2"
+    const planGrant2 = await h.call("dispatch_grant", { workflowId: h.workflowId, stepId: "plan" }, "general", "parent")
+    expect(planGrant2.error).toBeUndefined()
+    expect((await h.call("attach", { workflowId: h.workflowId, stepId: "plan", grantId: planGrant2.grantId }, "planner", planner2)).attached).toBe(true)
+    const beforeFreshPlan = await h.work()
+    const oldPlan = beforeFreshPlan.plans.find((plan: any) => plan.generation === 1)
+    const oldTask = oldPlan.phases[0].waves[0].tasks[0]
+    const freshPlan = await h.call("work_plan", richWorkPlanInput(h.workflowId, [{
+      id: "core", title: "Core", waves: [{ id: "first", title: "First", tasks: [{
+        ...oldTask,
+        acceptanceCriteria: [...oldTask.acceptanceCriteria, "The fresh generation is independently reviewed before dispatch."],
+      }] }],
+    }], { expectedVersion: beforeFreshPlan.version, replaceReason: "Replace the invalidated decomposition." }), "planner", planner2)
+    expect(freshPlan.error).toBeUndefined()
+    expect(freshPlan.generation).toBe(2)
+
+    const freshWork = await h.work()
+    const freshTask = freshWork.plans.find((plan: any) => plan.generation === 2).phases[0].waves[0].tasks[0]
+    expect((await h.call("task_plan", {
+      workflowId: h.workflowId,
+      tasks: [{ ...freshTask, write: ["src/**"], skills: [] }],
+    }, "planner", planner2)).error).toBeUndefined()
+    expect((await h.call("complete", {
+      workflowId: h.workflowId, stepId: "plan", summary: "Fresh Plan and executable DAG are ready for independent review.",
+    }, "planner", planner2)).error).toBeUndefined()
+
+    const beforeReviewDispatch = await h.call("dispatch_grant", { workflowId: h.workflowId, stepId: "task:one" }, "general", "parent")
+    expect(beforeReviewDispatch.error).toContain("not currently runnable")
+    const reviewer = "reviewer-invalidate-recovery"
+    const reviewGrant = await h.call("dispatch_grant", { workflowId: h.workflowId, stepId: "review-plan" }, "general", "parent")
+    expect(reviewGrant.error).toBeUndefined()
+    expect((await h.call("attach", { workflowId: h.workflowId, stepId: "review-plan", grantId: reviewGrant.grantId }, "reviewer", reviewer)).attached).toBe(true)
+    expect((await h.call("complete", {
+      workflowId: h.workflowId, stepId: "review-plan", outcome: "pass", summary: "Fresh generation and DAG independently reviewed.",
+    }, "reviewer", reviewer)).error).toBeUndefined()
+    expect((await h.call("dispatch_grant", { workflowId: h.workflowId, stepId: "task:one" }, "general", "parent")).error).toBeUndefined()
+
+    const history = await h.work()
+    expect(history.plans.find((plan: any) => plan.generation === 1).invalidated.reason).toBe("The released, unconsumed decomposition is no longer valid.")
+    expect(history.plans.some((plan: any) => plan.generation === 2)).toBe(true)
+  } finally {
+    h.restore()
+  }
+})
+
 
 const reopenRequest = (workflowId: string, stepId: string) => ({
   workflowId, stepId, reason: "New evidence invalidates this step.",
