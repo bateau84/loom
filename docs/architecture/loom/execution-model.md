@@ -5,7 +5,7 @@ description: Agent roles, worker contexts, routing, and skill use inside OpenCod
 tags: [architecture, loom, agents, routing, skills]
 ---
 
-**Status:** proposed
+**Status:** architecture direction; supported role-safe Plan execution is implemented and independently reviewed on this branch. Universal all-subagent Task routing and agent-roster/planning-insight discovery are not implemented. This branch state does not establish merge, CI, or release.
 
 ## Agent Set
 
@@ -32,10 +32,16 @@ Loom's repository is the global OpenCode config directory. Agent files therefore
 - **research** — sourced investigation and external knowledge.
 - **diagnostic** — root-cause investigation.
 - **acceptance** — executes real end-to-end Product Acceptance scenarios and records observed proof.
-- **planner** — disposable decomposition context that turns an accepted Objective into Phase/Wave/Task decomposition; the current executable Task compiler produces a bounded Worker-only DAG. The proposed mixed-role path in [Control Plane](control-plane.md#proposed-accountable-role-admission) is not implemented.
+- **planner** — disposable decomposition context that turns an accepted Objective into Phase/Wave/Task decomposition. Current branch code supports role-bound Tasks for a bounded set of producer roles, Reviewer review Tasks, and user-decision waits; Planner is not yet a supported planned Task recipient. A future Planner-owned Task must be bounded planning/replanning work, not generic execution or a second product authority.
 - **documenter** — maintains current system/user knowledge after implementation changes and verifies it through OKF.
 
 Planner is an execution context, not a product authority or gate owner. Objective identity and completion meaning come from accepted authority before Planner. Planner may decompose inside that Objective, but may not redefine it.
+
+### Discovery and task-path admission
+
+General and Planner should receive a current view of available OpenCode subagent names and descriptions, plus Loom-owned planning insights about appropriate responsibilities and known path constraints. Prefer `.loom` configuration for the advisory insight registry rather than changing agent definitions; do **not** add custom `loom:` frontmatter to OpenCode agent files (unknown fields are forwarded as provider options). The roster comes from the host's actual agent availability, not a static list or the advisory registry. Insights may prioritize candidates or warn of limits, but neither roster presence nor metadata is permission, task-path support, gate proof, or an allowlist. Missing insight for an available Loom subagent must not make the role categorically ineligible.
+
+The control plane validates a selected role against the **specific** Task kind or OQ responder path, current host availability, role authority and permissions, dependencies, independent gates, and the Plan binding at admission and again at dispatch/completion as relevant. Every available Loom subagent, including Planner, is eligible for a suitable planned Task and OQ after its role-native path is implemented and validated. A role without such a path remains a visible planning/admission blocker, not a Worker assignment. Answering an OQ is a narrow role-owned response, not completion of a Task or an independent review verdict. See [Role-Safe Plan Execution](role-safe-plan-execution.md) for the proposed extension and the current supported-role boundary.
 
 For Planner-driven product work, the control plane materializes Planner output into persistent Objective/Phase/Wave/Task work state plus the executable dependency DAG. Workflow state remains the bounded execution view over that work. A separate Plan document is not required unless the product itself needs one.
 
@@ -73,7 +79,7 @@ The transition preserves matching upstream step state and attempt identity. Gene
 Authority and execution subagents run in fresh OpenCode child sessions.
 
 Only the minimum required context is passed:
-- objective;
+- objective and bounded Plan/Task context where applicable;
 - Anchor;
 - relevant accepted authority;
 - relevant OQs;
@@ -106,7 +112,7 @@ Typical mapping:
 | normal independent check | Reviewer |
 | whole-solution challenge | Critic |
 
-The coordinator may propose classification. The control plane prevents dependent stages from proceeding when recorded prerequisites are incomplete.
+The coordinator may propose classification. The control plane prevents dependent stages from proceeding when recorded prerequisites are incomplete. The mapping above names expertise, **not** a claim that every role has a currently implemented planned Task route. The supported role-safe subset is present on this branch; universal routing and live roster discovery remain separate implementation work.
 
 ## Skills
 
