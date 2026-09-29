@@ -190,6 +190,7 @@ return {attachment, result: unpack(await pending)};`)
     await rm(join(signals, "started"), { force: true })
     await rm(join(signals, "release"), { force: true })
     const activeTurn = driver.run(activeOqChild, "return await tools.lifecycleprobe.delayed({})", false)
+    void activeTurn.catch(() => {})
     try {
       assert.equal((await waitSignal(signals, "started")).sessionID, activeOqChild)
       const activeRaised = await driver.run(
