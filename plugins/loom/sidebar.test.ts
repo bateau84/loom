@@ -10,6 +10,82 @@ import {
 } from "./work"
 
 describe("Loom sidebar snapshot", () => {
+  test("surfaces a ready user-owned decision before its blocking OQ exists without making it dispatchable", () => {
+    const workflow: Workflow = {
+      id: "wf-decision",
+      projectId: "project-test",
+      revision: 0,
+      anchor: "docs/anchors/product/anchor.md",
+      createdBySession: "session-1",
+      createdAt: "now",
+      steps: [{
+        id: "task:decision",
+        agent: "user",
+        kind: "wait",
+        dependsOn: [],
+        status: "waiting",
+        task: {
+          id: "decision",
+          title: "Choose the release mode",
+          objective: "Select staged or immediate release.",
+          rationale: "The rollout behavior must be chosen by the product owner.",
+          acceptanceCriteria: ["Choose staged or immediate."],
+          dependsOn: [],
+          write: [],
+          skills: [],
+          verify: ["Record the user's answer"],
+          role: "user",
+          responsibility: "obtain-user-decision",
+        },
+      }, {
+        id: "review-plan",
+        agent: "reviewer",
+        kind: "gate",
+        dependsOn: ["task:decision"],
+        status: "pending",
+      }],
+    }
+
+    const snapshot = buildSidebarSnapshot(workflow)
+
+    expect(snapshot.now).toEqual([])
+    expect(snapshot.openQuestions).toBe(0)
+    expect(snapshot.userDecisions).toEqual([{
+      step: "task:decision",
+      taskId: "decision",
+      title: "Choose the release mode",
+      objective: "Select staged or immediate release.",
+      rationale: "The rollout behavior must be chosen by the product owner.",
+      acceptanceCriteria: ["Choose staged or immediate."],
+      ready: true,
+      waitsFor: [],
+    }])
+  })
+
+  test("clears a user decision from the sidebar only after its wait is completed", () => {
+    const workflow: Workflow = {
+      id: "wf-decision-answered",
+      projectId: "project-test",
+      revision: 0,
+      anchor: "docs/anchors/product/anchor.md",
+      createdBySession: "session-1",
+      createdAt: "now",
+      steps: [{
+        id: "task:decision",
+        agent: "user",
+        kind: "wait",
+        dependsOn: [],
+        status: "complete",
+        task: {
+          id: "decision", title: "Choose mode", objective: "Choose a mode.", dependsOn: [],
+          write: [], skills: [], verify: [], role: "user", responsibility: "obtain-user-decision",
+        },
+      }],
+    }
+
+    expect(buildSidebarSnapshot(workflow).userDecisions).toEqual([])
+  })
+
   test("shows planned tasks and runnable state", () => {
     const workflow: Workflow = {
       id: "wf-1",
@@ -200,6 +276,7 @@ describe("Loom sidebar snapshot", () => {
       progress: { finished: 0, total: 0, failed: 0 },
       tasks: [],
       now: [],
+      userDecisions: [],
       openQuestions: 0,
       openVerification: 0,
     })
