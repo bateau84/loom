@@ -73,7 +73,7 @@ describe("Loom shared OQ board", () => {
   })
 
   test("any Loom role may be the named OQ responder without turning the answer into a gate verdict", () => {
-    for (const requiredAuthority of ["planner", "worker", "reviewer", "critic", "documenter", "acceptance"] as const) {
+    for (const requiredAuthority of ["planner", "worker", "reviewer", "critic", "documenter", "acceptance", "brainstorm"] as const) {
       const q = raiseQuestion({
         id: `q-${requiredAuthority}`,
         workflow: workflow(),

@@ -55,6 +55,7 @@ class MemoryStorage {
 
 type RegisteredTool = {
   name: string
+  input?: { properties?: { responder?: { enum?: string[] } } }
   options?: { namespace?: string; codemode?: boolean; permission?: string }
   execute: (input: unknown, tool: { agent: string; sessionID: string }) => Promise<{ content: string }>
 }
@@ -7881,6 +7882,50 @@ describe("workflow lifecycle recovery", () => {
       expect((await h.work()).objectiveStatus).toBe("active")
     } finally { h.restore() }
   })
+})
+
+test("Brainstorm is eligible for an exact OQ dispatch without becoming a Task producer", async () => {
+  const h = await harness()
+  try {
+    expect(h.registered.get("loom_oq_raise")?.input?.properties?.responder?.enum).toContain("brainstorm")
+    const { workflowId } = await h.call("start", { request: "Answer a bounded advisory question." }, "general", "parent")
+    const raised = await h.call("oq_raise", {
+      workflowId,
+      question: "What alternatives and trade-offs should the accountable authority consider?",
+      responder: "brainstorm",
+      blocking: false,
+    }, "general", "parent")
+    expect(raised.error).toBeUndefined()
+    expect(raised.question.responder).toBe("brainstorm")
+
+    const unauthorized = { agent: "general", sessionID: "parent", action: "subagent", resources: ["brainstorm"], effect: "allow", message: "" }
+    await h.permissionHooks.get("evaluate")!(unauthorized)
+    expect(unauthorized.effect).toBe("deny")
+    expect(unauthorized.message).toContain("loom_dispatch_grant")
+
+    const grant = await h.call("dispatch_grant", { workflowId, questionId: raised.question.id }, "general", "parent")
+    expect(grant.error).toBeUndefined()
+    const authorized = { agent: "general", sessionID: "parent", action: "subagent", resources: ["brainstorm"], effect: "deny", message: "" }
+    await h.permissionHooks.get("evaluate")!(authorized)
+    expect(authorized.effect).toBe("allow")
+    const brainstorm = "bounded-brainstorm-oq"
+    expect((await h.call("attach", {
+      workflowId, questionId: raised.question.id, grantId: grant.grantId,
+    }, "brainstorm", brainstorm)).attached).toBe(true)
+    expect((await h.call("oq_answer", {
+      workflowId, questionId: raised.question.id,
+      answer: "Consider option A for simplicity and option B for resilience; the trade-off is operational complexity.",
+      source: "agent",
+    }, "brainstorm", brainstorm)).error).toBeUndefined()
+
+    const workflow = await h.durableStorage.get(`workflow/${workflowId}`) as any
+    expect(workflow.steps.some((step: any) => step.agent === "worker" || step.agent === "brainstorm")).toBe(false)
+    expect((await h.call("complete", {
+      workflowId, stepId: "task:not-a-brainstorm-task", summary: "Advisory answer",
+    }, "brainstorm", brainstorm)).error).toContain("exact attached workflow step")
+  } finally {
+    h.restore()
+  }
 })
 
 test("Planner OQ may amend untouched future work without staling the active Wave DAG", async () => {
