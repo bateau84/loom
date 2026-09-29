@@ -568,7 +568,7 @@ function chooseMockAction(prompt: string, results: Map<string, unknown>, state: 
       return {
         name: "write",
         args: {
-          filePath: "src/commit-proof.txt",
+          path: "src/commit-proof.txt",
           content: "real OpenCode file-backed commit proof\n",
         },
       }
@@ -595,7 +595,7 @@ function chooseMockAction(prompt: string, results: Map<string, unknown>, state: 
       return {
         name: "write",
         args: {
-          filePath: "ephemeral-reports/worker/commit-messages/host-integration.md",
+          path: "ephemeral-reports/worker/commit-messages/host-integration.md",
           content: [
             "test(runtime): prove file-backed commit in real OpenCode",
             "",
