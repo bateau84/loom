@@ -1972,6 +1972,25 @@ try {
   let dashboardPort = await freePort()
   while (dashboardPort === 4318) dashboardPort = await freePort()
 
+  await mkdir(join(projectA, "src"), { recursive: true })
+  for (const args of [
+    ["init", "-q"],
+    ["config", "user.name", "Loom Host Integration"],
+    ["config", "user.email", "loom-host-integration@example.invalid"],
+  ]) {
+    const git = Bun.spawnSync(["git", ...args], {
+      cwd: projectA,
+      stdout: "pipe",
+      stderr: "pipe",
+    })
+    if (git.exitCode !== 0) {
+      throw new Error(
+        "Could not prepare real OpenCode Git fixture: " +
+          new TextDecoder().decode(git.stderr),
+      )
+    }
+  }
+
   const serverA = await startServer(base, projectA, sharedState, runtimeA, "server-a", dashboardPort)
   servers.push(serverA)
 
@@ -2035,25 +2054,6 @@ try {
     "real OpenCode General start/route/grant sequence",
     () => mock.state,
   )
-
-  await mkdir(join(projectA, "src"), { recursive: true })
-  for (const args of [
-    ["init", "-q"],
-    ["config", "user.name", "Loom Host Integration"],
-    ["config", "user.email", "loom-host-integration@example.invalid"],
-  ]) {
-    const git = Bun.spawnSync(["git", ...args], {
-      cwd: projectA,
-      stdout: "pipe",
-      stderr: "pipe",
-    })
-    if (git.exitCode !== 0) {
-      throw new Error(
-        "Could not prepare real OpenCode Git fixture: " +
-          new TextDecoder().decode(git.stderr),
-      )
-    }
-  }
 
   const workerSession = await jsonRequestAny(
     [`${serverA.baseUrl}/api/session`, `${serverA.baseUrl}/session`],
