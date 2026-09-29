@@ -9627,4 +9627,229 @@ describe("Skill methodology evidence lifecycle", () => {
     }
   })
 
+
+  test("file-backed commit messages require current role-authored unchanged scratch bytes", async () => {
+    const h = await harness(async (_storage, root) => {
+      await initializeGitFixture(root)
+      await mkdir(join(root, "docs", "requirements"), { recursive: true })
+    })
+    try {
+      const generalSession = "commit-file-general"
+      const childSession = "commit-file-specifier"
+      const started = await h.call(
+        "start",
+        { request: "Specify one bounded behavior and commit the resulting requirement." },
+        "general",
+        generalSession,
+      )
+      const workflowId = String(started.workflowId)
+      expect((await h.call(
+        "route",
+        {
+          humanFacing: false,
+          behavioral: true,
+          structural: false,
+          externalUnknown: false,
+          diagnostic: false,
+          productOutcome: false,
+          implementationRequested: true,
+          executionDepth: "change",
+        },
+        "general",
+        generalSession,
+      )).error).toBeUndefined()
+
+      const grant = await h.call(
+        "dispatch_grant",
+        { workflowId, stepId: "specifier" },
+        "general",
+        generalSession,
+      )
+      expect((await h.call(
+        "attach",
+        { grantId: grant.grantId, workflowId, stepId: "specifier" },
+        "specifier",
+        childSession,
+      )).attached).toBe(true)
+
+      const productPath = "docs/requirements/runtime.md"
+      const productBody = "# Runtime\n\nThe committed requirement is scoped.\n"
+      const productPermission: any = {
+        agent: "specifier",
+        action: "edit",
+        resources: [productPath],
+        sessionID: childSession,
+        effect: "ask",
+      }
+      await h.permissionHooks.get("evaluate")!(productPermission)
+      expect(productPermission.effect).not.toBe("deny")
+
+      const productWrite = {
+        tool: "write",
+        callID: "commit-file-product-write",
+        messageID: "commit-file-product-write-message",
+        sessionID: childSession,
+        agent: "specifier",
+        input: { filePath: productPath, content: productBody },
+      }
+      await h.toolHooks.get("execute.before")!(productWrite)
+      await writeFile(join(h.root, productPath), productBody)
+      await h.toolHooks.get("execute.after")!({
+        ...productWrite,
+        status: "completed",
+        result: "written",
+      })
+
+      const stageCommand = `git add -- ${productPath}`
+      const stagePermission: any = {
+        agent: "specifier",
+        action: "shell",
+        resources: [stageCommand],
+        sessionID: childSession,
+        effect: "ask",
+      }
+      await h.permissionHooks.get("evaluate")!(stagePermission)
+      expect(stagePermission.effect).toBe("allow")
+      const stageEvent = {
+        tool: "shell",
+        callID: "commit-file-stage",
+        messageID: "commit-file-stage-message",
+        sessionID: childSession,
+        agent: "specifier",
+        input: { command: stageCommand },
+      }
+      await h.toolHooks.get("execute.before")!(stageEvent)
+      await git(h.root, ["add", "--", productPath])
+      await h.toolHooks.get("execute.after")!({
+        ...stageEvent,
+        status: "completed",
+        result: "staged",
+      })
+
+      const scratchPath =
+        "ephemeral-reports/specifier/commit-messages/runtime.md"
+      const longMessage = [
+        "docs(runtime): define scoped commit messages",
+        "",
+        "### Background",
+        "Loom accepts long Markdown commit messages without shell redirection.",
+        "",
+        "### Verification",
+        "The plugin boundary exercised the real file-backed Git commit path.",
+        "",
+      ].join("\n")
+
+      await mkdir(join(h.root, "ephemeral-reports", "specifier", "commit-messages"), {
+        recursive: true,
+      })
+      await writeFile(join(h.root, scratchPath), "foreign pre-existing message\n")
+
+      const commitCommand =
+        `git -c core.hooksPath=/dev/null commit -F ${scratchPath}`
+      const commitPermission: any = {
+        agent: "specifier",
+        action: "shell",
+        resources: [commitCommand],
+        sessionID: childSession,
+        effect: "ask",
+      }
+      await h.permissionHooks.get("evaluate")!(commitPermission)
+      expect(commitPermission.effect).toBe("allow")
+
+      await expect(
+        h.toolHooks.get("execute.before")!({
+          tool: "shell",
+          callID: "commit-file-unowned",
+          messageID: "commit-file-unowned-message",
+          sessionID: childSession,
+          agent: "specifier",
+          input: { command: commitCommand },
+        }),
+      ).rejects.toThrow("was not authored by this current role/session")
+
+      await rm(join(h.root, scratchPath), { force: true })
+      await symlink(join(h.root, productPath), join(h.root, scratchPath))
+      const scratchPermission: any = {
+        agent: "specifier",
+        action: "edit",
+        resources: [scratchPath],
+        sessionID: childSession,
+        effect: "ask",
+      }
+      await h.permissionHooks.get("evaluate")!(scratchPermission)
+      expect(scratchPermission.effect).toBe("allow")
+      await expect(
+        h.toolHooks.get("execute.before")!({
+          tool: "write",
+          callID: "commit-file-symlink",
+          messageID: "commit-file-symlink-message",
+          sessionID: childSession,
+          agent: "specifier",
+          input: { filePath: scratchPath, content: longMessage },
+        }),
+      ).rejects.toThrow("regular file")
+      await rm(join(h.root, scratchPath), { force: true })
+
+      const writeScratch = async (callID: string, content: string) => {
+        const event = {
+          tool: "write",
+          callID,
+          messageID: `${callID}-message`,
+          sessionID: childSession,
+          agent: "specifier",
+          input: { filePath: scratchPath, content },
+        }
+        await h.toolHooks.get("execute.before")!(event)
+        await writeFile(join(h.root, scratchPath), content)
+        await h.toolHooks.get("execute.after")!({
+          ...event,
+          status: "completed",
+          result: "written",
+        })
+      }
+
+      await writeScratch("commit-file-owned", longMessage)
+      await writeFile(join(h.root, scratchPath), longMessage + "tampered\n")
+      await expect(
+        h.toolHooks.get("execute.before")!({
+          tool: "shell",
+          callID: "commit-file-changed",
+          messageID: "commit-file-changed-message",
+          sessionID: childSession,
+          agent: "specifier",
+          input: { command: commitCommand },
+        }),
+      ).rejects.toThrow("changed after this role/session last wrote it")
+
+      await writeScratch("commit-file-restored", longMessage)
+      const commitEvent = {
+        tool: "shell",
+        callID: "commit-file-success",
+        messageID: "commit-file-success-message",
+        sessionID: childSession,
+        agent: "specifier",
+        input: { command: commitCommand },
+      }
+      await h.toolHooks.get("execute.before")!(commitEvent)
+      await git(h.root, [
+        "-c",
+        "core.hooksPath=/dev/null",
+        "commit",
+        "-F",
+        scratchPath,
+        "-q",
+      ])
+      await h.toolHooks.get("execute.after")!({
+        ...commitEvent,
+        status: "completed",
+        result: "committed",
+      })
+
+      const committed = await git(h.root, ["log", "-1", "--pretty=%B"])
+      expect(committed.stdout.trim()).toBe(longMessage.trim())
+    } finally {
+      h.restore()
+    }
+  })
+
 })
