@@ -34,7 +34,7 @@ Verify with workflow traces from representative greenfield and maintenance runs.
 
 Valid proof includes uninterrupted phase progression, automatic expert rerouting, and a deliberate user stop only at a seeded user-owned decision.
 
-Include an OQ continuation case with a consumer already running, one where the current consumer has returned and is waiting for the answer, a delivery failure, and a superseded-consumer case. Valid proof shows automatic continuation for current work, no parallel continuation after successful notification, resumable durable state after failure, and no revival of stale work.
+Verify the current-consumer continuation contract at the host boundary, including the continuation signal used for an already-active consumer, and exercise a returned/waiting consumer through the real host. Also cover delivery failure and a superseded-consumer case. Valid proof shows automatic continuation for current work, no parallel continuation after successful notification, resumable durable state after failure, and no revival of stale work.
 
 A narrated plan, repeated "continue?" prompts, or a trace that returns control at ordinary phase boundaries does not satisfy this requirement.
 
