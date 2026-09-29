@@ -749,6 +749,7 @@ async function recordGitSessionOwnership(
   sessionID: string,
   projectDirectory: string,
   paths: readonly string[],
+  recordAttemptProvenance = true,
 ) {
   if (paths.length === 0) return
   const [ownership, binding] = await Promise.all([
@@ -770,7 +771,7 @@ async function recordGitSessionOwnership(
     delete ownership.stagedFingerprints[path]
   }
   await ctx.storage.set(gitSessionOwnershipKey(sessionID), ownership)
-  if (binding) {
+  if (binding && recordAttemptProvenance) {
     await recordGitStepAttemptOwnedFingerprints(
       ctx,
       binding,
@@ -11115,17 +11116,15 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         const sessionID = String(raw.sessionID)
 
         if (raw.status === "completed") {
-          const owned = successfulMutationPaths(
+          const mutationPaths = successfulMutationPaths(
             tool,
             input,
             ctx.location.directory,
-          ).filter(
+          )
+          const owned = mutationPaths.filter(
             (path) =>
               !isAbsolute(path) &&
-              (
-                resourcesWithinScope([path], generalScope) ||
-                roleCommitMessagePath("general", path)
-              ),
+              resourcesWithinScope([path], generalScope),
           )
           if (owned.length > 0) {
             await recordGitSessionOwnership(
@@ -11133,6 +11132,18 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               sessionID,
               ctx.location.directory,
               owned,
+            )
+          }
+          const commitMessageOwned = mutationPaths.filter((path) =>
+            roleCommitMessagePath("general", path),
+          )
+          if (commitMessageOwned.length > 0) {
+            await recordGitSessionOwnership(
+              ctx,
+              sessionID,
+              ctx.location.directory,
+              commitMessageOwned,
+              false,
             )
           }
         }
@@ -11227,6 +11238,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 sessionID,
                 ctx.location.directory,
                 commitMessageOwned,
+                false,
               )
             }
           }
