@@ -9847,6 +9847,18 @@ describe("Skill methodology evidence lifecycle", () => {
 
       const committed = await git(h.root, ["log", "-1", "--pretty=%B"])
       expect(committed.stdout.trim()).toBe(longMessage.trim())
+      await expect(stat(join(h.root, scratchPath))).rejects.toThrow()
+
+      await expect(
+        h.toolHooks.get("execute.before")!({
+          tool: "shell",
+          callID: "commit-file-reuse",
+          messageID: "commit-file-reuse-message",
+          sessionID: childSession,
+          agent: "specifier",
+          input: { command: commitCommand },
+        }),
+      ).rejects.toThrow("must exist as a regular file")
     } finally {
       h.restore()
     }
