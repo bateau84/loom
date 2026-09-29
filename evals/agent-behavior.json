@@ -104,7 +104,7 @@
         "BR-001",
         "BR-008"
       ],
-      "prompt": "A user-owned blocking OQ has just been answered. `loom_oq_answer` returned `notifications: { notified: [\"architect\"], failed: [] }` for the current Architect consumer. Loom's notification targets the exact current step-attempt session and uses steering delivery with resume enabled. The Architect may still be executing, or it may already have returned and be idle. Decide General's immediate action. Also state the recovery boundary if delivery had failed instead.",
+      "prompt": "A user-owned blocking OQ has just been answered. `loom_oq_answer` returned `notifications: { notified: [\"architect\"], failed: [] }` for the current Architect consumer. The Architect may still be executing, or it may already have returned and be idle. Decide General's immediate action. Also state the recovery boundary if notification delivery had failed instead.",
       "trap": "Send a second continuation message, explicitly resume or redispatch Architect after a successful notification, or assume an idle returned session needs a separate General wake-up.",
       "expectations": [
         "Treats the successful Loom notification as the sole continuation signal and does not send another message, resume, or redispatch for the notified Architect.",
