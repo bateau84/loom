@@ -3175,15 +3175,9 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           )
         }
 
-        const expected = ownership.worktreeFingerprints[path]
-        if (!ownership.paths.includes(path) || !expected) {
+        if (!ownership.paths.includes(path)) {
           throw new Error(
             "Commit-message scratch write target already exists but was not authored by this current role/session.",
-          )
-        }
-        if (await worktreeFingerprint(ctx.location.directory, path) !== expected) {
-          throw new Error(
-            "Commit-message scratch write target changed after this role/session last wrote it.",
           )
         }
       }
