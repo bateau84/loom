@@ -28,7 +28,7 @@ import {
 } from "./upgrade-actions"
 
 export const LOOM_NATIVE_TOOL_GUIDANCE =
-  "Loom control-plane tools are available through two equivalent OpenCode surfaces: native loom_* tools and Code Mode mirrors under tools.loom.code.*. Use either surface directly according to the active tool paradigm. If using Code Mode, search for Loom tools and invoke the returned tools.loom.code.* signatures; do not fall back to shell/filesystem discovery for Loom commands. Reviewer/Critic methodology uses a two-part contract: load practitioner guidance with OpenCode's native skill tool, then consume the role companion through loom_assessment or loom_qa; a plain ASSESSMENT.md/QA.md read is artifact inspection, not methodology loading. Interactive status is dashboard-first and does not depend on model prose: the Loom sidebar exposes a stable workflow dashboard URL, while loom_status may also return presentation metadata. Desktop browser preview is optional metadata only; do not invoke tools.browser.preview merely because presentation metadata exists. When a role owns a repository commit, load git-commit-discipline before committing so the commit remains coherent and reviewable. Loom admits bounded role commits only through `git -c core.hooksPath=/dev/null commit -m ...`; plain `git commit` is intentionally denied so repository hooks cannot change the staged scope after Loom validates it. Runtime write scope is discoverable: an attached child that needs additional project-local files calls loom_scope_elevate and continues immediately when granted. If any Loom tool returns continue=false, the child MUST stop its current turn and return control immediately; it must not retry the blocked mutation or continue assuming authority will arrive later."
+  "Loom control-plane tools are available through two equivalent OpenCode surfaces: native loom_* tools and Code Mode mirrors under tools.loom.code.*. Use either surface directly according to the active tool paradigm. If using Code Mode, search for Loom tools and invoke the returned tools.loom.code.* signatures; do not fall back to shell/filesystem discovery for Loom commands. Reviewer/Critic methodology uses a two-part contract: load practitioner guidance with OpenCode's native skill tool, then consume the role companion through loom_assessment or loom_qa; a plain ASSESSMENT.md/QA.md read is artifact inspection, not methodology loading. Interactive status is dashboard-first and does not depend on model prose: the Loom sidebar exposes a stable workflow dashboard URL, while loom_status may also return presentation metadata. Desktop browser preview is optional metadata only; do not invoke tools.browser.preview merely because presentation metadata exists. When a role owns a repository commit, load git-commit-discipline before committing so the commit remains coherent and reviewable. Loom admits bounded role commits through `git -c core.hooksPath=/dev/null commit -m ...`; long Markdown messages may instead use `git -c core.hooksPath=/dev/null commit -F ephemeral-reports/<role>/commit-messages/<name>.md`. Compose that scratch file with edit/write tools, never shell redirection. Plain `git commit` is intentionally denied so repository hooks cannot change the staged scope after Loom validates it. Runtime write scope is discoverable: an attached child that needs additional project-local files calls loom_scope_elevate and continues immediately when granted. If any Loom tool returns continue=false, the child MUST stop its current turn and return control immediately; it must not retry the blocked mutation or continue assuming authority will arrive later."
 import {
   assertWorkflowNotCancelled,
   WorkflowCancelledError,
@@ -107,6 +107,7 @@ import {
 import {
   authorGitShellResourcesAllowed,
   diagnosticExecutionShellResourcesAllowed,
+  gitCommitMessageFile,
   diagnosticShellResourcesAllowed,
   isAllowedGitCommit,
   isGitAuthoringShellCommand,
@@ -245,6 +246,25 @@ const productScopeElevatingAgents = new Set([
 ])
 
 const generalGitWriteScope = ["docs/anchors/**"]
+
+function roleCommitMessagePath(agent: string, resource: string) {
+  if (agent !== "general" && !loomAgents.has(agent)) return false
+  return resourceMatchesScope(
+    resource,
+    `ephemeral-reports/${agent}/commit-messages/**`,
+  )
+}
+
+function shellUsesOwnedCommitMessageFile(
+  resources: readonly string[],
+  agent: string,
+) {
+  if (resources.length === 0) return false
+  return resources.every((command) => {
+    const file = gitCommitMessageFile(command)
+    return Boolean(file && roleCommitMessagePath(agent, file))
+  })
+}
 
 function reviewerAcceptanceWriteScope(step: Workflow["steps"][number]) {
   const write = [...(artifactWriteDefaults.reviewer ?? [])]
@@ -2891,6 +2911,18 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       const agent = String(raw.agent)
       if (!loomAgents.has(agent)) return
 
+      const commitMessagePaths = directMutationPaths.filter((path) =>
+        roleCommitMessagePath(agent, path),
+      )
+      if (commitMessagePaths.length > 0) {
+        if (commitMessagePaths.length !== directMutationPaths.length) {
+          throw new Error(
+            "Do not mix commit-message scratch writes with product mutations in one tool call.",
+          )
+        }
+        return
+      }
+
       const classifiedMutationPaths = await Promise.all(
         directMutationPaths.map(async (path) => ({
           path,
@@ -2965,6 +2997,15 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       if (typeof command !== "string") return
 
       const agent = String(raw.agent ?? "")
+      const commitMessageFile = gitCommitMessageFile(command)
+      if (
+        commitMessageFile &&
+        !roleCommitMessagePath(agent, commitMessageFile)
+      ) {
+        throw new Error(
+          "Git commit message file must be inside the current role's ephemeral-reports/<role>/commit-messages/ namespace.",
+        )
+      }
       if (agent !== "general" && loomAgents.has(agent)) {
         const sessionID = String(raw.sessionID ?? "")
         const workflowId = (await ctx.storage.get(sessionKey(sessionID))) as string | undefined
@@ -9780,6 +9821,19 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           resourceMatchesScope(resource, "ephemeral-reports/**"),
         )
         const reportAgent = typeof event.agent === "string" ? event.agent : ""
+        const commitMessageResources = reportResources.filter((resource: string) =>
+          roleCommitMessagePath(reportAgent, resource),
+        )
+        if (commitMessageResources.length > 0) {
+          if (commitMessageResources.length !== event.resources.length) {
+            event.effect = "deny"
+            event.message =
+              "Do not mix commit-message scratch writes with other report or product mutations."
+            return
+          }
+          event.effect = "allow"
+          return
+        }
         if (
           reportResources.length > 0 &&
           (
@@ -9870,10 +9924,13 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         event.action === "shell" &&
         event.resources.some((resource: string) => resource.replaceAll("\\", "/").includes("ephemeral-reports"))
       ) {
-        event.effect = "deny"
-        event.message =
-          "Shell access to ephemeral report storage is blocked. Use role-scoped edit permissions for report creation and OKF-MCP for discovery/read."
-        return
+        const agent = String(event.agent ?? "")
+        if (!shellUsesOwnedCommitMessageFile(event.resources, agent)) {
+          event.effect = "deny"
+          event.message =
+            "Shell access to ephemeral report storage is blocked. The only exception is a hookless git commit using -F with the current role's ephemeral-reports/<role>/commit-messages/ scratch file."
+          return
+        }
       }
 
       if (event.action === "shell") {
