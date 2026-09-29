@@ -8,6 +8,9 @@ permissions:
   - action: edit
     resource: "docs/requirements/**"
     effect: allow
+  - action: edit
+    resource: "ephemeral-reports/specifier/commit-messages/**"
+    effect: allow
   - action: subagent
     resource: "*"
     effect: deny
