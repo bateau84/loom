@@ -553,7 +553,22 @@ export function isGitAuthoringShellCommand(command: string) {
   })
 }
 
-export function isAllowedGitCommit(command: string) {
+type AllowedGitCommit = {
+  messageFile?: string
+}
+
+function safeCommitMessagePath(path: string) {
+  const normalized = path.replaceAll("\\", "/").replace(/^\.\//, "")
+  if (!safeProjectRelativePath(normalized)) return undefined
+  if (
+    !/^ephemeral-reports\/[A-Za-z0-9_-]+\/commit-messages\/[A-Za-z0-9._/-]+\.md$/.test(
+      normalized,
+    )
+  ) return undefined
+  return normalized
+}
+
+function parsedAllowedGitCommit(command: string): AllowedGitCommit | undefined {
   const words = parsedCommandWords(command)
   if (
     !words ||
@@ -561,25 +576,49 @@ export function isAllowedGitCommit(command: string) {
     words[1] !== "-c" ||
     words[2] !== "core.hooksPath=/dev/null" ||
     words[3] !== "commit"
-  ) return false
+  ) return undefined
 
-  let hasCommitIntent = false
+  let hasInlineMessage = false
+  let messageFile: string | undefined
   for (let index = 4; index < words.length; index += 1) {
     const word = words[index]
     if (word === "-m" || word === "--message") {
       const message = words[index + 1]
-      if (!message) return false
-      hasCommitIntent = true
+      if (!message || messageFile) return undefined
+      hasInlineMessage = true
       index += 1
+      continue
+    }
+    if (word === "-F" || word === "--file") {
+      const file = words[index + 1]
+      if (!file || hasInlineMessage || messageFile) return undefined
+      messageFile = safeCommitMessagePath(file)
+      if (!messageFile) return undefined
+      index += 1
+      continue
+    }
+    if (word.startsWith("--file=")) {
+      if (hasInlineMessage || messageFile) return undefined
+      messageFile = safeCommitMessagePath(word.slice("--file=".length))
+      if (!messageFile) return undefined
       continue
     }
     if (word === "--signoff" || word === "-s") {
       continue
     }
-    return false
+    return undefined
   }
 
-  return hasCommitIntent
+  if (!hasInlineMessage && !messageFile) return undefined
+  return messageFile ? { messageFile } : {}
+}
+
+export function gitCommitMessageFile(command: string) {
+  return parsedAllowedGitCommit(command)?.messageFile
+}
+
+export function isAllowedGitCommit(command: string) {
+  return Boolean(parsedAllowedGitCommit(command))
 }
 
 function workerExecutionAllowed(command: string) {
