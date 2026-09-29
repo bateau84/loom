@@ -316,9 +316,9 @@ async function prepareCommitMessageScratchPath(
 
   try {
     const info = await lstat(join(projectDirectory, normalized))
-    if (info.isSymbolicLink() || !info.isFile()) {
+    if (info.isSymbolicLink() || !info.isFile() || info.nlink !== 1) {
       throw new Error(
-        "Commit-message scratch file must be a regular file, not a symlink or other file type.",
+        "Commit-message scratch file must be a single-link regular file, not a symlink, hardlink, or other file type.",
       )
     }
   } catch (error: any) {
@@ -346,9 +346,9 @@ async function assertOwnedCommitMessageFile(
       throw error
     },
   )
-  if (!info?.isFile() || info.isSymbolicLink()) {
+  if (!info?.isFile() || info.isSymbolicLink() || info.nlink !== 1) {
     throw new Error(
-      "Git commit message file must exist as a regular file written by this current role/session.",
+      "Git commit message file must exist as a single-link regular file written by this current role/session.",
     )
   }
 
@@ -3132,13 +3132,10 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             "Commit-message scratch writes require a current role/step with committable repository scope.",
           )
         }
-        for (const path of commitMessagePaths) {
-          await prepareCommitMessageScratchPath(
-            ctx.location.directory,
-            agent,
-            path,
-          )
-        }
+        await assertCommitMessageScratchWriteTarget(
+          raw,
+          commitMessagePaths,
+        )
         return
       }
       if (
@@ -3148,6 +3145,47 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         throw new Error(
           `${agent} mutation is outside the current Loom write scope. Call loom_scope_elevate for the additional project-local paths before retrying.`,
         )
+      }
+    }
+
+    const assertCommitMessageScratchWriteTarget = async (
+      raw: any,
+      paths: readonly string[],
+    ) => {
+      if (paths.length === 0) return
+      const sessionID = String(raw.sessionID ?? "")
+      const agent = String(raw.agent ?? "")
+      const ownership = await gitSessionOwnership(ctx, sessionID)
+
+      for (const rawPath of paths) {
+        const path = await prepareCommitMessageScratchPath(
+          ctx.location.directory,
+          agent,
+          rawPath,
+        )
+        const absolute = join(ctx.location.directory, path)
+        const info = await lstat(absolute).catch((error: any) => {
+          if (error?.code === "ENOENT") return undefined
+          throw error
+        })
+        if (!info) continue
+        if (!info.isFile() || info.isSymbolicLink() || info.nlink !== 1) {
+          throw new Error(
+            "Commit-message scratch write target must be a single-link regular file.",
+          )
+        }
+
+        const expected = ownership.worktreeFingerprints[path]
+        if (!ownership.paths.includes(path) || !expected) {
+          throw new Error(
+            "Commit-message scratch write target already exists but was not authored by this current role/session.",
+          )
+        }
+        if (await worktreeFingerprint(ctx.location.directory, path) !== expected) {
+          throw new Error(
+            "Commit-message scratch write target changed after this role/session last wrote it.",
+          )
+        }
       }
     }
 
