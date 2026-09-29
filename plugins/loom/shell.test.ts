@@ -292,6 +292,22 @@ describe("Loom Worker shell policy", () => {
     expect(
       workerShellResourcesAllowed(
         [
+          "git -c core.hooksPath=/dev/null commit -F ephemeral-reports/worker/commit-messages/nested/runtime.md",
+        ],
+        scope,
+      ),
+    ).toBe(false)
+    expect(
+      workerShellResourcesAllowed(
+        [
+          "git -c core.hooksPath=/dev/null commit -F ephemeral-reports/worker/commit-messages/runtime.txt",
+        ],
+        scope,
+      ),
+    ).toBe(false)
+    expect(
+      workerShellResourcesAllowed(
+        [
           "git -c core.hooksPath=/dev/null commit -m 'fix: runtime' -F ephemeral-reports/worker/commit-messages/runtime.md",
         ],
         scope,
