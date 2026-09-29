@@ -183,6 +183,26 @@ describe("Loom routing DAG", () => {
     expect(runnable(w).map((step) => step.id)).toEqual(["task:api"])
   })
 
+  test("specialist results require an independent gate before a dependent Worker can run", () => {
+    const w = workflow(buildSteps({
+      humanFacing: false, behavioral: false, structural: false, externalUnknown: false,
+      diagnostic: false, productOutcome: true, workLevel: "wave",
+    }))
+    finishStep(w, "critic-solution", "critic", "pass", "solution pass")
+    applyTaskPlan(w, [
+      { id: "design", title: "Design", objective: "Design contract", dependsOn: [], write: ["docs/architecture/**"], skills: [], verify: ["review"], role: "architect", responsibility: "produce" },
+      { id: "build", title: "Build", objective: "Implement design", dependsOn: ["design"], write: ["src/**"], skills: [], verify: ["test"], role: "worker", responsibility: "execute" },
+    ])
+    finishStep(w, "plan", "planner", "complete", "plan ready")
+    finishStep(w, "review-plan", "reviewer", "pass", "plan pass")
+    expect(runnable(w).map((step) => step.id)).toEqual(["task:design"])
+    expect(() => finishStep(w, "task:design", "worker", "complete", "impersonated")).toThrow("belongs to architect")
+    finishStep(w, "task:design", "architect", "complete", "design ready")
+    expect(runnable(w).map((step) => step.id)).toEqual(["task-review:design"])
+    finishStep(w, "task-review:design", "reviewer", "pass", "design reviewed")
+    expect(runnable(w).map((step) => step.id)).toEqual(["task:build"])
+  })
+
   test("structural maintenance receives knowledge sync even without full product acceptance", () => {
     const w = workflow(buildSteps({
       humanFacing: false,

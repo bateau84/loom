@@ -4,6 +4,11 @@ export const MAX_TASKS = 24
 export const MAX_TASK_ID_LENGTH = 96
 export const MAX_TASK_TEXT_LENGTH = 1_000
 export const MAX_TASK_CONTEXT_ITEMS = 16
+export const LOOM_AGENT_ROLES = [
+  "designer", "specifier", "architect", "reviewer", "critic", "acceptance",
+  "planner", "documenter", "worker", "research", "diagnostic",
+] as const
+export const PLAN_PRODUCER_ROLES = ["worker", "designer", "specifier", "architect", "documenter", "research", "diagnostic"] as const
 
 function boundedText(value: string, label: string) {
   const text = value.trim()
@@ -41,6 +46,9 @@ export type TaskSpec = {
   write: string[]
   skills: string[]
   verify: string[]
+  /** Accountable agent role copied from the persistent semantic Plan. */
+  role?: string
+  responsibility?: "produce" | "execute" | "review" | "obtain-user-decision"
 }
 
 function normalizeTask(input: TaskSpec): TaskSpec {
@@ -57,6 +65,8 @@ function normalizeTask(input: TaskSpec): TaskSpec {
   const write = [...new Set(input.write.map((item) => item.trim()).filter(Boolean))]
   const skills = boundedList(input.skills, `Task ${id} skills`)
   const verify = boundedList(input.verify, `Task ${id} verify`)
+  const role = input.role?.trim()
+  const responsibility = input.responsibility
 
   if (!/^[a-z0-9][a-z0-9-]*$/.test(id)) {
     throw new Error(`Invalid task id ${input.id}; use lowercase letters, numbers, and hyphens.`)
@@ -65,6 +75,10 @@ function normalizeTask(input: TaskSpec): TaskSpec {
     throw new Error(`Task id exceeds maximum of ${MAX_TASK_ID_LENGTH} characters.`)
   }
   if (!title || !objective) throw new Error(`Task ${id} requires title and objective.`)
+  if (role && !/^[a-z][a-z0-9-]*$/.test(role)) throw new Error(`Task ${id} has invalid accountable role.`)
+  if (responsibility && !["produce", "execute", "review", "obtain-user-decision"].includes(responsibility)) {
+    throw new Error(`Task ${id} has invalid responsibility.`)
+  }
   if (!rationale) throw new Error(`Task ${id} requires rationale within the parent Plan.`)
   if (authorityRefs.length === 0) throw new Error(`Task ${id} requires at least one accepted authority reference.`)
   if (acceptanceCriteria.length === 0) throw new Error(`Task ${id} requires at least one falsifiable acceptance criterion.`)
@@ -85,6 +99,8 @@ function normalizeTask(input: TaskSpec): TaskSpec {
     write,
     skills,
     verify,
+    ...(role ? { role } : {}),
+    ...(responsibility ? { responsibility } : {}),
   }
 }
 
