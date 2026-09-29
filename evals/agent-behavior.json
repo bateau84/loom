@@ -108,7 +108,7 @@
       "trap": "Send a second continuation message, explicitly resume or redispatch Architect after a successful notification, or assume an idle returned session needs a separate General wake-up.",
       "expectations": [
         "Treats the successful Loom notification as the sole immediate continuation signal and does not send a parallel message, resume, or redispatch merely because the step is still pending.",
-        "Rejects elapsed time or pending/unreconciled state alone as stall proof; allows recovery only after positive delivery failure or an observed notified child turn that ended/failed unreconciled, with a fresh current-state check that prevents stale-attempt revival."
+        "Rejects elapsed time or pending/unreconciled state alone as stall proof; allows recovery only after confirmed non-delivery/no scheduled signal or an observed notified child turn that ended/failed unreconciled, with a fresh current-state check that prevents stale-attempt revival."
       ],
       "must_not": [
         "Must not create duplicate continuation work from timeout intuition, pending status, or the mere fact that the OQ answer is now known."
@@ -166,6 +166,24 @@
       ],
       "must_not": [
         "Must not turn a partial notification failure into a blanket retry or blanket wait across all OQ consumers."
+      ]
+    },
+    {
+      "id": "AUDIT-OQ-CONTINUATION-05",
+      "agent": "general",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-001",
+        "BR-008"
+      ],
+      "prompt": "`loom_oq_answer` persisted the answer and returned `notifications: { notified: [], failed: [{\"stepId\":\"worker\",\"error\":\"connection closed while sending synthetic input\"}] }`. The Worker is still the current unresolved consumer, but the host gives no evidence whether the synthetic input was accepted before the connection closed. Decide whether General should immediately redispatch the Worker.",
+      "trap": "Treat any `notifications.failed` entry as proof that no wake signal reached the child and immediately send a duplicate continuation.",
+      "expectations": [
+        "Treats the delivery result as ambiguous because the host error does not establish whether the signal was accepted.",
+        "Preserves the answered OQ as a resumable incomplete boundary until host/session evidence distinguishes non-delivery or the child turn is observed to end/fail unreconciled; does not infer failure from pending state or elapsed time."
+      ],
+      "must_not": [
+        "Must not convert an ambiguous transport error into automatic duplicate-dispatch authority."
       ]
     },
     {
