@@ -9963,13 +9963,24 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         )
         const reportAgent = typeof event.agent === "string" ? event.agent : ""
         const commitMessageResources = reportResources.filter((resource: string) =>
-          roleCommitMessagePath(reportAgent, resource),
+          Boolean(commitMessageScratchPath(resource)),
         )
         if (commitMessageResources.length > 0) {
           if (commitMessageResources.length !== event.resources.length) {
             event.effect = "deny"
             event.message =
               "Do not mix commit-message scratch writes with other report or product mutations."
+            return
+          }
+          if (
+            !roleCanOwnRepositoryCommit(reportAgent) ||
+            !commitMessageResources.every((resource: string) =>
+              roleCommitMessagePath(reportAgent, resource),
+            )
+          ) {
+            event.effect = "deny"
+            event.message =
+              "Commit-message scratch is available only to a role that can own the repository commit, inside that role's own namespace."
             return
           }
           if (reportAgent !== "general") {
@@ -9992,6 +10003,18 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               event.effect = "deny"
               event.message =
                 "Commit-message scratch writes require the role's exact current runnable Loom step attempt."
+              return
+            }
+            const declaredScope = (await ctx.storage.get(
+              scopeKey(workflowId, stepId),
+            )) as TaskScope | undefined
+            const effectiveWrite = declaredScope?.write.length
+              ? declaredScope.write
+              : (artifactWriteDefaults[reportAgent] ?? [])
+            if (committableWriteScope(effectiveWrite).length === 0) {
+              event.effect = "deny"
+              event.message =
+                "Commit-message scratch writes require a current role/step with committable repository scope."
               return
             }
           }
