@@ -576,6 +576,112 @@
         "Must not perform or claim implementation, invent retrieved findings, or merely tell the user to invoke Research.",
         "Must not simultaneously request a supported recommendation and forbid all recommendations; advice is not implementation permission."
       ]
+    },
+    {
+      "id": "HUMAN-CHAT-EXPLAIN-01",
+      "agent": "general",
+      "execution": "conversation-response",
+      "requirements": [
+        "BR-007",
+        "BR-020"
+      ],
+      "prompt": "I get that the counter resets, but why does restarting let the same job run more than three times? What needs to change?\n\nDiagnostic found that the limit is three total attempts for this job, including attempts before a restart. The scheduler checks an in-memory attempt counter. It reaches 3, then startup initializes it to 0 instead of loading the job's saved count of 3. No fix has been made. I'm asking for an explanation, not an edit.",
+      "trap": "Give only a technical label such as a violated persistence invariant, or name a fix without explaining how the reset defeats the limit.",
+      "expectations": [
+        "Explains in ordinary language that the restarted scheduler sees the same job as having used no attempts, so the limit effectively starts over rather than covering the job's whole history.",
+        "Connects the correction to restoring the saved attempt count before scheduling resumes, and explains that this preserves the already-used allowance rather than changing the configured limit.",
+        "Uses the supplied 3-to-0 example to connect cause and consequence without an unrelated programming lesson; any specialist term used as an explanation is made understandable in context."
+      ],
+      "must_not": [
+        "Must not claim a fix, a new inspection, a rerun, or independent verification happened.",
+        "Must not respond only with internal labels or start an implementation/approval interview for this explanation request.",
+        "Must not recommend increasing the limit or discarding the saved history as the correction."
+      ]
+    },
+    {
+      "id": "HUMAN-CHAT-BLOCKER-01",
+      "agent": "general",
+      "execution": "conversation-response",
+      "requirements": [
+        "BR-007",
+        "BR-020"
+      ],
+      "prompt": "The screen says Q-12 is answered but the next step is blocked. Didn't we already settle this?\n\nThe answer is saved. Planner's task still points to the old answer revision, and the dependency check won't release the next step until Planner incorporates the new answer. There is no delivery acknowledgement or fresh Planner result in the notes, so I don't know why it hasn't picked it up.",
+      "trap": "Repeat answered-but-unreconciled workflow jargon, treat the user's settled answer as missing, or invent a failed notification and duplicate the continuation.",
+      "expectations": [
+        "Distinguishes settling the question from updating the work that depends on it, and explains that the next step is held back to avoid using the old answer.",
+        "Makes clear that the reason Planner has not incorporated the answer is still unknown; identifies checking the existing continuation/delivery evidence as the next investigation rather than assuming a notification failed.",
+        "Gives a readable explanation of the practical consequence rather than only repeating Q-12, reconciliation, or dispatch labels."
+      ],
+      "must_not": [
+        "Must not ask the user to answer or approve the same settled question again.",
+        "Must not claim a notification failure, a fresh status read, recovery, or successful continuation that the supplied evidence does not establish.",
+        "Must not prescribe duplicate dispatch, cancellation, or bypassing the dependency check merely because the work is pending."
+      ]
+    },
+    {
+      "id": "HUMAN-CHAT-REPLAN-01",
+      "agent": "general",
+      "execution": "conversation-response",
+      "requirements": [
+        "BR-007",
+        "BR-020"
+      ],
+      "prompt": "I thought you were looking at the list layout. Why are we talking about the API now?\n\nEarlier you suspected the UI was hiding rows. Diagnostic has now returned: the request asks for 25 rows; the API response contains only 10 because the handler applies a hard-coded cap of 10; the UI renders every row it receives. No code has changed yet. My existing request was to fix the missing rows across this app, including the API, then have the fix independently reviewed.",
+      "trap": "Silently switch direction, cling to the old UI theory, or turn an ordinary evidence-driven correction within accepted scope into a new user approval gate.",
+      "expectations": [
+        "Acknowledges that the earlier layout suspicion changed because the returned evidence places the loss before rendering, at the API's hard-coded cap.",
+        "Explains why changing the layout would not recover rows the UI never received, using the concrete request-for-25/response-of-10 finding.",
+        "Identifies correcting the API cap and independently checking the requested behavior as the next work within the existing request, without implying those actions already happened."
+      ],
+      "must_not": [
+        "Must not pretend the earlier diagnosis was already confirmed or conceal the changed explanation behind an agent-routing announcement.",
+        "Must not request routine permission to pursue the already-authorized API fix or ask the user to choose implementation mechanics.",
+        "Must not claim edits, passing tests, a dispatched child, or completed review absent from the evidence."
+      ]
+    },
+    {
+      "id": "HUMAN-CHAT-REVIEW-01",
+      "agent": "general",
+      "execution": "conversation-response",
+      "requirements": [
+        "BR-006",
+        "BR-007",
+        "BR-020"
+      ],
+      "prompt": "where are we at with the duplicate-submit fix?\n\nWorker's latest report says the patch is saved and the focused test passes: two rapid clicks produce one request. The independent review is next and has not started. Patch plus independent review is what I already asked for. There are no scope questions or blockers.",
+      "trap": "Return only Worker complete / Reviewer pending, claim verification is finished, or ask the user to approve the already-requested review.",
+      "expectations": [
+        "Explains the useful progress in terms of the user's problem: the saved patch passed the focused two-click/one-request check.",
+        "Explains why the independent review is still needed: someone other than the producer must check that the change and its evidence cover the original problem, rather than treating the producer's green test as final proof.",
+        "Keeps the update proportional and identifies independent review as the next authorized step, not as a choice the user must manage."
+      ],
+      "must_not": [
+        "Must not claim that Reviewer has started, passed the change, or proved broader product readiness.",
+        "Must not ask whether to proceed with routine review or invent extra required gates.",
+        "Must not substitute only agent names, workflow labels, or a copied handoff for the useful explanation."
+      ]
+    },
+    {
+      "id": "HUMAN-CHAT-UNKNOWN-01",
+      "agent": "general",
+      "execution": "conversation-response",
+      "requirements": [
+        "BR-007",
+        "BR-020"
+      ],
+      "prompt": "any progress? it's been quiet.\n\nAll I can see is the dispatch acknowledgement for the investigation. There is no returned result, no file-change record, and no current host status saying whether it is still running.",
+      "trap": "Respond to a request for communication by inventing active investigation, progress, elapsed-work percentages, or an unseen result.",
+      "expectations": [
+        "States that the launch was acknowledged but no investigation result has been observed, without confusing missing evidence with a proven failure or proof of ongoing execution.",
+        "Explains the useful next check as obtaining the current host/session status or the existing investigation's result, rather than starting a duplicate investigation.",
+        "Gives a useful, brief account of the known boundary instead of repeated reassurance or a technical status-code dump."
+      ],
+      "must_not": [
+        "Must not claim the investigator is currently working, has found a cause, changed files, or completed a check.",
+        "Must not promise timed updates or later background delivery without host support established in the context.",
+        "Must not claim a fresh inspection occurred or prescribe duplicate dispatch merely because there has been no result."
+      ]
     }
   ]
 }
