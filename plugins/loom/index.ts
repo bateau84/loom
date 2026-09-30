@@ -2973,6 +2973,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
   async setup(ctx) {
     const pluginBuild = createHash("sha256").update(await readFile(new URL(import.meta.url))).digest("hex")
+    const setupInstance = randomUUID()
     const legacyStorage = ctx.storage as any
     const runtime = await resolveRuntimeIdentity(ctx.location.project.canonical, legacyStorage)
     const rawStorage = await createTransactionalStorage(runtime)
@@ -3462,20 +3463,23 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
     })
 
     await ctx.tool.transform((editor) => {
+      let expectedRosterRegistration: unknown
       const addLoomTool: typeof editor.add = (definition) => {
         const execute = definition.execute
+        const registeredExecute = async (input: Parameters<typeof execute>[0], tool: Parameters<typeof execute>[1]) => {
+          try {
+            await ensureLegacyCancellationBoundary(tool.sessionID)
+            await assertLoomToolAdmission(ctx.storage as any, definition.name, input, tool)
+            return await execute(input, tool)
+          } catch (error) {
+            if (!(error instanceof WorkflowCancelledError)) throw error
+            return { content: renderToolOutput({ error: error.message }) }
+          }
+        }
+        if (definition.name === "roster") expectedRosterRegistration = registeredExecute
         editor.add({
           ...definition,
-          execute: async (input, tool) => {
-            try {
-              await ensureLegacyCancellationBoundary(tool.sessionID)
-              await assertLoomToolAdmission(ctx.storage as any, definition.name, input, tool)
-              return await execute(input, tool)
-            } catch (error) {
-              if (!(error instanceof WorkflowCancelledError)) throw error
-              return { content: renderToolOutput({ error: error.message }) }
-            }
-          },
+          execute: registeredExecute,
         })
       }
 
@@ -3484,6 +3488,45 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         description: "Loom workflow control, shared questions, routing, step state, and bounded project inspection.",
       })
 
+
+      addLoomTool({
+        name: "attestation",
+        description:
+          "Read-only metadata attestation for this live Loom plugin setup instance. Reports bounded provenance and roster-tool registration identity only; never invokes or returns roster data.",
+        input: {
+          type: "object",
+          properties: {},
+          additionalProperties: false,
+        },
+        options: { namespace: "loom", codemode: false },
+        execute: async (_input, tool) => {
+          if (tool.agent !== "general" && tool.agent !== "planner") {
+            throw new Error("The live plugin attestation is available only to General and Planner.")
+          }
+
+          const registrations = await ctx.tool.list()
+          const rosterRegistrations = registrations.filter(({ id }) => id === "loom_roster")
+          if (
+            !expectedRosterRegistration ||
+            rosterRegistrations.length !== 1 ||
+            rosterRegistrations[0]?.execute !== expectedRosterRegistration
+          ) {
+            throw new Error("The effective production roster registration is unknown or was overridden.")
+          }
+
+          return {
+            content: renderToolOutput({
+              provenance: {
+                worktree: runtime.canonicalLocation,
+                entrypoint: import.meta.url,
+                buildFingerprint: pluginBuild,
+                setupInstance,
+                rosterRegistration: { id: "loom_roster", present: true },
+              },
+            }),
+          }
+        },
+      })
 
       addLoomTool({
         name: "roster",
