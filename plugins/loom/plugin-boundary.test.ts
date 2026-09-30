@@ -68,6 +68,10 @@ async function harness(
   ) => { id: string; projectID?: string; parentID?: string; fork?: { sessionID?: string } },
   existing?: { root: string; storage: MemoryStorage },
   synthetic?: (input: Record<string, any>) => void | Promise<void>,
+  agentList: (input?: { location?: { directory?: string } }) => {
+    location: { directory: string }
+    data: readonly { name: string; description?: string }[]
+  } = (input) => ({ location: { directory: input?.location?.directory ?? "" }, data: [] }),
 ) {
   const root = existing?.root ?? await mkdtemp(join(tmpdir(), "loom-plugin-boundary-"))
   if (!existing) roots.push(root)
@@ -102,6 +106,7 @@ async function harness(
     storage,
     rpc: { register: async () => ({}) },
     agent: {
+      list: agentList,
       transform: async (fn: (editor: any) => unknown) =>
         fn({ get: () => undefined, default: () => {} }),
     },
@@ -229,6 +234,69 @@ afterEach(async () => {
 })
 
 describe("Loom registered plugin boundary", () => {
+  test("exposes a live, bounded host roster only to General and Planner", async () => {
+    let roster: Array<{ name: string; description?: string; mode?: string; model?: string }> = [
+      { name: "general", description: "Primary coordinator", mode: "primary", model: "secret-model" },
+      { name: "planner", description: "Plans bounded work", mode: "subagent" },
+    ];
+    let calls = 0;
+    let responseDirectoryOverride: string | undefined;
+    const requestedLocations: string[] = [];
+    const h = await harness(undefined, undefined, undefined, undefined, (input) => {
+      calls += 1;
+      const directory = input?.location?.directory ?? "";
+      requestedLocations.push(directory);
+      return { location: { directory: responseDirectoryOverride ?? directory }, data: roster };
+    });
+    try {
+      expect(h.registered.has("loom_roster")).toBe(true);
+      const first = await h.call("roster", {}, "general", "roster-general");
+      expect(first).toMatchObject({
+        agents: [
+          { name: "general", description: "Primary coordinator" },
+          { name: "planner", description: "Plans bounded work" },
+        ],
+        provenance: {
+          plugin: "loom",
+          worktree: h.runtime.canonicalLocation,
+          entrypoint: expect.any(String),
+          build: expect.stringMatching(/^[a-f0-9]{64}$/),
+        },
+      });
+      expect(first.agents).toEqual([
+        { name: "general", description: "Primary coordinator" },
+        { name: "planner", description: "Plans bounded work" },
+      ]);
+      expect(Object.keys(first).sort()).toEqual(["agents", "provenance", "truncated"]);
+      expect(JSON.stringify(first)).not.toContain("secret-model");
+      expect(calls).toBe(1);
+      expect(requestedLocations).toEqual([h.runtime.canonicalLocation]);
+
+      roster = [{ name: "general", description: "Updated live description" }];
+      const second = await h.call("roster", {}, "planner", "roster-planner");
+      expect(second.agents).toEqual([{ name: "general", description: "Updated live description" }]);
+      expect(calls).toBe(2);
+
+      roster = Array.from({ length: 205 }, (_, index) => ({
+        name: `${index}-${"n".repeat(200)}`,
+        description: "d".repeat(2_100),
+      }));
+      const bounded = await h.call("roster", {}, "planner", "roster-bounded");
+      expect(bounded.agents).toHaveLength(200);
+      expect(bounded.truncated).toBe(true);
+      expect(bounded.agents[0].name).toHaveLength(128);
+      expect(bounded.agents[0].description).toHaveLength(2_000);
+
+      responseDirectoryOverride = "/different-worktree";
+      await expect(h.call("roster", {}, "planner", "roster-wrong-worktree")).rejects.toThrow(/different worktree/);
+      expect(calls).toBe(4);
+      await expect(h.call("roster", {}, "worker", "roster-worker")).rejects.toThrow(/General and Planner/);
+      expect(calls).toBe(4);
+    } finally {
+      h.restore();
+    }
+  });
+
   test("registers equivalent Code Mode mirrors without removing native Loom tools", async () => {
     const { registered, namespaces, restore } = await harness()
     try {
