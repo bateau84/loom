@@ -5,7 +5,7 @@ Critic-only adversarial methodology for work produced with `software-engineering
 ## QA criteria
 
 1. **Attack local simplicity that creates system complexity.** A change can look minimal in its own module while duplicating policy, bypassing an existing invariant, or forcing other components to know implementation detail. Trace the behavior across its real callers and boundaries.
-2. **Attack the chosen module boundary.** A "deep module" can become a god module, hide unrelated policy, centralize contention, or couple lifecycle decisions that should remain independent. Test whether the small interface hides cohesive complexity rather than merely concealing it.
+2. **Attack both sides of module depth.** Treat the full caller contract as interface surface: required ordering, lifecycle/state knowledge, invariants, recovery rules, configuration, and repeated choreography all count. First look for shallow seams where callers reconstruct the same protocol or state machine. Then invert the attack: a "deeper" module can become a god module, hide unrelated policy, centralize contention, steal caller-owned decisions or observability, or couple lifecycle decisions that should remain independent. The useful boundary hides cohesive complexity without merely concealing or over-centralizing it.
 3. **Attack deletion assumptions.** Search for hidden consumers outside obvious call sites: reflection, registration, configuration keys, migrations, plugins, scripts, generated references, serialized names, external callers, or rollback/recovery paths. Deletion is good only when the obsolete path is genuinely obsolete.
 4. **Attack apparently honest green.** Real code and real input can still test the wrong boundary. Look for missing composition, concurrency, recovery, migration, backward-compatibility, environment, and failure-injection cases where unit-level reality does not establish system behavior.
 5. **Attack error-path composition.** Verify that retries, fallback, wrapping, cancellation, partial success, and cleanup preserve the original failure meaning across layers. Look for double handling, lost causality, retry storms, or success reported after partial failure.
@@ -25,6 +25,7 @@ Use probes proportionally to the change:
 - run the change in mixed old/new versions where deployment is not atomic;
 - ask what happens on retry, rollback, cancellation, duplicate delivery, restart, and stale state;
 - inspect what an operator would see during the failure and whether those signals identify cause without leaking sensitive data;
+- enumerate what a caller must know to use the seam correctly; if correctness depends on repeated or undocumented choreography, treat that protocol as interface complexity, then test whether collapsing it would preserve necessary caller control and observability;
 - compare the tests' exercised boundary with the strongest claim made by the implementation or PR.
 
 ## Confidence rule

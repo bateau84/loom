@@ -4,7 +4,7 @@ description: "MANDATORY baseline engineering discipline whenever a task authors 
 license: MIT
 metadata:
   author: Bateau
-  version: "1.0.0"
+  version: "1.1.0"
 ---
 
 # Software Engineering
@@ -22,16 +22,25 @@ This is the baseline discipline for changing software. It does not replace langu
 
 ## Deep modules and information locality
 
-Prefer **deep modules**: small, stable interfaces that hide substantial implementation detail.
+Prefer **deep modules**: substantial behavior behind a small, stable interface.
 
-- Keep behavior that changes together close together.
-- Keep implementation detail behind the narrowest useful boundary.
-- Avoid layers, wrappers, adapters, managers, factories, and helper chains that mostly forward calls without hiding real complexity.
-- Do not split one behavior across many files or modules merely to make pieces smaller.
+The interface is **everything a caller must know to use the module correctly**. This includes not only functions and parameters, but also required ordering, invariants, state transitions, error modes, configuration, and other protocol knowledge.
+
+- **Depth is a property of the interface, not implementation size.** A large implementation composed from many internal modules can still present one small external seam.
+- **Hide coordination, not only code.** If callers must perform the same multi-step sequence, track internal state, understand lifecycle rules, or preserve invariants themselves, that complexity is part of the interface. Prefer moving that protocol behind the module.
+- **Prefer outcome-oriented operations over mechanism-oriented choreography.** Let callers state what they need; let the owning module perform the required transitions, validation, recovery, and bookkeeping when those mechanics belong together.
+- **Watch for repeated orchestration.** If several callers must know `A → B → C`, inspect B's state, recover through D, then retry C, consider whether that sequence should become one deeper operation.
+- **Keep behavior that changes together close together.** A rule should ideally have one owning implementation rather than being reconstructed across callers.
+- **Keep implementation detail behind the narrowest useful boundary.**
+- **Avoid shallow indirection.** Wrappers, managers, factories, helpers, adapters, or interfaces that mostly forward calls without hiding complexity add surface without adding leverage.
+- **Do not split one behavior across many files or modules merely to make pieces smaller.**
+- **Use the deletion test.** If removing a seam forces callers to absorb meaningful coordination, decisions, invariants, or protocol knowledge, the seam is hiding useful complexity. If callers can use the underlying capability correctly with no material new knowledge or choreography, the seam may only be pass-through indirection.
+- **Treat the interface as the primary test surface.** Important behavior should normally be verifiable through the same seam callers use rather than by reaching through it into implementation details.
 - If a small behavior change requires tracing unrelated layers or widespread implementation knowledge, first consider whether the module boundary is too shallow or the information is too scattered.
 - Preserve an existing good boundary rather than introducing a new abstraction simply because the change touches it.
+- Do not introduce speculative seams merely for architectural neatness. A seam should hide real complexity, isolate meaningful variation, or improve locality.
 
-A short function is not automatically simple. A small interface over substantial hidden behavior is often simpler than many tiny public pieces.
+A short function or small file is not automatically simple. Likewise, a module containing substantial internal machinery can be simple to use when callers only need to understand a small, stable contract.
 
 ## Tests and honest green
 
@@ -82,7 +91,7 @@ Before returning implementation work, ask:
 1. Does the code implement the accepted behavior, including important failure and edge cases?
 2. Is there a smaller complete solution with less mechanism?
 3. Did the change leave obsolete code, duplicate paths, speculative scaffolding, or shallow indirection behind?
-4. Are module boundaries deep enough and is the information needed to change the behavior reasonably local?
+4. What must a caller know to use this correctly? Are ordering rules, lifecycle/state mechanics, invariants, recovery, or repeated orchestration leaking through an interface that should own them?
 5. Are errors surfaced and operational signals appropriate to the behavior?
 6. Do tests exercise the real behavior and explain why the result is green?
 7. Is the resulting diff focused and understandable?

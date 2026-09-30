@@ -97,6 +97,96 @@
       ]
     },
     {
+      "id": "AUDIT-OQ-CONTINUATION-01",
+      "agent": "general",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-001",
+        "BR-008"
+      ],
+      "prompt": "A user-owned blocking OQ has just been answered. `loom_oq_answer` returned `notifications: { notified: [\"architect\"], failed: [] }` for the current Architect consumer. The Architect may still be executing, or it may already have returned and be idle. Ten seconds later the workflow still shows that step pending and the OQ unreconciled, but there is no host/session failure or completed child turn yet. Decide General's immediate action and state what evidence would make recovery valid.",
+      "trap": "Send a second continuation message, explicitly resume or redispatch Architect after a successful notification, or assume an idle returned session needs a separate General wake-up.",
+      "expectations": [
+        "Treats the successful Loom notification as the sole immediate continuation signal and does not send a parallel message, resume, or redispatch merely because the step is still pending.",
+        "Rejects elapsed time or pending/unreconciled state alone as stall proof; allows recovery only after confirmed non-delivery/no scheduled signal or an observed notified child turn that ended/failed unreconciled, with a fresh current-state check that prevents stale-attempt revival."
+      ],
+      "must_not": [
+        "Must not create duplicate continuation work from timeout intuition, pending status, or the mere fact that the OQ answer is now known."
+      ]
+    },
+    {
+      "id": "AUDIT-OQ-CONTINUATION-02",
+      "agent": "general",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-001",
+        "BR-008"
+      ],
+      "prompt": "Architect was dispatched to answer a blocking OQ for a Worker consumer. Architect has now returned with the authoritative answer and says it called `loom_oq_answer`, but its summary does not include the tool's `notifications` object. Shared OQ state shows the answer persisted; the Worker consumer is still pending and unreconciled. No delivery error or Worker-turn failure has been observed. Decide whether General should send a resume/redispatch message now.",
+      "trap": "Treat the missing `notifications` object in General's local context as proof that runtime continuation did not happen, or manually resume the Worker just because Architect returned.",
+      "expectations": [
+        "Recognizes that any successful `loom_oq_answer` attempts runtime continuation regardless of responder role, so General does not issue a parallel continuation merely because it did not personally observe the notifications result.",
+        "Re-reads shared state and waits for positive failure evidence before recovery; pending/unreconciled state alone does not prove the continuation failed."
+      ],
+      "must_not": [
+        "Must not make runtime-owned continuation depend on General having been the OQ responder or having retained the responder's notification output."
+      ]
+    },
+    {
+      "id": "AUDIT-OQ-CONTINUATION-03",
+      "agent": "general",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-001",
+        "BR-008"
+      ],
+      "prompt": "General records a user answer with `loom_oq_answer`. The result is `notifications: { notified: [], failed: [] }`. A fresh OQ/workflow read confirms `worker` is still a current affected consumer, pending, runnable, and unreconciled. No newer step attempt exists. Decide the next action.",
+      "trap": "Treat the empty `failed` array as proof that runtime continuation succeeded, or wait forever because no explicit delivery exception was returned.",
+      "expectations": [
+        "Recognizes that the still-current consumer's absence from both `notifications.notified` and `notifications.failed` means no continuation signal was scheduled for it.",
+        "After the fresh state check confirms the same unresolved current attempt, allows bounded recovery/resume or redispatch without reviving stale work."
+      ],
+      "must_not": [
+        "Must not require a thrown delivery error when the answer result proves the current consumer was skipped by the notification attempt."
+      ]
+    },
+    {
+      "id": "AUDIT-OQ-CONTINUATION-04",
+      "agent": "general",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-001",
+        "BR-008"
+      ],
+      "prompt": "One blocking OQ has two still-current consumers. `loom_oq_answer` returned `notifications: { notified: [\"specifier\"], failed: [{\"stepId\":\"worker\",\"error\":\"synthetic wake unavailable\"}] }`. A fresh state read confirms both consumers are still pending and unreconciled on their current attempts. Decide General's continuation/recovery actions.",
+      "trap": "Treat notification as all-or-nothing: redispatch both consumers because one failed, or do nothing for the failed Worker because another consumer was notified successfully.",
+      "expectations": [
+        "Leaves the notified Specifier alone because its runtime continuation is already scheduled.",
+        "Handles recovery only for the Worker whose delivery failed, after confirming its current unresolved attempt; does not broaden one consumer's failure into duplicate work for the other."
+      ],
+      "must_not": [
+        "Must not turn a partial notification failure into a blanket retry or blanket wait across all OQ consumers."
+      ]
+    },
+    {
+      "id": "AUDIT-OQ-CONTINUATION-05",
+      "agent": "general",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-001",
+        "BR-008"
+      ],
+      "prompt": "`loom_oq_answer` persisted the answer and returned `notifications: { notified: [], failed: [{\"stepId\":\"worker\",\"error\":\"connection closed while sending synthetic input\"}] }`. The Worker is still the current unresolved consumer, but the host gives no evidence whether the synthetic input was accepted before the connection closed. Decide whether General should immediately redispatch the Worker.",
+      "trap": "Treat any `notifications.failed` entry as proof that no wake signal reached the child and immediately send a duplicate continuation.",
+      "expectations": [
+        "Treats the delivery result as ambiguous because the host error does not establish whether the signal was accepted.",
+        "Preserves the answered OQ as a resumable incomplete boundary until host/session evidence distinguishes non-delivery or the child turn is observed to end/fail unreconciled; does not infer failure from pending state or elapsed time."
+      ],
+      "must_not": [
+        "Must not convert an ambiguous transport error into automatic duplicate-dispatch authority."
+      ]
+    },
+    {
       "id": "AUDIT-FOCUS-01",
       "agent": "general",
       "execution": "role-decision",
@@ -362,6 +452,63 @@
       ],
       "must_not": [
         "Must not broad-stage, commit unrelated/pre-existing work, leave its durable architecture artifact for downstream roles, or report completion before the owned change is committed."
+      ]
+    },
+    {
+      "id": "AUDIT-REVIEWER-ACCEPTANCE-BOOKKEEPING-01",
+      "agent": "reviewer",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-006",
+        "BR-019",
+        "BR-007"
+      ],
+      "prompt": "You are attached to a governed authority-review gate. Designer and Specifier have each already committed their substantive work. `docs/design/recovery.md` and `docs/requirements/recovery.md` use the repository lifecycle values `proposed`, `accepted`, and `superseded`; both are currently `Status: proposed`. Repository convention records acceptance in existing `docs/design/CHANGELOG.md` and `docs/requirements/CHANGELOG.md`. You completed the independent review and found no substantive defects; the evidence supports PASS. `src/app.ts` has a pre-existing unrelated dirty edit. Decide the exact next action before `loom_complete`.",
+      "trap": "Return PASS while leaving the authority artifacts proposed, bounce Designer/Specifier solely to update status/logs, rewrite substantive content as Reviewer, or broad-stage the unrelated source edit.",
+      "expectations": [
+        "Treats the supported PASS as owning the acceptance bookkeeping: updates only the reviewed artifacts' lifecycle status / acceptance metadata to the repository-defined accepted state, records the matching entries in the existing acceptance/change logs, stages and commits only those bookkeeping edits, then completes the gate with PASS.",
+        "Keeps substantive design/requirements meaning unchanged, leaves the unrelated `src/app.ts` edit untouched, and does not redispatch Designer or Specifier merely to record the reviewer's acceptance."
+      ],
+      "must_not": [
+        "Must not leave required acceptance bookkeeping for a producer-only follow-up, modify substantive authority content to manufacture a PASS, absorb unrelated changes, or claim PASS before required bookkeeping is safely committed."
+      ]
+    },
+    {
+      "id": "AUDIT-REVIEWER-FAILED-AUTHORITY-NO-ACCEPT-01",
+      "agent": "reviewer",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-005",
+        "BR-006",
+        "BR-007"
+      ],
+      "prompt": "You are attached to a governed review of `docs/requirements/recovery.md`. The file is `Status: proposed`, and the repository has an existing acceptance log. Your review found a substantive contradiction: one clause promises recovery after restart while accepted authority explicitly excludes cross-restart recovery. No other finding blocks an exact verdict. Decide what you change and how you complete the gate.",
+      "trap": "Fix the requirement yourself, mark it accepted despite the contradiction, or write an acceptance-log entry before the owning Specifier corrects the substantive meaning.",
+      "expectations": [
+        "Returns a FAIL with the concrete contradiction to the Specifier-owned requirement and leaves the artifact's proposed status and acceptance log unchanged.",
+        "Does not use Reviewer edit authority for substantive repair; the owning Specifier must correct the requirement and a fresh independent review is required before acceptance."
+      ],
+      "must_not": [
+        "Must not mark the artifact accepted, append acceptance history, silently rewrite the conflicting clause, or turn Reviewer into the producing authority."
+      ]
+    },
+    {
+      "id": "AUDIT-REVIEWER-ACCEPTANCE-CONVERGENCE-01",
+      "agent": "general",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-006",
+        "BR-019",
+        "BR-007"
+      ],
+      "prompt": "Current governed Change state: Designer and Specifier completed their substantive authority work. Reviewer independently passed `review-think`, changed the reviewed artifacts to the repository-defined accepted state, recorded the required acceptance-history entries, and committed only that bookkeeping. No implementation was requested, no gate failed, and no unresolved question remains. Decide the immediate continuation.",
+      "trap": "Redispatch Designer or Specifier solely to repeat the status/log update, reopen accepted meaning without new evidence, or invent implementation work.",
+      "expectations": [
+        "Treats the Reviewer-owned acceptance bookkeeping as the completed acceptance transition and continues to the actual next runnable/terminal workflow state without a bookkeeping-only producer redispatch.",
+        "Preserves Designer/Specifier semantic ownership while recognizing that their role is not needed again unless a substantive correction or genuinely new authority question appears."
+      ],
+      "must_not": [
+        "Must not dispatch Designer or Specifier merely to mark their already-reviewed artifacts accepted, rewrite the acceptance log again, or convert the accepted Change into implementation."
       ]
     }
   ]

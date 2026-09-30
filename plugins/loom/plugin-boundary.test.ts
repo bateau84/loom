@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test"
 import { createHash } from "node:crypto"
 import { execFile } from "node:child_process"
 import { promisify } from "node:util"
-import { chmod, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises"
+import { chmod, link, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
 import loomPlugin from "./index"
@@ -2479,6 +2479,21 @@ Verdict: FAIL
       await evaluate!(governedRun)
       expect(governedRun.effect).toBe("allow")
 
+      const diagnosticCommitScratch: any = {
+        agent: "diagnostic",
+        action: "edit",
+        resources: [
+          "ephemeral-reports/diagnostic/commit-messages/diagnosis.md",
+        ],
+        sessionID: "governed-diagnostic-execute",
+        effect: "ask",
+      }
+      await evaluate!(diagnosticCommitScratch)
+      expect(diagnosticCommitScratch.effect).toBe("deny")
+      expect(diagnosticCommitScratch.message).toContain(
+        "role that can own the repository commit",
+      )
+
       const designStarted = await call(
         "start",
         { request: "Define one bounded user-facing change." },
@@ -2553,6 +2568,45 @@ Verdict: FAIL
       }
       await evaluate!(designerAdd)
       expect(designerAdd.effect).toBe("allow")
+
+      const designerCommitMessageEdit: any = {
+        agent: "designer",
+        action: "edit",
+        resources: [
+          "ephemeral-reports/designer/commit-messages/runtime.md",
+        ],
+        sessionID: "designer-author",
+        effect: "ask",
+      }
+      await evaluate!(designerCommitMessageEdit)
+      expect(designerCommitMessageEdit.effect).toBe("allow")
+
+      const crossRoleCommitMessageEdit: any = {
+        agent: "designer",
+        action: "edit",
+        resources: [
+          "ephemeral-reports/specifier/commit-messages/runtime.md",
+        ],
+        sessionID: "designer-author",
+        effect: "ask",
+      }
+      await evaluate!(crossRoleCommitMessageEdit)
+      expect(crossRoleCommitMessageEdit.effect).toBe("deny")
+
+      const crossRoleCommitMessageShell: any = {
+        agent: "designer",
+        action: "shell",
+        resources: [
+          "git -c core.hooksPath=/dev/null commit -F ephemeral-reports/specifier/commit-messages/runtime.md",
+        ],
+        sessionID: "designer-author",
+        effect: "ask",
+      }
+      await evaluate!(crossRoleCommitMessageShell)
+      expect(crossRoleCommitMessageShell.effect).toBe("deny")
+      expect(crossRoleCommitMessageShell.message).toContain(
+        "current role's ephemeral-reports/<role>/commit-messages/",
+      )
 
       const designerOutside: any = {
         agent: "designer",
@@ -2867,6 +2921,645 @@ Verdict: FAIL
       await evaluate(priorAttemptStage)
       expect(priorAttemptStage.effect).toBe("deny")
       expect(priorAttemptStage.message).toContain("current Loom step attempt")
+    } finally {
+      h.restore()
+    }
+  })
+
+  test("Reviewer authority gates scope and commit acceptance bookkeeping", async () => {
+    const h = await harness()
+    try {
+      await initializeGitFixture(h.root)
+      const requirementPath = "docs/requirements/recovery.md"
+      const logPath = "docs/requirements/CHANGELOG.md"
+      await mkdir(join(h.root, "docs", "requirements"), { recursive: true })
+      await writeFile(
+        join(h.root, requirementPath),
+        "# Recovery\n\n**Status:** proposed\n\nRecovery semantics remain producer-owned.\n",
+      )
+      await writeFile(join(h.root, logPath), "# Requirements changelog\n")
+      await writeFile(join(h.root, "src", "app.ts"), "export const app = true\n")
+      await git(h.root, ["add", requirementPath, logPath, "src/app.ts"])
+      await git(h.root, ["commit", "-m", "test: reviewer bookkeeping fixture", "-q"])
+      await writeFile(join(h.root, "src", "app.ts"), "export const app = false\n")
+
+      const generalSession = "reviewer-bookkeeping-general"
+      const specifierSession = "reviewer-bookkeeping-specifier"
+      const reviewerSession = "reviewer-bookkeeping-reviewer"
+      const started = await h.call(
+        "start",
+        { request: "Specify and independently accept one bounded requirement." },
+        "general",
+        generalSession,
+      )
+      const workflowId = String(started.workflowId)
+      expect((await h.call(
+        "route",
+        {
+          humanFacing: false,
+          behavioral: true,
+          structural: false,
+          externalUnknown: false,
+          diagnostic: false,
+          productOutcome: false,
+          implementationRequested: false,
+          executionDepth: "change",
+        },
+        "general",
+        generalSession,
+      )).error).toBeUndefined()
+
+      const specifierGrant = await h.call(
+        "dispatch_grant",
+        { workflowId, stepId: "specifier" },
+        "general",
+        generalSession,
+      )
+      expect((await h.call(
+        "attach",
+        {
+          grantId: specifierGrant.grantId,
+          workflowId,
+          stepId: "specifier",
+        },
+        "specifier",
+        specifierSession,
+      )).attached).toBe(true)
+      expect((await h.call(
+        "complete",
+        {
+          workflowId,
+          stepId: "specifier",
+          summary: "requirement ready for independent review",
+        },
+        "specifier",
+        specifierSession,
+      )).error).toBeUndefined()
+
+      const reviewerGrant = await h.call(
+        "dispatch_grant",
+        { workflowId, stepId: "review-think" },
+        "general",
+        generalSession,
+      )
+      expect((await h.call(
+        "attach",
+        {
+          grantId: reviewerGrant.grantId,
+          workflowId,
+          stepId: "review-think",
+        },
+        "reviewer",
+        reviewerSession,
+      )).attached).toBe(true)
+
+      const scope = await h.call(
+        "scope_status",
+        { workflowId, stepId: "review-think" },
+        "reviewer",
+        reviewerSession,
+      )
+      expect(scope.roleWriteDefault).toEqual(["ephemeral-reports/reviewer/**"])
+      expect(scope.effectiveWrite).toEqual([
+        "docs/requirements/**",
+        "ephemeral-reports/reviewer/**",
+      ])
+
+      const evaluate = h.permissionHooks.get("evaluate")!
+      for (const path of [requirementPath, logPath]) {
+        const bookkeepingEdit: any = {
+          agent: "reviewer",
+          action: "edit",
+          resources: [path],
+          sessionID: reviewerSession,
+          effect: "ask",
+        }
+        await evaluate(bookkeepingEdit)
+        expect(bookkeepingEdit.effect).not.toBe("deny")
+      }
+
+      for (const path of [
+        "docs/design/recovery.md",
+        "docs/architecture/runtime.md",
+        "src/app.ts",
+      ]) {
+        const outsideEdit: any = {
+          agent: "reviewer",
+          action: "edit",
+          resources: [path],
+          sessionID: reviewerSession,
+          effect: "ask",
+        }
+        await evaluate(outsideEdit)
+        expect(outsideEdit.effect).toBe("deny")
+        expect(outsideEdit.message).toContain("current Loom write scope")
+      }
+
+      const escaped = await h.call(
+        "scope_elevate",
+        {
+          workflowId,
+          stepId: "review-think",
+          paths: ["src/app.ts"],
+          reason: "Attempt to turn an acceptance review into implementation.",
+        },
+        "reviewer",
+        reviewerSession,
+      )
+      expect(escaped.error).toContain("independent/advisory role")
+      expect(escaped.roleWriteDefault).toEqual(["ephemeral-reports/reviewer/**"])
+
+      const inventedLogPath = "docs/requirements/acceptance.md"
+      const inventedLogEdit = {
+        tool: "edit",
+        callID: "reviewer-invented-log-edit",
+        messageID: "reviewer-invented-log-edit-message",
+        sessionID: reviewerSession,
+        agent: "reviewer",
+        input: { filePath: inventedLogPath, oldString: "", newString: "" },
+      }
+      await h.toolHooks.get("execute.before")!(inventedLogEdit)
+      await writeFile(join(h.root, inventedLogPath), "# Acceptance\n- invented history\n")
+      await h.toolHooks.get("execute.after")!({
+        ...inventedLogEdit,
+        status: "completed",
+        result: "created",
+      })
+      const inventedLogStageCommand =
+        `git -c core.hooksPath=/dev/null add -- ${inventedLogPath}`
+      const inventedLogStagePermission: any = {
+        agent: "reviewer",
+        action: "shell",
+        resources: [inventedLogStageCommand],
+        sessionID: reviewerSession,
+        effect: "ask",
+      }
+      await evaluate(inventedLogStagePermission)
+      expect(inventedLogStagePermission.effect).toBe("allow")
+      const inventedLogStageEvent = {
+        tool: "shell",
+        callID: "reviewer-invented-log-stage",
+        messageID: "reviewer-invented-log-stage-message",
+        sessionID: reviewerSession,
+        agent: "reviewer",
+        input: { command: inventedLogStageCommand },
+      }
+      await h.toolHooks.get("execute.before")!(inventedLogStageEvent)
+      await git(h.root, ["add", inventedLogPath])
+      await h.toolHooks.get("execute.after")!({
+        ...inventedLogStageEvent,
+        status: "completed",
+        result: "staged",
+      })
+      const inventedLogCommitCommand =
+        "git -c core.hooksPath=/dev/null commit -m 'docs: invent acceptance history'"
+      const inventedLogCommit: any = {
+        agent: "reviewer",
+        action: "shell",
+        resources: [inventedLogCommitCommand],
+        sessionID: reviewerSession,
+        effect: "ask",
+      }
+      await evaluate(inventedLogCommit)
+      expect(inventedLogCommit.effect).toBe("deny")
+      expect(inventedLogCommit.message).toContain(
+        "acceptance/change/decision history file",
+      )
+      await git(h.root, ["restore", "--staged", "--", inventedLogPath])
+      await rm(join(h.root, inventedLogPath), { force: true })
+
+      const substantiveEditEvent = {
+        tool: "edit",
+        callID: "reviewer-substantive-edit",
+        messageID: "reviewer-substantive-edit-message",
+        sessionID: reviewerSession,
+        agent: "reviewer",
+        input: { filePath: requirementPath, oldString: "", newString: "" },
+      }
+      await h.toolHooks.get("execute.before")!(substantiveEditEvent)
+      await writeFile(
+        join(h.root, requirementPath),
+        "# Recovery\n\n**Status:** accepted\n\nReviewer rewrote substantive semantics.\n",
+      )
+      await h.toolHooks.get("execute.after")!({
+        ...substantiveEditEvent,
+        status: "completed",
+        result: "updated",
+      })
+      const substantiveStageCommand =
+        `git -c core.hooksPath=/dev/null add -- ${requirementPath}`
+      const substantiveStagePermission: any = {
+        agent: "reviewer",
+        action: "shell",
+        resources: [substantiveStageCommand],
+        sessionID: reviewerSession,
+        effect: "ask",
+      }
+      await evaluate(substantiveStagePermission)
+      expect(substantiveStagePermission.effect).toBe("allow")
+      const substantiveStageEvent = {
+        tool: "shell",
+        callID: "reviewer-substantive-stage",
+        messageID: "reviewer-substantive-stage-message",
+        sessionID: reviewerSession,
+        agent: "reviewer",
+        input: { command: substantiveStageCommand },
+      }
+      await h.toolHooks.get("execute.before")!(substantiveStageEvent)
+      await git(h.root, ["add", requirementPath])
+      await h.toolHooks.get("execute.after")!({
+        ...substantiveStageEvent,
+        status: "completed",
+        result: "staged",
+      })
+
+      const blockedCommitCommand =
+        "git -c core.hooksPath=/dev/null commit -m 'docs: rewrite reviewed requirement'"
+      const blockedCommit: any = {
+        agent: "reviewer",
+        action: "shell",
+        resources: [blockedCommitCommand],
+        sessionID: reviewerSession,
+        effect: "ask",
+      }
+      await evaluate(blockedCommit)
+      expect(blockedCommit.effect).toBe("deny")
+      expect(blockedCommit.message).toContain(
+        "substantive document content remains producer-owned",
+      )
+
+      await git(h.root, ["restore", "--staged", "--", requirementPath])
+      await writeFile(
+        join(h.root, requirementPath),
+        "# Recovery\n\n**Status:** proposed\n\nRecovery semantics remain producer-owned.\n",
+      )
+
+      for (const [path, content, callID] of [
+        [
+          requirementPath,
+          "# Recovery\n\n**Status:** accepted\n\nRecovery semantics remain producer-owned.\n",
+          "reviewer-status-edit",
+        ],
+        [logPath, "# Requirements changelog\n- recovery accepted\n", "reviewer-log-edit"],
+      ] as const) {
+        const editEvent = {
+          tool: "edit",
+          callID,
+          messageID: callID + "-message",
+          sessionID: reviewerSession,
+          agent: "reviewer",
+          input: { filePath: path, oldString: "", newString: content },
+        }
+        await h.toolHooks.get("execute.before")!(editEvent)
+        await writeFile(join(h.root, path), content)
+        await h.toolHooks.get("execute.after")!({
+          ...editEvent,
+          status: "completed",
+          result: "updated",
+        })
+      }
+
+      const dirtyPass = await h.call(
+        "complete",
+        {
+          workflowId,
+          stepId: "review-think",
+          outcome: "pass",
+          summary: "authority accepted",
+        },
+        "reviewer",
+        reviewerSession,
+      )
+      expect(dirtyPass.error).toContain(
+        "Cannot complete while this role has uncommitted changes",
+      )
+      expect(dirtyPass.error).toContain(requirementPath)
+      expect(dirtyPass.error).toContain(logPath)
+
+      for (const [path, callID] of [
+        [requirementPath, "reviewer-status-stage"],
+        [logPath, "reviewer-log-stage"],
+      ] as const) {
+        const command = `git -c core.hooksPath=/dev/null add -- ${path}`
+        const permission: any = {
+          agent: "reviewer",
+          action: "shell",
+          resources: [command],
+          sessionID: reviewerSession,
+          effect: "ask",
+        }
+        await evaluate(permission)
+        expect(permission.effect).toBe("allow")
+        const stageEvent = {
+          tool: "shell",
+          callID,
+          messageID: callID + "-message",
+          sessionID: reviewerSession,
+          agent: "reviewer",
+          input: { command },
+        }
+        await h.toolHooks.get("execute.before")!(stageEvent)
+        await git(h.root, ["add", path])
+        await h.toolHooks.get("execute.after")!({
+          ...stageEvent,
+          status: "completed",
+          result: "staged",
+        })
+      }
+
+      const commitCommand =
+        "git -c core.hooksPath=/dev/null commit -m 'docs: record reviewed acceptance'"
+      const commitPermission: any = {
+        agent: "reviewer",
+        action: "shell",
+        resources: [commitCommand],
+        sessionID: reviewerSession,
+        effect: "ask",
+      }
+      await evaluate(commitPermission)
+      expect(commitPermission.effect).toBe("allow")
+      const commitEvent = {
+        tool: "shell",
+        callID: "reviewer-bookkeeping-commit",
+        messageID: "reviewer-bookkeeping-commit-message",
+        sessionID: reviewerSession,
+        agent: "reviewer",
+        input: { command: commitCommand },
+      }
+      await h.toolHooks.get("execute.before")!(commitEvent)
+      await git(h.root, [
+        "-c",
+        "core.hooksPath=/dev/null",
+        "commit",
+        "-m",
+        "docs: record reviewed acceptance",
+        "-q",
+      ])
+      await h.toolHooks.get("execute.after")!({
+        ...commitEvent,
+        status: "completed",
+        result: "committed",
+      })
+
+      expect((await h.call(
+        "complete",
+        {
+          workflowId,
+          stepId: "review-think",
+          outcome: "pass",
+          summary: "authority accepted and bookkeeping committed",
+        },
+        "reviewer",
+        reviewerSession,
+      )).error).toBeUndefined()
+
+      expect((await git(h.root, ["status", "--porcelain"])).stdout).toBe(
+        " M src/app.ts\n",
+      )
+    } finally {
+      h.restore()
+    }
+  })
+
+  test("Reviewer acceptance scope is recomputed after reroute", async () => {
+    const h = await harness()
+    try {
+      const generalSession = "reviewer-reroute-general"
+      const specifierSession = "reviewer-reroute-specifier"
+      const reviewerSession = "reviewer-reroute-reviewer"
+      const started = await h.call(
+        "start",
+        { request: "Specify one bounded requirement, then narrow the workflow." },
+        "general",
+        generalSession,
+      )
+      const workflowId = String(started.workflowId)
+      expect((await h.call(
+        "route",
+        {
+          humanFacing: false,
+          behavioral: true,
+          structural: false,
+          externalUnknown: false,
+          diagnostic: false,
+          productOutcome: false,
+          implementationRequested: false,
+          executionDepth: "change",
+        },
+        "general",
+        generalSession,
+      )).error).toBeUndefined()
+
+      const specifierGrant = await h.call(
+        "dispatch_grant",
+        { workflowId, stepId: "specifier" },
+        "general",
+        generalSession,
+      )
+      expect((await h.call(
+        "attach",
+        { grantId: specifierGrant.grantId, workflowId, stepId: "specifier" },
+        "specifier",
+        specifierSession,
+      )).attached).toBe(true)
+      expect((await h.call(
+        "complete",
+        { workflowId, stepId: "specifier", summary: "requirements complete" },
+        "specifier",
+        specifierSession,
+      )).error).toBeUndefined()
+
+      const firstReviewerGrant = await h.call(
+        "dispatch_grant",
+        { workflowId, stepId: "review-think" },
+        "general",
+        generalSession,
+      )
+      expect((await h.call(
+        "attach",
+        { grantId: firstReviewerGrant.grantId, workflowId, stepId: "review-think" },
+        "reviewer",
+        reviewerSession,
+      )).attached).toBe(true)
+      const firstScope = await h.call(
+        "scope_status",
+        { workflowId, stepId: "review-think" },
+        "reviewer",
+        reviewerSession,
+      )
+      expect(firstScope.effectiveWrite).toEqual([
+        "docs/requirements/**",
+        "ephemeral-reports/reviewer/**",
+      ])
+
+      expect((await h.call(
+        "complete",
+        {
+          workflowId,
+          stepId: "review-think",
+          outcome: "pass",
+          summary: "requirements accepted",
+        },
+        "reviewer",
+        reviewerSession,
+      )).error).toBeUndefined()
+
+      expect((await h.call(
+        "route",
+        {
+          humanFacing: false,
+          behavioral: false,
+          structural: false,
+          externalUnknown: true,
+          diagnostic: false,
+          productOutcome: false,
+          implementationRequested: false,
+          executionDepth: "change",
+        },
+        "general",
+        generalSession,
+      )).error).toBeUndefined()
+
+      const researchGrant = await h.call(
+        "dispatch_grant",
+        { workflowId, stepId: "research" },
+        "general",
+        generalSession,
+      )
+      expect((await h.call(
+        "attach",
+        { grantId: researchGrant.grantId, workflowId, stepId: "research" },
+        "research",
+        "reviewer-reroute-research",
+      )).attached).toBe(true)
+      expect((await h.call(
+        "complete",
+        { workflowId, stepId: "research", summary: "research complete" },
+        "research",
+        "reviewer-reroute-research",
+      )).error).toBeUndefined()
+
+      const secondReviewerGrant = await h.call(
+        "dispatch_grant",
+        { workflowId, stepId: "review-think" },
+        "general",
+        generalSession,
+      )
+      expect((await h.call(
+        "attach",
+        { grantId: secondReviewerGrant.grantId, workflowId, stepId: "review-think" },
+        "reviewer",
+        reviewerSession,
+      )).attached).toBe(true)
+      const narrowed = await h.call(
+        "scope_status",
+        { workflowId, stepId: "review-think" },
+        "reviewer",
+        reviewerSession,
+      )
+      expect(narrowed.effectiveWrite).toEqual([
+        "ephemeral-reports/reviewer/**",
+      ])
+
+      const staleAuthorityEdit: any = {
+        agent: "reviewer",
+        action: "edit",
+        resources: ["docs/requirements/recovery.md"],
+        sessionID: reviewerSession,
+        effect: "ask",
+      }
+      await h.permissionHooks.get("evaluate")!(staleAuthorityEdit)
+      expect(staleAuthorityEdit.effect).toBe("deny")
+      expect(staleAuthorityEdit.message).toContain("current Loom write scope")
+    } finally {
+      h.restore()
+    }
+  })
+
+  test("implementation review remains read-only for authority documents", async () => {
+    const h = await harness()
+    try {
+      const generalSession = "reviewer-readonly-general"
+      const workerSession = "reviewer-readonly-worker"
+      const reviewerSession = "reviewer-readonly-reviewer"
+      const started = await h.call(
+        "start",
+        { request: "Implement one bounded settled change." },
+        "general",
+        generalSession,
+      )
+      const workflowId = String(started.workflowId)
+      expect((await h.call(
+        "route",
+        {
+          humanFacing: false,
+          behavioral: false,
+          structural: false,
+          externalUnknown: false,
+          diagnostic: false,
+          productOutcome: false,
+          implementationRequested: true,
+          executionDepth: "task",
+        },
+        "general",
+        generalSession,
+      )).error).toBeUndefined()
+
+      const workerGrant = await h.call(
+        "dispatch_grant",
+        { workflowId, stepId: "worker" },
+        "general",
+        generalSession,
+      )
+      expect((await h.call(
+        "attach",
+        { grantId: workerGrant.grantId, workflowId, stepId: "worker" },
+        "worker",
+        workerSession,
+      )).attached).toBe(true)
+      expect((await h.call(
+        "complete",
+        { workflowId, stepId: "worker", summary: "implementation ready for review" },
+        "worker",
+        workerSession,
+      )).error).toBeUndefined()
+
+      const reviewerGrant = await h.call(
+        "dispatch_grant",
+        { workflowId, stepId: "review-implementation" },
+        "general",
+        generalSession,
+      )
+      expect((await h.call(
+        "attach",
+        {
+          grantId: reviewerGrant.grantId,
+          workflowId,
+          stepId: "review-implementation",
+        },
+        "reviewer",
+        reviewerSession,
+      )).attached).toBe(true)
+
+      const scope = await h.call(
+        "scope_status",
+        { workflowId, stepId: "review-implementation" },
+        "reviewer",
+        reviewerSession,
+      )
+      expect(scope.roleWriteDefault).toEqual(["ephemeral-reports/reviewer/**"])
+      expect(scope.effectiveWrite).toEqual(["ephemeral-reports/reviewer/**"])
+
+      const authorityEdit: any = {
+        agent: "reviewer",
+        action: "edit",
+        resources: ["docs/requirements/recovery.md"],
+        sessionID: reviewerSession,
+        effect: "ask",
+      }
+      await h.permissionHooks.get("evaluate")!(authorityEdit)
+      expect(authorityEdit.effect).toBe("deny")
+      expect(authorityEdit.message).toContain("current Loom write scope")
     } finally {
       h.restore()
     }
@@ -9951,6 +10644,283 @@ describe("Skill methodology evidence lifecycle", () => {
         materialized: false,
         active: false,
       })
+    } finally {
+      h.restore()
+    }
+  })
+
+
+  test("file-backed commit messages require current role-authored unchanged scratch bytes", async () => {
+    const h = await harness(async (_storage, root) => {
+      await initializeGitFixture(root)
+      await mkdir(join(root, "docs", "requirements"), { recursive: true })
+    })
+    try {
+      const generalSession = "commit-file-general"
+      const childSession = "commit-file-specifier"
+      const started = await h.call(
+        "start",
+        { request: "Specify one bounded behavior and commit the resulting requirement." },
+        "general",
+        generalSession,
+      )
+      const workflowId = String(started.workflowId)
+      expect((await h.call(
+        "route",
+        {
+          humanFacing: false,
+          behavioral: true,
+          structural: false,
+          externalUnknown: false,
+          diagnostic: false,
+          productOutcome: false,
+          implementationRequested: true,
+          executionDepth: "change",
+        },
+        "general",
+        generalSession,
+      )).error).toBeUndefined()
+
+      const grant = await h.call(
+        "dispatch_grant",
+        { workflowId, stepId: "specifier" },
+        "general",
+        generalSession,
+      )
+      expect((await h.call(
+        "attach",
+        { grantId: grant.grantId, workflowId, stepId: "specifier" },
+        "specifier",
+        childSession,
+      )).attached).toBe(true)
+
+      const productPath = "docs/requirements/runtime.md"
+      const productBody = "# Runtime\n\nThe committed requirement is scoped.\n"
+      const productPermission: any = {
+        agent: "specifier",
+        action: "edit",
+        resources: [productPath],
+        sessionID: childSession,
+        effect: "ask",
+      }
+      await h.permissionHooks.get("evaluate")!(productPermission)
+      expect(productPermission.effect).not.toBe("deny")
+
+      const productWrite = {
+        tool: "write",
+        callID: "commit-file-product-write",
+        messageID: "commit-file-product-write-message",
+        sessionID: childSession,
+        agent: "specifier",
+        input: { filePath: productPath, content: productBody },
+      }
+      await h.toolHooks.get("execute.before")!(productWrite)
+      await writeFile(join(h.root, productPath), productBody)
+      await h.toolHooks.get("execute.after")!({
+        ...productWrite,
+        status: "completed",
+        result: "written",
+      })
+
+      const stageCommand = `git add -- ${productPath}`
+      const stagePermission: any = {
+        agent: "specifier",
+        action: "shell",
+        resources: [stageCommand],
+        sessionID: childSession,
+        effect: "ask",
+      }
+      await h.permissionHooks.get("evaluate")!(stagePermission)
+      expect(stagePermission.effect).toBe("allow")
+      const stageEvent = {
+        tool: "shell",
+        callID: "commit-file-stage",
+        messageID: "commit-file-stage-message",
+        sessionID: childSession,
+        agent: "specifier",
+        input: { command: stageCommand },
+      }
+      await h.toolHooks.get("execute.before")!(stageEvent)
+      await git(h.root, ["add", "--", productPath])
+      await h.toolHooks.get("execute.after")!({
+        ...stageEvent,
+        status: "completed",
+        result: "staged",
+      })
+
+      const scratchPath =
+        "ephemeral-reports/specifier/commit-messages/runtime.md"
+      const longMessage = [
+        "docs(runtime): define scoped commit messages",
+        "",
+        "### Background",
+        "Loom accepts long Markdown commit messages without shell redirection.",
+        "",
+        "### Verification",
+        "The plugin boundary exercised the real file-backed Git commit path.",
+        "",
+      ].join("\n")
+
+      await mkdir(join(h.root, "ephemeral-reports", "specifier", "commit-messages"), {
+        recursive: true,
+      })
+      await writeFile(join(h.root, scratchPath), "foreign pre-existing message\n")
+
+      const scratchPermission: any = {
+        agent: "specifier",
+        action: "edit",
+        resources: [scratchPath],
+        sessionID: childSession,
+        effect: "ask",
+      }
+      await h.permissionHooks.get("evaluate")!(scratchPermission)
+      expect(scratchPermission.effect).toBe("allow")
+      await expect(
+        h.toolHooks.get("execute.before")!({
+          tool: "write",
+          callID: "commit-file-preexisting-write",
+          messageID: "commit-file-preexisting-write-message",
+          sessionID: childSession,
+          agent: "specifier",
+          input: { filePath: scratchPath, content: longMessage },
+        }),
+      ).rejects.toThrow("already exists but was not authored")
+
+      const commitCommand =
+        `git -c core.hooksPath=/dev/null commit -F ${scratchPath}`
+      const commitPermission: any = {
+        agent: "specifier",
+        action: "shell",
+        resources: [commitCommand],
+        sessionID: childSession,
+        effect: "ask",
+      }
+      await h.permissionHooks.get("evaluate")!(commitPermission)
+      expect(commitPermission.effect).toBe("allow")
+
+      await expect(
+        h.toolHooks.get("execute.before")!({
+          tool: "shell",
+          callID: "commit-file-unowned",
+          messageID: "commit-file-unowned-message",
+          sessionID: childSession,
+          agent: "specifier",
+          input: { command: commitCommand },
+        }),
+      ).rejects.toThrow("was not authored by this current role/session")
+
+      await rm(join(h.root, scratchPath), { force: true })
+      const hardlinkSource = join(h.root, "hardlink-source.md")
+      await writeFile(hardlinkSource, "hardlink sentinel\n")
+      await link(hardlinkSource, join(h.root, scratchPath))
+      await expect(
+        h.toolHooks.get("execute.before")!({
+          tool: "write",
+          callID: "commit-file-hardlink",
+          messageID: "commit-file-hardlink-message",
+          sessionID: childSession,
+          agent: "specifier",
+          input: { filePath: scratchPath, content: longMessage },
+        }),
+      ).rejects.toThrow("single-link regular file")
+      expect(await readFile(hardlinkSource, "utf8")).toBe("hardlink sentinel\n")
+      await rm(join(h.root, scratchPath), { force: true })
+      await rm(hardlinkSource, { force: true })
+
+      await symlink(join(h.root, productPath), join(h.root, scratchPath))
+      await expect(
+        h.toolHooks.get("execute.before")!({
+          tool: "write",
+          callID: "commit-file-symlink",
+          messageID: "commit-file-symlink-message",
+          sessionID: childSession,
+          agent: "specifier",
+          input: { filePath: scratchPath, content: longMessage },
+        }),
+      ).rejects.toThrow("regular file")
+      await rm(join(h.root, scratchPath), { force: true })
+
+      const writeScratch = async (callID: string, content: string) => {
+        const event = {
+          tool: "write",
+          callID,
+          messageID: `${callID}-message`,
+          sessionID: childSession,
+          agent: "specifier",
+          input: { filePath: scratchPath, content },
+        }
+        await h.toolHooks.get("execute.before")!(event)
+        await writeFile(join(h.root, scratchPath), content)
+        await h.toolHooks.get("execute.after")!({
+          ...event,
+          status: "completed",
+          result: "written",
+        })
+      }
+
+      await writeScratch("commit-file-owned", longMessage)
+      await writeFile(join(h.root, scratchPath), longMessage + "tampered\n")
+      await expect(
+        h.toolHooks.get("execute.before")!({
+          tool: "shell",
+          callID: "commit-file-changed",
+          messageID: "commit-file-changed-message",
+          sessionID: childSession,
+          agent: "specifier",
+          input: { command: commitCommand },
+        }),
+      ).rejects.toThrow("changed after this role/session last wrote it")
+
+      await writeScratch("commit-file-restored", longMessage)
+      const commitEvent = {
+        tool: "shell",
+        callID: "commit-file-success",
+        messageID: "commit-file-success-message",
+        sessionID: childSession,
+        agent: "specifier",
+        input: { command: commitCommand },
+      }
+      await h.toolHooks.get("execute.before")!(commitEvent)
+
+      await expect(
+        h.toolHooks.get("execute.before")!({
+          tool: "write",
+          callID: "commit-file-concurrent-rewrite",
+          messageID: "commit-file-concurrent-rewrite-message",
+          sessionID: childSession,
+          agent: "specifier",
+          input: { filePath: scratchPath, content: longMessage + "raced\n" },
+        }),
+      ).rejects.toThrow("locked for write by another agent")
+
+      await git(h.root, [
+        "-c",
+        "core.hooksPath=/dev/null",
+        "commit",
+        "-F",
+        scratchPath,
+        "-q",
+      ])
+      await h.toolHooks.get("execute.after")!({
+        ...commitEvent,
+        status: "completed",
+        result: "committed",
+      })
+
+      const committed = await git(h.root, ["log", "-1", "--pretty=%B"])
+      expect(committed.stdout.trim()).toBe(longMessage.trim())
+      await expect(stat(join(h.root, scratchPath))).rejects.toThrow()
+
+      await expect(
+        h.toolHooks.get("execute.before")!({
+          tool: "shell",
+          callID: "commit-file-reuse",
+          messageID: "commit-file-reuse-message",
+          sessionID: childSession,
+          agent: "specifier",
+          input: { command: commitCommand },
+        }),
+      ).rejects.toThrow("must exist as a single-link regular file")
     } finally {
       h.restore()
     }

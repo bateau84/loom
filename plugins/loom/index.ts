@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto"
-import { lstat, readFile, readlink, realpath } from "node:fs/promises"
+import { lstat, mkdir, readFile, readlink, realpath, unlink } from "node:fs/promises"
 import { dirname, isAbsolute, join, relative, resolve } from "node:path"
 import { execFile } from "node:child_process"
 import { promisify } from "node:util"
@@ -28,7 +28,7 @@ import {
 } from "./upgrade-actions"
 
 export const LOOM_NATIVE_TOOL_GUIDANCE =
-  "Loom control-plane tools are available through two equivalent OpenCode surfaces: native loom_* tools and Code Mode mirrors under tools.loom.code.*. Use either surface directly according to the active tool paradigm. If using Code Mode, search for Loom tools and invoke the returned tools.loom.code.* signatures; do not fall back to shell/filesystem discovery for Loom commands. Reviewer/Critic methodology uses a two-part contract: load practitioner guidance with OpenCode's native skill tool, then consume the role companion through loom_assessment or loom_qa; a plain ASSESSMENT.md/QA.md read is artifact inspection, not methodology loading. Interactive status is dashboard-first and does not depend on model prose: the Loom sidebar exposes a stable workflow dashboard URL, while loom_status may also return presentation metadata. Desktop browser preview is optional metadata only; do not invoke tools.browser.preview merely because presentation metadata exists. When a role owns a repository commit, load git-commit-discipline before committing so the commit remains coherent and reviewable. Loom admits bounded role commits only through `git -c core.hooksPath=/dev/null commit -m ...`; plain `git commit` is intentionally denied so repository hooks cannot change the staged scope after Loom validates it. Runtime write scope is discoverable: an attached child that needs additional project-local files calls loom_scope_elevate and continues immediately when granted. If any Loom tool returns continue=false, the child MUST stop its current turn and return control immediately; it must not retry the blocked mutation or continue assuming authority will arrive later."
+  "Loom control-plane tools are available through two equivalent OpenCode surfaces: native loom_* tools and Code Mode mirrors under tools.loom.code.*. Use either surface directly according to the active tool paradigm. If using Code Mode, search for Loom tools and invoke the returned tools.loom.code.* signatures; do not fall back to shell/filesystem discovery for Loom commands. Reviewer/Critic methodology uses a two-part contract: load practitioner guidance with OpenCode's native skill tool, then consume the role companion through loom_assessment or loom_qa; a plain ASSESSMENT.md/QA.md read is artifact inspection, not methodology loading. Interactive status is dashboard-first and does not depend on model prose: the Loom sidebar exposes a stable workflow dashboard URL, while loom_status may also return presentation metadata. Desktop browser preview is optional metadata only; do not invoke tools.browser.preview merely because presentation metadata exists. When a role owns a repository commit, load git-commit-discipline before committing so the commit remains coherent and reviewable. Loom admits bounded role commits through `git -c core.hooksPath=/dev/null commit -m ...`; long Markdown messages may instead use `git -c core.hooksPath=/dev/null commit -F ephemeral-reports/<role>/commit-messages/<name>.md`. Compose that scratch file with edit/write tools, never shell redirection. Plain `git commit` is intentionally denied so repository hooks cannot change the staged scope after Loom validates it. Runtime write scope is discoverable: an attached child that needs additional project-local files calls loom_scope_elevate and continues immediately when granted. If any Loom tool returns continue=false, the child MUST stop its current turn and return control immediately; it must not retry the blocked mutation or continue assuming authority will arrive later."
 import {
   assertWorkflowNotCancelled,
   WorkflowCancelledError,
@@ -108,7 +108,9 @@ import {
 } from "./diagnostic-sandbox"
 import {
   authorGitShellResourcesAllowed,
+  commitMessageScratchPath,
   diagnosticExecutionShellResourcesAllowed,
+  gitCommitMessageFile,
   diagnosticShellResourcesAllowed,
   isAllowedGitCommit,
   isGitAuthoringShellCommand,
@@ -305,6 +307,183 @@ const productScopeElevatingAgents = new Set([
 
 const generalGitWriteScope = ["docs/anchors/**"]
 
+const repositoryCommitAgents = new Set([
+  "designer",
+  "specifier",
+  "architect",
+  "reviewer",
+  "documenter",
+  "worker",
+])
+
+function roleCanOwnRepositoryCommit(agent: string) {
+  return agent === "general" || repositoryCommitAgents.has(agent)
+}
+
+function roleCommitMessagePath(agent: string, resource: string) {
+  if (!roleCanOwnRepositoryCommit(agent)) return false
+  const normalized = commitMessageScratchPath(resource)
+  return Boolean(
+    normalized &&
+    normalized.startsWith(`ephemeral-reports/${agent}/commit-messages/`),
+  )
+}
+
+async function prepareCommitMessageScratchPath(
+  projectDirectory: string,
+  agent: string,
+  resource: string,
+) {
+  const normalized = commitMessageScratchPath(resource)
+  if (!normalized || !roleCommitMessagePath(agent, normalized)) {
+    throw new Error(
+      "Commit-message scratch path must be a .md file inside the current commit-owning role's ephemeral-reports/<role>/commit-messages/ namespace.",
+    )
+  }
+
+  const parentPaths = [
+    "ephemeral-reports",
+    `ephemeral-reports/${agent}`,
+    `ephemeral-reports/${agent}/commit-messages`,
+  ]
+  for (const path of parentPaths) {
+    try {
+      const info = await lstat(join(projectDirectory, path))
+      if (info.isSymbolicLink() || !info.isDirectory()) {
+        throw new Error(
+          `Commit-message scratch parent must be a real directory, not a symlink or other file: ${path}`,
+        )
+      }
+    } catch (error: any) {
+      if (error?.code !== "ENOENT") throw error
+    }
+  }
+
+  await mkdir(
+    join(projectDirectory, `ephemeral-reports/${agent}/commit-messages`),
+    { recursive: true },
+  )
+
+  for (const path of parentPaths) {
+    const info = await lstat(join(projectDirectory, path))
+    if (info.isSymbolicLink() || !info.isDirectory()) {
+      throw new Error(
+        `Commit-message scratch parent must remain a real directory: ${path}`,
+      )
+    }
+  }
+
+  try {
+    const info = await lstat(join(projectDirectory, normalized))
+    if (info.isSymbolicLink() || !info.isFile() || info.nlink !== 1) {
+      throw new Error(
+        "Commit-message scratch file must be a single-link regular file, not a symlink, hardlink, or other file type.",
+      )
+    }
+  } catch (error: any) {
+    if (error?.code !== "ENOENT") throw error
+  }
+
+  return normalized
+}
+
+async function assertOwnedCommitMessageFile(
+  ctx: any,
+  sessionID: string,
+  projectDirectory: string,
+  agent: string,
+  resource: string,
+) {
+  const normalized = await prepareCommitMessageScratchPath(
+    projectDirectory,
+    agent,
+    resource,
+  )
+  const info = await lstat(join(projectDirectory, normalized)).catch(
+    (error: any) => {
+      if (error?.code === "ENOENT") return undefined
+      throw error
+    },
+  )
+  if (!info?.isFile() || info.isSymbolicLink() || info.nlink !== 1) {
+    throw new Error(
+      "Git commit message file must exist as a single-link regular file written by this current role/session.",
+    )
+  }
+
+  const ownership = await gitSessionOwnership(ctx, sessionID)
+  const expected = ownership.worktreeFingerprints[normalized]
+  if (!ownership.paths.includes(normalized) || !expected) {
+    throw new Error(
+      "Git commit message file was not authored by this current role/session.",
+    )
+  }
+  const actual = await worktreeFingerprint(projectDirectory, normalized)
+  if (actual !== expected) {
+    throw new Error(
+      "Git commit message file changed after this role/session last wrote it.",
+    )
+  }
+}
+
+async function consumeCommitMessageFile(
+  ctx: any,
+  sessionID: string,
+  projectDirectory: string,
+  resource: string,
+) {
+  const normalized = commitMessageScratchPath(resource)
+  if (!normalized) return
+
+  const ownership = await gitSessionOwnership(ctx, sessionID)
+  ownership.paths = ownership.paths.filter((path) => path !== normalized)
+  delete ownership.worktreeFingerprints[normalized]
+  delete ownership.stagedFingerprints[normalized]
+  await ctx.storage.set(gitSessionOwnershipKey(sessionID), ownership)
+
+  try {
+    await unlink(join(projectDirectory, normalized))
+  } catch (error: any) {
+    if (error?.code !== "ENOENT") {
+      // The commit already succeeded. Invalidated ownership is the correctness
+      // boundary; any leftover ignored scratch file must be rewritten before reuse.
+    }
+  }
+}
+
+function shellUsesOwnedCommitMessageFile(
+  resources: readonly string[],
+  agent: string,
+) {
+  if (resources.length === 0) return false
+  return resources.every((command) => {
+    const file = gitCommitMessageFile(command)
+    return Boolean(file && roleCommitMessagePath(agent, file))
+  })
+}
+
+function reviewerAcceptanceWriteScope(step: Workflow["steps"][number]) {
+  const write = [...(artifactWriteDefaults.reviewer ?? [])]
+  if (step.id === "review-think") {
+    if (step.dependsOn.includes("designer")) write.unshift("docs/design/**")
+    if (step.dependsOn.includes("specifier")) write.unshift("docs/requirements/**")
+  } else if (
+    step.id === "review-architecture" &&
+    step.dependsOn.includes("architect")
+  ) {
+    write.unshift("docs/architecture/**")
+  }
+  return [...new Set(write)]
+}
+
+function reviewerOwnsAcceptanceBookkeeping(
+  step: Workflow["steps"][number],
+) {
+  return reviewerAcceptanceWriteScope(step).some(
+    (path) => !path.startsWith("ephemeral-reports/"),
+  )
+}
+
 type GitSessionOwnership = {
   schemaVersion: 3
   authorityId?: string
@@ -474,6 +653,8 @@ function toolMutationLockPaths(
     const command = (input as any).command
     if (typeof command === "string") {
       paths.push(...(scopedGitAddTargets(command) ?? []))
+      const messageFile = gitCommitMessageFile(command)
+      if (messageFile) paths.push(messageFile)
     }
   }
   return [...new Set(paths.map(mutationLockIdentity))].sort()
@@ -627,6 +808,7 @@ async function recordGitSessionOwnership(
   sessionID: string,
   projectDirectory: string,
   paths: readonly string[],
+  recordAttemptProvenance = true,
 ) {
   if (paths.length === 0) return
   const [ownership, binding] = await Promise.all([
@@ -648,7 +830,7 @@ async function recordGitSessionOwnership(
     delete ownership.stagedFingerprints[path]
   }
   await ctx.storage.set(gitSessionOwnershipKey(sessionID), ownership)
-  if (binding) {
+  if (binding && recordAttemptProvenance) {
     await recordGitStepAttemptOwnedFingerprints(
       ctx,
       binding,
@@ -996,6 +1178,112 @@ async function recordGitSessionStagingResult(
   } catch {
     // Best-effort recovery must never replace the original shell failure.
   }
+}
+
+function reviewerAcceptanceLogPath(path: string) {
+  const normalized = normalizeRepoPath(path)
+  return /(?:^|\/)(?:changelog|history|changes|acceptance(?:[-_]?log)?|decision(?:s|[-_]?log)?|reviews?)\.md$/i.test(
+    normalized,
+  )
+}
+
+async function trackedAtHead(projectDirectory: string, path: string) {
+  try {
+    await execFileAsync(
+      "git",
+      ["cat-file", "-e", `HEAD:${safeOwnedRepoPath(path)}`],
+      { cwd: projectDirectory, encoding: "utf8" },
+    )
+    return true
+  } catch {
+    return false
+  }
+}
+
+function reviewerAcceptanceMetadataLine(line: string) {
+  const value = line.trim()
+  if (!value) return true
+  return (
+    /^(?:\*\*)?status\s*:(?:\*\*)?/i.test(value) ||
+    /^(?:\*\*)?(?:accepted|acceptance|reviewed?)(?:[-_ ](?:at|by|date|commit|reviewer))?\s*:(?:\*\*)?/i.test(value)
+  )
+}
+
+async function reviewerAcceptanceCommitError(
+  projectDirectory: string,
+  staged: readonly string[],
+) {
+  for (const raw of staged) {
+    const path = normalizeRepoPath(raw)
+    const { stdout } = await execFileAsync(
+      "git",
+      ["diff", "--cached", "--unified=0", "--no-renames", "--", path],
+      { cwd: projectDirectory, encoding: "utf8" },
+    )
+    const changed = String(stdout)
+      .split("\n")
+      .filter(
+        (line) =>
+          (line.startsWith("+") || line.startsWith("-")) &&
+          !line.startsWith("+++") &&
+          !line.startsWith("---"),
+      )
+
+    if (reviewerAcceptanceLogPath(path)) {
+      if (!(await trackedAtHead(projectDirectory, path))) {
+        return (
+          "Git commit denied: Reviewer may append only to an existing " +
+          `repository acceptance/change/decision history file; ${path} is new.`
+        )
+      }
+      const removed = changed.filter((line) => line.startsWith("-"))
+      if (removed.length > 0) {
+        return (
+          "Git commit denied: Reviewer acceptance history is append-only; " +
+          `${path} removes or rewrites existing history.`
+        )
+      }
+      continue
+    }
+
+    const invalid = changed
+      .map((line) => line.slice(1))
+      .filter((line) => !reviewerAcceptanceMetadataLine(line))
+    if (invalid.length > 0) {
+      return (
+        "Git commit denied: Reviewer acceptance bookkeeping may change only " +
+        `lifecycle/acceptance metadata in ${path}; substantive document content remains producer-owned.`
+      )
+    }
+  }
+  return undefined
+}
+
+async function reviewerAcceptanceStagedCommitError(
+  ctx: any,
+  sessionID: string,
+  projectDirectory: string,
+) {
+  const workflowId = (await ctx.storage.get(
+    sessionKey(sessionID),
+  )) as string | undefined
+  const stepId = (await ctx.storage.get(
+    sessionStepKey(sessionID),
+  )) as string | undefined
+  if (!workflowId || !stepId) return undefined
+
+  const workflow = await readWorkflow(ctx, workflowId)
+  const step = workflow?.steps.find((candidate) => candidate.id === stepId)
+  if (
+    !step ||
+    step.agent !== "reviewer" ||
+    !reviewerOwnsAcceptanceBookkeeping(step)
+  ) {
+    return undefined
+  }
+
+  const staged = await stagedGitPaths(projectDirectory)
+  return reviewerAcceptanceCommitError(projectDirectory, staged)
 }
 
 async function commitScopeError(
@@ -2820,9 +3108,22 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         sessionStepKey(sessionID),
       )) as string | undefined
 
-      if (!raw.agent || raw.agent === "general") return
+      if (!raw.agent) return
       const agent = String(raw.agent)
-      if (!loomAgents.has(agent)) return
+
+      const commitMessagePaths = directMutationPaths.filter((path) =>
+        roleCommitMessagePath(agent, path),
+      )
+      if (agent === "general" && commitMessagePaths.length === 0) return
+      if (agent !== "general" && !loomAgents.has(agent)) return
+      if (
+        commitMessagePaths.length > 0 &&
+        commitMessagePaths.length !== directMutationPaths.length
+      ) {
+        throw new Error(
+          "Do not mix commit-message scratch writes with product mutations in one tool call.",
+        )
+      }
 
       const classifiedMutationPaths = await Promise.all(
         directMutationPaths.map(async (path) => ({
@@ -2860,25 +3161,44 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         )
       }
 
-      if (
-        !workflowId ||
-        !stepId ||
-        !(await exactRunnableStepAttemptBinding(ctx, sessionID, workflowId, stepId))
-      ) {
-        throw new Error(
-          `${agent} mutation requires the exact attached current runnable Loom step attempt.`,
-        )
-      }
-      if (agent === "worker") {
-        await assertWorkerWorkClaim(ctx, workflowId, stepId)
+      if (agent !== "general") {
+        if (
+          !workflowId ||
+          !stepId ||
+          !(await exactRunnableStepAttemptBinding(ctx, sessionID, workflowId, stepId))
+        ) {
+          throw new Error(
+            `${agent} mutation requires the exact attached current runnable Loom step attempt.`,
+          )
+        }
+        if (agent === "worker") {
+          await assertWorkerWorkClaim(ctx, workflowId, stepId)
+        }
       }
 
-      const declaredScope = (await ctx.storage.get(
-        scopeKey(workflowId, stepId),
-      )) as TaskScope | undefined
-      const effectiveWriteScope = declaredScope?.write.length
-        ? declaredScope.write
-        : (artifactWriteDefaults[agent] ?? [])
+      const declaredScope =
+        workflowId && stepId && agent !== "general"
+          ? ((await ctx.storage.get(scopeKey(workflowId, stepId))) as TaskScope | undefined)
+          : undefined
+      const effectiveWriteScope =
+        agent === "general"
+          ? generalGitWriteScope
+          : declaredScope?.write.length
+            ? declaredScope.write
+            : (artifactWriteDefaults[agent] ?? [])
+
+      if (commitMessagePaths.length > 0) {
+        if (committableWriteScope(effectiveWriteScope).length === 0) {
+          throw new Error(
+            "Commit-message scratch writes require a current role/step with committable repository scope.",
+          )
+        }
+        await assertCommitMessageScratchWriteTarget(
+          raw,
+          commitMessagePaths,
+        )
+        return
+      }
       if (
         effectiveWriteScope.length === 0 ||
         !resourcesWithinScope(directMutationPaths, effectiveWriteScope)
@@ -2886,6 +3206,41 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         throw new Error(
           `${agent} mutation is outside the current Loom write scope. Call loom_scope_elevate for the additional project-local paths before retrying.`,
         )
+      }
+    }
+
+    const assertCommitMessageScratchWriteTarget = async (
+      raw: any,
+      paths: readonly string[],
+    ) => {
+      if (paths.length === 0) return
+      const sessionID = String(raw.sessionID ?? "")
+      const agent = String(raw.agent ?? "")
+      const ownership = await gitSessionOwnership(ctx, sessionID)
+
+      for (const rawPath of paths) {
+        const path = await prepareCommitMessageScratchPath(
+          ctx.location.directory,
+          agent,
+          rawPath,
+        )
+        const absolute = join(ctx.location.directory, path)
+        const info = await lstat(absolute).catch((error: any) => {
+          if (error?.code === "ENOENT") return undefined
+          throw error
+        })
+        if (!info) continue
+        if (!info.isFile() || info.isSymbolicLink() || info.nlink !== 1) {
+          throw new Error(
+            "Commit-message scratch write target must be a single-link regular file.",
+          )
+        }
+
+        if (!ownership.paths.includes(path)) {
+          throw new Error(
+            "Commit-message scratch write target already exists but was not authored by this current role/session.",
+          )
+        }
       }
     }
 
@@ -2898,6 +3253,21 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       if (typeof command !== "string") return
 
       const agent = String(raw.agent ?? "")
+      const commitMessageFile = gitCommitMessageFile(command)
+      if (commitMessageFile) {
+        if (!roleCommitMessagePath(agent, commitMessageFile)) {
+          throw new Error(
+            "Git commit message file must be inside the current commit-owning role's ephemeral-reports/<role>/commit-messages/ namespace.",
+          )
+        }
+        await assertOwnedCommitMessageFile(
+          ctx,
+          String(raw.sessionID ?? ""),
+          ctx.location.directory,
+          agent,
+          commitMessageFile,
+        )
+      }
       if (agent !== "general" && loomAgents.has(agent)) {
         const sessionID = String(raw.sessionID ?? "")
         const workflowId = (await ctx.storage.get(sessionKey(sessionID))) as string | undefined
@@ -2983,6 +3353,14 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         true,
       )
       if (error) throw new Error(error)
+      if (String(raw.agent ?? "") === "reviewer") {
+        const acceptanceError = await reviewerAcceptanceStagedCommitError(
+          ctx,
+          String(raw.sessionID),
+          ctx.location.directory,
+        )
+        if (acceptanceError) throw new Error(acceptanceError)
+      }
     }
     const legacyCheckedSessions = new Set<string>()
     const ensureLegacySession = async (sessionID: string) => {
@@ -4834,7 +5212,17 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             }
             await validateWorkflowMutationLocked(ctx, runtime, workflow)
 
-            if (resolvedOutcome === "complete") {
+            const currentStep = workflow.steps.find(
+              (candidate) => candidate.id === stepId,
+            )
+            const reviewerAcceptanceVerdict =
+              tool.agent === "reviewer" &&
+              (resolvedOutcome === "pass" || resolvedOutcome === "fail") &&
+              Boolean(
+                currentStep &&
+                reviewerOwnsAcceptanceBookkeeping(currentStep),
+              )
+            if (resolvedOutcome === "complete" || reviewerAcceptanceVerdict) {
               let ownedWriteScope: string[]
               if (tool.agent === "general") {
                 ownedWriteScope = generalGitWriteScope
@@ -5510,7 +5898,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       addLoomTool({
         name: "oq_answer",
         description:
-          "Answer a shared question as its named responder role. Any Loom role may be an OQ responder. Reviewer/Critic OQ answers are not gate verdicts. User-owned answers are recorded by General with source=user.",
+          "Answer a shared question as its named responder role. Any Loom role may be an OQ responder. Reviewer/Critic OQ answers are not gate verdicts. User-owned answers are recorded by General with source=user. Answering also attempts runtime continuation of each still-current consumer. `notifications.notified` means that consumer has a Loom continuation signal scheduled; `notifications.failed` records delivery errors. A still-current affected consumer omitted from both arrays tells the answer caller that no signal was scheduled for it. General must not issue a parallel continuation merely because an answer succeeded, and missing notification output after another responder or a coordinator restart is not proof of failure. Recover only after re-checking current state and positive evidence that no signal was scheduled, host/session evidence confirms a reported delivery error did not deliver, or a notified child turn ended/failed unreconciled; an ambiguous delivery error is not automatic retry authority. A child responder returning to General should include the `notifications` outcome in its handoff when available so partial delivery can be recovered without guesswork.",
         input: {
           type: "object",
           properties: {
@@ -8597,6 +8985,21 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 scope = (await ctx.storage.get(
                   scopeKey(value.workflowId, value.stepId),
                 )) as TaskScope | undefined
+                if (tool.agent === "reviewer") {
+                  // Reviewer mutation authority is derived from the exact
+                  // current gate shape, not inherited from a prior attempt.
+                  // Recompute it on every fresh attachment so reopen/reroute
+                  // cannot retain stale acceptance-write authority.
+                  scope = {
+                    workflowId: value.workflowId,
+                    stepId: value.stepId,
+                    write: reviewerAcceptanceWriteScope(step),
+                  }
+                  await ctx.storage.set(
+                    scopeKey(value.workflowId, value.stepId),
+                    scope,
+                  )
+                }
 
                 if (
                   (step.task ||
@@ -9948,6 +10351,65 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           resourceMatchesScope(resource, "ephemeral-reports/**"),
         )
         const reportAgent = typeof event.agent === "string" ? event.agent : ""
+        const commitMessageResources = reportResources.filter((resource: string) =>
+          Boolean(commitMessageScratchPath(resource)),
+        )
+        if (commitMessageResources.length > 0) {
+          if (commitMessageResources.length !== event.resources.length) {
+            event.effect = "deny"
+            event.message =
+              "Do not mix commit-message scratch writes with other report or product mutations."
+            return
+          }
+          if (
+            !roleCanOwnRepositoryCommit(reportAgent) ||
+            !commitMessageResources.every((resource: string) =>
+              roleCommitMessagePath(reportAgent, resource),
+            )
+          ) {
+            event.effect = "deny"
+            event.message =
+              "Commit-message scratch is available only to a role that can own the repository commit, inside that role's own namespace."
+            return
+          }
+          if (reportAgent !== "general") {
+            const workflowId = (await ctx.storage.get(
+              sessionKey(event.sessionID),
+            )) as string | undefined
+            const stepId = (await ctx.storage.get(
+              sessionStepKey(event.sessionID),
+            )) as string | undefined
+            if (
+              !workflowId ||
+              !stepId ||
+              !(await exactRunnableStepAttemptBinding(
+                ctx,
+                event.sessionID,
+                workflowId,
+                stepId,
+              ))
+            ) {
+              event.effect = "deny"
+              event.message =
+                "Commit-message scratch writes require the role's exact current runnable Loom step attempt."
+              return
+            }
+            const declaredScope = (await ctx.storage.get(
+              scopeKey(workflowId, stepId),
+            )) as TaskScope | undefined
+            const effectiveWrite = declaredScope?.write.length
+              ? declaredScope.write
+              : (artifactWriteDefaults[reportAgent] ?? [])
+            if (committableWriteScope(effectiveWrite).length === 0) {
+              event.effect = "deny"
+              event.message =
+                "Commit-message scratch writes require a current role/step with committable repository scope."
+              return
+            }
+          }
+          event.effect = "allow"
+          return
+        }
         if (
           reportResources.length > 0 &&
           (
@@ -10038,10 +10500,13 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         event.action === "shell" &&
         event.resources.some((resource: string) => resource.replaceAll("\\", "/").includes("ephemeral-reports"))
       ) {
-        event.effect = "deny"
-        event.message =
-          "Shell access to ephemeral report storage is blocked. Use role-scoped edit permissions for report creation and OKF-MCP for discovery/read."
-        return
+        const agent = String(event.agent ?? "")
+        if (!shellUsesOwnedCommitMessageFile(event.resources, agent)) {
+          event.effect = "deny"
+          event.message =
+            "Shell access to ephemeral report storage is blocked. The only exception is a hookless git commit using -F with the current role's ephemeral-reports/<role>/commit-messages/ scratch file."
+          return
+        }
       }
 
       if (event.action === "shell") {
@@ -10149,6 +10614,18 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               event.effect = "deny"
               event.message = error
               return
+            }
+            if (agent === "reviewer") {
+              const acceptanceError = await reviewerAcceptanceStagedCommitError(
+                ctx,
+                event.sessionID,
+                ctx.location.directory,
+              )
+              if (acceptanceError) {
+                event.effect = "deny"
+                event.message = acceptanceError
+                return
+              }
             }
           }
           event.effect = "allow"
@@ -11000,11 +11477,12 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         const sessionID = String(raw.sessionID)
 
         if (raw.status === "completed") {
-          const owned = successfulMutationPaths(
+          const mutationPaths = successfulMutationPaths(
             tool,
             input,
             ctx.location.directory,
-          ).filter(
+          )
+          const owned = mutationPaths.filter(
             (path) =>
               !isAbsolute(path) &&
               resourcesWithinScope([path], generalScope),
@@ -11015,6 +11493,18 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               sessionID,
               ctx.location.directory,
               owned,
+            )
+          }
+          const commitMessageOwned = mutationPaths.filter((path) =>
+            roleCommitMessagePath("general", path),
+          )
+          if (commitMessageOwned.length > 0) {
+            await recordGitSessionOwnership(
+              ctx,
+              sessionID,
+              ctx.location.directory,
+              commitMessageOwned,
+              false,
             )
           }
         }
@@ -11044,6 +11534,15 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             isAllowedGitCommit(command)
           ) {
             await clearGitSessionStaging(ctx, sessionID)
+            const messageFile = gitCommitMessageFile(command)
+            if (messageFile) {
+              await consumeCommitMessageFile(
+                ctx,
+                sessionID,
+                ctx.location.directory,
+                messageFile,
+              )
+            }
           }
         }
       }
@@ -11085,6 +11584,25 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               ? declaredScope.write
               : defaultScope,
           )
+
+          if (raw.status === "completed") {
+            const commitMessageOwned = successfulMutationPaths(
+              tool,
+              input,
+              ctx.location.directory,
+            ).filter((path) =>
+              roleCommitMessagePath(String(raw.agent), path),
+            )
+            if (commitMessageOwned.length > 0) {
+              await recordGitSessionOwnership(
+                ctx,
+                sessionID,
+                ctx.location.directory,
+                commitMessageOwned,
+                false,
+              )
+            }
+          }
 
           if (writeScope.length) {
             if (raw.status === "completed") {
@@ -11132,6 +11650,15 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 isAllowedGitCommit(command)
               ) {
                 await clearGitSessionStaging(ctx, sessionID)
+                const messageFile = gitCommitMessageFile(command)
+                if (messageFile) {
+                  await consumeCommitMessageFile(
+                    ctx,
+                    sessionID,
+                    ctx.location.directory,
+                    messageFile,
+                  )
+                }
               }
             }
           }
