@@ -220,9 +220,18 @@ function assertPlannedTaskAdmission(
   work: WorkHierarchy | undefined,
   step: Workflow["steps"][number],
 ) {
-  if (!step.task || step.kind === "wait") return
+  const handoffTaskId = step.id.startsWith("task-review:")
+    ? step.id.slice("task-review:".length)
+    : undefined
+  if ((!step.task && !handoffTaskId) || step.kind === "wait") return
   if (!workflow.work || !work) {
     throw new Error("Task admission denied: persistent Plan and Wave binding are required.")
+  }
+  if (
+    handoffTaskId &&
+    !workflow.steps.some((candidate) => candidate.id === `task:${handoffTaskId}` && candidate.task)
+  ) {
+    throw new Error("Task admission denied: handoff Reviewer gate has no current planned Task.")
   }
   const generation = workflow.work.generation
   if (work.generation !== generation) {
@@ -8224,7 +8233,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 if (!runnable(current).some((candidate) => candidate.id === value.stepId)) {
                   throw new Error("Step is no longer runnable.")
                 }
-                if (step.task && step.kind !== "wait") {
+                if ((step.task || step.id.startsWith("task-review:")) && step.kind !== "wait") {
                   const work = current.work
                     ? await readWork(ctx, current.work.objectiveId)
                     : undefined
@@ -8464,7 +8473,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                   scopeKey(value.workflowId, value.stepId),
                 )) as TaskScope | undefined
 
-                if (step.task && step.kind !== "wait") {
+                if ((step.task || step.id.startsWith("task-review:")) && step.kind !== "wait") {
                   assertPlannedTaskAdmission(workflow, work, step)
                 }
               } else {

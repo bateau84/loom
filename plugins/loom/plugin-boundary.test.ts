@@ -7667,6 +7667,66 @@ test("invalidated Plan blocks stale role-owned Task grants and attachments after
   }
 })
 
+test("invalidated Plan blocks stale handoff Reviewer gate grants and attachments after Wave release", async () => {
+  const h = await waveLifecycleFixture("wave", false, "architect", true)
+  try {
+    expect((await h.finish("task:one", "architect")).error).toBeUndefined()
+    const staleGateGrant = await h.call("dispatch_grant", {
+      workflowId: h.workflowId,
+      stepId: "task-review:one",
+    }, "general", "parent")
+    expect(staleGateGrant.error).toBeUndefined()
+
+    expect((await h.call("work_release", {
+      workflowId: h.workflowId,
+      reason: "Release the unconsumed Wave before invalidating its Plan.",
+    }, "general", "parent")).error).toBeUndefined()
+    const raised = await h.call("oq_raise", {
+      workflowId: h.workflowId,
+      stepId: "plan",
+      question: "Invalidate the released Plan before replanning.",
+      responder: "planner",
+      blocking: false,
+    }, "general", "parent")
+    expect(raised.error).toBeUndefined()
+    const oqGrant = await h.call("dispatch_grant", {
+      workflowId: h.workflowId,
+      questionId: raised.question.id,
+    }, "general", "parent")
+    expect(oqGrant.error).toBeUndefined()
+    const planner = "planner-stale-handoff-invalidation"
+    expect((await h.call("attach", {
+      workflowId: h.workflowId,
+      questionId: raised.question.id,
+      grantId: oqGrant.grantId,
+    }, "planner", planner)).attached).toBe(true)
+    expect((await h.call("work_invalidate", {
+      workflowId: h.workflowId,
+      questionId: raised.question.id,
+      expectedVersion: (await h.work()).version,
+      reason: "The released Plan is obsolete.",
+    }, "planner", planner)).error).toBeUndefined()
+
+    const workflow = await h.workflow()
+    expect(workflow.steps.find((step: any) => step.id === "review-plan").status).toBe("passed")
+    expect(workflow.steps.find((step: any) => step.id === "task-review:one").status).toBe("pending")
+    const deniedGrant = await h.call("dispatch_grant", {
+      workflowId: h.workflowId,
+      stepId: "task-review:one",
+    }, "general", "parent")
+    expect(deniedGrant.error ?? "").toContain("invalidated")
+
+    const attached = await h.call("attach", {
+      workflowId: h.workflowId,
+      stepId: "task-review:one",
+      grantId: staleGateGrant.grantId,
+    }, "reviewer", "stale-handoff-reviewer")
+    expect(attached.error ?? "").toContain("invalidated")
+  } finally {
+    h.restore()
+  }
+})
+
 
 const reopenRequest = (workflowId: string, stepId: string) => ({
   workflowId, stepId, reason: "New evidence invalidates this step.",
