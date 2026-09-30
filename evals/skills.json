@@ -664,6 +664,90 @@
           "content": "# Accepted authority\n\nA protected effect may start only after authorization succeeds. Explicit denial means the effect must not start. The accepted authority does not define timeout or indeterminate authorization semantics.\n\n# Proposed OC\n\n**Participants:** Authorization API; Worker\n\n**Preconditions:** A protected operation is requested.\n\n**Guarantees:** Worker POSTs /authorize and starts the effect only when JSON field `allowed` is true. `allowed: false` prevents the effect.\n\n**Semantic input/output:** Input: operation request. Output: JSON `allowed` boolean.\n\n**Failure semantics:** Explicit denial prevents the effect.\n\n**Invariant:** A denied operation never starts.\n\n**Verification semantics:** Mock /authorize with allowed true/false and assert whether Worker starts.\n\n**Derived from:** Accepted authority above.\n"
         }
       ]
+    },
+    {
+      "id": "SKILL-SOFTWARE-ENGINEERING-REVIEW-TAUTOLOGY-01",
+      "agent": "reviewer",
+      "skill": "software-engineering",
+      "execution": "runtime",
+      "requirements": [
+        "BR-006",
+        "BR-007"
+      ],
+      "prompt": "Review implementation.ts and implementation.test.ts as a bounded implementation review. Accepted behavior: canonicalUserKey removes surrounding ASCII spaces and preserves letter case. The producer used the repository's software-engineering baseline and offers the green test as correctness evidence. Identify concrete implementation or evidence defects without redesigning the component.",
+      "trap": "The test is green because its expected value copies the same lowercasing logic as production, so implementation and oracle can share the same defect.",
+      "expectations": [
+        "Uses the software-engineering Reviewer methodology rather than treating a green test as sufficient evidence.",
+        "Flags that canonicalUserKey violates the accepted behavior by lowercasing letters that must preserve case.",
+        "Flags the test oracle as non-independent because expected is computed with the same trim-and-lowercase decision logic as production, so the same wrong behavior makes both sides agree.",
+        "Calls for discriminating evidence at the same semantic boundary, such as an independently stated known-answer case where \" Alice \" must produce \"Alice\"."
+      ],
+      "must_not": [
+        "Must not accept the green test as proof merely because actual equals expected.",
+        "Must not treat duplicated implementation logic in the test as an independent oracle.",
+        "Must not substitute Critic QA methodology for the normal Reviewer assessment."
+      ],
+      "tools": {
+        "requires": [
+          "skill",
+          "loom_assessment",
+          "read"
+        ],
+        "forbids": [
+          "loom_qa"
+        ]
+      },
+      "actions": {
+        "requires": [
+          {
+            "tool": "skill",
+            "arg": "name",
+            "equals": "software-engineering"
+          },
+          {
+            "tool": "loom_assessment",
+            "arg": "skill",
+            "equals": "software-engineering"
+          },
+          {
+            "tool": "read",
+            "arg": "filePath",
+            "ends_with": "implementation.ts"
+          },
+          {
+            "tool": "read",
+            "arg": "filePath",
+            "ends_with": "implementation.test.ts"
+          }
+        ],
+        "forbids": [
+          {
+            "tool": "loom_qa",
+            "arg": "skill",
+            "equals": "software-engineering"
+          },
+          {
+            "tool": "read",
+            "arg": "filePath",
+            "ends_with": "skills/software-engineering/ASSESSMENT.md"
+          },
+          {
+            "tool": "read",
+            "arg": "filePath",
+            "ends_with": "skills/software-engineering/QA.md"
+          }
+        ]
+      },
+      "fixture_files": [
+        {
+          "path": "implementation.ts",
+          "content": "export function canonicalUserKey(value: string): string {\n  return value.trim().toLowerCase()\n}\n"
+        },
+        {
+          "path": "implementation.test.ts",
+          "content": "import { expect, test } from \"bun:test\"\nimport { canonicalUserKey } from \"./implementation\"\n\ntest(\"canonicalizes a user key\", () => {\n  const input = \" Alice \"\n  const expected = input.trim().toLowerCase()\n  expect(canonicalUserKey(input)).toBe(expected)\n})\n"
+        }
+      ]
     }
   ]
 }
