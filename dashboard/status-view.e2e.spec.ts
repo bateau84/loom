@@ -7,6 +7,7 @@ function view(): StatusView {
     state: "active",
     progress: { finished: 2, total: 5, failed: 0 },
     now: [{ step: "task:api", agent: "worker", kind: "work" }],
+    userDecisions: [],
     recent: [],
     upcoming: [],
     questions: { open: 0, routes: [], reconcile: [] },
@@ -16,6 +17,7 @@ function view(): StatusView {
     knowledge: { valid: true },
     work: {
       version: 2,
+      plan: null,
       nextRunnableWaves: [],
       tree: {
         objective: { id: "objective:browser", title: "Browser validation", status: "active", progress: { finished: 1, total: 3 } },
@@ -54,6 +56,7 @@ test("workflow status artifact supports keyboard-native expansion and filtering"
   await page.setContent(renderStatusHtml(view()))
 
   await expect(page.getByRole("heading", { name: "Loom workflow status" })).toBeVisible()
+  await expect(page.getByText("No pending user decisions.", { exact: true })).toBeVisible()
   await expect(page.getByText("Implement API", { exact: true })).toBeVisible()
   await expect(page.locator("details.wave").first()).toHaveAttribute("open", "")
 
@@ -88,6 +91,7 @@ test("cancelled status explains preserved work without advertising runnable step
   cancelled.now = []
   await page.setContent(renderStatusHtml(cancelled))
   await expect(page.getByRole("heading", { name: "Workflow cancelled" })).toBeVisible()
+  await expect(page.getByText("No pending user decisions.", { exact: true })).toBeVisible()
   await expect(page.getByText("Completed work is preserved. Unfinished checks are not passes. Start a new workflow to continue.")).toBeVisible()
   await expect(page.getByText("No runnable step.", { exact: true })).toBeVisible()
   await expect(page.getByRole("region", { name: "Cancellation" })).toContainText("<script>bad()</script>")
