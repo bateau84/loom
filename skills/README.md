@@ -47,4 +47,6 @@ For TypeScript tasks, use `typescript-common-practice` as the language baseline 
 
 For human-facing work, combine cross-surface skills (`information-architecture`, `interaction-design`, `user-flow-design`, `visual-interface-design`) only when that dimension is actually in scope, plus the relevant surface skill.
 
+Use `feature-handoff` when work in one component or session discovers functionality that another independently handled component, repository, or fresh session must provide. The skill produces a standalone copy/paste request rather than transferring conversation history.
+
 See `PORTING.md` for provenance and deferred source skills.
