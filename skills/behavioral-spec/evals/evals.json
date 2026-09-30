@@ -38,6 +38,79 @@
         "Must not omit the OC despite the explicit independently implemented authorization seam.",
         "Must not invent a numeric failover target or concrete router/broker/API."
       ]
+    },
+    {
+      "id": "BehavioralSpec-03",
+      "name": "cross-session-omission-and-vacuous-safety",
+      "trap": "Local non-overlap and unconditional denial look safe, while a lost-contact assumption conceals overlapping execution across sessions.",
+      "prompt": "Specify this accepted anchor for downstream realization: two local sessions can execute a shared workflow; the same logical task must never execute concurrently across sessions. Under normal operation an eligible task with an available authorized session can be started. A session may lose contact while its task keeps executing. There is no accepted promise of automatic recovery or bounded recovery time. The draft says only: each session shall avoid starting a task it is already running; a session may start any task absent from its own running list. A proposed safety fix denies every start. Produce the smallest coherent obligation layer, its basis, and verification intent. Do not choose implementation mechanisms.",
+      "expectations": [
+        "Identifies a concrete two-session sequence in which both local rules hold but the same logical task executes concurrently, and repairs the cross-session scope rather than merely restating local rules.",
+        "Explains why shared logical task identity and cross-session non-overlap are necessary to the accepted promise without requiring a particular identifier format, database, or lock.",
+        "Rejects unconditional denial because the accepted normal-operation capability must remain possible; does not conflate that capability with an unconditional eventual-success promise.",
+        "Handles lost contact without assuming the original execution stopped; makes overlapping restart or retry a violating observation while leaving unsupported automatic recovery and timing guarantees out.",
+        "Provides verification intent that observes actual overlapping execution across sessions and useful normal-operation starts, not only a status field or per-session list."
+      ],
+      "negative_expectations": [
+        "Must not accept the local-only draft or deny-all fix as complete coverage.",
+        "Must not assume away lost contact or treat a missing local record as proof that execution ended.",
+        "Must not prescribe SQLite, a lock service, a lease algorithm, automatic failover, or a recovery deadline as necessary product meaning."
+      ]
+    },
+    {
+      "id": "BehavioralSpec-04",
+      "name": "modality-invention-and-delegated-choice",
+      "trap": "The model inflates a minimal anchor into a mechanism-heavy product or escalates an ordinary choice that was expressly delegated.",
+      "prompt": "Produce a bounded obligation layer from this accepted anchor. Picture: a person saves and reads named drafts locally while offline. Done: after a successful save the named content can be read back unchanged. Minimal version: create new drafts and read saved drafts; replacing existing content is not included. Not this: cloud sync is outside this version. Forces: prefer a simple, responsive experience; no numeric target or storage mechanism is fixed. Specifier is delegated to choose the observable duplicate-name outcome provided the existing content remains unchanged and the conflict is explicit. A suggested expansion says SQLite is mandatory, all saves finish within 100 ms, and cloud sync must be permanently forbidden. Explain the resulting obligations and important choices, including what not to promote into a requirement. Do not design the implementation.",
+      "expectations": [
+        "Preserves offline local creation/readback and unchanged content after successful save as the baseline, with conditions and observable violation criteria.",
+        "Rejects mandatory SQLite as an unsupported realization choice and 100 ms as an invented numeric guarantee; the responsiveness preference is not silently promoted to a target.",
+        "Distinguishes cloud sync being outside this version from a permanent prohibition or a request to implement sync.",
+        "Chooses and explains a coherent duplicate-name behavior within the express delegation, preserving existing content and explicit conflict rather than asking the user to settle routine detail.",
+        "Distinguishes sourced or necessary meaning from the chosen duplicate-name semantics; does not claim the selected valid behavior is the only logically possible realization.",
+        "Keeps the obligation set proportional, with no requirement for a new document type or a BR/QS/OC triplet for each concern."
+      ],
+      "negative_expectations": [
+        "Must not make the suggested database, latency, or permanent sync ban normative.",
+        "Must not introduce replacing existing content, accounts, or synchronization as required capability.",
+        "Must not escalate the delegated duplicate-name choice solely because more than one coherent behavior exists."
+      ]
+    },
+    {
+      "id": "BehavioralSpec-05",
+      "name": "cancellation-completion-composition",
+      "trap": "Each clause looks reasonable alone, but the same export can truthfully satisfy their triggers and acquire contradictory terminal outcomes.",
+      "prompt": "Refine this export specification. Accepted meaning: a valid export with available resources can complete; each export ends in exactly one truthful terminal outcome, completed, cancelled, or failed; completed means a usable export is available. A user may request cancellation while work is running. Precedence when cancellation competes with completion is delegated ordinary semantic detail, not a reserved product decision. Draft clauses: every cancellation request received while running immediately reports cancelled; every successful output write reports completed. A cancellation request can arrive just before the output write finishes. Produce a coherent observable contract and its verification intent, including any legitimate semantic choice. Do not select locks, transactions, storage, or APIs.",
+      "expectations": [
+        "Shows a concrete sequence in which cancellation is reported and a later successful write also reports completion, violating the single-terminal-outcome promise despite satisfying both draft clauses.",
+        "Defines one consistent precedence or cancellation-admission rule within delegated authority, and preserves terminal outcome consistency for subsequent events.",
+        "Retains useful completion and the condition that completed means a usable export exists; does not solve the conflict by denying all work or redefining success as mere attempt.",
+        "States observable violation criteria for contradictory terminal outcomes and false completion, rather than testing only independent happy-path clauses.",
+        "Keeps structural realization separate and does not invent a guarantee to roll back or delete already produced external effects."
+      ],
+      "negative_expectations": [
+        "Must not approve the two draft clauses unchanged or leave the delegated race meaning unresolved.",
+        "Must not prescribe a mutex, transaction, database schema, or unconditional rollback as the normative solution.",
+        "Must not assume concurrent events never occur or weaken the accepted one-terminal-outcome guarantee."
+      ]
+    },
+    {
+      "id": "BehavioralSpec-06",
+      "name": "bounded-readiness-with-reserved-gap",
+      "trap": "A recorded question is counted as fulfilled coverage, or one genuinely reserved decision halts all otherwise independent specification.",
+      "prompt": "Specify an archive extraction feature from this accepted direction: a user selects archive entries and a destination folder; success means all selected entries were extracted with unchanged content; failures are explicit. The product owner has expressly reserved the policy for an entry whose destination path already contains a file, including whether to overwrite, rename, skip, or reject. That decision is not yet answered. Work on entries without destination conflicts is independent of that policy. Another author proposes either marking the entire anchor complete once an open question is recorded, or stopping all specification until the owner replies. Produce the obligation-layer handoff, including the scope ready for realization and remaining gaps. Do not choose implementation mechanisms.",
+      "expectations": [
+        "Produces useful obligations and falsification criteria for the independent no-conflict scope, preserving unchanged selected content on reported success and explicit failures.",
+        "Leaves the expressly reserved existing-destination policy open and identifies the product owner and the dependent behavior it blocks, without selecting a default as settled authority.",
+        "Rejects the claim that merely recording the question completes the whole anchor; clearly bounds downstream readiness to settled independent behavior.",
+        "Does not stop all specification because one local decision remains open, and explains what affected coverage must be revisited when the decision arrives.",
+        "Uses the existing obligation artifacts and a bounded handoff rather than adding a mandatory approval stage or a new normative ledger."
+      ],
+      "negative_expectations": [
+        "Must not mark the dependent conflict behavior or the full anchor complete while the reserved policy remains unresolved.",
+        "Must not invent overwrite, rename, skip, or reject semantics as accepted authority.",
+        "Must not withhold the independent no-conflict specification pending the owner decision or claim exhaustive completeness."
+      ]
     }
   ]
 }
