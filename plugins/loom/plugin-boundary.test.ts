@@ -6989,6 +6989,194 @@ test("planning-only Objective cannot complete or review an invalidated Plan", as
   }
 })
 
+test("fresh workflow adjudicates Critic over carried invalidation, replans, and gates all execution on gen2 review", async () => {
+  const h = await waveLifecycleFixture()
+  try {
+    const oldWorkflowId = h.workflowId
+    const oldWorkflow = await h.workflow()
+    const oldCriticSummary = oldWorkflow.steps.find((step: any) => step.id === "critic-solution").summary
+    const carriedAtStart = await h.work()
+    const oldPlan = carriedAtStart.plans.find((plan: any) => plan.generation === 1)
+
+    expect((await h.call("work_release", {
+      workflowId: oldWorkflowId,
+      reason: "Release the old unconsumed Wave before Plan invalidation.",
+    }, "general", "parent")).error).toBeUndefined()
+    const raised = await h.call("oq_raise", {
+      workflowId: oldWorkflowId,
+      stepId: "plan",
+      question: "Invalidate the old Plan before starting a fresh planning workflow.",
+      responder: "planner",
+      blocking: false,
+    }, "general", "parent")
+    expect(raised.error).toBeUndefined()
+    const oldOqGrant = await h.call("dispatch_grant", {
+      workflowId: oldWorkflowId,
+      questionId: raised.question.id,
+    }, "general", "parent")
+    expect(oldOqGrant.error).toBeUndefined()
+    const oldPlanner = "planner-before-cancel"
+    expect((await h.call("attach", {
+      workflowId: oldWorkflowId,
+      questionId: raised.question.id,
+      grantId: oldOqGrant.grantId,
+    }, "planner", oldPlanner)).attached).toBe(true)
+    const invalidated = await h.call("work_invalidate", {
+      workflowId: oldWorkflowId,
+      questionId: raised.question.id,
+      expectedVersion: (await h.work()).version,
+      reason: "The first Objective Plan is invalidated and retained as history.",
+    }, "planner", oldPlanner)
+    expect(invalidated.error).toBeUndefined()
+    expect((await h.call("cancel", cancellationRequest(oldWorkflowId), "general", "parent")).cancelled).toBe(true)
+
+    const started = await h.call("start", {
+      anchor: "docs/anchors/lifecycle/anchor.md",
+    }, "general", "parent")
+    const freshWorkflowId = String(started.workflowId)
+    expect((await h.call("route", {
+      humanFacing: false,
+      behavioral: false,
+      structural: false,
+      externalUnknown: false,
+      diagnostic: false,
+      productOutcome: true,
+      implementationRequested: true,
+      executionDepth: "objective",
+      workLevel: "wave",
+    }, "general", "parent")).error).toBeUndefined()
+
+    const freshCriticGrant = await h.call("dispatch_grant", {
+      workflowId: freshWorkflowId,
+      stepId: "critic-solution",
+    }, "general", "parent")
+    expect(freshCriticGrant.error).toBeUndefined()
+    const freshCritic = "critic-fresh-workflow"
+    expect((await h.call("attach", {
+      workflowId: freshWorkflowId,
+      stepId: "critic-solution",
+      grantId: freshCriticGrant.grantId,
+    }, "critic", freshCritic)).attached).toBe(true)
+    expect((await h.call("complete", {
+      workflowId: freshWorkflowId,
+      stepId: "critic-solution",
+      outcome: "pass",
+      summary: "Fresh Critic adjudication proceeds while invalidated Plan remains historical.",
+    }, "critic", freshCritic)).error).toBeUndefined()
+
+    const carriedWork = await h.durableStorage.get(`work/${encodeURIComponent(carriedAtStart.objectiveId)}`) as any
+    expect(carriedWork.generation).toBe(1)
+    expect(carriedWork.plans.find((plan: any) => plan.generation === 1).invalidated.reason)
+      .toBe("The first Objective Plan is invalidated and retained as history.")
+    const invalidatedPlanHistory = structuredClone(
+      carriedWork.plans.find((plan: any) => plan.generation === 1),
+    )
+    const plannerGrant = await h.call("dispatch_grant", {
+      workflowId: freshWorkflowId,
+      stepId: "plan",
+    }, "general", "parent")
+    expect(plannerGrant.error).toBeUndefined()
+    const freshPlanner = "planner-fresh-workflow"
+    expect((await h.call("attach", {
+      workflowId: freshWorkflowId,
+      stepId: "plan",
+      grantId: plannerGrant.grantId,
+    }, "planner", freshPlanner)).attached).toBe(true)
+
+    const oldTask = oldPlan.phases[0].waves[0].tasks[0]
+    const staleCompile = await h.call("task_plan", {
+      workflowId: freshWorkflowId,
+      tasks: [{ ...oldTask, write: ["src/**"], skills: [] }],
+    }, "planner", freshPlanner)
+    expect(staleCompile.error).toContain("invalidated")
+    expect((await h.call("dispatch_grant", {
+      workflowId: freshWorkflowId,
+      stepId: "task:one",
+    }, "general", "parent")).error).toContain("Step not found")
+    expect(() => claimWorkflowWave(
+      carriedWork,
+      freshWorkflowId,
+      1,
+      [{ ...oldTask, write: ["src/**"], skills: [] }],
+      false,
+      new Date().toISOString(),
+    )).toThrow("invalidated")
+
+    const freshTask: WorkPlanTask = {
+      ...richPlanTask("fresh-one", "Fresh One", "Deliver from a new semantic Plan generation"),
+      role: "worker",
+      responsibility: "execute",
+    }
+    const versionBeforeReplacement = carriedWork.version
+    const replanned = await h.call("work_plan", richWorkPlanInput(freshWorkflowId, [{
+      id: "fresh-delivery",
+      title: "Fresh delivery",
+      waves: [{ id: "fresh-wave", title: "Fresh wave", tasks: [freshTask] }],
+    }], {
+      expectedVersion: versionBeforeReplacement,
+      replaceReason: "Create a fresh semantic generation after preserving invalidated history.",
+    }), "planner", freshPlanner)
+    expect(replanned.error).toBeUndefined()
+    expect(replanned.generation).toBe(2)
+
+    const generation2 = await h.durableStorage.get(`work/${encodeURIComponent(carriedAtStart.objectiveId)}`) as any
+    expect(generation2.plans.find((plan: any) => plan.generation === 1)).toEqual(invalidatedPlanHistory)
+    expect(generation2.plans.some((plan: any) => plan.generation === 2)).toBe(true)
+    const newSemanticTask = generation2.plans.find((plan: any) => plan.generation === 2).phases[0].waves[0].tasks[0]
+    expect((await h.call("task_plan", {
+      workflowId: freshWorkflowId,
+      tasks: [{ ...newSemanticTask, write: ["src/**"], skills: [] }],
+    }, "planner", freshPlanner)).error).toBeUndefined()
+    expect((await h.call("complete", {
+      workflowId: freshWorkflowId,
+      stepId: "plan",
+      summary: "Generation 2 is compiled and ready for independent review.",
+    }, "planner", freshPlanner)).error).toBeUndefined()
+    expect((await h.call("dispatch_grant", {
+      workflowId: freshWorkflowId,
+      stepId: "task:fresh-one",
+    }, "general", "parent")).error).toContain("not currently runnable")
+
+    const reviewGrant = await h.call("dispatch_grant", {
+      workflowId: freshWorkflowId,
+      stepId: "review-plan",
+    }, "general", "parent")
+    expect(reviewGrant.error).toBeUndefined()
+    const reviewer = "reviewer-fresh-workflow"
+    expect((await h.call("attach", {
+      workflowId: freshWorkflowId,
+      stepId: "review-plan",
+      grantId: reviewGrant.grantId,
+    }, "reviewer", reviewer)).attached).toBe(true)
+    expect((await h.call("complete", {
+      workflowId: freshWorkflowId,
+      stepId: "review-plan",
+      outcome: "pass",
+      summary: "Independent review approved only fresh generation 2.",
+    }, "reviewer", reviewer)).error).toBeUndefined()
+    expect((await h.work()).nodes.find((node: any) => node.logicalId === "fresh-wave" && node.type === "wave")
+      .claimedByWorkflowId).toBe(freshWorkflowId)
+
+    const taskGrant = await h.call("dispatch_grant", {
+      workflowId: freshWorkflowId,
+      stepId: "task:fresh-one",
+    }, "general", "parent")
+    expect(taskGrant.error).toBeUndefined()
+    expect((await h.call("attach", {
+      workflowId: freshWorkflowId,
+      stepId: "task:fresh-one",
+      grantId: taskGrant.grantId,
+    }, "worker", "worker-fresh-generation")).attached).toBe(true)
+
+    const historicalWorkflow = await h.durableStorage.get(`workflow/${oldWorkflowId}`) as any
+    expect(historicalWorkflow.cancellation).toBeDefined()
+    expect(historicalWorkflow.steps.find((step: any) => step.id === "critic-solution").summary)
+      .toBe(oldCriticSummary)
+  } finally {
+    h.restore()
+  }
+})
+
 test("planning-only Reviewer findings reopen Planner and require a fresh review", async () => {
   const h = await harness()
   try {

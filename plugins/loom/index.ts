@@ -5337,8 +5337,25 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               const work = await readWork(ctx, workflow.work.objectiveId)
               if (!work) throw new Error("Persistent work hierarchy not found.")
 
-              assertWorkGeneration(work, workflow.work.generation)
               const taskSteps = plannedTaskSteps(workflow)
+              const currentPlan = workPlanContext(
+                work,
+                undefined,
+                "focused",
+                workflow.work.generation,
+              )
+              const preplanningCriticAdjudication =
+                stepId === "critic-solution" &&
+                taskSteps.length === 0 &&
+                work.generation === workflow.work.generation &&
+                currentPlan?.invalidated
+              // A fresh workflow's Critic must be able to adjudicate before its
+              // Planner replaces a carried invalidated Plan. This exception is
+              // deliberately limited to the preplanning gate: all planning,
+              // review, compilation, and execution paths retain generation checks.
+              if (!preplanningCriticAdjudication) {
+                assertWorkGeneration(work, workflow.work.generation)
+              }
               const taskIds = taskSteps.map((taskStep) => taskStep.task!.id)
               const now = new Date().toISOString()
               const hasPlanReview = workflow.steps.some((candidate) => candidate.id === "review-plan")
