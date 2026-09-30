@@ -220,10 +220,25 @@ function assertPlannedTaskAdmission(
   work: WorkHierarchy | undefined,
   step: Workflow["steps"][number],
 ) {
+  const taskSteps = plannedTaskSteps(workflow)
+  const taskIds = taskSteps.map((taskStep) => taskStep.task!.id)
+  const compiledTaskStepIds = new Set(taskSteps.map((taskStep) => taskStep.id))
+  const handoffGateIds = new Set(
+    workflow.steps
+      .filter((candidate) => candidate.id.startsWith("task-review:"))
+      .map((candidate) => candidate.id),
+  )
   const handoffTaskId = step.id.startsWith("task-review:")
     ? step.id.slice("task-review:".length)
     : undefined
-  if ((!step.task && !handoffTaskId) || step.kind === "wait") return
+  const compiledImplementationReview =
+    step.id === "review-implementation" &&
+    step.kind === "gate" &&
+    taskIds.length > 0 &&
+    step.dependsOn.some((dependency) =>
+      compiledTaskStepIds.has(dependency) || handoffGateIds.has(dependency),
+    )
+  if ((!step.task && !handoffTaskId && !compiledImplementationReview) || step.kind === "wait") return
   if (!workflow.work || !work) {
     throw new Error("Task admission denied: persistent Plan and Wave binding are required.")
   }
@@ -246,7 +261,6 @@ function assertPlannedTaskAdmission(
     throw new Error("Task admission denied: current Plan requires independent review-plan PASS.")
   }
 
-  const taskIds = plannedTaskSteps(workflow).map((taskStep) => taskStep.task!.id)
   const currentFingerprint = workflowTaskSemanticFingerprint(work, taskIds, generation)
   if (!currentFingerprint || workflow.work.taskPlanFingerprint !== currentFingerprint) {
     throw new Error("Task admission denied: compiled Task DAG is stale against the current Plan generation.")
@@ -8233,7 +8247,12 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 if (!runnable(current).some((candidate) => candidate.id === value.stepId)) {
                   throw new Error("Step is no longer runnable.")
                 }
-                if ((step.task || step.id.startsWith("task-review:")) && step.kind !== "wait") {
+                if (
+                  (step.task ||
+                    step.id.startsWith("task-review:") ||
+                    (step.id === "review-implementation" && plannedTaskSteps(current).length > 0)) &&
+                  step.kind !== "wait"
+                ) {
                   const work = current.work
                     ? await readWork(ctx, current.work.objectiveId)
                     : undefined
@@ -8473,7 +8492,12 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                   scopeKey(value.workflowId, value.stepId),
                 )) as TaskScope | undefined
 
-                if ((step.task || step.id.startsWith("task-review:")) && step.kind !== "wait") {
+                if (
+                  (step.task ||
+                    step.id.startsWith("task-review:") ||
+                    (step.id === "review-implementation" && plannedTaskSteps(workflow).length > 0)) &&
+                  step.kind !== "wait"
+                ) {
                   assertPlannedTaskAdmission(workflow, work, step)
                 }
               } else {
