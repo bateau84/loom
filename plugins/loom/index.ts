@@ -2997,6 +2997,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
   id: "loom",
 
   async setup(ctx) {
+    const pluginBuild = createHash("sha256").update(await readFile(new URL(import.meta.url))).digest("hex")
     const legacyStorage = ctx.storage as any
     const runtime = await resolveRuntimeIdentity(ctx.location.project.canonical, legacyStorage)
     const rawStorage = await createTransactionalStorage(runtime)
@@ -3554,6 +3555,51 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         description: "Loom workflow control, shared questions, routing, step state, and bounded project inspection.",
       })
 
+
+      addLoomTool({
+        name: "roster",
+        description:
+          "Read-only live OpenCode agent names and descriptions. Available only to General and Planner; this is discovery, not execution authority.",
+        input: {
+          type: "object",
+          properties: {},
+          additionalProperties: false,
+        },
+        options: { namespace: "loom", codemode: false },
+        execute: async (_input, tool) => {
+          if (tool.agent !== "general" && tool.agent !== "planner") {
+            throw new Error("The live host roster is available only to General and Planner.")
+          }
+
+          const roster = await ctx.agent.list({
+            location: { directory: runtime.canonicalLocation },
+          })
+          if (roster.location.directory !== runtime.canonicalLocation) {
+            throw new Error("OpenCode returned an agent roster for a different worktree.")
+          }
+          const agents = roster.data
+          const maxAgents = 200
+          const maxNameLength = 128
+          const maxDescriptionLength = 2_000
+          return {
+            content: renderToolOutput({
+              agents: agents.slice(0, maxAgents).map(({ name, description }) => ({
+                name: name.slice(0, maxNameLength),
+                description: typeof description === "string"
+                  ? description.slice(0, maxDescriptionLength)
+                  : "",
+              })),
+              truncated: agents.length > maxAgents,
+              provenance: {
+                plugin: "loom",
+                worktree: runtime.canonicalLocation,
+                entrypoint: import.meta.url,
+                build: pluginBuild,
+              },
+            }),
+          }
+        },
+      })
 
       addLoomTool({
         name: "find",
