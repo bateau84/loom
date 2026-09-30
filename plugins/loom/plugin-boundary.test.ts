@@ -104,6 +104,7 @@ async function harness(
         fn({ get: () => undefined, default: () => {} }),
     },
     tool: {
+      list: async () => [...registered.entries()].map(([id, definition]) => ({ ...definition, id })),
       transform: async (fn: (editor: any) => unknown) =>
         fn({
           namespace: (definition: { name: string; description: string }) =>
@@ -227,6 +228,43 @@ afterEach(async () => {
 })
 
 describe("Loom registered plugin boundary", () => {
+  test("attests only live setup metadata and the exact effective roster registration", async () => {
+    let rosterCalls = 0
+    const h = await harness(undefined, undefined, undefined, undefined, (input) => {
+      rosterCalls++
+      return { location: { directory: input?.location?.directory ?? "" }, data: [] }
+    })
+    try {
+      expect(h.registered.has("loom_attestation")).toBe(true)
+      expect(rosterCalls).toBe(0)
+      const first = await h.call("attestation", {}, "general", "attestation-general")
+      const second = await h.call("attestation", {}, "planner", "attestation-planner")
+      expect(rosterCalls).toBe(0)
+      expect(Object.keys(first)).toEqual(["provenance"])
+      expect(first.provenance).toEqual({
+        worktree: h.runtime.canonicalLocation,
+        entrypoint: expect.stringMatching(/^file:/),
+        buildFingerprint: expect.stringMatching(/^[a-f0-9]{64}$/),
+        setupInstance: expect.stringMatching(/^[0-9a-f-]{36}$/),
+        rosterRegistration: { id: "loom_roster", present: true },
+      })
+      expect(second.provenance.setupInstance).toBe(first.provenance.setupInstance)
+      expect(Object.keys(first.provenance)).toEqual([
+        "worktree", "entrypoint", "buildFingerprint", "setupInstance", "rosterRegistration",
+      ])
+      await expect(h.call("attestation", {}, "worker", "attestation-worker")).rejects.toThrow(/General and Planner/)
+
+      h.registered.set("loom_roster", {
+        ...h.registered.get("loom_roster")!,
+        execute: async () => ({ content: "overridden" }),
+      })
+      await expect(h.call("attestation", {}, "general", "attestation-overridden")).rejects.toThrow(/unknown or was overridden/)
+      expect(rosterCalls).toBe(0)
+    } finally {
+      h.restore()
+    }
+  })
+
   test("exposes a live, bounded host roster only to General and Planner", async () => {
     let roster: Array<{ name: string; description?: string; mode?: string; model?: string }> = [
       { name: "general", description: "Primary coordinator", mode: "primary", model: "secret-model" },
