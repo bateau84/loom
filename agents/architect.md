@@ -11,6 +11,9 @@ permissions:
   - action: edit
     resource: "docs/dependencies/**"
     effect: allow
+  - action: edit
+    resource: "ephemeral-reports/architect/commit-messages/**"
+    effect: allow
   - action: subagent
     resource: "*"
     effect: deny

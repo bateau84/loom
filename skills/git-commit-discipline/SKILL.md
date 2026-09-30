@@ -15,6 +15,58 @@ metadata:
 
 A commit small enough to be safe (§1) is also small enough to explain honestly (§2) - the two disciplines reinforce each other. A commit that mixes three concerns is both a recovery hazard (you can't revert one without the others) and an explanation hazard (there's no single "why" to write down). Split it for either reason and you've split it for both.
 
+## Loom-compatible Git commands
+
+When Loom's runtime is active, its Git surface is intentionally narrower than generic Git. Use these forms rather than improvising equivalent commands. Outside Loom, use the repository/host's normal approved commit mechanism; this skill does not independently authorize disabling repository hooks.
+
+```bash
+git status --short
+git diff --stat
+git diff -- path/to/fileA path/to/fileB
+
+git add -- path/to/fileA path/to/fileB
+git diff --cached --check
+git diff --cached --stat
+git diff --cached
+
+git -c core.hooksPath=/dev/null commit -m "<type>(<scope>): <subject>"
+```
+
+For a short or medium multi-paragraph message, repeat `-m`:
+
+```bash
+git -c core.hooksPath=/dev/null commit -m "<type>(<scope>): <subject>" -m "<why / important reasoning>" -m "Verification: <checks performed>"
+```
+
+For a long Markdown message, compose it with the normal edit/write tool under the current role's reserved scratch namespace:
+
+```text
+ephemeral-reports/<role>/commit-messages/<unique-name>.md
+```
+
+Then use the file as the complete commit message:
+
+```bash
+git -c core.hooksPath=/dev/null commit -F ephemeral-reports/<role>/commit-messages/<unique-name>.md
+```
+
+The scratch file is non-committable. Never stage it. The current commit-owning role/session must write the exact file bytes before using `-F`; Loom rejects a pre-existing, cross-role, stale/changed, symlink, hardlinked, or other non-single-link regular message file. A successful file-backed commit consumes the scratch file, so write a fresh message file for the next commit. Do not use shell redirection, heredocs, arbitrary `-F` paths, or another role's scratch namespace to construct a commit message.
+
+Loom intentionally rejects plain `git commit`, `git commit -a`, `git add .`, `git add -A`, and partial staging with `git add -p`. Loom tracks admitted whole-file bytes for authorship/provenance, so partial staging does not fit that model.
+
+When the assigned delivery outcome includes publishing the branch, use the bounded forms Loom supports:
+
+```bash
+git push -u origin HEAD
+git push origin HEAD
+```
+
+After an authorized history rewrite, use `--force-with-lease`, never plain `--force`:
+
+```bash
+git push --force-with-lease origin HEAD
+```
+
 ## 0. The two problems this skill solves
 
 1. **Loss.** Uncommitted work has no safety net - a single destructive command can erase hours of a session. §1, §4, and §5 exist to make the blast radius of any mistake as small as possible.
@@ -41,6 +93,8 @@ git add <files you actually touched for this task>   # never -A/. mid-task, see 
 git commit -m "<task>: <what changed and why>"
 ```
 
+When Loom's runtime is active, use the Loom-compatible hookless commit form documented above instead of plain `git commit`.
+
 A session that commits after every task has a worst-case loss of "one task's work" if something goes wrong - not "everything since the session started." This is the single biggest lever against the incident this skill exists to prevent.
 
 ## 2. Splitting a large or mixed diff into smaller commits
@@ -64,17 +118,17 @@ git diff --staged
 git commit -m "<concern B>: <what and why>"
 ```
 
-**For a single file mixing two concerns**, stage by hunk instead of by file:
+Outside Loom, partial staging is appropriate when one file contains two genuinely independent concerns:
 
 ```bash
 git add -p path/to/file.go
-# y = stage this hunk, n = skip, s = split further if the hunk itself is too coarse,
-# q = quit staging (safe - nothing staged yet is lost)
-git diff --staged           # confirm exactly the intended hunks are in
+git diff --staged
 git commit -m "<concern A>: <what and why>"
-git add -p path/to/file.go  # remaining hunks
+git add -p path/to/file.go
 git commit -m "<concern B>: <what and why>"
 ```
+
+Under Loom, do **not** use partial staging. Reshape the edit into one coherent file-level checkpoint, or finish one concern and commit it before making the second concern. Loom's provenance model tracks admitted whole-file bytes, so `git add -p` is intentionally unsupported. Use the Loom-compatible commit form from the section above for each Loom commit.
 
 **Rule of thumb for "is this one commit or two?":** if you'd write "and" in the commit message ("fix the timeout bug and refactor the client"), it's two commits. Each commit should be revertable on its own without taking an unrelated change down with it.
 

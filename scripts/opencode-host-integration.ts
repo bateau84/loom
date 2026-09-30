@@ -113,6 +113,8 @@ type MockProviderState = {
   diagnosticGrantId?: string
   workerAttached: boolean
   workerShellObserved: boolean
+  workerCommitPhase: number
+  workerFileBackedCommitObserved: boolean
   workerCompleted: boolean
   diagnosticConversationalExecutionRejected: boolean
   diagnosticAttached: boolean
@@ -551,26 +553,96 @@ function chooseMockAction(prompt: string, results: Map<string, unknown>, state: 
   if (prompt.includes("LOOM_INTEGRATION_WORKER")) {
     const attach = results.get("loom_attach") as any
     if (attach?.attached) state.workerAttached = true
-    const shell = results.get("shell")
-    if (shell !== undefined && !toolRejected(shell)) state.workerShellObserved = true
     const complete = results.get("loom_complete") as any
     if (complete && !complete.error) state.workerCompleted = true
+
     if (!results.has("loom_attach")) {
       return {
         name: "loom_attach",
         args: { grantId: state.workerGrantId, workflowId: state.workflowId, stepId: "worker" },
       }
     }
-    if (!results.has("shell")) {
-      return { name: "shell", args: { command: "pwd" } }
+
+    if (state.workerCommitPhase === 0) {
+      state.workerCommitPhase = 1
+      return {
+        name: "write",
+        args: {
+          path: "src/commit-proof.txt",
+          content: "real OpenCode file-backed commit proof\n",
+        },
+      }
     }
+
+    if (state.workerCommitPhase === 1) {
+      const write = results.get("write")
+      if (write === undefined) return null
+      if (toolRejected(write)) {
+        throw new Error("Real OpenCode Worker product write was rejected: " + JSON.stringify(write))
+      }
+      state.workerCommitPhase = 2
+      return { name: "shell", args: { command: "git add -- src/commit-proof.txt" } }
+    }
+
+    if (state.workerCommitPhase === 2) {
+      const shell = results.get("shell")
+      if (shell === undefined) return null
+      if (toolRejected(shell)) {
+        throw new Error("Real OpenCode Worker staging was rejected: " + JSON.stringify(shell))
+      }
+      state.workerShellObserved = true
+      state.workerCommitPhase = 3
+      return {
+        name: "write",
+        args: {
+          path: "ephemeral-reports/worker/commit-messages/host-integration.md",
+          content: [
+            "test(runtime): prove file-backed commit in real OpenCode",
+            "",
+            "### Background",
+            "Exercise Loom's actual host permission and plugin hook stack.",
+            "",
+            "### Verification",
+            "The resulting Git commit is inspected by the host integration script.",
+            "",
+          ].join("\n"),
+        },
+      }
+    }
+
+    if (state.workerCommitPhase === 3) {
+      const write = results.get("write")
+      if (write === undefined) return null
+      if (toolRejected(write)) {
+        throw new Error("Real OpenCode Worker commit-message write was rejected: " + JSON.stringify(write))
+      }
+      state.workerCommitPhase = 4
+      return {
+        name: "shell",
+        args: {
+          command:
+            "git -c core.hooksPath=/dev/null commit -F ephemeral-reports/worker/commit-messages/host-integration.md",
+        },
+      }
+    }
+
+    if (state.workerCommitPhase === 4) {
+      const shell = results.get("shell")
+      if (shell === undefined) return null
+      if (toolRejected(shell)) {
+        throw new Error("Real OpenCode Worker file-backed commit was rejected: " + JSON.stringify(shell))
+      }
+      state.workerFileBackedCommitObserved = true
+      state.workerCommitPhase = 5
+    }
+
     if (!results.has("loom_status")) {
       return { name: "loom_status", args: { workflowId: state.workflowId, detail: true } }
     }
     if (!results.has("loom_complete")) {
       return {
         name: "loom_complete",
-        args: { workflowId: state.workflowId, stepId: "worker", summary: "real-host worker complete" },
+        args: { workflowId: state.workflowId, stepId: "worker", summary: "real-host worker committed through -F" },
       }
     }
     return null
@@ -835,6 +907,8 @@ async function startMockProvider() {
     programs: new Map(),
     workerAttached: false,
     workerShellObserved: false,
+    workerCommitPhase: 0,
+    workerFileBackedCommitObserved: false,
     workerCompleted: false,
     diagnosticConversationalExecutionRejected: false,
     diagnosticAttached: false,
@@ -1898,6 +1972,25 @@ try {
   let dashboardPort = await freePort()
   while (dashboardPort === 4318) dashboardPort = await freePort()
 
+  await mkdir(join(projectA, "src"), { recursive: true })
+  for (const args of [
+    ["init", "-q"],
+    ["config", "user.name", "Loom Host Integration"],
+    ["config", "user.email", "loom-host-integration@example.invalid"],
+  ]) {
+    const git = Bun.spawnSync(["git", ...args], {
+      cwd: projectA,
+      stdout: "pipe",
+      stderr: "pipe",
+    })
+    if (git.exitCode !== 0) {
+      throw new Error(
+        "Could not prepare real OpenCode Git fixture: " +
+          new TextDecoder().decode(git.stderr),
+      )
+    }
+  }
+
   const serverA = await startServer(base, projectA, sharedState, runtimeA, "server-a", dashboardPort)
   servers.push(serverA)
 
@@ -1976,10 +2069,34 @@ try {
     () =>
       mock.state.workerAttached &&
       mock.state.workerShellObserved &&
+      mock.state.workerFileBackedCommitObserved &&
       mock.state.workerCompleted,
-    "fresh real Worker attach/shell/status/complete sequence",
+    "fresh real Worker attach/write/stage/file-backed-commit/status/complete sequence",
     () => mock.state,
   )
+
+  const commitMessage = Bun.spawnSync(
+    ["git", "log", "-1", "--pretty=%B"],
+    { cwd: projectA, stdout: "pipe", stderr: "pipe" },
+  )
+  if (commitMessage.exitCode !== 0) {
+    throw new Error(
+      "Could not inspect real OpenCode Worker commit: " +
+        new TextDecoder().decode(commitMessage.stderr),
+    )
+  }
+  const committedMessage = new TextDecoder().decode(commitMessage.stdout)
+  if (!committedMessage.includes("test(runtime): prove file-backed commit in real OpenCode")) {
+    throw new Error(
+      "Real OpenCode Worker did not create the expected file-backed commit: " +
+        committedMessage,
+    )
+  }
+  if (await Bun.file(
+    join(projectA, "ephemeral-reports", "worker", "commit-messages", "host-integration.md"),
+  ).exists()) {
+    throw new Error("Real OpenCode Worker commit-message scratch file was not consumed")
+  }
 
   await sendPrompt(serverA, sessionA.id, "LOOM_INTEGRATION_REVIEW_GRANT")
   await waitForCondition(
@@ -2479,6 +2596,7 @@ try {
   console.log(` - workflow: ${mock.state.workflowId}`)
   console.log(` - worker/reviewer attached: ${mock.state.workerAttached}/${mock.state.reviewerAttached}`)
   console.log(` - attached Worker native shell admitted: ${mock.state.workerShellObserved}`)
+  console.log(` - real OpenCode Worker file-backed commit completed: ${mock.state.workerFileBackedCommitObserved}`)
   console.log(
     ` - Diagnostic conversational execution rejected / governed execution admitted: ${mock.state.diagnosticConversationalExecutionRejected}/${mock.state.diagnosticExecutionObserved}`,
   )
