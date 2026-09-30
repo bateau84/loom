@@ -8427,6 +8427,64 @@ test("invalidated Plan blocks stale handoff Reviewer gate grants and attachments
   }
 })
 
+test("invalidated Plan blocks stale implementation-review gate grants and attachments after Wave release", async () => {
+  const h = await waveLifecycleFixture()
+  try {
+    expect((await h.finish("task:one", "worker")).error).toBeUndefined()
+    const staleGateGrant = await h.call("dispatch_grant", {
+      workflowId: h.workflowId,
+      stepId: "review-implementation",
+    }, "general", "parent")
+    expect(staleGateGrant.error).toBeUndefined()
+
+    expect((await h.call("work_release", {
+      workflowId: h.workflowId,
+      reason: "Release the completed-but-unreviewed Wave before invalidating its Plan.",
+    }, "general", "parent")).error).toBeUndefined()
+    const raised = await h.call("oq_raise", {
+      workflowId: h.workflowId,
+      stepId: "plan",
+      question: "Invalidate the released Plan before implementation review.",
+      responder: "planner",
+      blocking: false,
+    }, "general", "parent")
+    expect(raised.error).toBeUndefined()
+    const oqGrant = await h.call("dispatch_grant", {
+      workflowId: h.workflowId,
+      questionId: raised.question.id,
+    }, "general", "parent")
+    expect(oqGrant.error).toBeUndefined()
+    const planner = "planner-stale-implementation-review"
+    expect((await h.call("attach", {
+      workflowId: h.workflowId,
+      questionId: raised.question.id,
+      grantId: oqGrant.grantId,
+    }, "planner", planner)).attached).toBe(true)
+    expect((await h.call("work_invalidate", {
+      workflowId: h.workflowId,
+      questionId: raised.question.id,
+      expectedVersion: (await h.work()).version,
+      reason: "The Plan changed before implementation review.",
+    }, "planner", planner)).error).toBeUndefined()
+
+    const workflow = await h.workflow()
+    expect(workflow.steps.find((step: any) => step.id === "review-implementation").status).toBe("pending")
+    expect((await h.call("dispatch_grant", {
+      workflowId: h.workflowId,
+      stepId: "review-implementation",
+    }, "general", "parent")).error ?? "").toContain("invalidated")
+
+    const attached = await h.call("attach", {
+      workflowId: h.workflowId,
+      stepId: "review-implementation",
+      grantId: staleGateGrant.grantId,
+    }, "reviewer", "stale-implementation-reviewer")
+    expect(attached.error ?? "").toContain("invalidated")
+  } finally {
+    h.restore()
+  }
+})
+
 
 const reopenRequest = (workflowId: string, stepId: string) => ({
   workflowId, stepId, reason: "New evidence invalidates this step.",
