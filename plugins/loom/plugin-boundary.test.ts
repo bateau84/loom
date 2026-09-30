@@ -8299,6 +8299,67 @@ test("released invalidated Plan can recover through a fresh reviewed generation 
   }
 })
 
+test("invalidated Plan blocks stale role-owned Task grants and attachments after Wave release", async () => {
+  const h = await waveLifecycleFixture("wave", false, "architect")
+  try {
+    const staleGrant = await h.call("dispatch_grant", {
+      workflowId: h.workflowId,
+      stepId: "task:one",
+    }, "general", "parent")
+    expect(staleGrant.error).toBeUndefined()
+
+    expect((await h.call("work_release", {
+      workflowId: h.workflowId,
+      reason: "Release the unconsumed Wave before revising its Plan.",
+    }, "general", "parent")).error).toBeUndefined()
+
+    const raised = await h.call("oq_raise", {
+      workflowId: h.workflowId,
+      stepId: "plan",
+      question: "The current Plan must be invalidated before replanning.",
+      responder: "planner",
+      blocking: false,
+    }, "general", "parent")
+    expect(raised.error).toBeUndefined()
+    const oqGrant = await h.call("dispatch_grant", {
+      workflowId: h.workflowId,
+      questionId: raised.question.id,
+    }, "general", "parent")
+    expect(oqGrant.error).toBeUndefined()
+    const planner = "planner-role-task-invalidation"
+    expect((await h.call("attach", {
+      workflowId: h.workflowId,
+      questionId: raised.question.id,
+      grantId: oqGrant.grantId,
+    }, "planner", planner)).attached).toBe(true)
+    const invalidated = await h.call("work_invalidate", {
+      workflowId: h.workflowId,
+      questionId: raised.question.id,
+      expectedVersion: (await h.work()).version,
+      reason: "The released Plan no longer represents current evidence.",
+    }, "planner", planner)
+    expect(invalidated.error).toBeUndefined()
+
+    const workflow = await h.workflow()
+    expect(workflow.steps.find((step: any) => step.id === "review-plan").status).toBe("passed")
+    expect(workflow.steps.find((step: any) => step.id === "task:one").status).toBe("pending")
+    const deniedGrant = await h.call("dispatch_grant", {
+      workflowId: h.workflowId,
+      stepId: "task:one",
+    }, "general", "parent")
+    expect(deniedGrant.error ?? "").toContain("invalidated")
+
+    const attached = await h.call("attach", {
+      workflowId: h.workflowId,
+      stepId: "task:one",
+      grantId: staleGrant.grantId,
+    }, "architect", "stale-role-task-child")
+    expect(attached.error ?? "").toContain("invalidated")
+  } finally {
+    h.restore()
+  }
+})
+
 
 const reopenRequest = (workflowId: string, stepId: string) => ({
   workflowId, stepId, reason: "New evidence invalidates this step.",
