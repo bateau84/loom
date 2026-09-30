@@ -215,6 +215,36 @@ function plannedTaskSatisfied(workflow: Workflow, step: Workflow["steps"][number
   return workflow.steps.some((candidate) => candidate.id === "review-implementation" && candidate.status === "passed")
 }
 
+function assertPlannedTaskAdmission(
+  workflow: Workflow,
+  work: WorkHierarchy | undefined,
+  step: Workflow["steps"][number],
+) {
+  if (!step.task || step.kind === "wait") return
+  if (!workflow.work || !work) {
+    throw new Error("Task admission denied: persistent Plan and Wave binding are required.")
+  }
+  const generation = workflow.work.generation
+  if (work.generation !== generation) {
+    throw new Error("Task admission denied: workflow is bound to a stale Plan generation.")
+  }
+  const plan = workPlanContext(work, undefined, "focused", generation)
+  if (!plan || plan.invalidated) {
+    throw new Error("Task admission denied: current Plan generation is missing or invalidated.")
+  }
+  const reviewPlan = workflow.steps.find((candidate) => candidate.id === "review-plan")
+  if (!reviewPlan || reviewPlan.status !== "passed") {
+    throw new Error("Task admission denied: current Plan requires independent review-plan PASS.")
+  }
+
+  const taskIds = plannedTaskSteps(workflow).map((taskStep) => taskStep.task!.id)
+  const currentFingerprint = workflowTaskSemanticFingerprint(work, taskIds, generation)
+  if (!currentFingerprint || workflow.work.taskPlanFingerprint !== currentFingerprint) {
+    throw new Error("Task admission denied: compiled Task DAG is stale against the current Plan generation.")
+  }
+  assertWaveClaimForTasks(work, workflow.id, generation, taskIds)
+}
+
 const reportProducerAgents = new Set([
   "general",
   "reviewer",
@@ -8194,22 +8224,11 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 if (!runnable(current).some((candidate) => candidate.id === value.stepId)) {
                   throw new Error("Step is no longer runnable.")
                 }
-                if (step.agent === "worker") {
-                  if (current.work && step.task) {
-                    const work = await readWork(ctx, current.work.objectiveId)
-                    const taskIds = plannedTaskSteps(current).map((taskStep) => taskStep.task!.id)
-                    const currentFingerprint = work
-                      ? workflowTaskSemanticFingerprint(work, taskIds, current.work.generation)
-                      : undefined
-                    if (
-                      currentFingerprint &&
-                      current.work.taskPlanFingerprint !== currentFingerprint
-                    ) {
-                      throw new Error(
-                        "Worker Task DAG is stale against its semantic Task/Wave contract. Reopen planning and re-run loom_task_plan before dispatch.",
-                      )
-                    }
-                  }
+                if (step.task && step.kind !== "wait") {
+                  const work = current.work
+                    ? await readWork(ctx, current.work.objectiveId)
+                    : undefined
+                  assertPlannedTaskAdmission(current, work, step)
                 }
               } else {
                 const question = (await ctx.storage.get(
@@ -8445,29 +8464,8 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                   scopeKey(value.workflowId, value.stepId),
                 )) as TaskScope | undefined
 
-                if (tool.agent === "worker") {
-                  if (step.task && workflow.work && work) {
-                    const taskIds = plannedTaskSteps(workflow).map((taskStep) => taskStep.task!.id)
-                    const currentFingerprint = workflowTaskSemanticFingerprint(
-                      work,
-                      taskIds,
-                      workflow.work.generation,
-                    )
-                    if (
-                      currentFingerprint &&
-                      workflow.work.taskPlanFingerprint !== currentFingerprint
-                    ) {
-                      throw new Error(
-                        "Worker Task DAG is stale against its semantic Task/Wave contract. Reopen planning and re-run loom_task_plan before attachment.",
-                      )
-                    }
-                    assertWaveClaimForTasks(
-                      work,
-                      workflow.id,
-                      workflow.work.generation,
-                      plannedTaskSteps(workflow).map((taskStep) => taskStep.task!.id),
-                    )
-                  }
+                if (step.task && step.kind !== "wait") {
+                  assertPlannedTaskAdmission(workflow, work, step)
                 }
               } else {
                 const question = (await ctx.storage.get(
