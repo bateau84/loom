@@ -632,6 +632,11 @@ describe("Loom registered plugin boundary", () => {
       const noOp = await h.call("resume", { workflowId: targetId, fromWorkflowId: targetId }, "general", general)
       expect(noOp).toMatchObject({ status: "already_current", changedOnlyCoordinatorAccess: false })
       expect(await h.durableStorage.get(`session-resumption/${encodeURIComponent(general)}`)).toEqual(audit)
+      const childImpersonation = await h.call("resume", {
+        workflowId: targetId,
+        fromWorkflowId: targetId,
+      }, "worker", general)
+      expect(childImpersonation.error).toContain("Only general may restore coordinator workflow access")
       const status = await h.call("status", { detail: true }, "general", general)
       expect(status.workflow.id).toBe(targetId)
       expect(status.workflow.steps.find((step: any) => step.id === "historic")).toMatchObject({
@@ -779,6 +784,7 @@ describe("Loom registered plugin boundary", () => {
     const cases = [
       { name: "stale source", sourceId: "deny-stale-source", targetId: "deny-stale-target", current: "deny-other-source" },
       { name: "incomplete source", sourceId: "deny-incomplete-source", targetId: "deny-incomplete-target", sourceStatus: "pending" },
+      { name: "cancelled source", sourceId: "deny-cancelled-source", targetId: "deny-cancelled-target", source: { cancellation: { at: createdAt } } },
       { name: "cancelled target", sourceId: "deny-cancel-source", targetId: "deny-cancel-target", target: { cancellation: { at: createdAt } } },
       { name: "deleted target", sourceId: "deny-deleted-source", targetId: "deny-deleted-target", deleted: true },
       { name: "foreign creator", sourceId: "deny-foreign-source", targetId: "deny-foreign-target", target: { createdBySession: "other-general" } },
@@ -797,6 +803,7 @@ describe("Loom registered plugin boundary", () => {
           createdBySession: owner,
           createdAt,
           steps: [{ id: "done", agent: "worker", kind: "work", dependsOn: [], status: scenario.sourceStatus ?? "complete" }],
+          ...scenario.source,
         }
         const target = {
           id: scenario.targetId,
@@ -908,6 +915,90 @@ describe("Loom registered plugin boundary", () => {
       expect(event.message).toContain("attachment changed while this Loom invocation waited")
       expect(await h.durableStorage.get(`dispatch-grant/${grant.grantId}`)).toEqual(grant)
       expect(await h.durableStorage.get(`budget/${workflowId}`)).toBeUndefined()
+    } finally {
+      lockProcess?.stdin?.end()
+      if (lockProcess && lockProcess.exitCode === null) await once(lockProcess, "exit")
+      h.restore()
+    }
+  })
+
+  test("serializes competing current-session start and resume decisions across processes", async () => {
+    const h = await harness()
+    const session = "resume-competing-general"
+    const sourceId = "resume-competing-source"
+    const targetId = "resume-competing-target"
+    let lockProcess: ReturnType<typeof spawn> | undefined
+    try {
+      const createdAt = new Date().toISOString()
+      await h.durableStorage.set(`workflow/${sourceId}`, {
+        id: sourceId,
+        projectId: h.runtime.projectId,
+        revision: 1,
+        anchor: "task:resume-competing-source",
+        createdBySession: session,
+        createdAt,
+        steps: [{ id: "done", agent: "worker", kind: "work", dependsOn: [], status: "complete" }],
+      })
+      await h.durableStorage.set(`workflow/${targetId}`, {
+        id: targetId,
+        projectId: h.runtime.projectId,
+        revision: 1,
+        anchor: "task:resume-competing-target",
+        createdBySession: session,
+        createdAt,
+        steps: [{ id: "pending", agent: "worker", kind: "work", dependsOn: [], status: "pending" }],
+      })
+      await h.durableStorage.set(`session/${session}`, sourceId)
+      await h.durableStorage.set(`session-attachment/${session}`, "competing-before")
+      const lockHash = createHash("sha256").update(session).digest("hex")
+      const lockPath = join(
+        h.runtime.runtimeRoot,
+        "locks",
+        h.runtime.installationId,
+        h.runtime.projectId,
+        "session-coordinator",
+        `${lockHash}.lock`,
+      )
+      await mkdir(dirname(lockPath), { recursive: true, mode: 0o700 })
+      lockProcess = spawn("flock", ["-x", lockPath, "sh", "-c", "printf 'locked\\n'; cat >/dev/null"], {
+        stdio: ["pipe", "pipe", "pipe"],
+      })
+      let output = ""
+      const lockReady = new Promise<void>((resolve, reject) => {
+        lockProcess!.stdout!.setEncoding("utf8")
+        lockProcess!.stdout!.on("data", (chunk: string) => {
+          output += chunk
+          if (output.includes("locked\n")) resolve()
+        })
+        lockProcess!.once("error", reject)
+        lockProcess!.stderr!.on("data", (chunk) => reject(new Error(String(chunk))))
+      })
+      await lockReady
+
+      const resume = h.call("resume", {
+        workflowId: targetId,
+        fromWorkflowId: sourceId,
+      }, "general", session)
+      const start = h.call("start", { request: "Start a fresh independent workflow." }, "general", session)
+      await Bun.sleep(50)
+      lockProcess.stdin!.end()
+      await once(lockProcess, "exit")
+      const [resumeResult, startResult] = await Promise.allSettled([resume, start])
+      const resumed = resumeResult.status === "fulfilled" && resumeResult.value.status === "resumed"
+      const started = startResult.status === "fulfilled" && startResult.value.status === "started"
+      expect(Number(resumed) + Number(started)).toBe(1)
+      const loser = resumed ? startResult : resumeResult
+      if (loser.status === "fulfilled") {
+        expect(loser.value.error).toContain("attachment changed while this Loom invocation waited")
+      } else {
+        expect(String(loser.reason)).toContain("attachment changed while this Loom invocation waited")
+      }
+      const current = await h.durableStorage.get(`session/${session}`)
+      expect(current).toBe(resumed ? targetId : startResult.status === "fulfilled" ? startResult.value.workflowId : undefined)
+      expect(await h.durableStorage.get(`session-attachment/${session}`)).not.toBe("competing-before")
+      expect(await h.durableStorage.get(`session-step/${session}`)).toBe("")
+      expect(await h.durableStorage.get(`session-step-attempt/${encodeURIComponent(session)}`)).toBeNull()
+      expect(await h.durableStorage.get(`session-oq/${session}`)).toBe("")
     } finally {
       lockProcess?.stdin?.end()
       if (lockProcess && lockProcess.exitCode === null) await once(lockProcess, "exit")
