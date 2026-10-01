@@ -20,9 +20,11 @@ import {
   workTree,
   workPlanContext,
   workPlanSemanticFingerprint,
+  taskSemanticFingerprintAtRevision,
   workflowTaskSemanticFingerprint,
   validatePlanRoleFeasibility,
   type WorkPlanDefinition,
+  type WorkPlanAmendOperation,
 } from "./work"
 
 const now = "2026-09-21T00:00:00Z"
@@ -104,6 +106,72 @@ function plan(): WorkPlanDefinition {
       },
     ],
   }
+}
+
+function historicalOrderPlan(kind: "phase" | "wave" | "task") {
+  const definition = plan()
+  const tasks = new Map(
+    definition.phases.flatMap((phase) => phase.waves.flatMap((wave) => wave.tasks))
+      .map((item) => [item.id, { ...item, dependsOn: [] }]),
+  )
+  const wave = (id: string, taskId: string): WorkPlanDefinition["phases"][number]["waves"][number] => ({
+    id,
+    title: `${id} Wave`,
+    objective: `${id} wave objective`,
+    constraints: [],
+    tasks: [tasks.get(taskId)!],
+  })
+  const phase = (id: string, taskId: string): WorkPlanDefinition["phases"][number] => ({
+    id,
+    title: `${id} Phase`,
+    objective: `${id} phase objective`,
+    waves: [wave(`${id}-wave`, taskId)],
+  })
+
+  if (kind === "phase") {
+    definition.phases = [phase("current", "a"), phase("middle", "b"), phase("last", "c")]
+  } else if (kind === "wave") {
+    definition.phases = [{
+      id: "current",
+      title: "Current Phase",
+      objective: "Keep the claimed Wave first.",
+      waves: [wave("current", "a"), wave("middle", "b"), wave("last", "c")],
+    }]
+  } else {
+    definition.phases = [{
+      id: "current",
+      title: "Current Phase",
+      objective: "Keep the task order explicit.",
+      waves: [{
+        id: "current",
+        title: "Current Wave",
+        objective: "Three ordered unclaimed Tasks.",
+        constraints: [],
+        tasks: [tasks.get("a")!, tasks.get("b")!, tasks.get("c")!],
+      }],
+    }]
+  }
+  return definition
+}
+
+function phaseFrom(definition: WorkPlanDefinition, phaseId: string) {
+  return structuredClone(definition.phases.find((phase) => phase.id === phaseId)!)
+}
+
+function waveFrom(definition: WorkPlanDefinition, phaseId: string, waveId: string) {
+  return structuredClone(definition.phases.find((phase) => phase.id === phaseId)!.waves.find((wave) => wave.id === waveId)!)
+}
+
+function taskFrom(definition: WorkPlanDefinition, taskId: string) {
+  return structuredClone(definition.phases.flatMap((phase) => phase.waves)
+    .flatMap((wave) => wave.tasks).find((task) => task.id === taskId)!)
+}
+
+function planOrder(definition: { phases?: Array<any>; planMap?: Array<any> }, kind: "phase" | "wave" | "task") {
+  const phases = definition.phases ?? definition.planMap ?? []
+  if (kind === "phase") return phases.map((phase) => phase.id)
+  if (kind === "wave") return phases[0]?.waves.map((wave: any) => wave.id) ?? []
+  return phases[0]?.waves[0]?.tasks.map((task: any) => task.id) ?? []
 }
 
 function task(id: string, dependsOn: string[] = []): TaskSpec {
@@ -375,6 +443,71 @@ describe("Loom persistent work hierarchy", () => {
       .toEqual(["Implement C"])
     expect(workPlanContext(work, "c", "focused", 1, 2)?.focus?.task.subtasks)
       .toEqual(["Implement C", "Exercise runtime recovery"])
+  })
+
+  test("delta history restores exact non-final Phase, Wave, and Task ordering and fingerprints", () => {
+    const scenarios: Array<{
+      kind: "phase" | "wave" | "task"
+      operations: WorkPlanAmendOperation[]
+      historicalOrder: string[]
+      currentOrder: string[]
+    }> = [
+      {
+        kind: "phase",
+        operations: [
+          { action: "remove-phase", phaseId: "middle" },
+          { action: "add-phase", phase: phaseFrom(historicalOrderPlan("phase"), "middle") },
+        ],
+        historicalOrder: ["current", "middle", "last"],
+        currentOrder: ["current", "last", "middle"],
+      },
+      {
+        kind: "wave",
+        operations: [
+          { action: "remove-wave", phaseId: "current", waveId: "middle" },
+          { action: "add-wave", phaseId: "current", wave: waveFrom(historicalOrderPlan("wave"), "current", "middle") },
+        ],
+        historicalOrder: ["current", "middle", "last"],
+        currentOrder: ["current", "last", "middle"],
+      },
+      {
+        kind: "task",
+        operations: [
+          { action: "remove-task", taskId: "b" },
+          { action: "add-task", phaseId: "current", waveId: "current", task: taskFrom(historicalOrderPlan("task"), "b") },
+        ],
+        historicalOrder: ["a", "b", "c"],
+        currentOrder: ["a", "c", "b"],
+      },
+    ]
+
+    for (const scenario of scenarios) {
+      const baseline = historicalOrderPlan(scenario.kind)
+      const work = createWorkHierarchy("docs/anchors/product/anchor.md", `wf-history-${scenario.kind}`, now)
+      materializeWorkPlan(work, `wf-history-${scenario.kind}`, baseline, now)
+      const generation = work.generation
+      const originalPlanFingerprint = workPlanSemanticFingerprint(work, generation)
+      const originalTaskFingerprint = taskSemanticFingerprintAtRevision(work, "a", generation, 1)
+      const originalWaveFingerprint = workflowTaskSemanticFingerprint(work, ["a"], generation)
+
+      const amendment = amendWorkPlan(work, {
+        expectedVersion: work.version,
+        by: "planner",
+        reason: `Reorder a non-final ${scenario.kind} without changing the reviewed current Task contract.`,
+        operations: scenario.operations,
+      }, "r2")
+      expect(amendment.plan.revision, scenario.kind).toBe(2)
+      expect(planOrder(amendment.plan, scenario.kind), scenario.kind).toEqual(scenario.currentOrder)
+
+      const historical = workPlanContext(work, undefined, "full", generation, 1)
+      expect(historical, scenario.kind).toBeDefined()
+      expect(planOrder(historical!, scenario.kind), scenario.kind).toEqual(scenario.historicalOrder)
+      expect(workPlanSemanticFingerprint(work, generation, 1), scenario.kind).toBe(originalPlanFingerprint)
+      expect(taskSemanticFingerprintAtRevision(work, "a", generation, 1), scenario.kind)
+        .toBe(originalTaskFingerprint)
+      expect(workflowTaskSemanticFingerprint(work, ["a"], generation, 1), scenario.kind)
+        .toBe(originalWaveFingerprint)
+    }
   })
 
   test("preserves early full-snapshot revision history when converting to delta-backed amendments", () => {
