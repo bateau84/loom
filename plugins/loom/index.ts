@@ -12141,13 +12141,9 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             const reviewedTaskFingerprint = currentWork && binding && Number.isSafeInteger(reviewedRevision)
               ? workflowTaskSemanticFingerprint(currentWork, taskIds, binding.generation, reviewedRevision)
               : undefined
-            const reviewedPlanFingerprint = currentWork && binding && Number.isSafeInteger(reviewedRevision)
-              ? workPlanSemanticFingerprint(currentWork, binding.generation, reviewedRevision)
-              : undefined
             if (!binding || !plan || plan.invalidated || taskIds.length === 0 ||
                 !Number.isSafeInteger(reviewedRevision) || reviewedRevision! > plan.revision ||
-                !binding.reviewedPlanFingerprint || !reviewedPlanFingerprint ||
-                binding.reviewedPlanFingerprint !== reviewedPlanFingerprint ||
+                !binding.reviewedPlanFingerprint ||
                 !currentTaskFingerprint || !reviewedTaskFingerprint ||
                 reviewedTaskFingerprint !== currentTaskFingerprint ||
                 binding.taskPlanRevision !== plan.revision ||
