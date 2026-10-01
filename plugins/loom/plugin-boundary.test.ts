@@ -2854,6 +2854,103 @@ describe("Loom registered plugin boundary", () => {
     }
   })
 
+  test("a production source reopen that wins the coordinator lease makes subsequent resume ineligible", async () => {
+    const h = await harness()
+    const general = "source-reopen-first-general"
+    const sourceId = "source-reopen-first-source"
+    const targetId = "source-reopen-first-target"
+    const createdAt = new Date().toISOString()
+    const readyFile = join(h.root, "source-reopen-first-selected")
+    const releaseFile = join(h.root, "source-reopen-first-release")
+    let reopener: ReturnType<typeof Bun.spawn> | undefined
+    let resumer: ReturnType<typeof Bun.spawn> | undefined
+    try {
+      await h.durableStorage.set(`workflow/${sourceId}`, {
+        id: sourceId,
+        projectId: h.runtime.projectId,
+        revision: 1,
+        anchor: `task:${sourceId}`,
+        createdBySession: general,
+        createdAt,
+        steps: [{ id: "done", agent: "worker", kind: "work", dependsOn: [], status: "complete", attempt: 0 }],
+      })
+      const target = {
+        id: targetId,
+        projectId: h.runtime.projectId,
+        revision: 1,
+        anchor: `task:${targetId}`,
+        createdBySession: general,
+        createdAt,
+        steps: [{ id: "pending", agent: "worker", kind: "work", dependsOn: [], status: "pending", attempt: 0 }],
+      }
+      await h.durableStorage.set(`workflow/${targetId}`, target)
+      await h.durableStorage.set(`session/${general}`, sourceId)
+      await h.durableStorage.set(`session-attachment/${general}`, "source-reopen-first-attachment")
+      await h.durableStorage.set(`session-step/${general}`, "")
+      await h.durableStorage.set(`session-step-attempt/${encodeURIComponent(general)}`, null)
+
+      reopener = spawnResumptionProcessFixture(h.root, {
+        mode: "reopen-before-commit",
+        sessionID: general,
+        agent: "general",
+        toolName: "reopen",
+        workflowId: sourceId,
+        toolInput: {
+          workflowId: sourceId,
+          stepId: "done",
+          reason: "A changed hypothesis requires reopening the source before restoration admission.",
+          newEvidence: true,
+          changedHypothesis: true,
+          changedStrategy: false,
+          reducedUnresolved: false,
+        },
+        readyFile,
+        releaseFile,
+      })
+      for (let attempt = 0; attempt < 1_000; attempt++) {
+        try {
+          await readFile(readyFile)
+          break
+        } catch (error: any) {
+          if (error?.code !== "ENOENT") throw error
+          if (attempt === 999) throw new Error("Registered source reopen did not reach its coordinator-fenced commit barrier.")
+          await Bun.sleep(5)
+        }
+      }
+
+      resumer = spawnResumptionProcessFixture(h.root, {
+        mode: "tool",
+        sessionID: general,
+        agent: "general",
+        toolName: "resume",
+        workflowId: targetId,
+        toolInput: { workflowId: targetId, fromWorkflowId: sourceId },
+      })
+      await waitForRuntimeLockUsers(h.runtime, "session-coordinator", general, 2)
+      await writeFile(releaseFile, "let the source reopen commit before resume admission")
+
+      const reopened = await readResumptionProcessFixture(reopener)
+      expect(reopened.reopened).toBe("done")
+      const denied = await readResumptionProcessFixture(resumer)
+      expect(denied.status).not.toBe("resumed")
+      expect(denied.error ?? denied.thrown).toContain("successfully completed current workflow")
+      expect(await h.durableStorage.get(`session/${general}`)).toBe(sourceId)
+      expect(await h.durableStorage.get(`session-attachment/${general}`)).toBe("source-reopen-first-attachment")
+      expect(await h.durableStorage.get(`workflow/${sourceId}`)).toMatchObject({
+        steps: [{ status: "pending", attempt: 1 }],
+      })
+      expect(await h.durableStorage.get(`workflow/${targetId}`)).toEqual(target)
+      expect(await h.durableStorage.get(`session-resumption/${encodeURIComponent(general)}`)).toBeUndefined()
+    } finally {
+      if (reopener && reopener.exitCode === null) {
+        await writeFile(releaseFile, "cleanup")
+        await reopener.exited
+      }
+      if (resumer && resumer.exitCode === null) await resumer.exited
+      h.restore()
+    }
+  })
+
   test("resume denies a target deleted by the independent production cleanup transaction", async () => {
     const h = await harness()
     const general = "delete-resume-general"
