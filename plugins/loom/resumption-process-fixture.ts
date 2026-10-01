@@ -83,7 +83,7 @@ test("production Loom process fixture executes an actual registered tool", async
         await writeFile(process.env.LOOM_RESUMPTION_READY_FILE!, "captured-before-lease")
         await waitForFile(process.env.LOOM_RESUMPTION_RELEASE_FILE!)
       }
-      if (mode === "resume-before-transaction" &&
+      if (mode === "resume-before-coordinator-lease" &&
           aggregate === "session-coordinator" && resourceIdentity === sessionID && !barrierUsed) {
         barrierUsed = true
         await writeFile(process.env.LOOM_RESUMPTION_READY_FILE!, "captured-before-coordinator-lease")
@@ -101,6 +101,15 @@ test("production Loom process fixture executes an actual registered tool", async
             resource.resourceIdentity === process.env.LOOM_RESUMPTION_WORKFLOW_ID)) {
         barrierUsed = true
         await writeFile(process.env.LOOM_RESUMPTION_READY_FILE!, "selected-before-commit")
+        await waitForFile(process.env.LOOM_RESUMPTION_RELEASE_FILE!)
+      }
+      if (mode === "resume-after-observation" && !barrierUsed &&
+          resources.some((resource) => resource.aggregate === "workflow" &&
+            resource.resourceIdentity === process.env.LOOM_RESUMPTION_SOURCE_WORKFLOW_ID) &&
+          resources.some((resource) => resource.aggregate === "workflow" &&
+            resource.resourceIdentity === process.env.LOOM_RESUMPTION_TARGET_WORKFLOW_ID)) {
+        barrierUsed = true
+        await writeFile(process.env.LOOM_RESUMPTION_READY_FILE!, "source-target-snapshots-loaded-before-locks")
         await waitForFile(process.env.LOOM_RESUMPTION_RELEASE_FILE!)
       }
       const result = await originalWithRuntimeLocks(runtime, resources, fn)
@@ -199,6 +208,19 @@ test("production Loom process fixture executes an actual registered tool", async
     })
     const { deleteWorkflowRecords } = await import("./workflow-cleanup")
     result = await deleteWorkflowRecords(storage, runtime, JSON.parse(process.env.LOOM_RESUMPTION_INPUT ?? "{}"))
+  } else if (mode === "cancel-workflow") {
+    const runtime = await actualRuntime.resolveRuntimeIdentity(projectRoot, legacyStorage)
+    const raw = await actualRuntime.createTransactionalStorage(runtime)
+    const storage = actualRuntime.createProjectStorage(raw, runtime.projectId, {
+      expectedRuntimeVersion: actualRuntime.RUNTIME_STATE_VERSION,
+    })
+    const { cancelWorkflow } = await import("./lifecycle")
+    result = await cancelWorkflow(
+      storage,
+      runtime,
+      input as { workflowId: string; reason: string; confirmation: string },
+      { agent, sessionID },
+    )
   } else {
     const toolName = process.env.LOOM_RESUMPTION_TOOL_NAME ?? ""
     const surface = process.env.LOOM_RESUMPTION_SURFACE === "code" ? "loom_code_" : "loom_"

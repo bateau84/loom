@@ -931,8 +931,9 @@ function plannedTask(snapshot: WorkPlanSnapshot | undefined, taskId: string) {
 export function workPlanSemanticFingerprint(
   hierarchy: WorkHierarchy,
   generation = hierarchy.generation,
+  revision?: number,
 ) {
-  const snapshot = planSnapshot(hierarchy, generation)
+  const snapshot = planSnapshot(hierarchy, generation, revision)
   if (!snapshot) return undefined
   return createHash("sha256").update(JSON.stringify(snapshot)).digest("hex")
 }
@@ -1286,8 +1287,9 @@ export function workflowTaskSemanticFingerprint(
   hierarchy: WorkHierarchy,
   taskIds: string[],
   generation = hierarchy.generation,
+  revision?: number,
 ) {
-  const snapshot = planSnapshot(hierarchy, generation)
+  const snapshot = planSnapshot(hierarchy, generation, revision)
   if (!snapshot || taskIds.length === 0) return undefined
   const selected = [...new Set(taskIds)].sort()
   const fingerprints = selected.map((taskId) => {
