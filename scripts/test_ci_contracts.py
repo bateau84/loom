@@ -153,6 +153,7 @@ class UnitDiscoveryTests(unittest.TestCase):
             self.assertEqual(Path(env["XDG_STATE_HOME"]), isolation_root / "state")
             self.assertEqual(Path(env["XDG_RUNTIME_DIR"]), isolation_root / "runtime")
             self.assertEqual(Path(env["TMPDIR"]), isolation_root / "tmp")
+            self.assertNotIn("LOOM_TOOL_OUTPUT", env)
             self.assertFalse((Path(env["XDG_STATE_HOME"]) / "loom" / "runtime-root.json").exists())
 
     def test_isolated_environment_rejects_a_nonfresh_root(self):

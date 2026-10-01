@@ -1,13 +1,15 @@
-import { afterEach, describe, expect, test } from "bun:test"
+import { afterEach, describe, expect, setDefaultTimeout, test } from "bun:test"
 import { createHash } from "node:crypto"
-import { execFile, spawn } from "node:child_process"
+import { execFile, spawn, spawnSync } from "node:child_process"
 import { once } from "node:events"
 import { promisify } from "node:util"
-import { chmod, link, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises"
+import { chmod, link, mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, writeFile } from "node:fs/promises"
 import { dirname, join } from "node:path"
 import { tmpdir } from "node:os"
+import { fileURLToPath } from "node:url"
 import loomPlugin from "./index"
 import { cancelWorkflow } from "./lifecycle"
+import { deleteWorkflowRecords } from "./workflow-cleanup"
 import { createWorkHierarchy, materializeWorkPlan, claimWorkflowWave, syncWorkTaskStatuses,
   completeWaveForTasks, releaseCancelledWorkflowClaims, reopenWaveForTasks, type WorkPlanTask } from "./work"
 import { buildSidebarSnapshot } from "./sidebar"
@@ -18,9 +20,11 @@ import {
   createTransactionalStorage,
   resolveRuntimeIdentity,
   tryAcquireRuntimeLocks,
+  type LoomRuntimeIdentity,
 } from "./runtime"
 
 const roots: string[] = []
+setDefaultTimeout(30_000)
 
 const execFileAsync = promisify(execFile)
 
@@ -225,6 +229,184 @@ async function harness(
   return { root, storage, runtime, projectID, registered, namespaces, sessionHooks, permissionHooks, toolHooks, syntheticMessages, durableStorage, call, callObserved, restore }
 }
 
+function resumptionProcessEnvironment(
+  projectRoot: string,
+  input: {
+    mode: string
+    sessionID: string
+    agent: string
+    toolName: string
+    surface?: "native" | "code"
+    toolInput?: unknown
+    workflowId?: string
+    readyFile?: string
+    releaseFile?: string
+    sourceWorkflowId?: string
+    targetWorkflowId?: string
+    permissionEvent?: unknown
+    legacyRecords?: Array<[string, unknown]>
+  },
+): Record<string, string> {
+  const env: Record<string, string> = Object.fromEntries(
+    Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined),
+  )
+  env.LOOM_RESUMPTION_FIXTURE_MODE = input.mode
+  env.LOOM_RESUMPTION_PROJECT_ROOT = projectRoot
+  env.LOOM_RESUMPTION_PROJECT_ID = "opencode-project-a"
+  env.LOOM_RESUMPTION_SESSION_ID = input.sessionID
+  env.LOOM_RESUMPTION_AGENT = input.agent
+  env.LOOM_RESUMPTION_TOOL_NAME = input.toolName
+  if (input.surface === "code") env.LOOM_RESUMPTION_SURFACE = "code"
+  if (input.toolInput !== undefined) env.LOOM_RESUMPTION_INPUT = JSON.stringify(input.toolInput)
+  if (input.workflowId) env.LOOM_RESUMPTION_WORKFLOW_ID = input.workflowId
+  if (input.readyFile) env.LOOM_RESUMPTION_READY_FILE = input.readyFile
+  if (input.releaseFile) env.LOOM_RESUMPTION_RELEASE_FILE = input.releaseFile
+  if (input.sourceWorkflowId) env.LOOM_RESUMPTION_SOURCE_WORKFLOW_ID = input.sourceWorkflowId
+  if (input.targetWorkflowId) env.LOOM_RESUMPTION_TARGET_WORKFLOW_ID = input.targetWorkflowId
+  if (input.permissionEvent !== undefined) env.LOOM_RESUMPTION_EVENT = JSON.stringify(input.permissionEvent)
+  if (input.legacyRecords !== undefined) env.LOOM_RESUMPTION_LEGACY_RECORDS = JSON.stringify(input.legacyRecords)
+  return env
+}
+
+function spawnResumptionProcessFixture(
+  projectRoot: string,
+  input: Parameters<typeof resumptionProcessEnvironment>[1],
+) {
+  const fixture = fileURLToPath(new URL("./resumption-process-fixture.ts", import.meta.url))
+  return Bun.spawn([process.execPath, "test", fixture], {
+    cwd: projectRoot,
+    env: resumptionProcessEnvironment(projectRoot, input),
+    stdout: "pipe",
+    stderr: "pipe",
+  })
+}
+
+function startResumptionProcessFixture(
+  projectRoot: string,
+  input: Parameters<typeof resumptionProcessEnvironment>[1],
+) {
+  const fixture = fileURLToPath(new URL("./resumption-process-fixture.ts", import.meta.url))
+  return Bun.spawn([process.execPath, "test", fixture], {
+    cwd: projectRoot,
+    env: resumptionProcessEnvironment(projectRoot, input),
+    stdout: "pipe",
+    stderr: "pipe",
+  })
+}
+
+async function readResumptionProcessFixture(processFixture: ReturnType<typeof Bun.spawn>) {
+  const [stdout, stderr, exitCode] = await Promise.all([
+    new Response(processFixture.stdout as ReadableStream<Uint8Array>).text(),
+    new Response(processFixture.stderr as ReadableStream<Uint8Array>).text(),
+    processFixture.exited,
+  ])
+  if (exitCode !== 0) throw new Error(`Independent Loom fixture exited ${exitCode}: ${stderr}\n${stdout}`)
+  const resultLine = stdout.split("\n").find((line) => line.startsWith("LOOM_RESUMPTION_RESULT:"))
+  if (!resultLine) throw new Error(`Independent Loom fixture omitted its result: ${stdout}`)
+  return JSON.parse(resultLine.slice("LOOM_RESUMPTION_RESULT:".length)) as Record<string, any>
+}
+
+function runResumptionProcessFixture(
+  projectRoot: string,
+  input: Parameters<typeof resumptionProcessEnvironment>[1],
+) {
+  const fixture = fileURLToPath(new URL("./resumption-process-fixture.ts", import.meta.url))
+  const child = spawnSync(process.execPath, ["test", fixture], {
+    cwd: projectRoot,
+    env: resumptionProcessEnvironment(projectRoot, input),
+    encoding: "utf8",
+  })
+  if (child.error) throw child.error
+  if (child.status !== 0) {
+    throw new Error(`Independent Loom process fixture failed (${child.status}): ${child.stderr}`)
+  }
+  const resultLine = child.stdout.split("\n").find((line) => line.startsWith("LOOM_RESUMPTION_RESULT:"))
+  if (!resultLine) throw new Error(`Independent Loom process fixture omitted its result: ${child.stdout}`)
+  return JSON.parse(resultLine.slice("LOOM_RESUMPTION_RESULT:".length)) as Record<string, any>
+}
+
+function runtimeLockPathForTest(runtime: LoomRuntimeIdentity, aggregate: string, resourceIdentity: string) {
+  const hash = createHash("sha256").update(resourceIdentity).digest("hex")
+  return join(
+    runtime.runtimeRoot,
+    "locks",
+    runtime.installationId,
+    runtime.projectId,
+    aggregate,
+    `${hash}.lock`,
+  )
+}
+
+async function holdRuntimeLockForTest(runtime: LoomRuntimeIdentity, aggregate: string, resourceIdentity: string) {
+  const lockPath = runtimeLockPathForTest(runtime, aggregate, resourceIdentity)
+  await mkdir(dirname(lockPath), { recursive: true, mode: 0o700 })
+  const proc = spawn("flock", ["-x", lockPath, "sh", "-c", "printf 'held\\n'; cat >/dev/null"], {
+    stdio: ["pipe", "pipe", "pipe"],
+  })
+  let output = ""
+  await new Promise<void>((resolve, reject) => {
+    proc.stdout!.setEncoding("utf8")
+    proc.stdout!.on("data", (chunk: string) => {
+      output += chunk
+      if (output.includes("held\n")) resolve()
+    })
+    proc.once("error", reject)
+    proc.stderr!.on("data", (chunk) => reject(new Error(String(chunk))))
+  })
+  return { lockPath, proc }
+}
+
+async function acquireTestFlock(lockPath: string) {
+  await mkdir(dirname(lockPath), { recursive: true, mode: 0o700 })
+  const proc = spawn("flock", ["-x", lockPath, "sh", "-c", "printf 'locked\\n'; cat >/dev/null"], {
+    stdio: ["pipe", "pipe", "pipe"],
+  })
+  let output = ""
+  const ready = new Promise<void>((resolve, reject) => {
+    proc.stdout!.setEncoding("utf8")
+    proc.stdout!.on("data", (chunk: string) => {
+      output += chunk
+      if (output.includes("locked\n")) resolve()
+    })
+    proc.once("error", reject)
+    proc.stderr!.on("data", (chunk) => reject(new Error(String(chunk))))
+  })
+  await ready
+  return proc
+}
+
+async function waitForFlockUsers(lockPath: string, minimum: number) {
+  const countWaiters = async (parentPid: number, visited = new Set<number>()): Promise<number> => {
+    if (visited.has(parentPid)) return 0
+    visited.add(parentPid)
+    const childrenPath = `/proc/${parentPid}/task/${parentPid}/children`
+    const childIds = (await readFile(childrenPath, "utf8").catch(() => ""))
+      .trim().split(/\s+/).filter(Boolean).map(Number)
+    let count = 0
+    for (const childPid of childIds) {
+      const command = await readFile(`/proc/${childPid}/cmdline`, "utf8").catch(() => "")
+      if ((command.startsWith("flock\0") || command.includes("/flock\0")) && command.includes(lockPath)) count++
+      count += await countWaiters(childPid, visited)
+    }
+    return count
+  }
+  for (let attempt = 0; attempt < 2_000; attempt++) {
+    const count = await countWaiters(process.pid)
+    if (count >= minimum) return
+    await Bun.sleep(5)
+  }
+  throw new Error(`Did not observe ${minimum} independent flock processes for ${lockPath}.`)
+}
+
+async function waitForRuntimeLockUsers(
+  runtime: LoomRuntimeIdentity,
+  aggregate: string,
+  resourceIdentity: string,
+  minimum: number,
+) {
+  return waitForFlockUsers(runtimeLockPathForTest(runtime, aggregate, resourceIdentity), minimum)
+}
+
 afterEach(async () => {
   while (roots.length) await rm(roots.pop()!, { recursive: true, force: true })
 })
@@ -375,12 +557,9 @@ describe("Loom registered plugin boundary", () => {
 
   test("restores only the same General's binding and preserves admitted child authority", async () => {
     let announceQueued!: () => void
-    let releaseQueued!: () => void
     const queuedContinuation = new Promise<void>((resolve) => { announceQueued = resolve })
-    const waitingContinuation = new Promise<void>((resolve) => { releaseQueued = resolve })
-    const h = await harness(undefined, undefined, undefined, async () => {
+    const h = await harness(undefined, undefined, undefined, () => {
       announceQueued()
-      await waitingContinuation
     })
     const general = "resume-general"
     const child = "resume-child"
@@ -391,12 +570,15 @@ describe("Loom registered plugin boundary", () => {
     const source = {
       id: sourceId,
       projectId: h.runtime.projectId,
-      revision: 4,
+      revision: 0,
       anchor: "task:resume-source",
       createdBySession: general,
       createdAt,
-      steps: [{ id: "done", agent: "worker", kind: "work", dependsOn: [], status: "complete" }],
-      verification: [{ id: "proof", status: "open", statement: "Preserve an open requirement" }],
+      steps: [
+        { id: "worker-work", agent: "worker", kind: "work", dependsOn: [], status: "pending", attempt: 0 },
+        { id: "approval", agent: "reviewer", kind: "gate", dependsOn: ["worker-work"], status: "pending", attempt: 0 },
+      ],
+      verification: [],
     }
     const target = {
       id: targetId,
@@ -406,7 +588,7 @@ describe("Loom registered plugin boundary", () => {
       createdBySession: general,
       createdAt,
       work: {
-        objectiveId: "objective:resume-target",
+        objectiveId: "objective:task:resume-target",
         generation: 2,
         taskPlanRevision: 6,
         reviewedPlanRevision: 5,
@@ -416,12 +598,21 @@ describe("Loom registered plugin boundary", () => {
       steps: [
         { id: "historic", agent: "worker", kind: "work", dependsOn: [], status: "complete", attempt: 1, summary: "Prior result" },
         { id: "pending", agent: "worker", kind: "work", dependsOn: [], status: "pending", attempt: 2 },
-        { id: "independent-gate", agent: "reviewer", kind: "gate", dependsOn: [], status: "failed", attempt: 1, summary: "Keep failed gate" },
+        { id: "independent-gate", agent: "reviewer", kind: "gate", dependsOn: ["historic"], status: "failed", attempt: 1, summary: "Keep failed gate" },
       ],
-      verification: [{ id: "independent-gate", status: "open", statement: "Remain open" }],
+      verification: [{
+        id: "independent-requirement",
+        createdByStepId: "historic",
+        createdByAgent: "worker",
+        beforeStepId: "independent-gate",
+        kind: "other",
+        statement: "Remain open in the blocked target.",
+        status: "open",
+        createdAt,
+      }],
     }
     const targetWork = {
-      objectiveId: "objective:resume-target",
+      objectiveId: "objective:task:resume-target",
       anchor: target.anchor,
       title: "Resume target",
       objectiveStatus: "active",
@@ -487,10 +678,71 @@ describe("Loom registered plugin boundary", () => {
       await h.durableStorage.set(`evidence-claim/${targetId}/pending/${historicalClaim.id}`, historicalClaim)
       await h.durableStorage.set(`session/${general}`, sourceId)
       await h.durableStorage.set(`session-attachment/${general}`, "source-attachment")
-      await h.durableStorage.set(`session-step/${general}`, "done")
+      await h.durableStorage.set(`session-step/${general}`, "stale-selector")
       await h.durableStorage.set(`session-step-attempt/${encodeURIComponent(general)}`, 0)
       await h.durableStorage.set(`session-oq/${general}`, "old-question")
       await h.durableStorage.set(`session-plan-review/${encodeURIComponent(general)}`, { workflowId: sourceId, generation: 3 })
+
+      const sourceWorker = "resume-source-worker"
+      const sourceReviewer = "resume-source-reviewer"
+      await h.durableStorage.set(`session/${sourceWorker}`, sourceId)
+      await h.durableStorage.set(`session-attachment/${sourceWorker}`, "source-worker-attachment")
+      await h.durableStorage.set(`session-step/${sourceWorker}`, "worker-work")
+      await h.durableStorage.set(`session-step-attempt/${encodeURIComponent(sourceWorker)}`, 0)
+      const required = await h.call("verification", {
+        action: "require",
+        workflowId: sourceId,
+        beforeStepId: "approval",
+        kind: "other",
+        statement: "Require observed proof before source completion.",
+      }, "worker", sourceWorker)
+      expect(required.error).toBeUndefined()
+      const sourceObservation = await h.callObserved("stats", { paths: ["src"] },
+        "worker", sourceWorker, "source-proof-observation")
+      expect(sourceObservation.error).toBeUndefined()
+      const sourceObservationLinks = await h.durableStorage.scan({
+        prefix: `evidence-session/${sourceWorker}/`,
+      })
+      expect(sourceObservationLinks.entries).toHaveLength(1)
+      const sourceObservationId = sourceObservationLinks.entries[0]?.value as string
+      const proven = await h.call("verification", {
+        action: "prove",
+        workflowId: sourceId,
+        requirementId: required.requirement.id,
+        statement: "Proof was observed through the attached source Worker path.",
+        observationIds: [sourceObservationId],
+      }, "worker", sourceWorker)
+      expect(proven.error).toBeUndefined()
+      expect((await h.call("complete", {
+        workflowId: sourceId,
+        stepId: "worker-work",
+        summary: "Source work completed with observed proof.",
+      }, "worker", sourceWorker)).error).toBeUndefined()
+      const reviewGrant = await h.call("dispatch_grant", {
+        workflowId: sourceId,
+        stepId: "approval",
+      }, "general", general)
+      expect(reviewGrant.error).toBeUndefined()
+      expect((await h.call("attach", {
+        grantId: reviewGrant.grantId,
+        workflowId: sourceId,
+        stepId: "approval",
+      }, "reviewer", sourceReviewer)).error).toBeUndefined()
+      expect((await h.call("complete", {
+        workflowId: sourceId,
+        stepId: "approval",
+        summary: "Independent source gate passed after proof.",
+        outcome: "pass",
+      }, "reviewer", sourceReviewer)).error).toBeUndefined()
+      const completedSource = await h.durableStorage.get(`workflow/${sourceId}`) as any
+      expect(completedSource.steps).toMatchObject([
+        { id: "worker-work", status: "complete" },
+        { id: "approval", status: "passed" },
+      ])
+      expect(completedSource.verification).toMatchObject([
+        { id: required.requirement.id, status: "satisfied", proof: { observationIds: [sourceObservationId] } },
+      ])
+
       await h.durableStorage.set(`session/${child}`, targetId)
       await h.durableStorage.set(`session-attachment/${child}`, "child-attachment")
       await h.durableStorage.set(`session-step/${child}`, "pending")
@@ -663,7 +915,7 @@ describe("Loom registered plugin boundary", () => {
       expect(await Promise.all(retainedHistoricalGrants.map((grant) =>
         h.durableStorage.get(`dispatch-grant/${grant.grantId}`),
       ))).toEqual(beforeHistoricalGrants)
-      expect(await h.durableStorage.get(`workflow/${sourceId}`)).toEqual(source)
+      expect(await h.durableStorage.get(`workflow/${sourceId}`)).toEqual(completedSource)
       expect(await h.durableStorage.get(`budget/${targetId}`)).toEqual(exhaustedBudget)
       expect(await h.durableStorage.get(`limits/${targetId}`)).toEqual(exhaustedLimits)
       expect(await h.durableStorage.get(`session/${child}`)).toBe(targetId)
@@ -733,13 +985,387 @@ describe("Loom registered plugin boundary", () => {
       expect(exhaustedDispatch.effect).toBe("deny")
       expect(exhaustedDispatch.message).toContain("total dispatch limit 1 reached")
       expect(await h.durableStorage.get(`budget/${targetId}`)).toEqual(exhaustedBudget)
-      releaseQueued()
       const answered = await answering
       expect(answered.notifications.notified).toContain("pending")
     } finally {
       workflowLockProcess?.stdin?.end()
       if (workflowLockProcess && workflowLockProcess.exitCode === null) await once(workflowLockProcess, "exit")
-      releaseQueued()
+      h.restore()
+    }
+  })
+
+  test("continuation scheduling holds recipient workflow authority until send is admitted", async () => {
+    let announceSend!: () => void
+    let releaseSend!: () => void
+    const sendEntered = new Promise<void>((resolve) => { announceSend = resolve })
+    const sendBarrier = new Promise<void>((resolve) => { releaseSend = resolve })
+    const h = await harness(undefined, undefined, undefined, async () => {
+      announceSend()
+      await sendBarrier
+    })
+    const general = "continuation-fence-general"
+    const child = "continuation-fence-child"
+    const workflowId = "continuation-fence-workflow"
+    const stepId = "consumer"
+    const questionId = "continuation-fence-question"
+    const now = new Date().toISOString()
+    try {
+      const workflow = {
+        id: workflowId,
+        projectId: h.runtime.projectId,
+        revision: 1,
+        anchor: "task:continuation-fence",
+        createdBySession: general,
+        createdAt: now,
+        steps: [{ id: stepId, agent: "worker", kind: "work", dependsOn: [], status: "pending", attempt: 0 }],
+      }
+      await h.durableStorage.set(`workflow/${workflowId}`, workflow)
+      await h.durableStorage.set(`session/${general}`, workflowId)
+      await h.durableStorage.set(`session-attachment/${general}`, "general-fence-attachment")
+      await h.durableStorage.set(`session/${child}`, workflowId)
+      await h.durableStorage.set(`session-attachment/${child}`, "child-fence-attachment")
+      await h.durableStorage.set(`session-step/${child}`, stepId)
+      await h.durableStorage.set(`session-step-attempt/${encodeURIComponent(child)}`, 0)
+      await h.durableStorage.set(`session-oq/${child}`, questionId)
+      await h.durableStorage.set(`step-session/${encodeURIComponent(workflowId)}/${stepId}/0`, {
+        schemaVersion: 1,
+        workflowId,
+        stepId,
+        attempt: 0,
+        sessionID: child,
+        agent: "worker",
+        attachedAt: now,
+      })
+      await h.durableStorage.set(`oq-index/${workflowId}`, [questionId])
+      await h.durableStorage.set(`oq/${workflowId}/${questionId}`, {
+        id: questionId,
+        workflowId,
+        question: "The recipient must remain current until notification admission.",
+        raisedByAgent: "general",
+        raisedByStepId: "general",
+        requiredAuthority: "worker",
+        blocking: true,
+        consumerStepIds: [stepId],
+        evidence: [],
+        status: "open",
+        reconciliations: {},
+        createdAt: now,
+      })
+
+      const answer = h.call("oq_answer", {
+        workflowId,
+        questionId,
+        answer: "The recipient remains authorized through the send boundary.",
+        source: "agent",
+      }, "worker", child)
+      await sendEntered
+      const cancellation = startResumptionProcessFixture(h.root, {
+        mode: "tool",
+        sessionID: general,
+        agent: "general",
+        toolName: "cancel",
+        toolInput: {
+          workflowId,
+          reason: "Exercise cancellation racing with an already validated continuation send.",
+          confirmation: "Cancel this test-owned workflow after its notification is admitted.",
+        },
+      })
+      await waitForRuntimeLockUsers(h.runtime, "workflow", workflowId, 2)
+      expect((await h.durableStorage.get(`workflow/${workflowId}`) as any).cancellation).toBeUndefined()
+
+      releaseSend()
+      const [answered, cancelled] = await Promise.all([
+        answer,
+        readResumptionProcessFixture(cancellation),
+      ])
+      expect(answered.notifications.notified).toContain(stepId)
+      expect(cancelled.cancelled).toBe(true)
+      expect(h.syntheticMessages).toHaveLength(1)
+      expect(h.syntheticMessages[0]).toMatchObject({
+        sessionID: child,
+        metadata: { workflowId, questionId, stepId, attempt: 0 },
+      })
+      expect((await h.durableStorage.get(`workflow/${workflowId}`) as any).cancellation).toBeDefined()
+    } finally {
+      releaseSend()
+      h.restore()
+    }
+  })
+
+  test("reopened consumer attempt is rejected when the answered OQ notification is validated", async () => {
+    const h = await harness()
+    const general = "continuation-reopen-general"
+    const child = "continuation-reopen-child"
+    const workflowId = "continuation-reopen-workflow"
+    const stepId = "consumer"
+    const questionId = "continuation-reopen-question"
+    const now = new Date().toISOString()
+    try {
+      await h.durableStorage.set(`workflow/${workflowId}`, {
+        id: workflowId,
+        projectId: h.runtime.projectId,
+        revision: 1,
+        anchor: "task:continuation-reopen",
+        createdBySession: general,
+        createdAt: now,
+        steps: [{ id: stepId, agent: "worker", kind: "work", dependsOn: [], status: "pending", attempt: 0 }],
+      })
+      await h.durableStorage.set(`session/${general}`, workflowId)
+      await h.durableStorage.set(`session-attachment/${general}`, "reopen-general-attachment")
+      await h.durableStorage.set(`session/${child}`, workflowId)
+      await h.durableStorage.set(`session-attachment/${child}`, "reopen-child-attachment")
+      await h.durableStorage.set(`session-step/${child}`, stepId)
+      await h.durableStorage.set(`session-step-attempt/${encodeURIComponent(child)}`, 0)
+      await h.durableStorage.set(`session-oq/${child}`, questionId)
+      await h.durableStorage.set(`step-session/${encodeURIComponent(workflowId)}/${stepId}/0`, {
+        schemaVersion: 1,
+        workflowId,
+        stepId,
+        attempt: 0,
+        sessionID: child,
+        agent: "worker",
+        attachedAt: now,
+      })
+      await h.durableStorage.set(`oq-index/${workflowId}`, [questionId])
+      await h.durableStorage.set(`oq/${workflowId}/${questionId}`, {
+        id: questionId,
+        workflowId,
+        question: "The OQ answer belongs to the original step attempt.",
+        raisedByAgent: "general",
+        raisedByStepId: "general",
+        requiredAuthority: "worker",
+        blocking: true,
+        consumerStepIds: [stepId],
+        evidence: [],
+        status: "open",
+        reconciliations: {},
+        createdAt: now,
+      })
+
+      const reopened = await h.call("reopen", {
+        workflowId,
+        stepId,
+        reason: "New evidence requires a fresh consumer attempt.",
+        newEvidence: true,
+        changedHypothesis: true,
+        changedStrategy: false,
+        reducedUnresolved: false,
+      }, "general", general)
+      expect(reopened.error).toBeUndefined()
+      expect(reopened.reset).toContain(stepId)
+      expect((await h.durableStorage.get(`workflow/${workflowId}`) as any).steps[0].attempt).toBe(1)
+
+      const answered = await h.call("oq_answer", {
+        workflowId,
+        questionId,
+        answer: "This answer must not resume the old attempt.",
+        source: "agent",
+      }, "worker", child)
+      expect(answered.error).toBeUndefined()
+      expect(answered.notifications).toEqual({ notified: [], failed: [] })
+      expect(h.syntheticMessages).toHaveLength(0)
+    } finally {
+      h.restore()
+    }
+  })
+
+  test("deleted and rebound OQ recipients are not steered by a delayed old continuation", async () => {
+    const h = await harness()
+    const general = "continuation-delete-general"
+    const child = "continuation-delete-child"
+    const oldWorkflow = "continuation-delete-old"
+    const newWorkflow = "continuation-delete-new"
+    const stepId = "consumer"
+    const questionId = "delete-question"
+    const now = new Date().toISOString()
+    let stepLease: Awaited<ReturnType<typeof holdRuntimeLockForTest>> | undefined
+    try {
+      await h.durableStorage.set(`workflow/${oldWorkflow}`, {
+        id: oldWorkflow,
+        projectId: h.runtime.projectId,
+        revision: 1,
+        anchor: "task:continuation-delete-old",
+        createdBySession: general,
+        createdAt: now,
+        steps: [{ id: stepId, agent: "worker", kind: "work", dependsOn: [], status: "pending", attempt: 0 }],
+      })
+      await h.durableStorage.set(`workflow/${newWorkflow}`, {
+        id: newWorkflow,
+        projectId: h.runtime.projectId,
+        revision: 1,
+        anchor: "task:continuation-delete-new",
+        createdBySession: general,
+        createdAt: now,
+        steps: [{ id: "next", agent: "worker", kind: "work", dependsOn: [], status: "pending", attempt: 0 }],
+      })
+      await h.durableStorage.set(`session/${general}`, oldWorkflow)
+      await h.durableStorage.set(`session-attachment/${general}`, "delete-general-attachment")
+      await h.durableStorage.set(`session/${child}`, oldWorkflow)
+      await h.durableStorage.set(`session-attachment/${child}`, "delete-child-attachment")
+      await h.durableStorage.set(`session-step/${child}`, stepId)
+      await h.durableStorage.set(`session-step-attempt/${encodeURIComponent(child)}`, 0)
+      await h.durableStorage.set(`session-oq/${child}`, questionId)
+      await h.durableStorage.set(`step-session/${encodeURIComponent(oldWorkflow)}/${stepId}/0`, {
+        schemaVersion: 1,
+        workflowId: oldWorkflow,
+        stepId,
+        attempt: 0,
+        sessionID: child,
+        agent: "worker",
+        attachedAt: now,
+      })
+      await h.durableStorage.set(`oq-index/${oldWorkflow}`, [questionId])
+      await h.durableStorage.set(`oq/${oldWorkflow}/${questionId}`, {
+        id: questionId,
+        workflowId: oldWorkflow,
+        question: "Do not send a continuation after recipient deletion/rebind.",
+        raisedByAgent: "general",
+        raisedByStepId: "general",
+        requiredAuthority: "worker",
+        blocking: true,
+        consumerStepIds: [stepId],
+        evidence: [],
+        status: "open",
+        reconciliations: {},
+        createdAt: now,
+      })
+      const rebindGrant = {
+        schemaVersion: 1,
+        grantId: "continuation-rebind-grant",
+        projectId: h.runtime.projectId,
+        workflowId: newWorkflow,
+        stepId: "next",
+        expectedAgent: "worker",
+        issuingParentSessionId: general,
+        createdAt: now,
+        expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      }
+      await h.durableStorage.set(`dispatch-grant/${rebindGrant.grantId}`, rebindGrant)
+      stepLease = await holdRuntimeLockForTest(h.runtime, "step-authority", `${oldWorkflow}:${stepId}`)
+
+      const answering = h.call("oq_answer", {
+        workflowId: oldWorkflow,
+        questionId,
+        answer: "The recipient is being removed before continuation admission.",
+        source: "agent",
+      }, "worker", child)
+      await waitForRuntimeLockUsers(h.runtime, "step-authority", `${oldWorkflow}:${stepId}`, 2)
+      expect((await h.durableStorage.get(`oq/${oldWorkflow}/${questionId}`) as any).answer.text)
+        .toContain("removed before continuation")
+
+      expect((await h.call("cancel", {
+        workflowId: oldWorkflow,
+        reason: "Remove the test-owned workflow before its consumer continuation is admitted.",
+        confirmation: "Cancel this test-owned workflow after the OQ answer and before notification admission.",
+      }, "general", general)).cancelled).toBe(true)
+      const deleted = await deleteWorkflowRecords(h.durableStorage as any, h.runtime, {
+        workflowIds: [oldWorkflow],
+        reason: "Verify cleanup fences a continuation whose recipient has been deleted.",
+      })
+      expect(deleted.deleted).toContain(oldWorkflow)
+      expect(await h.durableStorage.get(`session-deletion-fence/${child}`)).toBeDefined()
+      expect(await h.durableStorage.get(`session/${child}`)).toBeUndefined()
+
+      stepLease.proc.stdin!.end()
+      await once(stepLease.proc, "exit")
+      stepLease = undefined
+      const answerResult = await answering
+      expect(answerResult.notifications).toEqual({ notified: [], failed: [] })
+      expect(h.syntheticMessages).toHaveLength(0)
+      expect(runResumptionProcessFixture(h.root, {
+        mode: "tool",
+        sessionID: child,
+        agent: "worker",
+        toolName: "attach",
+        toolInput: {
+        workflowId: newWorkflow,
+        stepId: "next",
+        grantId: rebindGrant.grantId,
+        },
+      }).error).toBeUndefined()
+      expect(await h.durableStorage.get(`session/${child}`)).toBe(newWorkflow)
+    } finally {
+      stepLease?.proc.stdin?.end()
+      if (stepLease && stepLease.proc.exitCode === null) await once(stepLease.proc, "exit")
+      h.restore()
+    }
+  })
+
+  test("reopened recipient attempts do not receive an old OQ continuation", async () => {
+    const h = await harness()
+    const general = "continuation-reopen-general"
+    const child = "continuation-reopen-child"
+    const workflowId = "continuation-reopen-workflow"
+    const stepId = "consumer"
+    const questionId = "continuation-reopen-question"
+    const now = new Date().toISOString()
+    try {
+      await h.durableStorage.set(`workflow/${workflowId}`, {
+        id: workflowId,
+        projectId: h.runtime.projectId,
+        revision: 1,
+        anchor: "task:continuation-reopen",
+        createdBySession: general,
+        createdAt: now,
+        steps: [{ id: stepId, agent: "worker", kind: "work", dependsOn: [], status: "pending", attempt: 0 }],
+      })
+      await h.durableStorage.set(`session/${general}`, workflowId)
+      await h.durableStorage.set(`session-attachment/${general}`, "reopen-general-attachment")
+      await h.durableStorage.set(`session/${child}`, workflowId)
+      await h.durableStorage.set(`session-attachment/${child}`, "reopen-child-attachment")
+      await h.durableStorage.set(`session-step/${child}`, stepId)
+      await h.durableStorage.set(`session-step-attempt/${encodeURIComponent(child)}`, 0)
+      await h.durableStorage.set(`session-oq/${child}`, questionId)
+      await h.durableStorage.set(`step-session/${encodeURIComponent(workflowId)}/${stepId}/0`, {
+        schemaVersion: 1,
+        workflowId,
+        stepId,
+        attempt: 0,
+        sessionID: child,
+        agent: "worker",
+        attachedAt: now,
+      })
+      await h.durableStorage.set(`oq-index/${workflowId}`, [questionId])
+      await h.durableStorage.set(`oq/${workflowId}/${questionId}`, {
+        id: questionId,
+        workflowId,
+        question: "The OQ answer belongs to the original step attempt.",
+        raisedByAgent: "general",
+        raisedByStepId: "general",
+        requiredAuthority: "worker",
+        blocking: true,
+        consumerStepIds: [stepId],
+        evidence: [],
+        status: "open",
+        reconciliations: {},
+        createdAt: now,
+      })
+
+      const reopened = await h.call("reopen", {
+        workflowId,
+        stepId,
+        reason: "A new hypothesis requires a fresh consumer attempt.",
+        newEvidence: true,
+        changedHypothesis: true,
+        changedStrategy: false,
+        reducedUnresolved: false,
+      }, "general", general)
+      expect(reopened.error).toBeUndefined()
+      expect(reopened.reset).toContain(stepId)
+      expect((await h.durableStorage.get(`workflow/${workflowId}`) as any).steps[0].attempt).toBe(1)
+
+      const answered = await h.call("oq_answer", {
+        workflowId,
+        questionId,
+        answer: "The previous OQ now has an answer but its consumer attempt changed.",
+        source: "agent",
+      }, "worker", child)
+      expect(answered.error).toBeUndefined()
+      expect(answered.notifications).toEqual({ notified: [], failed: [] })
+      expect(h.syntheticMessages).toHaveLength(0)
+      expect((await h.durableStorage.get(`oq/${workflowId}/${questionId}`) as any).answer.text)
+        .toContain("consumer attempt changed")
+    } finally {
       h.restore()
     }
   })
@@ -835,8 +1461,38 @@ describe("Loom registered plugin boundary", () => {
     const createdAt = new Date().toISOString()
     const cases = [
       { name: "stale source", sourceId: "deny-stale-source", targetId: "deny-stale-target", current: "deny-other-source" },
+      { name: "source key and id mismatch", sourceId: "deny-source-key-mismatch", targetId: "deny-source-key-target", source: { id: "wrong-source-id" } },
+      { name: "target key and id mismatch", sourceId: "deny-target-key-source", targetId: "deny-target-key-mismatch", target: { id: "wrong-target-id" } },
+      { name: "missing source record", sourceId: "deny-missing-source", targetId: "deny-missing-source-target", missingSource: true },
+      { name: "missing target record", sourceId: "deny-missing-target-source", targetId: "deny-missing-target", missingTarget: true },
+      { name: "malformed target steps", sourceId: "deny-malformed-source", targetId: "deny-malformed-target", target: { steps: null } },
       { name: "incomplete source", sourceId: "deny-incomplete-source", targetId: "deny-incomplete-target", sourceStatus: "pending" },
       { name: "cancelled source", sourceId: "deny-cancelled-source", targetId: "deny-cancelled-target", source: { cancellation: { at: createdAt } } },
+      {
+        name: "open source verification",
+        sourceId: "deny-open-proof-source",
+        targetId: "deny-open-proof-target",
+        source: {
+          steps: [
+            { id: "done", agent: "worker", kind: "work", dependsOn: [], status: "complete" },
+            { id: "gate", agent: "reviewer", kind: "gate", dependsOn: ["done"], status: "passed" },
+          ],
+          verification: [{ id: "open", createdByStepId: "done", createdByAgent: "worker", beforeStepId: "gate", kind: "other", statement: "Still open", status: "open", createdAt }],
+        },
+      },
+      {
+        name: "invalid source proof evidence",
+        sourceId: "deny-invalid-proof-source",
+        targetId: "deny-invalid-proof-target",
+        source: {
+          steps: [
+            { id: "done", agent: "worker", kind: "work", dependsOn: [], status: "complete" },
+            { id: "gate", agent: "reviewer", kind: "gate", dependsOn: ["done"], status: "passed" },
+          ],
+          verification: [{ id: "invalid-proof", createdByStepId: "done", createdByAgent: "worker", beforeStepId: "gate", kind: "other", statement: "Missing observed proof", status: "satisfied", createdAt, proof: { byAgent: "worker", stepId: "done", statement: "Forged proof", observationIds: ["missing-observation"], provedAt: createdAt } }],
+        },
+      },
+      { name: "unresolved source blocking OQ", sourceId: "deny-unresolved-oq-source", targetId: "deny-unresolved-oq-target", sourceQuestion: true },
       { name: "cancelled target", sourceId: "deny-cancel-source", targetId: "deny-cancel-target", target: { cancellation: { at: createdAt } } },
       { name: "deleted target", sourceId: "deny-deleted-source", targetId: "deny-deleted-target", deleted: true },
       { name: "foreign creator", sourceId: "deny-foreign-source", targetId: "deny-foreign-target", target: { createdBySession: "other-general" } },
@@ -868,12 +1524,29 @@ describe("Loom registered plugin boundary", () => {
           ...scenario.target,
         }
         const current = scenario.current ?? scenario.sourceId
-        await h.durableStorage.set(`workflow/${scenario.sourceId}`, source)
-        await h.durableStorage.set(`workflow/${scenario.targetId}`, target)
+        if (!scenario.missingSource) await h.durableStorage.set(`workflow/${scenario.sourceId}`, source)
+        if (!scenario.missingTarget) await h.durableStorage.set(`workflow/${scenario.targetId}`, target)
         await h.durableStorage.set(`session/${owner}`, current)
         if (scenario.deleted) {
           await h.durableStorage.set(`workflow-deletion/${scenario.targetId}`, {
             schemaVersion: 1, workflowId: scenario.targetId, projectId: h.runtime.projectId,
+          })
+        }
+        if (scenario.sourceQuestion) {
+          await h.durableStorage.set(`oq-index/${scenario.sourceId}`, ["unfinished-source-question"])
+          await h.durableStorage.set(`oq/${scenario.sourceId}/unfinished-source-question`, {
+            id: "unfinished-source-question",
+            workflowId: scenario.sourceId,
+            question: "The completed-looking source has an unresolved blocking OQ.",
+            raisedByAgent: "general",
+            raisedByStepId: "general",
+            requiredAuthority: "worker",
+            blocking: true,
+            consumerStepIds: ["done"],
+            evidence: [],
+            status: "open",
+            reconciliations: {},
+            createdAt,
           })
         }
         const beforeTarget = await h.durableStorage.get(`workflow/${scenario.targetId}`)
@@ -970,6 +1643,1115 @@ describe("Loom registered plugin boundary", () => {
     } finally {
       lockProcess?.stdin?.end()
       if (lockProcess && lockProcess.exitCode === null) await once(lockProcess, "exit")
+      h.restore()
+    }
+  })
+
+  test("independent child completion wins after permission selection and before dispatch commit", async () => {
+    const h = await harness()
+    const general = "dispatch-race-general"
+    const child = "dispatch-race-worker"
+    const workflowId = "dispatch-race-workflow"
+    const readyFile = join(h.root, "permission-selected")
+    const releaseFile = join(h.root, "permission-release")
+    let permissionProcess: ReturnType<typeof Bun.spawn> | undefined
+    try {
+      const createdAt = new Date().toISOString()
+      await h.durableStorage.set(`workflow/${workflowId}`, {
+        id: workflowId,
+        projectId: h.runtime.projectId,
+        revision: 1,
+        anchor: "task:dispatch-race",
+        createdBySession: general,
+        createdAt,
+        steps: [{ id: "selected", agent: "worker", kind: "work", dependsOn: [], status: "pending", attempt: 0 }],
+      })
+      await h.durableStorage.set(`session/${general}`, workflowId)
+      await h.durableStorage.set(`session-attachment/${general}`, "dispatch-race-general-attachment")
+      const childGrant = await h.call("dispatch_grant", { workflowId, stepId: "selected" }, "general", general)
+      expect(childGrant.error).toBeUndefined()
+      expect((await h.call("attach", {
+        grantId: childGrant.grantId,
+        workflowId,
+        stepId: "selected",
+      }, "worker", child)).error).toBeUndefined()
+      const parentGrant = await h.call("dispatch_grant", { workflowId, stepId: "selected" }, "general", general)
+      expect(parentGrant.error).toBeUndefined()
+      const beforeParentGrant = await h.durableStorage.get(`dispatch-grant/${parentGrant.grantId}`)
+      const beforeBudget = await h.durableStorage.get(`budget/${workflowId}`)
+
+      permissionProcess = Bun.spawn([
+        process.execPath,
+        "test",
+        fileURLToPath(new URL("./resumption-process-fixture.ts", import.meta.url)),
+      ], {
+        cwd: h.root,
+        env: resumptionProcessEnvironment(h.root, {
+          mode: "permission-before-commit",
+          sessionID: general,
+          agent: "general",
+          toolName: "permission",
+          workflowId,
+          readyFile,
+          releaseFile,
+          permissionEvent: {
+            agent: "general",
+            action: "subagent",
+            resources: ["worker"],
+            sessionID: general,
+            source: { messageID: "selected-before-child-complete", id: "dispatch-race" },
+            effect: "allow",
+            message: "",
+          },
+        }),
+        stdout: "pipe",
+        stderr: "pipe",
+      })
+      const permissionOutput = new Response(permissionProcess.stdout as ReadableStream<Uint8Array>).text()
+      const permissionError = new Response(permissionProcess.stderr as ReadableStream<Uint8Array>).text()
+      const permissionExit = permissionProcess.exited
+      const waitForBarrier = async () => {
+        for (let attempt = 0; attempt < 1_000; attempt++) {
+          try {
+            await readFile(readyFile)
+            return
+          } catch (error: any) {
+            if (error?.code !== "ENOENT") throw error
+          }
+          await Bun.sleep(5)
+        }
+        throw new Error("Parent permission process did not reach the selected-before-commit barrier.")
+      }
+      await waitForBarrier()
+
+      const completed = runResumptionProcessFixture(h.root, {
+        mode: "tool",
+        sessionID: child,
+        agent: "worker",
+        toolName: "complete",
+        toolInput: { workflowId, stepId: "selected", summary: "Competing child completed first." },
+      })
+      expect(completed.error).toBeUndefined()
+      expect((await h.durableStorage.get(`workflow/${workflowId}`) as any).steps[0].status).toBe("complete")
+
+      await writeFile(releaseFile, "allow permission commit revalidation")
+      const [stdout, stderr, exitCode] = await Promise.all([permissionOutput, permissionError, permissionExit])
+      expect(exitCode, stderr).toBe(0)
+      const resultLine = stdout.split("\n").find((line) => line.startsWith("LOOM_RESUMPTION_RESULT:"))
+      expect(resultLine).toBeDefined()
+      const permissionResult = JSON.parse(resultLine!.slice("LOOM_RESUMPTION_RESULT:".length))
+      expect(permissionResult.effect).toBe("deny")
+      expect(permissionResult.message).toContain("Dispatch eligibility changed before admission")
+      expect(await h.durableStorage.get(`dispatch-grant/${parentGrant.grantId}`)).toEqual(beforeParentGrant)
+      expect(await h.durableStorage.get(`budget/${workflowId}`)).toEqual(beforeBudget)
+    } finally {
+      if (permissionProcess && permissionProcess.exitCode === null) {
+        await writeFile(releaseFile, "cleanup")
+        await permissionProcess.exited
+      }
+      h.restore()
+    }
+  })
+
+  test("parent permission revalidates a selected step after an independent child completes it", async () => {
+    const h = await harness()
+    const general = "dispatch-race-general"
+    const child = "dispatch-race-worker"
+    const workflowId = "dispatch-race-workflow"
+    const readyFile = join(h.root, "permission-selected")
+    const releaseFile = join(h.root, "permission-release")
+    let permissionProcess: ReturnType<typeof Bun.spawn> | undefined
+    try {
+      const createdAt = new Date().toISOString()
+      await h.durableStorage.set(`workflow/${workflowId}`, {
+        id: workflowId,
+        projectId: h.runtime.projectId,
+        revision: 1,
+        anchor: "task:dispatch-race",
+        createdBySession: general,
+        createdAt,
+        steps: [{ id: "selected", agent: "worker", kind: "work", dependsOn: [], status: "pending", attempt: 0 }],
+      })
+      await h.durableStorage.set(`session/${general}`, workflowId)
+      await h.durableStorage.set(`session-attachment/${general}`, "dispatch-race-general-attachment")
+      const childGrant = await h.call("dispatch_grant", { workflowId, stepId: "selected" }, "general", general)
+      expect(childGrant.error).toBeUndefined()
+      expect((await h.call("attach", {
+        grantId: childGrant.grantId,
+        workflowId,
+        stepId: "selected",
+      }, "worker", child)).error).toBeUndefined()
+      const parentGrant = await h.call("dispatch_grant", { workflowId, stepId: "selected" }, "general", general)
+      expect(parentGrant.error).toBeUndefined()
+      const beforeParentGrant = await h.durableStorage.get(`dispatch-grant/${parentGrant.grantId}`)
+      const beforeBudget = await h.durableStorage.get(`budget/${workflowId}`)
+
+      permissionProcess = Bun.spawn([
+        process.execPath,
+        "test",
+        fileURLToPath(new URL("./resumption-process-fixture.ts", import.meta.url)),
+      ], {
+        cwd: h.root,
+        env: resumptionProcessEnvironment(h.root, {
+          mode: "permission-before-commit",
+          sessionID: general,
+          agent: "general",
+          toolName: "permission",
+          workflowId,
+          readyFile,
+          releaseFile,
+          permissionEvent: {
+            agent: "general",
+            action: "subagent",
+            resources: ["worker"],
+            sessionID: general,
+            source: { messageID: "selected-before-child-complete", id: "dispatch-race" },
+            effect: "allow",
+            message: "",
+          },
+        }),
+        stdout: "pipe",
+        stderr: "pipe",
+      })
+      const permissionOutput = new Response(permissionProcess.stdout as ReadableStream<Uint8Array>).text()
+      const permissionError = new Response(permissionProcess.stderr as ReadableStream<Uint8Array>).text()
+      const exitCode = permissionProcess.exited
+      const waitForFile = async (path: string) => {
+        for (let attempt = 0; attempt < 1_000; attempt++) {
+          try {
+            await readFile(path)
+            return
+          } catch (error: any) {
+            if (error?.code !== "ENOENT") throw error
+          }
+          await Bun.sleep(5)
+        }
+        throw new Error(`Process permission fixture did not reach its exact selection barrier: ${path}`)
+      }
+      await waitForFile(readyFile)
+
+      const completed = runResumptionProcessFixture(h.root, {
+        mode: "tool",
+        sessionID: child,
+        agent: "worker",
+        toolName: "complete",
+        toolInput: { workflowId, stepId: "selected", summary: "Competing child completed first." },
+      })
+      expect(completed.error).toBeUndefined()
+      expect((await h.durableStorage.get(`workflow/${workflowId}`) as any).steps[0].status).toBe("complete")
+
+      await writeFile(releaseFile, "resume admission checks current step")
+      const [stdout, stderr, status] = await Promise.all([permissionOutput, permissionError, exitCode])
+      expect(status, stderr).toBe(0)
+      const resultLine = stdout.split("\n").find((line) => line.startsWith("LOOM_RESUMPTION_RESULT:"))
+      expect(resultLine).toBeDefined()
+      const permissionResult = JSON.parse(resultLine!.slice("LOOM_RESUMPTION_RESULT:".length))
+      expect(permissionResult.effect).toBe("deny")
+      expect(permissionResult.message).toContain("Dispatch eligibility changed before admission")
+      expect(await h.durableStorage.get(`dispatch-grant/${parentGrant.grantId}`)).toEqual(beforeParentGrant)
+      expect(await h.durableStorage.get(`budget/${workflowId}`)).toEqual(beforeBudget)
+    } finally {
+      if (permissionProcess && permissionProcess.exitCode === null) {
+        await writeFile(releaseFile, "cleanup")
+        await permissionProcess.exited
+      }
+      h.restore()
+    }
+  })
+
+  test("parent Planner-OQ admission revalidates the pinned Plan revision after a concurrent amendment", async () => {
+    const h = await harness()
+    const general = "planner-oq-race-general"
+    const planner = "planner-oq-race-planner"
+    const readyFile = join(h.root, "planner-oq-selected")
+    const releaseFile = join(h.root, "planner-oq-release")
+    let permissionProcess: ReturnType<typeof Bun.spawn> | undefined
+    try {
+      const start = await h.call("start", { anchor: "docs/anchors/test/anchor.md" }, "general", general)
+      const workflowId = String(start.workflowId)
+      expect(start.error).toBeUndefined()
+      expect((await h.call("route", {
+        humanFacing: false,
+        behavioral: false,
+        structural: false,
+        externalUnknown: false,
+        diagnostic: false,
+        productOutcome: true,
+        implementationRequested: true,
+        executionDepth: "objective",
+        workLevel: "wave",
+      }, "general", general)).error).toBeUndefined()
+      const criticGrant = await h.call("dispatch_grant", { workflowId, stepId: "critic-solution" }, "general", general)
+      const criticSession = "planner-oq-race-critic"
+      expect((await h.call("attach", {
+        workflowId, stepId: "critic-solution", grantId: criticGrant.grantId,
+      }, "critic", criticSession)).error).toBeUndefined()
+      expect((await h.call("complete", {
+        workflowId, stepId: "critic-solution", outcome: "pass", summary: "Ready to plan",
+      }, "critic", criticSession)).error).toBeUndefined()
+      const planGrant = await h.call("dispatch_grant", { workflowId, stepId: "plan" }, "general", general)
+      expect(planGrant.error).toBeUndefined()
+      expect((await h.call("attach", {
+        workflowId, stepId: "plan", grantId: planGrant.grantId,
+      }, "planner", planner)).error).toBeUndefined()
+      const planned = await h.call("work_plan", richWorkPlanInput(workflowId, [{
+        id: "core",
+        title: "Core",
+        waves: [{ id: "first", title: "First", tasks: [
+          richPlanTask("one", "One", "Retain a precise Plan revision for this Planner OQ."),
+        ] }],
+      }]), "planner", planner)
+      expect(planned.error).toBeUndefined()
+      const raised = await h.call("oq_raise", {
+        workflowId,
+        question: "Reconcile this Planner question against its captured Plan revision.",
+        responder: "planner",
+        blocking: false,
+      }, "general", general)
+      expect(raised.error).toBeUndefined()
+      const objectiveId = String(planned.objectiveId)
+      const initialWork = await h.durableStorage.get(`work/${encodeURIComponent(objectiveId)}`) as any
+      const initialPlan = initialWork.plans.find((plan: any) => plan.generation === initialWork.generation)
+      expect(raised.question.work.revision).toBe(initialPlan.revision)
+      const grant = await h.call("dispatch_grant", {
+        workflowId,
+        questionId: raised.question.id,
+      }, "general", general)
+      expect(grant.error).toBeUndefined()
+      const beforeGrant = await h.durableStorage.get(`dispatch-grant/${grant.grantId}`)
+      const beforeBudget = await h.durableStorage.get(`budget/${workflowId}`)
+      const beforeQuestion = await h.durableStorage.get(`oq/${workflowId}/${raised.question.id}`)
+
+      permissionProcess = spawnResumptionProcessFixture(h.root, {
+        mode: "permission-before-commit",
+        sessionID: general,
+        agent: "general",
+        toolName: "permission",
+        workflowId,
+        readyFile,
+        releaseFile,
+        permissionEvent: {
+          agent: "general",
+          action: "subagent",
+          resources: ["planner"],
+          sessionID: general,
+          source: { messageID: "plan-before-amendment", id: "planner-oq-race" },
+          effect: "allow",
+          message: "",
+        },
+      })
+      const permissionOutput = new Response(permissionProcess.stdout as ReadableStream<Uint8Array>).text()
+      const permissionError = new Response(permissionProcess.stderr as ReadableStream<Uint8Array>).text()
+      const permissionExit = permissionProcess.exited
+      for (let attempt = 0; attempt < 1_000; attempt++) {
+        try {
+          await readFile(readyFile)
+          break
+        } catch (error: any) {
+          if (error?.code !== "ENOENT") throw error
+          if (attempt === 999) throw new Error("Parent Planner-OQ admission did not reach its exact precommit barrier.")
+          await Bun.sleep(5)
+        }
+      }
+
+      const amended = await h.call("work_amend", {
+        workflowId,
+        expectedVersion: planned.version,
+        reason: "Change the Plan after permission selected its older OQ context.",
+        operations: [],
+        planPatch: { goal: "The selected Planner OQ now references a prior Plan revision." },
+      }, "planner", planner)
+      expect(amended.error).toBeUndefined()
+      expect(amended.revision).toBeGreaterThan(raised.question.work.revision)
+      await writeFile(releaseFile, "revalidate the current Planner OQ Plan context")
+
+      const [stdout, stderr, exitCode] = await Promise.all([permissionOutput, permissionError, permissionExit])
+      expect(exitCode, stderr).toBe(0)
+      const line = stdout.split("\n").find((entry) => entry.startsWith("LOOM_RESUMPTION_RESULT:"))
+      expect(line).toBeDefined()
+      const permissionResult = JSON.parse(line!.slice("LOOM_RESUMPTION_RESULT:".length))
+      expect(permissionResult.effect).toBe("deny")
+      expect(permissionResult.message).toContain("selected OQ Plan revision is no longer current")
+      expect(await h.durableStorage.get(`dispatch-grant/${grant.grantId}`)).toEqual(beforeGrant)
+      expect(await h.durableStorage.get(`budget/${workflowId}`)).toEqual(beforeBudget)
+      expect(await h.durableStorage.get(`oq/${workflowId}/${raised.question.id}`)).toEqual(beforeQuestion)
+    } finally {
+      if (permissionProcess && permissionProcess.exitCode === null) {
+        await writeFile(releaseFile, "cleanup")
+        await permissionProcess.exited
+      }
+      h.restore()
+    }
+  })
+
+  test("parent OQ admission revalidates the pinned Plan revision after Planner amendment", async () => {
+    const h = await harness()
+    const general = "plan-race-general"
+    const planner = "plan-race-planner"
+    const readyFile = join(h.root, "plan-permission-selected")
+    const releaseFile = join(h.root, "plan-permission-release")
+    let permissionProcess: ReturnType<typeof Bun.spawn> | undefined
+    try {
+      const start = await h.call("start", {
+        anchor: "docs/anchors/test/anchor.md",
+      }, "general", general)
+      const workflowId = String(start.workflowId)
+      expect(start.error).toBeUndefined()
+      expect((await h.call("route", {
+        humanFacing: false,
+        behavioral: false,
+        structural: false,
+        externalUnknown: false,
+        diagnostic: false,
+        productOutcome: true,
+        implementationRequested: true,
+        executionDepth: "objective",
+        workLevel: "wave",
+      }, "general", general)).error).toBeUndefined()
+
+      const criticGrant = await h.call("dispatch_grant", { workflowId, stepId: "critic-solution" }, "general", general)
+      const criticSession = "plan-race-critic"
+      expect((await h.call("attach", {
+        workflowId, stepId: "critic-solution", grantId: criticGrant.grantId,
+      }, "critic", criticSession)).error).toBeUndefined()
+      expect((await h.call("complete", {
+        workflowId, stepId: "critic-solution", outcome: "pass", summary: "Ready to plan",
+      }, "critic", criticSession)).error).toBeUndefined()
+
+      const plannerGrant = await h.call("dispatch_grant", { workflowId, stepId: "plan" }, "general", general)
+      expect(plannerGrant.error).toBeUndefined()
+      expect((await h.call("attach", {
+        workflowId, stepId: "plan", grantId: plannerGrant.grantId,
+      }, "planner", planner)).error).toBeUndefined()
+      const planned = await h.call("work_plan", richWorkPlanInput(workflowId, [{
+        id: "core",
+        title: "Core",
+        waves: [{ id: "first", title: "First", tasks: [
+          richPlanTask("one", "One", "Retain an executable current Plan for the OQ."),
+        ] }],
+      }]), "planner", planner)
+      expect(planned.error).toBeUndefined()
+      const raised = await h.call("oq_raise", {
+        workflowId,
+        question: "Reconcile this Planner question against its captured Plan revision.",
+        responder: "planner",
+        blocking: false,
+      }, "general", general)
+      expect(raised.error).toBeUndefined()
+      const questionId = raised.question.id
+      const objectiveId = String(planned.objectiveId)
+      const grant = await h.call("dispatch_grant", {
+        workflowId, questionId,
+      }, "general", general)
+      expect(grant.error).toBeUndefined()
+      const beforeGrant = await h.durableStorage.get(`dispatch-grant/${grant.grantId}`)
+      const beforeBudget = await h.durableStorage.get(`budget/${workflowId}`)
+      const beforeQuestion = await h.durableStorage.get(`oq/${workflowId}/${questionId}`)
+
+      permissionProcess = Bun.spawn([
+        process.execPath,
+        "test",
+        fileURLToPath(new URL("./resumption-process-fixture.ts", import.meta.url)),
+      ], {
+        cwd: h.root,
+        env: resumptionProcessEnvironment(h.root, {
+          mode: "permission-before-commit",
+          sessionID: general,
+          agent: "general",
+          toolName: "permission",
+          workflowId,
+          readyFile,
+          releaseFile,
+          permissionEvent: {
+            agent: "general",
+            action: "subagent",
+            resources: ["planner"],
+            sessionID: general,
+            source: { messageID: "plan-before-amend", id: "plan-race-dispatch" },
+            effect: "allow",
+            message: "",
+          },
+        }),
+        stdout: "pipe",
+        stderr: "pipe",
+      })
+      const permissionOutput = new Response(permissionProcess.stdout as ReadableStream<Uint8Array>).text()
+      const permissionError = new Response(permissionProcess.stderr as ReadableStream<Uint8Array>).text()
+      const permissionExit = permissionProcess.exited
+      for (let attempt = 0; attempt < 1_000; attempt++) {
+        try {
+          await readFile(readyFile)
+          break
+        } catch (error: any) {
+          if (error?.code !== "ENOENT") throw error
+          if (attempt === 999) throw new Error("Parent Planner-OQ admission did not reach the precommit barrier.")
+          await Bun.sleep(5)
+        }
+      }
+
+      const amended = await h.call("work_amend", {
+        workflowId,
+        expectedVersion: planned.version,
+        reason: "Change the Plan after permission selected its old OQ context.",
+        operations: [],
+        planPatch: { goal: "Updated goal invalidates the selected OQ revision." },
+      }, "planner", planner)
+      expect(amended.error).toBeUndefined()
+      expect(amended.revision).toBeGreaterThan(raised.question.work.revision)
+      await writeFile(releaseFile, "revalidate current Plan before grant admission")
+
+      const [stdout, stderr, exitCode] = await Promise.all([permissionOutput, permissionError, permissionExit])
+      expect(exitCode, stderr).toBe(0)
+      const line = stdout.split("\n").find((entry) => entry.startsWith("LOOM_RESUMPTION_RESULT:"))
+      expect(line).toBeDefined()
+      const permissionResult = JSON.parse(line!.slice("LOOM_RESUMPTION_RESULT:".length))
+      expect(permissionResult.effect).toBe("deny")
+      expect(permissionResult.message).toContain("selected OQ Plan revision is no longer current")
+      expect(await h.durableStorage.get(`dispatch-grant/${grant.grantId}`)).toEqual(beforeGrant)
+      expect(await h.durableStorage.get(`budget/${workflowId}`)).toEqual(beforeBudget)
+      expect(await h.durableStorage.get(`oq/${workflowId}/${questionId}`)).toEqual(beforeQuestion)
+      const currentWork = await h.durableStorage.get(`work/${encodeURIComponent(objectiveId)}`) as any
+      expect(currentWork.plans.find((plan: any) => plan.generation === currentWork.generation).revision).toBeGreaterThan(raised.question.work.revision)
+    } finally {
+      if (permissionProcess && permissionProcess.exitCode === null) {
+        await writeFile(releaseFile, "cleanup")
+        await permissionProcess.exited
+      }
+      h.restore()
+    }
+  })
+
+  test("registered resume crash and lost-response boundaries expose only old or new complete tuples", async () => {
+    const h = await harness()
+    const general = "resume-crash-general"
+    const sourceId = "resume-crash-source"
+    const targetId = "resume-crash-target"
+    const createdAt = new Date().toISOString()
+    try {
+      const source = {
+        id: sourceId,
+        projectId: h.runtime.projectId,
+        revision: 3,
+        anchor: "task:resume-crash-source",
+        createdBySession: general,
+        createdAt,
+        steps: [{ id: "done", agent: "worker", kind: "work", dependsOn: [], status: "complete" }],
+      }
+      const target = {
+        id: targetId,
+        projectId: h.runtime.projectId,
+        revision: 5,
+        anchor: "task:resume-crash-target",
+        createdBySession: general,
+        createdAt,
+        steps: [{ id: "pending", agent: "worker", kind: "work", dependsOn: [], status: "pending", attempt: 3 }],
+      }
+      await h.durableStorage.set(`workflow/${sourceId}`, source)
+      await h.durableStorage.set(`workflow/${targetId}`, target)
+      await h.durableStorage.set(`session/${general}`, sourceId)
+      await h.durableStorage.set(`session-attachment/${general}`, "before-crash")
+      await h.durableStorage.set(`session-step/${general}`, "historic-selector")
+      await h.durableStorage.set(`session-step-attempt/${encodeURIComponent(general)}`, 4)
+      await h.durableStorage.set(`session-oq/${general}`, "historic-question")
+      await h.durableStorage.set(`session-plan-review/${encodeURIComponent(general)}`, { workflowId: sourceId, generation: 9 })
+      await h.durableStorage.set(`limits/${targetId}`, { maxTotalDispatches: 8 })
+      await h.durableStorage.set(`budget/${targetId}`, { totalDispatches: 6, seenDispatches: ["prior"] })
+
+      const crash = spawnResumptionProcessFixture(h.root, {
+        mode: "resume-crash-after-binding-write",
+        workflowId: targetId,
+        sourceWorkflowId: sourceId,
+        targetWorkflowId: targetId,
+        sessionID: general,
+        agent: "general",
+        toolName: "resume",
+        toolInput: { workflowId: targetId, fromWorkflowId: sourceId },
+      })
+      const crashStdout = new Response(crash.stdout).text()
+      const crashStderr = new Response(crash.stderr).text()
+      const crashExit = await crash.exited
+      expect(crashExit, `${await crashStdout}\n${await crashStderr}`).toBe(87)
+      expect(await h.durableStorage.get(`session/${general}`)).toBe(sourceId)
+      expect(await h.durableStorage.get(`session-attachment/${general}`)).toBe("before-crash")
+      expect(await h.durableStorage.get(`session-step/${general}`)).toBe("historic-selector")
+      expect(await h.durableStorage.get(`session-step-attempt/${encodeURIComponent(general)}`)).toBe(4)
+      expect(await h.durableStorage.get(`session-oq/${general}`)).toBe("historic-question")
+      expect(await h.durableStorage.get(`session-plan-review/${encodeURIComponent(general)}`)).toEqual({ workflowId: sourceId, generation: 9 })
+      expect(await h.durableStorage.get(`session-resumption/${encodeURIComponent(general)}`)).toBeUndefined()
+      expect(await h.durableStorage.get(`workflow/${sourceId}`)).toEqual(source)
+      expect(await h.durableStorage.get(`workflow/${targetId}`)).toEqual(target)
+      expect(await h.durableStorage.get(`budget/${targetId}`)).toEqual({ totalDispatches: 6, seenDispatches: ["prior"] })
+      expect(await h.durableStorage.get(`limits/${targetId}`)).toEqual({ maxTotalDispatches: 8 })
+
+      const responseLost = spawnResumptionProcessFixture(h.root, {
+        mode: "resume-response-loss",
+        workflowId: targetId,
+        sourceWorkflowId: sourceId,
+        targetWorkflowId: targetId,
+        sessionID: general,
+        agent: "general",
+        toolName: "resume",
+        surface: "code",
+        toolInput: { workflowId: targetId, fromWorkflowId: sourceId },
+      })
+      const lostStdout = new Response(responseLost.stdout).text()
+      const lostStderr = new Response(responseLost.stderr).text()
+      const lostExit = await responseLost.exited
+      expect(lostExit, `${await lostStdout}\n${await lostStderr}`).toBe(86)
+      expect(await h.durableStorage.get(`session/${general}`)).toBe(targetId)
+      const committedAttachment = await h.durableStorage.get(`session-attachment/${general}`)
+      expect(committedAttachment).not.toBe("before-crash")
+      expect(await h.durableStorage.get(`session-step/${general}`)).toBe("")
+      expect(await h.durableStorage.get(`session-step-attempt/${encodeURIComponent(general)}`)).toBeNull()
+      expect(await h.durableStorage.get(`session-oq/${general}`)).toBe("")
+      expect(await h.durableStorage.get(`session-plan-review/${encodeURIComponent(general)}`)).toBeNull()
+      const provenance = await h.durableStorage.get(`session-resumption/${encodeURIComponent(general)}`)
+      expect(provenance).toMatchObject({
+        coordinatorSessionId: general,
+        sourceWorkflowId: sourceId,
+        targetWorkflowId: targetId,
+      })
+      expect(await h.durableStorage.get(`workflow/${sourceId}`)).toEqual(source)
+      expect(await h.durableStorage.get(`workflow/${targetId}`)).toEqual(target)
+      expect(await h.durableStorage.get(`budget/${targetId}`)).toEqual({ totalDispatches: 6, seenDispatches: ["prior"] })
+      expect(await h.durableStorage.get(`limits/${targetId}`)).toEqual({ maxTotalDispatches: 8 })
+
+      const retry = await h.call("resume", { workflowId: targetId, fromWorkflowId: targetId }, "general", general)
+      expect(retry).toMatchObject({ status: "already_current", workDispatched: false })
+      expect(await h.durableStorage.get(`session-attachment/${general}`)).toBe(committedAttachment)
+      expect(await h.durableStorage.get(`session-resumption/${encodeURIComponent(general)}`)).toEqual(provenance)
+    } finally {
+      h.restore()
+    }
+  })
+
+  test("independent native and Code Mode calls captured before rotation never retarget", async () => {
+    const h = await harness()
+    const createdAt = new Date().toISOString()
+    try {
+      for (const surface of ["native", "code"] as const) {
+        const suffix = surface
+        const general = `process-wait-${suffix}-general`
+        const sourceId = `process-wait-${suffix}-source`
+        const targetId = `process-wait-${suffix}-target`
+        const readyFile = join(h.root, `process-wait-${suffix}-captured`)
+        const releaseFile = join(h.root, `process-wait-${suffix}-release`)
+        await h.durableStorage.set(`workflow/${sourceId}`, {
+          id: sourceId,
+          projectId: h.runtime.projectId,
+          revision: 1,
+          anchor: `task:${sourceId}`,
+          createdBySession: general,
+          createdAt,
+          steps: [{ id: "done", agent: "worker", kind: "work", dependsOn: [], status: "complete" }],
+        })
+        await h.durableStorage.set(`workflow/${targetId}`, {
+          id: targetId,
+          projectId: h.runtime.projectId,
+          revision: 1,
+          anchor: `task:${targetId}`,
+          createdBySession: general,
+          createdAt,
+          steps: [{ id: "pending", agent: "worker", kind: "work", dependsOn: [], status: "pending" }],
+        })
+        await h.durableStorage.set(`session/${general}`, sourceId)
+        await h.durableStorage.set(`session-attachment/${general}`, `${suffix}-old-attachment`)
+        await h.durableStorage.set(`session-step/${general}`, "stale-selector")
+        await h.durableStorage.set(`session-step-attempt/${encodeURIComponent(general)}`, 3)
+        await h.durableStorage.set(`session-oq/${general}`, "stale-question")
+
+        const waiting = spawnResumptionProcessFixture(h.root, {
+          mode: surface === "native" ? "wait-native" : "wait-codemode",
+          sessionID: general,
+          agent: "general",
+          toolName: "status",
+          surface,
+          toolInput: { detail: true },
+          readyFile,
+          releaseFile,
+        })
+        for (let attempt = 0; attempt < 1_000; attempt++) {
+          try {
+            await readFile(readyFile)
+            break
+          } catch (error: any) {
+            if (error?.code !== "ENOENT") throw error
+            if (attempt === 999) throw new Error(`${surface} process did not acknowledge its pre-lease tuple.`)
+            await Bun.sleep(5)
+          }
+        }
+
+        const resumer = spawnResumptionProcessFixture(h.root, {
+          mode: "tool",
+          sessionID: general,
+          agent: "general",
+          toolName: "resume",
+          surface: "code",
+          toolInput: { workflowId: targetId, fromWorkflowId: sourceId },
+        })
+        expect((await readResumptionProcessFixture(resumer)).status).toBe("resumed")
+        await writeFile(releaseFile, "allow the original captured call to revalidate")
+        const stale = await readResumptionProcessFixture(waiting)
+        expect(stale.thrown).toContain("attachment changed while this Loom invocation waited")
+        expect(stale.workflow).toBeUndefined()
+        expect(await h.durableStorage.get(`session/${general}`)).toBe(targetId)
+        expect(await h.durableStorage.get(`session-attachment/${general}`)).not.toBe(`${surface}-old-attachment`)
+        expect(await h.durableStorage.get(`session-step/${general}`)).toBe("")
+        expect(await h.durableStorage.get(`session-step-attempt/${encodeURIComponent(general)}`)).toBeNull()
+        expect(await h.durableStorage.get(`session-oq/${general}`)).toBe("")
+      }
+    } finally {
+      h.restore()
+    }
+  })
+
+  test("independent exact attach admission completes before resume rechecks an unused target grant", async () => {
+    const h = await harness()
+    const general = "attach-resume-general"
+    const child = "attach-resume-child"
+    const sourceId = "attach-resume-source"
+    const targetId = "attach-resume-target"
+    const readyFile = join(h.root, "attach-resume-waiting")
+    const releaseFile = join(h.root, "attach-resume-release")
+    let resumer: ReturnType<typeof Bun.spawn> | undefined
+    try {
+      const createdAt = new Date().toISOString()
+      await h.durableStorage.set(`workflow/${sourceId}`, {
+        id: sourceId,
+        projectId: h.runtime.projectId,
+        revision: 1,
+        anchor: `task:${sourceId}`,
+        createdBySession: general,
+        createdAt,
+        steps: [{ id: "done", agent: "worker", kind: "work", dependsOn: [], status: "complete" }],
+      })
+      await h.durableStorage.set(`workflow/${targetId}`, {
+        id: targetId,
+        projectId: h.runtime.projectId,
+        revision: 1,
+        anchor: `task:${targetId}`,
+        createdBySession: general,
+        createdAt,
+        steps: [{ id: "pending", agent: "worker", kind: "work", dependsOn: [], status: "pending", attempt: 0 }],
+      })
+      await h.durableStorage.set(`session/${general}`, sourceId)
+      await h.durableStorage.set(`session-attachment/${general}`, "attach-resume-source")
+      const attachGrant = {
+        schemaVersion: 1,
+        grantId: "attach-resume-target-grant",
+        projectId: h.runtime.projectId,
+        workflowId: targetId,
+        stepId: "pending",
+        expectedAgent: "worker",
+        issuingParentSessionId: general,
+        createdAt,
+        expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      }
+      await h.durableStorage.set(`dispatch-grant/${attachGrant.grantId}`, attachGrant)
+
+      resumer = spawnResumptionProcessFixture(h.root, {
+        mode: "resume-before-transaction",
+        sessionID: general,
+        agent: "general",
+        toolName: "resume",
+        workflowId: targetId,
+        sourceWorkflowId: sourceId,
+        targetWorkflowId: targetId,
+        toolInput: { workflowId: targetId, fromWorkflowId: sourceId },
+        readyFile,
+        releaseFile,
+      })
+      for (let attempt = 0; attempt < 1_000; attempt++) {
+        try {
+          await readFile(readyFile)
+          break
+        } catch (error: any) {
+          if (error?.code !== "ENOENT") throw error
+          if (attempt === 999) throw new Error("Independent resume process did not reach its locked revalidation barrier.")
+          await Bun.sleep(5)
+        }
+      }
+
+      const attached = runResumptionProcessFixture(h.root, {
+        mode: "tool",
+        sessionID: child,
+        agent: "worker",
+        toolName: "attach",
+        toolInput: { workflowId: targetId, stepId: "pending", grantId: attachGrant.grantId },
+      })
+      expect(attached.error).toBeUndefined()
+      expect(await h.durableStorage.get(`dispatch-grant/${attachGrant.grantId}`)).toMatchObject({
+        consumedAt: expect.any(String),
+        consumingSessionId: child,
+      })
+      await writeFile(releaseFile, "attach consumed the target grant before resume commit")
+      expect((await readResumptionProcessFixture(resumer)).status).toBe("resumed")
+      expect(await h.durableStorage.get(`session/${general}`)).toBe(targetId)
+      expect(await h.durableStorage.get(`session/${child}`)).toBe(targetId)
+      expect(await h.durableStorage.get(`session-step/${child}`)).toBe("pending")
+      expect(await h.durableStorage.get(`session-step-attempt/${encodeURIComponent(child)}`)).toBe(0)
+    } finally {
+      if (resumer && resumer.exitCode === null) {
+        await writeFile(releaseFile, "cleanup")
+        await resumer.exited
+      }
+      h.restore()
+    }
+  })
+
+  test("independent start wins the coordinator lease before resume commit and leaves no mixed binding", async () => {
+    const h = await harness()
+    const general = "start-resume-general"
+    const sourceId = "start-resume-source"
+    const targetId = "start-resume-target"
+    const readyFile = join(h.root, "start-resume-observed")
+    const releaseFile = join(h.root, "start-resume-release")
+    let resumer: ReturnType<typeof Bun.spawn> | undefined
+    try {
+      const createdAt = new Date().toISOString()
+      await h.durableStorage.set(`workflow/${sourceId}`, {
+        id: sourceId,
+        projectId: h.runtime.projectId,
+        revision: 1,
+        anchor: `task:${sourceId}`,
+        createdBySession: general,
+        createdAt,
+        steps: [{ id: "done", agent: "worker", kind: "work", dependsOn: [], status: "complete" }],
+      })
+      await h.durableStorage.set(`workflow/${targetId}`, {
+        id: targetId,
+        projectId: h.runtime.projectId,
+        revision: 1,
+        anchor: `task:${targetId}`,
+        createdBySession: general,
+        createdAt,
+        steps: [{ id: "pending", agent: "worker", kind: "work", dependsOn: [], status: "pending" }],
+      })
+      await h.durableStorage.set(`session/${general}`, sourceId)
+      await h.durableStorage.set(`session-attachment/${general}`, "start-resume-source-attachment")
+
+      resumer = spawnResumptionProcessFixture(h.root, {
+        mode: "resume-before-transaction",
+        sessionID: general,
+        agent: "general",
+        toolName: "resume",
+        workflowId: targetId,
+        sourceWorkflowId: sourceId,
+        targetWorkflowId: targetId,
+        toolInput: { workflowId: targetId, fromWorkflowId: sourceId },
+        readyFile,
+        releaseFile,
+      })
+      for (let attempt = 0; attempt < 1_000; attempt++) {
+        try {
+          await readFile(readyFile)
+          break
+        } catch (error: any) {
+          if (error?.code !== "ENOENT") throw error
+          if (attempt === 999) throw new Error("Resume process did not reach its coordinator-lease barrier.")
+          await Bun.sleep(5)
+        }
+      }
+
+      const started = runResumptionProcessFixture(h.root, {
+        mode: "tool",
+        sessionID: general,
+        agent: "general",
+        toolName: "start",
+        toolInput: { request: "bounded competing start for the coordinator lease test" },
+      })
+      expect(started.status).toBe("started")
+      expect(started.workflowId).not.toBe(targetId)
+      expect(await h.durableStorage.get(`session/${general}`)).toBe(started.workflowId)
+
+      await writeFile(releaseFile, "start committed before resume revalidation")
+      const denied = await readResumptionProcessFixture(resumer)
+      expect(denied.status).not.toBe("resumed")
+      expect(denied.error ?? denied.thrown).toBeDefined()
+      expect(await h.durableStorage.get(`session/${general}`)).toBe(started.workflowId)
+      expect(await h.durableStorage.get(`session-resumption/${encodeURIComponent(general)}`)).toBeUndefined()
+      expect(await h.durableStorage.get(`workflow/${targetId}`)).toMatchObject({ id: targetId, revision: 1 })
+    } finally {
+      if (resumer && resumer.exitCode === null) {
+        await writeFile(releaseFile, "cleanup")
+        await resumer.exited
+      }
+      h.restore()
+    }
+  })
+
+  test("resume denies a target deleted by the independent production cleanup transaction", async () => {
+    const h = await harness()
+    const general = "delete-resume-general"
+    const sourceId = "delete-resume-source"
+    const targetId = "delete-resume-target"
+    const createdAt = new Date().toISOString()
+    const readyFile = join(h.root, "delete-resume-snapshots-loaded")
+    const releaseFile = join(h.root, "delete-resume-release")
+    let resumer: ReturnType<typeof Bun.spawn> | undefined
+    try {
+      await h.durableStorage.set(`workflow/${sourceId}`, {
+        id: sourceId,
+        projectId: h.runtime.projectId,
+        revision: 1,
+        anchor: `task:${sourceId}`,
+        createdBySession: general,
+        createdAt,
+        steps: [{ id: "done", agent: "worker", kind: "work", dependsOn: [], status: "complete" }],
+      })
+      await h.durableStorage.set(`workflow/${targetId}`, {
+        id: targetId,
+        projectId: h.runtime.projectId,
+        revision: 4,
+        anchor: `task:${targetId}`,
+        createdBySession: general,
+        createdAt,
+        steps: [{ id: "failed-gate", agent: "reviewer", kind: "gate", dependsOn: [], status: "failed" }],
+      })
+      await h.durableStorage.set(`session/${general}`, sourceId)
+      await h.durableStorage.set(`session-attachment/${general}`, "delete-resume-source")
+
+      resumer = spawnResumptionProcessFixture(h.root, {
+        mode: "resume-before-transaction",
+        sessionID: general,
+        agent: "general",
+        toolName: "resume",
+        workflowId: targetId,
+        sourceWorkflowId: sourceId,
+        targetWorkflowId: targetId,
+        toolInput: { workflowId: targetId, fromWorkflowId: sourceId },
+        readyFile,
+        releaseFile,
+      })
+      for (let attempt = 0; attempt < 1_000; attempt++) {
+        try {
+          await readFile(readyFile)
+          break
+        } catch (error: any) {
+          if (error?.code !== "ENOENT") throw error
+          if (attempt === 999) throw new Error("Resume process did not acknowledge its source/target snapshot.")
+          await Bun.sleep(5)
+        }
+      }
+
+      const deletion = runResumptionProcessFixture(h.root, {
+        mode: "delete-workflow",
+        sessionID: general,
+        agent: "general",
+        toolName: "delete",
+        toolInput: {
+          workflowIds: [targetId],
+          reason: "Delete the failed test target before resume revalidation commits.",
+        },
+      })
+      expect(deletion.deleted).toEqual([targetId])
+      expect(await h.durableStorage.get(`workflow/${targetId}`)).toBeUndefined()
+      expect(await h.durableStorage.get(`workflow-deletion/${targetId}`)).toMatchObject({
+        workflowId: targetId,
+        projectId: h.runtime.projectId,
+        status: "failed",
+      })
+
+      await writeFile(releaseFile, "revalidate after independent deletion")
+      const resumeResult = await readResumptionProcessFixture(resumer)
+      expect(resumeResult.error ?? resumeResult.thrown).toBeDefined()
+      expect(resumeResult.status).not.toBe("resumed")
+      expect(await h.durableStorage.get(`session/${general}`)).toBe(sourceId)
+      expect(await h.durableStorage.get(`session-resumption/${encodeURIComponent(general)}`)).toBeUndefined()
+    } finally {
+      if (resumer && resumer.exitCode === null) {
+        await writeFile(releaseFile, "cleanup")
+        await resumer.exited
+      }
+      h.restore()
+    }
+  })
+
+  test("legacy binding migration and resume cannot overwrite one another across processes", async () => {
+    const h = await harness()
+    const general = "legacy-resume-general"
+    const sourceId = "legacy-resume-source"
+    const targetId = "legacy-resume-target"
+    const createdAt = new Date().toISOString()
+    const migrationReady = join(h.root, "legacy-migration-captured")
+    const migrationRelease = join(h.root, "legacy-migration-release")
+    const resumeReady = join(h.root, "legacy-resume-captured")
+    const resumeRelease = join(h.root, "legacy-resume-release")
+    let externalLease: Awaited<ReturnType<typeof holdRuntimeLockForTest>> | undefined
+    let migration: ReturnType<typeof Bun.spawn> | undefined
+    let resume: ReturnType<typeof Bun.spawn> | undefined
+    try {
+      const source = {
+        id: sourceId,
+        projectId: h.runtime.projectId,
+        revision: 1,
+        anchor: "task:legacy-resume-source",
+        createdBySession: general,
+        createdAt,
+        steps: [{ id: "done", agent: "worker", kind: "work", dependsOn: [], status: "complete" }],
+      }
+      await h.durableStorage.set(`workflow/${sourceId}`, source)
+      await h.durableStorage.set(`workflow/${targetId}`, {
+        id: targetId,
+        projectId: h.runtime.projectId,
+        revision: 1,
+        anchor: "task:legacy-resume-target",
+        createdBySession: general,
+        createdAt,
+        steps: [{ id: "pending", agent: "worker", kind: "work", dependsOn: [], status: "pending" }],
+      })
+      expect(await h.durableStorage.get(`session/${general}`)).toBeUndefined()
+      externalLease = await holdRuntimeLockForTest(h.runtime, "session-coordinator", general)
+
+      migration = spawnResumptionProcessFixture(h.root, {
+        mode: "wait-native",
+        sessionID: general,
+        agent: "general",
+        toolName: "status",
+        toolInput: { detail: true },
+        readyFile: migrationReady,
+        releaseFile: migrationRelease,
+        legacyRecords: [
+          [`session/${general}`, sourceId],
+          [`workflow/${sourceId}`, source],
+        ],
+      })
+      resume = spawnResumptionProcessFixture(h.root, {
+        mode: "wait-native",
+        sessionID: general,
+        agent: "general",
+        toolName: "resume",
+        toolInput: { workflowId: targetId, fromWorkflowId: sourceId },
+        readyFile: resumeReady,
+        releaseFile: resumeRelease,
+      })
+      const waitForFile = async (path: string) => {
+        for (let attempt = 0; attempt < 1_000; attempt++) {
+          try {
+            await readFile(path)
+            return
+          } catch (error: any) {
+            if (error?.code !== "ENOENT") throw error
+            if (attempt === 999) throw new Error(`Process invocation did not reach its binding barrier: ${path}`)
+            await Bun.sleep(5)
+          }
+        }
+      }
+      await Promise.all([waitForFile(migrationReady), waitForFile(resumeReady)])
+      await writeFile(migrationRelease, "allow legacy migration to contend")
+      await writeFile(resumeRelease, "allow resume to contend")
+      await waitForRuntimeLockUsers(h.runtime, "session-coordinator", general, 3)
+      externalLease.proc.stdin!.end()
+      await once(externalLease.proc, "exit")
+      externalLease = undefined
+
+      const [migrationResult, resumeResult] = await Promise.all([
+        readResumptionProcessFixture(migration),
+        readResumptionProcessFixture(resume),
+      ])
+      expect(migrationResult.workflow.id).toBe(sourceId)
+      expect(resumeResult.status).not.toBe("resumed")
+      expect(resumeResult.thrown ?? resumeResult.error).toBeDefined()
+      expect(await h.durableStorage.get(`session/${general}`)).toBe(sourceId)
+      expect(await h.durableStorage.get(`session-resumption/${encodeURIComponent(general)}`)).toBeUndefined()
+
+      const retried = await h.call("resume", {
+        workflowId: targetId,
+        fromWorkflowId: sourceId,
+      }, "general", general)
+      expect(retried.status).toBe("resumed")
+      expect(await h.durableStorage.get(`session/${general}`)).toBe(targetId)
+    } finally {
+      externalLease?.proc.stdin?.end()
+      if (externalLease && externalLease.proc.exitCode === null) await once(externalLease.proc, "exit")
+      if (migration && migration.exitCode === null) {
+        await writeFile(migrationRelease, "cleanup")
+        await migration.exited
+      }
+      if (resume && resume.exitCode === null) {
+        await writeFile(resumeRelease, "cleanup")
+        await resume.exited
+      }
+      h.restore()
+    }
+  })
+
+  test("native and Code Mode invocations captured before attachment rotation fail closed after resume", async () => {
+    const h = await harness()
+    const createdAt = new Date().toISOString()
+    try {
+      for (const surface of ["native", "code"] as const) {
+        const suffix = surface
+        const general = `waiting-${suffix}-general`
+        const sourceId = `waiting-${suffix}-source`
+        const targetId = `waiting-${suffix}-target`
+        const readyFile = join(h.root, `waiting-${suffix}-captured`)
+        const releaseFile = join(h.root, `waiting-${suffix}-release`)
+        await h.durableStorage.set(`workflow/${sourceId}`, {
+          id: sourceId,
+          projectId: h.runtime.projectId,
+          revision: 1,
+          anchor: `task:${sourceId}`,
+          createdBySession: general,
+          createdAt,
+          steps: [{ id: "done", agent: "worker", kind: "work", dependsOn: [], status: "complete" }],
+        })
+        await h.durableStorage.set(`workflow/${targetId}`, {
+          id: targetId,
+          projectId: h.runtime.projectId,
+          revision: 2,
+          anchor: `task:${targetId}`,
+          createdBySession: general,
+          createdAt,
+          steps: [{ id: "pending", agent: "worker", kind: "work", dependsOn: [], status: "pending" }],
+        })
+        await h.durableStorage.set(`session/${general}`, sourceId)
+        await h.durableStorage.set(`session-attachment/${general}`, `waiting-${suffix}-old-attachment`)
+        await h.durableStorage.set(`session-step/${general}`, "old-selector")
+        await h.durableStorage.set(`session-step-attempt/${encodeURIComponent(general)}`, 2)
+        await h.durableStorage.set(`session-oq/${general}`, "old-question")
+
+        const waiting = spawnResumptionProcessFixture(h.root, {
+          mode: surface === "native" ? "wait-native" : "wait-codemode",
+          sessionID: general,
+          agent: "general",
+          toolName: "status",
+          surface,
+          readyFile,
+          releaseFile,
+          toolInput: { detail: true },
+        })
+        for (let attempt = 0; attempt < 1_000; attempt++) {
+          try {
+            await readFile(readyFile)
+            break
+          } catch (error: any) {
+            if (error?.code !== "ENOENT") throw error
+            if (attempt === 999) throw new Error(`${surface} invocation did not acknowledge its captured tuple.`)
+            await Bun.sleep(5)
+          }
+        }
+
+        const resume = spawnResumptionProcessFixture(h.root, {
+          mode: "tool",
+          sessionID: general,
+          agent: "general",
+          toolName: "resume",
+          surface: "code",
+          toolInput: { workflowId: targetId, fromWorkflowId: sourceId },
+        })
+        const resumed = await readResumptionProcessFixture(resume)
+        expect(resumed.status).toBe("resumed")
+        await writeFile(releaseFile, "resume committed; allow captured caller to revalidate")
+        const stale = await readResumptionProcessFixture(waiting)
+        expect(stale.thrown).toContain("attachment changed while this Loom invocation waited")
+        expect(await h.durableStorage.get(`session/${general}`)).toBe(targetId)
+        expect(await h.durableStorage.get(`session-attachment/${general}`)).not.toBe(`waiting-${suffix}-old-attachment`)
+        expect(await h.durableStorage.get(`session-step/${general}`)).toBe("")
+        expect(await h.durableStorage.get(`session-step-attempt/${encodeURIComponent(general)}`)).toBeNull()
+        expect(await h.durableStorage.get(`session-oq/${general}`)).toBe("")
+      }
+    } finally {
       h.restore()
     }
   })

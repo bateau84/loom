@@ -6,7 +6,7 @@ import { execFile } from "node:child_process"
 import { promisify } from "node:util"
 import { captureEvidenceAdmission, observationCallKey, persistEvidenceObservation, sessionAttachmentKey, type EvidenceAdmission } from "./evidence-admission"
 import type * as OpenCodePlugin from "@opencode/plugin"
-import { RUNTIME_STATE_VERSION, admitDispatchGrantLocked, consumeDispatchGrantLocked, createProjectStorage, createTransactionalStorage, ensureRuntimeStateVersion, findUsableDispatchGrant, importLegacyPluginStorage, issueDispatchGrantLocked, migrateLegacySessionState, resolveRuntimeIdentity, sessionBoundToOq, sessionBoundToStep, sessionBoundToWorkflow, tryAcquireRuntimeLocks, withRuntimeAdvisoryLock, withRuntimeLock, withRuntimeLocks, type LoomRuntimeIdentity } from "./runtime"
+import { RUNTIME_STATE_VERSION, admitDispatchGrantLocked, consumeDispatchGrantLocked, createProjectStorage, createTransactionalStorage, ensureRuntimeStateVersion, findUsableDispatchGrant, importLegacyPluginStorage, issueDispatchGrantLocked, migrateLegacySessionState, resolveRuntimeIdentity, sessionBoundToOq, sessionBoundToStep, sessionBoundToWorkflow, tryAcquireRuntimeLocks, withRuntimeAdvisoryLock, withRuntimeAdvisoryLocks, withRuntimeLock, withRuntimeLocks, type LoomRuntimeIdentity } from "./runtime"
 import { LoomRpc } from "./rpc"
 import { assertLoomToolAdmission, assertCancelledChildToolAdmission, cancelWorkflow, ensureCompletedWaveHistory, workflowBindingTerminal, type CancelWorkflowInput } from "./lifecycle"
 import { buildSidebarSnapshot } from "./sidebar"
@@ -2480,6 +2480,224 @@ async function readWorkflow(ctx: any, id: string): Promise<Workflow | undefined>
   return (await ctx.storage.get(workflowKey(id))) as Workflow | undefined
 }
 
+function recordValue(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value)
+}
+
+function validStringList(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((item) => typeof item === "string" && item.length > 0)
+}
+
+function validTimestamp(value: unknown) {
+  return typeof value === "string" && Number.isFinite(Date.parse(value))
+}
+
+function stepDependsOnWorkflow(workflow: Workflow, targetStepId: string, sourceStepId: string, visited = new Set<string>()): boolean {
+  if (targetStepId === sourceStepId) return true
+  if (visited.has(targetStepId)) return false
+  visited.add(targetStepId)
+  const target = workflow.steps.find((step) => step.id === targetStepId)
+  return Boolean(target?.dependsOn.some((dependency) =>
+    stepDependsOnWorkflow(workflow, dependency, sourceStepId, visited),
+  ))
+}
+
+function workflowRecordError(
+  value: unknown,
+  expectedId: string,
+  projectId: string,
+  ownerSessionId: string,
+): string | undefined {
+  if (!recordValue(value)) return "Workflow record is malformed."
+  if (value.id !== expectedId) return "Workflow key does not match its canonical workflow ID."
+  if (value.projectId !== projectId || value.createdBySession !== ownerSessionId) {
+    return "Workflow ownership or project provenance does not match this coordinator."
+  }
+  if (
+    !Number.isSafeInteger(value.revision) || Number(value.revision) < 0 ||
+    typeof value.anchor !== "string" || !value.anchor.trim() ||
+    typeof value.createdAt !== "string" || !value.createdAt.trim() || !Array.isArray(value.steps)
+  ) {
+    return "Workflow record has an invalid canonical shape."
+  }
+
+  const stepIds = new Set<string>()
+  const validStatuses = new Set(["pending", "waiting", "complete", "passed", "failed"])
+  for (const candidate of value.steps) {
+    if (!recordValue(candidate) || typeof candidate.id !== "string" || !candidate.id.trim() ||
+        typeof candidate.agent !== "string" || !candidate.agent.trim() ||
+        !["work", "gate", "wait"].includes(String(candidate.kind)) ||
+        !validStatuses.has(String(candidate.status)) || !validStringList(candidate.dependsOn) ||
+        new Set(candidate.dependsOn).size !== candidate.dependsOn.length ||
+        (candidate.attempt !== undefined && (!Number.isSafeInteger(candidate.attempt) || Number(candidate.attempt) < 0)) ||
+        (candidate.summary !== undefined && typeof candidate.summary !== "string")) {
+      return "Workflow contains a malformed step record."
+    }
+    if (stepIds.has(candidate.id)) return "Workflow contains duplicate step identities."
+    stepIds.add(candidate.id)
+    if (candidate.task !== undefined) {
+      if (!recordValue(candidate.task) || typeof candidate.task.id !== "string" || !candidate.task.id.trim() ||
+          typeof candidate.task.title !== "string" || !candidate.task.title.trim() ||
+          typeof candidate.task.objective !== "string" || !candidate.task.objective.trim() ||
+          !validStringList(candidate.task.dependsOn) || !validStringList(candidate.task.write) ||
+          !validStringList(candidate.task.skills) || !validStringList(candidate.task.verify)) {
+        return "Workflow contains a malformed Task authority record."
+      }
+    }
+  }
+  for (const candidate of value.steps as Array<Record<string, unknown>>) {
+    const dependencies = candidate.dependsOn as string[]
+    if (dependencies.some((dependency) => !stepIds.has(dependency))) {
+      return "Workflow contains a dependency on a missing step."
+    }
+  }
+
+  if (value.verification !== undefined) {
+    if (!Array.isArray(value.verification)) return "Workflow verification state is malformed."
+    const requirementIds = new Set<string>()
+    for (const candidate of value.verification) {
+      if (!recordValue(candidate) || typeof candidate.id !== "string" || !candidate.id.trim() ||
+          typeof candidate.createdByStepId !== "string" || !candidate.createdByStepId ||
+          typeof candidate.createdByAgent !== "string" || !candidate.createdByAgent ||
+          typeof candidate.beforeStepId !== "string" || !candidate.beforeStepId ||
+          typeof candidate.kind !== "string" || !candidate.kind ||
+          typeof candidate.statement !== "string" || !candidate.statement.trim() ||
+          !["open", "satisfied", "superseded"].includes(String(candidate.status)) ||
+          !validTimestamp(candidate.createdAt)) {
+        return "Workflow contains a malformed verification requirement."
+      }
+      if (requirementIds.has(candidate.id)) return "Workflow contains duplicate verification requirement identities."
+      requirementIds.add(candidate.id)
+      if (candidate.status !== "superseded") {
+        const creator = (value.steps as Workflow["steps"]).find((step) => step.id === candidate.createdByStepId)
+        const gate = (value.steps as Workflow["steps"]).find((step) => step.id === candidate.beforeStepId)
+        if (!creator || creator.agent !== candidate.createdByAgent || !gate || gate.kind !== "gate" ||
+            !stepDependsOnWorkflow(value as Workflow, candidate.beforeStepId, candidate.createdByStepId)) {
+          return "Workflow contains a verification requirement with an invalid creator/gate path."
+        }
+      }
+      if (candidate.status === "satisfied") {
+        const proof = candidate.proof
+        if (!recordValue(proof) || typeof proof.byAgent !== "string" || !proof.byAgent ||
+            typeof proof.stepId !== "string" || !proof.stepId ||
+            typeof proof.statement !== "string" || !proof.statement.trim() ||
+            !Array.isArray(proof.observationIds) || proof.observationIds.length === 0 ||
+            !proof.observationIds.every((id) => typeof id === "string" && Boolean(id)) ||
+            new Set(proof.observationIds).size !== proof.observationIds.length ||
+            !validTimestamp(proof.provedAt)) {
+          return "A satisfied verification requirement has malformed proof provenance."
+        }
+      } else if (candidate.proof !== undefined) {
+        return "A non-satisfied verification requirement contains stale proof provenance."
+      }
+    }
+  }
+
+  if (value.work !== undefined) {
+    const workAssociation = value.work
+    if (!recordValue(workAssociation) || typeof workAssociation.objectiveId !== "string" || !workAssociation.objectiveId ||
+        !Number.isSafeInteger(workAssociation.generation) || Number(workAssociation.generation) < 0 ||
+        ["taskPlanRevision", "reviewedPlanRevision"].some((key) => workAssociation[key] !== undefined &&
+          (!Number.isSafeInteger(workAssociation[key]) || Number(workAssociation[key]) < 1)) ||
+        ["taskPlanFingerprint", "reviewedPlanFingerprint"].some((key) => workAssociation[key] !== undefined &&
+          (typeof workAssociation[key] !== "string" || !workAssociation[key]))) {
+      return "Workflow Objective/Plan association is malformed."
+    }
+  }
+  return undefined
+}
+
+async function successfulSourceWorkflowError(ctx: any, workflow: Workflow): Promise<string | undefined> {
+  if (workflow.steps.length === 0 || !workflow.steps.every((step) =>
+    step.kind === "gate" ? step.status === "passed" : step.status === "complete",
+  )) {
+    return "fromWorkflowId must be the successfully completed current workflow."
+  }
+  const satisfiedSteps = new Set(workflow.steps.filter(satisfied).map((step) => step.id))
+  if (workflow.steps.some((step) => step.dependsOn.some((dependency) => !satisfiedSteps.has(dependency)))) {
+    return "Completed source workflow has an unsatisfied dependency inconsistency."
+  }
+
+  for (const requirement of workflow.verification ?? []) {
+    if (requirement.status === "open") {
+      return "Completed source workflow still has an open verification requirement."
+    }
+    if (requirement.status === "superseded") continue
+    const creator = workflow.steps.find((step) => step.id === requirement.createdByStepId)
+    const gate = workflow.steps.find((step) => step.id === requirement.beforeStepId)
+    const proofStep = requirement.proof?.stepId
+      ? workflow.steps.find((step) => step.id === requirement.proof!.stepId)
+      : undefined
+    if (!creator || creator.agent !== requirement.createdByAgent || !gate || gate.kind !== "gate" ||
+        !stepDependsOnWorkflow(workflow, requirement.beforeStepId, requirement.createdByStepId) ||
+        gate.status !== "passed" || !proofStep || proofStep.agent !== requirement.proof?.byAgent ||
+        proofStep.status !== "complete" && proofStep.status !== "passed") {
+      return "Completed source workflow has an invalid verification proof path."
+    }
+    const observations = await Promise.all(requirement.proof!.observationIds.map((id) =>
+      ctx.storage.get(evidenceKey(id)) as Promise<EvidenceObservation | undefined>,
+    ))
+    if (observations.some((observation) => !observation) || !observationsSupportKind(
+      requirement.kind,
+      observations as EvidenceObservation[],
+    ) || observations.some((observation) =>
+      !observation || observation.agent !== requirement.proof!.byAgent ||
+      !observationMatchesStep(observation, workflow, requirement.proof!.stepId!),
+    )) {
+      return "Completed source workflow has missing or invalid verification evidence."
+    }
+  }
+
+  const questionIds = await ctx.storage.get(oqIndexKey(workflow.id))
+  if (questionIds !== undefined && (!Array.isArray(questionIds) ||
+      !questionIds.every((id) => typeof id === "string" && Boolean(id)) ||
+      new Set(questionIds).size !== questionIds.length)) {
+    return "Completed source workflow has a malformed OQ index."
+  }
+  const questions = await readQuestions(ctx, workflow.id)
+  if (questionIds !== undefined && questions.length !== questionIds.length) {
+    return "Completed source workflow has an OQ index pointing to missing state."
+  }
+  for (const question of questions) {
+    if (question.workflowId !== workflow.id || !question.id ||
+        typeof question.question !== "string" || !question.question.trim() ||
+        typeof question.raisedByAgent !== "string" || !question.raisedByAgent ||
+        typeof question.raisedByStepId !== "string" || !question.raisedByStepId ||
+        typeof question.requiredAuthority !== "string" || !question.requiredAuthority ||
+        typeof question.blocking !== "boolean" || !Array.isArray(question.evidence) ||
+        !question.evidence.every((id) => typeof id === "string") || !validTimestamp(question.createdAt) ||
+        !Array.isArray(question.consumerStepIds) ||
+        question.consumerStepIds.some((id) => typeof id !== "string" || !id) ||
+        new Set(question.consumerStepIds).size !== question.consumerStepIds.length ||
+        question.consumerStepIds.some((stepId) => !workflow.steps.some((step) => step.id === stepId)) ||
+        !recordValue(question.reconciliations) || !["open", "answered", "closed"].includes(question.status) ||
+        (question.answer !== undefined && (!recordValue(question.answer) ||
+          typeof question.answer.by !== "string" || !question.answer.by ||
+          !["agent", "user"].includes(String(question.answer.source)) ||
+          typeof question.answer.text !== "string" || !question.answer.text.trim() ||
+          !Array.isArray(question.answer.evidence) || !question.answer.evidence.every((id) => typeof id === "string") ||
+          !validTimestamp(question.answer.at))) ||
+        (question.answer ? question.status === "open" : question.status !== "open")) {
+      return "Completed source workflow has malformed OQ state."
+    }
+    if (!question.blocking) continue
+    if (!question.answer || question.status !== "closed" || question.consumerStepIds.length === 0) {
+      return "Completed source workflow has an unresolved blocking question inconsistency."
+    }
+    for (const stepId of question.consumerStepIds) {
+      const reconciliation = question.reconciliations[stepId]
+      if (!satisfiedSteps.has(stepId) || !recordValue(reconciliation) ||
+          reconciliation.stepId !== stepId || !reconciliation.byAgent ||
+          !["incorporated", "unaffected", "explicitly-deferred"].includes(String(reconciliation.disposition)) ||
+          typeof reconciliation.summary !== "string" || !reconciliation.summary.trim() ||
+          !validTimestamp(reconciliation.at)) {
+        return "Completed source workflow has an unresolved blocking question inconsistency."
+      }
+    }
+  }
+  return undefined
+}
+
 async function validateWorkflowMutationLocked(
   ctx: any,
   runtime: LoomRuntimeIdentity,
@@ -2686,10 +2904,12 @@ async function notifyAnsweredQuestionConsumers(
 
   for (const stepId of question.consumerStepIds) {
     try {
-      let admittedAttempt: number | undefined
-      const delivered = await withRuntimeLocks(
+      const delivered = await withRuntimeAdvisoryLocks(
         runtime,
-        [stepAuthorityResource(question.workflowId, stepId)],
+        [
+          { aggregate: "workflow", resourceIdentity: question.workflowId },
+          stepAuthorityResource(question.workflowId, stepId),
+        ],
         async () => {
           const [workflow, currentQuestion] = await Promise.all([
             readWorkflow(ctx, question.workflowId),
@@ -2698,7 +2918,15 @@ async function notifyAnsweredQuestionConsumers(
           if (
             !workflow ||
             workflow.cancellation ||
+            workflow.id !== question.workflowId ||
             !currentQuestion?.answer ||
+            currentQuestion.id !== question.id ||
+            currentQuestion.workflowId !== question.workflowId ||
+            currentQuestion.status !== "answered" ||
+            JSON.stringify(currentQuestion.answer) !== JSON.stringify(question.answer) ||
+            JSON.stringify(currentQuestion.consumerStepIds) !== JSON.stringify(question.consumerStepIds) ||
+            JSON.stringify(currentQuestion.work) !== JSON.stringify(question.work) ||
+            JSON.stringify(currentQuestion.reopened) !== JSON.stringify(question.reopened) ||
             currentQuestion.reconciliations[stepId]
           ) {
             return false
@@ -2714,7 +2942,6 @@ async function notifyAnsweredQuestionConsumers(
           }
 
           const attempt = step.attempt ?? 0
-          admittedAttempt = attempt
           const binding = (await ctx.storage.get(
             stepSessionBindingKey(question.workflowId, stepId, attempt),
           )) as StepSessionBinding | undefined
@@ -2734,27 +2961,29 @@ async function notifyAnsweredQuestionConsumers(
           ) {
             return false
           }
-          return binding.sessionID
+          if (await ctx.storage.get(`session-deletion-fence/${binding.sessionID}`) !== undefined) {
+            return false
+          }
+
+          await ctx.session.synthetic({
+            sessionID: binding.sessionID,
+            text:
+              `Loom OQ ${question.id} has been answered. Re-read the persisted OQ with loom_oq_list for workflow ${question.workflowId}, incorporate it into step ${stepId}, then call loom_oq_reconcile before completing that step. The persisted OQ state is authoritative; this notification intentionally contains no answer content.`,
+            description: "Loom OQ answered",
+            metadata: {
+              source: "loom",
+              kind: "oq-answered",
+              workflowId: question.workflowId,
+              questionId: question.id,
+              stepId,
+              attempt,
+            },
+            delivery: "steer",
+            resume: true,
+          })
+          return true
         },
       )
-      if (delivered) {
-        await ctx.session.synthetic({
-          sessionID: delivered,
-          text:
-            `Loom OQ ${question.id} has been answered. Re-read the persisted OQ with loom_oq_list for workflow ${question.workflowId}, incorporate it into step ${stepId}, then call loom_oq_reconcile before completing that step. The persisted OQ state is authoritative; this notification intentionally contains no answer content.`,
-          description: "Loom OQ answered",
-          metadata: {
-            source: "loom",
-            kind: "oq-answered",
-            workflowId: question.workflowId,
-            questionId: question.id,
-            stepId,
-              attempt: admittedAttempt,
-          },
-          delivery: "steer",
-          resume: true,
-        })
-      }
       if (delivered) notified.push(stepId)
     } catch (error) {
       failed.push({
@@ -4601,6 +4830,23 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           if (!sourceSnapshot || !targetSnapshot) {
             return { content: renderToolOutput({ error: "Source or target workflow is unavailable in this project." }) }
           }
+          const sourceSnapshotError = workflowRecordError(
+            sourceSnapshot,
+            fromWorkflowId,
+            runtime.projectId,
+            tool.sessionID,
+          )
+          const targetSnapshotError = workflowRecordError(
+            targetSnapshot,
+            workflowId,
+            runtime.projectId,
+            tool.sessionID,
+          )
+          if (sourceSnapshotError || targetSnapshotError) {
+            return {
+              content: renderToolOutput({ error: sourceSnapshotError ?? targetSnapshotError }),
+            }
+          }
           const workIds = [...new Set([
             sourceSnapshot.work?.objectiveId,
             targetSnapshot.work?.objectiveId,
@@ -4620,12 +4866,9 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               const source = await readWorkflow(ctx, fromWorkflowId)
               const target = await readWorkflow(ctx, workflowId)
               if (!source || !target) throw new Error("Source or target workflow disappeared before restoration.")
-              if (
-                source.projectId !== runtime.projectId || target.projectId !== runtime.projectId ||
-                source.createdBySession !== tool.sessionID || target.createdBySession !== tool.sessionID
-              ) {
-                throw new Error("Source and target must be proven to belong to this coordinator and project.")
-              }
+              const sourceRecordError = workflowRecordError(source, fromWorkflowId, runtime.projectId, tool.sessionID)
+              const targetRecordError = workflowRecordError(target, workflowId, runtime.projectId, tool.sessionID)
+              if (sourceRecordError || targetRecordError) throw new Error(sourceRecordError ?? targetRecordError)
               if (
                 source.work?.objectiveId !== sourceSnapshot.work?.objectiveId ||
                 target.work?.objectiveId !== targetSnapshot.work?.objectiveId
@@ -4644,11 +4887,13 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 if (!workflow.work) return
                 const work = await readWork(ctx, workflow.work.objectiveId)
                 const hasGeneration = Boolean(work) && (
+                  (workflow.work.generation === 0 && work!.generation === 0) ||
                   work!.plans?.some((plan) => plan.generation === workflow.work!.generation) ||
                   work!.nodes.some((node) => node.generation === workflow.work!.generation)
                 )
                 if (
                   !work || work.objectiveId !== workflow.work.objectiveId ||
+                  work.anchor !== workflow.anchor || objectiveIdForAnchor(work.anchor) !== workflow.work.objectiveId ||
                   !work.workflowIds.includes(workflow.id) || !hasGeneration
                 ) {
                   throw new Error(`Workflow ${workflow.id} has an inconsistent Objective/Plan association.`)
@@ -4660,14 +4905,8 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 return { status: "already_current" as const }
               }
 
-              if (
-                source.steps.length === 0 ||
-                !source.steps.every((step) => step.kind === "gate"
-                  ? step.status === "passed"
-                  : step.status === "complete")
-              ) {
-                throw new Error("fromWorkflowId must be the successfully completed current workflow.")
-              }
+              const sourceCompletionError = await successfulSourceWorkflowError(ctx, source)
+              if (sourceCompletionError) throw new Error(sourceCompletionError)
               await validateLifecycleAndWork(source)
 
               const now = Date.now()
@@ -4724,7 +4963,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
               const at = new Date(now).toISOString()
               const transitionId = randomUUID()
-              await ctx.storage.set(sessionKey(tool.sessionID), target.id)
+              await ctx.storage.set(sessionKey(tool.sessionID), workflowId)
               await ctx.storage.set(sessionAttachmentKey(tool.sessionID), transitionId)
               await ctx.storage.set(sessionStepKey(tool.sessionID), "")
               await ctx.storage.set(sessionStepAttemptKey(tool.sessionID), null)
@@ -4736,7 +4975,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 projectId: runtime.projectId,
                 coordinatorSessionId: tool.sessionID,
                 sourceWorkflowId: source.id,
-                targetWorkflowId: target.id,
+                targetWorkflowId: workflowId,
                 at,
               })
               return { status: "resumed" as const, at }
@@ -11197,7 +11436,129 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         target,
       ].join(":")
       const key = runnableStep ? `step:${runnableStep.id}` : `oq:${openQuestion!.id}`
-      const recorded = await withRuntimeLock(runtime, "workflow", workflow.id, async () => {
+      const admissionLocks = [
+        { aggregate: "workflow", resourceIdentity: workflow.id },
+        ...(workflow.work
+          ? [{ aggregate: "work", resourceIdentity: workflow.work.objectiveId }]
+          : []),
+      ]
+      const recorded = await withRuntimeLocks(runtime, admissionLocks, async () => {
+        const stale = (reason: string) => ({
+          allowed: false as const,
+          duplicate: false as const,
+          staleEligibility: true as const,
+          reason: `Dispatch eligibility changed before admission: ${reason}`,
+          state: newBudgetState(),
+        })
+
+        const currentWorkflow = await readWorkflow(ctx, workflow.id)
+        if (!currentWorkflow || currentWorkflow.id !== workflow.id ||
+            currentWorkflow.projectId !== runtime.projectId || currentWorkflow.cancellation ||
+            (await ctx.storage.get(sessionKey(event.sessionID))) !== workflow.id) {
+          return stale("the selected workflow is missing, closed, foreign, or no longer current")
+        }
+        if (currentWorkflow.work?.objectiveId !== workflow.work?.objectiveId ||
+            currentWorkflow.work?.generation !== workflow.work?.generation) {
+          return stale("the Objective or Plan generation changed")
+        }
+
+        let currentWork: WorkHierarchy | undefined
+        if (currentWorkflow.work) {
+          currentWork = await readWork(ctx, currentWorkflow.work.objectiveId)
+          if (!currentWork || currentWork.objectiveId !== currentWorkflow.work.objectiveId ||
+              currentWork.generation !== currentWorkflow.work.generation) {
+            return stale("the current Objective/Plan association is missing or changed")
+          }
+        }
+
+        if (runnableStep) {
+          const currentStep = currentWorkflow.steps.find((candidate) => candidate.id === runnableStep.id)
+          if (!currentStep || currentStep.agent !== target || currentStep.kind !== runnableStep.kind ||
+              currentStep.status !== "pending" || (currentStep.attempt ?? 0) !== (runnableStep.attempt ?? 0) ||
+              JSON.stringify(currentStep.dependsOn) !== JSON.stringify(runnableStep.dependsOn) ||
+              JSON.stringify(currentStep.task) !== JSON.stringify(runnableStep.task) ||
+              !runnable(currentWorkflow).some((candidate) => candidate.id === runnableStep.id)) {
+            return stale("the selected step is no longer the exact current runnable attempt")
+          }
+          try {
+            assertPlannedTaskAdmission(currentWorkflow, currentWork, currentStep)
+          } catch (error) {
+            return stale(error instanceof Error ? error.message : String(error))
+          }
+          if (
+            currentStep.task || currentStep.id.startsWith("task-review:") ||
+            (currentStep.id === "review-implementation" && plannedTaskSteps(currentWorkflow).length > 0)
+          ) {
+            const binding = currentWorkflow.work
+            const plan = currentWork && binding
+              ? workPlanContext(currentWork, undefined, "focused", binding.generation)
+              : null
+            const fingerprint = currentWork && binding
+              ? workPlanSemanticFingerprint(currentWork, binding.generation)
+              : undefined
+            if (!binding || !plan || plan.invalidated ||
+                binding.reviewedPlanRevision !== plan.revision || !fingerprint ||
+                binding.reviewedPlanFingerprint !== fingerprint) {
+              return stale("the accepted Plan revision or Reviewer claim no longer matches this Task")
+            }
+          }
+        } else {
+          const currentQuestion = await ctx.storage.get(
+            oqKey(currentWorkflow.id, openQuestion!.id),
+          ) as OpenQuestion | undefined
+          const currentQuestionIds = (await ctx.storage.get(
+            oqIndexKey(currentWorkflow.id),
+          )) as unknown
+          if (!Array.isArray(currentQuestionIds) || !currentQuestionIds.includes(openQuestion!.id) ||
+              !currentQuestion || currentQuestion.id !== openQuestion!.id ||
+              currentQuestion.workflowId !== currentWorkflow.id ||
+              currentQuestion.status !== "open" || currentQuestion.answer ||
+              currentQuestion.requiredAuthority !== target ||
+              JSON.stringify(currentQuestion) !== JSON.stringify(openQuestion)) {
+            return stale("the selected OQ is no longer the exact unanswered current question")
+          }
+          if (currentQuestion.consumerStepIds.some((stepId) =>
+            !currentWorkflow.steps.some((step) => step.id === stepId))) {
+            return stale("the selected OQ has a missing consumer step")
+          }
+          for (const consumerStepId of currentQuestion.consumerStepIds) {
+            const consumerStep = currentWorkflow.steps.find((step) => step.id === consumerStepId)!
+            try {
+              assertPlannedTaskAdmission(currentWorkflow, currentWork, consumerStep)
+            } catch (error) {
+              return stale(error instanceof Error ? error.message : String(error))
+            }
+          }
+          if (currentQuestion.work) {
+            if (!currentWorkflow.work ||
+                currentQuestion.work.objectiveId !== currentWorkflow.work.objectiveId ||
+                currentQuestion.work.generation !== currentWorkflow.work.generation ||
+                !currentWork) {
+              return stale("the selected OQ Plan context is no longer current")
+            }
+            const currentPlan = workPlanContext(
+              currentWork,
+              currentQuestion.work.taskId,
+              "focused",
+              currentWorkflow.work.generation,
+            )
+            if (!currentPlan || (currentQuestion.work.revision !== undefined &&
+                currentPlan.revision !== currentQuestion.work.revision)) {
+              return stale("the selected OQ Plan revision is no longer current")
+            }
+          }
+        }
+
+        const currentGrant = await findUsableDispatchGrant(ctx.storage as any, runtime, {
+          workflowId: currentWorkflow.id,
+          ...(runnableStep ? { stepId: runnableStep.id } : { oqId: openQuestion!.id }),
+          expectedAgent: target,
+          issuingParentSessionId: event.sessionID,
+        })
+        if (!currentGrant || currentGrant.grantId !== grantedTarget.grant.grantId) {
+          return stale("the selected dispatch grant is no longer unused and eligible")
+        }
+
         const limits = await readLimits(ctx, workflow.id)
         const budget = await readBudget(ctx, workflow.id)
         try {
@@ -11231,10 +11592,14 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         return result
       })
 
-      if (!recorded.allowed) {
-        const reason = recorded.reason ?? "Unknown dispatch denial."
-        event.effect = "deny"
-        if (reason.startsWith("Dispatch grant admission failed:")) {
+        if (!recorded.allowed) {
+          const reason = recorded.reason ?? "Unknown dispatch denial."
+          event.effect = "deny"
+          if (reason.startsWith("Dispatch eligibility changed before admission:")) {
+            event.message = reason
+            return
+          }
+          if (reason.startsWith("Dispatch grant admission failed:")) {
           event.message = `${reason} Issue a fresh exact loom_dispatch_grant before retrying.`
         } else {
           const blocked: BudgetBlockedTarget = {
