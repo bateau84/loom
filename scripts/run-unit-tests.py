@@ -66,6 +66,11 @@ def isolated_test_environment(isolation_root: Path) -> dict[str, str]:
         raise RuntimeError("Unit-test database path aliases the host installation database.")
 
     env = {key: value for key, value in os.environ.items() if value is not None}
+    # A host may set output or runtime toggles for its long-lived plugin. Do not
+    # let those settings leak into unit suites or their subprocesses.
+    for key in tuple(env):
+        if key.startswith("LOOM_"):
+            env.pop(key)
     env.update({
         "HOME": str(test_home),
         "USERPROFILE": str(test_home),
