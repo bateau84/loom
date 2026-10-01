@@ -17,6 +17,7 @@ import {
   createProjectStorage,
   createTransactionalStorage,
   resolveRuntimeIdentity,
+  tryAcquireRuntimeLocks,
 } from "./runtime"
 
 const roots: string[] = []
@@ -392,6 +393,7 @@ describe("Loom registered plugin boundary", () => {
     const child = "resume-child"
     const sourceId = "resume-source"
     const targetId = "resume-target"
+    let workflowLockProcess: ReturnType<typeof spawn> | undefined
     const createdAt = new Date().toISOString()
     const source = {
       id: sourceId,
@@ -573,13 +575,6 @@ describe("Loom registered plugin boundary", () => {
       await h.durableStorage.set(`budget/${targetId}`, exhaustedBudget)
       await h.durableStorage.set(`limits/${targetId}`, exhaustedLimits)
 
-      const answering = h.call("oq_answer", {
-        workflowId: targetId,
-        questionId: "target-question",
-        answer: "The admitted child is still authoritative.",
-        source: "agent",
-      }, "worker", child)
-      await queuedContinuation
       const beforeTarget = await h.durableStorage.get(`workflow/${targetId}`)
       const beforeWork = await h.durableStorage.get(`work/${encodeURIComponent(targetWork.objectiveId)}`)
       const beforeOq = await h.durableStorage.get(`oq/${targetId}/target-question`)
@@ -591,10 +586,58 @@ describe("Loom registered plugin boundary", () => {
       const beforeHistoricalGrants = await Promise.all(retainedHistoricalGrants.map((grant) =>
         h.durableStorage.get(`dispatch-grant/${grant.grantId}`),
       ))
-      const result = await h.call("code_resume", {
+      const workflowLockHash = createHash("sha256").update(targetId).digest("hex")
+      const workflowLockPath = join(
+        h.runtime.runtimeRoot,
+        "locks",
+        h.runtime.installationId,
+        h.runtime.projectId,
+        "workflow",
+        `${workflowLockHash}.lock`,
+      )
+      await mkdir(dirname(workflowLockPath), { recursive: true, mode: 0o700 })
+      workflowLockProcess = spawn("flock", ["-x", workflowLockPath, "sh", "-c", "printf 'locked\\n'; cat >/dev/null"], {
+        stdio: ["pipe", "pipe", "pipe"],
+      })
+      let workflowLockOutput = ""
+      const workflowLockReady = new Promise<void>((resolve, reject) => {
+        workflowLockProcess!.stdout!.setEncoding("utf8")
+        workflowLockProcess!.stdout!.on("data", (chunk: string) => {
+          workflowLockOutput += chunk
+          if (workflowLockOutput.includes("locked\n")) resolve()
+        })
+        workflowLockProcess!.once("error", reject)
+        workflowLockProcess!.stderr!.on("data", (chunk) => reject(new Error(String(chunk))))
+      })
+      await workflowLockReady
+
+      const answering = h.call("oq_answer", {
+        workflowId: targetId,
+        questionId: "target-question",
+        answer: "The admitted child is still authoritative.",
+        source: "agent",
+      }, "worker", child)
+      const resuming = h.call("code_resume", {
         workflowId: targetId,
         fromWorkflowId: sourceId,
       }, "general", general)
+      const waitForCoordinatorLease = async (sessionID: string) => {
+        for (let attempt = 0; attempt < 100; attempt++) {
+          const probe = await tryAcquireRuntimeLocks(h.runtime, [{
+            aggregate: "session-coordinator",
+            resourceIdentity: sessionID,
+          }])
+          if ("busyResource" in probe) return
+          await probe.release()
+          await Bun.sleep(10)
+        }
+        throw new Error(`Invocation did not acquire coordinator admission for ${sessionID}.`)
+      }
+      await Promise.all([waitForCoordinatorLease(general), waitForCoordinatorLease(child)])
+      workflowLockProcess.stdin!.end()
+      await once(workflowLockProcess, "exit")
+      const result = await resuming
+      await queuedContinuation
 
       expect(result).toMatchObject({
         status: "resumed",
@@ -609,9 +652,16 @@ describe("Loom registered plugin boundary", () => {
       expect(await h.durableStorage.get(`session-step-attempt/${encodeURIComponent(general)}`)).toBeNull()
       expect(await h.durableStorage.get(`session-oq/${general}`)).toBe("")
       expect(await h.durableStorage.get(`session-plan-review/${encodeURIComponent(general)}`)).toBeNull()
-      expect(await h.durableStorage.get(`workflow/${targetId}`)).toEqual(beforeTarget)
+      expect(await h.durableStorage.get(`workflow/${targetId}`)).toEqual({
+        ...beforeTarget as Record<string, unknown>,
+        revision: (beforeTarget as { revision: number }).revision + 1,
+      })
       expect(await h.durableStorage.get(`work/${encodeURIComponent(targetWork.objectiveId)}`)).toEqual(beforeWork)
-      expect(await h.durableStorage.get(`oq/${targetId}/target-question`)).toEqual(beforeOq)
+      expect(await h.durableStorage.get(`oq/${targetId}/target-question`)).toMatchObject({
+        ...beforeOq as Record<string, unknown>,
+        status: "answered",
+        answer: { by: "worker", text: "The admitted child is still authoritative." },
+      })
       expect(await h.durableStorage.get(`evidence/${historicalEvidence.id}`)).toEqual(beforeEvidence)
       expect(await h.durableStorage.get(`evidence-session/${child}/${historicalEvidence.id}`)).toEqual(beforeEvidenceLink)
       expect(await h.durableStorage.get(`evidence-step/${targetId}/pending/${historicalEvidence.id}`)).toEqual(beforeStepEvidence)
@@ -694,6 +744,8 @@ describe("Loom registered plugin boundary", () => {
       const answered = await answering
       expect(answered.notifications.notified).toContain("pending")
     } finally {
+      workflowLockProcess?.stdin?.end()
+      if (workflowLockProcess && workflowLockProcess.exitCode === null) await once(workflowLockProcess, "exit")
       releaseQueued()
       h.restore()
     }
