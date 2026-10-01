@@ -2,8 +2,10 @@
 """Discover only zero-inference *.test.ts suites in Loom's unit-test roots."""
 from __future__ import annotations
 
+import json
 import os
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
@@ -93,5 +95,55 @@ def run_unit_tests(root: Path = ROOT) -> int:
         ).returncode
 
 
+def preflight_isolation() -> int:
+    """Prove child-process root propagation without opening any Loom state store."""
+    with tempfile.TemporaryDirectory(prefix="loom-isolation-preflight-") as directory:
+        root = Path(directory)
+        env = isolated_test_environment(root)
+        probe = (
+            "import json, os; print(json.dumps({key: os.environ[key] for key in "
+            "('HOME','XDG_STATE_HOME','XDG_RUNTIME_DIR','TMPDIR','LOOM_TEST_ISOLATION_ROOT')}))"
+        )
+        child = subprocess.run(
+            [sys.executable, "-c", probe],
+            env=env,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        observed = json.loads(child.stdout)
+        expected = {
+            key: env[key]
+            for key in ("HOME", "XDG_STATE_HOME", "XDG_RUNTIME_DIR", "TMPDIR", "LOOM_TEST_ISOLATION_ROOT")
+        }
+        if observed != expected:
+            raise RuntimeError("Child process did not inherit the complete isolated Loom test environment.")
+        test_state = Path(env["XDG_STATE_HOME"]) / "loom"
+        test_database = test_state / "execution-state.sqlite"
+        host_state = Path(
+            os.environ.get("XDG_STATE_HOME") or Path(os.environ.get("HOME") or Path.home()) / ".local" / "state"
+        ).resolve()
+        host_database = host_state / "loom" / "execution-state.sqlite"
+        if (test_state / "runtime-root.json").exists() or test_database.exists():
+            raise RuntimeError("Isolation preflight unexpectedly found a pre-existing Loom state store.")
+        database_aliased = test_database.resolve() == host_database.resolve()
+        if database_aliased:
+            raise RuntimeError("Isolation preflight database path aliases the host Loom installation.")
+        print(json.dumps({
+            "status": "isolated",
+            "processEnvironmentVerified": True,
+            "stateHome": env["XDG_STATE_HOME"],
+            "runtimeHome": env["XDG_RUNTIME_DIR"],
+            "runtimeRootSelectorExists": False,
+            "executionDatabaseExists": False,
+            "hostDatabasePathAliased": database_aliased,
+        }, sort_keys=True))
+    return 0
+
+
 if __name__ == "__main__":
+    if sys.argv[1:] == ["--preflight-isolation"]:
+        raise SystemExit(preflight_isolation())
+    if sys.argv[1:]:
+        raise SystemExit("Usage: run-unit-tests.py [--preflight-isolation]")
     raise SystemExit(run_unit_tests())
