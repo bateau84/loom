@@ -532,13 +532,30 @@ export async function withRuntimeAdvisoryLock<T>(
   resourceIdentity: string,
   fn: () => Promise<T>,
 ): Promise<T> {
-  const release = await acquireFlock(
-    runtimeLockPath(runtime, { aggregate, resourceIdentity }),
-  )
+  return withRuntimeAdvisoryLocks(runtime, [{ aggregate, resourceIdentity }], fn)
+}
+
+/** Hold ordered cross-process advisory leases without extending a storage transaction. */
+export async function withRuntimeAdvisoryLocks<T>(
+  runtime: LoomRuntimeIdentity,
+  resources: RuntimeLockResource[],
+  fn: () => Promise<T>,
+): Promise<T> {
+  const lockPaths = [...new Set(resources.map((resource) => runtimeLockPath(runtime, resource)))].sort()
+  const releases: Array<() => Promise<void>> = []
   try {
+    for (const lockPath of lockPaths) releases.push(await acquireFlock(lockPath))
     return await fn()
   } finally {
-    await release()
+    let releaseError: unknown
+    for (const release of releases.reverse()) {
+      try {
+        await release()
+      } catch (error) {
+        releaseError ??= error
+      }
+    }
+    if (releaseError) throw releaseError
   }
 }
 
@@ -2013,9 +2030,12 @@ export async function revokeWorkflowDispatchGrantsLocked(
   return revoked
 }
 
-async function assertGrantWorkflowActive(storage: RawStorage, workflowId: string) {
+async function assertGrantWorkflowActive(storage: RawStorage, workflowId: string, projectId: string) {
   const workflow = await storage.get(`workflow/${workflowId}`) as Workflow | undefined
-  if (workflow) assertWorkflowNotCancelled(workflow)
+  if (!workflow || workflow.id !== workflowId || workflow.projectId !== projectId) {
+    throw new Error("Dispatch grant workflow is missing or belongs to another project.")
+  }
+  assertWorkflowNotCancelled(workflow)
 }
 
 function dispatchGrantKey(grantId: string) {
@@ -2051,7 +2071,7 @@ export async function issueDispatchGrantLocked(
   runtime: LoomRuntimeIdentity,
   input: IssueDispatchGrantInput,
 ): Promise<DispatchGrantV1> {
-  await assertGrantWorkflowActive(storage, input.workflowId)
+  await assertGrantWorkflowActive(storage, input.workflowId, runtime.projectId)
   if (Boolean(input.stepId) === Boolean(input.oqId)) {
     throw new Error("Dispatch grant requires exactly one of stepId or oqId.")
   }
@@ -2105,7 +2125,10 @@ export async function findUsableDispatchGrant(
   },
 ): Promise<DispatchGrantV1 | undefined> {
   const workflow = await storage.get(`workflow/${input.workflowId}`) as Workflow | undefined
-  if (workflow?.cancellation) return undefined
+  if (!workflow || workflow.id !== input.workflowId || workflow.projectId !== runtime.projectId) {
+    throw new Error("Dispatch grant workflow is missing or belongs to another project.")
+  }
+  if (workflow.cancellation) return undefined
   const now = (input.now ?? new Date()).getTime()
   let after: string | undefined
   do {
@@ -2150,11 +2173,11 @@ export async function admitDispatchGrantLocked(
   runtime: LoomRuntimeIdentity,
   input: AdmitDispatchGrantInput,
 ): Promise<DispatchGrantV1> {
-  await assertGrantWorkflowActive(storage, input.workflowId)
   const grant = (await storage.get(dispatchGrantKey(input.grantId))) as DispatchGrantV1 | undefined
   if (!grant || grant.schemaVersion !== 1) throw new Error("Dispatch grant not found.")
   if (grant.projectId !== runtime.projectId) throw new Error("Dispatch grant belongs to another project.")
   if (!grantMatchesSelector(grant, input)) throw new Error("Dispatch grant scope changed before dispatch.")
+  await assertGrantWorkflowActive(storage, input.workflowId, runtime.projectId)
   if (grant.revokedAt) throw new Error("Dispatch grant has been revoked.")
   if (grant.consumedAt) throw new Error("Dispatch grant has already been consumed.")
   if (grant.admittedAt) throw new Error("Dispatch grant has already admitted a subagent launch.")
@@ -2187,11 +2210,11 @@ export async function consumeDispatchGrantLocked(
   runtime: LoomRuntimeIdentity,
   input: ConsumeDispatchGrantInput,
 ): Promise<DispatchGrantV1> {
-  await assertGrantWorkflowActive(storage, input.workflowId)
   const grant = (await storage.get(dispatchGrantKey(input.grantId))) as DispatchGrantV1 | undefined
   if (!grant || grant.schemaVersion !== 1) throw new Error("Dispatch grant not found.")
   if (grant.projectId !== runtime.projectId) throw new Error("Dispatch grant belongs to another project.")
   if (!grantMatchesSelector(grant, input)) throw new Error("Dispatch grant scope does not match this attachment.")
+  await assertGrantWorkflowActive(storage, input.workflowId, runtime.projectId)
   if (grant.revokedAt) throw new Error("Dispatch grant has been revoked.")
   if (grant.consumedAt) throw new Error("Dispatch grant has already been consumed.")
 
