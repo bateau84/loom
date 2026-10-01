@@ -143,7 +143,26 @@ class UnitDiscoveryTests(unittest.TestCase):
             (root / "scripts/a space.test.ts").write_text("")
             with patch.object(RUNNER.subprocess, "run", return_value=subprocess.CompletedProcess([], 7)) as run:
                 self.assertEqual(RUNNER.run_unit_tests(root), 7)
-            run.assert_called_once_with(["bun", "test", "./scripts/a space.test.ts"], cwd=root, check=False)
+            args, kwargs = run.call_args
+            self.assertEqual(args, (["bun", "test", "./scripts/a space.test.ts"],))
+            self.assertEqual(kwargs["cwd"], root)
+            self.assertFalse(kwargs["check"])
+            env = kwargs["env"]
+            isolation_root = Path(env["LOOM_TEST_ISOLATION_ROOT"])
+            self.assertEqual(Path(env["HOME"]), isolation_root / "home")
+            self.assertEqual(Path(env["XDG_STATE_HOME"]), isolation_root / "state")
+            self.assertEqual(Path(env["XDG_RUNTIME_DIR"]), isolation_root / "runtime")
+            self.assertEqual(Path(env["TMPDIR"]), isolation_root / "tmp")
+            self.assertFalse((Path(env["XDG_STATE_HOME"]) / "loom" / "runtime-root.json").exists())
+
+    def test_isolated_environment_rejects_a_nonfresh_root(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "state").mkdir()
+            (root / "state/loom").mkdir()
+            (root / "state/loom/runtime-root.json").write_text("{}")
+            with self.assertRaisesRegex(RuntimeError, "fresh and empty"):
+                RUNNER.isolated_test_environment(root)
 
     def test_normal_entrypoint_uses_discovery(self):
         script = json.loads((ROOT / "package.json").read_text())["scripts"]["test"]
