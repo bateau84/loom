@@ -4942,9 +4942,11 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               if (sourceRecordError || targetRecordError) throw new Error(sourceRecordError ?? targetRecordError)
               if (
                 source.work?.objectiveId !== sourceSnapshot.work?.objectiveId ||
-                target.work?.objectiveId !== targetSnapshot.work?.objectiveId
+                source.work?.generation !== sourceSnapshot.work?.generation ||
+                target.work?.objectiveId !== targetSnapshot.work?.objectiveId ||
+                target.work?.generation !== targetSnapshot.work?.generation
               ) {
-                throw new Error("Workflow work association changed concurrently; inspect and retry restoration.")
+                throw new Error("Workflow Objective/Plan association changed concurrently; inspect and retry restoration.")
               }
 
               const validateLifecycleAndWork = async (workflow: Workflow) => {
@@ -12131,13 +12133,26 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             const plan = currentWork && binding
               ? workPlanContext(currentWork, undefined, "focused", binding.generation)
               : null
-            const fingerprint = currentWork && binding
-              ? workPlanSemanticFingerprint(currentWork, binding.generation)
+            const taskIds = plannedTaskSteps(currentWorkflow).map((candidate) => candidate.task!.id)
+            const reviewedRevision = binding?.reviewedPlanRevision
+            const currentTaskFingerprint = currentWork && binding
+              ? workflowTaskSemanticFingerprint(currentWork, taskIds, binding.generation)
               : undefined
-            if (!binding || !plan || plan.invalidated ||
-                binding.reviewedPlanRevision !== plan.revision || !fingerprint ||
-                binding.reviewedPlanFingerprint !== fingerprint) {
-              return stale("the accepted Plan revision or Reviewer claim no longer matches this Task")
+            const reviewedTaskFingerprint = currentWork && binding && Number.isSafeInteger(reviewedRevision)
+              ? workflowTaskSemanticFingerprint(currentWork, taskIds, binding.generation, reviewedRevision)
+              : undefined
+            const reviewedPlanFingerprint = currentWork && binding && Number.isSafeInteger(reviewedRevision)
+              ? workPlanSemanticFingerprint(currentWork, binding.generation, reviewedRevision)
+              : undefined
+            if (!binding || !plan || plan.invalidated || taskIds.length === 0 ||
+                !Number.isSafeInteger(reviewedRevision) || reviewedRevision! > plan.revision ||
+                !binding.reviewedPlanFingerprint || !reviewedPlanFingerprint ||
+                binding.reviewedPlanFingerprint !== reviewedPlanFingerprint ||
+                !currentTaskFingerprint || !reviewedTaskFingerprint ||
+                reviewedTaskFingerprint !== currentTaskFingerprint ||
+                binding.taskPlanRevision !== plan.revision ||
+                binding.taskPlanFingerprint !== currentTaskFingerprint) {
+              return stale("the reviewed claimed-Wave contract or current Task DAG no longer matches")
             }
           }
         } else {
@@ -12176,13 +12191,21 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             }
             const currentPlan = workPlanContext(
               currentWork,
-              currentQuestion.work.taskId,
+              undefined,
               "focused",
               currentWorkflow.work.generation,
             )
-            if (!currentPlan || (currentQuestion.work.revision !== undefined &&
-                currentPlan.revision !== currentQuestion.work.revision)) {
-              return stale("the selected OQ Plan revision is no longer current")
+            const pinnedPlan = workPlanContext(
+              currentWork,
+              currentQuestion.work.taskId,
+              "focused",
+              currentWorkflow.work.generation,
+              currentQuestion.work.revision,
+            )
+            if (!currentPlan || currentPlan.invalidated || !pinnedPlan || pinnedPlan.invalidated ||
+                (currentQuestion.work.revision !== undefined &&
+                  pinnedPlan.revision !== currentQuestion.work.revision)) {
+              return stale("the selected OQ Plan context is unavailable or invalidated")
             }
           }
         }
