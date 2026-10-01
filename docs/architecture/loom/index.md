@@ -1,10 +1,3 @@
----
-type: architecture-index
-title: Loom Architecture
-description: Navigation for Loom's OpenCode-native architecture.
-tags: [architecture, loom, index]
----
-
 # Loom Architecture
 
 - [System Architecture](system.md)
@@ -15,6 +8,7 @@ tags: [architecture, loom, index]
 - [Runtime Isolation](runtime-isolation.md)
   - [Project Epoch Identity](decisions/project-epoch-identity.md)
   - [Cross-Process Mutation Guard](decisions/cross-process-mutation-guard.md)
+  - [Same-Owner Coordinator Resumption](decisions/same-owner-coordinator-resumption.md)
   - [Runtime Scope Specification](specs/runtime-scope.md)
 - [Dashboard Observability](dashboard-observability.md)
   - [Dashboard Projection Transport](decisions/dashboard-projection-transport.md)
