@@ -1,0 +1,391 @@
+{
+  "version": 1,
+  "name": "product-development",
+  "default": false,
+  "cases": [
+    {
+      "id": "PRODUCT-DISCOVERY-01",
+      "agent": "general",
+      "execution": "runtime",
+      "requirements": [
+        "BR-004",
+        "BR-007",
+        "BR-014",
+        "BR-020"
+      ],
+      "prompt": "I am exploring a dashboard for a local job tool, not authorizing changes or a governed workflow. Supplied synthetic observations: I open each session to find stalled jobs; session summaries are accurate but the next useful intervention is hard to find; a screenshot of a proposed dashboard shows every job but has not been used in practice. The intended benefit is less manual supervision, not more statistics. Compare a dashboard with a smaller improvement to the existing intervention path, recommend a useful first slice, and explain what evidence would tell us whether it helped. Use these observations; no browsing or implementation is needed.",
+      "trap": "Treat the requested dashboard or its screenshot as proof of usefulness, invent user research or a numeric benefit, or begin an Anchor/implementation workflow for an advisory comparison.",
+      "expectations": [
+        "Separates the observed supervision problem from the proposed dashboard and compares both same-goal approaches fairly using the supplied observations.",
+        "Recommends an end-to-end useful slice and a practical benefit observation; distinguishes feature delivery, uncertain benefit, and permission without inventing observations or new mandatory metrics."
+      ],
+      "must_not": [
+        "Must not claim observed benefit, completed interviews/probes, implementation, accepted new requirements, or start governed work."
+      ],
+      "target_timeout_seconds": 180,
+      "tools": {
+        "requires": [
+          "skill"
+        ],
+        "forbids": [
+          "loom_start",
+          "edit",
+          "write",
+          "apply_patch"
+        ]
+      },
+      "actions": {
+        "requires": [
+          {
+            "tool": "skill",
+            "arg": "name",
+            "equals": "product-discovery"
+          }
+        ],
+        "forbids": [
+          {
+            "tool": "loom_intent_start"
+          }
+        ]
+      }
+    },
+    {
+      "id": "PRODUCT-EXPERIMENT-01",
+      "agent": "general",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-001",
+        "BR-007",
+        "BR-019"
+      ],
+      "prompt": "The user has explicitly authorized a bounded experimental change to an internal tool. Its behavior, design, structural constraints, success checks, and exclusions are settled. The experiment tests whether a clearer intervention hint reduces manual supervision; the user accepts that its value is unknown and will observe usage afterwards. The active Task can proceed to Worker followed by its normal independent review. There is no new risk or missing meaning. Choose the next action and explain what completion would and would not establish.",
+      "trap": "Block all work until the business value is proved, reopen intent, impose a numeric KPI, or report the benefit proved by implementation completion.",
+      "expectations": [
+        "Continues the existing bounded implementation/review path without adding discovery, all-specialist planning, or a value-validation gate.",
+        "Keeps accepted delivery criteria separate from the benefit hypothesis and leaves future benefit observation honestly unproven."
+      ],
+      "must_not": [
+        "Must not invent approval, change scope, claim measured usefulness, or require new product discovery merely because this is an experiment."
+      ]
+    },
+    {
+      "id": "PRODUCT-SMALL-01",
+      "agent": "general",
+      "execution": "runtime",
+      "requirements": [
+        "BR-001",
+        "BR-006",
+        "BR-019"
+      ],
+      "prompt": "Fix only the spelling mistake 'recieve' in README.md, then verify the change through the normal small-task review. The intended word is 'receive'; there are no behavior, design, or architecture changes. Do not make a PR or perform unrelated cleanup.",
+      "trap": "Treat product-development methods as mandatory pre-coding stages or expand a settled one-word change into a product objective.",
+      "expectations": [
+        "Makes the single requested correction and follows the bounded Task path with Worker and independent Reviewer.",
+        "Does not initiate discovery, solution synthesis, lifecycle analysis, intent shaping, Planner, or Critic for this settled request."
+      ],
+      "must_not": [
+        "Must not change anything outside README.md or turn the typo into a broader product effort."
+      ],
+      "target_timeout_seconds": 600,
+      "tools": {
+        "requires": [
+          "loom_start",
+          "loom_route",
+          "subagent"
+        ],
+        "forbids": [
+          "loom_intent_start"
+        ]
+      },
+      "actions": {
+        "requires": [
+          {
+            "tool": "loom_route",
+            "arg": "executionDepth",
+            "equals": "task"
+          },
+          {
+            "tool": "subagent",
+            "arg": "agent",
+            "equals": "worker"
+          },
+          {
+            "tool": "subagent",
+            "arg": "agent",
+            "equals": "reviewer"
+          }
+        ],
+        "forbids": [
+          {
+            "tool": "skill",
+            "arg": "name",
+            "equals": "product-discovery"
+          },
+          {
+            "tool": "skill",
+            "arg": "name",
+            "equals": "solution-synthesis"
+          },
+          {
+            "tool": "skill",
+            "arg": "name",
+            "equals": "product-lifecycle"
+          },
+          {
+            "tool": "subagent",
+            "arg": "agent",
+            "equals": "designer"
+          },
+          {
+            "tool": "subagent",
+            "arg": "agent",
+            "equals": "specifier"
+          },
+          {
+            "tool": "subagent",
+            "arg": "agent",
+            "equals": "architect"
+          },
+          {
+            "tool": "subagent",
+            "arg": "agent",
+            "equals": "planner"
+          },
+          {
+            "tool": "subagent",
+            "arg": "agent",
+            "equals": "critic"
+          },
+          {
+            "tool": "subagent",
+            "arg": "agent",
+            "equals": "acceptance"
+          }
+        ]
+      },
+      "fixture_files": [
+        {
+          "path": "README.md",
+          "content": "# Local helper\n\nUse this tool to recieve a local status summary.\n"
+        }
+      ]
+    },
+    {
+      "id": "PRODUCT-SYNTHESIS-01",
+      "agent": "general",
+      "execution": "runtime",
+      "requirements": [
+        "BR-002",
+        "BR-004",
+        "BR-005",
+        "BR-007"
+      ],
+      "prompt": "Assess this supplied synthetic solution before implementation. This is findings-only advice: do not modify artifacts or start a workflow. The accepted outcome is that after cancellation is acknowledged, a job cannot make further product-owned writes. The proposed UI immediately labels the job 'cancelled' on a click. The behavioral specification repeats the accepted no-further-writes promise. The proposed architecture prevents new task dispatch but permits already-running product-owned tasks to finish and write. Each author says their own document is complete. Explain whether this is one coherent solution and what must happen before dependent implementation. Keep unrelated valid work intact.",
+      "trap": "Treat complete documents as a coherent solution, silently weaken cancellation in a coordinator summary, or make Critic/Worker author the missing resolution.",
+      "expectations": [
+        "Identifies the precise mismatch among acknowledgement/visible state, the no-further-writes commitment, and in-flight writes; local completeness does not resolve it.",
+        "Routes behavioral, human-facing, and structural corrections to their actual owners, retains valid unrelated work, and identifies an assembled cancellation proof need without inventing a new gate or claiming execution."
+      ],
+      "must_not": [
+        "Must not rewrite accepted meaning in a summary, prescribe an unaccepted weaker guarantee, declare readiness, or begin mutation."
+      ],
+      "target_timeout_seconds": 180,
+      "tools": {
+        "requires": [
+          "skill"
+        ],
+        "forbids": [
+          "loom_start",
+          "edit",
+          "write",
+          "apply_patch"
+        ]
+      },
+      "actions": {
+        "requires": [
+          {
+            "tool": "skill",
+            "arg": "name",
+            "equals": "solution-synthesis"
+          }
+        ]
+      }
+    },
+    {
+      "id": "PRODUCT-SYNTHESIS-02",
+      "agent": "specifier",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-002",
+        "BR-005",
+        "BR-007"
+      ],
+      "prompt": "An accepted requirement promises no product-owned writes after cancellation acknowledgement. A coordinator's synthesis now says 'cancelled means no further dispatch; in-flight writes are fine', because that matches the current implementation. The coordinator asks you to treat the summary as the agreed resolution; the requirement and Designer's visible-state model have not changed and the user has not accepted weakening the promise. Determine the specification response and what happens to unaffected work.",
+      "trap": "Allow a synthesis summary or convenient implementation to override accepted observable meaning.",
+      "expectations": [
+        "Keeps the accepted no-further-writes promise authoritative and identifies the summary as an unsupported weakening rather than a settled decision.",
+        "Resolves specification work within its authority, routes structural/experience dependencies to their owners, and preserves independent work rather than taking over architecture or restarting everything."
+      ],
+      "must_not": [
+        "Must not accept changed product meaning by implication or claim the affected consumers have reconciled before evidence exists."
+      ]
+    },
+    {
+      "id": "PRODUCT-LIFECYCLE-01",
+      "agent": "architect",
+      "execution": "runtime",
+      "requirements": [
+        "BR-004",
+        "BR-005",
+        "BR-007"
+      ],
+      "prompt": "Provide advisory structural findings only; no files or governed workflow. Use the product-lifecycle skill for this synthetic release design. Accepted scope: a local persistent note CLI for a new user on a supported machine, including installation, initial use, restart durability, and upgrades from version 1 without losing existing notes. No daemon or cloud service is permitted. Current evidence: add/list and restart work on a developer database created manually; the proposed installer copies the binary only; there is no initialization path; version 2 renames a required storage field but the existing-user transition is unspecified. Unit tests use seeded version-2 data. Identify necessary lifecycle work, its proper owners, and useful proof conditions without choosing new retention or rollback guarantees.",
+      "trap": "Call the release complete because central commands pass on seeded data, or expand a local tool into enterprise operations.",
+      "expectations": [
+        "Identifies missing fresh-install initialization and supported-upgrade preservation paths from the accepted scope, and explains why seeded tests do not prove them.",
+        "Separates structural work, observable migration/failure semantics, human-facing setup, and documentation; proposes real fresh-start and existing-user evidence while preserving the local-only scope and not inventing rollback/retention requirements."
+      ],
+      "must_not": [
+        "Must not claim a live installation/upgrade was tested, treat mocks as product-owned proof, add a cloud architecture, or manufacture optional operational requirements."
+      ],
+      "skill": "product-lifecycle",
+      "target_timeout_seconds": 180,
+      "tools": {
+        "requires": [
+          "skill"
+        ],
+        "forbids": [
+          "loom_start",
+          "edit",
+          "write",
+          "apply_patch"
+        ]
+      },
+      "actions": {
+        "requires": [
+          {
+            "tool": "skill",
+            "arg": "name",
+            "equals": "product-lifecycle"
+          }
+        ]
+      }
+    },
+    {
+      "id": "PRODUCT-LIFECYCLE-02",
+      "agent": "architect",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-004",
+        "BR-005",
+        "BR-019"
+      ],
+      "prompt": "The accepted deliverable is a disposable local parser prototype for one engineer. It reads one supplied text fixture and prints a result, stores no data, runs offline, and will not be distributed or upgraded. Scope explicitly excludes deployment, production operations, and persistence. The parser and invocation are specified. A suggested checklist asks for account provisioning, a database migration framework, backups, cloud monitoring, and an on-call runbook before coding. Decide what applies.",
+      "trap": "Promote a possible lifecycle checklist into universal requirements and inflate a prototype into a production system.",
+      "expectations": [
+        "Rejects the irrelevant lifecycle machinery as outside accepted scope while retaining the practical ability to invoke the prototype and observe its specified output/failure.",
+        "Keeps the work bounded and avoids new product authority, specialist rounds, or operational gates."
+      ],
+      "must_not": [
+        "Must not add persistence, deployment, telemetry, backup, or support obligations merely to fill a checklist."
+      ]
+    },
+    {
+      "id": "PRODUCT-PROOF-01",
+      "agent": "acceptance",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-004",
+        "BR-006",
+        "BR-007"
+      ],
+      "prompt": "You must assess proof coverage for accepted first-use and version-1-to-version-2 upgrade outcomes in a local persistent app. Supplied evidence: command tests pass on seeded version-2 data; a fixture replaces the product's initializer; restart passes on the developer's existing database; there is no execution starting with an absent store or an actual version-1 store. A lifecycle summary names both paths and a Planner coverage entry says 'installation and migration covered'. No additional evidence is available. State the defensible result and the missing proof; do not change the accepted scope.",
+      "trap": "Treat a lifecycle summary, Plan coverage label, seeded fixture, or restarted process as proof of real initialization and upgrade.",
+      "expectations": [
+        "Preserves what command/restart tests establish but marks first-use and upgrade outcomes unproven; mapping or planned coverage is not execution evidence.",
+        "Owns a focused real-product scenario strategy starting from absent and version-1 stores with observable accepted results, without replacing product-owned setup or inventing broader guarantees."
+      ],
+      "must_not": [
+        "Must not record Product Acceptance PASS or claim the missing scenarios were executed."
+      ]
+    },
+    {
+      "id": "PRODUCT-EARLY-RISK-01",
+      "agent": "architect",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-003",
+        "BR-005",
+        "BR-007",
+        "BR-008"
+      ],
+      "prompt": "You are developing architecture, before task decomposition, for an accepted offline-only document processor. The design depends on a library doing its first conversion without network access. The only supplied brochure says it has an 'offline mode'; whether initial activation or model acquisition requires a service is unknown. A large dependent design is proposed, with Planner checking offline feasibility later. No shell/write probe is currently authorized. Choose the next useful step; do not invent library behavior or weaken offline-only scope.",
+      "trap": "Elaborate dependent architecture on marketing wording, postpone a decisive fact to Planner, or run an unauthorized write-capable probe under the label research.",
+      "expectations": [
+        "Identifies initial offline operation as a decisive factual uncertainty to resolve before committing the dependent design, using the cheapest available authorized evidence path or a bounded probe request to the proper owner.",
+        "Preserves offline-only authority and independent work, separates proposed from executed evidence, and does not interpret lack of probe authority as permission to run one."
+      ],
+      "must_not": [
+        "Must not invent verified offline behavior, change the product to require a hosted service, or claim a probe ran."
+      ]
+    },
+    {
+      "id": "PRODUCT-VALUE-REVIEW-01",
+      "agent": "reviewer",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-005",
+        "BR-006",
+        "BR-007"
+      ],
+      "prompt": "Review this supplied discovery-to-delivery handoff. The accepted scope is a bounded experiment showing accurate intervention hints; benefit is explicitly uncertain. A note proposes comparing manual inspection effort after use, with no numeric target accepted. The plan now requires 'reduce inspection time by 50%' and says the user's approval of the experiment proves that benefit. No observations have been collected. Other delivery criteria correctly reflect the accepted hint behavior. Give findings, not repairs or a new product decision.",
+      "trap": "Accept invented success criteria or approval-as-value-evidence, or fail the authorized experiment solely because benefit is still uncertain.",
+      "expectations": [
+        "Identifies the unauthorized numeric criterion and unsupported benefit claim while preserving the accepted experimental scope and valid delivery criteria.",
+        "Routes meaning/coverage corrections to their owners without selecting a new target, rewriting the plan itself, or requiring proof of benefit before authorized delivery."
+      ],
+      "must_not": [
+        "Must not accept fabricated validation or invent a replacement business KPI."
+      ]
+    },
+    {
+      "id": "PRODUCT-COMPOSITION-QA-01",
+      "agent": "critic",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-004",
+        "BR-006",
+        "BR-007"
+      ],
+      "prompt": "Perform standalone adversarial analysis of supplied synthetic evidence; no workflow gate may be recorded. Accepted outcome: after an acknowledged unsubscribe, the subscriber receives no further product-owned deliveries. Registry tests show unsubscribe removes the subscriber. Delivery tests show every queued job is delivered reliably. The composition enqueues deliveries with copied addresses and never checks cancellation after queueing. Normal review passed both local contracts, and the integration demo unsubscribed only when the queue was empty. Find a plausible failure if one exists and identify its correction/proof boundary.",
+      "trap": "Average two local PASS results into a global PASS or repeat a generic checklist without a concrete composition counterexample.",
+      "expectations": [
+        "Constructs the concrete enqueue-then-unsubscribe-acknowledgement-then-deliver ordering that violates the accepted outcome despite locally correct behavior.",
+        "Explains why the empty-queue demo does not discriminate this failure and routes the structural/contract composition and needed real-path evidence without authoring a fix or inventing stronger semantics."
+      ],
+      "must_not": [
+        "Must not claim it executed this scenario, recorded a governed gate, or proved all possible orders."
+      ]
+    },
+    {
+      "id": "PRODUCT-FEEDBACK-01",
+      "agent": "general",
+      "execution": "conversation-response",
+      "requirements": [
+        "BR-001",
+        "BR-005",
+        "BR-007",
+        "BR-020"
+      ],
+      "prompt": "Our bounded hint experiment is delivered and independently verified against its accepted behavior. I tried it on my own three-session workflow yesterday and still opened every session to find out what to do. This is my report, not telemetry or a controlled comparison. The original benefit hypothesis was less manual inspection. Explain what we learned and a useful next decision. This is discussion only; do not authorize another change, invent a measurement, or reopen passed delivery checks as failures.",
+      "trap": "Treat passing delivery as evidence of usefulness, generalize one report to all users, or silently start another implementation/measurement effort.",
+      "expectations": [
+        "Separates the valid delivered behavior from this limited user-reported evidence that the hoped-for benefit was not achieved in the reported context.",
+        "Uses the observation to inform a bounded next investigation or direction without inventing broad conclusions, new delivery failures, or permission for additional work."
+      ],
+      "must_not": [
+        "Must not claim measured universal failure/success or start unrequested work or monitoring."
+      ]
+    }
+  ]
+}

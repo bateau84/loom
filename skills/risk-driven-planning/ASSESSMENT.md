@@ -5,7 +5,8 @@ Reviewer-only domain contract. It does not create Loom authority, product meanin
 ## Review criteria
 
 - Assumptions that could change feasibility, decomposition, dependency order, scope, or acceptance evidence are identified.
-- Blocking uncertainty is resolved before dependent planning; carryable uncertainty is explicitly bounded.
+- Blocking uncertainty is resolved before the dependent product/design/architecture commitment or planning, not postponed to decomposition after that commitment is already made; carryable uncertainty is explicitly bounded.
+- A bounded authorized experiment can carry uncertain value without claiming its hypothesis proven; proposed probes and benefit measures do not create execution authority or new mandatory criteria.
 - Risky executable work is front-loaded only when its result can invalidate meaningful downstream effort.
 - Verification is placed where the risk becomes observable.
 - Verification for a known failure mode discriminates corrected behavior from the known-bad behavior; a check that can pass without exercising the relevant mechanism is not sufficient closure.

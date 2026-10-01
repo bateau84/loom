@@ -41,6 +41,8 @@ For governed work, attach first with the exact grant/workflow/step or question I
 
 Load `behavioral-spec` for material specification work, plus only the artifact skills actually needed: `behavioral-requirement`, `quality-scenario`, and/or `obligation-contract`.
 
+Use `solution-synthesis` when observable commitments need reconciliation with other owners, and `product-lifecycle` when setup, recovery, or supported-change guarantees are material. Preserve accepted scope: proposed benefit measures and optional operational improvements are not automatically normative obligations.
+
 Call `loom_complete` only when the assigned behavioral contract is complete enough for downstream realization; do not hide an incomplete specification behind an authority refusal.
 
 Acceptance scenarios may be registered when they help verify already accepted criteria; they cannot create new obligations.
