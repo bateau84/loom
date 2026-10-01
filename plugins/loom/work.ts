@@ -125,7 +125,7 @@ export type WorkPlanAmendmentRecord = {
   operations: string[]
   at: string
   /** Internal inverse delta used to reconstruct immutable earlier revisions without copying the whole Plan. */
-  inverseOperations?: WorkPlanAmendOperation[]
+  inverseOperations?: WorkPlanInverseOperation[]
   /** Previous values for top-level fields changed by this revision. */
   inversePlanPatch?: WorkPlanTopLevelPatch
 }
@@ -169,6 +169,12 @@ export type WorkPlanAmendOperation =
   | { action: "remove-wave"; phaseId: string; waveId: string }
   | { action: "add-task"; phaseId: string; waveId: string; task: WorkPlanTask }
   | { action: "remove-task"; taskId: string }
+
+type WorkPlanInverseOperation =
+  | Exclude<WorkPlanAmendOperation, { action: "add-phase" | "add-wave" | "add-task" }>
+  | { action: "add-phase"; phase: WorkPlanPhase; index?: number }
+  | { action: "add-wave"; phaseId: string; wave: WorkPlanWave; index?: number }
+  | { action: "add-task"; phaseId: string; waveId: string; task: WorkPlanTask; index?: number }
 
 export type WaveCompletion = {
   workflowId: string
@@ -823,7 +829,20 @@ function progressFor(hierarchy: WorkHierarchy, parentId?: string): WorkProgress 
   }
 }
 
-function applyInverseOperation(plan: WorkPlanDefinition, operation: WorkPlanAmendOperation) {
+function restoreArrayPosition<T>(items: T[], item: T, index?: number) {
+  if (index === undefined) {
+    // Historical delta records created before positional inverses used append.
+    // Keep those records readable; new removal inverses always persist an index.
+    items.push(item)
+    return
+  }
+  if (!Number.isSafeInteger(index) || index < 0 || index > items.length) {
+    throw new Error("Historical Plan inverse contains an invalid array position.")
+  }
+  items.splice(index, 0, item)
+}
+
+function applyInverseOperation(plan: WorkPlanDefinition, operation: WorkPlanInverseOperation) {
   if (operation.action === "patch-phase") {
     const phase = findPlanPhase(plan, operation.phaseId)
     if (phase) Object.assign(phase, structuredClone(operation.patch))
@@ -840,7 +859,7 @@ function applyInverseOperation(plan: WorkPlanDefinition, operation: WorkPlanAmen
     return
   }
   if (operation.action === "add-phase") {
-    plan.phases.push(structuredClone(operation.phase))
+    restoreArrayPosition(plan.phases, structuredClone(operation.phase), operation.index)
     return
   }
   if (operation.action === "remove-phase") {
@@ -849,7 +868,7 @@ function applyInverseOperation(plan: WorkPlanDefinition, operation: WorkPlanAmen
   }
   if (operation.action === "add-wave") {
     const phase = findPlanPhase(plan, operation.phaseId)
-    if (phase) phase.waves.push(structuredClone(operation.wave))
+    if (phase) restoreArrayPosition(phase.waves, structuredClone(operation.wave), operation.index)
     return
   }
   if (operation.action === "remove-wave") {
@@ -859,7 +878,7 @@ function applyInverseOperation(plan: WorkPlanDefinition, operation: WorkPlanAmen
   }
   if (operation.action === "add-task") {
     const wave = findPlanWave(plan, operation.phaseId, operation.waveId)
-    if (wave) wave.tasks.push(structuredClone(operation.task))
+    if (wave) restoreArrayPosition(wave.tasks, structuredClone(operation.task), operation.index)
     return
   }
   const located = findPlanTask(plan, operation.taskId)
@@ -1613,7 +1632,7 @@ export function amendWorkPlan(
     : undefined
   if (input.planPatch) Object.assign(draft, structuredClone(input.planPatch))
 
-  const inverseOperations: WorkPlanAmendOperation[] = []
+  const inverseOperations: WorkPlanInverseOperation[] = []
   for (const operation of input.operations) {
     assertAmendOperationShape(operation)
     if (operation.action === "patch-phase") {
@@ -1690,8 +1709,13 @@ export function amendWorkPlan(
 
     if (operation.action === "remove-phase") {
       const existingPhase = findPlanPhase(draft, operation.phaseId)
+      const originalIndex = draft.phases.findIndex((phase) => phase.id === operation.phaseId)
       if (existingPhase) {
-        inverseOperations.unshift({ action: "add-phase", phase: structuredClone(existingPhase) })
+        inverseOperations.unshift({
+          action: "add-phase",
+          phase: structuredClone(existingPhase),
+          index: originalIndex,
+        })
       }
       const node = phaseNode(hierarchy, operation.phaseId)
       if (!node) throw new Error(`Phase ${operation.phaseId} not found.`)
@@ -1731,6 +1755,7 @@ export function amendWorkPlan(
           action: "add-wave",
           phaseId: operation.phaseId,
           wave: structuredClone(existingWave),
+          index: phase?.waves.findIndex((wave) => wave.id === operation.waveId),
         })
       }
       const node = waveNode(hierarchy, operation.phaseId, operation.waveId)
@@ -1770,6 +1795,7 @@ export function amendWorkPlan(
           phaseId: located.phase.id,
           waveId: located.wave.id,
           task: structuredClone(located.task),
+          index: located.wave.tasks.findIndex((task) => task.id === operation.taskId),
         })
       }
       const node = taskNode(hierarchy, operation.taskId)

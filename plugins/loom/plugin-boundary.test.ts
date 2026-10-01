@@ -9769,6 +9769,7 @@ async function waveLifecycleFixture(
   includeDependentWorker = false,
   taskResponsibility: "produce" | "execute" | "review" | "obtain-user-decision" = "execute",
   dependentRole = "worker",
+  includeLastFutureWave = false,
 ) {
   const h = await harness()
   try {
@@ -9804,7 +9805,14 @@ async function waveLifecycleFixture(
         title: "Core",
         waves: [
           { id: "first", title: "First", tasks: [task, ...(includeDependentWorker ? [dependentWorker] : [])] },
-          ...(includeFutureWave ? [{ id: "second", title: "Second", tasks: [future] }] : []),
+          ...(includeFutureWave ? [
+            { id: "second", title: "Second", tasks: [future] },
+            ...(includeLastFutureWave ? [{
+              id: "last",
+              title: "Last",
+              tasks: [richPlanTask("three", "Three", "Build three without changing the active Wave.")],
+            }] : []),
+          ] : []),
         ],
       },
     ]), "planner", planner)).error).toBeUndefined()
@@ -11450,6 +11458,96 @@ test("Planner OQ may amend untouched future work without staling the active Wave
       stepId: "task:one",
       grantId: currentGrant.grantId,
     }, "worker", "unchanged-claimed-wave-worker")).attached).toBe(true)
+  } finally {
+    h.restore()
+  }
+})
+
+test("production permission and attachment preserve an unchanged Wave after non-final future-Wave reordering", async () => {
+  const h = await waveLifecycleFixture("wave", true, "worker", false, "execute", "worker", true)
+  try {
+    const before = await h.work()
+    const originalPlan = before.plans.find((candidate: any) => candidate.generation === before.generation)
+    const middleWave = structuredClone(originalPlan.phases[0].waves.find((wave: any) => wave.id === "second"))
+    const claimBefore = before.nodes.find((node: any) => node.type === "wave" && node.logicalId === "first")
+    expect(claimBefore.claimedByWorkflowId).toBe(h.workflowId)
+
+    const raised = await h.call("oq_raise", {
+      workflowId: h.workflowId,
+      taskId: "two",
+      question: "Reorder only unclaimed future Waves without changing the current reviewed Wave.",
+      responder: "planner",
+      blocking: false,
+    }, "general", "parent")
+    expect(raised.error).toBeUndefined()
+    const plannerGrant = await h.call("dispatch_grant", {
+      workflowId: h.workflowId,
+      questionId: raised.question.id,
+    }, "general", "parent")
+    expect(plannerGrant.error).toBeUndefined()
+    const planner = "reorder-future-waves-planner"
+    expect((await h.call("attach", {
+      workflowId: h.workflowId,
+      questionId: raised.question.id,
+      grantId: plannerGrant.grantId,
+    }, "planner", planner)).attached).toBe(true)
+
+    const amended = await h.call("work_amend", {
+      workflowId: h.workflowId,
+      questionId: raised.question.id,
+      expectedVersion: before.version,
+      reason: "Exercise supported non-final future-Wave removal and reinsertion order.",
+      operations: [
+        { action: "remove-wave", phaseId: "core", waveId: "second" },
+        { action: "add-wave", phaseId: "core", wave: middleWave },
+      ],
+    }, "planner", planner)
+    expect(amended.error).toBeUndefined()
+    expect(amended.taskPlanRefreshRequired).toBe(false)
+    expect(amended.changedTaskIds).toEqual([])
+
+    const afterAmendment = await h.work()
+    expect(afterAmendment.plans.find((candidate: any) => candidate.generation === afterAmendment.generation)
+      .phases[0].waves.map((wave: any) => wave.id)).toEqual(["first", "last", "second"])
+    const claimAfterAmendment = afterAmendment.nodes.find((node: any) => node.type === "wave" && node.logicalId === "first")
+    expect(claimAfterAmendment).toMatchObject({
+      id: claimBefore.id,
+      claimedByWorkflowId: h.workflowId,
+      claimedAt: claimBefore.claimedAt,
+    })
+
+    const grant = await h.call("dispatch_grant", {
+      workflowId: h.workflowId,
+      stepId: "task:one",
+    }, "general", "parent")
+    expect(grant.error).toBeUndefined()
+    const beforeBudget = await h.durableStorage.get(`budget/${h.workflowId}`)
+    const permission: any = {
+      agent: "general",
+      action: "subagent",
+      resources: ["worker"],
+      sessionID: "parent",
+      source: { messageID: "reviewed-wave-after-reorder", id: "reviewed-wave-after-reorder" },
+      effect: "deny",
+      message: "",
+    }
+    await h.permissionHooks.get("evaluate")!(permission)
+    expect(permission.effect).toBe("allow")
+    const admitted = await h.durableStorage.get(`dispatch-grant/${grant.grantId}`) as any
+    expect(admitted.admittedAt).toEqual(expect.any(String))
+    expect(await h.durableStorage.get(`budget/${h.workflowId}`)).not.toEqual(beforeBudget)
+
+    const attached = await h.call("attach", {
+      workflowId: h.workflowId,
+      stepId: "task:one",
+      grantId: grant.grantId,
+    }, "worker", "reviewed-wave-reorder-worker")
+    expect(attached.attached).toBe(true)
+    expect(attached.planContext).toMatchObject({
+      generation: afterAmendment.generation,
+      focus: { task: { id: "one", objective: "Build one" } },
+    })
+    expect((await h.workflow()).steps.find((step: any) => step.id === "task:one").attempt).toBe(0)
   } finally {
     h.restore()
   }
