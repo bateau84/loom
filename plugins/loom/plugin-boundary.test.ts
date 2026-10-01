@@ -411,7 +411,11 @@ describe("Loom registered plugin boundary", () => {
         taskPlanFingerprint: "accepted-task-plan",
         reviewedPlanFingerprint: "reviewed-holistic-plan",
       },
-      steps: [{ id: "pending", agent: "worker", kind: "work", dependsOn: [], status: "pending", attempt: 2 }],
+      steps: [
+        { id: "historic", agent: "worker", kind: "work", dependsOn: [], status: "complete", attempt: 1, summary: "Prior result" },
+        { id: "pending", agent: "worker", kind: "work", dependsOn: [], status: "pending", attempt: 2 },
+        { id: "independent-gate", agent: "reviewer", kind: "gate", dependsOn: [], status: "failed", attempt: 1, summary: "Keep failed gate" },
+      ],
       verification: [{ id: "independent-gate", status: "open", statement: "Remain open" }],
     }
     const targetWork = {
@@ -422,7 +426,10 @@ describe("Loom registered plugin boundary", () => {
       version: 9,
       generation: 2,
       workflowIds: [targetId],
-      nodes: [{ id: "task-node", logicalId: "task", type: "task", title: "Task", status: "pending", generation: 2, createdAt, updatedAt: createdAt }],
+      nodes: [
+        { id: "historic-node", logicalId: "historic", type: "task", title: "Prior result", status: "complete", generation: 2, result: { workflowId: targetId, summary: "Retained task receipt", evidenceClaimIds: ["historic-claim"], completedAt: createdAt }, createdAt, updatedAt: createdAt },
+        { id: "task-node", logicalId: "task", type: "task", title: "Task", status: "pending", generation: 2, createdAt, updatedAt: createdAt },
+      ],
       plans: [{
         generation: 2,
         revision: 6,
@@ -440,10 +447,42 @@ describe("Loom registered plugin boundary", () => {
       createdAt,
       updatedAt: createdAt,
     }
+    const historicalEvidence = {
+      id: "child-evidence",
+      sessionID: child,
+      agent: "worker",
+      tool: "loom_stats",
+      status: "completed",
+      observedAt: createdAt,
+      workflowId: targetId,
+      stepId: "pending",
+      resultDigest: "observed-result-digest",
+      admission: {
+        at: createdAt,
+        workflowId: targetId,
+        stepId: "pending",
+        attachmentId: "child-attachment",
+        agent: "worker",
+        attempt: 2,
+      },
+    }
+    const historicalClaim = {
+      id: "historic-claim",
+      workflowId: targetId,
+      stepId: "pending",
+      kind: "test",
+      statement: "Retain prior evidence attribution",
+      observationIds: [historicalEvidence.id],
+      createdAt,
+    }
     try {
       await h.durableStorage.set(`workflow/${sourceId}`, source)
       await h.durableStorage.set(`workflow/${targetId}`, target)
       await h.durableStorage.set(`work/${encodeURIComponent(targetWork.objectiveId)}`, targetWork)
+      await h.durableStorage.set(`evidence/${historicalEvidence.id}`, historicalEvidence)
+      await h.durableStorage.set(`evidence-session/${child}/${historicalEvidence.id}`, historicalEvidence.id)
+      await h.durableStorage.set(`evidence-step/${targetId}/pending/${historicalEvidence.id}`, historicalEvidence.id)
+      await h.durableStorage.set(`evidence-claim/${targetId}/pending/${historicalClaim.id}`, historicalClaim)
       await h.durableStorage.set(`session/${general}`, sourceId)
       await h.durableStorage.set(`session-attachment/${general}`, "source-attachment")
       await h.durableStorage.set(`session-step/${general}`, "done")
@@ -510,8 +549,22 @@ describe("Loom registered plugin boundary", () => {
       for (const grant of retainedHistoricalGrants) {
         await h.durableStorage.set(`dispatch-grant/${grant.grantId}`, grant)
       }
-      await h.durableStorage.set(`budget/${targetId}`, { used: 3, dispatches: ["prior"] })
-      await h.durableStorage.set(`limits/${targetId}`, { maxDispatches: 8 })
+      const exhaustedBudget = {
+        totalDispatches: 1,
+        byKey: { pending: 1 },
+        seenDispatches: ["prior"],
+        grants: [],
+      }
+      const exhaustedLimits = {
+        maxTotalDispatches: 1,
+        maxDispatchesPerStep: 1,
+        maxReviewerDispatchesPerStep: 1,
+        maxCriticDispatchesPerStep: 1,
+        maxExtraDispatchesPerStep: 1,
+        maxProviderRetries: 0,
+      }
+      await h.durableStorage.set(`budget/${targetId}`, exhaustedBudget)
+      await h.durableStorage.set(`limits/${targetId}`, exhaustedLimits)
 
       const answering = h.call("oq_answer", {
         workflowId: targetId,
@@ -522,6 +575,11 @@ describe("Loom registered plugin boundary", () => {
       await queuedContinuation
       const beforeTarget = await h.durableStorage.get(`workflow/${targetId}`)
       const beforeWork = await h.durableStorage.get(`work/${encodeURIComponent(targetWork.objectiveId)}`)
+      const beforeOq = await h.durableStorage.get(`oq/${targetId}/target-question`)
+      const beforeEvidence = await h.durableStorage.get(`evidence/${historicalEvidence.id}`)
+      const beforeEvidenceLink = await h.durableStorage.get(`evidence-session/${child}/${historicalEvidence.id}`)
+      const beforeStepEvidence = await h.durableStorage.get(`evidence-step/${targetId}/pending/${historicalEvidence.id}`)
+      const beforeClaim = await h.durableStorage.get(`evidence-claim/${targetId}/pending/${historicalClaim.id}`)
       const beforeGrant = await h.durableStorage.get(`dispatch-grant/${admittedGrant.grantId}`)
       const beforeHistoricalGrants = await Promise.all(retainedHistoricalGrants.map((grant) =>
         h.durableStorage.get(`dispatch-grant/${grant.grantId}`),
@@ -546,13 +604,18 @@ describe("Loom registered plugin boundary", () => {
       expect(await h.durableStorage.get(`session-plan-review/${encodeURIComponent(general)}`)).toBeNull()
       expect(await h.durableStorage.get(`workflow/${targetId}`)).toEqual(beforeTarget)
       expect(await h.durableStorage.get(`work/${encodeURIComponent(targetWork.objectiveId)}`)).toEqual(beforeWork)
+      expect(await h.durableStorage.get(`oq/${targetId}/target-question`)).toEqual(beforeOq)
+      expect(await h.durableStorage.get(`evidence/${historicalEvidence.id}`)).toEqual(beforeEvidence)
+      expect(await h.durableStorage.get(`evidence-session/${child}/${historicalEvidence.id}`)).toEqual(beforeEvidenceLink)
+      expect(await h.durableStorage.get(`evidence-step/${targetId}/pending/${historicalEvidence.id}`)).toEqual(beforeStepEvidence)
+      expect(await h.durableStorage.get(`evidence-claim/${targetId}/pending/${historicalClaim.id}`)).toEqual(beforeClaim)
       expect(await h.durableStorage.get(`dispatch-grant/${admittedGrant.grantId}`)).toEqual(beforeGrant)
       expect(await Promise.all(retainedHistoricalGrants.map((grant) =>
         h.durableStorage.get(`dispatch-grant/${grant.grantId}`),
       ))).toEqual(beforeHistoricalGrants)
       expect(await h.durableStorage.get(`workflow/${sourceId}`)).toEqual(source)
-      expect(await h.durableStorage.get(`budget/${targetId}`)).toEqual({ used: 3, dispatches: ["prior"] })
-      expect(await h.durableStorage.get(`limits/${targetId}`)).toEqual({ maxDispatches: 8 })
+      expect(await h.durableStorage.get(`budget/${targetId}`)).toEqual(exhaustedBudget)
+      expect(await h.durableStorage.get(`limits/${targetId}`)).toEqual(exhaustedLimits)
       expect(await h.durableStorage.get(`session/${child}`)).toBe(targetId)
       expect(await h.durableStorage.get(`session-attachment/${child}`)).toBe("child-attachment")
       expect(h.syntheticMessages).toHaveLength(1)
@@ -571,6 +634,50 @@ describe("Loom registered plugin boundary", () => {
       expect(await h.durableStorage.get(`session-resumption/${encodeURIComponent(general)}`)).toEqual(audit)
       const status = await h.call("status", { detail: true }, "general", general)
       expect(status.workflow.id).toBe(targetId)
+      expect(status.workflow.steps.find((step: any) => step.id === "historic")).toMatchObject({
+        status: "complete",
+        summary: "Prior result",
+      })
+      expect(status.workflow.steps.find((step: any) => step.id === "independent-gate")).toMatchObject({
+        status: "failed",
+        summary: "Keep failed gate",
+      })
+      const gateBypass = await h.call("complete", {
+        workflowId: targetId,
+        stepId: "independent-gate",
+        summary: "Attempt to bypass the independent Reviewer gate.",
+        outcome: "pass",
+      }, "general", general)
+      expect(gateBypass.error).toContain("exact attached workflow step")
+      expect((await h.call("status", { detail: true }, "general", general)).workflow.steps.find((step: any) =>
+        step.id === "independent-gate").status).toBe("failed")
+
+      const staleGrantAttach = await h.call("attach", {
+        grantId: "expired-target-grant",
+        workflowId: targetId,
+        stepId: "pending",
+      }, "worker", "resume-expired-child")
+      expect(staleGrantAttach.error).toContain("Dispatch grant has expired")
+      expect(await h.durableStorage.get("session/resume-expired-child")).toBeUndefined()
+
+      const freshGrant = await h.call("dispatch_grant", {
+        workflowId: targetId,
+        stepId: "pending",
+      }, "general", general)
+      expect(freshGrant.error).toBeUndefined()
+      const exhaustedDispatch: any = {
+        agent: "general",
+        action: "subagent",
+        resources: ["worker"],
+        sessionID: general,
+        source: { messageID: "resume-after-exhaustion", id: "resume-exhausted-dispatch" },
+        effect: "allow",
+        message: "",
+      }
+      await h.permissionHooks.get("evaluate")!(exhaustedDispatch)
+      expect(exhaustedDispatch.effect).toBe("deny")
+      expect(exhaustedDispatch.message).toContain("total dispatch limit 1 reached")
+      expect(await h.durableStorage.get(`budget/${targetId}`)).toEqual(exhaustedBudget)
       releaseQueued()
       const answered = await answering
       expect(answered.notifications.notified).toContain("pending")
