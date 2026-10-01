@@ -1024,6 +1024,15 @@ describe("Loom runtime identity and scoped storage", () => {
       const runtime = await resolveRuntimeIdentity(project, raw as any)
       const storage = createProjectStorage(raw as any, runtime.projectId)
       const now = new Date("2026-09-21T12:00:00.000Z")
+      await storage.set("workflow/workflow-a", {
+        id: "workflow-a",
+        projectId: runtime.projectId,
+        revision: 1,
+        anchor: "task:workflow-a",
+        createdBySession: "general-session",
+        createdAt: now.toISOString(),
+        steps: [],
+      })
 
       const grant = await issueDispatchGrant(storage, runtime, {
         workflowId: "workflow-a",
@@ -1086,6 +1095,15 @@ describe("Loom runtime identity and scoped storage", () => {
       const runtime = await resolveRuntimeIdentity(project, raw as any)
       const storage = createProjectStorage(raw as any, runtime.projectId)
       const issuedAt = new Date("2026-09-21T12:00:00.000Z")
+      await storage.set("workflow/workflow-a", {
+        id: "workflow-a",
+        projectId: runtime.projectId,
+        revision: 1,
+        anchor: "task:workflow-a",
+        createdBySession: "general-session",
+        createdAt: issuedAt.toISOString(),
+        steps: [],
+      })
 
       const grant = await issueDispatchGrant(storage, runtime, {
         workflowId: "workflow-a",
@@ -1202,6 +1220,15 @@ describe("Loom runtime identity and scoped storage", () => {
       const runtimeB = await resolveRuntimeIdentity(b, raw as any)
       const storageA = createProjectStorage(raw as any, runtimeA.projectId)
       const now = new Date("2026-09-21T12:00:00.000Z")
+      await storageA.set("workflow/workflow-a", {
+        id: "workflow-a",
+        projectId: runtimeA.projectId,
+        revision: 1,
+        anchor: "task:workflow-a",
+        createdBySession: "general-a",
+        createdAt: now.toISOString(),
+        steps: [],
+      })
       const grant = await issueDispatchGrant(storageA, runtimeA, {
         workflowId: "workflow-a",
         stepId: "task:a",
@@ -1220,6 +1247,23 @@ describe("Loom runtime identity and scoped storage", () => {
           now,
         }),
       ).rejects.toThrow("another project")
+    })
+  })
+
+  test("dispatch grant creation fails closed when its workflow record is absent", async () => {
+    await withRoots(async (root) => {
+      const raw = new MemoryStorage()
+      const project = join(root, "missing-workflow-project")
+      await mkdir(project, { recursive: true })
+      const runtime = await resolveRuntimeIdentity(project, raw as any)
+      const storage = createProjectStorage(raw as any, runtime.projectId)
+
+      await expect(issueDispatchGrant(storage, runtime, {
+        workflowId: "workflow-missing",
+        stepId: "step",
+        expectedAgent: "worker",
+        issuingParentSessionId: "general-session",
+      })).rejects.toThrow("workflow is missing")
     })
   })
 
