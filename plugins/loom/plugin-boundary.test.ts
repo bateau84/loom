@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, test } from "bun:test"
 import { createHash } from "node:crypto"
-import { execFile } from "node:child_process"
+import { execFile, spawn } from "node:child_process"
+import { once } from "node:events"
 import { promisify } from "node:util"
 import { chmod, link, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises"
-import { join } from "node:path"
+import { dirname, join } from "node:path"
 import { tmpdir } from "node:os"
 import loomPlugin from "./index"
 import { cancelWorkflow } from "./lifecycle"
@@ -360,6 +361,457 @@ describe("Loom registered plugin boundary", () => {
       expect(mirrorStatus?.options?.permission).toBe("loom_status")
     } finally {
       restore()
+    }
+  })
+
+  test("registers native and Code Mode coordinator resumption executors", async () => {
+    const { registered, restore } = await harness()
+    try {
+      const native = registered.get("loom_resume")
+      const mirror = registered.get("loom_code_resume")
+      expect(native).toBeDefined()
+      expect(mirror).toBeDefined()
+      expect(native?.options).toMatchObject({ namespace: "loom", codemode: false })
+      expect(mirror?.options).toMatchObject({ namespace: "loom.code", codemode: true })
+      expect(mirror?.execute).toBe(native?.execute)
+    } finally {
+      restore()
+    }
+  })
+
+  test("restores only the same General's binding and preserves admitted child authority", async () => {
+    let announceQueued!: () => void
+    let releaseQueued!: () => void
+    const queuedContinuation = new Promise<void>((resolve) => { announceQueued = resolve })
+    const waitingContinuation = new Promise<void>((resolve) => { releaseQueued = resolve })
+    const h = await harness(undefined, undefined, undefined, async () => {
+      announceQueued()
+      await waitingContinuation
+    })
+    const general = "resume-general"
+    const child = "resume-child"
+    const sourceId = "resume-source"
+    const targetId = "resume-target"
+    const createdAt = new Date().toISOString()
+    const source = {
+      id: sourceId,
+      projectId: h.runtime.projectId,
+      revision: 4,
+      anchor: "task:resume-source",
+      createdBySession: general,
+      createdAt,
+      steps: [{ id: "done", agent: "worker", kind: "work", dependsOn: [], status: "complete" }],
+      verification: [{ id: "proof", status: "open", statement: "Preserve an open requirement" }],
+    }
+    const target = {
+      id: targetId,
+      projectId: h.runtime.projectId,
+      revision: 7,
+      anchor: "task:resume-target",
+      createdBySession: general,
+      createdAt,
+      work: {
+        objectiveId: "objective:resume-target",
+        generation: 2,
+        taskPlanRevision: 6,
+        reviewedPlanRevision: 5,
+        taskPlanFingerprint: "accepted-task-plan",
+        reviewedPlanFingerprint: "reviewed-holistic-plan",
+      },
+      steps: [{ id: "pending", agent: "worker", kind: "work", dependsOn: [], status: "pending", attempt: 2 }],
+      verification: [{ id: "independent-gate", status: "open", statement: "Remain open" }],
+    }
+    const targetWork = {
+      objectiveId: "objective:resume-target",
+      anchor: target.anchor,
+      title: "Resume target",
+      objectiveStatus: "active",
+      version: 9,
+      generation: 2,
+      workflowIds: [targetId],
+      nodes: [{ id: "task-node", logicalId: "task", type: "task", title: "Task", status: "pending", generation: 2, createdAt, updatedAt: createdAt }],
+      plans: [{
+        generation: 2,
+        revision: 6,
+        goal: "Preserve this accepted Plan",
+        assumptions: ["assumption"],
+        outOfScope: ["out of scope"],
+        authorityRefs: ["anchor"],
+        obligations: [],
+        riskBoundaries: [],
+        acceptanceCoverage: [],
+        relationships: [],
+        correctionRouting: [],
+        phases: [],
+      }],
+      createdAt,
+      updatedAt: createdAt,
+    }
+    try {
+      await h.durableStorage.set(`workflow/${sourceId}`, source)
+      await h.durableStorage.set(`workflow/${targetId}`, target)
+      await h.durableStorage.set(`work/${encodeURIComponent(targetWork.objectiveId)}`, targetWork)
+      await h.durableStorage.set(`session/${general}`, sourceId)
+      await h.durableStorage.set(`session-attachment/${general}`, "source-attachment")
+      await h.durableStorage.set(`session-step/${general}`, "done")
+      await h.durableStorage.set(`session-step-attempt/${encodeURIComponent(general)}`, 0)
+      await h.durableStorage.set(`session-oq/${general}`, "old-question")
+      await h.durableStorage.set(`session-plan-review/${encodeURIComponent(general)}`, { workflowId: sourceId, generation: 3 })
+      await h.durableStorage.set(`session/${child}`, targetId)
+      await h.durableStorage.set(`session-attachment/${child}`, "child-attachment")
+      await h.durableStorage.set(`session-step/${child}`, "pending")
+      await h.durableStorage.set(`session-step-attempt/${encodeURIComponent(child)}`, 2)
+      await h.durableStorage.set(`session-oq/${child}`, "target-question")
+      await h.durableStorage.set(`step-session/${encodeURIComponent(targetId)}/pending/2`, {
+        schemaVersion: 1,
+        workflowId: targetId,
+        stepId: "pending",
+        attempt: 2,
+        sessionID: child,
+        agent: "worker",
+        attachedAt: createdAt,
+      })
+      await h.durableStorage.set(`oq-index/${targetId}`, ["target-question"])
+      await h.durableStorage.set(`oq/${targetId}/target-question`, {
+        id: "target-question",
+        workflowId: targetId,
+        question: "Keep this admitted child continuation intact.",
+        raisedByAgent: "general",
+        raisedByStepId: "general",
+        requiredAuthority: "worker",
+        blocking: true,
+        consumerStepIds: ["pending"],
+        evidence: [],
+        status: "open",
+        reconciliations: {},
+        createdAt,
+      })
+      const admittedGrant = {
+        schemaVersion: 1,
+        grantId: "admitted-target-grant",
+        projectId: h.runtime.projectId,
+        workflowId: targetId,
+        stepId: "pending",
+        expectedAgent: "worker",
+        issuingParentSessionId: general,
+        createdAt,
+        expiresAt: new Date(Date.now() + 60_000).toISOString(),
+        admittedAt: createdAt,
+        admittedDispatchId: "already-admitted",
+      }
+      await h.durableStorage.set(`dispatch-grant/${admittedGrant.grantId}`, admittedGrant)
+      const retainedHistoricalGrants = [
+        { grantId: "expired-target-grant", expiresAt: new Date(Date.now() - 1000).toISOString() },
+        { grantId: "revoked-target-grant", expiresAt: new Date(Date.now() + 60_000).toISOString(), revokedAt: createdAt },
+        { grantId: "consumed-target-grant", expiresAt: new Date(Date.now() + 60_000).toISOString(), consumedAt: createdAt, consumingSessionId: child },
+      ].map((grant) => ({
+        schemaVersion: 1,
+        projectId: h.runtime.projectId,
+        workflowId: targetId,
+        stepId: "pending",
+        expectedAgent: "worker",
+        issuingParentSessionId: general,
+        createdAt,
+        ...grant,
+      }))
+      for (const grant of retainedHistoricalGrants) {
+        await h.durableStorage.set(`dispatch-grant/${grant.grantId}`, grant)
+      }
+      await h.durableStorage.set(`budget/${targetId}`, { used: 3, dispatches: ["prior"] })
+      await h.durableStorage.set(`limits/${targetId}`, { maxDispatches: 8 })
+
+      const answering = h.call("oq_answer", {
+        workflowId: targetId,
+        questionId: "target-question",
+        answer: "The admitted child is still authoritative.",
+        source: "agent",
+      }, "worker", child)
+      await queuedContinuation
+      const beforeTarget = await h.durableStorage.get(`workflow/${targetId}`)
+      const beforeWork = await h.durableStorage.get(`work/${encodeURIComponent(targetWork.objectiveId)}`)
+      const beforeGrant = await h.durableStorage.get(`dispatch-grant/${admittedGrant.grantId}`)
+      const beforeHistoricalGrants = await Promise.all(retainedHistoricalGrants.map((grant) =>
+        h.durableStorage.get(`dispatch-grant/${grant.grantId}`),
+      ))
+      const result = await h.call("code_resume", {
+        workflowId: targetId,
+        fromWorkflowId: sourceId,
+      }, "general", general)
+
+      expect(result).toMatchObject({
+        status: "resumed",
+        workflowId: targetId,
+        fromWorkflowId: sourceId,
+        changedOnlyCoordinatorAccess: true,
+        workDispatched: false,
+      })
+      expect(await h.durableStorage.get(`session/${general}`)).toBe(targetId)
+      expect(await h.durableStorage.get(`session-attachment/${general}`)).not.toBe("source-attachment")
+      expect(await h.durableStorage.get(`session-step/${general}`)).toBe("")
+      expect(await h.durableStorage.get(`session-step-attempt/${encodeURIComponent(general)}`)).toBeNull()
+      expect(await h.durableStorage.get(`session-oq/${general}`)).toBe("")
+      expect(await h.durableStorage.get(`session-plan-review/${encodeURIComponent(general)}`)).toBeNull()
+      expect(await h.durableStorage.get(`workflow/${targetId}`)).toEqual(beforeTarget)
+      expect(await h.durableStorage.get(`work/${encodeURIComponent(targetWork.objectiveId)}`)).toEqual(beforeWork)
+      expect(await h.durableStorage.get(`dispatch-grant/${admittedGrant.grantId}`)).toEqual(beforeGrant)
+      expect(await Promise.all(retainedHistoricalGrants.map((grant) =>
+        h.durableStorage.get(`dispatch-grant/${grant.grantId}`),
+      ))).toEqual(beforeHistoricalGrants)
+      expect(await h.durableStorage.get(`workflow/${sourceId}`)).toEqual(source)
+      expect(await h.durableStorage.get(`budget/${targetId}`)).toEqual({ used: 3, dispatches: ["prior"] })
+      expect(await h.durableStorage.get(`limits/${targetId}`)).toEqual({ maxDispatches: 8 })
+      expect(await h.durableStorage.get(`session/${child}`)).toBe(targetId)
+      expect(await h.durableStorage.get(`session-attachment/${child}`)).toBe("child-attachment")
+      expect(h.syntheticMessages).toHaveLength(1)
+      expect(h.syntheticMessages[0]).toMatchObject({
+        sessionID: child,
+        metadata: { kind: "oq-answered", workflowId: targetId, questionId: "target-question", stepId: "pending", attempt: 2 },
+      })
+      expect(await h.durableStorage.get(`session-resumption/${encodeURIComponent(general)}`)).toMatchObject({
+        coordinatorSessionId: general,
+        sourceWorkflowId: sourceId,
+        targetWorkflowId: targetId,
+      })
+      const audit = await h.durableStorage.get(`session-resumption/${encodeURIComponent(general)}`)
+      const noOp = await h.call("resume", { workflowId: targetId, fromWorkflowId: targetId }, "general", general)
+      expect(noOp).toMatchObject({ status: "already_current", changedOnlyCoordinatorAccess: false })
+      expect(await h.durableStorage.get(`session-resumption/${encodeURIComponent(general)}`)).toEqual(audit)
+      const status = await h.call("status", { detail: true }, "general", general)
+      expect(status.workflow.id).toBe(targetId)
+      releaseQueued()
+      const answered = await answering
+      expect(answered.notifications.notified).toContain("pending")
+    } finally {
+      releaseQueued()
+      h.restore()
+    }
+  })
+
+  test("denies restoration when any page contains an unadmitted valid source grant", async () => {
+    const h = await harness()
+    const general = "resume-grant-general"
+    const sourceId = "resume-grant-source"
+    const targetId = "resume-grant-target"
+    const createdAt = new Date().toISOString()
+    try {
+      await h.durableStorage.set(`workflow/${sourceId}`, {
+        id: sourceId,
+        projectId: h.runtime.projectId,
+        revision: 1,
+        anchor: "task:resume-grant-source",
+        createdBySession: general,
+        createdAt,
+        steps: [{ id: "done", agent: "worker", kind: "work", dependsOn: [], status: "complete" }],
+      })
+      await h.durableStorage.set(`workflow/${targetId}`, {
+        id: targetId,
+        projectId: h.runtime.projectId,
+        revision: 1,
+        anchor: "task:resume-grant-target",
+        createdBySession: general,
+        createdAt,
+        steps: [{ id: "pending", agent: "worker", kind: "work", dependsOn: [], status: "pending" }],
+      })
+      await h.durableStorage.set(`session/${general}`, sourceId)
+      for (let index = 0; index < 105; index++) {
+        await h.durableStorage.set(`dispatch-grant/unrelated-${String(index).padStart(3, "0")}`, {
+          schemaVersion: 1,
+          grantId: `unrelated-${String(index).padStart(3, "0")}`,
+          projectId: h.runtime.projectId,
+          workflowId: `other-${index}`,
+          stepId: "step",
+          expectedAgent: "worker",
+          issuingParentSessionId: "someone-else",
+          createdAt,
+          expiresAt: new Date(Date.now() + 60_000).toISOString(),
+        })
+      }
+      const unused = {
+        schemaVersion: 1,
+        grantId: "z-late-unadmitted",
+        projectId: h.runtime.projectId,
+        workflowId: sourceId,
+        stepId: "done",
+        expectedAgent: "worker",
+        issuingParentSessionId: general,
+        createdAt,
+        expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      }
+      await h.durableStorage.set(`dispatch-grant/${unused.grantId}`, unused)
+
+      const result = await h.call("resume", { workflowId: targetId, fromWorkflowId: sourceId }, "general", general)
+      expect(result.error).toContain("unadmitted unused dispatch grant")
+      expect(await h.durableStorage.get(`session/${general}`)).toBe(sourceId)
+      expect(await h.durableStorage.get(`dispatch-grant/${unused.grantId}`)).toEqual(unused)
+      expect(await h.durableStorage.get(`workflow/${targetId}`)).toMatchObject({ revision: 1 })
+      expect(await h.durableStorage.get(`session-resumption/${encodeURIComponent(general)}`)).toBeUndefined()
+
+      const expiredSourceGrant = { ...unused, expiresAt: new Date(Date.now() - 1000).toISOString() }
+      const targetGrant = { ...unused, grantId: "target-unadmitted", workflowId: targetId }
+      await h.durableStorage.set(`dispatch-grant/${unused.grantId}`, expiredSourceGrant)
+      await h.durableStorage.set(`dispatch-grant/${targetGrant.grantId}`, targetGrant)
+      const targetGrantResult = await h.call("resume", {
+        workflowId: targetId,
+        fromWorkflowId: sourceId,
+      }, "general", general)
+      expect(targetGrantResult.error).toContain("unadmitted unused dispatch grant")
+      expect(await h.durableStorage.get(`session/${general}`)).toBe(sourceId)
+      expect(await h.durableStorage.get(`dispatch-grant/${targetGrant.grantId}`)).toEqual(targetGrant)
+
+      const malformed = { ...targetGrant, schemaVersion: 2 }
+      await h.durableStorage.set(`dispatch-grant/${targetGrant.grantId}`, malformed)
+      const malformedResult = await h.call("resume", {
+        workflowId: targetId,
+        fromWorkflowId: sourceId,
+      }, "general", general)
+      expect(malformedResult.error).toContain("Malformed relevant dispatch grant")
+      expect(await h.durableStorage.get(`session/${general}`)).toBe(sourceId)
+      expect(await h.durableStorage.get(`dispatch-grant/${targetGrant.grantId}`)).toEqual(malformed)
+    } finally {
+      h.restore()
+    }
+  })
+
+  test("denies stale, incomplete, cancelled, deleted, foreign, and inconsistent restoration targets", async () => {
+    const h = await harness()
+    const owner = "resume-denial-owner"
+    const createdAt = new Date().toISOString()
+    const cases = [
+      { name: "stale source", sourceId: "deny-stale-source", targetId: "deny-stale-target", current: "deny-other-source" },
+      { name: "incomplete source", sourceId: "deny-incomplete-source", targetId: "deny-incomplete-target", sourceStatus: "pending" },
+      { name: "cancelled target", sourceId: "deny-cancel-source", targetId: "deny-cancel-target", target: { cancellation: { at: createdAt } } },
+      { name: "deleted target", sourceId: "deny-deleted-source", targetId: "deny-deleted-target", deleted: true },
+      { name: "foreign creator", sourceId: "deny-foreign-source", targetId: "deny-foreign-target", target: { createdBySession: "other-general" } },
+      { name: "foreign project", sourceId: "deny-project-source", targetId: "deny-project-target", target: { projectId: "other-project" } },
+      { name: "missing creator provenance", sourceId: "deny-provenance-source", targetId: "deny-provenance-target", target: { createdBySession: undefined } },
+      { name: "archived target", sourceId: "deny-archive-source", targetId: "deny-archive-target", target: { archived: true } },
+      { name: "inconsistent Plan association", sourceId: "deny-plan-source", targetId: "deny-plan-target", target: { work: { objectiveId: "missing-objective", generation: 3 } } },
+    ]
+    try {
+      for (const scenario of cases) {
+        const source = {
+          id: scenario.sourceId,
+          projectId: h.runtime.projectId,
+          revision: 1,
+          anchor: `task:${scenario.sourceId}`,
+          createdBySession: owner,
+          createdAt,
+          steps: [{ id: "done", agent: "worker", kind: "work", dependsOn: [], status: scenario.sourceStatus ?? "complete" }],
+        }
+        const target = {
+          id: scenario.targetId,
+          projectId: h.runtime.projectId,
+          revision: 1,
+          anchor: `task:${scenario.targetId}`,
+          createdBySession: owner,
+          createdAt,
+          steps: [{ id: "pending", agent: "worker", kind: "work", dependsOn: [], status: "pending" }],
+          ...scenario.target,
+        }
+        const current = scenario.current ?? scenario.sourceId
+        await h.durableStorage.set(`workflow/${scenario.sourceId}`, source)
+        await h.durableStorage.set(`workflow/${scenario.targetId}`, target)
+        await h.durableStorage.set(`session/${owner}`, current)
+        if (scenario.deleted) {
+          await h.durableStorage.set(`workflow-deletion/${scenario.targetId}`, {
+            schemaVersion: 1, workflowId: scenario.targetId, projectId: h.runtime.projectId,
+          })
+        }
+        const beforeTarget = await h.durableStorage.get(`workflow/${scenario.targetId}`)
+        const result = await h.call("resume", {
+          workflowId: scenario.targetId,
+          fromWorkflowId: scenario.sourceId,
+        }, "general", owner)
+        expect(result.error, scenario.name).toBeDefined()
+        expect(await h.durableStorage.get(`session/${owner}`), scenario.name).toBe(current)
+        expect(await h.durableStorage.get(`workflow/${scenario.targetId}`), scenario.name).toEqual(beforeTarget)
+        expect(await h.durableStorage.get(`session-resumption/${encodeURIComponent(owner)}`), scenario.name).toBeUndefined()
+      }
+    } finally {
+      h.restore()
+    }
+  })
+
+  test("rejects a captured parent dispatch admission after binding ABA across processes", async () => {
+    const h = await harness()
+    const session = "resume-aba-session"
+    const workflowId = "resume-aba-workflow"
+    let lockProcess: ReturnType<typeof spawn> | undefined
+    try {
+      await h.durableStorage.set(`workflow/${workflowId}`, {
+        id: workflowId,
+        projectId: h.runtime.projectId,
+        revision: 1,
+        anchor: "task:resume-aba",
+        createdBySession: session,
+        createdAt: new Date().toISOString(),
+        steps: [{ id: "pending", agent: "worker", kind: "work", dependsOn: [], status: "pending" }],
+      })
+      await h.durableStorage.set(`session/${session}`, workflowId)
+      await h.durableStorage.set(`session-attachment/${session}`, "attachment-before")
+      const grant = {
+        schemaVersion: 1,
+        grantId: "aba-parent-grant",
+        projectId: h.runtime.projectId,
+        workflowId,
+        stepId: "pending",
+        expectedAgent: "worker",
+        issuingParentSessionId: session,
+        createdAt: new Date().toISOString(),
+        expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      }
+      await h.durableStorage.set(`dispatch-grant/${grant.grantId}`, grant)
+      const lockHash = createHash("sha256").update(session).digest("hex")
+      const lockPath = join(
+        h.runtime.runtimeRoot,
+        "locks",
+        h.runtime.installationId,
+        h.runtime.projectId,
+        "session-coordinator",
+        `${lockHash}.lock`,
+      )
+      await mkdir(dirname(lockPath), { recursive: true, mode: 0o700 })
+      lockProcess = spawn("flock", ["-x", lockPath, "sh", "-c", "printf 'locked\\n'; cat >/dev/null"], {
+        stdio: ["pipe", "pipe", "pipe"],
+      })
+      let output = ""
+      const lockReady = new Promise<void>((resolve, reject) => {
+        lockProcess!.stdout!.setEncoding("utf8")
+        lockProcess!.stdout!.on("data", (chunk: string) => {
+          output += chunk
+          if (output.includes("locked\n")) resolve()
+        })
+        lockProcess!.once("error", reject)
+        lockProcess!.stderr!.on("data", (chunk) => reject(new Error(String(chunk))))
+      })
+      await lockReady
+
+      const event: any = {
+        agent: "general",
+        action: "subagent",
+        resources: ["worker"],
+        sessionID: session,
+        source: { messageID: "message-before-rotation", id: "dispatch-before-rotation" },
+        effect: "allow",
+        message: "",
+      }
+      const invocation = h.permissionHooks.get("evaluate")!(event)
+      await Bun.sleep(50)
+      await h.durableStorage.set(`session/${session}`, "temporary-other-workflow")
+      await h.durableStorage.set(`session/${session}`, workflowId)
+      await h.durableStorage.set(`session-attachment/${session}`, "attachment-after-aba")
+      lockProcess.stdin!.end()
+      await once(lockProcess, "exit")
+
+      await invocation
+      expect(event.effect).toBe("deny")
+      expect(event.message).toContain("attachment changed while this Loom invocation waited")
+      expect(await h.durableStorage.get(`dispatch-grant/${grant.grantId}`)).toEqual(grant)
+      expect(await h.durableStorage.get(`budget/${workflowId}`)).toBeUndefined()
+    } finally {
+      lockProcess?.stdin?.end()
+      if (lockProcess && lockProcess.exitCode === null) await once(lockProcess, "exit")
+      h.restore()
     }
   })
 
