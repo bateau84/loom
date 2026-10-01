@@ -533,6 +533,26 @@ export function executableTaskPlanFingerprint(workflow: Workflow) {
   return createHash("sha256").update(JSON.stringify(tasks)).digest("hex")
 }
 
+function userDecisionContract(task: TaskSpec) {
+  return JSON.stringify([
+    task.id,
+    task.title,
+    task.objective,
+    task.rationale ?? "",
+    task.dependsOn,
+    task.authorityRefs ?? [],
+    task.constraints ?? [],
+    task.acceptanceCriteria ?? [],
+    task.subtasks ?? [],
+    task.integration ?? [],
+    task.write,
+    task.skills,
+    task.verify,
+    task.role,
+    task.responsibility,
+  ])
+}
+
 export function applyTaskPlan(workflow: Workflow, tasks: TaskSpec[]) {
   const plan = workflow.steps.find((step) => step.id === "plan")
   if (!plan) throw new Error("Workflow has no planning step.")
@@ -542,8 +562,31 @@ export function applyTaskPlan(workflow: Workflow, tasks: TaskSpec[]) {
   }
 
   const existing = plannedTaskSteps(workflow)
-  if (existing.some((step) => step.status !== "pending")) {
-    throw new Error("Task graph cannot change after task execution has started.")
+  const startedTasks = existing.filter((step) => {
+    const untouchedUserDecision =
+      step.kind === "wait" &&
+      step.status === "waiting" &&
+      step.agent === "user" &&
+      step.task?.role === "user" &&
+      step.task.responsibility === "obtain-user-decision"
+    return step.status !== "pending" && !untouchedUserDecision
+  })
+  if (startedTasks.length > 0) {
+    const details = startedTasks.map((step) => `${step.id} (${step.kind}/${step.status})`).join(", ")
+    throw new Error(`Task graph cannot change after task execution has started: ${details}.`)
+  }
+  for (const step of existing) {
+    if (step.status !== "waiting") continue
+    const task = step.task!
+    const refreshed = tasks.find((candidate) => candidate.id === task.id)
+    if (
+      !refreshed ||
+      task.role !== "user" ||
+      task.responsibility !== "obtain-user-decision" ||
+      userDecisionContract(task) !== userDecisionContract(refreshed)
+    ) {
+      throw new Error(`Cannot refresh while unanswered user-owned decision Task ${task.id} is pending.`)
+    }
   }
 
   const executionGateId = "review-plan"
