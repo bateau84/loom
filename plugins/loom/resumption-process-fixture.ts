@@ -112,6 +112,13 @@ test("production Loom process fixture executes an actual registered tool", async
         await writeFile(process.env.LOOM_RESUMPTION_READY_FILE!, "source-target-snapshots-loaded-before-locks")
         await waitForFile(process.env.LOOM_RESUMPTION_RELEASE_FILE!)
       }
+      if (mode === "reopen-before-commit" && !barrierUsed &&
+          resources.some((resource) => resource.aggregate === "workflow" &&
+            resource.resourceIdentity === process.env.LOOM_RESUMPTION_WORKFLOW_ID)) {
+        barrierUsed = true
+        await writeFile(process.env.LOOM_RESUMPTION_READY_FILE!, "source-reopen-holds-coordinator-lease-before-workflow-commit")
+        await waitForFile(process.env.LOOM_RESUMPTION_RELEASE_FILE!)
+      }
       const result = await originalWithRuntimeLocks(runtime, resources, fn)
       const sourceId = process.env.LOOM_RESUMPTION_SOURCE_WORKFLOW_ID
       const targetId = process.env.LOOM_RESUMPTION_TARGET_WORKFLOW_ID
