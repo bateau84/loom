@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto"
+import { AsyncLocalStorage } from "node:async_hooks"
 import { lstat, mkdir, readFile, readlink, realpath, unlink } from "node:fs/promises"
 import { dirname, isAbsolute, join, relative, resolve } from "node:path"
 import { execFile } from "node:child_process"
@@ -2685,6 +2686,7 @@ async function notifyAnsweredQuestionConsumers(
 
   for (const stepId of question.consumerStepIds) {
     try {
+      let admittedAttempt: number | undefined
       const delivered = await withRuntimeLocks(
         runtime,
         [stepAuthorityResource(question.workflowId, stepId)],
@@ -2712,6 +2714,7 @@ async function notifyAnsweredQuestionConsumers(
           }
 
           const attempt = step.attempt ?? 0
+          admittedAttempt = attempt
           const binding = (await ctx.storage.get(
             stepSessionBindingKey(question.workflowId, stepId, attempt),
           )) as StepSessionBinding | undefined
@@ -2731,26 +2734,27 @@ async function notifyAnsweredQuestionConsumers(
           ) {
             return false
           }
-
-          await ctx.session.synthetic({
-            sessionID: binding.sessionID,
-            text:
-              `Loom OQ ${question.id} has been answered. Re-read the persisted OQ with loom_oq_list for workflow ${question.workflowId}, incorporate it into step ${stepId}, then call loom_oq_reconcile before completing that step. The persisted OQ state is authoritative; this notification intentionally contains no answer content.`,
-            description: "Loom OQ answered",
-            metadata: {
-              source: "loom",
-              kind: "oq-answered",
-              workflowId: question.workflowId,
-              questionId: question.id,
-              stepId,
-              attempt,
-            },
-            delivery: "steer",
-            resume: true,
-          })
-          return true
+          return binding.sessionID
         },
       )
+      if (delivered) {
+        await ctx.session.synthetic({
+          sessionID: delivered,
+          text:
+            `Loom OQ ${question.id} has been answered. Re-read the persisted OQ with loom_oq_list for workflow ${question.workflowId}, incorporate it into step ${stepId}, then call loom_oq_reconcile before completing that step. The persisted OQ state is authoritative; this notification intentionally contains no answer content.`,
+          description: "Loom OQ answered",
+          metadata: {
+            source: "loom",
+            kind: "oq-answered",
+            workflowId: question.workflowId,
+            questionId: question.id,
+            stepId,
+              attempt: admittedAttempt,
+          },
+          delivery: "steer",
+          resume: true,
+        })
+      }
       if (delivered) notified.push(stepId)
     } catch (error) {
       failed.push({
@@ -2950,6 +2954,8 @@ const evidenceObservedLoomToolNames = new Set([
   "diagnostic_sandbox_exec",
   "diagnostic_sandbox_diff",
 ])
+
+const heldCoordinatorAdmissions = new AsyncLocalStorage<Set<string>>()
 
 function isLoomToolName(tool: string) {
   return tool.startsWith("loom_") || tool.startsWith("loom.")
@@ -3364,34 +3370,36 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
     }
     const legacyCheckedSessions = new Set<string>()
     const ensureLegacySession = async (sessionID: string) => {
-      if (legacyCheckedSessions.has(sessionID)) return
-      if (await scopedStorage.get(`session-deletion-fence/${sessionID}`) !== undefined) {
+      return withCoordinatorAdmission(sessionID, async () => {
+        if (legacyCheckedSessions.has(sessionID)) return
+        if (await scopedStorage.get(`session-deletion-fence/${sessionID}`) !== undefined) {
+          legacyCheckedSessions.add(sessionID)
+          return
+        }
+        const session = await ctx.session.get({ sessionID })
+        const sessionProjectId =
+          typeof session.projectID === "string" ? session.projectID : ""
+        const currentProjectId =
+          typeof ctx.location.project.id === "string" ? ctx.location.project.id : ""
+        const resumeProof =
+          typeof session.id === "string" &&
+          session.id === sessionID &&
+          sessionProjectId.length > 0 &&
+          currentProjectId.length > 0
+            ? {
+                kind: "opencode-host-session" as const,
+                sessionId: session.id,
+                projectId: sessionProjectId,
+              }
+            : undefined
+        await migrateLegacySessionState(legacyStorage, scopedStorage, runtime, {
+          sessionId: sessionID,
+          sessionProjectId,
+          currentProjectId,
+          ...(resumeProof ? { resumeProof } : {}),
+        })
         legacyCheckedSessions.add(sessionID)
-        return
-      }
-      const session = await ctx.session.get({ sessionID })
-      const sessionProjectId =
-        typeof session.projectID === "string" ? session.projectID : ""
-      const currentProjectId =
-        typeof ctx.location.project.id === "string" ? ctx.location.project.id : ""
-      const resumeProof =
-        typeof session.id === "string" &&
-        session.id === sessionID &&
-        sessionProjectId.length > 0 &&
-        currentProjectId.length > 0
-          ? {
-              kind: "opencode-host-session" as const,
-              sessionId: session.id,
-              projectId: sessionProjectId,
-            }
-          : undefined
-      await migrateLegacySessionState(legacyStorage, scopedStorage, runtime, {
-        sessionId: sessionID,
-        sessionProjectId,
-        currentProjectId,
-        ...(resumeProof ? { resumeProof } : {}),
       })
-      legacyCheckedSessions.add(sessionID)
     }
 
     // A resumed pre-epoch child can first return through a host/MCP tool rather
@@ -3403,6 +3411,34 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       if (await legacyStorage.get(sessionKey(sessionID)) !== undefined) {
         await ensureLegacySession(sessionID)
       }
+    }
+
+    const captureCoordinatorTuple = async (sessionID: string) => {
+      const read = async () => [
+        await scopedStorage.get(sessionKey(sessionID)),
+        await scopedStorage.get(sessionAttachmentKey(sessionID)),
+        await scopedStorage.get(sessionStepKey(sessionID)),
+        await scopedStorage.get(sessionStepAttemptKey(sessionID)),
+        await scopedStorage.get(sessionOqKey(sessionID)),
+        await scopedStorage.get(sessionPlanReviewKey(sessionID)),
+      ]
+      return scopedStorage.transaction ? scopedStorage.transaction(read) : read()
+    }
+
+    const withCoordinatorAdmission = async <T>(sessionID: string, fn: () => Promise<T>) => {
+      if (!sessionID) throw new Error("Loom coordinator admission requires the authenticated host session.")
+      const inherited = heldCoordinatorAdmissions.getStore()
+      if (inherited?.has(sessionID)) return fn()
+      const observed = await captureCoordinatorTuple(sessionID)
+      return withRuntimeAdvisoryLock(runtime, "session-coordinator", sessionID, async () => {
+        const current = await captureCoordinatorTuple(sessionID)
+        if (JSON.stringify(current) !== JSON.stringify(observed)) {
+          throw new Error("Session workflow attachment changed while this Loom invocation waited; retry it.")
+        }
+        const held = new Set(inherited ?? [])
+        held.add(sessionID)
+        return heldCoordinatorAdmissions.run(held, fn)
+      })
     }
 
     const cleanupDiagnosticSandboxesForWorkflow = async (workflowId: string) => {
@@ -3468,9 +3504,11 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         const execute = definition.execute
         const registeredExecute = async (input: Parameters<typeof execute>[0], tool: Parameters<typeof execute>[1]) => {
           try {
-            await ensureLegacyCancellationBoundary(tool.sessionID)
-            await assertLoomToolAdmission(ctx.storage as any, definition.name, input, tool)
-            return await execute(input, tool)
+            return await withCoordinatorAdmission(tool.sessionID, async () => {
+              await ensureLegacyCancellationBoundary(tool.sessionID)
+              await assertLoomToolAdmission(ctx.storage as any, definition.name, input, tool)
+              return execute(input, tool)
+            })
           } catch (error) {
             if (!(error instanceof WorkflowCancelledError)) throw error
             return { content: renderToolOutput({ error: error.message }) }
@@ -4529,6 +4567,194 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         },
         options: { namespace: "loom", codemode: false },
         execute: async (input, tool) => loadMethodologyForRole("qa", "critic", input, tool),
+      })
+
+      addLoomTool({
+        name: "resume",
+        description:
+          "Restore this General coordinator's access to its own existing workflow after a completed current workflow. This changes access only; it does not dispatch work. General only.",
+        input: {
+          type: "object",
+          properties: {
+            workflowId: { type: "string" },
+            fromWorkflowId: { type: "string" },
+          },
+          required: ["workflowId", "fromWorkflowId"],
+          additionalProperties: false,
+        },
+        options: { namespace: "loom", codemode: false },
+        execute: async (input, tool) => {
+          if (tool.agent !== "general") {
+            return { content: renderToolOutput({ error: "Only general may restore coordinator workflow access." }) }
+          }
+
+          const { workflowId, fromWorkflowId } = input as {
+            workflowId: string
+            fromWorkflowId: string
+          }
+          if (!workflowId?.trim() || !fromWorkflowId?.trim()) {
+            return { content: renderToolOutput({ error: "Both workflowId and fromWorkflowId are required." }) }
+          }
+
+          const sourceSnapshot = await readWorkflow(ctx, fromWorkflowId)
+          const targetSnapshot = await readWorkflow(ctx, workflowId)
+          if (!sourceSnapshot || !targetSnapshot) {
+            return { content: renderToolOutput({ error: "Source or target workflow is unavailable in this project." }) }
+          }
+          const workIds = [...new Set([
+            sourceSnapshot.work?.objectiveId,
+            targetSnapshot.work?.objectiveId,
+          ].filter((id): id is string => Boolean(id)))]
+          const resources = [
+            ...new Set([fromWorkflowId, workflowId]).values(),
+          ].map((id) => ({ aggregate: "workflow", resourceIdentity: id }))
+          resources.push(...workIds.map((id) => ({ aggregate: "work", resourceIdentity: id })))
+
+          try {
+            const result = await withRuntimeLocks(runtime, resources, async () => {
+              const currentBinding = await ctx.storage.get(sessionKey(tool.sessionID))
+              if (currentBinding !== fromWorkflowId) {
+                throw new Error("Current coordinator binding does not match fromWorkflowId; no workflow was changed.")
+              }
+
+              const source = await readWorkflow(ctx, fromWorkflowId)
+              const target = await readWorkflow(ctx, workflowId)
+              if (!source || !target) throw new Error("Source or target workflow disappeared before restoration.")
+              if (
+                source.projectId !== runtime.projectId || target.projectId !== runtime.projectId ||
+                source.createdBySession !== tool.sessionID || target.createdBySession !== tool.sessionID
+              ) {
+                throw new Error("Source and target must be proven to belong to this coordinator and project.")
+              }
+              if (
+                source.work?.objectiveId !== sourceSnapshot.work?.objectiveId ||
+                target.work?.objectiveId !== targetSnapshot.work?.objectiveId
+              ) {
+                throw new Error("Workflow work association changed concurrently; inspect and retry restoration.")
+              }
+
+              const validateLifecycleAndWork = async (workflow: Workflow) => {
+                if (workflow.cancellation) throw new Error(`Workflow ${workflow.id} is cancelled.`)
+                if (await ctx.storage.get(`workflow-deletion/${workflow.id}`) !== undefined) {
+                  throw new Error(`Workflow ${workflow.id} is deleted and cannot be restored.`)
+                }
+                if ((workflow as Workflow & { archived?: unknown }).archived) {
+                  throw new Error(`Workflow ${workflow.id} is archived and cannot be restored.`)
+                }
+                if (!workflow.work) return
+                const work = await readWork(ctx, workflow.work.objectiveId)
+                const hasGeneration = Boolean(work) && (
+                  work!.plans?.some((plan) => plan.generation === workflow.work!.generation) ||
+                  work!.nodes.some((node) => node.generation === workflow.work!.generation)
+                )
+                if (
+                  !work || work.objectiveId !== workflow.work.objectiveId ||
+                  !work.workflowIds.includes(workflow.id) || !hasGeneration
+                ) {
+                  throw new Error(`Workflow ${workflow.id} has an inconsistent Objective/Plan association.`)
+                }
+              }
+
+              await validateLifecycleAndWork(target)
+              if (currentBinding === workflowId) {
+                return { status: "already_current" as const }
+              }
+
+              if (
+                source.steps.length === 0 ||
+                !source.steps.every((step) => step.kind === "gate"
+                  ? step.status === "passed"
+                  : step.status === "complete")
+              ) {
+                throw new Error("fromWorkflowId must be the successfully completed current workflow.")
+              }
+              await validateLifecycleAndWork(source)
+
+              const now = Date.now()
+              let after: string | undefined
+              do {
+                const page = await ctx.storage.scan({
+                  prefix: "dispatch-grant/",
+                  limit: 100,
+                  ...(after ? { after } : {}),
+                })
+                for (const entry of page.entries ?? []) {
+                  const value = entry.value as Record<string, unknown> | undefined
+                  const relevantById = value?.workflowId === source.id || value?.workflowId === target.id
+                  if (!value || typeof value !== "object") {
+                    throw new Error("Malformed dispatch-grant record prevents safe restoration.")
+                  }
+                  if (typeof value.workflowId !== "string" || !value.workflowId ||
+                      typeof value.projectId !== "string" || !value.projectId) {
+                    throw new Error("Malformed dispatch-grant ownership prevents safe restoration.")
+                  }
+                  if (value.projectId !== runtime.projectId || !relevantById) continue
+                  const grantKey = typeof entry.key === "string" &&
+                    entry.key.startsWith(`project/${runtime.projectId}/`)
+                    ? entry.key.slice(`project/${runtime.projectId}/`.length)
+                    : entry.key
+                  const valid = value.schemaVersion === 1 &&
+                    typeof value.grantId === "string" && value.grantId.length > 0 &&
+                    grantKey === `dispatch-grant/${value.grantId}` &&
+                    typeof value.projectId === "string" && value.projectId === runtime.projectId &&
+                    typeof value.workflowId === "string" &&
+                    typeof value.expectedAgent === "string" && value.expectedAgent.length > 0 &&
+                    typeof value.issuingParentSessionId === "string" && value.issuingParentSessionId.length > 0 &&
+                    typeof value.createdAt === "string" && Number.isFinite(Date.parse(value.createdAt)) &&
+                    typeof value.expiresAt === "string" && Number.isFinite(Date.parse(value.expiresAt)) &&
+                    ((typeof value.stepId === "string" && value.stepId.length > 0) !==
+                      (typeof value.oqId === "string" && value.oqId.length > 0)) &&
+                    ["admittedAt", "admittedDispatchId", "consumedAt", "consumingSessionId", "revokedAt"]
+                      .every((key) => value[key] === undefined || (
+                        typeof value[key] === "string" &&
+                        (key.endsWith("At") ? Number.isFinite(Date.parse(value[key] as string)) : value[key].length > 0)
+                      )) &&
+                    ((value.admittedAt === undefined) === (value.admittedDispatchId === undefined)) &&
+                    ((value.consumedAt === undefined) === (value.consumingSessionId === undefined))
+                  if (!valid) throw new Error("Malformed relevant dispatch grant prevents safe restoration.")
+                  const activeUnused = value.admittedAt === undefined &&
+                    value.consumedAt === undefined && value.revokedAt === undefined &&
+                    Date.parse(value.expiresAt as string) > now
+                  if (activeUnused) {
+                    throw new Error("An unadmitted unused dispatch grant is still valid for the source or target workflow.")
+                  }
+                }
+                after = page.next
+              } while (after)
+
+              const at = new Date(now).toISOString()
+              const transitionId = randomUUID()
+              await ctx.storage.set(sessionKey(tool.sessionID), target.id)
+              await ctx.storage.set(sessionAttachmentKey(tool.sessionID), transitionId)
+              await ctx.storage.set(sessionStepKey(tool.sessionID), "")
+              await ctx.storage.set(sessionStepAttemptKey(tool.sessionID), null)
+              await ctx.storage.set(sessionOqKey(tool.sessionID), "")
+              await ctx.storage.set(sessionPlanReviewKey(tool.sessionID), null)
+              await ctx.storage.set(`session-resumption/${encodeURIComponent(tool.sessionID)}`, {
+                schemaVersion: 1,
+                transitionId,
+                projectId: runtime.projectId,
+                coordinatorSessionId: tool.sessionID,
+                sourceWorkflowId: source.id,
+                targetWorkflowId: target.id,
+                at,
+              })
+              return { status: "resumed" as const, at }
+            })
+
+            return {
+              content: renderToolOutput({
+                ...result,
+                fromWorkflowId,
+                workflowId,
+                changedOnlyCoordinatorAccess: result.status === "resumed",
+                workDispatched: false,
+              }),
+            }
+          } catch (error) {
+            return { content: renderToolOutput({ error: error instanceof Error ? error.message : String(error) }) }
+          }
+        },
       })
 
       addLoomTool({
@@ -10292,7 +10518,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
     })
 
-    const evaluatePermission = async (event: any) => {
+    const evaluatePermissionAdmitted = async (event: any) => {
       const delegationAction = event.action === "subagent"
       if (event.action === "edit" || event.action === "shell" || delegationAction) {
         await ensureLegacyCancellationBoundary(event.sessionID)
@@ -11038,6 +11264,18 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       }
 
       event.effect = "allow"
+    }
+
+    const evaluatePermission = async (event: any) => {
+      if (event.action !== "subagent") return evaluatePermissionAdmitted(event)
+      try {
+        return await withCoordinatorAdmission(String(event.sessionID ?? ""), async () =>
+          evaluatePermissionAdmitted(event),
+        )
+      } catch (error) {
+        event.effect = "deny"
+        event.message = `Loom delegation admission failed: ${error instanceof Error ? error.message : String(error)}`
+      }
     }
 
     await ctx.permission.hook("evaluate", evaluatePermission)

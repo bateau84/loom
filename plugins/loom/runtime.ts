@@ -49,7 +49,7 @@ const PROJECT_PREFIX = "project/"
 const GLOBAL_PREFIXES = ["installation/", "episode/", "heuristic/"]
 
 export const RUNTIME_BASELINE_VERSION = 1
-export const RUNTIME_STATE_VERSION = 7
+export const RUNTIME_STATE_VERSION = 8
 
 export type RuntimeUpgradePhase =
   | "canonical-upgrade"
@@ -144,6 +144,13 @@ const RUNTIME_UPGRADE_STEPS: RuntimeUpgradeStep[] = [{
     runnableAttemptMutationFence: true,
     installationScopedHardBoundaryLocks: true,
   }),
+}, {
+  id: "same-owner-coordinator-resumption-v8",
+  fromVersion: 7,
+  toVersion: 8,
+  // Existing records are unchanged. Fence v7 writers that do not serialize
+  // same-session Loom admission with coordinator binding transitions.
+  applyInstallation: async () => ({ sameOwnerCoordinatorResumption: true }),
 }]
 
 function sha256(value: string) {
