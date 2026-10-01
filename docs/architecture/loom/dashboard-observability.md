@@ -1,26 +1,28 @@
 ---
 type: design
 title: Loom Dashboard Observability and Control
-description: Read-only operational projection plus a bounded local cleanup path for the Loom control panel.
+description: Read-only operator projection with first-class sessions and a separate bounded local workflow-cleanup path.
 tags: [architecture, loom, dashboard, control-panel, observability, projection]
 ---
 
-**Status:** proposed
+**Status:** proposed — operator-overview revision; the new session-aware model is not implemented by this documentation change.
 
 ## Purpose
 
-Loom exposes a local control panel for work spread across OpenCode processes and working directories.
+Loom exposes a local operator dashboard for work spread across OpenCode processes and projects/worktrees.
 
-The primary UI hierarchy is defined by the Designer artifact as **Working directory → Session → Workflow**. This architecture owns projection, aggregation, freshness, and the narrowly bounded workflow-cleanup control path.
+The target experience is **Overview, Sessions, Workflows, Work, and Projects**, with explicit relationships between those objects. The dashboard is the human's complete view of observed work, not a broader permission surface for agents. A working directory is a filter/grouping, not a mandatory parent page for everything.
+
+The [Operator Model](specs/dashboard-operator-model.md) defines first-class session/host inventory, current versus historical relationships, activity evidence, coverage, and delivery/acceptance scenarios. The existing [V1 Projection Specification](specs/dashboard-projection.md) remains the compatibility contract during rollout; its workflow-derived session locators do not establish live activity. This draft changes the target design, not the running implementation.
 
 ## Projection boundary
 
 Operational display data still flows through the read-only projection:
 
 ```text
-OpenCode + Loom process
+OpenCode host inventory/activity + canonical Loom bindings/work
         |
-        | atomic bounded snapshot + heartbeat
+        | atomic bounded snapshots + source-specific freshness
         v
 host-local projection
         |
@@ -28,10 +30,10 @@ host-local projection
 dashboard aggregator
         |
         v
-control-panel UI
+operator UI: Overview / Sessions / Workflows / Work / Projects
 ```
 
-Snapshot files are never authority and are never written back to control Loom.
+Snapshot files are never authority and are never written back to control Loom. OpenCode observations describe host identity/activity; only Loom describes workflow/step/Task authority and completion. A host heartbeat or a runnable step is not evidence that a session is executing.
 
 Each manifest/project snapshot retains:
 
@@ -44,7 +46,7 @@ generatedAt
 leaseExpiresAt
 ```
 
-Publication remains atomic and per-publisher generation is monotonic. An expired lease produces stale/offline state. Same-highest-revision incompatible workflow state is a consistency conflict; the aggregator does not invent a winner.
+Publication remains atomic and per-publisher generation is monotonic. An expired lease produces stale/offline source state, not inferred session completion. Same-highest-revision incompatible workflow state is a consistency conflict; the aggregator does not invent a winner. Session observations retain their own source epoch/sequence, observation time, and validity rather than borrowing workflow revision or publisher liveness.
 
 ## Bounded control path
 
@@ -69,7 +71,7 @@ The first control action is only:
 delete terminal failed/cancelled workflow records
 ```
 
-It does not turn snapshot files into a command bus and it does not make dashboard availability an execution dependency.
+It does not turn snapshot files into a command bus and it does not make dashboard availability an execution dependency. History filtering is independent of cleanup; removing visual clutter does not require deleting records.
 
 ### Browser admission
 
@@ -110,7 +112,7 @@ Deletion then:
 
 Evidence observations/claims and durable completed work results are retained.
 
-The deletion tombstone has a second purpose: stale publisher snapshots can continue to exist until their leases expire. The control-panel aggregator filters any workflow named by a tombstone so deleted work does not reappear in the UI during that window.
+The deletion tombstone has a second purpose: stale publisher snapshots can continue to exist until their leases expire. The control-panel aggregator filters any workflow named by a tombstone so deleted work does not reappear in the UI during that window. The new session inventory must also respect tombstones on relationship lookups; it does not delete a still-existing host session merely because its workflow was removed.
 
 ## Storage capability
 
@@ -124,21 +126,23 @@ Canonical Loom storage exposes an optional `delete(key)` capability.
 
 ## Projection model
 
-The existing bounded workflow projection remains authoritative for presentation and can include:
+The target operator projection includes independent host/publisher, session, workflow, and work collections. Their identities and relationships are specified in [Operator Model](specs/dashboard-operator-model.md). Core session inventory is not optional cost/model enrichment and is not derived by selecting one session per workflow.
+
+Preserve the existing workflow/work projection detail:
 
 - project/working-directory identity;
-- participating session IDs;
+- participating session IDs with explicit current/historical meaning in the operator view;
 - workflow state/revision;
-- current/runnable steps;
-- Objective → Phase → Wave → Task detail;
+- runnable steps, distinct from observed executing sessions/steps;
+- Objective, current Plan, Phase, Wave, and Task detail;
 - OQs and verification counts/details;
 - dispatch budget;
 - Product Acceptance and knowledge state;
-- recent activity;
+- recent activity and its source;
 - publisher freshness;
-- optional OpenCode enrichment.
+- optional OpenCode cost/model/output enrichment.
 
-Missing optional data is unavailable, never inferred as zero/success.
+Missing optional data is unavailable, never inferred as zero/success. Core session/activity capture failures likewise remain explicit unavailable/partial coverage rather than disappearing behind optional enrichment. Bounded page sizes do not permit silently incomplete active-work inventories.
 
 ## Failure semantics
 
@@ -162,7 +166,8 @@ Cleanup failure is fail-closed:
 - no credential values, hidden prompts, or unrestricted tool output are projected;
 - cleanup accepts workflow IDs and a bounded reason only;
 - remote/public exposure still requires an authenticated/authorized reverse proxy or private tunnel;
-- on shared multi-user hosts, OS/container isolation is required because loopback is not same-user authentication.
+- on shared multi-user hosts, OS/container isolation is required because loopback is not same-user authentication;
+- operator visibility never creates or expands an agent's project/workflow/step binding.
 
 ## Non-goals
 
@@ -182,7 +187,8 @@ Further control actions require separate product and architecture acceptance rat
 
 ## Related
 
-- [Control Panel Experience](../../design/loom/dashboard-experience.md)
+- [Operator Dashboard Experience](../../design/loom/dashboard-experience.md)
+- [Operator Model and Delivery](specs/dashboard-operator-model.md)
 - [Dashboard Projection Transport](decisions/dashboard-projection-transport.md)
-- [Dashboard Projection Specification](specs/dashboard-projection.md)
+- [V1 Projection Specification](specs/dashboard-projection.md)
 - [BR-018](../../requirements/loom/br-018-external-operational-dashboard.md)
