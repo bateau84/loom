@@ -5,7 +5,7 @@ description: Restore a General coordinator's current binding to its own existing
 tags: [architecture, decision, loom, recovery, authority, concurrency]
 ---
 
-**Status:** revised implementation-facing decision, pending independent architecture review. Implementation and runtime availability are not claimed.
+**Status:** accepted implementation-facing decision (revision 2). Implementation and runtime availability are not claimed.
 
 **Revision 2:** supersedes this decision's original host-wide source/target quiescence premise. OQs `7291b1fe-f8ff-42ee-8583-9dd20bc33ddb` and `d23934e5-786d-4350-9e8e-a12afef0baa7` established its infeasibility and authorized architecture reconsideration. This revision removes an Architect-added implementation precondition, not a user-owned guarantee. The accepted outcome remains access-only restoration to the same owner and workflow.
 
