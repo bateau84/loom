@@ -5,7 +5,7 @@ description: Restore a General coordinator's current binding to its own existing
 tags: [architecture, decision, loom, recovery, authority, concurrency]
 ---
 
-**Status:** implementation-facing decision; implementation and runtime availability are not claimed.
+**Status:** accepted implementation-facing decision; implementation and runtime availability are not claimed.
 
 ## Derived from
 
