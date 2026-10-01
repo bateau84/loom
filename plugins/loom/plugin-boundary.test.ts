@@ -8412,7 +8412,7 @@ test("reopening Plan after Worker execution does not release the consumed Wave c
 })
 
 test("reopened Planner can surgically amend a current Task and must refresh the executable DAG", async () => {
-  const h = await waveLifecycleFixture()
+  const h = await waveLifecycleFixture("wave", false, "worker", true, "execute", "user")
   try {
     expect((await h.call("reopen", {
       workflowId: h.workflowId,
@@ -8469,11 +8469,13 @@ test("reopened Planner can surgically amend a current Task and must refresh the 
     expect(prematureComplete.error).toContain("stale against the current semantic Task/Wave contract")
 
     const current = await h.work()
-    const semanticTask = current.plans.at(-1).phases[0].waves[0].tasks[0]
+    const semanticTasks = current.plans.at(-1).phases[0].waves[0].tasks
     expect((await h.call("task_plan", {
       workflowId: h.workflowId,
-      tasks: [{ ...semanticTask, write: ["src/**"], skills: [] }],
+      tasks: semanticTasks.map((task: any) => ({ ...task, write: task.role === "user" ? [] : ["src/**"], skills: [] })),
     }, "planner", planner)).error).toBeUndefined()
+    expect((await h.workflow()).steps.find((step: any) => step.id === "task:dependent"))
+      .toMatchObject({ agent: "user", kind: "wait", status: "waiting" })
     expect((await h.call("complete", {
       workflowId: h.workflowId,
       stepId: "plan",
@@ -8503,6 +8505,10 @@ test("reopened Planner can surgically amend a current Task and must refresh the 
       stepId: "task:one",
     }, "general", "parent")
     expect(refreshedGrant.error).toBeUndefined()
+    expect((await h.call("dispatch_grant", {
+      workflowId: h.workflowId,
+      stepId: "task:dependent",
+    }, "general", "parent")).error).toContain("not currently runnable")
   } finally {
     h.restore()
   }

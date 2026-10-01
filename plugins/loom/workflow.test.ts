@@ -182,6 +182,67 @@ describe("Loom routing DAG", () => {
     expect(() => finishStep(w, "task:choice", "user", "complete", "synthetic decision")).toThrow("exact answered user-owned OQ")
   })
 
+  test("refresh accepts only an untouched user-owned decision wait in the prior Task graph", () => {
+    const w = workflow(buildSteps({
+      humanFacing: false, behavioral: false, structural: false, externalUnknown: false,
+      diagnostic: false, productOutcome: true, workLevel: "wave",
+    }))
+    finishStep(w, "critic-solution", "critic", "pass", "solution pass")
+    const decision = {
+      id: "choice", title: "Choose", objective: "Choose the accepted behavior", dependsOn: [],
+      write: [], skills: [], verify: ["user decision recorded"], role: "user", responsibility: "obtain-user-decision" as const,
+    }
+    const implementation = {
+      id: "implementation", title: "Implementation", objective: "Implement the accepted behavior", dependsOn: [],
+      write: ["src/**"], skills: [], verify: ["test"], role: "worker", responsibility: "execute" as const,
+    }
+    applyTaskPlan(w, [implementation, decision])
+
+    expect(() => applyTaskPlan(w, [{ ...implementation, objective: "Implement the refreshed behavior" }, decision])).not.toThrow()
+    expect(w.steps.find((step) => step.id === "task:choice")).toMatchObject({ kind: "wait", agent: "user", status: "waiting" })
+    expect(w.steps.find((step) => step.id === "task:implementation")?.task?.objective).toBe("Implement the refreshed behavior")
+  })
+
+  test("refresh cannot discard or rewrite an unanswered user-owned decision contract", () => {
+    const w = workflow(buildSteps({
+      humanFacing: false, behavioral: false, structural: false, externalUnknown: false,
+      diagnostic: false, productOutcome: true, workLevel: "wave",
+    }))
+    finishStep(w, "critic-solution", "critic", "pass", "solution pass")
+    const decision = {
+      id: "choice", title: "Choose", objective: "Choose the accepted behavior", dependsOn: [],
+      write: [], skills: [], verify: ["user decision recorded"], role: "user", responsibility: "obtain-user-decision" as const,
+    }
+    const implementation = {
+      id: "implementation", title: "Implementation", objective: "Implement the accepted behavior", dependsOn: [],
+      write: ["src/**"], skills: [], verify: ["test"], role: "worker", responsibility: "execute" as const,
+    }
+    applyTaskPlan(w, [implementation, decision])
+
+    expect(() => applyTaskPlan(w, [implementation])).toThrow("unanswered user-owned decision Task choice")
+    expect(() => applyTaskPlan(w, [implementation, { ...decision, objective: "Choose something else" }]))
+      .toThrow("unanswered user-owned decision Task choice")
+    expect(w.steps.find((step) => step.id === "task:choice")?.task?.objective).toBe(decision.objective)
+  })
+
+  test("refresh still rejects a completed Task and identifies the protected step", () => {
+    const w = workflow(buildSteps({
+      humanFacing: false, behavioral: false, structural: false, externalUnknown: false,
+      diagnostic: false, productOutcome: true, workLevel: "wave",
+    }))
+    finishStep(w, "critic-solution", "critic", "pass", "solution pass")
+    const completedTask = {
+      id: "completed", title: "Completed", objective: "Already consumed work", dependsOn: [],
+      write: ["src/**"], skills: [], verify: ["test"], role: "worker", responsibility: "execute" as const,
+    }
+    applyTaskPlan(w, [completedTask])
+    w.steps.find((step) => step.id === "task:completed")!.status = "complete"
+
+    expect(() => applyTaskPlan(w, [{ ...completedTask, objective: "Changed contract" }]))
+      .toThrow("task:completed (work/complete)")
+    expect(w.steps.find((step) => step.id === "task:completed")?.task?.objective).toBe("Already consumed work")
+  })
+
   test("planned Worker dependencies become real workflow dependencies", () => {
     const w = workflow(buildSteps({
       humanFacing: false,
