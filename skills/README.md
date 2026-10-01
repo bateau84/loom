@@ -33,6 +33,22 @@ Because the native skill tool injects `SKILL.md` while resolving that directory,
 | Diagnostic | narrow troubleshooting/domain `SKILL.md` matching the observed failure |
 | Critic | small set of load-bearing/risky skill `QA.md` files |
 
+## Product-development methods
+
+These are optional methods within existing roles, not a new workflow or additional gates.
+
+| Method | Primary use and ownership |
+| --- | --- |
+| `product-discovery` | General keeps the problem, smallest useful outcome, evidence, and benefit assumptions visible; Designer and Research contribute within their existing domains. |
+| `solution-synthesis` | General coordinates constructive reconciliation; Designer, Specifier, and Architect retain their own decisions and authoritative artifacts. |
+| `product-lifecycle` | Architect leads applicable setup, operation, recovery, and upgrade coverage; Specifier/Designer own observable and human-facing meaning. Planner carries accepted work; Acceptance owns real scenario proof. |
+
+Use `risk-driven-planning` during discovery and solution development as well as decomposition when a decisive assumption could invalidate dependent work. A bounded authorized experiment may carry uncertain value; an accepted Anchor is permission/meaning, not proof of benefit.
+
+Reuse existing conversations, permitted handoffs, owner artifacts, Plan, and verification surfaces. Do not add a master product document, require every specialist on every change, or turn possible lifecycle concerns into accepted scope. Reviewer/Critic use the new skills' distinct companions only when relevant to their assigned review or attack.
+
+The focused cases in `evals/product-development.json` cover these decisions; see `evals/product-development.md` for scope and commands.
+
 ## Loading discipline
 
 Load the smallest useful set. A Go database task might use `golang-common-practice`, `golang-database`, and `golang-testing`; it should not load every Go skill.
