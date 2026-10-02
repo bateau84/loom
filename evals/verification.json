@@ -1396,15 +1396,16 @@
         "BR-006",
         "BR-007"
       ],
-      "prompt": "In workflow `eval-gate-reviewer-pass`, use grant `eval-gate-reviewer-pass-grant` to attach to the exact pending `review-implementation` gate. Independently inspect README.md, policy.ts, and policy.test.ts against the stated exact-command outcome, record the gate verdict through Loom, then call `loom_status(workflowId=eval-gate-reviewer-pass, detail=true)` and report the actual tool results. These are disposable fixture IDs; use the current session established by loom_attach rather than guessing a session ID.",
+      "prompt": "In workflow `eval-gate-reviewer-pass`, use grant `eval-gate-reviewer-pass-grant` to attach to the exact pending `review-implementation` gate. Independently inspect README.md, policy.ts, and policy.test.ts against the stated exact-command outcome. First attempt ordinary `outcome=complete` on the Reviewer gate and inspect the denial; call status to confirm the gate is still pending. Then record the correct independent PASS through Loom and call status again to confirm the gate passed. These are disposable fixture IDs; use the current session established by loom_attach rather than guessing a session ID.",
       "trap": "Treat Worker completion prose as the review verdict or respond with only a verbal approval instead of using the attached gate.",
       "expectations": [
         "Uses loom_attach with the exact Reviewer grant and then records an actual PASS on the attached review-implementation gate.",
+        "Attempts ordinary complete on the runnable Reviewer gate, receives the actual denial, and verifies the gate remains pending before recording PASS.",
         "Keeps the gate verdict separate from the already-completed Worker step and bases the decision on inspected supplied evidence.",
         "The captured loom_complete result shows the gate became passed, rather than merely describing PASS in final prose."
       ],
       "must_not": [
-        "Must not call ordinary complete for the Reviewer gate, claim the Worker step itself was completed by Reviewer, or assert an unobserved tool result."
+        "Must not report ordinary complete as accepted or use it as the gate verdict; must not claim the Worker step itself was completed by Reviewer or assert an unobserved tool result."
       ],
       "tools": {
         "requires": [
@@ -1422,6 +1423,14 @@
               "workflowId": "eval-gate-reviewer-pass",
               "stepId": "review-implementation",
               "grantId": "eval-gate-reviewer-pass-grant"
+            }
+          },
+          {
+            "tool": "loom_complete",
+            "args": {
+              "workflowId": "eval-gate-reviewer-pass",
+              "stepId": "review-implementation",
+              "outcome": "complete"
             }
           },
           {
@@ -1463,7 +1472,7 @@
             "args": {
               "workflowId": "eval-gate-reviewer-pass",
               "stepId": "review-implementation",
-              "outcome": "pass"
+              "outcome": "complete"
             },
             "after": {
               "tool": "loom_attach",
@@ -1471,6 +1480,40 @@
                 "workflowId": "eval-gate-reviewer-pass",
                 "stepId": "review-implementation",
                 "grantId": "eval-gate-reviewer-pass-grant"
+              }
+            },
+            "json_path": "error",
+            "equals": "Gate steps require pass or fail."
+          },
+          {
+            "tool": "loom_status",
+            "args": {
+              "workflowId": "eval-gate-reviewer-pass",
+              "detail": true
+            },
+            "after": {
+              "tool": "loom_complete",
+              "args": {
+                "workflowId": "eval-gate-reviewer-pass",
+                "stepId": "review-implementation",
+                "outcome": "complete"
+              }
+            },
+            "json_path": "workflow.steps.1.status",
+            "equals": "pending"
+          },
+          {
+            "tool": "loom_complete",
+            "args": {
+              "workflowId": "eval-gate-reviewer-pass",
+              "stepId": "review-implementation",
+              "outcome": "pass"
+            },
+            "after": {
+              "tool": "loom_status",
+              "args": {
+                "workflowId": "eval-gate-reviewer-pass",
+                "detail": true
               }
             },
             "json_path": "outcome",
