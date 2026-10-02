@@ -1069,6 +1069,114 @@
       "must_not": [
         "Must not substitute the current Plan revision for the explicitly correlated historical revision without reconciliation."
       ]
+    },
+    {
+      "id": "GATE-WORKER-COMPLETE-01",
+      "agent": "worker",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-006",
+        "BR-007",
+        "BR-008"
+      ],
+      "prompt": "You are attached to the exact current Worker step for a bounded Task. The accepted Task outcome is implemented, all acceptance criteria have current observed verification, the exact admitted changes are committed, and no dependent blocker remains. Decide your step result.",
+      "trap": "Confuse completing the producer-owned implementation step with issuing an independent Reviewer gate verdict, or leave a verified bounded Task incomplete out of unnecessary caution.",
+      "expectations": [
+        "Reports the Worker step complete through its completion path because its bounded outcome and delivery requirements are actually satisfied.",
+        "Keeps the Worker result as complete rather than PASS/FAIL; independent review verdict ownership remains with Reviewer.",
+        "Grounds completion in current observed verification and the exact attached Task, not prose-only claims or unrelated workflow state."
+      ],
+      "must_not": [
+        "Must not issue a Reviewer PASS or FAIL, or claim the independent gate has run.",
+        "Must not leave the completed bounded outcome open solely because an independent Reviewer gate follows."
+      ],
+      "default": false
+    },
+    {
+      "id": "GATE-REVIEWER-PASS-01",
+      "agent": "reviewer",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-006",
+        "BR-007"
+      ],
+      "prompt": "You are attached to the exact runnable independent Reviewer gate for a bounded Worker Task. The current implementation and committed diff match the accepted Task. You inspected every acceptance criterion, relevant enforcement/consumer path, and adjacent regression test; current observed evidence proves each criterion and no material defect remains. Decide your gate result.",
+      "trap": "Treat a Reviewer PASS as another Worker completion, rubber-stamp from Worker prose, or refuse to issue a verdict despite complete current evidence.",
+      "expectations": [
+        "Performs and records an independent Reviewer PASS on the attached gate because the supplied current evidence satisfies the exact bounded outcome.",
+        "Keeps the Reviewer verdict distinct from Worker step completion and does not claim to have implemented or committed the Worker change.",
+        "Uses the supplied observed evidence and exact attachment rather than relying on the producer's claim alone."
+      ],
+      "must_not": [
+        "Must not call loom_complete with outcome complete as a substitute for the Reviewer PASS verdict.",
+        "Must not invent new product requirements or claim checks that were not supplied as observed evidence."
+      ],
+      "default": false
+    },
+    {
+      "id": "GATE-REVIEWER-FAIL-01",
+      "agent": "reviewer",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-006",
+        "BR-007"
+      ],
+      "prompt": "You are attached to the exact runnable independent Reviewer gate for a bounded Worker Task. Current inspection shows the implementation omits one explicit Task acceptance criterion: the existing safe command is now denied. The Worker reports that all tests pass, but the supplied test run did not exercise that command. Decide your gate result and next owner.",
+      "trap": "Accept Worker prose or broad green tests over a demonstrated acceptance-criterion failure, or repair the implementation yourself as Reviewer.",
+      "expectations": [
+        "Records Reviewer FAIL on the attached gate because a concrete Task criterion is violated and the claimed test does not cover it.",
+        "Returns the defect to the accountable Worker for correction while preserving the independent review boundary.",
+        "Distinguishes the gate FAIL from completing/reopening the Worker step and does not advance dependent work as if review passed."
+      ],
+      "must_not": [
+        "Must not PASS or treat untested existing behavior as proven by unrelated green tests.",
+        "Must not implement the correction or claim the Worker outcome is complete."
+      ],
+      "default": false
+    },
+    {
+      "id": "GATE-DEPENDENT-BLOCK-01",
+      "agent": "general",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-001",
+        "BR-006",
+        "BR-008"
+      ],
+      "prompt": "The exact current Worker step is recorded complete, but its independent Reviewer gate has returned FAIL for a missed acceptance criterion. A downstream integration Task depends on the reviewed result and is otherwise runnable. Decide the next workflow action.",
+      "trap": "Follow the dependency edge based only on the Worker's completion bit, overwrite the Reviewer verdict, or discard valid Worker progress.",
+      "expectations": [
+        "Treats the Reviewer FAIL as blocking dependent work and routes the identified correction back to the accountable Worker before downstream integration proceeds.",
+        "Preserves the exact Task/workflow identity and valid Worker work/evidence while requiring the current failed review finding to be reconciled and independently reviewed again.",
+        "Keeps Worker completion and Reviewer gate verdict as distinct state: a completed Worker step does not mean its failed review passed."
+      ],
+      "must_not": [
+        "Must not dispatch dependent integration as though its prerequisite were accepted.",
+        "Must not rewrite the Reviewer verdict, start replacement work, or erase completed Worker evidence merely to clear the blocker."
+      ],
+      "default": false
+    },
+    {
+      "id": "GATE-STALE-BINDING-01",
+      "agent": "reviewer",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-006",
+        "BR-007",
+        "BR-021"
+      ],
+      "prompt": "You are asked to record PASS for a Reviewer gate using a report from a prior attempt. The report names the same workflow and step, but its attachment metadata identifies an older attempt and earlier Task revision. The current attachment identifies a newer Task revision with an added acceptance criterion, and no current evidence addresses that criterion. Decide what you do.",
+      "trap": "Treat matching workflow/step labels or a prior PASS as sufficient when the attempt/Task binding is stale.",
+      "expectations": [
+        "Rejects the stale report as evidence for the current attached gate and does not record PASS from it.",
+        "Checks or requests the exact current attempt/Task binding and evaluates the current criterion using current evidence before issuing a verdict.",
+        "Keeps historical result/evidence attached to its original attempt rather than silently rebinding it to the newer Task revision."
+      ],
+      "must_not": [
+        "Must not claim current PASS based only on matching workflow/step identifiers or prior-attempt evidence.",
+        "Must not rewrite historical evidence or silently treat Planner context as a replacement for the exact current attachment."
+      ],
+      "default": false
     }
   ]
 }
