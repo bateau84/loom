@@ -92,6 +92,8 @@ Every normal project mutation validates the durable runtime version against the 
 
 Runtime version 6 is a protocol-only fence for specialist write scopes and exact step-attempt authority. It does not rewrite product artifacts. A specialist session resumed from an older runtime may lack the new attempt binding; in that case its existing history remains intact, but durable mutation is refused until General issues a fresh exact grant and the child re-attaches to the current runnable step. This is intentional fail-closed recovery rather than guessing which historical attempt the session belonged to.
 
+Runtime version 8 adds the coordinator-admission fence used by same-owner workflow access restoration. Older still-running writers fail closed after the installation advances; restart the OpenCode+Loom processes as instructed for the exact update before relying on the new tool. The migration/fence does not identify the cause of a prior database or process-isolation incident.
+
 A mutation already in flight before the upgrade is serialized by the canonical SQLite transaction boundary; the upgrade runs after that old-version mutation commits and migrates its result.
 
 
@@ -108,6 +110,21 @@ The operation works before planning and after a completed Wave no longer has a l
 For the old **“Wave ... is claimed by nobody”** closure failure, upgrading may also let the owning Documenter finish normally when the completed Wave has uniquely provable stored review history. That missing live claim is expected after successful implementation review. Ambiguous history is not converted into proof; an explicit cancellation is still available to leave the workflow and create a separately authorized replacement.
 
 Do not use `loom_work_release` as an abort command, delete runtime storage, rerun completed implementation, or manufacture a failed gate to escape a binding. Cancelled children cannot resume old work; a reused child needs a new exact grant for a different active workflow. Fully successful terminal workflows remain unchanged. Failed-terminal workflows still release claims and revoke unused grants on cancellation, while preserving the failed gate results. The owning General can perform that cleanup even after starting a replacement.
+
+## Returning to your existing workflow after completed side work
+
+The General coordinator can restore access to its own existing workflow after another workflow has completed. This is a narrow binding restoration—not a general pause/resume feature and not a way to transfer ownership, reopen work, or dispatch the original Objective.
+
+Only proceed when General has given you the exact reviewed implementation branch/commit and checkout location, and the required OpenCode/plugin restart instructions. A merged or published commit, visible tool listing, or stale running plugin is not by itself proof that the current session loaded the implementation. Follow General's notification for the exact branch/commit and restart; do not switch branches, restart services, or invoke recovery speculatively. After restart, General must confirm the supported runtime/tool capability is loaded. Live eligibility of your particular source and target workflows is not established by the feature's presence and is checked only by the command.
+
+When eligible, the same General session calls `loom_resume` (or `tools.loom.code.resume`) with:
+
+- `workflowId`: the ID of the original existing workflow to return to;
+- `fromWorkflowId`: the ID of the successfully completed workflow that is still this session's current binding.
+
+The two IDs are an exact target and compare-and-swap expectation, not credentials. Loom verifies the authenticated General session is the creator of both workflows, that both remain in this project with intact lifecycle and Objective/Plan associations, that the source is successfully complete, and that neither has a still-valid unused unadmitted dispatch grant. Different owners/projects, stale source bindings, unfinished or failed sources, cancelled/deleted/archived state, malformed authority or inconsistent associations are denied without changing workflow state. If a different workflow has since become current, it must be completed and named as the source; Loom will not hop from historical repair work.
+
+Success changes only the General session's workflow binding/attachment selectors and records the transition. Existing workflow IDs, Plan generation/revision, results, evidence, attempts, budgets, grants and independent gates remain intact. No child is started or notified and no original product work is dispatched. A same-owner target that is already current may return `already_current`; that is a no-op, not confirmation that the target is runnable. On any denial, stop and have General inspect the stated condition—do not retry with guessed IDs, call `loom_start` as a substitute, edit runtime storage, or treat this access restoration as authorization to continue the Objective.
 
 
 A cancelled child using Code Mode must use a single direct recovery call, with JSON arguments, for example `return await tools.loom.code.attach({"workflowId":"...","stepId":"...","grantId":"..."})`. The outer wrapper allows this narrow form, not arbitrary code. History reads have the same single-call form. Invalid or old grants still fail.

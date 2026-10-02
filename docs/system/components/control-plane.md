@@ -16,6 +16,7 @@ Keep deterministic coordination out of model memory.
 The Loom plugin exposes tools for:
 - intent interview start/question/resolve/prepare/accept;
 - workflow start/routing/status/completion/reopen and explicit user-authorized cancellation;
+- General-only `loom_resume` access restoration for its own existing workflow after a completed current workflow;
 - shared OQs;
 - executable task DAGs and task attachment;
 - persistent Objective Plan authoring/amendment and role-safe Plan Task admission/status;
@@ -80,6 +81,8 @@ The control plane publishes bounded operational snapshots through `plugins/loom/
 For executable Task status, `loom_task_status` reports task/step status, dependencies, and whether a step is runnable; a ready step is not necessarily a dispatch grant. User-decision waits are included as non-agent steps with `decisionWait` and dependency-derived `decisionReady`, while remaining non-runnable. The sidebar/status projection separately presents ready user decisions as “Ready for your decision · not dispatchable” and shows dependencies still blocking other decisions. A planning-only Objective may expose an exact Plan Task contract, but it remains non-executable and has no Worker scope until an implementation workflow compiles a Wave.
 
 Plan admission validates that executable Tasks repeat the current Plan role and responsibility, preserves local and inter-Wave dependency constraints, and requires external dependencies to be complete in a completed/reviewed Wave. Cross-role production dependencies are mediated by independent Reviewer handoffs. These gates preserve the distinction between a persisted Plan, compiled work, completed implementation, and independently reviewed Wave history.
+
+`loom_resume` changes only the authenticated General session's current workflow binding. The caller supplies the existing target `workflowId` and exact current `fromWorkflowId`; both workflows must belong to the current project and have been created by that same session. An actual switch requires the named source workflow to be successfully complete, the target to remain eligible and correctly associated with its existing Objective/Plan, and no live unused unadmitted dispatch grant for either workflow. The operation serializes coordinator binding-dependent Loom invocations and revalidates state under the workflow/work locks. It rotates the coordinator attachment and clears its step/OQ selectors while preserving workflow IDs/history, Plan generation/revision, evidence, budgets, grants, attempts and independent gates. It does not start, dispatch, notify, replay or resume child work. An already-current same-owner target is a checked no-op, not proof of execution readiness. Errors fail closed; use the returned reason to inspect the ordinary workflow state rather than creating a replacement or editing storage.
 
 ## Depends on
 
