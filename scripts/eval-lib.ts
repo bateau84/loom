@@ -13,6 +13,18 @@ export type ActionAssertion = {
   contains_all?: string[]
 }
 
+export type ToolResultAssertion = {
+  tool: string
+  args: Record<string, string | number | boolean | null>
+  occurrence?: number
+  after?: { tool: string; args: Record<string, string | number | boolean | null> }
+  status?: string
+  output_contains?: string
+  output_contains_all?: string[]
+  json_path?: string
+  equals?: string | number | boolean | null
+}
+
 export type EvalCase = {
   id: string
   default?: boolean
@@ -33,6 +45,10 @@ export type EvalCase = {
     requires?: ActionAssertion[]
     forbids?: ActionAssertion[]
     any_of?: ActionAssertion[][]
+  }
+  tool_results?: {
+    requires?: ToolResultAssertion[]
+    forbids?: ToolResultAssertion[]
   }
   output?: {
     min_source_urls?: number
@@ -137,6 +153,73 @@ export function validateSuite(suite: EvalSuite, repoRoot: string) {
         const values = item.output[key]
         if (values !== undefined && (!Array.isArray(values) || values.some((value) => typeof value !== "string" || !value))) {
           errors.push(`${label}: output.${key} must be a non-empty string array when present`)
+        }
+      }
+    }
+    if (item.tool_results) {
+      if (item.execution !== "runtime") {
+        errors.push(`${label}: tool-result assertions require runtime execution`)
+      }
+      const scalar = (value: unknown) => value === null || typeof value === "string" || typeof value === "boolean" || (typeof value === "number" && Number.isFinite(value))
+      for (const key of ["requires", "forbids"] as const) {
+        const assertions = item.tool_results[key]
+        if (assertions === undefined) continue
+        if (!Array.isArray(assertions)) {
+          errors.push(`${label}: tool_results.${key} must be an array`)
+          continue
+        }
+        for (const [resultIndex, assertion] of assertions.entries()) {
+          const prefix = `${label}: tool_results.${key}[${resultIndex}]`
+          if (!assertion || typeof assertion !== "object") {
+            errors.push(`${prefix} must be an object`)
+            continue
+          }
+          if (typeof assertion.tool !== "string" || !assertion.tool.trim()) {
+            errors.push(`${prefix}.tool is required`)
+          }
+          if (!assertion.args || typeof assertion.args !== "object" || Array.isArray(assertion.args) ||
+              !Object.keys(assertion.args).length ||
+              Object.entries(assertion.args).some(([name, value]) => !name.trim() || !scalar(value))) {
+            errors.push(`${prefix}.args must be a non-empty map of argument names to JSON scalars`)
+          }
+          if (assertion.status !== undefined && (typeof assertion.status !== "string" || !assertion.status.trim())) {
+            errors.push(`${prefix}.status must be a non-empty string when present`)
+          }
+          if (assertion.occurrence !== undefined && (!Number.isSafeInteger(assertion.occurrence) || assertion.occurrence < 1)) {
+            errors.push(`${prefix}.occurrence must be an integer >= 1 when present`)
+          }
+          if (assertion.after !== undefined && (
+            !assertion.after || typeof assertion.after !== "object" ||
+            typeof assertion.after.tool !== "string" || !assertion.after.tool.trim() ||
+            !assertion.after.args || typeof assertion.after.args !== "object" || Array.isArray(assertion.after.args) ||
+            !Object.keys(assertion.after.args).length ||
+            Object.entries(assertion.after.args).some(([name, value]) => !name.trim() || !scalar(value))
+          )) {
+            errors.push(`${prefix}.after must select a preceding tool call by tool and non-empty args`)
+          }
+          if (assertion.output_contains !== undefined &&
+              (typeof assertion.output_contains !== "string" || !assertion.output_contains)) {
+            errors.push(`${prefix}.output_contains must be a non-empty string when present`)
+          }
+          if (assertion.output_contains_all !== undefined &&
+              (!Array.isArray(assertion.output_contains_all) || assertion.output_contains_all.length === 0 ||
+               assertion.output_contains_all.some((part) => typeof part !== "string" || !part))) {
+            errors.push(`${prefix}.output_contains_all must be a non-empty string array when present`)
+          }
+          const hasJsonPath = assertion.json_path !== undefined
+          const hasEquals = Object.prototype.hasOwnProperty.call(assertion, "equals")
+          if (hasJsonPath && (typeof assertion.json_path !== "string" || !assertion.json_path.trim() ||
+              assertion.json_path.split(".").some((part) => !part))) {
+            errors.push(`${prefix}.json_path must be a dotted non-empty path when present`)
+          }
+          if (hasJsonPath !== hasEquals) {
+            errors.push(`${prefix}.json_path and equals must be supplied together`)
+          } else if (hasEquals && !scalar(assertion.equals)) {
+            errors.push(`${prefix}.equals must be a JSON scalar`)
+          }
+          if (!assertion.output_contains && !assertion.output_contains_all && !hasJsonPath) {
+            errors.push(`${prefix} must assert output_contains, output_contains_all, or json_path`)
+          }
         }
       }
     }
