@@ -83,18 +83,26 @@ Example:
 {
   "actions": {
     "requires": [
-      {"tool": "skill", "arg": "name", "equals": "golang-concurrency"},
-      {"tool": "loom_assessment", "arg": "skill", "equals": "golang-concurrency"},
-      {"tool": "execute", "arg": "code", "contains": "tools.browser.preview"}
+      { "tool": "skill", "arg": "name", "equals": "golang-concurrency" },
+      {
+        "tool": "loom_assessment",
+        "arg": "skill",
+        "equals": "golang-concurrency"
+      },
+      { "tool": "execute", "arg": "code", "contains": "tools.browser.preview" }
     ],
     "any_of": [
       [
-        {"tool": "loom_status"},
-        {"tool": "execute", "arg": "code", "contains": "tools.loom.code.status"}
+        { "tool": "loom_status" },
+        {
+          "tool": "execute",
+          "arg": "code",
+          "contains": "tools.loom.code.status"
+        }
       ]
     ],
     "forbids": [
-      {"tool": "loom_qa", "arg": "skill", "equals": "golang-concurrency"}
+      { "tool": "loom_qa", "arg": "skill", "equals": "golang-concurrency" }
     ]
   }
 }
@@ -103,6 +111,10 @@ Example:
 The semantic judge sees the observed assistant result and tool list. Deterministic tool/action assertions are evaluated separately and must also pass.
 
 ## Case-design methodology
+
+Runtime cases may also declare `tool_results.requires` or `tool_results.forbids` to check an actual captured result from one exact tool call, not just that the call was attempted. Each assertion selects by `tool` plus a non-empty `args` map, then checks `status`, `output_contains`, `output_contains_all`, or a parsed JSON `json_path`/`equals` pair. `occurrence` selects the 1-based matching call; `after` requires a preceding observed tool call with its own exact tool/input. These fields let a case prove a denial was followed by an unchanged durable state, rather than merely seeing a status from some other point in the turn. Checks fail closed when result evidence is missing, truncated, or omits events. Use a subsequent real status call and JSON path assertions for durable state; tool call counts or the target's prose are not state proof.
+
+## Scenario authoring standard
 
 Use `skills/agent-eval` for agent/role behavioral case design and `skills/skills-eval` for skill-value or native skill-integration case design. Those skills own scenario realism, oracle quality, boundary coverage, benchmark-hardness, and anti-overfitting methodology.
 
@@ -394,7 +406,6 @@ A failure may be:
 3. **harness/provider** — OpenCode/provider/judge execution failed.
 
 Harness/provider failure is non-evidence. It must not be counted as behavioral PASS or FAIL.
-
 
 ## Conversation-first tests and explicit cost boundaries
 
