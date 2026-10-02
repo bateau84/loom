@@ -1,0 +1,24 @@
+{
+  "skill": "skill-authoring",
+  "version": "1.0.0",
+  "shape": 1,
+  "cases": [
+    {
+      "id": "Skill-Authoring-Eval-Handoff-01",
+      "name": "delegate-benchmark-design-without-losing-coverage",
+      "trap": "Either keep embedding detailed eval rules inside skill-authoring, or remove behavioral coverage entirely when extracting that methodology.",
+      "prompt": "You are revising a reusable Loom skill whose methodology changes a model decision at an important boundary. The skill package itself is otherwise well-scoped. Explain what the authoring work must own, what evaluation work is required, and where the detailed benchmark-design method should come from.",
+      "expectations": [
+        "Keeps skill-authoring responsible for the production skill contract, trigger, methodology layers, authority discipline, and companion-file decisions.",
+        "Requires behavioral coverage because the skill change affects a model decision rather than treating evaluation as optional cleanup.",
+        "Hands detailed benchmark design to skills-eval instead of duplicating ablation, oracle, runtime-integration, or judge methodology inside skill-authoring.",
+        "Keeps the eval as verification of the production skill contract rather than the place the behavior is defined.",
+        "Still requires the coverage to discriminate the defining behavior rather than phrase presence or copied terminology."
+      ],
+      "negative_expectations": [
+        "Must not remove eval coverage merely because benchmark-design details moved to another skill.",
+        "Must not copy a second full eval-authoring methodology back into skill-authoring."
+      ]
+    }
+  ]
+}

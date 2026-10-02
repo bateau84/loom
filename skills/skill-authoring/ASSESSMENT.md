@@ -10,7 +10,7 @@ Reviewer-only domain contract. It does not create Loom authority, product meanin
 - Authority/side-effect discipline: methodology does not silently grant product, filesystem, credential, execution, or user-decision authority.
 - ASSESSMENT.md, when present, is domain-specific Reviewer methodology rather than generic correctness prose.
 - QA.md, when present, contains residual-confidence attacks distinct from normal review.
-- Evaluation handoff: when behavioral evidence is required, the change uses `skills-eval` for benchmark design rather than embedding ad hoc eval methodology here.
+- Evaluation handoff: when behavioral evidence is required, load `skills-eval`; coverage must still discriminate defining behavior rather than phrase presence, while detailed benchmark-design criteria live in that skill.
 - Version-sensitive guidance is grounded and current where consequential.
 
 ## Review depth

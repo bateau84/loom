@@ -5,21 +5,21 @@
   "cases": [
     {
       "id": "Skills-Eval-01",
-      "name": "choose-ablation-for-skill-value",
-      "trap": "Prove only that the skill loaded, compare different prompts, or call a partial candidate improvement a PASS.",
-      "prompt": "A reusable skill named incident-triage teaches a specific evidence method for distinguishing an application defect from a platform outage. The base model already knows generic debugging. We want an eval that tells us whether this skill actually adds useful methodology. Design the evaluation approach and the important pass/fail rules.",
+      "name": "separate-skill-value-from-native-integration",
+      "trap": "Collapse two different claims into one test: treat native loading as proof the methodology helps, or treat an ablation response as proof production roles really load companion methodology.",
+      "prompt": "A new incident-triage skill has two unresolved questions before broad rollout. First, maintainers want evidence that its evidence-triage method improves decisions compared with the model unaided. Second, a production regression suggests Reviewer sometimes skips the skill's ASSESSMENT companion even when the skill is relevant. Design the minimum evaluation coverage for both questions without conflating what each result proves.",
       "expectations": [
-        "Chooses a skill-owned eval under skills/incident-triage/evals using baseline/candidate ablation because the claim is skill value rather than native production loading.",
-        "Keeps the baseline and candidate prompt identical and gives only the candidate the target skill methodology.",
-        "Designs a realistic scenario that requires the skill's distinctive evidence distinction rather than rewarding generic debugging advice or terminology copied from the skill.",
-        "Defines a concrete trap plus positive and negative expectations that can distinguish wrong, partially improved, and correct behavior.",
-        "Requires the candidate to satisfy the full benchmark for PASS; a positive delta over a failing baseline is evidence of improvement but not absolute correctness.",
-        "Recommends repeated iterations and preferably an independent judge if the measured improvement itself will support a load-bearing claim."
+        "Separates the two claims instead of trying to prove both with one case.",
+        "Uses a skill-owned baseline/candidate ablation case for whether incident-triage materially improves the model's reasoning, with the same task on both sides and only the candidate receiving the target skill.",
+        "Uses a central runtime native-integration case for whether production Reviewer actually loads the skill and consumes its assessment path.",
+        "For the ablation case, requires absolute candidate correctness while preserving baseline-to-candidate delta as skill-value evidence rather than PASS by improvement alone.",
+        "For the runtime integration case, requires observed skill loading and assessment action bound to incident-triage rather than accepting final prose as proof.",
+        "States that an ablation result does not prove production integration and a native load does not prove the methodology adds value."
       ],
       "negative_expectations": [
-        "Must not use presence of a skill tool call as the primary proof that the skill is useful.",
-        "Must not give the candidate extra task hints that the baseline does not receive.",
-        "Must not require filesystem mutation or other side effects from reasoning-only ablation."
+        "Must not use presence of a skill tool call as the primary proof that the skill improves reasoning.",
+        "Must not claim a reasoning-only candidate response proves Reviewer consumed the companion in production.",
+        "Must not give the ablation candidate extra task hints beyond the target skill."
       ]
     },
     {

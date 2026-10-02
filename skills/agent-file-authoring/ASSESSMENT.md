@@ -13,7 +13,7 @@ Reviewer-only domain contract. It does not create Loom authority, product meanin
 - **Control-plane coherence:** prompts do not recreate workflow state, bypass gates, or narrate mechanically enforced checks as a second state machine.
 - **Independent-gate neutrality:** producer/coordinator wording cannot bias Reviewer, Acceptance, or Critic verdicts.
 - **Completion truth:** role instructions do not permit knowingly incomplete work to be represented as complete.
-- **Evaluation handoff:** changed model behavior has appropriate coverage designed with `agent-eval`; this review does not duplicate the benchmark-design rubric.
+- **Evaluation handoff:** when model behavior changes, load `agent-eval`; coverage must discriminate professional decisions/outcomes and important negative space rather than phrases or one incident-specific implementation.
 - **Portability:** directives do not depend on source-repository-local IDs, paths, languages, or tools as universal authority.
 
 Scale review depth with consequence, uncertainty, boundary count, and blast radius.

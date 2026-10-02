@@ -1,6 +1,6 @@
 ---
 name: skills-eval
-description: Loom evaluation methodology for reusable skills. Use when creating, changing, or reviewing skill-owned ablation cases or central native skill-integration evals. Not for agent role behavior (use agent-eval).
+description: Loom evaluation methodology when the primary evaluation target is a reusable skill: skill-owned ablation for methodology value, or central runtime proof of native skill/companion loading and use. Not for general role contracts unrelated to skill behavior (use agent-eval).
 ---
 
 # Loom Skills Evaluation
@@ -8,6 +8,15 @@ description: Loom evaluation methodology for reusable skills. Use when creating,
 Evaluate a skill for the claim it actually makes: **does this methodology improve behavior, or does Loom load/use it correctly in production?**
 
 Skill evals do not create production behavior. The behavior must live in the skill, an agent charter, or control-plane enforcement.
+
+## Boundary with agent-eval
+
+Choose by the **primary claim**, not by which agent executes the case.
+
+- Use `skills-eval` when the claim is that a skill adds value, is natively loaded, or its Reviewer/Critic companion methodology is actually consumed.
+- Use `agent-eval` when the claim is about a role's authority, decision, routing, conversation, workflow, or tool behavior independent of a particular skill contract.
+
+A central runtime case may execute Reviewer or Critic and still belong to `skills-eval` when skill loading/use is the thing being proved.
 
 ## Choose the evidence type
 

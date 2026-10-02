@@ -1,6 +1,6 @@
 ---
 name: agent-eval
-description: Loom behavioral evaluation methodology for agents and roles. Use when creating, changing, or reviewing top-level agent eval cases, choosing execution mode, assertions, or regression coverage. Not for skill-value ablation (use skills-eval).
+description: Loom behavioral evaluation methodology when the primary evaluation target is a Loom role contract: decisions, authority, routing, conversation, workflow, or tool behavior. Not for measuring skill value or native skill/companion integration (use skills-eval).
 ---
 
 # Loom Agent Evaluation
@@ -8,6 +8,15 @@ description: Loom behavioral evaluation methodology for agents and roles. Use wh
 Evaluate whether a Loom role makes the correct production decision and, when necessary, actually performs the required runtime behavior.
 
 Agent evals verify production contracts. They never create authority, routing, completion semantics, or tool obligations.
+
+## Boundary with skills-eval
+
+Choose by the **primary claim**, not by the role named in the case.
+
+- Use `agent-eval` for a role contract that would remain meaningful if no particular skill existed.
+- Use `skills-eval` when the claim is specifically that a skill adds value, is loaded, or its ASSESSMENT/QA methodology is consumed.
+
+A runtime case targeting Reviewer is therefore still a `skills-eval` concern when the evidence sought is native `skill` + `loom_assessment` use.
 
 ## Choose the cheapest sufficient execution mode
 
