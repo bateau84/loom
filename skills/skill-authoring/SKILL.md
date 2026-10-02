@@ -53,7 +53,7 @@ Absence of either companion file is valid. Do not generate boilerplate merely fo
 8. Make verification concrete. A skill may recommend checks, but Loom evidence rules decide whether proof is sufficient.
 9. Preserve licenses/attribution for copied third-party material.
 10. Keep external dependencies explicit; do not assume a CLI/service is installed.
-11. If a skill changes behavioral decisions rather than merely technical method, add a realistic eval for that decision boundary.
+11. If a skill change affects behavioral decisions or makes a claim about methodology value, load `skills-eval` and add or adapt the smallest appropriate evaluation. Keep eval-design mechanics in that skill rather than duplicating them here.
 
 ## Companion quality tests
 

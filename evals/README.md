@@ -9,6 +9,12 @@ tags: [evaluation, loom, behavioral, conformance, adversarial]
 
 These evals test whether Loom's model-driven roles follow the behavioral contract, not just whether the deterministic control-plane code is correct.
 
+## Authoring methodology
+
+Use `skills/agent-eval` when designing or reviewing agent/role behavioral cases. Use `skills/skills-eval` when evaluating reusable skill value through ablation or native skill integration. The authoring skills (`agent-file-authoring` and `skill-authoring`) decide when evaluation is needed and hand off to these eval skills.
+
+This README remains the harness and execution reference: case shapes, transports, artifact semantics, commands, and benchmark-wide rules live here. The two eval skills own the reusable case-design method.
+
 ## Layers
 
 ### 1. Deterministic control-plane tests

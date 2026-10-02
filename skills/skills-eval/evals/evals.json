@@ -1,0 +1,43 @@
+{
+  "skill": "skills-eval",
+  "version": "1.0.0",
+  "shape": 1,
+  "cases": [
+    {
+      "id": "Skills-Eval-01",
+      "name": "choose-ablation-for-skill-value",
+      "trap": "Prove only that the skill loaded, compare different prompts, or call a partial candidate improvement a PASS.",
+      "prompt": "A reusable skill named incident-triage teaches a specific evidence method for distinguishing an application defect from a platform outage. The base model already knows generic debugging. We want an eval that tells us whether this skill actually adds useful methodology. Design the evaluation approach and the important pass/fail rules.",
+      "expectations": [
+        "Chooses a skill-owned eval under skills/incident-triage/evals using baseline/candidate ablation because the claim is skill value rather than native production loading.",
+        "Keeps the baseline and candidate prompt identical and gives only the candidate the target skill methodology.",
+        "Designs a realistic scenario that requires the skill's distinctive evidence distinction rather than rewarding generic debugging advice or terminology copied from the skill.",
+        "Defines a concrete trap plus positive and negative expectations that can distinguish wrong, partially improved, and correct behavior.",
+        "Requires the candidate to satisfy the full benchmark for PASS; a positive delta over a failing baseline is evidence of improvement but not absolute correctness.",
+        "Recommends repeated iterations and preferably an independent judge if the measured improvement itself will support a load-bearing claim."
+      ],
+      "negative_expectations": [
+        "Must not use presence of a skill tool call as the primary proof that the skill is useful.",
+        "Must not give the candidate extra task hints that the baseline does not receive.",
+        "Must not require filesystem mutation or other side effects from reasoning-only ablation."
+      ]
+    },
+    {
+      "id": "Skills-Eval-02",
+      "name": "choose-runtime-for-native-skill-integration",
+      "trap": "Use reasoning-only ablation to claim that a production Reviewer really loaded and consumed companion methodology.",
+      "prompt": "A regression report says Reviewer sometimes reviews Go work without actually loading the relevant skill assessment companion. The behavior we need to prove is production integration: Reviewer must natively load the skill and invoke the Loom assessment path for that skill. Design the focused eval.",
+      "expectations": [
+        "Chooses a central native skill integration case, normally in evals/skills.json, rather than a skill-owned ablation case.",
+        "Uses runtime execution with the OpenCode target because the claim depends on real production skill/tool behavior.",
+        "Requires observed native skill loading and the relevant loom_assessment action bound to the intended skill, rather than inferring use from final prose.",
+        "Keeps the scenario realistic and checks the production behavior without teaching the target the harness assertion.",
+        "Explains that this proves native integration, not that the skill itself materially improves reasoning quality."
+      ],
+      "negative_expectations": [
+        "Must not claim that a reasoning-only candidate response proves native production loading.",
+        "Must not accept a final answer that merely says the skill was used as sufficient integration evidence."
+      ]
+    }
+  ]
+}

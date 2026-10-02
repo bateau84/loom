@@ -11,6 +11,6 @@ Critic-only adversarial contract. Assume competent production and normal Reviewe
 - Look for correlated prompt/control-plane assumptions that deterministic enforcement will not catch.
 - Attack false completion, one-finding-at-a-time review loops, unnecessary specialist churn, and retries that exist only because the producer was prevented from owning the complete outcome.
 - Check that evidence/gate independence remains intact even when agents get broader professional judgment.
-- Treat eval changes that merely reward the new wording as suspect. Evals may verify a production contract but must never be cited as the mechanism that creates that contract; cases should still catch the original behavioral failure without requiring magic phrases.
+- When behavioral eval evidence matters, use `agent-eval` for adversarial benchmark review. Here, reject any claim that the eval itself creates the production contract.
 
 Increase QA depth where a shared wrong assumption could survive both competent production and normal review.
