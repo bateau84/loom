@@ -574,6 +574,136 @@ class ToolResultEvidenceTests(unittest.TestCase):
         )
         self.assertTrue(any("non-evidence: forbidden tool result" in item for item in failures))
 
+    def test_incomplete_execute_capture_prevents_forbidden_result_false_pass(self):
+        case = {
+            **scenario(),
+            "tool_results": {"forbids": [{
+                "tool": "loom_complete",
+                "args": {"workflowId": "wf-1", "stepId": "review", "outcome": "pass"},
+                "json_path": "outcome",
+                "equals": "pass",
+            }]},
+        }
+        known_nonmatching = event(
+            "loom_complete",
+            {"error": "Gate steps require pass or fail."},
+            args={"workflowId": "wf-1", "stepId": "review", "outcome": "complete"},
+        )
+        unknown_execute = event(
+            "execute", "aggregate output is not evidence of inner results",
+            args={"code": "await tools.loom.code.complete(args)"},
+            metadata={"metadata": {"toolCalls": "malformed"}},
+        )
+
+        evidence = self.capture(known_nonmatching, unknown_execute)
+        failures = RUN.deterministic_failures(
+            case, ["loom_complete", "execute"],
+            RUN.extract_observed_actions(raw(known_nonmatching, unknown_execute)),
+            tool_results=evidence,
+        )
+
+        self.assertTrue(any("non-evidence:" in failure and "forbidden" in failure for failure in failures))
+        self.assertEqual(
+            RUN.classify_behavioral_result(None, None, failures, semantic_passed=True),
+            "non-evidence",
+        )
+
+    def test_incomplete_capture_makes_non_loom_absence_assertions_non_evidence(self):
+        case = {
+            **scenario(),
+            "actions": {
+                "requires": [{"tool": "read", "args": {"filePath": "policy.ts"}}],
+                "any_of": [[{"tool": "read", "args": {"filePath": "policy.ts"}}]],
+                "forbids": [{"tool": "browser.preview", "args": {"path": "private.png"}}],
+            },
+        }
+        malformed = {"type": "tool_use", "part": {"type": "tool", "tool": "execute", "state": {
+            "status": "completed", "input": {"code": "run"}, "metadata": {"metadata": {"toolCalls": [None]}},
+        }}}
+
+        evidence = self.capture(malformed)
+        failures = RUN.deterministic_failures(
+            case, ["execute"], RUN.extract_observed_actions(raw(malformed)), tool_results=evidence,
+        )
+
+        self.assertEqual(len(failures), 3)
+        self.assertTrue(all(failure.startswith("non-evidence:") for failure in failures))
+
+    def test_malformed_non_loom_selector_cannot_prove_required_or_forbidden_absence(self):
+        case = {
+            **scenario(),
+            "tools": {"requires": ["read"], "forbids": ["browser_preview"]},
+            "actions": {
+                "requires": [{"tool": "read", "args": {"filePath": "policy.ts"}}],
+                "any_of": [[{"tool": "read", "args": {"filePath": "policy.ts"}}]],
+                "forbids": [{"tool": "browser_preview", "args": {"path": "private.png"}}],
+            },
+        }
+        malformed = {"type": "tool_use", "part": {"type": "tool", "tool": "browser_click", "state": {
+            "status": "completed", "input": "not an object", "output": "clicked",
+        }}}
+
+        evidence = self.capture(malformed)
+        failures = RUN.deterministic_failures(
+            case, ["browser_click"], RUN.extract_observed_actions(raw(malformed)), tool_results=evidence,
+        )
+
+        self.assertEqual(len(failures), 5)
+        self.assertTrue(all(failure.startswith("non-evidence:") for failure in failures))
+
+    def test_inner_json_string_result_is_not_double_encoded(self):
+        case = {
+            **scenario(),
+            "tool_results": {"requires": [{
+                "tool": "loom_status", "args": {"workflowId": "wf-json"},
+                "json_path": "workflow.id", "equals": "wf-json",
+            }]},
+        }
+        wrapper = event(
+            "execute", "outer result is unrelated",
+            args={"code": "await tools.loom.code.status(args)"},
+            metadata={"metadata": {"toolCalls": [{
+                "tool": "loom.code.status", "status": "completed",
+                "input": {"workflowId": "wf-json"},
+                "output": json.dumps({"workflow": {"id": "wf-json"}}),
+            }]}},
+        )
+
+        evidence = self.capture(wrapper)
+        inner = RUN.result_evidence_events(evidence)[-1]
+        failures = RUN.deterministic_failures(case, ["execute"], [], tool_results=evidence)
+
+        self.assertEqual(inner["output"], json.dumps({"workflow": {"id": "wf-json"}}))
+        self.assertEqual(failures, [])
+
+    def test_truncated_inner_result_is_non_evidence(self):
+        case = {
+            **scenario(),
+            "tool_results": {"requires": [{
+                "tool": "loom_status", "args": {"workflowId": "wf-json"},
+                "json_path": "workflow.id", "equals": "wf-json",
+            }]},
+        }
+        wrapper = event(
+            "execute", "outer result is unrelated",
+            args={"code": "await tools.loom.code.status(args)"},
+            metadata={"metadata": {"toolCalls": [{
+                "tool": "loom.code.status", "status": "completed",
+                "input": {"workflowId": "wf-json"},
+                "output": "x" * (RUN.TOOL_RESULT_FIELD_LIMIT + 1),
+            }]}},
+        )
+
+        failures = RUN.deterministic_failures(
+            case, ["execute"], [], tool_results=self.capture(wrapper),
+        )
+
+        self.assertTrue(any("non-evidence: per-call result unavailable" in failure for failure in failures))
+        self.assertEqual(
+            RUN.classify_behavioral_result(None, None, failures, semantic_passed=False),
+            "non-evidence",
+        )
+
 
     def test_truncated_raw_stdout_is_omitted_when_secret_redaction_cannot_be_complete(self):
         secret = "sk-secret-value-0123456789"
