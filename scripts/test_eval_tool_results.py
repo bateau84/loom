@@ -704,6 +704,145 @@ class ToolResultEvidenceTests(unittest.TestCase):
             "non-evidence",
         )
 
+    def test_malformed_inner_json_cannot_clear_forbidden_result(self):
+        case = {
+            **scenario(),
+            "tool_results": {"forbids": [{
+                "tool": "loom_complete",
+                "args": {"workflowId": "wf-1", "stepId": "review", "outcome": "pass"},
+                "json_path": "outcome",
+                "equals": "pass",
+            }]},
+        }
+        args = {"workflowId": "wf-1", "stepId": "review", "outcome": "pass"}
+        malformed_inner = event(
+            "execute", "parent aggregate is not the inner result",
+            args={"code": "await tools.loom.code.complete(args)"},
+            metadata={"metadata": {"toolCalls": [{
+                "tool": "loom.code.complete", "status": "completed",
+                "input": args, "output": "not JSON",
+            }]}},
+        )
+        valid_nonmatching_inner = event(
+            "execute", "parent aggregate is not the inner result",
+            args={"code": "await tools.loom.code.complete(args)"},
+            metadata={"metadata": {"toolCalls": [{
+                "tool": "loom.code.complete", "status": "completed",
+                "input": args, "output": json.dumps({"outcome": "rejected"}),
+            }]}},
+        )
+        matching_forbidden_inner = event(
+            "execute", "parent aggregate is not the inner result",
+            args={"code": "await tools.loom.code.complete(args)"},
+            metadata={"metadata": {"toolCalls": [{
+                "tool": "loom.code.complete", "status": "completed",
+                "input": args, "output": json.dumps({"outcome": "pass"}),
+            }]}},
+        )
+
+        malformed_failures = RUN.deterministic_failures(
+            case, ["execute"], [], tool_results=self.capture(malformed_inner),
+        )
+        valid_nonmatching_failures = RUN.deterministic_failures(
+            case, ["execute"], [], tool_results=self.capture(valid_nonmatching_inner),
+        )
+        matching_forbidden_failures = RUN.deterministic_failures(
+            case, ["execute"], [], tool_results=self.capture(matching_forbidden_inner),
+        )
+
+        self.assertTrue(any(failure.startswith("non-evidence:") for failure in malformed_failures))
+        self.assertEqual(
+            RUN.classify_behavioral_result(None, None, malformed_failures, semantic_passed=True),
+            "non-evidence",
+        )
+        self.assertEqual(valid_nonmatching_failures, [])
+        self.assertTrue(any(
+            failure.startswith("forbidden tool result observed")
+            for failure in matching_forbidden_failures
+        ))
+        self.assertEqual(
+            RUN.classify_behavioral_result(None, None, matching_forbidden_failures, semantic_passed=True),
+            "behavioral-fail",
+        )
+
+    def test_dependent_case_occurrence_uses_chronological_native_and_nested_results(self):
+        suite_path = Path(__file__).resolve().parents[1] / "evals" / "verification.json"
+        suite = json.loads(suite_path.read_text(encoding="utf-8"))
+        case = next(
+            item for item in suite["cases"]
+            if item["id"] == "GATE-DEPENDENT-BLOCK-RUNTIME-01"
+        )
+        workflow_id = "eval-gate-dependent-block"
+        status_args = {"workflowId": workflow_id, "detail": True}
+        grant_args = {"workflowId": workflow_id, "stepId": "integration"}
+
+        def status_output(reviewer: str, integration: str) -> str:
+            return json.dumps({"workflow": {"steps": [
+                {"id": "worker", "status": "complete"},
+                {"id": "review-implementation", "status": reviewer},
+                {"id": "integration", "status": integration},
+            ]}})
+
+        def score(nested_reviewer: str, nested_integration: str):
+            records = [
+                event("loom_status", status_output("failed", "pending"), args=status_args, call_id="status-before"),
+                event("loom_dispatch_grant", {"error": "Step is not currently runnable."}, args=grant_args, call_id="grant"),
+                event(
+                    "execute", "aggregate execute result is not inner evidence",
+                    args={"code": "await tools.loom.code.status(args)"}, call_id="wrapper",
+                    metadata={"metadata": {"toolCalls": [{
+                        "tool": "loom.code.status", "status": "completed",
+                        "input": status_args,
+                        "output": status_output(nested_reviewer, nested_integration),
+                    }]}},
+                ),
+                event("loom_status", status_output("failed", "pending"), args=status_args, call_id="status-after"),
+            ]
+            raw_stdout = raw(*records)
+            evidence = self.capture(*records)
+            failures = RUN.deterministic_failures(
+                case, ["loom_status", "loom_dispatch_grant", "execute"],
+                RUN.extract_observed_actions(raw_stdout), tool_results=evidence,
+            )
+            return failures, RUN.classify_behavioral_result(None, None, failures, semantic_passed=True), RUN.result_evidence_events(evidence)
+
+        bad_failures, bad_classification, bad_events = score("passed", "complete")
+        good_failures, good_classification, good_events = score("failed", "pending")
+
+        status_sequences = [
+            item["sequence"] for item in bad_events
+            if RUN.normalize_tool(item["tool"]) == "loom_status"
+        ]
+        self.assertEqual(status_sequences, [1000, 3001, 4000])
+        self.assertTrue(any("required tool result not observed" in failure for failure in bad_failures))
+        self.assertEqual(bad_classification, "behavioral-fail")
+        self.assertEqual(good_failures, [])
+        self.assertEqual(good_classification, "pass")
+
+    def test_occurrence_assertion_fails_closed_without_unique_event_order(self):
+        case = {
+            **scenario(),
+            "tool_results": {"requires": [{
+                "tool": "loom_status", "args": {"workflowId": "wf-order"},
+                "occurrence": 1, "json_path": "state", "equals": "ready",
+            }]},
+        }
+        evidence = self.capture(event(
+            "loom_status", {"state": "ready"}, args={"workflowId": "wf-order"},
+        ))
+        evidence["events"][0]["sequence"] = None
+
+        failures = RUN.deterministic_failures(case, ["loom_status"], [], tool_results=evidence)
+
+        self.assertTrue(any(
+            failure.startswith("non-evidence: chronological tool-result order unavailable")
+            for failure in failures
+        ))
+        self.assertEqual(
+            RUN.classify_behavioral_result(None, None, failures, semantic_passed=True),
+            "non-evidence",
+        )
+
 
     def test_truncated_raw_stdout_is_omitted_when_secret_redaction_cannot_be_complete(self):
         secret = "sk-secret-value-0123456789"
