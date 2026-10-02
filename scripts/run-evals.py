@@ -1792,12 +1792,6 @@ def tool_result_matches(
 
 
 def tool_result_output_indeterminate(event: dict[str, Any], assertion: dict[str, Any]) -> bool:
-    if event.get("nested_metadata_call"):
-        return (
-            "result" in (event.get("missing_fields") or []) or
-            any(field in (event.get("truncated_fields") or []) for field in ("output", "error")) or
-            not any(key in event for key in ("output", "error"))
-        )
     if "result" in (event.get("missing_fields") or []):
         return True
     if any(field in (event.get("truncated_fields") or []) for field in ("output", "error")):
@@ -1899,7 +1893,23 @@ def result_evidence_events(tool_results: dict[str, Any] | None) -> list[dict[str
         combined.append(outer)
     nested_calls, _ = nested_metadata_call_events(tool_results)
     combined.extend(nested_calls)
+    # Nested calls retain their parent sequence plus an in-parent index. Sort
+    # the combined stream so occurrence and after selectors follow actual event
+    # chronology instead of grouping all native events ahead of all nested ones.
+    combined.sort(
+        key=lambda event: event.get("sequence")
+        if isinstance(event.get("sequence"), int) and not isinstance(event.get("sequence"), bool)
+        else float("inf")
+    )
     return combined
+
+
+def result_event_order_complete(events: list[dict[str, Any]]) -> bool:
+    sequences = [event.get("sequence") for event in events]
+    return (
+        all(type(sequence) is int for sequence in sequences) and
+        len(sequences) == len(set(sequences))
+    )
 
 
 def describe_tool_result_assertion(assertion: dict[str, Any]) -> str:
@@ -2102,6 +2112,12 @@ def deterministic_failures(
                 + describe_tool_result_assertion(required)
             )
             continue
+        if ("occurrence" in required or "after" in required) and not result_event_order_complete(result_events):
+            failures.append(
+                "non-evidence: chronological tool-result order unavailable for required assertion: "
+                + describe_tool_result_assertion(required)
+            )
+            continue
         states = [tool_result_call_state(event, required) for event in result_events or []]
         candidates = [
             event for event, state in zip(result_events or [], states)
@@ -2166,6 +2182,12 @@ def deterministic_failures(
         if result_assertions and not result_evidence_complete:
             failures.append(
                 "non-evidence: forbidden tool result cannot be ruled out from incomplete capture: "
+                + describe_tool_result_assertion(forbidden)
+            )
+            continue
+        if ("occurrence" in forbidden or "after" in forbidden) and not result_event_order_complete(result_events):
+            failures.append(
+                "non-evidence: chronological tool-result order unavailable for forbidden assertion: "
                 + describe_tool_result_assertion(forbidden)
             )
             continue
