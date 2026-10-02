@@ -1270,6 +1270,12 @@ def normalize_tool(value: str) -> str:
     match = re.fullmatch(r"mcp__([^_]+)__(.+)", value)
     if match:
         value = match.group(1) + "_" + match.group(2)
+    # Code Mode aliases are equivalent only when the harness observed an
+    # actual inner tool event with this tool identity. Never derive calls from
+    # an execute wrapper's code string or returned prose.
+    code_mode = re.fullmatch(r"loom\.code\.([A-Za-z0-9_-]+)", value)
+    if code_mode:
+        value = "loom_" + code_mode.group(1)
     return value.replace(".", "_")
 
 
@@ -1306,6 +1312,37 @@ def normalized_target_actions(target: dict[str, Any]) -> list[dict[str, Any]]:
         if normalized:
             return normalized
     return extract_observed_actions(str(target.get("stdout") or ""))
+
+
+def tool_result_actions(tool_results: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """Return tool actions from trusted structured event evidence, never wrapper code."""
+    if not isinstance(tool_results, dict):
+        return []
+    schema = tool_results.get("schema")
+    trusted_source = (
+        schema == "opencode-eval-runner/tool-results/v1" and
+        tool_results.get("source") == "opencode.event-stream.full"
+    ) or (
+        schema == "loom-tool-results/v1" and
+        tool_results.get("source") == "target.stdout"
+    )
+    events = tool_results.get("events")
+    if not trusted_source or not isinstance(events, list):
+        return []
+
+    actions: list[dict[str, Any]] = []
+    for event in events:
+        if not isinstance(event, dict) or not isinstance(event.get("tool"), str):
+            continue
+        if any(field in (event.get("truncated_fields") or []) for field in ("tool", "input")):
+            continue
+        try:
+            args = json.loads(str(event.get("input") or "{}"))
+        except (TypeError, ValueError, RecursionError):
+            continue
+        if isinstance(args, dict):
+            actions.append({"tool": event["tool"], "args": args})
+    return actions
 
 
 ACTION_ARG_ALIASES: dict[str, dict[str, tuple[str, ...]]] = {
@@ -1392,7 +1429,7 @@ def tool_result_matches(
     events: list[dict[str, Any]] | None = None,
 ) -> bool:
     """Match one actual tool result and its exact input before checking output/state."""
-    if "output" in (event.get("truncated_fields") or []):
+    if any(field in (event.get("truncated_fields") or []) for field in ("output", "error")):
         return False
     if not tool_result_call_matches(event, assertion):
         return False
@@ -1535,7 +1572,8 @@ def deterministic_failures(
         if str(forbidden_text) in text:
             failures.append("forbidden output text observed: " + repr(forbidden_text))
 
-    observed_actions = actions or []
+    observed_actions = list(actions or [])
+    observed_actions.extend(tool_result_actions(tool_results))
     skill = case.get("skill")
     if require_native_skill_load and skill and skill not in set(loaded_skills or []):
         failures.append("skill under test not confirmed loaded: " + str(skill))
@@ -1560,15 +1598,36 @@ def deterministic_failures(
 
     result_assertions = case.get("tool_results") or {}
     result_events = tool_results.get("events") if isinstance(tool_results, dict) else None
-    result_evidence_complete = (
-        isinstance(tool_results, dict) and
-        tool_results.get("schema") in {
-            "loom-tool-results/v1",
-            "opencode-eval-runner/tool-results/v1",
-        } and
-        isinstance(result_events, list) and
-        tool_results.get("omitted_events", 0) == 0
-    )
+    if isinstance(tool_results, dict) and isinstance(result_events, list):
+        omitted = tool_results.get("omitted_events", 0)
+        observed = tool_results.get("observed_events", len(result_events))
+        schema = tool_results.get("schema")
+        source_is_complete = (
+            schema == "opencode-eval-runner/tool-results/v1" and
+            tool_results.get("source") == "opencode.event-stream.full"
+        ) or (
+            schema == "loom-tool-results/v1" and
+            tool_results.get("source") == "target.stdout" and
+            bool(tool_results.get("has_raw_trace")) and
+            not tool_results.get("upstream_stdout_truncated") and
+            tool_results.get("unparsed_lines", 0) == 0
+        )
+        selectors_complete = all(
+            isinstance(event, dict) and
+            not any(
+                field in (event.get("truncated_fields") or [])
+                for field in ("tool", "input")
+            )
+            for event in result_events
+        )
+        result_evidence_complete = (
+            source_is_complete and
+            type(omitted) is int and omitted >= 0 and omitted == 0 and
+            type(observed) is int and observed == len(result_events) + omitted and
+            selectors_complete
+        )
+    else:
+        result_evidence_complete = False
     if result_assertions and not result_evidence_complete:
         failures.append("complete tool-result evidence unavailable for result assertions")
         result_events = []
@@ -1601,6 +1660,14 @@ def deterministic_failures(
         if any(tool_result_matches(event, forbidden, result_events) for event in selected):
             failures.append(
                 "forbidden tool result observed: " + describe_tool_result_assertion(forbidden)
+            )
+        elif any(
+            any(field in (event.get("truncated_fields") or []) for field in ("output", "error"))
+            for event in selected
+        ):
+            failures.append(
+                "forbidden tool result could not be ruled out because captured output was truncated: "
+                + describe_tool_result_assertion(forbidden)
             )
     return failures
 
