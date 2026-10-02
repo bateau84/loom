@@ -6,7 +6,7 @@ Critic-only adversarial contract. Assume competent production and Reviewer confo
 
 - Attack trigger capture: could an over-broad description make this methodology dominate neighboring work?
 - Attack authority laundering: can a reusable rule quietly create semantics, permissions, destructive actions, or user decisions?
-- Find false confidence where validators/evals can pass without exercising the claimed behavior.
+- When confidence depends on behavioral evals, load `skills-eval` and attack cases that can pass without exercising the claimed behavior; also reject using eval evidence as a substitute for a real production methodology home.
 - Test whether ASSESSMENT and QA are genuinely independent or merely duplicated checklists with different severity words.
 - Look for stale expertise that will be amplified across many future dispatches.
 - Test whether a load-bearing rule is hidden in optional references or whether context bloat defeats progressive disclosure.

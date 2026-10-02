@@ -33,6 +33,17 @@ Because the native skill tool injects `SKILL.md` while resolving that directory,
 | Diagnostic | narrow troubleshooting/domain `SKILL.md` matching the observed failure |
 | Critic | small set of load-bearing/risky skill `QA.md` files |
 
+## Authoring and evaluation support
+
+| Work | Skills |
+| --- | --- |
+| Create or revise a reusable skill | `skill-authoring`; add `skills-eval` when behavioral/value evidence is needed |
+| Create or revise an agent charter | `agent-file-authoring`; add `agent-eval` when model behavior changes |
+| Design agent/role behavioral evals | `agent-eval` |
+| Design skill-value or native skill-integration evals | `skills-eval` |
+
+The authoring skills own the production artifact. The eval skills own benchmark design. Evals verify a production contract; they do not create one.
+
 ## Loading discipline
 
 Load the smallest useful set. A Go database task might use `golang-common-practice`, `golang-database`, and `golang-testing`; it should not load every Go skill.

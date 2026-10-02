@@ -1,0 +1,45 @@
+{
+  "skill": "agent-eval",
+  "version": "1.0.0",
+  "shape": 1,
+  "cases": [
+    {
+      "id": "Agent-Eval-01",
+      "name": "separate-judgment-proof-from-runtime-proof",
+      "trap": "Use one uniform execution mode for two regressions and either overspend on simple judgment evidence or accept stated intent as proof of real recovery execution.",
+      "prompt": "Two behavioral regressions need coverage. In one, Reviewer approved an implementation even though supplied evidence directly contradicted an accepted requirement. In the other, General told the user an exhausted Worker had been resumed, but no Worker was actually dispatched or attached. Design the minimum focused evaluation coverage for both regressions and explain what each result would and would not prove.",
+      "expectations": [
+        "Separates the regressions because they require different evidence rather than forcing both through one execution mode.",
+        "Uses role-decision for the Reviewer regression because the load-bearing claim is the review judgment against supplied authority/evidence.",
+        "Does not require real tool calls for the Reviewer role-decision case and does not claim that its PASS proves full workflow composition.",
+        "Uses runtime for the recovery regression because the load-bearing claim is that production actions actually occurred against workflow state.",
+        "Requires observed recovery actions bound to the intended existing workflow rather than accepting a final answer that says recovery happened.",
+        "Treats provider or harness failure as non-evidence rather than a behavioral verdict."
+      ],
+      "negative_expectations": [
+        "Must not use runtime for both cases merely because runtime sounds stronger.",
+        "Must not use a tool-less decision response as proof that Worker was actually dispatched and attached.",
+        "Must not require tool calls from the role-decision case."
+      ]
+    },
+    {
+      "id": "Agent-Eval-02",
+      "name": "test-both-sides-of-authority-boundary",
+      "trap": "Write only adversarial cases where refusal or escalation always wins, allowing an over-cautious agent to look correct while failing ordinary in-scope work.",
+      "prompt": "A role contract says an implementation specialist may choose ordinary implementation technique inside accepted architecture, but must not invent unresolved product meaning. Recent failures exist on both sides: one session invented a user-visible retry policy, while another escalated a routine internal refactor that was fully inside accepted architecture. Design behavioral coverage for this boundary.",
+      "expectations": [
+        "Creates coverage for both authority crossing and legitimate in-scope action rather than only the dangerous side of the boundary.",
+        "Uses realistic cases where the correct behavior differs: unresolved user-visible semantics must route to the owning authority, while ordinary implementation technique should be decided and carried forward by the implementation role.",
+        "Makes universal refusal, escalation, user-questioning, or delegation fail the ordinary in-scope control case.",
+        "Grades decisions and outcomes rather than exact phrases or one repository-specific edit sequence.",
+        "Chooses the cheapest execution mode sufficient for each claimed behavior and reserves runtime for evidence that actually depends on production actions.",
+        "Keeps the eval as verification of the existing role contract rather than using the case to create new authority."
+      ],
+      "negative_expectations": [
+        "Must not make escalation the only safe strategy across the corpus.",
+        "Must not encode one historical transcript or exact wording as the contract.",
+        "Must not invent new product or architecture semantics in the benchmark."
+      ]
+    }
+  ]
+}

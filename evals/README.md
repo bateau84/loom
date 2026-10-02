@@ -9,6 +9,12 @@ tags: [evaluation, loom, behavioral, conformance, adversarial]
 
 These evals test whether Loom's model-driven roles follow the behavioral contract, not just whether the deterministic control-plane code is correct.
 
+## Authoring methodology
+
+Use `skills/agent-eval` when designing or reviewing agent/role behavioral cases. Use `skills/skills-eval` when evaluating reusable skill value through ablation or native skill integration. The authoring skills (`agent-file-authoring` and `skill-authoring`) decide when evaluation is needed and hand off to these eval skills.
+
+This README remains the harness and execution reference: case shapes, transports, artifact semantics, commands, and benchmark-wide rules live here. The two eval skills own the reusable case-design method.
+
 ## Layers
 
 ### 1. Deterministic control-plane tests
@@ -96,28 +102,11 @@ Example:
 
 The semantic judge sees the observed assistant result and tool list. Deterministic tool/action assertions are evaluated separately and must also pass.
 
-## Scenario authoring standard
+## Case-design methodology
 
-Behavioral cases should resemble normal work, not instructions for passing the eval harness.
+Use `skills/agent-eval` for agent/role behavioral case design and `skills/skills-eval` for skill-value or native skill-integration case design. Those skills own scenario realism, oracle quality, boundary coverage, benchmark-hardness, and anti-overfitting methodology.
 
-- Prefer realistic user, teammate, bug, feature, refactor, documentation, and release situations.
-- Do not name a Loom mechanism in the prompt unless that mechanism itself is the behavior under test.
-- Test both sides of authority boundaries. A good corpus checks that a role refuses work it does not own **and** acts decisively when the work is inside its authority.
-- Include ordinary low-risk work as well as adversarial edge cases so the safest learned strategy is not simply to escalate everything.
-- Vary domain, pressure, lifecycle state, and task size instead of cloning the same scenario with different nouns.
-- In `role-decision` mode, expectations grade the production decision/action the role states; they must not require tool calls or completed side effects that the mode deliberately makes unavailable.
-- In `runtime` mode, require observed actions when the behavior depends on actually using Loom tools.
-- Keep harness plumbing, marker strings, container details, and judge instructions out of case prompts.
-
-## Benchmark discipline
-
-The behavioral corpus is Loom's model-behavior benchmark.
-
-- When a realistic case fails consistently across fresh runs, change the agent/control-plane behavior by default; do not weaken the case just to make the score green.
-- Change an eval only when independent evidence shows that its scenario, expectation, execution mode, or judge contract is unrealistic or measures harness behavior instead of production behavior.
-- A proposed eval change must be defensible without referring to the model's current failure. "The model does not pass it" is not a reason to change the benchmark.
-- Preserve hard cases that expose recurring production behavior even when they materially lower the aggregate pass rate.
-- Track infrastructure/provider errors separately from behavioral FAIL so transport noise does not change benchmark meaning.
+This README defines the harness contract and execution semantics only.
 
 ## Free validation
 
