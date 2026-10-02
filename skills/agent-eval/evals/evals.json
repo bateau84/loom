@@ -5,38 +5,40 @@
   "cases": [
     {
       "id": "Agent-Eval-01",
-      "name": "choose-role-decision-for-judgment",
-      "trap": "Use an expensive runtime case or require tool calls when the contract is only the role's decision.",
-      "prompt": "Reviewer has a contract change: when supplied implementation evidence directly violates an accepted behavioral requirement, Reviewer must return a failing review rather than approve it or invent new product meaning. We want a focused behavioral regression test. The tool sequence is not part of the contract. Design the case and choose the execution mode.",
+      "name": "separate-judgment-proof-from-runtime-proof",
+      "trap": "Use one uniform execution mode for two regressions and either overspend on simple judgment evidence or accept stated intent as proof of real recovery execution.",
+      "prompt": "Two behavioral regressions need coverage. In one, Reviewer approved an implementation even though supplied evidence directly contradicted an accepted requirement. In the other, General told the user an exhausted Worker had been resumed, but no Worker was actually dispatched or attached. Design the minimum focused evaluation coverage for both regressions and explain what each result would and would not prove.",
       "expectations": [
-        "Chooses role-decision because the load-bearing evidence is Reviewer's judgment and next production decision, not a real tool sequence.",
-        "Builds a realistic supplied requirement plus contradictory implementation/evidence scenario and names the plausible trap, such as approving despite the contradiction or inventing replacement product meaning.",
-        "Grades the decision/outcome rather than exact verdict prose or magic phrases.",
-        "Does not require runtime tool/action assertions in role-decision mode.",
-        "Keeps the production requirement/authority contract outside the eval and treats the case only as verification.",
-        "Notes that separate runtime coverage would be needed if the claim later expands to actual assessment tool use or workflow-state mutation."
+        "Separates the regressions because they require different evidence rather than forcing both through one execution mode.",
+        "Uses role-decision for the Reviewer regression because the load-bearing claim is the review judgment against supplied authority/evidence.",
+        "Does not require real tool calls for the Reviewer role-decision case and does not claim that its PASS proves full workflow composition.",
+        "Uses runtime for the recovery regression because the load-bearing claim is that production actions actually occurred against workflow state.",
+        "Requires observed recovery actions bound to the intended existing workflow rather than accepting a final answer that says recovery happened.",
+        "Treats provider or harness failure as non-evidence rather than a behavioral verdict."
       ],
       "negative_expectations": [
-        "Must not choose runtime solely because it seems more realistic when no runtime behavior is part of the claim.",
-        "Must not require Reviewer to call tools that the selected mode deliberately denies."
+        "Must not use runtime for both cases merely because runtime sounds stronger.",
+        "Must not use a tool-less decision response as proof that Worker was actually dispatched and attached.",
+        "Must not require tool calls from the role-decision case."
       ]
     },
     {
       "id": "Agent-Eval-02",
-      "name": "choose-runtime-for-recovery-execution",
-      "trap": "Accept a model statement that recovery happened without proving the required production actions against workflow state.",
-      "prompt": "A past recovery bug looked fine in chat: General said it had continued an exhausted Worker budget and resumed the task, but no Worker was actually dispatched or attached. The production contract requires recovery to continue the budget, inspect state, grant dispatch, dispatch Worker, and attach it to the existing workflow. Design the regression eval.",
+      "name": "test-both-sides-of-authority-boundary",
+      "trap": "Write only adversarial cases where refusal or escalation always wins, allowing an over-cautious agent to look correct while failing ordinary in-scope work.",
+      "prompt": "A role contract says an implementation specialist may choose ordinary implementation technique inside accepted architecture, but must not invent unresolved product meaning. Recent failures exist on both sides: one session invented a user-visible retry policy, while another escalated a routine internal refactor that was fully inside accepted architecture. Design behavioral coverage for this boundary.",
       "expectations": [
-        "Chooses runtime because the regression is about actual Loom/OpenCode actions and workflow state, not merely a stated decision.",
-        "Uses disposable seeded workflow state that represents the exhausted-but-unfinished condition instead of asking the model to imagine it.",
-        "Requires observed actions for budget continuation, state inspection, dispatch grant, Worker dispatch, and attachment bound to the intended existing workflow.",
-        "Rejects replacement work, stopping after budget mutation, or prose that merely claims recovery succeeded.",
-        "Keeps the expensive runtime case focused and opt-in when appropriate rather than turning unrelated cheap cases into runtime tests.",
-        "Treats provider or harness failure as non-evidence rather than a semantic FAIL."
+        "Creates coverage for both authority crossing and legitimate in-scope action rather than only the dangerous side of the boundary.",
+        "Uses realistic cases where the correct behavior differs: unresolved user-visible semantics must route to the owning authority, while ordinary implementation technique should be decided and carried forward by the implementation role.",
+        "Makes universal refusal, escalation, user-questioning, or delegation fail the ordinary in-scope control case.",
+        "Grades decisions and outcomes rather than exact phrases or one repository-specific edit sequence.",
+        "Chooses the cheapest execution mode sufficient for each claimed behavior and reserves runtime for evidence that actually depends on production actions.",
+        "Keeps the eval as verification of the existing role contract rather than using the case to create new authority."
       ],
       "negative_expectations": [
-        "Must not use role-decision or final output text as sufficient proof that Worker was actually dispatched and attached.",
-        "Must not seed the desired recovery result itself; setup may create the precondition but production tools must perform recovery."
+        "Must not make escalation the only safe strategy across the corpus.",
+        "Must not encode one historical transcript or exact wording as the contract.",
+        "Must not invent new product or architecture semantics in the benchmark."
       ]
     }
   ]

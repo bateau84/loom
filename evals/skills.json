@@ -758,8 +758,8 @@
         "BR-005",
         "BR-006"
       ],
-      "prompt": "You are maintaining candidate-skill/SKILL.md. The proposed change alters a model decision: ambiguous incidents that were previously routed to Diagnostic would now be routed to Research. Review the requested change as skill-authoring work and state the evaluation work that must accompany it before implementation. Do not edit files.",
-      "trap": "Keep all eval-design procedure inside skill-authoring, or notice that behavior changed but fail to load the dedicated skill-evaluation methodology.",
+      "prompt": "You are maintaining candidate-skill/SKILL.md. The proposed change alters a model decision: ambiguous incidents that were previously routed to Diagnostic would now be routed to Research. Determine what authoring and evaluation work must accompany this change before implementation. Do not edit files.",
+      "trap": "Treat this as ordinary text maintenance, keep all eval-design procedure in the authoring method, or fail to load the dedicated skill-evaluation methodology.",
       "expectations": [
         "Recognizes that changing the model's routing decision requires behavioral evaluation rather than treating it as documentation-only maintenance.",
         "Keeps skill-authoring focused on the production skill contract and hands detailed benchmark design to skills-eval.",
@@ -811,8 +811,8 @@
         "BR-005",
         "BR-006"
       ],
-      "prompt": "You are maintaining agents/example.md. The requested change alters completion behavior: the role may now claim completion even when one accepted verification item is still unproven. Review the requested change as agent-file-authoring work and state the evaluation work that must accompany it before implementation. Do not edit files.",
-      "trap": "Discuss agent wording and permissions but fail to load the dedicated agent-evaluation methodology for a changed completion decision.",
+      "prompt": "You are maintaining a Loom agent charter in agents/example.md. The requested change alters completion behavior: the role may now claim completion even when one accepted verification item is still unproven. Determine what authoring and evaluation work must accompany this change before implementation. Do not edit files.",
+      "trap": "Treat this as prompt wording only, or discuss the charter without loading the dedicated agent-evaluation methodology for the changed completion decision.",
       "expectations": [
         "Recognizes completion truth as a behavioral contract change that requires focused agent evaluation.",
         "Keeps agent-file-authoring focused on the production role charter and hands detailed benchmark design to agent-eval.",
