@@ -2274,8 +2274,7 @@ class ConversationCompositionTests(unittest.TestCase):
             [wrapper_only],
             tool_results=wrapper_result,
         )
-        self.assertTrue(any(item.startswith("required action not observed:") for item in failures))
-        self.assertTrue(any(item.startswith("required tool result not observed:") for item in failures))
+        self.assertTrue(any(item.startswith("non-evidence:") for item in failures))
 
     def test_tool_result_occurrence_can_assert_state_after_the_operation(self):
         case = {
@@ -2346,7 +2345,7 @@ class ConversationCompositionTests(unittest.TestCase):
         results["omitted_events"] = 0
         results["events"][0]["truncated_fields"] = ["output"]
         failures = RUN_EVALS.deterministic_failures(case, ["loom_status"], tool_results=results)
-        self.assertTrue(any(failure.startswith("required tool result not observed:") for failure in failures))
+        self.assertTrue(any(failure.startswith("non-evidence:") for failure in failures))
 
     def test_gate_runtime_cases_expose_fixture_ids_and_assert_observed_state(self):
         suite = json.loads(

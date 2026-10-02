@@ -792,6 +792,7 @@ def redact_sensitive_values(value: Any, secrets: list[str]) -> Any:
 TOOL_RESULT_FIELD_LIMIT = 6000
 TOOL_RESULT_EVENT_LIMIT = 64
 TOOL_RESULT_TOTAL_LIMIT = 48000
+TOOL_RESULT_NESTED_CALL_LIMIT = 256
 
 
 def _tool_result_field(value: Any, secrets: list[str], limit: int) -> tuple[str, bool]:
@@ -821,9 +822,20 @@ def extract_tool_result_evidence(raw_stdout: str, secrets: list[str]) -> dict[st
         "observed_events": 0,
         "omitted_events": 0,
         "unparsed_lines": 0,
+        "invalid_events": 0,
+        "execute_events": 0,
+        "nested_metadata_parents": 0,
+        "nested_tool_calls_observed": 0,
+        "nested_tool_calls_omitted": 0,
+        "metadata_tool_capture_complete": True,
+        "nested_tool_calls": [],
+        "outer_event_identities": [],
+        "outer_event_identities_omitted": 0,
         "events": [],
     }
     recent: deque[dict[str, Any]] = deque(maxlen=TOOL_RESULT_EVENT_LIMIT)
+    nested_recent: deque[dict[str, Any]] = deque(maxlen=TOOL_RESULT_NESTED_CALL_LIMIT)
+    identity_recent: deque[dict[str, Any]] = deque(maxlen=TOOL_RESULT_EVENT_LIMIT)
     for raw in StringIO(raw_stdout if isinstance(raw_stdout, str) else ""):
         try:
             event = json.loads(raw)
@@ -834,25 +846,110 @@ def extract_tool_result_evidence(raw_stdout: str, secrets: list[str]) -> dict[st
         if not isinstance(event, dict) or event.get("type") != "tool_use":
             continue
         part = event.get("part")
-        if not isinstance(part, dict) or part.get("type") != "tool" or not isinstance(part.get("tool"), str):
+        if not isinstance(part, dict) or part.get("type") != "tool":
+            evidence["invalid_events"] += 1
+            continue
+        if not isinstance(part.get("tool"), str) or not part["tool"]:
+            evidence["invalid_events"] += 1
             continue
         state = part.get("state")
         if not isinstance(state, dict):
-            evidence["unparsed_lines"] += 1
+            evidence["invalid_events"] += 1
             continue
         evidence["observed_events"] += 1
-        item: dict[str, Any] = {"sequence": evidence["observed_events"], "truncated_fields": []}
+        identity_input, identity_input_clipped = _tool_result_field(
+            state.get("input", {}), secrets, 2000
+        )
+        identity: dict[str, Any] = {
+            "sequence": evidence["observed_events"],
+            "tool": part["tool"],
+            "input": identity_input,
+            "truncated_fields": ["input"] if identity_input_clipped else [],
+        }
+        call_id = part.get("callID", part.get("id"))
+        if call_id is not None:
+            identity["call_id"] = _tool_result_field(call_id, secrets, 256)[0]
+        identity_recent.append(identity)
+        item: dict[str, Any] = {
+            "sequence": evidence["observed_events"],
+            "truncated_fields": [],
+            "missing_fields": [],
+        }
+        state_metadata = state.get("metadata")
+        tool_calls_metadata = (
+            state_metadata.get("metadata")
+            if isinstance(state_metadata, dict)
+            else None
+        )
+        if part["tool"] == "execute":
+            evidence["execute_events"] += 1
+            tool_calls = tool_calls_metadata.get("toolCalls") if isinstance(tool_calls_metadata, dict) else None
+            if not isinstance(tool_calls, list):
+                evidence["metadata_tool_capture_complete"] = False
+            else:
+                evidence["nested_metadata_parents"] += 1
+                for index, call in enumerate(tool_calls, start=1):
+                    evidence["nested_tool_calls_observed"] += 1
+                    if not isinstance(call, dict):
+                        evidence["metadata_tool_capture_complete"] = False
+                        continue
+                    tool = call.get("tool")
+                    input_args = call.get("input")
+                    if not isinstance(tool, str) or not tool or not isinstance(input_args, dict):
+                        evidence["metadata_tool_capture_complete"] = False
+                        continue
+                    safe_call = redact_sensitive_values(call, secrets)
+                    encoded_call = json.dumps(safe_call, ensure_ascii=False, sort_keys=True)
+                    nested: dict[str, Any] = {
+                        "parent_sequence": evidence["observed_events"],
+                        "parent_call_id": part.get("callID", part.get("id")),
+                        "nested_index": index,
+                        "tool": tool,
+                        "status": call.get("status", "unknown"),
+                        "input": "",
+                        "metadata_tool_call": safe_call,
+                        "truncated_fields": [],
+                        "missing_fields": [],
+                    }
+                    nested["input"], input_clipped = _tool_result_field(
+                        redact_sensitive_values(input_args, secrets), secrets, 2000
+                    )
+                    if input_clipped:
+                        nested["truncated_fields"].append("input")
+                        evidence["metadata_tool_capture_complete"] = False
+                    if len(encoded_call) > TOOL_RESULT_FIELD_LIMIT:
+                        nested["metadata_tool_call"] = _tool_result_field(safe_call, secrets, TOOL_RESULT_FIELD_LIMIT)[0]
+                        nested["truncated_fields"].append("metadata_tool_call")
+                        evidence["metadata_tool_capture_complete"] = False
+                    # Only explicit per-inner result fields count. The parent
+                    # execute output is never assigned to this record.
+                    result_key = next((key for key in ("output", "error", "result") if key in call), None)
+                    if result_key is not None:
+                        result_value = redact_sensitive_values(call[result_key], secrets)
+                        result_text = json.dumps(result_value, ensure_ascii=False, sort_keys=True)
+                        nested_key = "error" if result_key == "error" else "output"
+                        nested[nested_key], clipped = _tool_result_field(result_text, secrets, TOOL_RESULT_FIELD_LIMIT)
+                        if clipped:
+                            nested["truncated_fields"].append(nested_key)
+                    else:
+                        nested["missing_fields"].append("result")
+                    nested_recent.append(nested)
         fields = {
             "tool": (part["tool"], 256),
             "status": (state.get("status", "unknown"), 256),
             "input": (state.get("input", {}), 2000),
         }
-        for key, value in (("call_id", part.get("callID")), ("session_id", event.get("sessionID"))):
+        if "input" not in state or not isinstance(state.get("input"), dict):
+            item["missing_fields"].append("input")
+            evidence["invalid_events"] += 1
+        for key, value in (("call_id", part.get("callID", part.get("id"))), ("session_id", event.get("sessionID"))):
             if value is not None:
                 fields[key] = (value, 256)
         for key in ("output", "error"):
             if key in state:
                 fields[key] = (state[key], TOOL_RESULT_FIELD_LIMIT)
+        if "output" not in state and "error" not in state:
+            item["missing_fields"].append("result")
         for key, (value, limit) in fields.items():
             item[key], clipped = _tool_result_field(value, secrets, limit)
             if clipped:
@@ -861,16 +958,151 @@ def extract_tool_result_evidence(raw_stdout: str, secrets: list[str]) -> dict[st
 
     evidence["events"] = list(recent)
     evidence["omitted_events"] = evidence["observed_events"] - len(recent)
+    evidence["nested_tool_calls"] = list(nested_recent)
+    evidence["nested_tool_calls_omitted"] = (
+        evidence["nested_tool_calls_observed"] - len(nested_recent)
+    )
+    if evidence["nested_tool_calls_omitted"]:
+        evidence["metadata_tool_capture_complete"] = False
+    evidence["outer_event_identities"] = list(identity_recent)
+    evidence["outer_event_identities_omitted"] = (
+        evidence["observed_events"] - len(identity_recent)
+    )
+    if evidence["outer_event_identities_omitted"] or any(
+        "input" in event.get("truncated_fields", [])
+        for event in identity_recent
+    ):
+        evidence["metadata_tool_capture_complete"] = False
     # Prefer the latest state and verdicts over stale prefixes. Explicit omission
     # metadata prevents this bounded view from pretending to be a full trace.
     while len(json.dumps(evidence, ensure_ascii=False)) > TOOL_RESULT_TOTAL_LIMIT and evidence["events"]:
         evidence["events"].pop(0)
         evidence["omitted_events"] += 1
+    while len(json.dumps(evidence, ensure_ascii=False)) > TOOL_RESULT_TOTAL_LIMIT and evidence["nested_tool_calls"]:
+        evidence["nested_tool_calls"].pop(0)
+        evidence["nested_tool_calls_omitted"] += 1
+        evidence["metadata_tool_capture_complete"] = False
+    while len(json.dumps(evidence, ensure_ascii=False)) > TOOL_RESULT_TOTAL_LIMIT and evidence["outer_event_identities"]:
+        evidence["outer_event_identities"].pop(0)
+        evidence["outer_event_identities_omitted"] += 1
+        evidence["metadata_tool_capture_complete"] = False
     return evidence
+
+
+def metadata_tool_calls(event: dict[str, Any]) -> tuple[bool, list[dict[str, Any]] | None]:
+    """Read nested tool-call records already separated from the outer event stream."""
+    if event.get("tool") != "execute":
+        return True, []
+    calls = event.get("metadata_tool_calls")
+    if not isinstance(calls, list) or any(not isinstance(call, dict) for call in calls):
+        return False, None
+    return True, calls
+
+
+def nested_tool_capture_complete(tool_results: dict[str, Any] | None) -> bool:
+    if not isinstance(tool_results, dict) or not isinstance(tool_results.get("events"), list):
+        return False
+    events = tool_results["events"]
+    omitted = tool_results.get("omitted_events", 0)
+    observed = tool_results.get("observed_events", len(events))
+    schema = tool_results.get("schema")
+    if (
+        type(omitted) is not int or omitted != 0 or
+        type(observed) is not int or observed != len(events) + omitted or
+        tool_results.get("invalid_events", 0) != 0 or
+        tool_results.get("unparsed_lines", 0) != 0 or
+        tool_results.get("upstream_stdout_truncated")
+    ):
+        return False
+    if schema == "opencode-eval-runner/tool-results/v1":
+        if tool_results.get("source") != "opencode.event-stream.full":
+            return False
+    elif schema == "loom-tool-results/v1":
+        if tool_results.get("source") != "target.stdout" or not tool_results.get("has_raw_trace"):
+            return False
+    else:
+        return False
+    if not all(
+        isinstance(event, dict) and
+        not any(field in (event.get("truncated_fields") or []) for field in ("tool", "input"))
+        for event in events
+    ):
+        return False
+    if (
+        tool_results.get("metadata_tool_capture_complete") is False or
+        tool_results.get("nested_tool_calls_omitted", 0) != 0 or
+        tool_results.get("nested_metadata_parents", 0) != tool_results.get("execute_events", 0)
+    ):
+        return False
+    nested = tool_results.get("nested_tool_calls")
+    if not isinstance(nested, list) or len(nested) != tool_results.get("nested_tool_calls_observed"):
+        return False
+    if any(
+        not isinstance(call, dict) or not isinstance(call.get("tool"), str) or
+        not call.get("tool") or not isinstance(call.get("input"), str) or
+        "metadata_tool_call" in (call.get("truncated_fields") or [])
+        for call in nested
+    ):
+        return False
+    return True
+
+
+def nested_metadata_call_events(
+    tool_results: dict[str, Any] | None,
+) -> tuple[list[dict[str, Any]], bool]:
+    """Project actual structured Code Mode invocations, without parent results."""
+    if not isinstance(tool_results, dict):
+        return [], False
+    calls = tool_results.get("nested_tool_calls")
+    if not isinstance(calls, list):
+        return [], False
+    nested: list[dict[str, Any]] = []
+    for call in calls:
+        if not isinstance(call, dict):
+            return nested, False
+        tool = call.get("tool")
+        input_value = call.get("input")
+        parent_sequence = call.get("parent_sequence")
+        nested_index = call.get("nested_index")
+        if (
+            not isinstance(tool, str) or not tool or
+            not isinstance(input_value, str) or
+            type(parent_sequence) is not int or type(nested_index) is not int
+        ):
+            return nested, False
+        try:
+            args = json.loads(input_value)
+        except (ValueError, TypeError, RecursionError):
+            return nested, False
+        if not isinstance(args, dict):
+            return nested, False
+        child: dict[str, Any] = {
+            "sequence": parent_sequence * 1000 + nested_index,
+            "tool": tool,
+            "status": call.get("status", "unknown"),
+            "input": input_value,
+            "nested_metadata_call": True,
+            "parent_sequence": parent_sequence,
+            "nested_index": nested_index,
+            "truncated_fields": list(call.get("truncated_fields") or []),
+            "missing_fields": list(call.get("missing_fields") or []),
+        }
+        # Inner result fields are copied only from that exact raw inner record.
+        # Parent execute outputs are never considered.
+        for key in ("output", "error"):
+            if key in call:
+                child[key] = call[key]
+        nested.append(child)
+    return nested, nested_tool_capture_complete(tool_results)
 
 
 def transport_tool_result_evidence(result: dict[str, Any], secrets: list[str]) -> dict[str, Any]:
     candidate = result.get("tool_result_evidence")
+    if candidate is None:
+        # Saved eval artifacts intentionally persist the projected result under
+        # this name. Accept it for offline replay only; augment it from the
+        # immutable raw stdout below, never from execute source or final text.
+        candidate = result.get("observed_tool_results")
     if (
         isinstance(candidate, dict)
         and candidate.get("schema") == "opencode-eval-runner/tool-results/v1"
@@ -888,6 +1120,55 @@ def transport_tool_result_evidence(result: dict[str, Any], secrets: list[str]) -
                 for event in candidate["events"]
             ],
         }
+        raw_projection = extract_tool_result_evidence(result.get("stdout", ""), secrets)
+        projected_events = candidate_for_redaction["events"]
+        raw_identities = raw_projection["outer_event_identities"]
+        aligned = (
+            not result.get("stdout_truncated") and
+            raw_projection["invalid_events"] == 0 and
+            raw_projection["unparsed_lines"] == 0 and
+            raw_projection["outer_event_identities_omitted"] == 0 and
+            isinstance(projected_events, list) and
+            len(raw_identities) == len(projected_events) == candidate.get("observed_events")
+        )
+        if aligned:
+            # Align using an independent, bounded identity ledger. The richer
+            # raw-output projection may omit large old output payloads, but
+            # identity coverage is retained separately and must cover every
+            # event before nested metadata is admitted.
+            for raw_event, projected_event in zip(raw_identities, projected_events):
+                if not isinstance(projected_event, dict):
+                    aligned = False
+                    break
+                try:
+                    raw_input = json.loads(str(raw_event.get("input") or "{}"))
+                    projected_input = json.loads(str(projected_event.get("input") or "{}"))
+                except (TypeError, ValueError, RecursionError):
+                    aligned = False
+                    break
+                if (
+                    raw_event.get("sequence") != projected_event.get("sequence") or
+                    raw_event.get("tool") != projected_event.get("tool") or
+                    raw_input != projected_input or
+                    (
+                        raw_event.get("call_id") is not None and
+                        projected_event.get("call_id") is not None and
+                        raw_event.get("call_id") != projected_event.get("call_id")
+                    )
+                ):
+                    aligned = False
+                    break
+        candidate_for_redaction["metadata_tool_capture_complete"] = (
+            aligned and raw_projection["metadata_tool_capture_complete"]
+        )
+        candidate_for_redaction["execute_events"] = raw_projection["execute_events"]
+        candidate_for_redaction["nested_metadata_parents"] = raw_projection["nested_metadata_parents"]
+        candidate_for_redaction["nested_tool_calls_observed"] = raw_projection["nested_tool_calls_observed"]
+        candidate_for_redaction["nested_tool_calls_omitted"] = raw_projection["nested_tool_calls_omitted"]
+        candidate_for_redaction["nested_tool_calls"] = raw_projection["nested_tool_calls"]
+        candidate_for_redaction["invalid_events"] = raw_projection["invalid_events"]
+        candidate_for_redaction["unparsed_lines"] = raw_projection["unparsed_lines"]
+        candidate_for_redaction.pop("outer_event_identities", None)
         # The runner bounds fields before Loom receives provider credentials.
         # If a field was already clipped, a credential could straddle the clip
         # boundary and no longer match the full secret value. Omit such fields
@@ -1309,9 +1590,34 @@ def normalized_target_actions(target: dict[str, Any]) -> list[dict[str, Any]]:
                 "tool": item["tool"],
                 "args": args if isinstance(args, dict) else {},
             })
-        if normalized:
-            return normalized
-    return extract_observed_actions(str(target.get("stdout") or ""))
+    else:
+        normalized = []
+    if not normalized:
+        normalized = extract_observed_actions(str(target.get("stdout") or ""))
+    nested_events, _ = nested_metadata_call_events(target.get("observed_tool_results"))
+    nested_actions: list[dict[str, Any]] = []
+    for event in nested_events:
+        try:
+            args = json.loads(event["input"])
+        except (KeyError, TypeError, ValueError, RecursionError):
+            continue
+        if isinstance(args, dict):
+            nested_actions.append({"tool": event["tool"], "args": args})
+    return deduplicate_observed_actions([*normalized, *nested_actions])
+
+
+def deduplicate_observed_actions(actions: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for action in actions:
+        if not isinstance(action, dict) or not isinstance(action.get("tool"), str):
+            continue
+        args = action.get("args") if isinstance(action.get("args"), dict) else {}
+        key = (normalize_tool(action["tool"]), json.dumps(args, sort_keys=True, ensure_ascii=False))
+        if key not in seen:
+            seen.add(key)
+            result.append({"tool": action["tool"], "args": args})
+    return result
 
 
 def tool_result_actions(tool_results: dict[str, Any] | None) -> list[dict[str, Any]]:
@@ -1338,6 +1644,14 @@ def tool_result_actions(tool_results: dict[str, Any] | None) -> list[dict[str, A
             continue
         try:
             args = json.loads(str(event.get("input") or "{}"))
+        except (TypeError, ValueError, RecursionError):
+            continue
+        if isinstance(args, dict):
+            actions.append({"tool": event["tool"], "args": args})
+    nested, _ = nested_metadata_call_events(tool_results)
+    for event in nested:
+        try:
+            args = json.loads(event["input"])
         except (TypeError, ValueError, RecursionError):
             continue
         if isinstance(args, dict):
@@ -1474,23 +1788,111 @@ def tool_result_matches(
     return True
 
 
+def tool_result_output_indeterminate(event: dict[str, Any], assertion: dict[str, Any]) -> bool:
+    if event.get("nested_metadata_call"):
+        return not any(key in event for key in ("output", "error"))
+    if "result" in (event.get("missing_fields") or []):
+        return True
+    if any(field in (event.get("truncated_fields") or []) for field in ("output", "error")):
+        return True
+    output = event.get("output") if isinstance(event.get("output"), str) else event.get("error")
+    if not isinstance(output, str):
+        return True
+    if "json_path" in assertion:
+        try:
+            json.loads(output)
+        except (ValueError, TypeError, RecursionError):
+            return True
+    return False
+
+
 def tool_result_call_matches(event: dict[str, Any], assertion: dict[str, Any]) -> bool:
     """Match tool identity and exact captured arguments, independently of result."""
+    return tool_result_call_state(event, assertion) is True
+
+
+def tool_result_call_state(event: dict[str, Any], assertion: dict[str, Any]) -> bool | None:
+    """Return None when the selected call cannot be ruled in or out."""
+    if not isinstance(event, dict):
+        return None
+    if any(field in (event.get("truncated_fields") or []) for field in ("tool", "input")):
+        return None
     tool = str(event.get("tool") or "")
     expected_tool = str(assertion.get("tool") or "")
+    if not tool:
+        return None
     if normalize_tool(tool) != normalize_tool(expected_tool):
         return False
+    if "input" in (event.get("missing_fields") or []):
+        return None
 
     try:
         args = json.loads(str(event.get("input") or "{}"))
     except (TypeError, ValueError, RecursionError):
-        return False
-    if not isinstance(args, dict) or not action_matches(
+        return None
+    if not isinstance(args, dict):
+        return None
+    if not action_matches(
         {"tool": tool, "args": args},
         {"tool": expected_tool, "args": assertion.get("args")},
     ):
         return False
     return True
+
+
+def observed_post_call_events(
+    events: list[dict[str, Any]],
+    assertion: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Return structurally observed same-tool calls after an exact predecessor."""
+    predecessor = assertion.get("after")
+    if not isinstance(predecessor, dict):
+        return []
+    expected_tool = str(assertion.get("tool") or "")
+    predecessor_sequences = [
+        previous["sequence"] for previous in events
+        if isinstance(previous, dict) and type(previous.get("sequence")) is int and
+        tool_result_call_state(previous, predecessor) is True
+    ]
+    if not predecessor_sequences:
+        return []
+    earliest_predecessor = min(predecessor_sequences)
+    observed: list[dict[str, Any]] = []
+    for event in events:
+        if not isinstance(event, dict) or normalize_tool(str(event.get("tool") or "")) != normalize_tool(expected_tool):
+            continue
+        if any(field in (event.get("truncated_fields") or []) for field in ("tool", "input")):
+            continue
+        sequence = event.get("sequence")
+        if type(sequence) is not int:
+            continue
+        try:
+            args = json.loads(str(event.get("input") or "{}"))
+        except (TypeError, ValueError, RecursionError):
+            continue
+        if not isinstance(args, dict):
+            continue
+        if sequence > earliest_predecessor:
+            observed.append(event)
+    return observed
+
+
+def result_evidence_events(tool_results: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """Combine outer results and structured inner invocations without borrowing parent output."""
+    if not isinstance(tool_results, dict) or not isinstance(tool_results.get("events"), list):
+        return []
+    combined: list[dict[str, Any]] = []
+    for parent in tool_results["events"]:
+        if not isinstance(parent, dict):
+            continue
+        parent_sequence = parent.get("sequence")
+        outer = dict(parent)
+        if type(parent_sequence) is int:
+            outer["sequence"] = parent_sequence * 1000
+        combined.append(outer)
+    nested_calls, _ = nested_metadata_call_events(tool_results)
+    combined.extend(nested_calls)
+    return combined
 
 
 def describe_tool_result_assertion(assertion: dict[str, Any]) -> str:
@@ -1550,12 +1952,26 @@ def deterministic_failures(
     failures: list[str] = []
     assertions = case.get("tools") or {}
     normalized = {normalize_tool(tool) for tool in tools}
+    observed_actions = deduplicate_observed_actions([
+        *(actions or []),
+        *tool_result_actions(tool_results),
+    ])
+    normalized.update(normalize_tool(str(action.get("tool") or "")) for action in observed_actions)
+    nested_capture_complete = nested_tool_capture_complete(tool_results)
     for required in assertions.get("requires", []):
         if normalize_tool(required) not in normalized:
-            failures.append("required tool not observed: " + required)
+            if not nested_capture_complete and normalize_tool(required).startswith("loom_"):
+                failures.append("non-evidence: nested Code Mode tool capture unavailable for " + required)
+            else:
+                failures.append("required tool not observed: " + required)
     for forbidden in assertions.get("forbids", []):
         if normalize_tool(forbidden) in normalized:
             failures.append("forbidden tool observed: " + forbidden)
+        elif normalize_tool(forbidden).startswith("loom_") and not nested_capture_complete:
+            failures.append(
+                "non-evidence: nested Code Mode tool capture unavailable to rule out forbidden tool "
+                + forbidden
+            )
 
     output_assertions = case.get("output") or {}
     minimum_sources = output_assertions.get("min_source_urls", 0)
@@ -1572,8 +1988,6 @@ def deterministic_failures(
         if str(forbidden_text) in text:
             failures.append("forbidden output text observed: " + repr(forbidden_text))
 
-    observed_actions = list(actions or [])
-    observed_actions.extend(tool_result_actions(tool_results))
     skill = case.get("skill")
     if require_native_skill_load and skill and skill not in set(loaded_skills or []):
         failures.append("skill under test not confirmed loaded: " + str(skill))
@@ -1581,24 +1995,58 @@ def deterministic_failures(
     action_assertions = case.get("actions") or {}
     for required in action_assertions.get("requires", []):
         if not any(action_matches(action, required) for action in observed_actions):
-            failures.append("required action not observed: " + describe_action(required))
+            if (
+                normalize_tool(str(required.get("tool") or "")).startswith("loom_") and
+                not nested_capture_complete
+            ):
+                failures.append(
+                    "non-evidence: nested Code Mode tool capture unavailable for required action: "
+                    + describe_action(required)
+                )
+            else:
+                failures.append("required action not observed: " + describe_action(required))
     for group in action_assertions.get("any_of", []):
         if not any(
             action_matches(action, alternative)
             for alternative in group
             for action in observed_actions
         ):
-            failures.append(
-                "none of required alternative actions observed: "
-                + " OR ".join(describe_action(alternative) for alternative in group)
-            )
+            if not nested_capture_complete and any(
+                normalize_tool(str(alternative.get("tool") or "")).startswith("loom_")
+                for alternative in group if isinstance(alternative, dict)
+            ):
+                failures.append(
+                    "non-evidence: nested Code Mode capture unavailable for required action alternatives: "
+                    + " OR ".join(describe_action(alternative) for alternative in group)
+                )
+            else:
+                failures.append(
+                    "none of required alternative actions observed: "
+                    + " OR ".join(describe_action(alternative) for alternative in group)
+                )
     for forbidden in action_assertions.get("forbids", []):
         if any(action_matches(action, forbidden) for action in observed_actions):
             failures.append("forbidden action observed: " + describe_action(forbidden))
+        elif (
+            normalize_tool(str(forbidden.get("tool") or "")).startswith("loom_") and
+            not nested_capture_complete
+        ):
+            failures.append(
+                "non-evidence: nested Code Mode tool capture unavailable to rule out forbidden action: "
+                + describe_action(forbidden)
+            )
 
     result_assertions = case.get("tool_results") or {}
-    result_events = tool_results.get("events") if isinstance(tool_results, dict) else None
-    if isinstance(tool_results, dict) and isinstance(result_events, list):
+    outer_events = tool_results.get("events") if isinstance(tool_results, dict) else None
+    result_events = result_evidence_events(tool_results)
+    capture_metadata_complete = (
+        isinstance(tool_results, dict) and
+        type(tool_results.get("invalid_events", 0)) is int and
+        tool_results.get("invalid_events", 0) == 0 and
+        type(tool_results.get("unparsed_lines", 0)) is int and
+        tool_results.get("unparsed_lines", 0) == 0
+    )
+    if isinstance(tool_results, dict) and isinstance(outer_events, list):
         omitted = tool_results.get("omitted_events", 0)
         observed = tool_results.get("observed_events", len(result_events))
         schema = tool_results.get("schema")
@@ -1618,39 +2066,104 @@ def deterministic_failures(
                 field in (event.get("truncated_fields") or [])
                 for field in ("tool", "input")
             )
-            for event in result_events
+            for event in outer_events
         )
         result_evidence_complete = (
             source_is_complete and
             type(omitted) is int and omitted >= 0 and omitted == 0 and
-            type(observed) is int and observed == len(result_events) + omitted and
-            selectors_complete
+            type(observed) is int and observed == len(outer_events) + omitted and
+            selectors_complete and capture_metadata_complete
         )
     else:
         result_evidence_complete = False
     if result_assertions and not result_evidence_complete:
-        failures.append("complete tool-result evidence unavailable for result assertions")
+        failures.append("non-evidence: complete tool-result evidence unavailable for result assertions")
         result_events = []
     for required in result_assertions.get("requires", []):
+        if result_assertions and not result_evidence_complete:
+            failures.append(
+                "non-evidence: required tool result cannot be evaluated from incomplete capture: "
+                + describe_tool_result_assertion(required)
+            )
+            continue
+        states = [tool_result_call_state(event, required) for event in result_events or []]
         candidates = [
-            event for event in result_events or []
-            if isinstance(event, dict) and tool_result_call_matches(event, required)
+            event for event, state in zip(result_events or [], states)
+            if isinstance(event, dict) and state is True
         ]
+        if any(state is None for state in states):
+            failures.append(
+                "non-evidence: selected tool call has malformed or missing identity/input: "
+                + describe_tool_result_assertion(required)
+            )
+            continue
+        if required.get("after") and nested_capture_complete:
+            predecessor_events = [
+                event for event in result_events or []
+                if tool_result_call_state(event, required["after"]) is True
+            ]
+            if not predecessor_events:
+                failures.append(
+                    "required predecessor tool call not observed: "
+                    + describe_tool_result_assertion(required)
+                )
+                continue
+            post_calls = observed_post_call_events(result_events or [], required)
+            if not post_calls:
+                failures.append(
+                    "required post-operation tool call not observed: "
+                    + describe_tool_result_assertion(required)
+                )
+                continue
+            if not any(tool_result_call_state(event, required) is True for event in post_calls):
+                failures.append(
+                    "required post-operation tool call used mismatched arguments: "
+                    + describe_tool_result_assertion(required)
+                )
+                continue
         occurrence = required.get("occurrence")
         selected = (
             [candidates[occurrence - 1]]
             if type(occurrence) is int and 1 <= occurrence <= len(candidates)
             else candidates if occurrence is None else []
         )
-        if not any(tool_result_matches(event, required, result_events) for event in selected):
+        if any(tool_result_matches(event, required, result_events) for event in selected):
+            continue
+        if any(tool_result_output_indeterminate(event, required) for event in selected):
+            failures.append(
+                "non-evidence: per-call result unavailable or indeterminate: "
+                + describe_tool_result_assertion(required)
+            )
+        elif not candidates and not nested_capture_complete and any(
+            isinstance(event, dict) and event.get("tool") == "execute"
+            for event in (outer_events or [])
+        ):
+            failures.append(
+                "non-evidence: nested Code Mode invocation capture unavailable for required result: "
+                + describe_tool_result_assertion(required)
+            )
+        else:
             failures.append(
                 "required tool result not observed: " + describe_tool_result_assertion(required)
             )
     for forbidden in result_assertions.get("forbids", []):
+        if result_assertions and not result_evidence_complete:
+            failures.append(
+                "non-evidence: forbidden tool result cannot be ruled out from incomplete capture: "
+                + describe_tool_result_assertion(forbidden)
+            )
+            continue
+        states = [tool_result_call_state(event, forbidden) for event in result_events or []]
         candidates = [
-            event for event in result_events or []
-            if isinstance(event, dict) and tool_result_call_matches(event, forbidden)
+            event for event, state in zip(result_events or [], states)
+            if isinstance(event, dict) and state is True
         ]
+        if any(state is None for state in states):
+            failures.append(
+                "non-evidence: forbidden tool result cannot be ruled out from malformed/missing identity/input: "
+                + describe_tool_result_assertion(forbidden)
+            )
+            continue
         occurrence = forbidden.get("occurrence")
         selected = (
             [candidates[occurrence - 1]]
@@ -1661,12 +2174,17 @@ def deterministic_failures(
             failures.append(
                 "forbidden tool result observed: " + describe_tool_result_assertion(forbidden)
             )
-        elif any(
-            any(field in (event.get("truncated_fields") or []) for field in ("output", "error"))
-            for event in selected
+        elif any(tool_result_output_indeterminate(event, forbidden) for event in selected):
+            failures.append(
+                "non-evidence: forbidden tool result cannot be ruled out because its per-call result is absent/truncated: "
+                + describe_tool_result_assertion(forbidden)
+            )
+        elif not candidates and not nested_capture_complete and any(
+            isinstance(event, dict) and event.get("tool") == "execute"
+            for event in (outer_events or [])
         ):
             failures.append(
-                "forbidden tool result could not be ruled out because captured output was truncated: "
+                "non-evidence: nested Code Mode invocation capture unavailable to rule out forbidden result: "
                 + describe_tool_result_assertion(forbidden)
             )
     return failures
@@ -1779,6 +2297,22 @@ def semantic_pass(case: dict[str, Any], grade: dict[str, Any]) -> bool:
     if trap_declared and grade.get("trap_observed") is not False:
         return False
     return True
+
+
+def classify_behavioral_result(
+    target_error: str | None,
+    judge_error: str | None,
+    deterministic: list[str],
+    semantic_passed: bool,
+) -> str:
+    """Do not turn unsupported observation into a behavioral failure."""
+    if target_error or judge_error:
+        return "non-evidence"
+    if deterministic and all(item.startswith("non-evidence:") for item in deterministic):
+        return "non-evidence"
+    if deterministic:
+        return "behavioral-fail"
+    return "pass" if semantic_passed else "behavioral-fail"
 
 
 def semantic_behavior_score(grade: dict[str, Any], *, trap_declared: bool) -> float:
@@ -2632,14 +3166,13 @@ def run_case(
                 except Exception as exc:
                     judge_error = "judge parse failed: " + str(exc)
 
-        non_evidence = target_error is not None or judge_error is not None
-        passed = (
-            not non_evidence
-            and not deterministic
-            and isinstance(judge, dict)
-            and semantic_pass(case, judge)
+        classification = classify_behavioral_result(
+            target_error,
+            judge_error,
+            deterministic,
+            isinstance(judge, dict) and semantic_pass(case, judge),
         )
-        classification = "pass" if passed else "non-evidence" if non_evidence else "behavioral-fail"
+        passed = classification == "pass"
         total_seconds = time.perf_counter() - case_started
 
         artifact = {
