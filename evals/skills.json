@@ -748,6 +748,112 @@
           "content": "import { expect, test } from \"bun:test\"\nimport { canonicalUserKey } from \"./implementation\"\n\ntest(\"canonicalizes a user key\", () => {\n  const input = \" Alice \"\n  const expected = input.trim().toLowerCase()\n  expect(canonicalUserKey(input)).toBe(expected)\n})\n"
         }
       ]
+    },
+    {
+      "id": "SKILL-SKILL-AUTHORING-EVAL-HANDOFF-01",
+      "agent": "worker",
+      "skill": "skill-authoring",
+      "execution": "runtime",
+      "requirements": [
+        "BR-005",
+        "BR-006"
+      ],
+      "prompt": "You are maintaining candidate-skill/SKILL.md. The proposed change alters a model decision: ambiguous incidents that were previously routed to Diagnostic would now be routed to Research. Review the requested change as skill-authoring work and state the evaluation work that must accompany it before implementation. Do not edit files.",
+      "trap": "Keep all eval-design procedure inside skill-authoring, or notice that behavior changed but fail to load the dedicated skill-evaluation methodology.",
+      "expectations": [
+        "Recognizes that changing the model's routing decision requires behavioral evaluation rather than treating it as documentation-only maintenance.",
+        "Keeps skill-authoring focused on the production skill contract and hands detailed benchmark design to skills-eval.",
+        "Distinguishes evaluation as verification from the production home of the routing behavior."
+      ],
+      "must_not": [
+        "Must not make skill-authoring itself the owner of the full ablation/runtime/judge methodology.",
+        "Must not treat the eval as the place that defines the new routing behavior."
+      ],
+      "tools": {
+        "requires": [
+          "skill",
+          "read"
+        ],
+        "forbids": []
+      },
+      "actions": {
+        "requires": [
+          {
+            "tool": "skill",
+            "arg": "name",
+            "equals": "skill-authoring"
+          },
+          {
+            "tool": "skill",
+            "arg": "name",
+            "equals": "skills-eval"
+          },
+          {
+            "tool": "read",
+            "arg": "filePath",
+            "ends_with": "candidate-skill/SKILL.md"
+          }
+        ]
+      },
+      "fixture_files": [
+        {
+          "path": "candidate-skill/SKILL.md",
+          "content": "---\nname: incident-routing\ndescription: Route ambiguous engineering incidents to the right specialist.\n---\n\n# Incident routing\n\nCurrent rule: ambiguous incidents with insufficient evidence go to Diagnostic first.\n\nRequested change: send those incidents to Research instead.\n"
+        }
+      ]
+    },
+    {
+      "id": "SKILL-AGENT-AUTHORING-EVAL-HANDOFF-01",
+      "agent": "worker",
+      "skill": "agent-file-authoring",
+      "execution": "runtime",
+      "requirements": [
+        "BR-005",
+        "BR-006"
+      ],
+      "prompt": "You are maintaining agents/example.md. The requested change alters completion behavior: the role may now claim completion even when one accepted verification item is still unproven. Review the requested change as agent-file-authoring work and state the evaluation work that must accompany it before implementation. Do not edit files.",
+      "trap": "Discuss agent wording and permissions but fail to load the dedicated agent-evaluation methodology for a changed completion decision.",
+      "expectations": [
+        "Recognizes completion truth as a behavioral contract change that requires focused agent evaluation.",
+        "Keeps agent-file-authoring focused on the production role charter and hands detailed benchmark design to agent-eval.",
+        "Calls for coverage that discriminates the completion decision rather than exact replacement wording."
+      ],
+      "must_not": [
+        "Must not make agent-file-authoring itself the owner of the full role-eval methodology.",
+        "Must not treat phrase matching as sufficient behavioral coverage."
+      ],
+      "tools": {
+        "requires": [
+          "skill",
+          "read"
+        ],
+        "forbids": []
+      },
+      "actions": {
+        "requires": [
+          {
+            "tool": "skill",
+            "arg": "name",
+            "equals": "agent-file-authoring"
+          },
+          {
+            "tool": "skill",
+            "arg": "name",
+            "equals": "agent-eval"
+          },
+          {
+            "tool": "read",
+            "arg": "filePath",
+            "ends_with": "agents/example.md"
+          }
+        ]
+      },
+      "fixture_files": [
+        {
+          "path": "agents/example.md",
+          "content": "---\ndescription: Example implementation role.\n---\n\nThe role may complete only when all accepted verification items are proven.\n\nRequested change: allow completion with one accepted verification item still unproven when the role believes the risk is low.\n"
+        }
+      ]
     }
   ]
 }
