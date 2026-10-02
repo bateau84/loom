@@ -2157,6 +2157,211 @@ class ConversationCompositionTests(unittest.TestCase):
         self.assertFalse(RUN_EVALS.action_matches({"tool": "subagent", "args": {}}, {"tool": "subagent", "arg": "background", "equals": None}))
         self.assertTrue(RUN_EVALS.action_matches({"tool": "subagent", "args": {"background": None}}, {"tool": "subagent", "arg": "background", "equals": None}))
 
+    def test_tool_result_assertions_bind_output_and_durable_json_state_to_observed_call(self):
+        case = {
+            "tool_results": {
+                "requires": [
+                    {
+                        "tool": "loom_complete",
+                        "args": {"workflowId": "eval-wf", "stepId": "review", "outcome": "fail"},
+                        "json_path": "outcome",
+                        "equals": "fail",
+                    },
+                    {
+                        "tool": "loom_status",
+                        "args": {"workflowId": "eval-wf", "detail": True},
+                        "json_path": "workflow.steps.1.status",
+                        "equals": "failed",
+                    },
+                ]
+            }
+        }
+        results = {
+            "schema": "opencode-eval-runner/tool-results/v1",
+            "events": [
+                {
+                    "tool": "loom_complete",
+                    "status": "completed",
+                    "input": json.dumps({"workflowId": "eval-wf", "stepId": "review", "outcome": "fail"}),
+                    "output": json.dumps({"finished": "review", "outcome": "fail"}),
+                },
+                {
+                    "tool": "loom_status",
+                    "status": "completed",
+                    "input": json.dumps({"workflowId": "eval-wf", "detail": True}),
+                    "output": json.dumps({"workflow": {"steps": [{"status": "complete"}, {"status": "failed"}]}}),
+                },
+            ],
+        }
+        self.assertEqual(
+            RUN_EVALS.deterministic_failures(case, ["loom_complete", "loom_status"], tool_results=results),
+            [],
+        )
+
+        results["events"][0]["output"] = json.dumps({"finished": "review", "outcome": "complete"})
+        results["events"][1]["output"] = json.dumps({"workflow": {"steps": [{"status": "complete"}, {"status": "pending"}]}})
+        failures = RUN_EVALS.deterministic_failures(
+            case,
+            ["loom_complete", "loom_status"],
+            tool_results=results,
+        )
+        self.assertEqual(len(failures), 2)
+        self.assertTrue(all(item.startswith("required tool result not observed:") for item in failures))
+
+    def test_tool_result_assertions_fail_closed_on_missing_or_mismatched_events(self):
+        case = {
+            "tool_results": {
+                "requires": [{
+                    "tool": "loom_complete",
+                    "args": {"workflowId": "eval-wf", "stepId": "worker"},
+                    "output_contains": "Work steps require complete",
+                }]
+            }
+        }
+        self.assertTrue(RUN_EVALS.deterministic_failures(case, ["loom_complete"], tool_results=None))
+        wrong_call = {
+            "events": [{
+                "tool": "loom_complete",
+                "status": "completed",
+                "input": json.dumps({"workflowId": "other", "stepId": "worker"}),
+                "output": "Work steps require complete.",
+            }]
+        }
+        self.assertTrue(RUN_EVALS.deterministic_failures(case, ["loom_complete"], tool_results=wrong_call))
+
+    def test_tool_result_occurrence_can_assert_state_after_the_operation(self):
+        case = {
+            "tool_results": {
+                "requires": [{
+                    "tool": "loom_status",
+                    "args": {"workflowId": "eval-wf", "detail": True},
+                    "occurrence": 2,
+                    "after": {
+                        "tool": "loom_complete",
+                        "args": {"workflowId": "eval-wf", "stepId": "worker", "outcome": "pass"},
+                    },
+                    "json_path": "workflow.steps.0.status",
+                    "equals": "pending",
+                }]
+            }
+        }
+        results = {
+            "schema": "loom-tool-results/v1",
+            "omitted_events": 0,
+            "events": [
+                {"sequence": 1, "tool": "loom_status", "input": json.dumps({"workflowId": "eval-wf", "detail": True}),
+                 "output": json.dumps({"workflow": {"steps": [{"status": "complete"}]}})},
+                {"sequence": 2, "tool": "loom_complete", "input": json.dumps({"workflowId": "eval-wf", "stepId": "worker", "outcome": "pass"}),
+                 "output": json.dumps({"error": "Work steps require complete."})},
+                {"sequence": 3, "tool": "loom_status", "input": json.dumps({"workflowId": "eval-wf", "detail": True}),
+                 "output": json.dumps({"workflow": {"steps": [{"status": "pending"}]}})},
+            ],
+        }
+        self.assertEqual(
+            RUN_EVALS.deterministic_failures(case, ["loom_status"], tool_results=results),
+            [],
+        )
+        case["tool_results"]["requires"][0]["occurrence"] = 1
+        self.assertTrue(RUN_EVALS.deterministic_failures(case, ["loom_status"], tool_results=results))
+
+    def test_tool_result_assertions_reject_incomplete_or_truncated_evidence(self):
+        case = {
+            "tool_results": {
+                "requires": [{
+                    "tool": "loom_status",
+                    "args": {"workflowId": "eval-wf", "detail": True},
+                    "json_path": "workflow.steps.0.status",
+                    "equals": "pending",
+                }]
+            }
+        }
+        results = {
+            "schema": "loom-tool-results/v1",
+            "omitted_events": 1,
+            "events": [{
+                "tool": "loom_status",
+                "input": json.dumps({"workflowId": "eval-wf", "detail": True}),
+                "output": json.dumps({"workflow": {"steps": [{"status": "pending"}]}}),
+            }],
+        }
+        failures = RUN_EVALS.deterministic_failures(case, ["loom_status"], tool_results=results)
+        self.assertTrue(any("complete tool-result evidence unavailable" in failure for failure in failures))
+
+        results["omitted_events"] = 0
+        results["events"][0]["truncated_fields"] = ["output"]
+        failures = RUN_EVALS.deterministic_failures(case, ["loom_status"], tool_results=results)
+        self.assertTrue(any(failure.startswith("required tool result not observed:") for failure in failures))
+
+    def test_gate_runtime_cases_expose_fixture_ids_and_assert_observed_state(self):
+        suite = json.loads(
+            (RUN_EVALS.ROOT / "evals" / "verification.json").read_text(encoding="utf-8")
+        )
+        cases = {
+            case["id"]: case
+            for case in suite["cases"]
+            if case["id"].endswith("RUNTIME-01") or case["id"].startswith("GATE-")
+        }
+        expected = {
+            "GATE-WORKER-BOUNDARY-RUNTIME-01",
+            "GATE-REVIEWER-PASS-RUNTIME-01",
+            "GATE-REVIEWER-FAIL-RUNTIME-01",
+            "GATE-STALE-ATTEMPT-RUNTIME-01",
+            "GATE-DEPENDENT-BLOCK-RUNTIME-01",
+            "GATE-COORDINATOR-RESUME-RUNTIME-01",
+        }
+        for case_id in expected:
+            with self.subTest(case=case_id):
+                case = cases[case_id]
+                self.assertEqual(case["execution"], "runtime")
+                self.assertIn("tool_results", case)
+                result_assertions = case["tool_results"].get("requires", [])
+                self.assertTrue(result_assertions)
+                self.assertTrue(any(
+                    assertion["tool"] == "loom_status" and "json_path" in assertion
+                    for assertion in result_assertions
+                ))
+                fixture_content = "\n".join(
+                    fixture["content"]
+                    for fixture in case.get("fixture_files", [])
+                    if fixture["path"].endswith(".ts")
+                )
+                for assertion in case.get("actions", {}).get("requires", []):
+                    for key in ("workflowId", "fromWorkflowId", "grantId", "stepId"):
+                        value = assertion.get("args", {}).get(key)
+                        if value:
+                            self.assertIn(str(value), case["prompt"])
+                self.assertNotIn("ses_", case["prompt"] + fixture_content)
+                self.assertIn("event?.sessionID", fixture_content)
+
+    def test_forbidden_tool_result_is_detected_by_exact_call_and_output(self):
+        case = {
+            "tool_results": {
+                "forbids": [{
+                    "tool": "loom_complete",
+                    "args": {"workflowId": "eval-wf", "stepId": "review", "outcome": "pass"},
+                    "json_path": "outcome",
+                    "equals": "pass",
+                }]
+            }
+        }
+        results = {
+            "schema": "loom-tool-results/v1",
+            "omitted_events": 0,
+            "events": [{
+                "sequence": 1,
+                "tool": "loom_complete",
+                "input": json.dumps({"workflowId": "eval-wf", "stepId": "review", "outcome": "pass"}),
+                "output": json.dumps({"error": "Gate PASS denied"}),
+            }],
+        }
+        self.assertEqual(RUN_EVALS.deterministic_failures(case, ["loom_complete"], tool_results=results), [])
+
+        results["events"][0]["output"] = json.dumps({"outcome": "pass"})
+        self.assertTrue(any(
+            failure.startswith("forbidden tool result observed:")
+            for failure in RUN_EVALS.deterministic_failures(case, ["loom_complete"], tool_results=results)
+        ))
+
     def test_nested_timeout_does_not_change_ordinary_defaults(self):
         live = next(
             case

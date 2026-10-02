@@ -1386,6 +1386,95 @@ def action_matches(action: dict[str, Any], assertion: dict[str, Any]) -> bool:
     return False
 
 
+def tool_result_matches(
+    event: dict[str, Any],
+    assertion: dict[str, Any],
+    events: list[dict[str, Any]] | None = None,
+) -> bool:
+    """Match one actual tool result and its exact input before checking output/state."""
+    if "output" in (event.get("truncated_fields") or []):
+        return False
+    if not tool_result_call_matches(event, assertion):
+        return False
+    if "after" in assertion:
+        sequence = event.get("sequence")
+        predecessor = assertion.get("after")
+        if type(sequence) is not int or not any(
+            isinstance(previous, dict) and
+            type(previous.get("sequence")) is int and previous["sequence"] < sequence and
+            isinstance(predecessor, dict) and tool_result_call_matches(previous, predecessor)
+            for previous in events or []
+        ):
+            return False
+    if "status" in assertion and event.get("status") != assertion["status"]:
+        return False
+
+    output = event.get("output")
+    if not isinstance(output, str):
+        output = event.get("error")
+    if not isinstance(output, str):
+        return False
+    if "output_contains" in assertion and assertion["output_contains"] not in output:
+        return False
+    if "output_contains_all" in assertion and not all(
+        fragment in output for fragment in assertion["output_contains_all"]
+    ):
+        return False
+    if "json_path" in assertion:
+        try:
+            value: Any = json.loads(output)
+            for segment in assertion["json_path"].split("."):
+                if isinstance(value, list) and segment.isdecimal():
+                    value = value[int(segment)]
+                elif isinstance(value, dict) and segment in value:
+                    value = value[segment]
+                else:
+                    return False
+        except (ValueError, TypeError, IndexError, RecursionError):
+            return False
+        if not scalar_action_equal(value, assertion["equals"]):
+            return False
+    return True
+
+
+def tool_result_call_matches(event: dict[str, Any], assertion: dict[str, Any]) -> bool:
+    """Match tool identity and exact captured arguments, independently of result."""
+    tool = str(event.get("tool") or "")
+    expected_tool = str(assertion.get("tool") or "")
+    if normalize_tool(tool) != normalize_tool(expected_tool):
+        return False
+
+    try:
+        args = json.loads(str(event.get("input") or "{}"))
+    except (TypeError, ValueError, RecursionError):
+        return False
+    if not isinstance(args, dict) or not action_matches(
+        {"tool": tool, "args": args},
+        {"tool": expected_tool, "args": assertion.get("args")},
+    ):
+        return False
+    return True
+
+
+def describe_tool_result_assertion(assertion: dict[str, Any]) -> str:
+    summary = str(assertion.get("tool")) + " result for " + json.dumps(
+        assertion.get("args"), sort_keys=True
+    )
+    if "json_path" in assertion:
+        summary += " at " + str(assertion["json_path"]) + " == " + repr(assertion.get("equals"))
+    if "output_contains" in assertion:
+        summary += " containing " + repr(assertion["output_contains"])
+    if "output_contains_all" in assertion:
+        summary += " containing all " + repr(assertion["output_contains_all"])
+    if "occurrence" in assertion:
+        summary += " occurrence " + str(assertion["occurrence"])
+    if "after" in assertion:
+        summary += " after " + str(assertion["after"].get("tool")) + " " + json.dumps(
+            assertion["after"].get("args"), sort_keys=True
+        )
+    return summary
+
+
 def describe_action(assertion: dict[str, Any]) -> str:
     if "args" in assertion:
         return str(assertion.get("tool")) + " args " + json.dumps(assertion["args"], sort_keys=True)
@@ -1419,6 +1508,7 @@ def deterministic_failures(
     loaded_skills: list[str] | None = None,
     require_native_skill_load: bool = True,
     text: str = "",
+    tool_results: dict[str, Any] | None = None,
 ) -> list[str]:
     failures: list[str] = []
     assertions = case.get("tools") or {}
@@ -1467,6 +1557,51 @@ def deterministic_failures(
     for forbidden in action_assertions.get("forbids", []):
         if any(action_matches(action, forbidden) for action in observed_actions):
             failures.append("forbidden action observed: " + describe_action(forbidden))
+
+    result_assertions = case.get("tool_results") or {}
+    result_events = tool_results.get("events") if isinstance(tool_results, dict) else None
+    result_evidence_complete = (
+        isinstance(tool_results, dict) and
+        tool_results.get("schema") in {
+            "loom-tool-results/v1",
+            "opencode-eval-runner/tool-results/v1",
+        } and
+        isinstance(result_events, list) and
+        tool_results.get("omitted_events", 0) == 0
+    )
+    if result_assertions and not result_evidence_complete:
+        failures.append("complete tool-result evidence unavailable for result assertions")
+        result_events = []
+    for required in result_assertions.get("requires", []):
+        candidates = [
+            event for event in result_events or []
+            if isinstance(event, dict) and tool_result_call_matches(event, required)
+        ]
+        occurrence = required.get("occurrence")
+        selected = (
+            [candidates[occurrence - 1]]
+            if type(occurrence) is int and 1 <= occurrence <= len(candidates)
+            else candidates if occurrence is None else []
+        )
+        if not any(tool_result_matches(event, required, result_events) for event in selected):
+            failures.append(
+                "required tool result not observed: " + describe_tool_result_assertion(required)
+            )
+    for forbidden in result_assertions.get("forbids", []):
+        candidates = [
+            event for event in result_events or []
+            if isinstance(event, dict) and tool_result_call_matches(event, forbidden)
+        ]
+        occurrence = forbidden.get("occurrence")
+        selected = (
+            [candidates[occurrence - 1]]
+            if type(occurrence) is int and 1 <= occurrence <= len(candidates)
+            else candidates if occurrence is None else []
+        )
+        if any(tool_result_matches(event, forbidden, result_events) for event in selected):
+            failures.append(
+                "forbidden tool result observed: " + describe_tool_result_assertion(forbidden)
+            )
     return failures
 
 
@@ -2140,6 +2275,7 @@ def run_skill_ablation_case(
                 list(candidate_target.get("skills_loaded") or []),
                 require_native_skill_load=args.target_transport == "opencode",
                 text=str(candidate_target.get("text") or ""),
+                tool_results=candidate_target.get("observed_tool_results"),
             )
             if not candidate_target_error
             else []
@@ -2367,6 +2503,7 @@ def run_case(
                 list(target.get("skills_loaded") or []),
                 require_native_skill_load=args.target_transport == "opencode",
                 text=str(target.get("text") or ""),
+                tool_results=target.get("observed_tool_results"),
             )
             if not target_error
             else []
