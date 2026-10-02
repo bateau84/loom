@@ -2178,6 +2178,9 @@ class ConversationCompositionTests(unittest.TestCase):
         }
         results = {
             "schema": "opencode-eval-runner/tool-results/v1",
+            "source": "opencode.event-stream.full",
+            "observed_events": 2,
+            "omitted_events": 0,
             "events": [
                 {
                     "tool": "loom_complete",
@@ -2229,6 +2232,51 @@ class ConversationCompositionTests(unittest.TestCase):
         }
         self.assertTrue(RUN_EVALS.deterministic_failures(case, ["loom_complete"], tool_results=wrong_call))
 
+    def test_code_mode_alias_requires_an_observed_inner_tool_event(self):
+        assertion = {
+            "tool": "loom_status",
+            "args": {"workflowId": "eval-wf", "detail": True},
+        }
+        observed_inner = {
+            "tool": "loom.code.status",
+            "args": {"workflowId": "eval-wf", "detail": True},
+        }
+        self.assertTrue(RUN_EVALS.action_matches(observed_inner, assertion))
+
+        wrapper_only = {
+            "tool": "execute",
+            "args": {"code": "return await tools.loom.code.status({workflowId:'eval-wf',detail:true})"},
+        }
+        self.assertFalse(RUN_EVALS.action_matches(wrapper_only, assertion))
+        case = {
+            "actions": {"requires": [assertion]},
+            "tool_results": {"requires": [{
+                **assertion,
+                "json_path": "workflow.steps.0.status",
+                "equals": "passed",
+            }]},
+        }
+        wrapper_result = {
+            "schema": "opencode-eval-runner/tool-results/v1",
+            "source": "opencode.event-stream.full",
+            "observed_events": 1,
+            "omitted_events": 0,
+            "events": [{
+                "sequence": 1,
+                "tool": "execute",
+                "input": json.dumps(wrapper_only["args"]),
+                "output": json.dumps({"workflow": {"steps": [{"status": "passed"}]}}),
+            }],
+        }
+        failures = RUN_EVALS.deterministic_failures(
+            case,
+            ["execute"],
+            [wrapper_only],
+            tool_results=wrapper_result,
+        )
+        self.assertTrue(any(item.startswith("required action not observed:") for item in failures))
+        self.assertTrue(any(item.startswith("required tool result not observed:") for item in failures))
+
     def test_tool_result_occurrence_can_assert_state_after_the_operation(self):
         case = {
             "tool_results": {
@@ -2247,6 +2295,10 @@ class ConversationCompositionTests(unittest.TestCase):
         }
         results = {
             "schema": "loom-tool-results/v1",
+            "source": "target.stdout",
+            "has_raw_trace": True,
+            "unparsed_lines": 0,
+            "observed_events": 3,
             "omitted_events": 0,
             "events": [
                 {"sequence": 1, "tool": "loom_status", "input": json.dumps({"workflowId": "eval-wf", "detail": True}),
@@ -2277,6 +2329,10 @@ class ConversationCompositionTests(unittest.TestCase):
         }
         results = {
             "schema": "loom-tool-results/v1",
+            "source": "target.stdout",
+            "has_raw_trace": True,
+            "unparsed_lines": 0,
+            "observed_events": 2,
             "omitted_events": 1,
             "events": [{
                 "tool": "loom_status",
@@ -2333,6 +2389,32 @@ class ConversationCompositionTests(unittest.TestCase):
                 self.assertNotIn("ses_", case["prompt"] + fixture_content)
                 self.assertIn("event?.sessionID", fixture_content)
 
+        reviewer_pass = cases["GATE-REVIEWER-PASS-RUNTIME-01"]
+        ordinary_complete = {
+            "workflowId": "eval-gate-reviewer-pass",
+            "stepId": "review-implementation",
+            "outcome": "complete",
+        }
+        self.assertTrue(any(
+            action.get("tool") == "loom_complete" and action.get("args") == ordinary_complete
+            for action in reviewer_pass["actions"]["requires"]
+        ))
+        self.assertTrue(any(
+            result.get("tool") == "loom_complete" and result.get("args") == ordinary_complete and
+            result.get("json_path") == "error" and
+            result.get("equals") == "Gate steps require pass or fail."
+            for result in reviewer_pass["tool_results"]["requires"]
+        ))
+        self.assertTrue(any(
+            result.get("tool") == "loom_status" and
+            result.get("json_path") == "workflow.steps.1.status" and
+            result.get("equals") == "pending" and
+            result.get("after", {}).get("args") == ordinary_complete
+            for result in reviewer_pass["tool_results"]["requires"]
+        ))
+        self.assertFalse(any("must not call ordinary complete" in text.lower()
+                             for text in reviewer_pass["must_not"]))
+
     def test_forbidden_tool_result_is_detected_by_exact_call_and_output(self):
         case = {
             "tool_results": {
@@ -2346,6 +2428,10 @@ class ConversationCompositionTests(unittest.TestCase):
         }
         results = {
             "schema": "loom-tool-results/v1",
+            "source": "target.stdout",
+            "has_raw_trace": True,
+            "unparsed_lines": 0,
+            "observed_events": 1,
             "omitted_events": 0,
             "events": [{
                 "sequence": 1,
