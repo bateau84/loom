@@ -926,7 +926,10 @@ def extract_tool_result_evidence(raw_stdout: str, secrets: list[str]) -> dict[st
                     result_key = next((key for key in ("output", "error", "result") if key in call), None)
                     if result_key is not None:
                         result_value = redact_sensitive_values(call[result_key], secrets)
-                        result_text = json.dumps(result_value, ensure_ascii=False, sort_keys=True)
+                        result_text = (
+                            result_value if isinstance(result_value, str)
+                            else json.dumps(result_value, ensure_ascii=False, sort_keys=True)
+                        )
                         nested_key = "error" if result_key == "error" else "output"
                         nested[nested_key], clipped = _tool_result_field(result_text, secrets, TOOL_RESULT_FIELD_LIMIT)
                         if clipped:
@@ -1790,7 +1793,11 @@ def tool_result_matches(
 
 def tool_result_output_indeterminate(event: dict[str, Any], assertion: dict[str, Any]) -> bool:
     if event.get("nested_metadata_call"):
-        return not any(key in event for key in ("output", "error"))
+        return (
+            "result" in (event.get("missing_fields") or []) or
+            any(field in (event.get("truncated_fields") or []) for field in ("output", "error")) or
+            not any(key in event for key in ("output", "error"))
+        )
     if "result" in (event.get("missing_fields") or []):
         return True
     if any(field in (event.get("truncated_fields") or []) for field in ("output", "error")):
@@ -1958,18 +1965,29 @@ def deterministic_failures(
     ])
     normalized.update(normalize_tool(str(action.get("tool") or "")) for action in observed_actions)
     nested_capture_complete = nested_tool_capture_complete(tool_results)
+
+    def capture_incomplete_for(tool: str) -> bool:
+        # Direct unit callers predating result envelopes supply already-projected
+        # native actions. Preserve their established semantics while keeping all
+        # assertions fail-closed when a real capture envelope is explicitly partial.
+        return (
+            isinstance(tool_results, dict) and not nested_capture_complete
+        ) or (
+            tool_results is None and normalize_tool(tool).startswith("loom_")
+        )
+
     for required in assertions.get("requires", []):
         if normalize_tool(required) not in normalized:
-            if not nested_capture_complete and normalize_tool(required).startswith("loom_"):
-                failures.append("non-evidence: nested Code Mode tool capture unavailable for " + required)
+            if capture_incomplete_for(required):
+                failures.append("non-evidence: complete tool capture unavailable for required tool " + required)
             else:
                 failures.append("required tool not observed: " + required)
     for forbidden in assertions.get("forbids", []):
         if normalize_tool(forbidden) in normalized:
             failures.append("forbidden tool observed: " + forbidden)
-        elif normalize_tool(forbidden).startswith("loom_") and not nested_capture_complete:
+        elif capture_incomplete_for(forbidden):
             failures.append(
-                "non-evidence: nested Code Mode tool capture unavailable to rule out forbidden tool "
+                "non-evidence: complete tool capture unavailable to rule out forbidden tool "
                 + forbidden
             )
 
@@ -1996,11 +2014,10 @@ def deterministic_failures(
     for required in action_assertions.get("requires", []):
         if not any(action_matches(action, required) for action in observed_actions):
             if (
-                normalize_tool(str(required.get("tool") or "")).startswith("loom_") and
-                not nested_capture_complete
+                capture_incomplete_for(str(required.get("tool") or ""))
             ):
                 failures.append(
-                    "non-evidence: nested Code Mode tool capture unavailable for required action: "
+                    "non-evidence: complete tool capture unavailable for required action: "
                     + describe_action(required)
                 )
             else:
@@ -2011,12 +2028,12 @@ def deterministic_failures(
             for alternative in group
             for action in observed_actions
         ):
-            if not nested_capture_complete and any(
-                normalize_tool(str(alternative.get("tool") or "")).startswith("loom_")
+            if any(
+                capture_incomplete_for(str(alternative.get("tool") or ""))
                 for alternative in group if isinstance(alternative, dict)
             ):
                 failures.append(
-                    "non-evidence: nested Code Mode capture unavailable for required action alternatives: "
+                    "non-evidence: complete tool capture unavailable for required action alternatives: "
                     + " OR ".join(describe_action(alternative) for alternative in group)
                 )
             else:
@@ -2028,11 +2045,10 @@ def deterministic_failures(
         if any(action_matches(action, forbidden) for action in observed_actions):
             failures.append("forbidden action observed: " + describe_action(forbidden))
         elif (
-            normalize_tool(str(forbidden.get("tool") or "")).startswith("loom_") and
-            not nested_capture_complete
+            capture_incomplete_for(str(forbidden.get("tool") or ""))
         ):
             failures.append(
-                "non-evidence: nested Code Mode tool capture unavailable to rule out forbidden action: "
+                "non-evidence: complete tool capture unavailable to rule out forbidden action: "
                 + describe_action(forbidden)
             )
 
@@ -2179,12 +2195,12 @@ def deterministic_failures(
                 "non-evidence: forbidden tool result cannot be ruled out because its per-call result is absent/truncated: "
                 + describe_tool_result_assertion(forbidden)
             )
-        elif not candidates and not nested_capture_complete and any(
+        elif not nested_capture_complete and any(
             isinstance(event, dict) and event.get("tool") == "execute"
             for event in (outer_events or [])
         ):
             failures.append(
-                "non-evidence: nested Code Mode invocation capture unavailable to rule out forbidden result: "
+                "non-evidence: complete tool capture unavailable to rule out forbidden result: "
                 + describe_tool_result_assertion(forbidden)
             )
     return failures
