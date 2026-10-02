@@ -758,12 +758,13 @@
         "BR-005",
         "BR-006"
       ],
-      "prompt": "You are maintaining candidate-skill/SKILL.md. The proposed change alters a model decision: ambiguous incidents that were previously routed to Diagnostic would now be routed to Research. Determine what authoring and evaluation work must accompany this change before implementation. Do not edit files.",
-      "trap": "Treat this as ordinary text maintenance, keep all eval-design procedure in the authoring method, or fail to load the dedicated skill-evaluation methodology.",
+      "prompt": "You are maintaining candidate-skill/SKILL.md. The proposed change alters the skill's evidence-classification method: one timeout currently remains inconclusive, while the new method would classify a platform outage only after two independent platform-level symptoms agree. Determine what authoring and evaluation work must accompany this change before implementation. Do not edit files.",
+      "trap": "Treat a real methodology decision change as ordinary text maintenance, keep all eval-design procedure in the authoring method, or fail to load the dedicated skill-evaluation methodology.",
       "expectations": [
-        "Recognizes that changing the model's routing decision requires behavioral evaluation rather than treating it as documentation-only maintenance.",
+        "Recognizes that changing the skill's evidence-classification decision boundary requires behavioral evaluation rather than treating it as documentation-only maintenance.",
         "Keeps skill-authoring focused on the production skill contract and hands detailed benchmark design to skills-eval.",
-        "Distinguishes evaluation as verification from the production home of the routing behavior."
+        "Keeps the classification method inside reusable methodology without turning it into Loom routing or product authority.",
+        "Distinguishes evaluation as verification from the production home of the classification behavior."
       ],
       "must_not": [
         "Must not make skill-authoring itself the owner of the full ablation/runtime/judge methodology.",
@@ -798,7 +799,7 @@
       "fixture_files": [
         {
           "path": "candidate-skill/SKILL.md",
-          "content": "---\nname: incident-routing\ndescription: Route ambiguous engineering incidents to the right specialist.\n---\n\n# Incident routing\n\nCurrent rule: ambiguous incidents with insufficient evidence go to Diagnostic first.\n\nRequested change: send those incidents to Research instead.\n"
+          "content": "---\nname: incident-triage\ndescription: Classify incident evidence before choosing a diagnosis hypothesis.\n---\n\n# Incident triage\n\nCurrent method: a single timeout is inconclusive and must not be classified as a platform outage by itself.\n\nRequested method change: classify a platform outage only when two independent platform-level symptoms agree.\n"
         }
       ]
     },
@@ -811,12 +812,12 @@
         "BR-005",
         "BR-006"
       ],
-      "prompt": "You are maintaining a Loom agent charter in agents/example.md. The requested change alters completion behavior: the role may now claim completion even when one accepted verification item is still unproven. Determine what authoring and evaluation work must accompany this change before implementation. Do not edit files.",
-      "trap": "Treat this as prompt wording only, or discuss the charter without loading the dedicated agent-evaluation methodology for the changed completion decision.",
+      "prompt": "You are maintaining a Loom reviewer-like agent charter in agents/example.md. The requested change alters review behavior: the role currently stops after the first defect, while the new rule would report the complete material finding set when the available evidence permits. Determine what authoring and evaluation work must accompany this change before implementation. Do not edit files.",
+      "trap": "Treat a real role-behavior change as prompt wording only, or discuss the charter without loading the dedicated agent-evaluation methodology.",
       "expectations": [
-        "Recognizes completion truth as a behavioral contract change that requires focused agent evaluation.",
+        "Recognizes the finding-set behavior as a model contract change that requires focused agent evaluation.",
         "Keeps agent-file-authoring focused on the production role charter and hands detailed benchmark design to agent-eval.",
-        "Calls for coverage that discriminates the completion decision rather than exact replacement wording."
+        "Calls for coverage that discriminates complete material finding behavior from first-finding-only behavior rather than exact replacement wording."
       ],
       "must_not": [
         "Must not make agent-file-authoring itself the owner of the full role-eval methodology.",
@@ -851,7 +852,7 @@
       "fixture_files": [
         {
           "path": "agents/example.md",
-          "content": "---\ndescription: Example implementation role.\n---\n\nThe role may complete only when all accepted verification items are proven.\n\nRequested change: allow completion with one accepted verification item still unproven when the role believes the risk is low.\n"
+          "content": "---\ndescription: Example independent review role.\n---\n\nCurrent rule: when review finds a concrete defect, return that finding immediately and stop the pass.\n\nRequested change: when evidence permits, report the complete material finding set in the same review pass rather than intentionally stopping at the first defect.\n"
         }
       ]
     }
