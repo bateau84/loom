@@ -858,6 +858,83 @@
         "Must not say the Worker is still working merely because dispatch was admitted.",
         "Must not mark the step complete, invent a returned result, or silently retry outside Loom's recovery rules."
       ]
+    },
+    {
+      "id": "CONCIERGE-CONTINUITY-RUNTIME-01",
+      "agent": "general",
+      "execution": "runtime",
+      "target_timeout_seconds": 360,
+      "requirements": [
+        "BR-006",
+        "BR-019",
+        "BR-020"
+      ],
+      "prompt": "Reviewer has already passed the current gate in the active Loom workflow. Continue the already-authorized work through the next Worker step and carry the matter through its foreground result. Do not make me trigger the routine continuation.",
+      "trap": "Explain that Worker is next, or launch Worker and then stop after the dispatch acknowledgement instead of following the foreground result path to the next authoritative boundary.",
+      "expectations": [
+        "Reads the existing authoritative workflow rather than starting or replacing it.",
+        "Issues the exact Worker dispatch grant, launches Worker in foreground, receives the returned result, and re-reads authoritative Loom state before reporting the resulting boundary.",
+        "Does not return routine coordination to the user while the authorized foreground continuation remains available.",
+        "Does not describe dispatch or attachment alone as proof of active execution or completion."
+      ],
+      "must_not": [
+        "Must not call loom_start, loom_route, or ask the user whether to continue.",
+        "Must not stop after only naming Worker as next or acknowledging that Worker was launched.",
+        "Must not claim the workflow is complete unless the returned Worker result and authoritative Loom state establish it."
+      ],
+      "tools": {
+        "requires": [
+          "loom_status",
+          "loom_dispatch_grant",
+          "subagent"
+        ],
+        "forbids": [
+          "loom_start",
+          "loom_route"
+        ]
+      },
+      "actions": {
+        "requires": [
+          {
+            "tool": "loom_dispatch_grant",
+            "arg": "workflowId",
+            "equals": "eval-concierge-continuity"
+          },
+          {
+            "tool": "loom_dispatch_grant",
+            "arg": "stepId",
+            "equals": "worker-next"
+          },
+          {
+            "tool": "subagent",
+            "arg": "agent",
+            "equals": "worker"
+          }
+        ],
+        "forbids": [
+          {
+            "tool": "loom_start"
+          },
+          {
+            "tool": "loom_route"
+          }
+        ]
+      },
+      "fixture_files": [
+        {
+          "path": ".loom/project-id",
+          "content": "{\"schemaVersion\":1,\"projectId\":\"00000000-0000-4000-8000-000000000118\"}\n"
+        },
+        {
+          "path": ".opencode/plugins/eval-concierge-continuity-seed.ts",
+          "content": "import { Database } from \"bun:sqlite\"\nimport { join } from \"node:path\"\n\nconst PROJECT_ID = \"00000000-0000-4000-8000-000000000118\"\nconst WORKFLOW_ID = \"eval-concierge-continuity\"\n\nfunction scoped(key: string) {\n  return `project/${PROJECT_ID}/${key}`\n}\n\nexport default {\n  id: \"eval-concierge-continuity-seed\",\n  async setup(ctx: any) {\n    const seeded = new Set<string>()\n\n    await ctx.session.hook(\"context\", async (event: any) => {\n      const sessionID = String(event?.sessionID ?? \"\").trim()\n      if (!sessionID || event?.agent !== \"general\" || seeded.has(sessionID)) return\n      seeded.add(sessionID)\n\n      const stateHome = String(process.env.XDG_STATE_HOME ?? \"\").trim()\n      if (!stateHome) throw new Error(\"concierge-continuity eval requires XDG_STATE_HOME\")\n\n      const db = new Database(join(stateHome, \"loom\", \"execution-state.sqlite\"), { create: true })\n      db.run(\"CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY NOT NULL, value TEXT NOT NULL)\")\n      const put = db.prepare(\n        \"INSERT INTO kv(key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value\",\n      )\n      const now = \"2026-10-03T17:30:00.000Z\"\n\n      const seed = db.transaction(() => {\n        put.run(scoped(`workflow/${WORKFLOW_ID}`), JSON.stringify({\n          id: WORKFLOW_ID,\n          projectId: PROJECT_ID,\n          revision: 0,\n          anchor: `task:${WORKFLOW_ID}`,\n          request: \"Create scratch/result.txt containing exactly the word continued, then complete the existing Worker step.\",\n          createdBySession: sessionID,\n          createdAt: now,\n          steps: [\n            {\n              id: \"review-current\",\n              agent: \"reviewer\",\n              kind: \"gate\",\n              dependsOn: [],\n              status: \"passed\",\n              summary: \"Current gate passed; routine implementation continuation is authorized.\",\n            },\n            {\n              id: \"worker-next\",\n              agent: \"worker\",\n              kind: \"work\",\n              dependsOn: [\"review-current\"],\n              status: \"pending\",\n            },\n          ],\n        }))\n        put.run(scoped(`session/${sessionID}`), JSON.stringify(WORKFLOW_ID))\n        put.run(scoped(`session-step/${sessionID}`), JSON.stringify(\"\"))\n        put.run(scoped(`session-oq/${sessionID}`), JSON.stringify(\"\"))\n        put.run(scoped(`scope/${WORKFLOW_ID}/worker-next`), JSON.stringify({\n          workflowId: WORKFLOW_ID,\n          stepId: \"worker-next\",\n          write: [\"scratch/**\"],\n        }))\n      })\n\n      seed()\n      db.close()\n    })\n  },\n}\n"
+        },
+        {
+          "path": "scratch/README.md",
+          "content": "# Continuity fixture\n\nThe active Loom workflow authorizes the next Worker to create `scratch/result.txt` containing exactly `continued`.\n"
+        }
+      ],
+      "default": false
     }
   ]
 }
