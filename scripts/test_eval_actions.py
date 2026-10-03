@@ -716,7 +716,7 @@ class EvidenceRedactionTests(unittest.TestCase):
         self.assertNotIn(db_secret, encoded)
         self.assertIn("***REDACTED***", encoded)
 
-    def test_does_not_treat_short_or_non_secret_metadata_as_credentials(self):
+    def test_short_provider_credential_is_protected_without_collecting_model_metadata(self):
         secrets = RUN_EVALS.collect_sensitive_values(
             {
                 "OPENAI_API_KEY": "short",
@@ -728,7 +728,7 @@ class EvidenceRedactionTests(unittest.TestCase):
             None,
             None,
         )
-        self.assertEqual(secrets, [])
+        self.assertEqual(secrets, ["short"])
 
     def test_invoke_container_redacts_secret_before_returning_result(self):
         secret = "sk-live-secret-abcdef123456"
