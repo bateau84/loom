@@ -5,7 +5,7 @@ description: Preserve credential provenance and evidence availability through ty
 tags: [architecture, decision, loom, evals, security, evidence]
 ---
 
-**Status:** proposed implementation-facing decision, revision 1; requires independent architecture review. Not implementation acceptance, runner compatibility, full capture support, or Product PASS.
+**Status:** accepted implementation-facing decision, revision 1, after independent architecture review. Not implementation acceptance, runner compatibility, full capture support, or Product PASS.
 
 ## Derived from
 
