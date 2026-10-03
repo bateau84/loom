@@ -395,6 +395,36 @@ def write_project_config(project: Path, agent: str) -> None:
     )
 
 
+OBSERVER_FILENAME = ".loom-eval-tool-observer.jsonl"
+
+
+def attach_observer_capture(
+    result: dict[str, Any], project: Path, secrets: list[str]
+) -> dict[str, Any]:
+    """Replace runtime result projection only when a complete hook ledger exists."""
+    if not (project / ".opencode" / "plugins" / "eval-tool-observer.ts").is_file():
+        return result
+    capture_path = project / OBSERVER_FILENAME
+    try:
+        if capture_path.stat().st_size > TOTAL_OBSERVER_BYTES_LIMIT:
+            raw_capture = ""
+        else:
+            raw_capture = capture_path.read_text(encoding="utf-8")
+    except OSError:
+        raw_capture = ""
+    capture = capture_observer_tool_result_evidence(
+        raw_capture,
+        secrets,
+        outer_stdout=str(result.get("stdout") or ""),
+        stdout_truncated=bool(result.get("stdout_truncated")),
+    )
+    capture["capture_file_present"] = bool(raw_capture)
+    redacted_result = dict(result)
+    redacted_result.pop("tool_result_evidence", None)
+    redacted_result["observed_tool_results"] = capture
+    return redacted_result
+
+
 def setup_projects(case: dict[str, Any]) -> tuple[Path, Path, Path]:
     temp = Path(tempfile.mkdtemp(prefix="loom-eval-" + case["id"].lower() + "-"))
     target_project = temp / "target"
@@ -421,6 +451,9 @@ def setup_projects(case: dict[str, Any]) -> tuple[Path, Path, Path]:
             if source.stem == case["agent"]:
                 agent_text = promote_agent(agent_text)
             (target_oc / "agents" / source.name).write_text(agent_text, encoding="utf-8")
+        observer_plugin = target_oc / "plugins" / "eval-tool-observer.ts"
+        observer_plugin.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(ROOT / "scripts" / "fixtures" / "eval-tool-observer.ts", observer_plugin)
     else:
         source_agent = (ROOT / "agents" / (case["agent"] + ".md")).read_text(encoding="utf-8")
         if case["execution"] == "conversation-response":
@@ -992,6 +1025,254 @@ def extract_tool_result_evidence(raw_stdout: str, secrets: list[str]) -> dict[st
     return evidence
 
 
+OBSERVER_SCHEMA = "loom-eval-tool-observer/v1"
+TOTAL_OBSERVER_BYTES_LIMIT = 2_100_000
+
+
+def capture_observer_tool_result_evidence(
+    raw_records: str, secrets: list[str], *, outer_stdout: str, stdout_truncated: bool = False
+) -> dict[str, Any]:
+    """Validate paired OpenCode execute hooks; never reconstruct children from parent output."""
+    empty: dict[str, Any] = {
+        "schema": OBSERVER_SCHEMA,
+        "source": "opencode.tool.execute.hooks",
+        "has_raw_trace": isinstance(raw_records, str) and bool(raw_records.strip()),
+        "observer_complete": False,
+        "observer_outer_aligned": False,
+        "observed_events": 0,
+        "omitted_events": 0,
+        "invalid_events": 0,
+        "unparsed_lines": 0,
+        "execute_events": 0,
+        "nested_metadata_parents": 0,
+        "nested_tool_calls_observed": 0,
+        "nested_tool_calls_omitted": 0,
+        "metadata_tool_capture_complete": False,
+        "events": [],
+        "nested_tool_calls": [],
+    }
+    if not isinstance(raw_records, str) or not raw_records.strip():
+        return empty
+
+    parsed: list[dict[str, Any]] = []
+    for line in raw_records.splitlines():
+        try:
+            value = json.loads(line)
+        except (ValueError, RecursionError):
+            empty["unparsed_lines"] += 1
+            continue
+        if not isinstance(value, dict):
+            empty["invalid_events"] += 1
+            continue
+        parsed.append(value)
+
+    if len(parsed) < 2:
+        empty["invalid_events"] += 1
+        return empty
+    header, footer = parsed[0], parsed[-1]
+    registration_ids = footer.get("registration_ids")
+    if (
+        header.get("kind") != "header" or header.get("schema") != OBSERVER_SCHEMA or
+        footer.get("kind") != "footer" or footer.get("schema") != OBSERVER_SCHEMA or
+        footer.get("complete") is not True or not isinstance(registration_ids, list) or
+        any(not isinstance(tool, str) or not tool for tool in registration_ids) or
+        len(registration_ids) != len(set(registration_ids))
+    ):
+        empty["invalid_events"] += 1
+        return empty
+
+    records = parsed[1:-1]
+    if type(footer.get("event_count")) is not int or footer["event_count"] != len(records):
+        empty["invalid_events"] += 1
+        return empty
+
+    required = ("tool", "call_id", "session_id", "agent", "message_id", "input")
+    pending: dict[tuple[str, str, str, str], dict[str, Any]] = {}
+    observed_hook_ids: set[str] = set()
+    pairs: list[dict[str, Any]] = []
+    last_sequence = 0
+    for record in records:
+        sequence = record.get("sequence")
+        kind = record.get("kind")
+        if type(sequence) is not int or sequence <= last_sequence or kind not in {"before", "after"}:
+            empty["invalid_events"] += 1
+            continue
+        last_sequence = sequence
+        if any(not isinstance(record.get(field), str) or not record[field] for field in required[:-1]):
+            empty["invalid_events"] += 1
+            continue
+        if record.get("registered_tool") != record["tool"] or record["tool"] not in registration_ids:
+            empty["invalid_events"] += 1
+            continue
+        if not isinstance(record.get("input"), dict):
+            empty["invalid_events"] += 1
+            continue
+        hook_id = record.get("hook_id")
+        if not isinstance(hook_id, str) or not hook_id or record.get("pairing_ambiguous") is True:
+            empty["invalid_events"] += 1
+            continue
+        key = (record["session_id"], record["message_id"], record["call_id"], hook_id)
+        if kind == "before":
+            if (key in pending or hook_id in observed_hook_ids or "status" in record or "result" in record or "error" in record or
+                    record.get("parent_ambiguous") is True):
+                empty["invalid_events"] += 1
+                continue
+            observed_hook_ids.add(hook_id)
+            parent = record.get("parent")
+            if parent is not None and (
+                not isinstance(parent, dict) or parent.get("tool") != "execute" or
+                not all(isinstance(parent.get(field), str) and parent[field]
+                        for field in ("call_id", "hook_id", "registered_tool", "session_id", "agent", "message_id")) or
+                parent.get("registered_tool") != parent.get("tool") or
+                parent.get("registered_tool") not in registration_ids or
+                (parent["session_id"], parent["agent"], parent["message_id"]) !=
+                (record["session_id"], record["agent"], record["message_id"])
+            ):
+                empty["invalid_events"] += 1
+                continue
+            pending[key] = record
+            continue
+
+        before = pending.pop(key, None)
+        if (
+            before is None or any(record.get(field) != before.get(field) for field in required) or
+            record.get("registered_tool") != before.get("registered_tool") or
+            record["sequence"] <= before["sequence"]
+        ):
+            empty["invalid_events"] += 1
+            continue
+        status = record.get("status")
+        if status == "completed":
+            if "result" not in record or "error" in record:
+                empty["invalid_events"] += 1
+                continue
+            result = redact_sensitive_values(record["result"], secrets)
+            encoded, clipped = _tool_result_field(result, secrets, TOOL_RESULT_FIELD_LIMIT)
+            event: dict[str, Any] = {"output": encoded}
+            if clipped:
+                event["truncated_fields"] = ["output"]
+        elif status == "error":
+            if "error" not in record or "result" in record:
+                empty["invalid_events"] += 1
+                continue
+            error = redact_sensitive_values(record["error"], secrets)
+            encoded, clipped = _tool_result_field(error, secrets, TOOL_RESULT_FIELD_LIMIT)
+            event = {"error": encoded}
+            if clipped:
+                event["truncated_fields"] = ["error"]
+        else:
+            empty["invalid_events"] += 1
+            continue
+
+        safe_input, input_clipped = _tool_result_field(before["input"], secrets, 2000)
+        parent = before.get("parent")
+        event.update({
+            "sequence": before["sequence"],
+            "completed_sequence": record["sequence"],
+            "start_sequence": before["sequence"],
+            "tool": before["tool"],
+            "registered_tool": before["registered_tool"],
+            "status": status,
+            "input": safe_input,
+            "call_id": before["call_id"],
+            "hook_id": before["hook_id"],
+            "session_id": before["session_id"],
+            "actor": before["agent"],
+            "message_id": before["message_id"],
+            "parent_call_id": parent.get("call_id") if isinstance(parent, dict) else None,
+            "parent_hook_id": parent.get("hook_id") if isinstance(parent, dict) else None,
+            "truncated_fields": event.get("truncated_fields", []) + (["input"] if input_clipped else []),
+            "missing_fields": [],
+        })
+        pairs.append(event)
+
+    if pending:
+        empty["invalid_events"] += len(pending)
+    empty["observed_events"] = len(pairs)
+    empty["events"] = pairs[-TOOL_RESULT_EVENT_LIMIT:]
+    empty["omitted_events"] = len(pairs) - len(empty["events"])
+    nested: list[dict[str, Any]] = []
+    wrappers = {
+        (event["session_id"], event["actor"], event["message_id"], event["call_id"], event["hook_id"])
+        for event in pairs if event["tool"] == "execute"
+    }
+    for event in pairs:
+        parent_id = event.get("parent_call_id")
+        if parent_id is None:
+            continue
+        parent_hook_id = event.get("parent_hook_id")
+        parent_key = (event["session_id"], event["actor"], event["message_id"], parent_id, parent_hook_id)
+        if parent_key not in wrappers:
+            empty["invalid_events"] += 1
+            continue
+        nested_item = {
+            "parent_call_id": parent_id,
+            "parent_hook_id": parent_hook_id,
+            "parent_sequence": next(
+                parent["start_sequence"] for parent in pairs
+                if parent["tool"] == "execute" and parent["call_id"] == parent_id and
+                parent["hook_id"] == parent_hook_id and
+                parent["session_id"] == event["session_id"] and
+                parent["actor"] == event["actor"] and parent["message_id"] == event["message_id"]
+            ),
+            "nested_index": event["start_sequence"],
+            "sequence": event["sequence"],
+            "completed_sequence": event["completed_sequence"],
+            "start_sequence": event["start_sequence"],
+            "tool": event["tool"],
+            "registered_tool": event["registered_tool"],
+            "status": event["status"],
+            "input": event["input"],
+            "actor": event["actor"],
+            "session_id": event["session_id"],
+            "message_id": event["message_id"],
+            "truncated_fields": event["truncated_fields"],
+            "missing_fields": [],
+        }
+        for field in ("output", "error"):
+            if field in event:
+                nested_item[field] = event[field]
+        nested.append(nested_item)
+
+    empty["nested_tool_calls"] = nested[-TOOL_RESULT_NESTED_CALL_LIMIT:]
+    empty["nested_tool_calls_observed"] = len(nested)
+    empty["nested_tool_calls_omitted"] = len(nested) - len(empty["nested_tool_calls"])
+    empty["execute_events"] = sum(event["tool"] == "execute" for event in pairs)
+    empty["nested_metadata_parents"] = empty["execute_events"]
+    empty["registration_ids"] = registration_ids
+    outer = extract_tool_result_evidence(outer_stdout, secrets)
+
+    def identity(event: dict[str, Any]) -> tuple[str, str, str, str] | None:
+        tool, call_id, session_id, input_value = (
+            event.get("tool"), event.get("call_id"), event.get("session_id"), event.get("input")
+        )
+        if not all(isinstance(value, str) and value for value in (tool, call_id, session_id, input_value)):
+            return None
+        try:
+            canonical_input = json.dumps(json.loads(input_value), ensure_ascii=False, sort_keys=True)
+        except (ValueError, TypeError, RecursionError):
+            return None
+        return tool, call_id, session_id, canonical_input
+
+    top_level = [event for event in pairs if event["parent_call_id"] is None]
+    outer_identities = [identity(event) for event in outer["events"]]
+    top_identities = [identity(event) for event in top_level]
+    empty["observer_outer_aligned"] = (
+        not stdout_truncated and outer["invalid_events"] == 0 and outer["unparsed_lines"] == 0 and
+        outer["outer_event_identities_omitted"] == 0 and outer["omitted_events"] == 0 and
+        len(outer_identities) == len(top_identities) and
+        None not in outer_identities + top_identities and
+        sorted(outer_identities) == sorted(top_identities)
+    )
+    empty["observer_complete"] = (
+        empty["invalid_events"] == 0 and empty["unparsed_lines"] == 0 and
+        not pending and empty["omitted_events"] == 0 and
+        empty["nested_tool_calls_omitted"] == 0 and empty["observer_outer_aligned"]
+    )
+    empty["metadata_tool_capture_complete"] = empty["observer_complete"]
+    return empty
+
+
 def metadata_tool_calls(event: dict[str, Any]) -> tuple[bool, list[dict[str, Any]] | None]:
     """Read nested tool-call records already separated from the outer event stream."""
     if event.get("tool") != "execute":
@@ -1009,6 +1290,36 @@ def nested_tool_capture_complete(tool_results: dict[str, Any] | None) -> bool:
     omitted = tool_results.get("omitted_events", 0)
     observed = tool_results.get("observed_events", len(events))
     schema = tool_results.get("schema")
+    if schema == OBSERVER_SCHEMA:
+        if (
+            tool_results.get("source") != "opencode.tool.execute.hooks" or
+            tool_results.get("observer_complete") is not True or
+            tool_results.get("observer_outer_aligned") is not True or
+            tool_results.get("metadata_tool_capture_complete") is not True or
+            tool_results.get("invalid_events") != 0 or tool_results.get("unparsed_lines") != 0 or
+            tool_results.get("omitted_events") != 0
+        ):
+            return False
+        events = tool_results["events"]
+        if not isinstance(events, list) or len(events) != observed:
+            return False
+        registration_ids = tool_results.get("registration_ids")
+        if not isinstance(registration_ids, list) or len(registration_ids) != len(set(registration_ids)):
+            return False
+        return all(
+            isinstance(event, dict) and
+            event.get("registered_tool") == event.get("tool") and event.get("tool") in registration_ids and
+            all(isinstance(event.get(field), str) and event[field]
+                for field in ("tool", "input", "call_id", "session_id", "actor", "message_id")) and
+            type(event.get("sequence")) is int and type(event.get("start_sequence")) is int and
+            event["sequence"] == event["start_sequence"] and
+            type(event.get("completed_sequence")) is int and event["completed_sequence"] > event["sequence"] and
+            not event.get("truncated_fields") and
+            event.get("status") in {"completed", "error"} and
+            ((event.get("status") == "completed" and "output" in event and "error" not in event) or
+             (event.get("status") == "error" and "error" in event and "output" not in event))
+            for event in events
+        ) and tool_results.get("nested_tool_calls_omitted", 0) == 0
     if (
         type(omitted) is not int or omitted != 0 or
         type(observed) is not int or observed != len(events) + omitted or
@@ -1060,6 +1371,7 @@ def nested_metadata_call_events(
     if not isinstance(calls, list):
         return [], False
     nested: list[dict[str, Any]] = []
+    observer_schema = tool_results.get("schema") == OBSERVER_SCHEMA
     for call in calls:
         if not isinstance(call, dict):
             return nested, False
@@ -1080,7 +1392,10 @@ def nested_metadata_call_events(
         if not isinstance(args, dict):
             return nested, False
         child: dict[str, Any] = {
-            "sequence": parent_sequence * 1000 + nested_index,
+            "sequence": (
+                call.get("sequence") if observer_schema
+                else parent_sequence * 1000 + nested_index
+            ),
             "tool": tool,
             "status": call.get("status", "unknown"),
             "input": input_value,
@@ -1090,6 +1405,25 @@ def nested_metadata_call_events(
             "truncated_fields": list(call.get("truncated_fields") or []),
             "missing_fields": list(call.get("missing_fields") or []),
         }
+        if observer_schema:
+            parent_call_id = call.get("parent_call_id")
+            start_sequence = call.get("start_sequence")
+            if (
+                not isinstance(parent_call_id, str) or not parent_call_id or
+                call.get("registered_tool") != tool or
+                type(start_sequence) is not int or type(call.get("sequence")) is not int or
+                call["sequence"] != start_sequence
+            ):
+                return nested, False
+            child.update({
+                "parent_call_id": parent_call_id,
+                "parent_hook_id": call.get("parent_hook_id"),
+                "registered_tool": call.get("registered_tool"),
+                "start_sequence": start_sequence,
+                "actor": call.get("actor"),
+                "session_id": call.get("session_id"),
+                "message_id": call.get("message_id"),
+            })
         # Inner result fields are copied only from that exact raw inner record.
         # Parent execute outputs are never considered.
         for key in ("output", "error"):
@@ -1421,10 +1755,9 @@ def invoke_container(
                     "stdout": redacted_prefix(proc.stdout, secrets, 100000),
                     "infrastructure_error": True,
                 }, secrets)
-            return enforce_reasoning_contract(
-                prepare_transport_result(result, secrets),
-                reasoning,
-            )
+            prepared = prepare_transport_result(result, secrets)
+            prepared = attach_observer_capture(prepared, project, secrets)
+            return enforce_reasoning_contract(prepared, reasoning)
 
     with tempfile.TemporaryDirectory(prefix="loom-eval-invoke-") as tmp:
         root = Path(tmp)
@@ -1544,10 +1877,9 @@ def invoke_container(
                 "stdout": "",
                 "infrastructure_error": True,
             }, secrets)
-        return enforce_reasoning_contract(
-            prepare_transport_result(result, secrets),
-            reasoning,
-        )
+        prepared = prepare_transport_result(result, secrets)
+        prepared = attach_observer_capture(prepared, project, secrets)
+        return enforce_reasoning_contract(prepared, reasoning)
 
 
 def normalize_tool(value: str) -> str:
@@ -1882,6 +2214,11 @@ def result_evidence_events(tool_results: dict[str, Any] | None) -> list[dict[str
     """Combine outer results and structured inner invocations without borrowing parent output."""
     if not isinstance(tool_results, dict) or not isinstance(tool_results.get("events"), list):
         return []
+    if tool_results.get("schema") == OBSERVER_SCHEMA:
+        events = tool_results["events"]
+        if not nested_tool_capture_complete(tool_results):
+            return []
+        return sorted(events, key=lambda event: event["sequence"])
     combined: list[dict[str, Any]] = []
     for parent in tool_results["events"]:
         if not isinstance(parent, dict):
