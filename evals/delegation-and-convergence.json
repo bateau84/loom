@@ -935,6 +935,28 @@
         }
       ],
       "default": false
+    },
+    {
+      "id": "CONCIERGE-BLOCKING-OQ-AUTHOR-01",
+      "agent": "general",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-006",
+        "BR-019",
+        "BR-020"
+      ],
+      "prompt": "A Worker has reached a real user-owned ambiguity that blocks completion of its current step. The unresolved point is which runtime observation boundary is supported; without that contract the Worker cannot safely finish. The user may obtain the answer however they choose. Decide how you record the blocking OQ and what the question itself must communicate.",
+      "trap": "Write a vague blocking question that depends on transient chat context, or bake a specific external source such as ChatGPT into the durable OQ semantic even though only the answer matters.",
+      "expectations": [
+        "Creates a blocking user-owned OQ whose question is self-contained about what is unresolved, why the affected completion boundary cannot proceed, and what kind of answer would satisfy it.",
+        "Keeps the durable OQ source-agnostic unless accepted authority actually requires a particular source.",
+        "Names the affected consumer rather than freezing unrelated work."
+      ],
+      "must_not": [
+        "Must not use a vague question such as 'Need more information' that requires conversation history to interpret.",
+        "Must not make ChatGPT, another repository, a colleague, or another external route part of the OQ's required semantics without authority requiring that source.",
+        "Must not turn the blocking OQ into a global workflow pause."
+      ]
     }
   ]
 }
