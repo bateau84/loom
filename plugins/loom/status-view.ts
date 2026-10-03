@@ -300,7 +300,7 @@ function markdownCode(value: string) {
 function statusGlyph(status: string) {
   if (status === "complete" || status === "passed") return "✓"
   if (status === "failed" || status === "blocked") return "!"
-  if (status === "active" || status === "dag-ready") return "→"
+  if (status === "active" || status === "dag-ready" || status === "runnable") return "→"
   if (status === "cancelled" || status === "superseded") return "×"
   return "○"
 }
@@ -515,8 +515,12 @@ function attr(value: unknown) {
   return esc(value)
 }
 
+function statusLabel(status: string) {
+  return status === "dag-ready" || status === "runnable" ? "DAG ready" : status
+}
+
 function htmlStatus(status: string) {
-  return `<span class="status" data-status="${attr(status)}">${esc(statusGlyph(status))} ${esc(status)}</span>`
+  return `<span class="status" data-status="${attr(status)}">${esc(statusGlyph(status))} ${esc(statusLabel(status))}</span>`
 }
 
 function taskRuntimeStatus(view: StatusView, taskId: string, stored: WorkNodeStatus) {
@@ -703,7 +707,7 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wra
 .muted { color: var(--muted); }
 .status { white-space: nowrap; font-size: .9rem; }
 .status[data-status="blocked"], .status[data-status="failed"] { font-weight: 700; }
-.status[data-status="active"], .status[data-status="dag-ready"] { font-weight: 700; }
+.status[data-status="active"], .status[data-status="dag-ready"], .status[data-status="runnable"] { font-weight: 700; }
 .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(145px, 1fr)); gap: 10px; margin-bottom: 18px; }
 .card, .panel { border: 1px solid var(--border); border-radius: 10px; background: var(--surface); }
 .card { padding: 12px; }
@@ -789,7 +793,8 @@ ul { margin: 0; padding-left: 22px; }
 
   const statusMatch = (status, wanted) => {
     if (wanted === "all") return true;
-    if (wanted === "attention") return ["active", "blocked", "failed", "dag-ready"].includes(status);
+    if (wanted === "attention") return ["active", "blocked", "failed", "dag-ready", "runnable"].includes(status);
+    if (wanted === "dag-ready") return status === "dag-ready" || status === "runnable";
     return status === wanted;
   };
 
