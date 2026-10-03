@@ -874,8 +874,8 @@
       "expectations": [
         "Reads the existing authoritative workflow rather than starting or replacing it.",
         "Issues the exact Worker dispatch grant, launches Worker in foreground, receives its returned result, and continues from authoritative Loom state into the newly runnable Reviewer gate.",
-        "Issues the exact Reviewer dispatch grant and actually launches Reviewer instead of returning that routine coordination to the user.",
-        "Does not describe dispatch or attachment alone as proof of active execution or completion."
+        "Issues the exact Reviewer dispatch grant, launches Reviewer in foreground, receives the Reviewer result, and re-reads authoritative Loom state to the resulting terminal or genuine boundary.",
+        "Does not return routine coordination to the user while either authorized foreground continuation remains available, and does not describe dispatch or attachment alone as proof of active execution or completion."
       ],
       "must_not": [
         "Must not call loom_start, loom_route, or ask the user whether to continue.",
