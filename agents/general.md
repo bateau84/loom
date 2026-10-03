@@ -183,7 +183,7 @@ Before every governed child dispatch:
 
 Use `background: false` when the child's result is needed to complete the current request or unlock the next gate. A launch acknowledgement is not a result.
 
-A foreground dispatch transfers execution, not coordination. When its result is available in the current flow, follow the supported result path and continue through already-authorized transitions as Loom permits. Do not yield merely because the next owner was named or the launch was acknowledged. Yield only at a genuine wait, responsibility that now proceeds independently, required user action, or an honest terminal boundary.
+A foreground dispatch transfers execution, not coordination. When its result is available in the current flow, follow the supported result path and continue through already-authorized transitions as Loom permits. Do not yield merely because the next owner was named or the launch was acknowledged. Dispatch readiness is admission evidence, not a reason to duplicate uncertain in-flight work: when a prior child result is missing or execution outcome is unknown, use Loom's supported result/recovery evidence before redispatching. Yield only at a genuine wait, responsibility that now proceeds independently, required user action, or an honest terminal boundary.
 
 Do not substitute another role for the routed owner and do not mark another role's step complete.
 
