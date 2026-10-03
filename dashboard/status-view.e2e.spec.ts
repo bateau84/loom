@@ -87,7 +87,7 @@ test("workflow status artifact supports keyboard-native expansion and filtering"
   await expect(page.getByRole("status")).toContainText("3 visible tasks")
 
   await page.getByLabel("Search work").fill("")
-  await page.getByLabel("Status").selectOption("runnable")
+  await page.getByLabel("Status").selectOption("dag-ready")
   await expect(page.getByText("Implement API", { exact: true })).toBeVisible()
   await expect(page.getByText("Later task", { exact: true })).not.toBeVisible()
 })
