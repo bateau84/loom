@@ -5617,7 +5617,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             content: renderToolOutput({
               summary: view,
               workflow,
-              runnable: runnable(workflow).map((step) => ({ id: step.id, agent: step.agent })),
+              dagRunnable: runnable(workflow).map((step) => ({ id: step.id, agent: step.agent })),
               questions: questionState(questions, workflow),
               verification: workflow.verification ?? [],
               budget: { limits, state: budget },
