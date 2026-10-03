@@ -90,7 +90,7 @@ test("workflow status artifact supports keyboard-native expansion and filtering"
   await page.getByLabel("Status").selectOption("dag-ready")
   await expect(page.getByText("Implement API", { exact: true })).toBeVisible()
   await expect(page.getByText("Later task", { exact: true })).toBeVisible()
-  await expect(page.getByText("DAG ready", { exact: true }).first()).toBeVisible()
+  await expect(page.locator("li.task").filter({ hasText: "Later task" })).toContainText("DAG ready")
 })
 
 
@@ -98,7 +98,7 @@ test("cancelled status explains preserved work without advertising runnable step
   const cancelled = view()
   cancelled.state = "cancelled"
   cancelled.cancellation = { at: "2026-09-23T12:00:00Z", reason: "User replaced the old plan <script>bad()</script>" }
-  cancelled.now = []
+  cancelled.readiness = []
   await page.setContent(renderStatusHtml(cancelled))
   await expect(page.getByRole("heading", { name: "Workflow cancelled" })).toBeVisible()
   await expect(page.getByText("No pending user decisions.", { exact: true })).toBeVisible()
