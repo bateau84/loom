@@ -2846,7 +2846,6 @@ async function statusStepReadiness(
   ctx: any,
   runtime: LoomRuntimeIdentity,
   workflow: Workflow,
-  questions: OpenQuestion[],
   work: WorkHierarchy | undefined,
   budget: BudgetState,
   limits: ExecutionLimits,
@@ -2989,6 +2988,7 @@ function questionState(questions: OpenQuestion[], workflow: Workflow) {
   return {
     unresolved: unresolved.map((question) => ({
       id: question.id,
+      question: clippedSummary(question.question, 220),
       status: question.status,
       responder: question.requiredAuthority,
       blocking: question.blocking,
@@ -5546,7 +5546,6 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             ctx,
             runtime,
             workflow,
-            questions,
             work,
             budget,
             limits,
