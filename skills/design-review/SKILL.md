@@ -22,6 +22,6 @@ Review the design itself before implementation.
 - no accidental technical-realization decisions outside Designer authority;
 - enough precision for downstream implementation and validation.
 
-For web visual craft, load `hallmark` and use its Reviewer assessment through the existing assessment path. Judge the evidence and user/context consequence, not a self-awarded taste score. A familiar pattern is not a defect merely because it is familiar.
+For web visual craft, load `hallmark`. When acting as Reviewer, consume its assessment through `loom_assessment`; this instruction does not direct Critic to use Reviewer methodology or let a producer call self-inspection independent review. Other roles retain their own authority and method-loading rules. Judge the evidence and user/context consequence, not a self-awarded taste score. A familiar pattern is not a defect merely because it is familiar.
 
 Return concrete findings. Distinguish deviations from accepted direction and usability defects from optional refinement. Do not replace the design with a different preferred aesthetic unless the accepted design is actually defective; do not create new acceptance criteria merely because further polish is possible. Recheck the affected intent and journey after correction. A design-artifact review does not establish rendered or production behavior.
