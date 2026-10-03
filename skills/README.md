@@ -20,18 +20,18 @@ Because the native skill tool injects `SKILL.md` while resolving that directory,
 
 ## Core role methodology
 
-| Loom role  | Core skills                                                                                                                                  |
-| ---------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| Designer   | user-story and design-scenario when useful; design-specification; design-validation for realized experience; surface/design skills as needed |
-| Specifier  | behavioral-spec; behavioral-requirement, quality-scenario, and obligation-contract as needed                                                 |
-| Architect  | architectural-design; architectural-decision; architectural-spec                                                                             |
-| Planner    | risk-driven-planning; work-decomposition                                                                                                     |
-| Acceptance | product-acceptance                                                                                                                           |
-| Documenter | documentation                                                                                                                                |
-| Reviewer   | relevant skill `ASSESSMENT.md` files; design-review for design artifacts                                                                     |
-| Worker     | task-relevant engineering/domain `SKILL.md` only                                                                                             |
-| Diagnostic | narrow troubleshooting/domain `SKILL.md` matching the observed failure                                                                       |
-| Critic     | small set of load-bearing/risky skill `QA.md` files                                                                                          |
+| Loom role  | Core skills                                                                                                                                                                                                                   |
+| ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Designer   | user-story and design-scenario when useful; design-specification; hallmark for web visual direction/craft; prototyping for unresolved experiments; design-validation for realized experience; surface/design skills as needed |
+| Specifier  | behavioral-spec; behavioral-requirement, quality-scenario, and obligation-contract as needed                                                                                                                                  |
+| Architect  | architectural-design; architectural-decision; architectural-spec                                                                                                                                                              |
+| Planner    | risk-driven-planning; work-decomposition                                                                                                                                                                                      |
+| Acceptance | product-acceptance                                                                                                                                                                                                            |
+| Documenter | documentation                                                                                                                                                                                                                 |
+| Reviewer   | relevant skill `ASSESSMENT.md` files; design-review for design artifacts                                                                                                                                                      |
+| Worker     | task-relevant engineering/domain `SKILL.md`; design-implementation for UI implementation                                                                                                                                      |
+| Diagnostic | narrow troubleshooting/domain `SKILL.md` matching the observed failure                                                                                                                                                        |
+| Critic     | small set of load-bearing/risky skill `QA.md` files                                                                                                                                                                           |
 
 ## Authoring and evaluation support
 
@@ -56,8 +56,10 @@ For Python tasks, use `python-how-to` / `python-common-practice` to select the r
 
 For TypeScript tasks, use `typescript-common-practice` as the language baseline and add `typescript-type-safety`, `typescript-async`, or `typescript-testing` only when that concern is material. Load `javascript-runtime` when JavaScript execution semantics are load-bearing, and `browser-runtime` for direct Web API work. Existing design, accessibility, observability, performance, and UI skills remain the owners of those cross-cutting concerns.
 
-For human-facing work, combine cross-surface skills (`information-architecture`, `interaction-design`, `user-flow-design`, `visual-interface-design`) only when that dimension is actually in scope, plus the relevant surface skill.
+For human-facing work, combine cross-surface skills (`information-architecture`, `interaction-design`, `user-flow-design`, `visual-interface-design`) only when that dimension is actually in scope, plus the relevant surface skill. The bundled `hallmark` owns web visual production/craft for application and marketing surfaces; it does not replace those behavioral/accessibility methods. `design-implementation` carries accepted direction and real project patterns into implementation. A settled local change inherits the existing direction rather than starting a new branding exercise.
 
 Use `feature-handoff` when work in one component or session discovers functionality that another independently handled component, repository, or fresh session must provide. The skill produces a standalone copy/paste request rather than transferring conversation history.
+
+Design role judgment and native loading/consumption cases live in the topic suite `evals/design.json`; skill-owned ablations remain under each skill's `evals/`. Native loading, method value, and real rendered product quality are separate evidence claims. Package dependency tests run through `scripts/test_ci_design_dependencies.py`; they do not prove model behavior.
 
 See `PORTING.md` for provenance and deferred source skills.
