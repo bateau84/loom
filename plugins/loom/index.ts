@@ -6,7 +6,7 @@ import { execFile } from "node:child_process"
 import { promisify } from "node:util"
 import { captureEvidenceAdmission, observationCallKey, persistEvidenceObservation, sessionAttachmentKey, type EvidenceAdmission } from "./evidence-admission"
 import type * as OpenCodePlugin from "@opencode/plugin"
-import { RUNTIME_STATE_VERSION, admitDispatchGrantLocked, consumeDispatchGrantLocked, createProjectStorage, createTransactionalStorage, ensureRuntimeStateVersion, findUsableDispatchGrant, importLegacyPluginStorage, issueDispatchGrantLocked, migrateLegacySessionState, resolveRuntimeIdentity, sessionBoundToOq, sessionBoundToStep, sessionBoundToWorkflow, tryAcquireRuntimeLocks, withRuntimeAdvisoryLock, withRuntimeAdvisoryLocks, withRuntimeLock, withRuntimeLocks, type LoomRuntimeIdentity } from "./runtime"
+import { RUNTIME_STATE_VERSION, admitDispatchGrantLocked, consumeDispatchGrantLocked, createProjectStorage, createTransactionalStorage, ensureRuntimeStateVersion, findUsableDispatchGrant, importLegacyPluginStorage, issueDispatchGrantLocked, migrateLegacySessionState, resolveRuntimeIdentity, sessionBoundToOq, sessionBoundToStep, sessionBoundToWorkflow, tryAcquireRuntimeLocks, withRuntimeAdvisoryLock, withRuntimeAdvisoryLocks, withRuntimeLock, withRuntimeLocks, type DispatchGrantV1, type LoomRuntimeIdentity } from "./runtime"
 import { LoomRpc } from "./rpc"
 import { assertLoomToolAdmission, assertCancelledChildToolAdmission, cancelWorkflow, ensureCompletedWaveHistory, workflowBindingTerminal, type CancelWorkflowInput } from "./lifecycle"
 import { buildSidebarSnapshot } from "./sidebar"
@@ -20,6 +20,7 @@ import {
   renderStatusMarkdown,
   statusPresentation,
   writeStatusArtifact,
+  type StepReadinessObservation,
 } from "./status-view"
 import { createDashboardPublisher, runtimeInstanceIsLive } from "./dashboard"
 import { ensureDashboardServerLifecycle } from "./dashboard-lifecycle"
@@ -2841,6 +2842,110 @@ async function readQuestions(ctx: any, workflowId: string): Promise<OpenQuestion
   return questions.filter((question): question is OpenQuestion => Boolean(question))
 }
 
+async function statusStepReadiness(
+  ctx: any,
+  runtime: LoomRuntimeIdentity,
+  workflow: Workflow,
+  questions: OpenQuestion[],
+  work: WorkHierarchy | undefined,
+  budget: BudgetState,
+  limits: ExecutionLimits,
+  sessionID: string,
+): Promise<Record<string, StepReadinessObservation>> {
+  const now = Date.now()
+  const usableGrants: DispatchGrantV1[] = []
+  let after: string | undefined
+  do {
+    const page = await ctx.storage.scan({
+      prefix: "dispatch-grant/",
+      limit: 100,
+      ...(after ? { after } : {}),
+    })
+    for (const entry of page.entries ?? []) {
+      const grant = entry.value as DispatchGrantV1
+      if (
+        grant?.schemaVersion === 1 &&
+        grant.projectId === runtime.projectId &&
+        grant.workflowId === workflow.id &&
+        grant.issuingParentSessionId === sessionID &&
+        !grant.admittedAt &&
+        !grant.consumedAt &&
+        !grant.revokedAt &&
+        Date.parse(grant.expiresAt) > now
+      ) {
+        usableGrants.push(grant)
+      }
+    }
+    after = page.next
+  } while (after)
+
+  const result: Record<string, StepReadinessObservation> = {}
+  for (const step of runnable(workflow)) {
+    let dispatch: StepReadinessObservation["dispatch"] = { state: "ready" }
+
+    try {
+      assertPlannedTaskAdmission(workflow, work, step)
+    } catch (error) {
+      dispatch = {
+        state: "blocked",
+        reason: error instanceof Error ? error.message : String(error),
+      }
+    }
+
+    if (dispatch.state === "ready") {
+      const conflicting = usableGrants.find(
+        (grant) =>
+          grant.expectedAgent === step.agent &&
+          (grant.stepId !== step.id || Boolean(grant.oqId)),
+      )
+      if (conflicting) {
+        dispatch = {
+          state: "blocked",
+          reason:
+            `An unadmitted ${step.agent} dispatch grant already targets ${conflicting.stepId ? `step ${conflicting.stepId}` : `OQ ${conflicting.oqId}`}.`,
+        }
+      }
+    }
+
+    if (dispatch.state === "ready") {
+      const probeState = structuredClone(budget)
+      const probe = recordDispatch({
+        state: probeState,
+        limits,
+        dispatchID: `status-probe:${workflow.id}:${step.id}:${workflow.revision}`,
+        key: `step:${step.id}`,
+        agent: step.agent,
+      })
+      if (!probe.allowed) {
+        dispatch = {
+          state: "blocked",
+          reason: probe.reason ?? "Dispatch budget admission would deny this target.",
+        }
+      }
+    }
+
+    const binding = (await ctx.storage.get(
+      stepSessionBindingKey(workflow.id, step.id, step.attempt ?? 0),
+    )) as StepSessionBinding | undefined
+
+    result[step.id] = {
+      dispatch,
+      execution: binding
+        ? {
+            state: "attached",
+            activity: "unknown",
+            attachedAt: binding.attachedAt,
+          }
+        : {
+            state: "not_observed",
+            activity: "unknown",
+          },
+    }
+  }
+
+  return result
+}
+
 async function saveQuestion(ctx: any, question: OpenQuestion) {
   await ctx.storage.set(oqKey(question.workflowId, question.id), question)
 }
@@ -5437,6 +5542,16 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             boundaryAfter = page.next
           } while (boundaryAfter)
 
+          const stepReadiness = await statusStepReadiness(
+            ctx,
+            runtime,
+            workflow,
+            questions,
+            work,
+            budget,
+            limits,
+            tool.sessionID,
+          )
           const view = buildStatusView(
             workflow,
             questions,
@@ -5445,6 +5560,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             acceptance,
             knowledge,
             work,
+            stepReadiness,
           )
           const artifact = await writeStatusArtifact(runtime, view).catch(() => undefined)
           const presentation = statusPresentation(artifact)
