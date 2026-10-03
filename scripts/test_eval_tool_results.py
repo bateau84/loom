@@ -6,6 +6,7 @@ import argparse
 import importlib.util
 import json
 import os
+import shutil
 from contextlib import redirect_stdout
 from io import StringIO
 from pathlib import Path
@@ -19,11 +20,11 @@ RUN = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(RUN)
 
 
-def event(tool="loom_status", output="complete", *, status="completed", args=None, call_id="call-1", **extra):
+def event(tool="loom_status", output="complete", *, status="completed", args=None, call_id="call-1", session_id="parent-session", **extra):
     state = {"status": status, "input": args or {}, **extra}
     if output is not None:
         state["output"] = output
-    return {"type": "tool_use", "sessionID": "parent-session", "part": {
+    return {"type": "tool_use", "sessionID": session_id, "part": {
         "type": "tool", "tool": tool, "callID": call_id, "state": state,
     }}
 
@@ -41,6 +42,205 @@ def scenario(execution="runtime"):
 class ToolResultEvidenceTests(unittest.TestCase):
     def capture(self, *events, secrets=()):
         return RUN.extract_tool_result_evidence(raw(*events), list(secrets))
+
+    def test_observer_pairs_real_inner_result_not_parent_aggregate(self):
+        records = [
+            {"kind": "header", "schema": "loom-eval-tool-observer/v1"},
+            {"kind": "before", "sequence": 1, "tool": "execute", "call_id": "parent-1",
+             "session_id": "session-1", "agent": "worker", "message_id": "message-1", "input": {"code": "discard"}},
+            {"kind": "before", "sequence": 2, "tool": "loom_status", "call_id": "inner-1",
+             "session_id": "session-1", "agent": "worker", "message_id": "message-1",
+             "input": {"workflowId": "wf-1"}, "parent": {"tool": "execute", "call_id": "parent-1",
+             "session_id": "session-1", "agent": "worker", "message_id": "message-1"}},
+            {"kind": "after", "sequence": 3, "tool": "loom_status", "call_id": "inner-1",
+             "session_id": "session-1", "agent": "worker", "message_id": "message-1",
+             "input": {"workflowId": "wf-1"}, "status": "completed",
+             "result": {"content": "actual inner sentinel"}},
+            {"kind": "after", "sequence": 4, "tool": "execute", "call_id": "parent-1",
+             "session_id": "session-1", "agent": "worker", "message_id": "message-1", "input": {"code": "discard"},
+             "status": "completed", "result": {"content": "aggregate must not be used"}},
+            {"kind": "footer", "schema": "loom-eval-tool-observer/v1", "complete": True,
+             "event_count": 4},
+        ]
+
+        evidence = self.observer_capture(records)
+
+        self.assertTrue(RUN.nested_tool_capture_complete(evidence), repr(evidence))
+        nested, complete = RUN.nested_metadata_call_events(evidence)
+        self.assertTrue(complete)
+        self.assertEqual(nested[0]["tool"], "loom_status")
+        self.assertEqual(nested[0]["parent_call_id"], "parent-1")
+        self.assertEqual(json.loads(nested[0]["output"]), {"content": "actual inner sentinel"})
+
+    def observer_capture(self, records, secrets=(), outer_stdout=None):
+        registration_ids = sorted({
+            identity
+            for record in records
+            for identity in (
+                [record.get("tool")] +
+                ([record["parent"].get("tool")] if isinstance(record.get("parent"), dict) else [])
+            )
+            if isinstance(identity, str)
+        })
+        records = [dict(record) for record in records]
+        in_flight = {}
+        parent_hook_ids = {}
+        for record in records[1:-1]:
+            key = (record.get("session_id"), record.get("message_id"), record.get("call_id"))
+            if record.get("kind") == "before":
+                record["hook_id"] = str(record["sequence"])
+                record["registered_tool"] = record["tool"]
+                in_flight.setdefault(key, []).append(record["hook_id"])
+                if record.get("tool") == "execute":
+                    parent_hook_ids[record.get("call_id")] = record["hook_id"]
+                if isinstance(record.get("parent"), dict):
+                    record["parent"]["hook_id"] = parent_hook_ids.get(record["parent"].get("call_id"))
+                    record["parent"]["registered_tool"] = record["parent"].get("tool")
+            elif record.get("kind") == "after":
+                pending = in_flight.get(key, [])
+                record["hook_id"] = pending.pop(0) if len(pending) == 1 else "ambiguous"
+                record["registered_tool"] = record["tool"]
+        outer_events = [
+            event(record["tool"], output="outer result is not inner evidence", args=record["input"],
+                  call_id=record["call_id"], session_id=record["session_id"])
+            for record in records[1:-1]
+            if record.get("kind") == "before" and record.get("parent") is None
+        ]
+        records[-1]["registration_ids"] = registration_ids
+        return RUN.capture_observer_tool_result_evidence(
+            "\n".join(json.dumps(record) for record in records) + "\n",
+            list(secrets),
+            outer_stdout=outer_stdout if outer_stdout is not None else raw(*outer_events),
+        )
+
+    def test_observer_distinguishes_returned_domain_denial_from_thrown_failure(self):
+        records = [
+            {"kind": "header", "schema": "loom-eval-tool-observer/v1"},
+            {"kind": "before", "sequence": 1, "tool": "loom_budget_grant", "call_id": "denial",
+             "session_id": "s", "agent": "general", "message_id": "m", "input": {"workflowId": "wf"}, "parent": None},
+            {"kind": "after", "sequence": 2, "tool": "loom_budget_grant", "call_id": "denial",
+             "session_id": "s", "agent": "general", "message_id": "m", "input": {"workflowId": "wf"},
+             "status": "completed", "result": {"content": "denied by policy"}},
+            {"kind": "before", "sequence": 3, "tool": "loom_status", "call_id": "throw",
+             "session_id": "s", "agent": "general", "message_id": "m", "input": {"workflowId": "wf"}, "parent": None},
+            {"kind": "after", "sequence": 4, "tool": "loom_status", "call_id": "throw",
+             "session_id": "s", "agent": "general", "message_id": "m", "input": {"workflowId": "wf"},
+             "status": "error", "error": {"message": "runtime failure"}},
+            {"kind": "footer", "schema": "loom-eval-tool-observer/v1", "complete": True, "event_count": 4},
+        ]
+
+        captured = self.observer_capture(records)
+
+        self.assertTrue(RUN.nested_tool_capture_complete(captured), repr(captured))
+        self.assertEqual(captured["events"][0]["status"], "completed")
+        self.assertIn("denied by policy", captured["events"][0]["output"])
+        self.assertEqual(captured["events"][1]["status"], "error")
+        self.assertNotIn("output", captured["events"][1])
+        self.assertIn("runtime failure", captured["events"][1]["error"])
+
+    def test_observer_rejects_missing_duplicate_forged_and_ambiguous_pairs(self):
+        complete = [
+            {"kind": "header", "schema": "loom-eval-tool-observer/v1"},
+            {"kind": "before", "sequence": 1, "tool": "loom_status", "call_id": "id",
+             "session_id": "s", "agent": "worker", "message_id": "m", "input": {}, "parent": None},
+            {"kind": "after", "sequence": 2, "tool": "loom_status", "call_id": "id",
+             "session_id": "s", "agent": "worker", "message_id": "m", "input": {},
+             "status": "completed", "result": {"content": "actual"}},
+            {"kind": "footer", "schema": "loom-eval-tool-observer/v1", "complete": True, "event_count": 2},
+        ]
+        missing = self.observer_capture(complete[:-2] + [complete[-1]])
+        duplicate = self.observer_capture(complete[:-1] + [complete[2], complete[-1]])
+        forged = self.observer_capture([
+            *complete[:-2], {**complete[2], "input": {"workflowId": "other"}}, complete[-1]
+        ])
+        ambiguous = self.observer_capture([
+            *complete[:-2], {**complete[1], "parent_ambiguous": True}, complete[2], complete[-1]
+        ])
+        repeated_parallel = self.observer_capture([
+            complete[0],
+            {**complete[1], "sequence": 1},
+            {**complete[1], "sequence": 2},
+            {**complete[2], "sequence": 3},
+            {**complete[2], "sequence": 4},
+            {**complete[-1], "event_count": 4},
+        ])
+
+        for evidence in (missing, duplicate, forged, ambiguous, repeated_parallel):
+            self.assertFalse(RUN.nested_tool_capture_complete(evidence))
+
+        outer_forgery = self.observer_capture(
+            complete,
+            outer_stdout=raw(event("loom_status", args={"different": True}, call_id="id", session_id="s")),
+        )
+        self.assertFalse(RUN.nested_tool_capture_complete(outer_forgery))
+
+    def test_observer_preserves_call_start_order_separately_from_parallel_completion(self):
+        records = [
+            {"kind": "header", "schema": "loom-eval-tool-observer/v1"},
+            {"kind": "before", "sequence": 1, "tool": "execute", "call_id": "p",
+             "session_id": "s", "agent": "worker", "message_id": "m", "input": {}, "parent": None},
+            {"kind": "before", "sequence": 2, "tool": "loom_status", "call_id": "first",
+             "session_id": "s", "agent": "worker", "message_id": "m", "input": {"n": 1},
+             "parent": {"tool": "execute", "call_id": "p", "session_id": "s", "agent": "worker", "message_id": "m"}},
+            {"kind": "before", "sequence": 3, "tool": "loom_status", "call_id": "second",
+             "session_id": "s", "agent": "worker", "message_id": "m", "input": {"n": 2},
+             "parent": {"tool": "execute", "call_id": "p", "session_id": "s", "agent": "worker", "message_id": "m"}},
+            {"kind": "after", "sequence": 4, "tool": "loom_status", "call_id": "second",
+             "session_id": "s", "agent": "worker", "message_id": "m", "input": {"n": 2},
+             "status": "completed", "result": {"n": 2}},
+            {"kind": "after", "sequence": 5, "tool": "loom_status", "call_id": "first",
+             "session_id": "s", "agent": "worker", "message_id": "m", "input": {"n": 1},
+             "status": "completed", "result": {"n": 1}},
+            {"kind": "after", "sequence": 6, "tool": "execute", "call_id": "p",
+             "session_id": "s", "agent": "worker", "message_id": "m", "input": {},
+             "status": "completed", "result": {"content": "transformed"}},
+            {"kind": "footer", "schema": "loom-eval-tool-observer/v1", "complete": True, "event_count": 6},
+        ]
+
+        evidence = self.observer_capture(records)
+
+        self.assertTrue(RUN.nested_tool_capture_complete(evidence))
+        children = [event for event in RUN.result_evidence_events(evidence) if event["tool"] == "loom_status"]
+        self.assertEqual([json.loads(event["input"]) for event in children], [{"n": 1}, {"n": 2}])
+        self.assertEqual([event["completed_sequence"] for event in children], [5, 4])
+
+    def test_observer_redacts_credentials_before_clipping_and_fails_closed_on_oversize(self):
+        secret = "observer-secret-should-not-survive"
+        records = [
+            {"kind": "header", "schema": "loom-eval-tool-observer/v1"},
+            {"kind": "before", "sequence": 1, "tool": "execute", "call_id": "p",
+             "session_id": "s", "agent": "worker", "message_id": "m", "input": {}, "parent": None},
+            {"kind": "before", "sequence": 2, "tool": "loom_status", "call_id": "c",
+             "session_id": "s", "agent": "worker", "message_id": "m", "input": {"credential": secret},
+             "parent": {"tool": "execute", "call_id": "p", "session_id": "s", "agent": "worker", "message_id": "m"}},
+            {"kind": "after", "sequence": 3, "tool": "loom_status", "call_id": "c",
+             "session_id": "s", "agent": "worker", "message_id": "m", "input": {"credential": secret},
+             "status": "completed", "result": {"text": secret + "x" * 7000}},
+            {"kind": "after", "sequence": 4, "tool": "execute", "call_id": "p",
+             "session_id": "s", "agent": "worker", "message_id": "m", "input": {},
+             "status": "completed", "result": {"content": "discarded"}},
+            {"kind": "footer", "schema": "loom-eval-tool-observer/v1", "complete": True, "event_count": 4},
+        ]
+
+        captured = self.observer_capture(records, secrets=(secret,))
+        oversize = self.observer_capture([
+            *records[:-2], {**records[-2], "result": {"text": "x" * 70_000}}, records[-1]
+        ])
+
+        self.assertNotIn(secret, json.dumps(captured))
+        self.assertFalse(RUN.nested_tool_capture_complete(captured))
+        self.assertFalse(RUN.nested_tool_capture_complete(oversize))
+
+    def test_runtime_project_materializes_observer_and_missing_records_are_non_evidence(self):
+        temp, target, _judge = RUN.setup_projects(scenario("runtime"))
+        try:
+            plugin = target / ".opencode" / "plugins" / "eval-tool-observer.ts"
+            self.assertTrue(plugin.is_file())
+            result = RUN.attach_observer_capture({"text": "done"}, target, [])
+            self.assertFalse(RUN.nested_tool_capture_complete(result["observed_tool_results"]))
+            self.assertFalse(result["observed_tool_results"]["capture_file_present"])
+        finally:
+            shutil.rmtree(temp, ignore_errors=True)
 
     def test_reviewer_result_and_final_workflow_state_survive(self):
         captured = self.capture(
