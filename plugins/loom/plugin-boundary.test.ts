@@ -4283,7 +4283,7 @@ describe("Loom registered plugin boundary", () => {
         "worker-session",
       )
       expect(completed.error).toBeUndefined()
-      expect(completed.runnable).toEqual([{ id: "review-implementation", agent: "reviewer" }])
+      expect(completed.dagRunnable).toEqual([{ id: "review-implementation", agent: "reviewer" }])
 
       const reviewerGrant = await call(
         "dispatch_grant",
@@ -9345,7 +9345,7 @@ Verdict: FAIL
         "terminal-conversation-reviewer",
       )
       expect(completed.error).toBeUndefined()
-      expect(completed.runnable).toEqual([])
+      expect(completed.dagRunnable).toEqual([])
 
       for (const target of ["research", "diagnostic"] as const) {
         const conversational: any = {
@@ -9541,7 +9541,7 @@ Verdict: FAIL
         diagnosticSession,
       )
       expect(completed.error).toBeUndefined()
-      expect(completed.runnable).toContainEqual({ id: "review-task", agent: "reviewer" })
+      expect(completed.dagRunnable).toContainEqual({ id: "review-task", agent: "reviewer" })
 
       const afterCompletedStep = await observeShell("post-complete", "git status --short")
       expect(afterCompletedStep.workflowId).toBeUndefined()
@@ -12289,7 +12289,7 @@ describe("workflow cancellation and reviewed-history boundaries", () => {
       expect(sidebar.state).toBe("cancelled")
       expect(sidebar.now).toEqual([])
       const status = await h.call("status", { detail: true }, "general", "parent")
-      expect(status.runnable).toEqual([])
+      expect(status.dagRunnable).toEqual([])
       expect(status.summary.upcoming).toEqual([])
       // A pre-cancellation external tool may return; it is passive history, not new governed proof.
       await h.toolHooks.get("execute.after")!({ tool: "shell", sessionID: child, agent: "worker", callID: "late-observation", input: { command: "bun test" }, status: "completed", result: "late result" })
