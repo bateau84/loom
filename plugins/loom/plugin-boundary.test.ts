@@ -651,6 +651,30 @@ describe("Loom registered plugin boundary", () => {
         agent: "worker",
         waitsFor: ["worker-open"],
       })
+
+      await h.durableStorage.set(`oq-index/${workflowId}`, ["OQ-17", "OQ-18"])
+      await h.durableStorage.set(`oq/${workflowId}/OQ-18`, {
+        id: "OQ-18",
+        workflowId,
+        question: "Worker-owned peer question",
+        raisedByAgent: "reviewer",
+        raisedByStepId: "reviewer-budget",
+        requiredAuthority: "worker",
+        blocking: false,
+        consumerStepIds: [],
+        evidence: [],
+        status: "open",
+        reconciliations: {},
+        createdAt: now,
+      })
+
+      const ambiguous = await h.call("status", { workflowId }, "general", general)
+      expect(ambiguous.now.find((step: any) => step.step === "worker-open")?.dispatch).toMatchObject({
+        state: "unknown",
+      })
+      expect(
+        ambiguous.now.find((step: any) => step.step === "worker-open")?.dispatch.reason,
+      ).toContain("Multiple current targets are owned by worker")
     } finally {
       h.restore()
     }
