@@ -623,7 +623,7 @@ describe("Loom registered plugin boundary", () => {
       expect(status.now.find((step: any) => step.step === "worker-open")).toMatchObject({
         structurallyRunnable: true,
         dispatch: { state: "ready" },
-        execution: { state: "attached", activity: "unknown" },
+        execution: { state: "unknown", evidence: "current_attachment" },
         completion: {
           eligible: false,
           constraints: [{
@@ -636,7 +636,7 @@ describe("Loom registered plugin boundary", () => {
       expect(status.now.find((step: any) => step.step === "reviewer-budget")).toMatchObject({
         structurallyRunnable: true,
         dispatch: { state: "blocked" },
-        execution: { state: "not_observed", activity: "unknown" },
+        execution: { state: "unknown" },
       })
       expect(status.userAttention).toEqual([{
         questionId: "OQ-17",
