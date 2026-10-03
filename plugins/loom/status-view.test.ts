@@ -32,7 +32,7 @@ function statusView(): StatusView {
     workflowId: "wf-status",
     state: "active",
     progress: { finished: 3, total: 7, failed: 0 },
-    now: [{
+    readiness: [{
       step: "task:implement",
       agent: "worker",
       kind: "work",
@@ -133,8 +133,8 @@ describe("interactive Loom status presentation", () => {
       },
     )
 
-    expect(view.now.map((step) => step.step)).toEqual(["task:a", "task:b"])
-    expect(view.now[0]).toMatchObject({
+    expect(view.readiness.map((step) => step.step)).toEqual(["task:a", "task:b"])
+    expect(view.readiness[0]).toMatchObject({
       structurallyRunnable: true,
       dispatch: { state: "ready" },
       execution: { state: "unknown", evidence: "current_attachment" },
@@ -149,7 +149,7 @@ describe("interactive Loom status presentation", () => {
         }],
       },
     })
-    expect(view.now[1]).toMatchObject({
+    expect(view.readiness[1]).toMatchObject({
       structurallyRunnable: true,
       dispatch: { state: "blocked", reason: "dispatch budget exhausted" },
       execution: { state: "unknown" },
@@ -210,7 +210,7 @@ describe("interactive Loom status presentation", () => {
       },
     )
     expect(reconciling.userAttention).toEqual([])
-    expect(reconciling.now.find((step) => step.step === "task:a")?.completion).toMatchObject({
+    expect(reconciling.readiness.find((step) => step.step === "task:a")?.completion).toMatchObject({
       eligible: false,
       constraints: [{
         source: "OQ-17",
@@ -252,7 +252,7 @@ describe("interactive Loom status presentation", () => {
     const project = () => compactWorkflowState(workflow, [], { totalDispatches: 0, byKey: {}, seenDispatches: [] }, DEFAULT_LIMITS)
     const view = project()
 
-    expect(view.now).toEqual([])
+    expect(view.readiness).toEqual([])
     expect(view.questions.open).toBe(0)
     expect(view.userDecisions).toEqual([{
       step: "task:decision", taskId: "decision", title: "Choose the release mode",
@@ -294,7 +294,7 @@ describe("interactive Loom status presentation", () => {
     const view = statusView()
     view.state = "complete"
     view.planningOnly = true
-    view.now = []
+    view.readiness = []
     view.upcoming = []
     const markdown = renderStatusMarkdown(view)
     expect(markdown).toContain("Mode:** planning only")
