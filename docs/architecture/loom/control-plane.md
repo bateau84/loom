@@ -112,7 +112,7 @@ An OQ records:
 - the authoritative answer;
 - per-consumer reconciliation.
 
-Any active specialist may raise a question. The required authority reads and answers it directly from shared state. General schedules the required authority when needed but does not interpret or relay the question.
+Any active specialist may raise a question. The required authority reads and answers it directly from shared state. General schedules the required authority when needed but does not answer, rewrite, or impersonate that authority. For a user-owned OQ, General remains the interlocutor: it may explain the blocker, make the requested input easy to obtain, and prepare contextual handoffs, while the persisted OQ remains the authoritative question.
 
 An answer alone is not reconciliation. Each declared consumer records `incorporated`, `unaffected`, or `explicitly-deferred` for the answer it assessed. For a blocking OQ, a step cannot complete while **its own** required reconciliation is outstanding; after that reconciliation and its other prerequisites are satisfied, it may complete even if another consumer remains pending. `closed` describes the **aggregate** OQ only after all declared consumers reconcile; a still-`answered` OQ does not, by itself, bar a reconciled consumer's step completion. Dispatch to assess an answered OQ is distinct from both reconciliation and step completion. This proposed rule follows [OC-001](../../requirements/loom/oc-001-independent-question-consumer-reconciliation.md); it is not a conformance finding for all current execution paths.
 
@@ -120,11 +120,11 @@ For a blocking question raised before downstream work begins, the raising step i
 
 Reopening explicitly preserves or invalidates the previous answer and clears prior consumer reconciliation in either case. A preserved answer stays answered and its consumers may be dispatched to reassess it; an absent, replaced, stale, or conflicting answer cannot be treated as the same current reconciled answer.
 
-User-owned questions are the exception: General presents the exact stored question and records the exact user answer as user-sourced authority.
+User-owned questions are the exception: General records the exact user answer as user-sourced authority and actively helps the user satisfy the stored question. A blocking user OQ should be self-contained about what is unresolved, why the affected boundary cannot proceed, and what kind of answer will satisfy it. Where the user obtains that answer is contextual guidance, not durable OQ semantics unless accepted authority explicitly requires a source.
 
-Answering an OQ also drives the first continuation attempt for current consumers, independent of which authority supplied the answer. For each unreconciled consumer, Loom resolves the exact current step attempt and its exact attached session. When that consumer remains pending and runnable, the control plane sends one synthetic OQ-answer input with steering delivery and resume enabled. This runtime action is the primary continuation mechanism: it steers an active turn or wakes an idle/returned bound session. The answer caller receives `notifications.notified` / `notifications.failed`, but that result is an observation of the delivery attempt, not the authority for continuation itself. General therefore does not issue a parallel message, resume, or redispatch merely because it learns that an answer arrived, including when another specialist answered the OQ.
+Answering an OQ also drives the first continuation attempt for current consumers, independent of which authority supplied the answer. For each unreconciled consumer, Loom resolves the exact current step attempt and its exact attached session. When that consumer remains pending and structurally runnable, the control plane sends one synthetic OQ-answer input with steering delivery and resume enabled. This runtime action is the primary continuation mechanism: it steers an active turn or wakes an idle/returned bound session. The answer caller receives `notifications.notified` / `notifications.failed`, but that result is an observation of the delivery attempt, not the authority for continuation itself. General therefore does not issue a parallel message, resume, or redispatch merely because it learns that an answer arrived, including when another specialist answered the OQ.
 
-If no valid current binding exists, the step is no longer pending/runnable, the question was already reconciled, or delivery fails, the persisted answer remains authoritative and no stale session is revived. For the answer caller, a still-current affected consumer absent from both `notifications.notified` and `notifications.failed` is evidence that no continuation signal was scheduled for that consumer. A consumer present in `notifications.failed` had a delivery attempt throw; that error does not by itself strengthen the host API into an exactly-once delivery guarantee. A missing notification result in General after another responder or a coordinator restart is different and is not evidence that delivery failed. Explicit recovery requires a fresh state read plus positive evidence: caller-observed absence of a scheduled notification for a still-current unresolved consumer, host/session evidence confirming that a reported delivery error did not schedule the signal, or an observed notified child turn that ended/failed without reconciling. A thrown delivery error with ambiguous host outcome remains an ambiguous boundary rather than automatic retry authority. Pending state or elapsed time alone does not justify recovery. Synthetic wake delivery is best-effort, not a durable exactly-once receipt: if coordinator failure loses the notification result and the host provides no evidence that distinguishes delivered from undelivered, Loom preserves the answered OQ as a resumable incomplete boundary instead of speculatively duplicating continuation. Exact step-attempt validation prevents an answer or later recovery from reviving a session attached to an older attempt.
+If no valid current binding exists, the step is no longer pending/structurally-runnable, the question was already reconciled, or delivery fails, the persisted answer remains authoritative and no stale session is revived. For the answer caller, a still-current affected consumer absent from both `notifications.notified` and `notifications.failed` is evidence that no continuation signal was scheduled for that consumer. A consumer present in `notifications.failed` had a delivery attempt throw; that error does not by itself strengthen the host API into an exactly-once delivery guarantee. A missing notification result in General after another responder or a coordinator restart is different and is not evidence that delivery failed. Explicit recovery requires a fresh state read plus positive evidence: caller-observed absence of a scheduled notification for a still-current unresolved consumer, host/session evidence confirming that a reported delivery error did not schedule the signal, or an observed notified child turn that ended/failed without reconciling. A thrown delivery error with ambiguous host outcome remains an ambiguous boundary rather than automatic retry authority. Pending state or elapsed time alone does not justify recovery. Synthetic wake delivery is best-effort, not a durable exactly-once receipt: if coordinator failure loses the notification result and the host provides no evidence that distinguishes delivered from undelivered, Loom preserves the answered OQ as a resumable incomplete boundary instead of speculatively duplicating continuation. Exact step-attempt validation prevents an answer or later recovery from reviving a session attached to an older attempt.
 
 ## Progressive Maintenance Routing
 
@@ -159,16 +159,16 @@ Coordinator prompts cannot waive persisted verification.
 High-frequency operational tools default to compact views intended for both models and humans.
 
 `loom_status` summarizes:
-- finished/total progress;
-- currently runnable work;
-- recent completed/failed transitions;
-- near-term blocked steps and dependencies;
-- open OQs;
-- open verification requirements;
-- dispatch budget;
-- Product Acceptance / knowledge-sync state.
+- workflow lifecycle and finished/total progress;
+- structural/DAG readiness for current steps;
+- whether dispatch admission is ready, blocked, or still requires exact target revalidation;
+- what Loom can actually observe about execution, without equating dispatch or attachment with liveness;
+- completion constraints such as blocking OQs, and gate-PASS constraints such as open verification;
+- current user attention for blocking user-owned OQs;
+- recent completed/failed transitions and near-term dependency-blocked steps;
+- OQ routing / pending reconciliation, dispatch budget, Product Acceptance, and knowledge-sync state.
 
-Pass `detail=true` only when full workflow internals are actually needed.
+The compact structured projection uses `readiness` for DAG-ready steps. Detailed internals call the raw DAG set `dagRunnable`. A readiness record is not a claim that work is actively executing. Pass `detail=true` only when full workflow internals are actually needed.
 
 `loom_evidence_observations` likewise returns a bounded recent list by default instead of dumping all observation digests into the transcript; full records remain available with `detail=true`.
 
