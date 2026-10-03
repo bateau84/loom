@@ -619,8 +619,8 @@ describe("Loom registered plugin boundary", () => {
 
       const status = await h.call("status", { workflowId }, "general", general)
 
-      expect(status.now).toHaveLength(2)
-      expect(status.now.find((step: any) => step.step === "worker-open")).toMatchObject({
+      expect(status.readiness).toHaveLength(2)
+      expect(status.readiness.find((step: any) => step.step === "worker-open")).toMatchObject({
         structurallyRunnable: true,
         dispatch: { state: "ready" },
         execution: { state: "unknown", evidence: "current_attachment" },
@@ -633,7 +633,7 @@ describe("Loom registered plugin boundary", () => {
           }],
         },
       })
-      expect(status.now.find((step: any) => step.step === "reviewer-budget")).toMatchObject({
+      expect(status.readiness.find((step: any) => step.step === "reviewer-budget")).toMatchObject({
         structurallyRunnable: true,
         dispatch: { state: "blocked" },
         execution: { state: "unknown" },
@@ -669,11 +669,11 @@ describe("Loom registered plugin boundary", () => {
       })
 
       const ambiguous = await h.call("status", { workflowId }, "general", general)
-      expect(ambiguous.now.find((step: any) => step.step === "worker-open")?.dispatch).toMatchObject({
+      expect(ambiguous.readiness.find((step: any) => step.step === "worker-open")?.dispatch).toMatchObject({
         state: "unknown",
       })
       expect(
-        ambiguous.now.find((step: any) => step.step === "worker-open")?.dispatch.reason,
+        ambiguous.readiness.find((step: any) => step.step === "worker-open")?.dispatch.reason,
       ).toContain("Multiple current targets are owned by worker")
     } finally {
       h.restore()
