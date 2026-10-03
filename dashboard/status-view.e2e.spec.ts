@@ -6,7 +6,16 @@ function view(): StatusView {
     workflowId: "wf-browser",
     state: "active",
     progress: { finished: 2, total: 5, failed: 0 },
-    now: [{ step: "task:api", agent: "worker", kind: "work" }],
+    now: [{
+      step: "task:api",
+      agent: "worker",
+      kind: "work",
+      structurallyRunnable: true,
+      dispatch: { state: "ready" },
+      execution: { state: "not_observed", activity: "unknown" },
+      completion: { eligible: "unknown", constraints: [] },
+    }],
+    userAttention: [],
     userDecisions: [],
     recent: [],
     upcoming: [],
@@ -93,7 +102,7 @@ test("cancelled status explains preserved work without advertising runnable step
   await expect(page.getByRole("heading", { name: "Workflow cancelled" })).toBeVisible()
   await expect(page.getByText("No pending user decisions.", { exact: true })).toBeVisible()
   await expect(page.getByText("Completed work is preserved. Unfinished checks are not passes. Start a new workflow to continue.")).toBeVisible()
-  await expect(page.getByText("No runnable step.", { exact: true })).toBeVisible()
+  await expect(page.getByText("No structurally runnable step.", { exact: true })).toBeVisible()
   await expect(page.getByRole("region", { name: "Cancellation" })).toContainText("<script>bad()</script>")
   await expect(page.getByRole("region", { name: "Cancellation" }).locator("script")).toHaveCount(0)
   await page.getByRole("button", { name: "Expand all" }).click()
