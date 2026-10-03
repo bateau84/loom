@@ -6025,7 +6025,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               evidenceBound,
               outcome: resolvedOutcome,
               blocked: workflow.steps.filter((candidate) => candidate.status === "failed").map((candidate) => candidate.id),
-              runnable: runnable(workflow).map((candidate) => ({ id: candidate.id, agent: candidate.agent })),
+              dagRunnable: runnable(workflow).map((candidate) => ({ id: candidate.id, agent: candidate.agent })),
               questions: questionState(questions, workflow),
             }),
           }
@@ -6227,7 +6227,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               content: renderToolOutput({
                 reopened: stepId,
                 reset,
-                runnable: runnable(workflow).map((candidate) => ({ id: candidate.id, agent: candidate.agent })),
+                dagRunnable: runnable(workflow).map((candidate) => ({ id: candidate.id, agent: candidate.agent })),
               }),
             }
           } catch (error) {
