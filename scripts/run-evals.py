@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.util
 import json
 import os
 import re
@@ -396,32 +397,64 @@ def write_project_config(project: Path, agent: str) -> None:
 
 
 OBSERVER_FILENAME = ".loom-eval-tool-observer.jsonl"
+NORMAL_INVOKE_OBSERVER_FILENAME = ".loom-normal-invoke-diagnostic.jsonl"
+NORMAL_PAYLOAD_POLICY_OMIT = "omit-opaque-payloads/v1"
+NORMAL_PAYLOAD_POLICY_FIXTURE = "synthetic-secret-free-fixture/v1"
+
+
+def normal_invoke_observations_enabled() -> bool:
+    return os.environ.get("OPENCODE_EVAL_NORMAL_OBSERVATIONS") == "1"
+
+
+def parse_normal_invoke_diagnostic(raw: str | bytes) -> dict[str, Any]:
+    parser_path = ROOT / "scripts" / "normal_invoke_observation.py"
+    spec = importlib.util.spec_from_file_location("loom_normal_invoke_observation", parser_path)
+    if not spec or not spec.loader:
+        return {"schema": "loom-normal-invoke-diagnostic/v1", "diagnostic_only": True,
+                "evidence_eligible": False, "capture_valid": False, "events": [],
+                "reason": "parser_unavailable"}
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.parse_diagnostic_capture(raw)
 
 
 def attach_observer_capture(
     result: dict[str, Any], project: Path, secrets: list[str]
 ) -> dict[str, Any]:
     """Replace runtime result projection only when a complete hook ledger exists."""
-    if not (project / ".opencode" / "plugins" / "eval-tool-observer.ts").is_file():
+    legacy_observer_enabled = (project / ".opencode" / "plugins" / "eval-tool-observer.ts").is_file()
+    normal_observer_enabled = normal_invoke_observations_enabled()
+    if not legacy_observer_enabled and not normal_observer_enabled:
         return result
-    capture_path = project / OBSERVER_FILENAME
-    try:
-        if capture_path.stat().st_size > TOTAL_OBSERVER_BYTES_LIMIT:
-            raw_capture = ""
-        else:
-            raw_capture = capture_path.read_text(encoding="utf-8")
-    except OSError:
-        raw_capture = ""
-    capture = capture_observer_tool_result_evidence(
-        raw_capture,
-        secrets,
-        outer_stdout=str(result.get("stdout") or ""),
-        stdout_truncated=bool(result.get("stdout_truncated")),
-    )
-    capture["capture_file_present"] = bool(raw_capture)
     redacted_result = dict(result)
     redacted_result.pop("tool_result_evidence", None)
-    redacted_result["observed_tool_results"] = capture
+    if legacy_observer_enabled:
+        capture_path = project / OBSERVER_FILENAME
+        try:
+            if capture_path.stat().st_size > TOTAL_OBSERVER_BYTES_LIMIT:
+                raw_capture = ""
+            else:
+                raw_capture = capture_path.read_text(encoding="utf-8")
+        except OSError:
+            raw_capture = ""
+        capture = capture_observer_tool_result_evidence(
+            raw_capture,
+            secrets,
+            outer_stdout=str(result.get("stdout") or ""),
+            stdout_truncated=bool(result.get("stdout_truncated")),
+        )
+        capture["capture_file_present"] = bool(raw_capture)
+        redacted_result["observed_tool_results"] = capture
+    if normal_observer_enabled:
+        normal_path = project / NORMAL_INVOKE_OBSERVER_FILENAME
+        try:
+            normal_text = normal_path.read_bytes() if normal_path.is_file() and normal_path.stat().st_size <= 4_000_000 else b""
+        except OSError:
+            normal_text = b""
+        diagnostic = redact_sensitive_values(parse_normal_invoke_diagnostic(normal_text), secrets)
+        # This channel is diagnostic-only and deliberately never participates
+        # in action/result scoring or evidence eligibility.
+        redacted_result["normal_invoke_diagnostic"] = diagnostic
     return redacted_result
 
 
@@ -451,9 +484,14 @@ def setup_projects(case: dict[str, Any]) -> tuple[Path, Path, Path]:
             if source.stem == case["agent"]:
                 agent_text = promote_agent(agent_text)
             (target_oc / "agents" / source.name).write_text(agent_text, encoding="utf-8")
-        observer_plugin = target_oc / "plugins" / "eval-tool-observer.ts"
-        observer_plugin.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(ROOT / "scripts" / "fixtures" / "eval-tool-observer.ts", observer_plugin)
+        if normal_invoke_observations_enabled():
+            normal_plugin = target_oc / "plugins" / "loom-normal-invoke-observer.ts"
+            normal_plugin.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(ROOT / "scripts" / "fixtures" / "loom-normal-invoke-observer.ts", normal_plugin)
+        else:
+            observer_plugin = target_oc / "plugins" / "eval-tool-observer.ts"
+            observer_plugin.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(ROOT / "scripts" / "fixtures" / "eval-tool-observer.ts", observer_plugin)
     else:
         source_agent = (ROOT / "agents" / (case["agent"] + ".md")).read_text(encoding="utf-8")
         if case["execution"] == "conversation-response":
@@ -660,42 +698,196 @@ def pass_env(command: list[str], names: tuple[str, ...] | list[str], host_env: d
             command += ["--env", name]
 
 
-def _sensitive_key(name: str) -> bool:
-    lowered = name.lower().replace("-", "_")
-    if lowered == "key" or lowered.endswith("_key"):
-        return True
-    return any(
-        token in lowered
-        for token in (
-            "api_key",
-            "apikey",
-            "token",
-            "secret",
-            "password",
-            "credential",
-            "access",
-            "refresh",
-            "authorization",
-            "cookie",
-        )
+class CredentialEntry:
+    def __init__(self, source: str, location: str, role: str, value: str | None):
+        self.source = source
+        self.location = location
+        self.role = role
+        self.value = value
+
+
+class CredentialInventory:
+    def __init__(self, entries: list[CredentialEntry], sources: dict[str, str]):
+        self.entries = tuple(entries)
+        self.sources = dict(sources)
+        self.complete = all(state in {"complete", "not_selected"} for state in sources.values())
+        self.values = tuple(sorted({
+            entry.value for entry in entries
+            if entry.role == "credential" and entry.value
+        }, key=len, reverse=True))
+
+    def private_policy(self) -> dict[str, Any]:
+        return {
+            "schema": "loom-eval-credential-inventory/v1",
+            "policy_version": "source-path-roles/v1",
+            "complete": self.complete,
+            "sources": dict(self.sources),
+            "values": list(self.values) if self.complete else [],
+        }
+
+    def entries_as_tuples(self) -> set[tuple[str, str, str, str | None]]:
+        return {(item.source, item.location, item.role, item.value) for item in self.entries}
+
+
+def credential_inventory_from_values(values: list[str]) -> CredentialInventory:
+    """Build a complete private matcher inventory for focused synthetic tests."""
+    return CredentialInventory(
+        [CredentialEntry("synthetic", f"value.{index}", "credential", value) for index, value in enumerate(values)],
+        {"synthetic": "complete"},
     )
 
 
-def _collect_json_secrets(value: Any, found: set[str], *, sensitive: bool = False) -> None:
+def _normalized_key_words(name: str) -> list[str]:
+    # Split lower-to-upper and acronym-to-word boundaries before folding case.
+    camel = re.sub(r"([A-Z]+)([A-Z][a-z])", r"\1_\2", name)
+    camel = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", camel)
+    return re.findall(r"[a-z0-9]+", camel.lower())
+
+
+def _sensitive_key(name: str) -> bool:
+    # Match credential fields as words rather than substrings: e.g.
+    # ``accessibility`` and ``max_tokens`` are ordinary settings, while
+    # ``access_token`` and ``api-key`` identify credentials.
+    parts = _normalized_key_words(name)
+    if not parts:
+        return False
+    normalized = "_".join(parts)
+    if normalized.endswith("_key") or normalized in {"key", "apikey"}:
+        return True
+    if normalized.endswith("_token") or normalized == "token":
+        return True
+    if any(
+        normalized == field or normalized.endswith("_" + field)
+        for field in ("secret", "password", "credential", "authorization", "cookie")
+    ):
+        return True
+    return normalized in {"access", "refresh"} or normalized.endswith(
+        ("_access_token", "_refresh_token")
+    )
+
+
+_PUBLIC_CREDENTIAL_METADATA = {"type", "provider", "id", "scope", "context"}
+
+
+def _collect_json_inventory(
+    value: Any,
+    entries: list[CredentialEntry],
+    source: str,
+    location: str = "",
+    *,
+    in_credential_object: bool = False,
+) -> bool:
+    """Collect only classified leaves; report unsupported credential descendants."""
+    complete = True
     if isinstance(value, dict):
         for key, child in value.items():
-            _collect_json_secrets(
-                child,
-                found,
-                sensitive=sensitive or _sensitive_key(str(key)),
-            )
-        return
+            key_text = str(key)
+            child_location = f"{location}.{key_text}" if location else key_text
+            normalized = "_".join(_normalized_key_words(key_text))
+            credential_container = in_credential_object or normalized in {"credential", "credentials"}
+            if isinstance(child, str) and _sensitive_key(key_text) and child:
+                entries.append(CredentialEntry(source, child_location, "credential", child))
+            elif credential_container and normalized in _PUBLIC_CREDENTIAL_METADATA and isinstance(child, str):
+                entries.append(CredentialEntry(source, child_location, "public", child))
+            elif credential_container and not _sensitive_key(key_text):
+                entries.append(CredentialEntry(source, child_location, "unknown", None))
+                complete = False
+                if isinstance(child, (dict, list)):
+                    complete = _collect_json_inventory(
+                        child, entries, source, child_location,
+                        in_credential_object=True,
+                    ) and complete
+            else:
+                complete = _collect_json_inventory(
+                    child, entries, source, child_location,
+                    in_credential_object=credential_container,
+                ) and complete
+        return complete
     if isinstance(value, list):
-        for child in value:
-            _collect_json_secrets(child, found, sensitive=sensitive)
-        return
-    if sensitive and isinstance(value, str) and len(value) >= 8:
-        found.add(value)
+        for index, child in enumerate(value):
+            complete = _collect_json_inventory(
+                child, entries, source, f"{location}[{index}]",
+                in_credential_object=in_credential_object,
+            ) and complete
+        return complete
+    return True
+
+
+def collect_credential_inventory(
+    host_env: dict[str, str], extra_envs: list[str], auth: Path | None,
+    config: Path | None, models_catalog: Path | None, database_seed: Path | None,
+    config_root: Path | None = None, *, runner_defaults_known: bool = False,
+) -> CredentialInventory:
+    entries: list[CredentialEntry] = []
+    sources: dict[str, str] = {}
+    env_names = set(PROVIDER_ENVS) | set(COPILOT_ENVS) | {"OPENCODE_API_KEY"}
+    env_names.update(name for name in extra_envs if _sensitive_key(name))
+    for name in sorted(env_names):
+        value = host_env.get(name, "")
+        if value:
+            entries.append(CredentialEntry("env", name, "credential", value))
+    sources["env"] = "complete"
+    if config_root is not None or host_env.get("OPENCODE_CONFIG_DIR") or not runner_defaults_known:
+        # The runner resolves files and defaults under this directory; until its
+        # complete source adapter participates, do not treat selected config as empty.
+        sources["config_root"] = "incomplete"
+    else:
+        sources["config_root"] = "not_selected"
+
+    for source, path in (("auth", auth), ("config", config), ("models", models_catalog)):
+        if path is None:
+            sources[source] = "not_selected"
+            continue
+        try:
+            parsed = json.loads(path.read_text(encoding="utf-8"))
+            sources[source] = "complete" if _collect_json_inventory(parsed, entries, source) else "incomplete"
+        except (OSError, UnicodeError, json.JSONDecodeError, RecursionError):
+            sources[source] = "incomplete"
+
+    if database_seed is None:
+        sources["credential_seed"] = "not_selected"
+    else:
+        try:
+            with sqlite3.connect(f"file:{database_seed}?mode=ro", uri=True) as db:
+                columns = [row[1] for row in db.execute('PRAGMA table_info("credential")')]
+                if not columns:
+                    raise sqlite3.DatabaseError("credential table unavailable")
+                rows = db.execute(
+                    "SELECT " + ", ".join('"' + col.replace('"', '""') + '"' for col in columns)
+                    + ' FROM "credential"'
+                ).fetchall()
+                complete = True
+                for row_index, row in enumerate(rows):
+                    for column, value in zip(columns, row):
+                        location = f"credential[{row_index}].{column}"
+                        if isinstance(value, bytes):
+                            try:
+                                value = value.decode("utf-8", errors="strict")
+                            except UnicodeDecodeError:
+                                complete = False
+                                continue
+                        if not isinstance(value, str) or not value:
+                            continue
+                        if _sensitive_key(column):
+                            entries.append(CredentialEntry("credential_seed", location, "credential", value))
+                        elif value[:1] in ("{", "["):
+                            try:
+                                parsed = json.loads(value)
+                            except (json.JSONDecodeError, RecursionError):
+                                complete = False
+                                continue
+                            complete = _collect_json_inventory(
+                                parsed, entries, "credential_seed", location,
+                            ) and complete
+                        elif _normalized_key_words(column) and "_".join(_normalized_key_words(column)) in _PUBLIC_CREDENTIAL_METADATA:
+                            entries.append(CredentialEntry("credential_seed", location, "public", value))
+                        else:
+                            entries.append(CredentialEntry("credential_seed", location, "unknown", None))
+                            complete = False
+                sources["credential_seed"] = "complete" if complete else "incomplete"
+        except (OSError, sqlite3.Error):
+            sources["credential_seed"] = "incomplete"
+    return CredentialInventory(entries, sources)
 
 
 def collect_sensitive_values(
@@ -706,53 +898,163 @@ def collect_sensitive_values(
     models_catalog: Path | None,
     database_seed: Path | None,
 ) -> list[str]:
-    found: set[str] = set()
-    env_names = set(PROVIDER_ENVS) | set(COPILOT_ENVS) | set(extra_envs) | {"OPENCODE_API_KEY"}
-    for name in env_names:
-        value = host_env.get(name, "")
-        if len(value) >= 8:
-            found.add(value)
+    return list(collect_credential_inventory(
+        host_env, extra_envs, auth, config, models_catalog, database_seed,
+    ).values)
 
-    for path in (auth, config, models_catalog):
-        if not path or not path.is_file():
+
+def _project_payload(value: Any, secrets: tuple[str, ...]) -> tuple[Any, bool, bool]:
+    """Return projected payload, changed flag, and unsafe-key flag."""
+    if isinstance(value, str):
+        changed = redact_sensitive_text(value, list(secrets))
+        return changed, changed != value, False
+    if isinstance(value, list):
+        output = []
+        changed = False
+        unsafe = False
+        for item in value:
+            projected, item_changed, item_unsafe = _project_payload(item, secrets)
+            output.append(projected)
+            changed = changed or item_changed
+            unsafe = unsafe or item_unsafe
+        return output, changed, unsafe
+    if isinstance(value, dict):
+        output: dict[str, Any] = {}
+        changed = False
+        unsafe = False
+        for key, item in value.items():
+            if isinstance(key, str) and _sensitive_key(key):
+                return None, True, True
+            projected, item_changed, item_unsafe = _project_payload(item, secrets)
+            output[key] = projected
+            changed = changed or item_changed
+            unsafe = unsafe or item_unsafe
+        return output, changed, unsafe
+    return value, False, False
+
+
+def project_evidence_event(event: dict[str, Any], inventory: CredentialInventory) -> dict[str, Any]:
+    """Project known protocol fields without rewriting schema/control structure."""
+    protocol = {key: value for key, value in event.items() if key not in {"input", "output", "result", "error", "metadata_tool_call"}}
+    projected = dict(protocol)
+    dispositions: dict[str, dict[str, Any]] = {}
+    for field in ("input", "output", "result", "error", "metadata_tool_call"):
+        if field not in event:
             continue
-        try:
-            parsed = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        if not inventory.complete:
+            dispositions[field] = {"state": "omitted", "reason": "inventory_incomplete", "stage": "transport"}
             continue
-        _collect_json_secrets(parsed, found)
+        value, changed, unsafe_key = _project_payload(event[field], inventory.values)
+        if unsafe_key:
+            dispositions[field] = {"state": "omitted", "reason": "sensitive_key", "stage": "transport"}
+        else:
+            projected[field] = value
+            dispositions[field] = (
+                {"state": "redacted", "reason": "credential_match", "stage": "transport"}
+                if changed else {"state": "exact"}
+            )
+    return {"value": projected, "fields": dispositions}
 
-    if database_seed and database_seed.is_file():
-        try:
-            with sqlite3.connect(f"file:{database_seed}?mode=ro", uri=True) as db:
-                columns = [row[1] for row in db.execute('PRAGMA table_info("credential")')]
-                if columns:
-                    rows = db.execute(
-                        "SELECT " + ", ".join('"' + col.replace('"', '""') + '"' for col in columns)
-                        + ' FROM "credential"'
-                    ).fetchall()
-                    for row in rows:
-                        for column, value in zip(columns, row):
-                            if isinstance(value, bytes):
-                                try:
-                                    value = value.decode("utf-8")
-                                except UnicodeDecodeError:
-                                    continue
-                            if not isinstance(value, str):
-                                continue
-                            if _sensitive_key(column) and len(value) >= 8:
-                                found.add(value)
-                                continue
-                            if value[:1] in ("{", "["):
-                                try:
-                                    parsed = json.loads(value)
-                                except json.JSONDecodeError:
-                                    continue
-                                _collect_json_secrets(parsed, found)
-        except sqlite3.Error:
-            pass
 
-    return sorted(found, key=len, reverse=True)
+def apply_evidence_projection(evidence: dict[str, Any], inventory: CredentialInventory) -> dict[str, Any]:
+    """Apply typed dispositions to bounded event fields before public transport."""
+    result = json.loads(json.dumps(evidence, ensure_ascii=False))
+    incomplete = not inventory.complete
+    for collection in ("events", "nested_tool_calls"):
+        for event in result.get(collection, []):
+            if not isinstance(event, dict):
+                result["metadata_tool_capture_complete"] = False
+                continue
+            fields: dict[str, dict[str, Any]] = {}
+            truncated = list(event.get("truncated_fields") or [])
+            allowed_fields = {
+                "sequence", "completed_sequence", "start_sequence", "parent_sequence", "nested_index",
+                "truncated_fields", "missing_fields", "tool", "registered_tool", "status", "input",
+                "output", "error", "call_id", "hook_id", "session_id", "actor", "message_id",
+                "parent_call_id", "parent_hook_id", "metadata_tool_call",
+            }
+            unknown = set(event) - allowed_fields
+            if unknown:
+                # Unknown event schema/metadata is not recursively passed through.
+                event.clear()
+                event["truncated_fields"] = []
+                event["evidence_safety"] = {
+                    "event": {"state": "omitted", "reason": "unsupported_schema", "stage": "transport"}
+                }
+                result["metadata_tool_capture_complete"] = False
+                continue
+            for field in ("tool", "registered_tool", "call_id", "session_id", "actor", "message_id",
+                          "parent_call_id", "parent_hook_id", "input", "output", "error", "metadata_tool_call"):
+                if field not in event:
+                    continue
+                if incomplete:
+                    event.pop(field, None)
+                    fields[field] = {"state": "omitted", "reason": "inventory_incomplete", "stage": "transport"}
+                    if field not in truncated:
+                        truncated.append(field)
+                    continue
+                raw_value = event[field]
+                if field in truncated:
+                    rendered = raw_value if isinstance(raw_value, str) else json.dumps(raw_value, ensure_ascii=False)
+                    if "tool-result field truncated" in rendered:
+                        fields[field] = {"state": "omitted", "reason": "size_limit", "stage": "capture"}
+                        event.pop(field, None)
+                    elif "upstream-truncated" in rendered:
+                        fields[field] = {"state": "omitted", "reason": "upstream_clipped", "stage": "runner"}
+                        event.pop(field, None)
+                    elif "***REDACTED***" in rendered:
+                        fields[field] = {"state": "redacted", "reason": "credential_match", "stage": "capture"}
+                    else:
+                        fields[field] = {"state": "omitted", "reason": "size_limit", "stage": "capture"}
+                        event.pop(field, None)
+                    result["metadata_tool_capture_complete"] = False
+                    continue
+                decoded = raw_value
+                encoded_representation = isinstance(raw_value, str)
+                if field == "input" and isinstance(raw_value, str):
+                    try:
+                        decoded = json.loads(raw_value)
+                    except (ValueError, RecursionError):
+                        pass
+                elif field in {"output", "error"} and isinstance(raw_value, str):
+                    try:
+                        parsed = json.loads(raw_value)
+                        if isinstance(parsed, (dict, list)):
+                            decoded = parsed
+                    except (ValueError, RecursionError):
+                        pass
+                projected = project_evidence_event({field: decoded}, inventory)
+                disposition = projected["fields"].get(field, {"state": "exact"})
+                if disposition["state"] == "omitted":
+                    event.pop(field, None)
+                    if field not in truncated:
+                        truncated.append(field)
+                    result["metadata_tool_capture_complete"] = False
+                elif disposition["state"] == "redacted":
+                    value = projected["value"].get(field)
+                    if encoded_representation and isinstance(value, (dict, list)):
+                        value = json.dumps(value, ensure_ascii=False, sort_keys=True)
+                    event[field] = value
+                    if field not in truncated:
+                        truncated.append(field)
+                    result["metadata_tool_capture_complete"] = False
+                fields[field] = disposition
+            event["truncated_fields"] = truncated
+            event["evidence_safety"] = fields
+    result["evidence_safety"] = {
+        "schema": "loom-eval-evidence-safety/v1",
+        "policy_version": "source-path-roles/v1",
+        "inventory_complete": inventory.complete,
+        "coverage_complete": bool(inventory.complete and result.get("metadata_tool_capture_complete")),
+    }
+    if incomplete:
+        result["metadata_tool_capture_complete"] = False
+    while len(json.dumps(result, ensure_ascii=False)) > TOOL_RESULT_TOTAL_LIMIT and result.get("events"):
+        result["events"].pop(0)
+        result["omitted_events"] = result.get("omitted_events", 0) + 1
+        result["metadata_tool_capture_complete"] = False
+        result["evidence_safety"]["coverage_complete"] = False
+    return result
 
 
 def sensitive_text_variants(secret: str, *, max_json_depth: int = 3) -> set[str]:
@@ -814,9 +1116,10 @@ def redact_sensitive_values(value: Any, secrets: list[str]) -> Any:
     if isinstance(value, list):
         return [redact_sensitive_values(item, secrets) for item in value]
     if isinstance(value, dict):
+        if any(isinstance(key, str) and _sensitive_key(key) for key in value):
+            return None
         return {
-            redact_sensitive_text(key, secrets) if isinstance(key, str) else key:
-            redact_sensitive_values(item, secrets)
+            key: redact_sensitive_values(item, secrets)
             for key, item in value.items()
         }
     return value
@@ -829,13 +1132,18 @@ TOOL_RESULT_NESTED_CALL_LIMIT = 256
 
 
 def _tool_result_field(value: Any, secrets: list[str], limit: int) -> tuple[str, bool]:
-    # Decode JSONL first, redact before truncating, and also cover secrets inside
-    # JSON-valued output strings or object keys. Never send a clipped credential.
-    value = redact_sensitive_values(value, secrets)
-    text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, sort_keys=True)
-    text = redact_sensitive_text(text, secrets)
+    # Project structured values before encoding; never substitute across encoded
+    # JSON syntax or rename payload keys. Changed text is explicitly non-exact.
+    if isinstance(value, str):
+        text = redact_sensitive_text(value, secrets)
+        changed = text != value
+    else:
+        value, changed, unsafe_key = _project_payload(value, tuple(secrets))
+        if unsafe_key:
+            return "", True
+        text = json.dumps(value, ensure_ascii=False, sort_keys=True)
     if len(text) <= limit:
-        return text, False
+        return text, changed
     marker = "\n[... tool-result field truncated ...]\n"
     retained = limit - len(marker)
     head = retained // 2
@@ -990,6 +1298,8 @@ def extract_tool_result_evidence(raw_stdout: str, secrets: list[str]) -> dict[st
             item[key], clipped = _tool_result_field(value, secrets, limit)
             if clipped:
                 item["truncated_fields"].append(key)
+                if key in {"input", "output", "error"}:
+                    evidence["metadata_tool_capture_complete"] = False
         recent.append(item)
 
     evidence["events"] = list(recent)
@@ -1433,7 +1743,10 @@ def nested_metadata_call_events(
     return nested, nested_tool_capture_complete(tool_results)
 
 
-def transport_tool_result_evidence(result: dict[str, Any], secrets: list[str]) -> dict[str, Any]:
+def transport_tool_result_evidence(
+    result: dict[str, Any], secrets: list[str], inventory: CredentialInventory | None = None,
+) -> dict[str, Any]:
+    inventory = inventory or credential_inventory_from_values(secrets)
     candidate = result.get("tool_result_evidence")
     if candidate is None:
         # Saved eval artifacts intentionally persist the projected result under
@@ -1517,32 +1830,73 @@ def transport_tool_result_evidence(result: dict[str, Any], secrets: list[str]) -
                 for field in event.get("truncated_fields") or []:
                     if field in event:
                         event[field] = "[upstream-truncated field omitted before secret redaction]"
-        evidence = redact_sensitive_values(candidate_for_redaction, secrets)
+        # Do not recursively substitute through runner control/schema fields.
+        # The typed projection below knows which event values are payload and
+        # records any changed selector as non-exact.
+        evidence = candidate_for_redaction
         evidence["upstream_stdout_truncated"] = bool(result.get("stdout_truncated"))
         evidence["upstream_stdout_total_chars"] = result.get("stdout_total_chars")
-        return evidence
+        return apply_evidence_projection(evidence, inventory)
 
     evidence = extract_tool_result_evidence(result.get("stdout", ""), secrets)
     if result.get("stdout_truncated"):
         evidence["upstream_stdout_truncated"] = True
         evidence["upstream_stdout_total_chars"] = result.get("stdout_total_chars")
-    return evidence
+    return apply_evidence_projection(evidence, inventory)
 
 
-def prepare_transport_result(result: dict[str, Any], secrets: list[str]) -> dict[str, Any]:
+def prepare_transport_result(
+    result: dict[str, Any], secrets: list[str], inventory: CredentialInventory | None = None,
+) -> dict[str, Any]:
     # Compute evidence before constructing the public transport result. With an
     # empty secret set, redact_sensitive_values returns its input unchanged, so
     # mutating that object first would erase the runner projection we need.
-    evidence = transport_tool_result_evidence(result, secrets)
-    redacted_value = redact_sensitive_values(result, secrets)
-    redacted = dict(redacted_value) if isinstance(redacted_value, dict) else {}
+    evidence = transport_tool_result_evidence(result, secrets, inventory)
+    redacted: dict[str, Any] = {}
+    transport_fields: dict[str, dict[str, Any]] = {}
+    control_fields = {"exit_code", "stdout_truncated", "stderr_truncated", "stdout_total_chars",
+                      "stderr_total_chars", "infrastructure_error", "reasoning", "reasoning_source"}
+    for key, value in result.items():
+        if key == "tool_result_evidence":
+            continue
+        if key in control_fields:
+            redacted[key] = value
+            continue
+        if not inventory or inventory.complete:
+            projected, changed, unsafe_key = _project_payload(value, tuple(secrets))
+        else:
+            projected, changed, unsafe_key = None, False, True
+        if unsafe_key:
+            transport_fields[key] = {"state": "omitted", "reason": "sensitive_key" if inventory and inventory.complete else "inventory_incomplete", "stage": "transport"}
+        elif changed and key == "stdout":
+            # Raw JSONL is not a safe place for literal replacement: short values
+            # can corrupt its syntax. The separately typed projection remains.
+            transport_fields[key] = {"state": "omitted", "reason": "credential_match", "stage": "transport"}
+        else:
+            redacted[key] = projected
+            transport_fields[key] = (
+                {"state": "redacted", "reason": "credential_match", "stage": "transport"}
+                if changed else {"state": "exact"}
+            )
+    redacted["evidence_safety"] = {
+        "schema": "loom-eval-evidence-safety/v1",
+        "policy_version": "source-path-roles/v1",
+        "inventory_complete": inventory.complete if inventory else True,
+        "fields": transport_fields,
+    }
     # Upstream clipping can split a secret so the remaining prefix/suffix no
     # longer matches the full credential value. Parsed fields remain available,
     # but do not persist a clipped raw event stream when credentials are known.
     if secrets and result.get("stdout_truncated"):
-        redacted["stdout"] = "[upstream-truncated stdout omitted before secret redaction]"
+        redacted.pop("stdout", None)
+        redacted["evidence_safety"]["fields"]["stdout"] = {
+            "state": "omitted", "reason": "upstream_clipped", "stage": "runner",
+        }
     if secrets and result.get("stderr_truncated"):
-        redacted["stderr"] = "[upstream-truncated stderr omitted before secret redaction]"
+        redacted.pop("stderr", None)
+        redacted["evidence_safety"]["fields"]["stderr"] = {
+            "state": "omitted", "reason": "upstream_clipped", "stage": "runner",
+        }
     # The transport-owned full-stream projection uses a distinct schema/name.
     # Do not duplicate it in the persisted public result after consumption.
     redacted.pop("tool_result_evidence", None)
@@ -1644,20 +1998,48 @@ def invoke_container(
     skill: str | None = None,
     network: str | None = None,
     reasoning: str | None = None,
+    normal_observation_payload_policy: str = NORMAL_PAYLOAD_POLICY_OMIT,
 ) -> dict[str, Any]:
     node_modules = prepare_node_modules_mount(
         project,
         ROOT / "node_modules" if mount_node_modules else None,
     )
     host_env = host_environment_for_transport(transport)
-    secrets = collect_sensitive_values(
+    if normal_invoke_observations_enabled():
+        host_env["OPENCODE_EVAL_HOST_OBSERVATIONS"] = "1"
+        host_env["OPENCODE_EVAL_OBSERVATIONS"] = "1"
+        host_env["OPENCODE_EVAL_NORMAL_OBSERVATION_PAYLOAD_POLICY"] = (
+            normal_observation_payload_policy
+            if normal_observation_payload_policy in {
+                NORMAL_PAYLOAD_POLICY_OMIT, NORMAL_PAYLOAD_POLICY_FIXTURE
+            }
+            else NORMAL_PAYLOAD_POLICY_OMIT
+        )
+    inventory = collect_credential_inventory(
         host_env,
         extra_envs,
         auth,
         config,
         models_catalog,
         database_seed,
+        config_root,
     )
+    secrets = list(inventory.values)
+    policy = inventory.private_policy()
+    if not normal_invoke_observations_enabled() and any(
+        entry.role == "credential" and entry.source != "env" for entry in inventory.entries
+    ):
+        # The legacy observer runs inside the evaluated process. Do not expose
+        # seed-file credential material to it through an inherited environment;
+        # disable that capture until the external trusted collector owns policy delivery.
+        policy = {**policy, "complete": False, "values": []}
+    policy_bytes = json.dumps(policy, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    # An incomplete/oversize inventory disables capture in the hook; it is
+    # never represented as a complete empty credential set.
+    if len(policy_bytes) > 128_000:
+        policy = {**policy, "complete": False, "values": []}
+        policy_bytes = json.dumps(policy, separators=(",", ":")).encode("utf-8")
+    host_env["OPENCODE_EVAL_REDACTION_VALUES"] = policy_bytes.decode("utf-8")
     runner_bin = os.environ.get("OPENCODE_EVAL_RUNNER_BIN") or shutil.which("opencode-eval-runner")
     if runner_bin:
         with tempfile.TemporaryDirectory(prefix="loom-eval-runner-cli-") as tmp:
@@ -1707,6 +2089,10 @@ def invoke_container(
                 command += ["--mount", f"{node_modules}:/workspace/node_modules:ro"]
             for name in extra_envs:
                 command += ["--env", name]
+            if normal_invoke_observations_enabled():
+                for name in ("OPENCODE_EVAL_HOST_OBSERVATIONS", "OPENCODE_EVAL_OBSERVATIONS", "OPENCODE_EVAL_REDACTION_VALUES", "OPENCODE_EVAL_NORMAL_OBSERVATION_PAYLOAD_POLICY"):
+                    if name not in extra_envs:
+                        command += ["--env", name]
 
             proc = subprocess.run(
                 command,
@@ -1755,7 +2141,7 @@ def invoke_container(
                     "stdout": redacted_prefix(proc.stdout, secrets, 100000),
                     "infrastructure_error": True,
                 }, secrets)
-            prepared = prepare_transport_result(result, secrets)
+            prepared = prepare_transport_result(result, secrets, inventory)
             prepared = attach_observer_capture(prepared, project, secrets)
             return enforce_reasoning_contract(prepared, reasoning)
 
@@ -1838,6 +2224,12 @@ def invoke_container(
         if transport == "github-copilot-cli":
             pass_env(command, COPILOT_ENVS, host_env)
         pass_env(command, extra_envs, host_env)
+        if normal_invoke_observations_enabled():
+            for name in ("OPENCODE_EVAL_HOST_OBSERVATIONS", "OPENCODE_EVAL_OBSERVATIONS", "OPENCODE_EVAL_REDACTION_VALUES", "OPENCODE_EVAL_NORMAL_OBSERVATION_PAYLOAD_POLICY"):
+                if host_env.get(name) and name not in extra_envs:
+                    command += ["--env", name]
+        else:
+            command += ["--env", "OPENCODE_EVAL_REDACTION_VALUES"]
         command.append(image)
 
         proc = subprocess.run(
@@ -1877,7 +2269,7 @@ def invoke_container(
                 "stdout": "",
                 "infrastructure_error": True,
             }, secrets)
-        prepared = prepare_transport_result(result, secrets)
+        prepared = prepare_transport_result(result, secrets, inventory)
         prepared = attach_observer_capture(prepared, project, secrets)
         return enforce_reasoning_contract(prepared, reasoning)
 
@@ -3466,6 +3858,13 @@ def run_case(
         )
         target_seconds = time.perf_counter() - target_started
         target_error = transport_error(target)
+        target_safety = target.get("evidence_safety")
+        target_fields = target_safety.get("fields") if isinstance(target_safety, dict) else None
+        if not target_error and isinstance(target_fields, dict) and any(
+            isinstance(target_fields.get(field), dict) and target_fields[field].get("state") != "exact"
+            for field in ("text", "actions", "tools", "skills_loaded")
+        ):
+            target_error = "non-evidence: required transport payload was redacted or omitted"
         print(
             f"{case_label} target {'ERROR' if target_error else 'done'} in {target_seconds:.1f}s",
             flush=True,
@@ -3528,6 +3927,12 @@ def run_case(
             )
             judge_seconds = time.perf_counter() - judge_started
             judge_error = transport_error(judge_result)
+            judge_safety = judge_result.get("evidence_safety")
+            judge_fields = judge_safety.get("fields") if isinstance(judge_safety, dict) else None
+            if not judge_error and isinstance(judge_fields, dict) and (
+                isinstance(judge_fields.get("text"), dict) and judge_fields["text"].get("state") != "exact"
+            ):
+                judge_error = "non-evidence: judge response was redacted or omitted"
             print(
                 f"{case_label} judge {'ERROR' if judge_error else 'done'} in {judge_seconds:.1f}s",
                 flush=True,

@@ -1,0 +1,37 @@
+{
+  "skill": "design-validation",
+  "version": "2.0.0",
+  "shape": 1,
+  "cases": [
+    {
+      "id": "DESIGN-VALIDATION-CRAFT-01",
+      "name": "whole-journey-not-isolated-polish",
+      "prompt": "Assess the supplied validation evidence; do not claim to run the app. Accepted design for a monitoring console says quiet oversight and preserved orientation after interruption. Build r12 was observed in a browser: each panel is legible and actions work, but every background refresh triggers a toast over the selected job, and returning from detail resets selection. The report says PASS because all buttons work and screenshots look polished. What is your finding and next check?",
+      "trap": "Functional conformance and polished isolated screenshots hide a concrete violation of accepted whole-experience direction.",
+      "expectations": [
+        "Identifies the interruption and lost-orientation failures against accepted intent, citing the supplied observation boundary.",
+        "Separates implementation drift from any unresolved design decision and gives concrete correction ownership.",
+        "Requires re-exercising the affected refresh/detail/return path after correction rather than reusing the old PASS."
+      ],
+      "negative_expectations": [
+        "Do not approve based solely on working buttons or individual screenshots.",
+        "Do not claim personal observation of build r12 or introduce an arbitrary taste score."
+      ]
+    },
+    {
+      "id": "DESIGN-VALIDATION-LIMITS-01",
+      "name": "missing-style-authority-is-not-invented",
+      "prompt": "A developer submits source code and a static mockup for a functioning form. There is no accepted visual-direction document, no browser session, and no keyboard or screen-reader evidence. You dislike its rounded corners and want a more expressive brand. Assess what can and cannot be concluded from the available evidence.",
+      "trap": "The validator either invents an aesthetic acceptance bar or reports unobserved runtime behavior as passing.",
+      "expectations": [
+        "Limits claims to source/mockup inspection and identifies missing material interaction evidence.",
+        "Does not label personal aesthetic preferences as deviations from nonexistent accepted direction.",
+        "Keeps optional visual recommendations separate from evidence-backed usability or accessibility concerns."
+      ],
+      "negative_expectations": [
+        "Do not issue an unqualified runtime/accessibility PASS.",
+        "Do not block solely on a preferred brand or corner radius."
+      ]
+    }
+  ]
+}
