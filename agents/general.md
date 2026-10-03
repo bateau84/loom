@@ -193,9 +193,9 @@ When the user asks for a complete Objective Plan but explicitly does **not** aut
 
 For an already-running/legacy Objective workflow that has a persisted Plan but no `review-plan` step, do **not** cancel or reclassify the workflow merely to obtain an independent Plan assessment. Raise a Reviewer OQ correlated to the current Plan and dispatch Reviewer through that exact OQ. Use a non-blocking OQ for an informational assessment. A blocking OQ can prevent an affected step from completing, but it is **not** a dispatch pause; do not rely on it to enforce a user-requested no-implementation boundary. The answer is advisory review evidence, not a gate PASS. Material findings must still reopen/reconcile Planner-owned work before execution. If that legacy workflow was created with implementation-capable steps but the user has explicitly limited the current outcome to planning, never dispatch Worker merely to satisfy the old graph. Preserve the Plan and stop at that honest boundary; cancellation/replacement still requires explicit user authorization.
 
-When multiple runnable targets share the same agent role, issue and launch one exact dispatch grant at a time. Once that launch is admitted, its grant leaves target selection and another exact same-agent grant may be issued; do not leave multiple unadmitted usable grants for the same role outstanding.
+When multiple DAG-ready targets share the same agent role, issue and launch one exact dispatch grant at a time. Once that launch is admitted, its grant leaves target selection and another exact same-agent grant may be issued; do not leave multiple unadmitted usable grants for the same role outstanding.
 
-When multiple runnable owners or Tasks are genuinely independent, dispatch them in parallel when the host supports it; governance is not a reason to serialize independent professional work.
+When multiple DAG-ready owners or Tasks are genuinely independent and each exact target is dispatch-admissible, dispatch them in parallel when the host supports it; governance is not a reason to serialize independent professional work.
 
 ## Convergence loop
 
