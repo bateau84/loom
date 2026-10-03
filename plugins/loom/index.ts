@@ -20,6 +20,7 @@ import {
   renderStatusMarkdown,
   statusPresentation,
   writeStatusArtifact,
+  type StepReadinessObservation,
 } from "./status-view"
 import { createDashboardPublisher, runtimeInstanceIsLive } from "./dashboard"
 import { ensureDashboardServerLifecycle } from "./dashboard-lifecycle"
@@ -269,6 +270,61 @@ function assertPlannedTaskAdmission(
     throw new Error("Task admission denied: compiled Task DAG is stale against the current Plan generation.")
   }
   assertWaveClaimForTasks(work, workflow.id, generation, taskIds)
+}
+
+function requiresReviewedPlannedDispatchBinding(
+  workflow: Workflow,
+  step: Workflow["steps"][number],
+) {
+  return (
+    step.kind !== "wait" &&
+    Boolean(
+      step.task ||
+      step.id.startsWith("task-review:") ||
+      (step.id === "review-implementation" && plannedTaskSteps(workflow).length > 0),
+    )
+  )
+}
+
+function assertStepDispatchAdmission(
+  workflow: Workflow,
+  work: WorkHierarchy | undefined,
+  step: Workflow["steps"][number],
+) {
+  assertPlannedTaskAdmission(workflow, work, step)
+  if (!requiresReviewedPlannedDispatchBinding(workflow, step)) return
+
+  const binding = workflow.work
+  const plan = work && binding
+    ? workPlanContext(work, undefined, "focused", binding.generation)
+    : null
+  const taskIds = plannedTaskSteps(workflow).map((candidate) => candidate.task!.id)
+  const reviewedRevision = binding?.reviewedPlanRevision
+  const currentTaskFingerprint = work && binding
+    ? workflowTaskSemanticFingerprint(work, taskIds, binding.generation)
+    : undefined
+  const reviewedTaskFingerprint = work && binding && Number.isSafeInteger(reviewedRevision)
+    ? workflowTaskSemanticFingerprint(work, taskIds, binding.generation, reviewedRevision)
+    : undefined
+
+  if (
+    !binding ||
+    !plan ||
+    plan.invalidated ||
+    taskIds.length === 0 ||
+    !Number.isSafeInteger(reviewedRevision) ||
+    reviewedRevision! > plan.revision ||
+    !binding.reviewedPlanFingerprint ||
+    !currentTaskFingerprint ||
+    !reviewedTaskFingerprint ||
+    reviewedTaskFingerprint !== currentTaskFingerprint ||
+    binding.taskPlanRevision !== plan.revision ||
+    binding.taskPlanFingerprint !== currentTaskFingerprint
+  ) {
+    throw new Error(
+      "Dispatch admission denied: the reviewed claimed-Wave contract or current Task DAG no longer matches.",
+    )
+  }
 }
 
 const reportProducerAgents = new Set([
@@ -2841,6 +2897,105 @@ async function readQuestions(ctx: any, workflowId: string): Promise<OpenQuestion
   return questions.filter((question): question is OpenQuestion => Boolean(question))
 }
 
+async function statusStepReadiness(
+  ctx: any,
+  workflow: Workflow,
+  questions: OpenQuestion[],
+  work: WorkHierarchy | undefined,
+  budget: BudgetState,
+  limits: ExecutionLimits,
+): Promise<Record<string, StepReadinessObservation>> {
+  const currentRunnable = runnable(workflow)
+  const currentTargetCounts = new Map<string, number>()
+
+  for (const step of currentRunnable) {
+    currentTargetCounts.set(step.agent, (currentTargetCounts.get(step.agent) ?? 0) + 1)
+  }
+  for (const question of questions) {
+    if (
+      question.status === "closed" ||
+      question.answer ||
+      question.requiredAuthority === "user" ||
+      question.requiredAuthority === "general"
+    ) {
+      continue
+    }
+    currentTargetCounts.set(
+      question.requiredAuthority,
+      (currentTargetCounts.get(question.requiredAuthority) ?? 0) + 1,
+    )
+  }
+
+  const result: Record<string, StepReadinessObservation> = {}
+  for (const step of currentRunnable) {
+    let dispatch: StepReadinessObservation["dispatch"] = { state: "ready" }
+
+    try {
+      assertStepDispatchAdmission(workflow, work, step)
+    } catch (error) {
+      dispatch = {
+        state: "blocked",
+        reason: error instanceof Error ? error.message : String(error),
+      }
+    }
+
+    if (dispatch.state === "ready") {
+      const probeState = structuredClone(budget)
+      const probe = recordDispatch({
+        state: probeState,
+        limits,
+        dispatchID: `status-probe:${workflow.id}:${step.id}:${workflow.revision}`,
+        key: `step:${step.id}`,
+        agent: step.agent,
+      })
+      if (!probe.allowed) {
+        dispatch = {
+          state: "blocked",
+          reason: probe.reason ?? "Dispatch budget admission would deny this target.",
+        }
+      }
+    }
+
+    if (dispatch.state === "ready" && (currentTargetCounts.get(step.agent) ?? 0) > 1) {
+      dispatch = {
+        state: "unknown",
+        reason:
+          `Multiple current targets are owned by ${step.agent}; exact dispatch-grant issuance must revalidate same-agent grant selection.`,
+      }
+    }
+
+    const attempt = step.attempt ?? 0
+    const binding = (await ctx.storage.get(
+      stepSessionBindingKey(workflow.id, step.id, attempt),
+    )) as StepSessionBinding | undefined
+    const bindingCurrent = Boolean(
+      binding &&
+      binding.schemaVersion === 1 &&
+      binding.workflowId === workflow.id &&
+      binding.stepId === step.id &&
+      binding.attempt === attempt &&
+      binding.agent === step.agent &&
+      await exactStepAttemptBinding(ctx, binding.sessionID, workflow.id, step.id) &&
+      await ctx.storage.get(`session-deletion-fence/${binding.sessionID}`) === undefined,
+    )
+
+    result[step.id] = {
+      dispatch,
+      execution: bindingCurrent
+        ? {
+            state: "unknown",
+            evidence: "current_attachment",
+            attachedAt: binding!.attachedAt,
+          }
+        : {
+            state: "unknown",
+          },
+    }
+  }
+
+  return result
+}
+
 async function saveQuestion(ctx: any, question: OpenQuestion) {
   await ctx.storage.set(oqKey(question.workflowId, question.id), question)
 }
@@ -2884,6 +3039,7 @@ function questionState(questions: OpenQuestion[], workflow: Workflow) {
   return {
     unresolved: unresolved.map((question) => ({
       id: question.id,
+      question: question.question,
       status: question.status,
       responder: question.requiredAuthority,
       blocking: question.blocking,
@@ -5367,7 +5523,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
       addLoomTool({
         name: "status",
-        description: "Inspect Loom progress, current/next work, blockers, OQs, verification, and budget. Compact by default; detail=true returns internals. Interactive status is available independently through Loom's stable dashboard workflow URL exposed in the sidebar; the tool also returns browser-safe presentation metadata as a convenience. OpenCode Desktop browser preview is optional metadata only and must not be invoked merely because presentation metadata exists. Presentation availability never blocks or alters Loom workflow state.",
+        description: "Inspect Loom lifecycle and control-flow readiness: structural/DAG readiness, dispatch admission, execution evidence without inferred liveness, completion/PASS constraints, user attention, OQs/reconciliation, verification, and budget. Compact by default; detail=true returns internals. Interactive status is available independently through Loom's stable dashboard workflow URL exposed in the sidebar; the tool also returns browser-safe presentation metadata as a convenience. OpenCode Desktop browser preview is optional metadata only and must not be invoked merely because presentation metadata exists. Presentation availability never blocks or alters Loom workflow state.",
         input: {
           type: "object",
           properties: {
@@ -5437,6 +5593,14 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             boundaryAfter = page.next
           } while (boundaryAfter)
 
+          const stepReadiness = await statusStepReadiness(
+            ctx,
+            workflow,
+            questions,
+            work,
+            budget,
+            limits,
+          )
           const view = buildStatusView(
             workflow,
             questions,
@@ -5445,6 +5609,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             acceptance,
             knowledge,
             work,
+            stepReadiness,
           )
           const artifact = await writeStatusArtifact(runtime, view).catch(() => undefined)
           const presentation = statusPresentation(artifact)
@@ -5507,7 +5672,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             content: renderToolOutput({
               summary: view,
               workflow,
-              runnable: runnable(workflow).map((step) => ({ id: step.id, agent: step.agent })),
+              dagRunnable: runnable(workflow).map((step) => ({ id: step.id, agent: step.agent })),
               questions: questionState(questions, workflow),
               verification: workflow.verification ?? [],
               budget: { limits, state: budget },
@@ -5915,7 +6080,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               evidenceBound,
               outcome: resolvedOutcome,
               blocked: workflow.steps.filter((candidate) => candidate.status === "failed").map((candidate) => candidate.id),
-              runnable: runnable(workflow).map((candidate) => ({ id: candidate.id, agent: candidate.agent })),
+              dagRunnable: runnable(workflow).map((candidate) => ({ id: candidate.id, agent: candidate.agent })),
               questions: questionState(questions, workflow),
             }),
           }
@@ -6117,7 +6282,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               content: renderToolOutput({
                 reopened: stepId,
                 reset,
-                runnable: runnable(workflow).map((candidate) => ({ id: candidate.id, agent: candidate.agent })),
+                dagRunnable: runnable(workflow).map((candidate) => ({ id: candidate.id, agent: candidate.agent })),
               }),
             }
           } catch (error) {
@@ -6129,7 +6294,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       addLoomTool({
         name: "oq_raise",
         description:
-          "Raise a shared peer OQ to any Loom role or the user. For a user-owned Plan Task wait, General raises a blocking OQ with its exact taskId and sole Task consumerStepId; only the actual user answer recorded with source=user resolves that wait. Other planned Task questions inherit their exact Task context. Ask the role that owns or can best answer the specific question; an OQ answer does not substitute for an independent gate.",
+          "Raise a shared peer OQ to any Loom role or the user. A blocking OQ must be self-contained enough for a fresh session to understand what is unresolved, why that affected boundary cannot proceed, and what kind of answer would satisfy the question; do not make a particular external source part of the OQ semantic unless accepted authority actually requires that source. For a user-owned Plan Task wait, General raises a blocking OQ with its exact taskId and sole Task consumerStepId; only the actual user answer recorded with source=user resolves that wait. Other planned Task questions inherit their exact Task context. Ask the role that owns or can best answer the specific question; an OQ answer does not substitute for an independent gate.",
         input: {
           type: "object",
           properties: {
@@ -9208,17 +9373,10 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 if (!runnable(current).some((candidate) => candidate.id === value.stepId)) {
                   throw new Error("Step is no longer runnable.")
                 }
-                if (
-                  (step.task ||
-                    step.id.startsWith("task-review:") ||
-                    (step.id === "review-implementation" && plannedTaskSteps(current).length > 0)) &&
-                  step.kind !== "wait"
-                ) {
-                  const work = current.work
-                    ? await readWork(ctx, current.work.objectiveId)
-                    : undefined
-                  assertPlannedTaskAdmission(current, work, step)
-                }
+                const work = current.work
+                  ? await readWork(ctx, current.work.objectiveId)
+                  : undefined
+                assertStepDispatchAdmission(current, work, step)
               } else {
                 const question = (await ctx.storage.get(
                   oqKey(value.workflowId, value.questionId!),
@@ -9468,14 +9626,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                   )
                 }
 
-                if (
-                  (step.task ||
-                    step.id.startsWith("task-review:") ||
-                    (step.id === "review-implementation" && plannedTaskSteps(workflow).length > 0)) &&
-                  step.kind !== "wait"
-                ) {
-                  assertPlannedTaskAdmission(workflow, work, step)
-                }
+                assertStepDispatchAdmission(workflow, work, step)
               } else {
                 const question = (await ctx.storage.get(
                   oqKey(value.workflowId, value.questionId!),
@@ -11483,35 +11634,9 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             return stale("the selected step is no longer the exact current runnable attempt")
           }
           try {
-            assertPlannedTaskAdmission(currentWorkflow, currentWork, currentStep)
+            assertStepDispatchAdmission(currentWorkflow, currentWork, currentStep)
           } catch (error) {
             return stale(error instanceof Error ? error.message : String(error))
-          }
-          if (
-            currentStep.task || currentStep.id.startsWith("task-review:") ||
-            (currentStep.id === "review-implementation" && plannedTaskSteps(currentWorkflow).length > 0)
-          ) {
-            const binding = currentWorkflow.work
-            const plan = currentWork && binding
-              ? workPlanContext(currentWork, undefined, "focused", binding.generation)
-              : null
-            const taskIds = plannedTaskSteps(currentWorkflow).map((candidate) => candidate.task!.id)
-            const reviewedRevision = binding?.reviewedPlanRevision
-            const currentTaskFingerprint = currentWork && binding
-              ? workflowTaskSemanticFingerprint(currentWork, taskIds, binding.generation)
-              : undefined
-            const reviewedTaskFingerprint = currentWork && binding && Number.isSafeInteger(reviewedRevision)
-              ? workflowTaskSemanticFingerprint(currentWork, taskIds, binding.generation, reviewedRevision)
-              : undefined
-            if (!binding || !plan || plan.invalidated || taskIds.length === 0 ||
-                !Number.isSafeInteger(reviewedRevision) || reviewedRevision! > plan.revision ||
-                !binding.reviewedPlanFingerprint ||
-                !currentTaskFingerprint || !reviewedTaskFingerprint ||
-                reviewedTaskFingerprint !== currentTaskFingerprint ||
-                binding.taskPlanRevision !== plan.revision ||
-                binding.taskPlanFingerprint !== currentTaskFingerprint) {
-              return stale("the reviewed claimed-Wave contract or current Task DAG no longer matches")
-            }
           }
         } else {
           const currentQuestion = await ctx.storage.get(

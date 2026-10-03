@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.util
 import json
 import os
 import re
@@ -395,6 +396,68 @@ def write_project_config(project: Path, agent: str) -> None:
     )
 
 
+OBSERVER_FILENAME = ".loom-eval-tool-observer.jsonl"
+NORMAL_INVOKE_OBSERVER_FILENAME = ".loom-normal-invoke-diagnostic.jsonl"
+NORMAL_PAYLOAD_POLICY_OMIT = "omit-opaque-payloads/v1"
+NORMAL_PAYLOAD_POLICY_FIXTURE = "synthetic-secret-free-fixture/v1"
+
+
+def normal_invoke_observations_enabled() -> bool:
+    return os.environ.get("OPENCODE_EVAL_NORMAL_OBSERVATIONS") == "1"
+
+
+def parse_normal_invoke_diagnostic(raw: str | bytes) -> dict[str, Any]:
+    parser_path = ROOT / "scripts" / "normal_invoke_observation.py"
+    spec = importlib.util.spec_from_file_location("loom_normal_invoke_observation", parser_path)
+    if not spec or not spec.loader:
+        return {"schema": "loom-normal-invoke-diagnostic/v1", "diagnostic_only": True,
+                "evidence_eligible": False, "capture_valid": False, "events": [],
+                "reason": "parser_unavailable"}
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.parse_diagnostic_capture(raw)
+
+
+def attach_observer_capture(
+    result: dict[str, Any], project: Path, secrets: list[str]
+) -> dict[str, Any]:
+    """Replace runtime result projection only when a complete hook ledger exists."""
+    legacy_observer_enabled = (project / ".opencode" / "plugins" / "eval-tool-observer.ts").is_file()
+    normal_observer_enabled = normal_invoke_observations_enabled()
+    if not legacy_observer_enabled and not normal_observer_enabled:
+        return result
+    redacted_result = dict(result)
+    redacted_result.pop("tool_result_evidence", None)
+    if legacy_observer_enabled:
+        capture_path = project / OBSERVER_FILENAME
+        try:
+            if capture_path.stat().st_size > TOTAL_OBSERVER_BYTES_LIMIT:
+                raw_capture = ""
+            else:
+                raw_capture = capture_path.read_text(encoding="utf-8")
+        except OSError:
+            raw_capture = ""
+        capture = capture_observer_tool_result_evidence(
+            raw_capture,
+            secrets,
+            outer_stdout=str(result.get("stdout") or ""),
+            stdout_truncated=bool(result.get("stdout_truncated")),
+        )
+        capture["capture_file_present"] = bool(raw_capture)
+        redacted_result["observed_tool_results"] = capture
+    if normal_observer_enabled:
+        normal_path = project / NORMAL_INVOKE_OBSERVER_FILENAME
+        try:
+            normal_text = normal_path.read_bytes() if normal_path.is_file() and normal_path.stat().st_size <= 4_000_000 else b""
+        except OSError:
+            normal_text = b""
+        diagnostic = redact_sensitive_values(parse_normal_invoke_diagnostic(normal_text), secrets)
+        # This channel is diagnostic-only and deliberately never participates
+        # in action/result scoring or evidence eligibility.
+        redacted_result["normal_invoke_diagnostic"] = diagnostic
+    return redacted_result
+
+
 def setup_projects(case: dict[str, Any]) -> tuple[Path, Path, Path]:
     temp = Path(tempfile.mkdtemp(prefix="loom-eval-" + case["id"].lower() + "-"))
     target_project = temp / "target"
@@ -421,6 +484,14 @@ def setup_projects(case: dict[str, Any]) -> tuple[Path, Path, Path]:
             if source.stem == case["agent"]:
                 agent_text = promote_agent(agent_text)
             (target_oc / "agents" / source.name).write_text(agent_text, encoding="utf-8")
+        if normal_invoke_observations_enabled():
+            normal_plugin = target_oc / "plugins" / "loom-normal-invoke-observer.ts"
+            normal_plugin.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(ROOT / "scripts" / "fixtures" / "loom-normal-invoke-observer.ts", normal_plugin)
+        else:
+            observer_plugin = target_oc / "plugins" / "eval-tool-observer.ts"
+            observer_plugin.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(ROOT / "scripts" / "fixtures" / "eval-tool-observer.ts", observer_plugin)
     else:
         source_agent = (ROOT / "agents" / (case["agent"] + ".md")).read_text(encoding="utf-8")
         if case["execution"] == "conversation-response":
@@ -627,42 +698,196 @@ def pass_env(command: list[str], names: tuple[str, ...] | list[str], host_env: d
             command += ["--env", name]
 
 
-def _sensitive_key(name: str) -> bool:
-    lowered = name.lower().replace("-", "_")
-    if lowered == "key" or lowered.endswith("_key"):
-        return True
-    return any(
-        token in lowered
-        for token in (
-            "api_key",
-            "apikey",
-            "token",
-            "secret",
-            "password",
-            "credential",
-            "access",
-            "refresh",
-            "authorization",
-            "cookie",
-        )
+class CredentialEntry:
+    def __init__(self, source: str, location: str, role: str, value: str | None):
+        self.source = source
+        self.location = location
+        self.role = role
+        self.value = value
+
+
+class CredentialInventory:
+    def __init__(self, entries: list[CredentialEntry], sources: dict[str, str]):
+        self.entries = tuple(entries)
+        self.sources = dict(sources)
+        self.complete = all(state in {"complete", "not_selected"} for state in sources.values())
+        self.values = tuple(sorted({
+            entry.value for entry in entries
+            if entry.role == "credential" and entry.value
+        }, key=len, reverse=True))
+
+    def private_policy(self) -> dict[str, Any]:
+        return {
+            "schema": "loom-eval-credential-inventory/v1",
+            "policy_version": "source-path-roles/v1",
+            "complete": self.complete,
+            "sources": dict(self.sources),
+            "values": list(self.values) if self.complete else [],
+        }
+
+    def entries_as_tuples(self) -> set[tuple[str, str, str, str | None]]:
+        return {(item.source, item.location, item.role, item.value) for item in self.entries}
+
+
+def credential_inventory_from_values(values: list[str]) -> CredentialInventory:
+    """Build a complete private matcher inventory for focused synthetic tests."""
+    return CredentialInventory(
+        [CredentialEntry("synthetic", f"value.{index}", "credential", value) for index, value in enumerate(values)],
+        {"synthetic": "complete"},
     )
 
 
-def _collect_json_secrets(value: Any, found: set[str], *, sensitive: bool = False) -> None:
+def _normalized_key_words(name: str) -> list[str]:
+    # Split lower-to-upper and acronym-to-word boundaries before folding case.
+    camel = re.sub(r"([A-Z]+)([A-Z][a-z])", r"\1_\2", name)
+    camel = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", camel)
+    return re.findall(r"[a-z0-9]+", camel.lower())
+
+
+def _sensitive_key(name: str) -> bool:
+    # Match credential fields as words rather than substrings: e.g.
+    # ``accessibility`` and ``max_tokens`` are ordinary settings, while
+    # ``access_token`` and ``api-key`` identify credentials.
+    parts = _normalized_key_words(name)
+    if not parts:
+        return False
+    normalized = "_".join(parts)
+    if normalized.endswith("_key") or normalized in {"key", "apikey"}:
+        return True
+    if normalized.endswith("_token") or normalized == "token":
+        return True
+    if any(
+        normalized == field or normalized.endswith("_" + field)
+        for field in ("secret", "password", "credential", "authorization", "cookie")
+    ):
+        return True
+    return normalized in {"access", "refresh"} or normalized.endswith(
+        ("_access_token", "_refresh_token")
+    )
+
+
+_PUBLIC_CREDENTIAL_METADATA = {"type", "provider", "id", "scope", "context"}
+
+
+def _collect_json_inventory(
+    value: Any,
+    entries: list[CredentialEntry],
+    source: str,
+    location: str = "",
+    *,
+    in_credential_object: bool = False,
+) -> bool:
+    """Collect only classified leaves; report unsupported credential descendants."""
+    complete = True
     if isinstance(value, dict):
         for key, child in value.items():
-            _collect_json_secrets(
-                child,
-                found,
-                sensitive=sensitive or _sensitive_key(str(key)),
-            )
-        return
+            key_text = str(key)
+            child_location = f"{location}.{key_text}" if location else key_text
+            normalized = "_".join(_normalized_key_words(key_text))
+            credential_container = in_credential_object or normalized in {"credential", "credentials"}
+            if isinstance(child, str) and _sensitive_key(key_text) and child:
+                entries.append(CredentialEntry(source, child_location, "credential", child))
+            elif credential_container and normalized in _PUBLIC_CREDENTIAL_METADATA and isinstance(child, str):
+                entries.append(CredentialEntry(source, child_location, "public", child))
+            elif credential_container and not _sensitive_key(key_text):
+                entries.append(CredentialEntry(source, child_location, "unknown", None))
+                complete = False
+                if isinstance(child, (dict, list)):
+                    complete = _collect_json_inventory(
+                        child, entries, source, child_location,
+                        in_credential_object=True,
+                    ) and complete
+            else:
+                complete = _collect_json_inventory(
+                    child, entries, source, child_location,
+                    in_credential_object=credential_container,
+                ) and complete
+        return complete
     if isinstance(value, list):
-        for child in value:
-            _collect_json_secrets(child, found, sensitive=sensitive)
-        return
-    if sensitive and isinstance(value, str) and len(value) >= 8:
-        found.add(value)
+        for index, child in enumerate(value):
+            complete = _collect_json_inventory(
+                child, entries, source, f"{location}[{index}]",
+                in_credential_object=in_credential_object,
+            ) and complete
+        return complete
+    return True
+
+
+def collect_credential_inventory(
+    host_env: dict[str, str], extra_envs: list[str], auth: Path | None,
+    config: Path | None, models_catalog: Path | None, database_seed: Path | None,
+    config_root: Path | None = None, *, runner_defaults_known: bool = False,
+) -> CredentialInventory:
+    entries: list[CredentialEntry] = []
+    sources: dict[str, str] = {}
+    env_names = set(PROVIDER_ENVS) | set(COPILOT_ENVS) | {"OPENCODE_API_KEY"}
+    env_names.update(name for name in extra_envs if _sensitive_key(name))
+    for name in sorted(env_names):
+        value = host_env.get(name, "")
+        if value:
+            entries.append(CredentialEntry("env", name, "credential", value))
+    sources["env"] = "complete"
+    if config_root is not None or host_env.get("OPENCODE_CONFIG_DIR") or not runner_defaults_known:
+        # The runner resolves files and defaults under this directory; until its
+        # complete source adapter participates, do not treat selected config as empty.
+        sources["config_root"] = "incomplete"
+    else:
+        sources["config_root"] = "not_selected"
+
+    for source, path in (("auth", auth), ("config", config), ("models", models_catalog)):
+        if path is None:
+            sources[source] = "not_selected"
+            continue
+        try:
+            parsed = json.loads(path.read_text(encoding="utf-8"))
+            sources[source] = "complete" if _collect_json_inventory(parsed, entries, source) else "incomplete"
+        except (OSError, UnicodeError, json.JSONDecodeError, RecursionError):
+            sources[source] = "incomplete"
+
+    if database_seed is None:
+        sources["credential_seed"] = "not_selected"
+    else:
+        try:
+            with sqlite3.connect(f"file:{database_seed}?mode=ro", uri=True) as db:
+                columns = [row[1] for row in db.execute('PRAGMA table_info("credential")')]
+                if not columns:
+                    raise sqlite3.DatabaseError("credential table unavailable")
+                rows = db.execute(
+                    "SELECT " + ", ".join('"' + col.replace('"', '""') + '"' for col in columns)
+                    + ' FROM "credential"'
+                ).fetchall()
+                complete = True
+                for row_index, row in enumerate(rows):
+                    for column, value in zip(columns, row):
+                        location = f"credential[{row_index}].{column}"
+                        if isinstance(value, bytes):
+                            try:
+                                value = value.decode("utf-8", errors="strict")
+                            except UnicodeDecodeError:
+                                complete = False
+                                continue
+                        if not isinstance(value, str) or not value:
+                            continue
+                        if _sensitive_key(column):
+                            entries.append(CredentialEntry("credential_seed", location, "credential", value))
+                        elif value[:1] in ("{", "["):
+                            try:
+                                parsed = json.loads(value)
+                            except (json.JSONDecodeError, RecursionError):
+                                complete = False
+                                continue
+                            complete = _collect_json_inventory(
+                                parsed, entries, "credential_seed", location,
+                            ) and complete
+                        elif _normalized_key_words(column) and "_".join(_normalized_key_words(column)) in _PUBLIC_CREDENTIAL_METADATA:
+                            entries.append(CredentialEntry("credential_seed", location, "public", value))
+                        else:
+                            entries.append(CredentialEntry("credential_seed", location, "unknown", None))
+                            complete = False
+                sources["credential_seed"] = "complete" if complete else "incomplete"
+        except (OSError, sqlite3.Error):
+            sources["credential_seed"] = "incomplete"
+    return CredentialInventory(entries, sources)
 
 
 def collect_sensitive_values(
@@ -673,53 +898,163 @@ def collect_sensitive_values(
     models_catalog: Path | None,
     database_seed: Path | None,
 ) -> list[str]:
-    found: set[str] = set()
-    env_names = set(PROVIDER_ENVS) | set(COPILOT_ENVS) | set(extra_envs) | {"OPENCODE_API_KEY"}
-    for name in env_names:
-        value = host_env.get(name, "")
-        if len(value) >= 8:
-            found.add(value)
+    return list(collect_credential_inventory(
+        host_env, extra_envs, auth, config, models_catalog, database_seed,
+    ).values)
 
-    for path in (auth, config, models_catalog):
-        if not path or not path.is_file():
+
+def _project_payload(value: Any, secrets: tuple[str, ...]) -> tuple[Any, bool, bool]:
+    """Return projected payload, changed flag, and unsafe-key flag."""
+    if isinstance(value, str):
+        changed = redact_sensitive_text(value, list(secrets))
+        return changed, changed != value, False
+    if isinstance(value, list):
+        output = []
+        changed = False
+        unsafe = False
+        for item in value:
+            projected, item_changed, item_unsafe = _project_payload(item, secrets)
+            output.append(projected)
+            changed = changed or item_changed
+            unsafe = unsafe or item_unsafe
+        return output, changed, unsafe
+    if isinstance(value, dict):
+        output: dict[str, Any] = {}
+        changed = False
+        unsafe = False
+        for key, item in value.items():
+            if isinstance(key, str) and _sensitive_key(key):
+                return None, True, True
+            projected, item_changed, item_unsafe = _project_payload(item, secrets)
+            output[key] = projected
+            changed = changed or item_changed
+            unsafe = unsafe or item_unsafe
+        return output, changed, unsafe
+    return value, False, False
+
+
+def project_evidence_event(event: dict[str, Any], inventory: CredentialInventory) -> dict[str, Any]:
+    """Project known protocol fields without rewriting schema/control structure."""
+    protocol = {key: value for key, value in event.items() if key not in {"input", "output", "result", "error", "metadata_tool_call"}}
+    projected = dict(protocol)
+    dispositions: dict[str, dict[str, Any]] = {}
+    for field in ("input", "output", "result", "error", "metadata_tool_call"):
+        if field not in event:
             continue
-        try:
-            parsed = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        if not inventory.complete:
+            dispositions[field] = {"state": "omitted", "reason": "inventory_incomplete", "stage": "transport"}
             continue
-        _collect_json_secrets(parsed, found)
+        value, changed, unsafe_key = _project_payload(event[field], inventory.values)
+        if unsafe_key:
+            dispositions[field] = {"state": "omitted", "reason": "sensitive_key", "stage": "transport"}
+        else:
+            projected[field] = value
+            dispositions[field] = (
+                {"state": "redacted", "reason": "credential_match", "stage": "transport"}
+                if changed else {"state": "exact"}
+            )
+    return {"value": projected, "fields": dispositions}
 
-    if database_seed and database_seed.is_file():
-        try:
-            with sqlite3.connect(f"file:{database_seed}?mode=ro", uri=True) as db:
-                columns = [row[1] for row in db.execute('PRAGMA table_info("credential")')]
-                if columns:
-                    rows = db.execute(
-                        "SELECT " + ", ".join('"' + col.replace('"', '""') + '"' for col in columns)
-                        + ' FROM "credential"'
-                    ).fetchall()
-                    for row in rows:
-                        for column, value in zip(columns, row):
-                            if isinstance(value, bytes):
-                                try:
-                                    value = value.decode("utf-8")
-                                except UnicodeDecodeError:
-                                    continue
-                            if not isinstance(value, str):
-                                continue
-                            if _sensitive_key(column) and len(value) >= 8:
-                                found.add(value)
-                                continue
-                            if value[:1] in ("{", "["):
-                                try:
-                                    parsed = json.loads(value)
-                                except json.JSONDecodeError:
-                                    continue
-                                _collect_json_secrets(parsed, found)
-        except sqlite3.Error:
-            pass
 
-    return sorted(found, key=len, reverse=True)
+def apply_evidence_projection(evidence: dict[str, Any], inventory: CredentialInventory) -> dict[str, Any]:
+    """Apply typed dispositions to bounded event fields before public transport."""
+    result = json.loads(json.dumps(evidence, ensure_ascii=False))
+    incomplete = not inventory.complete
+    for collection in ("events", "nested_tool_calls"):
+        for event in result.get(collection, []):
+            if not isinstance(event, dict):
+                result["metadata_tool_capture_complete"] = False
+                continue
+            fields: dict[str, dict[str, Any]] = {}
+            truncated = list(event.get("truncated_fields") or [])
+            allowed_fields = {
+                "sequence", "completed_sequence", "start_sequence", "parent_sequence", "nested_index",
+                "truncated_fields", "missing_fields", "tool", "registered_tool", "status", "input",
+                "output", "error", "call_id", "hook_id", "session_id", "actor", "message_id",
+                "parent_call_id", "parent_hook_id", "metadata_tool_call",
+            }
+            unknown = set(event) - allowed_fields
+            if unknown:
+                # Unknown event schema/metadata is not recursively passed through.
+                event.clear()
+                event["truncated_fields"] = []
+                event["evidence_safety"] = {
+                    "event": {"state": "omitted", "reason": "unsupported_schema", "stage": "transport"}
+                }
+                result["metadata_tool_capture_complete"] = False
+                continue
+            for field in ("tool", "registered_tool", "call_id", "session_id", "actor", "message_id",
+                          "parent_call_id", "parent_hook_id", "input", "output", "error", "metadata_tool_call"):
+                if field not in event:
+                    continue
+                if incomplete:
+                    event.pop(field, None)
+                    fields[field] = {"state": "omitted", "reason": "inventory_incomplete", "stage": "transport"}
+                    if field not in truncated:
+                        truncated.append(field)
+                    continue
+                raw_value = event[field]
+                if field in truncated:
+                    rendered = raw_value if isinstance(raw_value, str) else json.dumps(raw_value, ensure_ascii=False)
+                    if "tool-result field truncated" in rendered:
+                        fields[field] = {"state": "omitted", "reason": "size_limit", "stage": "capture"}
+                        event.pop(field, None)
+                    elif "upstream-truncated" in rendered:
+                        fields[field] = {"state": "omitted", "reason": "upstream_clipped", "stage": "runner"}
+                        event.pop(field, None)
+                    elif "***REDACTED***" in rendered:
+                        fields[field] = {"state": "redacted", "reason": "credential_match", "stage": "capture"}
+                    else:
+                        fields[field] = {"state": "omitted", "reason": "size_limit", "stage": "capture"}
+                        event.pop(field, None)
+                    result["metadata_tool_capture_complete"] = False
+                    continue
+                decoded = raw_value
+                encoded_representation = isinstance(raw_value, str)
+                if field == "input" and isinstance(raw_value, str):
+                    try:
+                        decoded = json.loads(raw_value)
+                    except (ValueError, RecursionError):
+                        pass
+                elif field in {"output", "error"} and isinstance(raw_value, str):
+                    try:
+                        parsed = json.loads(raw_value)
+                        if isinstance(parsed, (dict, list)):
+                            decoded = parsed
+                    except (ValueError, RecursionError):
+                        pass
+                projected = project_evidence_event({field: decoded}, inventory)
+                disposition = projected["fields"].get(field, {"state": "exact"})
+                if disposition["state"] == "omitted":
+                    event.pop(field, None)
+                    if field not in truncated:
+                        truncated.append(field)
+                    result["metadata_tool_capture_complete"] = False
+                elif disposition["state"] == "redacted":
+                    value = projected["value"].get(field)
+                    if encoded_representation and isinstance(value, (dict, list)):
+                        value = json.dumps(value, ensure_ascii=False, sort_keys=True)
+                    event[field] = value
+                    if field not in truncated:
+                        truncated.append(field)
+                    result["metadata_tool_capture_complete"] = False
+                fields[field] = disposition
+            event["truncated_fields"] = truncated
+            event["evidence_safety"] = fields
+    result["evidence_safety"] = {
+        "schema": "loom-eval-evidence-safety/v1",
+        "policy_version": "source-path-roles/v1",
+        "inventory_complete": inventory.complete,
+        "coverage_complete": bool(inventory.complete and result.get("metadata_tool_capture_complete")),
+    }
+    if incomplete:
+        result["metadata_tool_capture_complete"] = False
+    while len(json.dumps(result, ensure_ascii=False)) > TOOL_RESULT_TOTAL_LIMIT and result.get("events"):
+        result["events"].pop(0)
+        result["omitted_events"] = result.get("omitted_events", 0) + 1
+        result["metadata_tool_capture_complete"] = False
+        result["evidence_safety"]["coverage_complete"] = False
+    return result
 
 
 def sensitive_text_variants(secret: str, *, max_json_depth: int = 3) -> set[str]:
@@ -781,9 +1116,10 @@ def redact_sensitive_values(value: Any, secrets: list[str]) -> Any:
     if isinstance(value, list):
         return [redact_sensitive_values(item, secrets) for item in value]
     if isinstance(value, dict):
+        if any(isinstance(key, str) and _sensitive_key(key) for key in value):
+            return None
         return {
-            redact_sensitive_text(key, secrets) if isinstance(key, str) else key:
-            redact_sensitive_values(item, secrets)
+            key: redact_sensitive_values(item, secrets)
             for key, item in value.items()
         }
     return value
@@ -796,13 +1132,18 @@ TOOL_RESULT_NESTED_CALL_LIMIT = 256
 
 
 def _tool_result_field(value: Any, secrets: list[str], limit: int) -> tuple[str, bool]:
-    # Decode JSONL first, redact before truncating, and also cover secrets inside
-    # JSON-valued output strings or object keys. Never send a clipped credential.
-    value = redact_sensitive_values(value, secrets)
-    text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, sort_keys=True)
-    text = redact_sensitive_text(text, secrets)
+    # Project structured values before encoding; never substitute across encoded
+    # JSON syntax or rename payload keys. Changed text is explicitly non-exact.
+    if isinstance(value, str):
+        text = redact_sensitive_text(value, secrets)
+        changed = text != value
+    else:
+        value, changed, unsafe_key = _project_payload(value, tuple(secrets))
+        if unsafe_key:
+            return "", True
+        text = json.dumps(value, ensure_ascii=False, sort_keys=True)
     if len(text) <= limit:
-        return text, False
+        return text, changed
     marker = "\n[... tool-result field truncated ...]\n"
     retained = limit - len(marker)
     head = retained // 2
@@ -957,6 +1298,8 @@ def extract_tool_result_evidence(raw_stdout: str, secrets: list[str]) -> dict[st
             item[key], clipped = _tool_result_field(value, secrets, limit)
             if clipped:
                 item["truncated_fields"].append(key)
+                if key in {"input", "output", "error"}:
+                    evidence["metadata_tool_capture_complete"] = False
         recent.append(item)
 
     evidence["events"] = list(recent)
@@ -992,6 +1335,254 @@ def extract_tool_result_evidence(raw_stdout: str, secrets: list[str]) -> dict[st
     return evidence
 
 
+OBSERVER_SCHEMA = "loom-eval-tool-observer/v1"
+TOTAL_OBSERVER_BYTES_LIMIT = 2_100_000
+
+
+def capture_observer_tool_result_evidence(
+    raw_records: str, secrets: list[str], *, outer_stdout: str, stdout_truncated: bool = False
+) -> dict[str, Any]:
+    """Validate paired OpenCode execute hooks; never reconstruct children from parent output."""
+    empty: dict[str, Any] = {
+        "schema": OBSERVER_SCHEMA,
+        "source": "opencode.tool.execute.hooks",
+        "has_raw_trace": isinstance(raw_records, str) and bool(raw_records.strip()),
+        "observer_complete": False,
+        "observer_outer_aligned": False,
+        "observed_events": 0,
+        "omitted_events": 0,
+        "invalid_events": 0,
+        "unparsed_lines": 0,
+        "execute_events": 0,
+        "nested_metadata_parents": 0,
+        "nested_tool_calls_observed": 0,
+        "nested_tool_calls_omitted": 0,
+        "metadata_tool_capture_complete": False,
+        "events": [],
+        "nested_tool_calls": [],
+    }
+    if not isinstance(raw_records, str) or not raw_records.strip():
+        return empty
+
+    parsed: list[dict[str, Any]] = []
+    for line in raw_records.splitlines():
+        try:
+            value = json.loads(line)
+        except (ValueError, RecursionError):
+            empty["unparsed_lines"] += 1
+            continue
+        if not isinstance(value, dict):
+            empty["invalid_events"] += 1
+            continue
+        parsed.append(value)
+
+    if len(parsed) < 2:
+        empty["invalid_events"] += 1
+        return empty
+    header, footer = parsed[0], parsed[-1]
+    registration_ids = footer.get("registration_ids")
+    if (
+        header.get("kind") != "header" or header.get("schema") != OBSERVER_SCHEMA or
+        footer.get("kind") != "footer" or footer.get("schema") != OBSERVER_SCHEMA or
+        footer.get("complete") is not True or not isinstance(registration_ids, list) or
+        any(not isinstance(tool, str) or not tool for tool in registration_ids) or
+        len(registration_ids) != len(set(registration_ids))
+    ):
+        empty["invalid_events"] += 1
+        return empty
+
+    records = parsed[1:-1]
+    if type(footer.get("event_count")) is not int or footer["event_count"] != len(records):
+        empty["invalid_events"] += 1
+        return empty
+
+    required = ("tool", "call_id", "session_id", "agent", "message_id", "input")
+    pending: dict[tuple[str, str, str, str], dict[str, Any]] = {}
+    observed_hook_ids: set[str] = set()
+    pairs: list[dict[str, Any]] = []
+    last_sequence = 0
+    for record in records:
+        sequence = record.get("sequence")
+        kind = record.get("kind")
+        if type(sequence) is not int or sequence <= last_sequence or kind not in {"before", "after"}:
+            empty["invalid_events"] += 1
+            continue
+        last_sequence = sequence
+        if any(not isinstance(record.get(field), str) or not record[field] for field in required[:-1]):
+            empty["invalid_events"] += 1
+            continue
+        if record.get("registered_tool") != record["tool"] or record["tool"] not in registration_ids:
+            empty["invalid_events"] += 1
+            continue
+        if not isinstance(record.get("input"), dict):
+            empty["invalid_events"] += 1
+            continue
+        hook_id = record.get("hook_id")
+        if not isinstance(hook_id, str) or not hook_id or record.get("pairing_ambiguous") is True:
+            empty["invalid_events"] += 1
+            continue
+        key = (record["session_id"], record["message_id"], record["call_id"], hook_id)
+        if kind == "before":
+            if (key in pending or hook_id in observed_hook_ids or "status" in record or "result" in record or "error" in record or
+                    record.get("parent_ambiguous") is True):
+                empty["invalid_events"] += 1
+                continue
+            observed_hook_ids.add(hook_id)
+            parent = record.get("parent")
+            if parent is not None and (
+                not isinstance(parent, dict) or parent.get("tool") != "execute" or
+                not all(isinstance(parent.get(field), str) and parent[field]
+                        for field in ("call_id", "hook_id", "registered_tool", "session_id", "agent", "message_id")) or
+                parent.get("registered_tool") != parent.get("tool") or
+                parent.get("registered_tool") not in registration_ids or
+                (parent["session_id"], parent["agent"], parent["message_id"]) !=
+                (record["session_id"], record["agent"], record["message_id"])
+            ):
+                empty["invalid_events"] += 1
+                continue
+            pending[key] = record
+            continue
+
+        before = pending.pop(key, None)
+        if (
+            before is None or any(record.get(field) != before.get(field) for field in required) or
+            record.get("registered_tool") != before.get("registered_tool") or
+            record["sequence"] <= before["sequence"]
+        ):
+            empty["invalid_events"] += 1
+            continue
+        status = record.get("status")
+        if status == "completed":
+            if "result" not in record or "error" in record:
+                empty["invalid_events"] += 1
+                continue
+            result = redact_sensitive_values(record["result"], secrets)
+            encoded, clipped = _tool_result_field(result, secrets, TOOL_RESULT_FIELD_LIMIT)
+            event: dict[str, Any] = {"output": encoded}
+            if clipped:
+                event["truncated_fields"] = ["output"]
+        elif status == "error":
+            if "error" not in record or "result" in record:
+                empty["invalid_events"] += 1
+                continue
+            error = redact_sensitive_values(record["error"], secrets)
+            encoded, clipped = _tool_result_field(error, secrets, TOOL_RESULT_FIELD_LIMIT)
+            event = {"error": encoded}
+            if clipped:
+                event["truncated_fields"] = ["error"]
+        else:
+            empty["invalid_events"] += 1
+            continue
+
+        safe_input, input_clipped = _tool_result_field(before["input"], secrets, 2000)
+        parent = before.get("parent")
+        event.update({
+            "sequence": before["sequence"],
+            "completed_sequence": record["sequence"],
+            "start_sequence": before["sequence"],
+            "tool": before["tool"],
+            "registered_tool": before["registered_tool"],
+            "status": status,
+            "input": safe_input,
+            "call_id": before["call_id"],
+            "hook_id": before["hook_id"],
+            "session_id": before["session_id"],
+            "actor": before["agent"],
+            "message_id": before["message_id"],
+            "parent_call_id": parent.get("call_id") if isinstance(parent, dict) else None,
+            "parent_hook_id": parent.get("hook_id") if isinstance(parent, dict) else None,
+            "truncated_fields": event.get("truncated_fields", []) + (["input"] if input_clipped else []),
+            "missing_fields": [],
+        })
+        pairs.append(event)
+
+    if pending:
+        empty["invalid_events"] += len(pending)
+    empty["observed_events"] = len(pairs)
+    empty["events"] = pairs[-TOOL_RESULT_EVENT_LIMIT:]
+    empty["omitted_events"] = len(pairs) - len(empty["events"])
+    nested: list[dict[str, Any]] = []
+    wrappers = {
+        (event["session_id"], event["actor"], event["message_id"], event["call_id"], event["hook_id"])
+        for event in pairs if event["tool"] == "execute"
+    }
+    for event in pairs:
+        parent_id = event.get("parent_call_id")
+        if parent_id is None:
+            continue
+        parent_hook_id = event.get("parent_hook_id")
+        parent_key = (event["session_id"], event["actor"], event["message_id"], parent_id, parent_hook_id)
+        if parent_key not in wrappers:
+            empty["invalid_events"] += 1
+            continue
+        nested_item = {
+            "parent_call_id": parent_id,
+            "parent_hook_id": parent_hook_id,
+            "parent_sequence": next(
+                parent["start_sequence"] for parent in pairs
+                if parent["tool"] == "execute" and parent["call_id"] == parent_id and
+                parent["hook_id"] == parent_hook_id and
+                parent["session_id"] == event["session_id"] and
+                parent["actor"] == event["actor"] and parent["message_id"] == event["message_id"]
+            ),
+            "nested_index": event["start_sequence"],
+            "sequence": event["sequence"],
+            "completed_sequence": event["completed_sequence"],
+            "start_sequence": event["start_sequence"],
+            "tool": event["tool"],
+            "registered_tool": event["registered_tool"],
+            "status": event["status"],
+            "input": event["input"],
+            "actor": event["actor"],
+            "session_id": event["session_id"],
+            "message_id": event["message_id"],
+            "truncated_fields": event["truncated_fields"],
+            "missing_fields": [],
+        }
+        for field in ("output", "error"):
+            if field in event:
+                nested_item[field] = event[field]
+        nested.append(nested_item)
+
+    empty["nested_tool_calls"] = nested[-TOOL_RESULT_NESTED_CALL_LIMIT:]
+    empty["nested_tool_calls_observed"] = len(nested)
+    empty["nested_tool_calls_omitted"] = len(nested) - len(empty["nested_tool_calls"])
+    empty["execute_events"] = sum(event["tool"] == "execute" for event in pairs)
+    empty["nested_metadata_parents"] = empty["execute_events"]
+    empty["registration_ids"] = registration_ids
+    outer = extract_tool_result_evidence(outer_stdout, secrets)
+
+    def identity(event: dict[str, Any]) -> tuple[str, str, str, str] | None:
+        tool, call_id, session_id, input_value = (
+            event.get("tool"), event.get("call_id"), event.get("session_id"), event.get("input")
+        )
+        if not all(isinstance(value, str) and value for value in (tool, call_id, session_id, input_value)):
+            return None
+        try:
+            canonical_input = json.dumps(json.loads(input_value), ensure_ascii=False, sort_keys=True)
+        except (ValueError, TypeError, RecursionError):
+            return None
+        return tool, call_id, session_id, canonical_input
+
+    top_level = [event for event in pairs if event["parent_call_id"] is None]
+    outer_identities = [identity(event) for event in outer["events"]]
+    top_identities = [identity(event) for event in top_level]
+    empty["observer_outer_aligned"] = (
+        not stdout_truncated and outer["invalid_events"] == 0 and outer["unparsed_lines"] == 0 and
+        outer["outer_event_identities_omitted"] == 0 and outer["omitted_events"] == 0 and
+        len(outer_identities) == len(top_identities) and
+        None not in outer_identities + top_identities and
+        sorted(outer_identities) == sorted(top_identities)
+    )
+    empty["observer_complete"] = (
+        empty["invalid_events"] == 0 and empty["unparsed_lines"] == 0 and
+        not pending and empty["omitted_events"] == 0 and
+        empty["nested_tool_calls_omitted"] == 0 and empty["observer_outer_aligned"]
+    )
+    empty["metadata_tool_capture_complete"] = empty["observer_complete"]
+    return empty
+
+
 def metadata_tool_calls(event: dict[str, Any]) -> tuple[bool, list[dict[str, Any]] | None]:
     """Read nested tool-call records already separated from the outer event stream."""
     if event.get("tool") != "execute":
@@ -1009,6 +1600,36 @@ def nested_tool_capture_complete(tool_results: dict[str, Any] | None) -> bool:
     omitted = tool_results.get("omitted_events", 0)
     observed = tool_results.get("observed_events", len(events))
     schema = tool_results.get("schema")
+    if schema == OBSERVER_SCHEMA:
+        if (
+            tool_results.get("source") != "opencode.tool.execute.hooks" or
+            tool_results.get("observer_complete") is not True or
+            tool_results.get("observer_outer_aligned") is not True or
+            tool_results.get("metadata_tool_capture_complete") is not True or
+            tool_results.get("invalid_events") != 0 or tool_results.get("unparsed_lines") != 0 or
+            tool_results.get("omitted_events") != 0
+        ):
+            return False
+        events = tool_results["events"]
+        if not isinstance(events, list) or len(events) != observed:
+            return False
+        registration_ids = tool_results.get("registration_ids")
+        if not isinstance(registration_ids, list) or len(registration_ids) != len(set(registration_ids)):
+            return False
+        return all(
+            isinstance(event, dict) and
+            event.get("registered_tool") == event.get("tool") and event.get("tool") in registration_ids and
+            all(isinstance(event.get(field), str) and event[field]
+                for field in ("tool", "input", "call_id", "session_id", "actor", "message_id")) and
+            type(event.get("sequence")) is int and type(event.get("start_sequence")) is int and
+            event["sequence"] == event["start_sequence"] and
+            type(event.get("completed_sequence")) is int and event["completed_sequence"] > event["sequence"] and
+            not event.get("truncated_fields") and
+            event.get("status") in {"completed", "error"} and
+            ((event.get("status") == "completed" and "output" in event and "error" not in event) or
+             (event.get("status") == "error" and "error" in event and "output" not in event))
+            for event in events
+        ) and tool_results.get("nested_tool_calls_omitted", 0) == 0
     if (
         type(omitted) is not int or omitted != 0 or
         type(observed) is not int or observed != len(events) + omitted or
@@ -1060,6 +1681,7 @@ def nested_metadata_call_events(
     if not isinstance(calls, list):
         return [], False
     nested: list[dict[str, Any]] = []
+    observer_schema = tool_results.get("schema") == OBSERVER_SCHEMA
     for call in calls:
         if not isinstance(call, dict):
             return nested, False
@@ -1080,7 +1702,10 @@ def nested_metadata_call_events(
         if not isinstance(args, dict):
             return nested, False
         child: dict[str, Any] = {
-            "sequence": parent_sequence * 1000 + nested_index,
+            "sequence": (
+                call.get("sequence") if observer_schema
+                else parent_sequence * 1000 + nested_index
+            ),
             "tool": tool,
             "status": call.get("status", "unknown"),
             "input": input_value,
@@ -1090,6 +1715,25 @@ def nested_metadata_call_events(
             "truncated_fields": list(call.get("truncated_fields") or []),
             "missing_fields": list(call.get("missing_fields") or []),
         }
+        if observer_schema:
+            parent_call_id = call.get("parent_call_id")
+            start_sequence = call.get("start_sequence")
+            if (
+                not isinstance(parent_call_id, str) or not parent_call_id or
+                call.get("registered_tool") != tool or
+                type(start_sequence) is not int or type(call.get("sequence")) is not int or
+                call["sequence"] != start_sequence
+            ):
+                return nested, False
+            child.update({
+                "parent_call_id": parent_call_id,
+                "parent_hook_id": call.get("parent_hook_id"),
+                "registered_tool": call.get("registered_tool"),
+                "start_sequence": start_sequence,
+                "actor": call.get("actor"),
+                "session_id": call.get("session_id"),
+                "message_id": call.get("message_id"),
+            })
         # Inner result fields are copied only from that exact raw inner record.
         # Parent execute outputs are never considered.
         for key in ("output", "error"):
@@ -1099,7 +1743,10 @@ def nested_metadata_call_events(
     return nested, nested_tool_capture_complete(tool_results)
 
 
-def transport_tool_result_evidence(result: dict[str, Any], secrets: list[str]) -> dict[str, Any]:
+def transport_tool_result_evidence(
+    result: dict[str, Any], secrets: list[str], inventory: CredentialInventory | None = None,
+) -> dict[str, Any]:
+    inventory = inventory or credential_inventory_from_values(secrets)
     candidate = result.get("tool_result_evidence")
     if candidate is None:
         # Saved eval artifacts intentionally persist the projected result under
@@ -1183,32 +1830,73 @@ def transport_tool_result_evidence(result: dict[str, Any], secrets: list[str]) -
                 for field in event.get("truncated_fields") or []:
                     if field in event:
                         event[field] = "[upstream-truncated field omitted before secret redaction]"
-        evidence = redact_sensitive_values(candidate_for_redaction, secrets)
+        # Do not recursively substitute through runner control/schema fields.
+        # The typed projection below knows which event values are payload and
+        # records any changed selector as non-exact.
+        evidence = candidate_for_redaction
         evidence["upstream_stdout_truncated"] = bool(result.get("stdout_truncated"))
         evidence["upstream_stdout_total_chars"] = result.get("stdout_total_chars")
-        return evidence
+        return apply_evidence_projection(evidence, inventory)
 
     evidence = extract_tool_result_evidence(result.get("stdout", ""), secrets)
     if result.get("stdout_truncated"):
         evidence["upstream_stdout_truncated"] = True
         evidence["upstream_stdout_total_chars"] = result.get("stdout_total_chars")
-    return evidence
+    return apply_evidence_projection(evidence, inventory)
 
 
-def prepare_transport_result(result: dict[str, Any], secrets: list[str]) -> dict[str, Any]:
+def prepare_transport_result(
+    result: dict[str, Any], secrets: list[str], inventory: CredentialInventory | None = None,
+) -> dict[str, Any]:
     # Compute evidence before constructing the public transport result. With an
     # empty secret set, redact_sensitive_values returns its input unchanged, so
     # mutating that object first would erase the runner projection we need.
-    evidence = transport_tool_result_evidence(result, secrets)
-    redacted_value = redact_sensitive_values(result, secrets)
-    redacted = dict(redacted_value) if isinstance(redacted_value, dict) else {}
+    evidence = transport_tool_result_evidence(result, secrets, inventory)
+    redacted: dict[str, Any] = {}
+    transport_fields: dict[str, dict[str, Any]] = {}
+    control_fields = {"exit_code", "stdout_truncated", "stderr_truncated", "stdout_total_chars",
+                      "stderr_total_chars", "infrastructure_error", "reasoning", "reasoning_source"}
+    for key, value in result.items():
+        if key == "tool_result_evidence":
+            continue
+        if key in control_fields:
+            redacted[key] = value
+            continue
+        if not inventory or inventory.complete:
+            projected, changed, unsafe_key = _project_payload(value, tuple(secrets))
+        else:
+            projected, changed, unsafe_key = None, False, True
+        if unsafe_key:
+            transport_fields[key] = {"state": "omitted", "reason": "sensitive_key" if inventory and inventory.complete else "inventory_incomplete", "stage": "transport"}
+        elif changed and key == "stdout":
+            # Raw JSONL is not a safe place for literal replacement: short values
+            # can corrupt its syntax. The separately typed projection remains.
+            transport_fields[key] = {"state": "omitted", "reason": "credential_match", "stage": "transport"}
+        else:
+            redacted[key] = projected
+            transport_fields[key] = (
+                {"state": "redacted", "reason": "credential_match", "stage": "transport"}
+                if changed else {"state": "exact"}
+            )
+    redacted["evidence_safety"] = {
+        "schema": "loom-eval-evidence-safety/v1",
+        "policy_version": "source-path-roles/v1",
+        "inventory_complete": inventory.complete if inventory else True,
+        "fields": transport_fields,
+    }
     # Upstream clipping can split a secret so the remaining prefix/suffix no
     # longer matches the full credential value. Parsed fields remain available,
     # but do not persist a clipped raw event stream when credentials are known.
     if secrets and result.get("stdout_truncated"):
-        redacted["stdout"] = "[upstream-truncated stdout omitted before secret redaction]"
+        redacted.pop("stdout", None)
+        redacted["evidence_safety"]["fields"]["stdout"] = {
+            "state": "omitted", "reason": "upstream_clipped", "stage": "runner",
+        }
     if secrets and result.get("stderr_truncated"):
-        redacted["stderr"] = "[upstream-truncated stderr omitted before secret redaction]"
+        redacted.pop("stderr", None)
+        redacted["evidence_safety"]["fields"]["stderr"] = {
+            "state": "omitted", "reason": "upstream_clipped", "stage": "runner",
+        }
     # The transport-owned full-stream projection uses a distinct schema/name.
     # Do not duplicate it in the persisted public result after consumption.
     redacted.pop("tool_result_evidence", None)
@@ -1310,20 +1998,48 @@ def invoke_container(
     skill: str | None = None,
     network: str | None = None,
     reasoning: str | None = None,
+    normal_observation_payload_policy: str = NORMAL_PAYLOAD_POLICY_OMIT,
 ) -> dict[str, Any]:
     node_modules = prepare_node_modules_mount(
         project,
         ROOT / "node_modules" if mount_node_modules else None,
     )
     host_env = host_environment_for_transport(transport)
-    secrets = collect_sensitive_values(
+    if normal_invoke_observations_enabled():
+        host_env["OPENCODE_EVAL_HOST_OBSERVATIONS"] = "1"
+        host_env["OPENCODE_EVAL_OBSERVATIONS"] = "1"
+        host_env["OPENCODE_EVAL_NORMAL_OBSERVATION_PAYLOAD_POLICY"] = (
+            normal_observation_payload_policy
+            if normal_observation_payload_policy in {
+                NORMAL_PAYLOAD_POLICY_OMIT, NORMAL_PAYLOAD_POLICY_FIXTURE
+            }
+            else NORMAL_PAYLOAD_POLICY_OMIT
+        )
+    inventory = collect_credential_inventory(
         host_env,
         extra_envs,
         auth,
         config,
         models_catalog,
         database_seed,
+        config_root,
     )
+    secrets = list(inventory.values)
+    policy = inventory.private_policy()
+    if not normal_invoke_observations_enabled() and any(
+        entry.role == "credential" and entry.source != "env" for entry in inventory.entries
+    ):
+        # The legacy observer runs inside the evaluated process. Do not expose
+        # seed-file credential material to it through an inherited environment;
+        # disable that capture until the external trusted collector owns policy delivery.
+        policy = {**policy, "complete": False, "values": []}
+    policy_bytes = json.dumps(policy, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    # An incomplete/oversize inventory disables capture in the hook; it is
+    # never represented as a complete empty credential set.
+    if len(policy_bytes) > 128_000:
+        policy = {**policy, "complete": False, "values": []}
+        policy_bytes = json.dumps(policy, separators=(",", ":")).encode("utf-8")
+    host_env["OPENCODE_EVAL_REDACTION_VALUES"] = policy_bytes.decode("utf-8")
     runner_bin = os.environ.get("OPENCODE_EVAL_RUNNER_BIN") or shutil.which("opencode-eval-runner")
     if runner_bin:
         with tempfile.TemporaryDirectory(prefix="loom-eval-runner-cli-") as tmp:
@@ -1373,6 +2089,10 @@ def invoke_container(
                 command += ["--mount", f"{node_modules}:/workspace/node_modules:ro"]
             for name in extra_envs:
                 command += ["--env", name]
+            if normal_invoke_observations_enabled():
+                for name in ("OPENCODE_EVAL_HOST_OBSERVATIONS", "OPENCODE_EVAL_OBSERVATIONS", "OPENCODE_EVAL_REDACTION_VALUES", "OPENCODE_EVAL_NORMAL_OBSERVATION_PAYLOAD_POLICY"):
+                    if name not in extra_envs:
+                        command += ["--env", name]
 
             proc = subprocess.run(
                 command,
@@ -1421,10 +2141,9 @@ def invoke_container(
                     "stdout": redacted_prefix(proc.stdout, secrets, 100000),
                     "infrastructure_error": True,
                 }, secrets)
-            return enforce_reasoning_contract(
-                prepare_transport_result(result, secrets),
-                reasoning,
-            )
+            prepared = prepare_transport_result(result, secrets, inventory)
+            prepared = attach_observer_capture(prepared, project, secrets)
+            return enforce_reasoning_contract(prepared, reasoning)
 
     with tempfile.TemporaryDirectory(prefix="loom-eval-invoke-") as tmp:
         root = Path(tmp)
@@ -1505,6 +2224,12 @@ def invoke_container(
         if transport == "github-copilot-cli":
             pass_env(command, COPILOT_ENVS, host_env)
         pass_env(command, extra_envs, host_env)
+        if normal_invoke_observations_enabled():
+            for name in ("OPENCODE_EVAL_HOST_OBSERVATIONS", "OPENCODE_EVAL_OBSERVATIONS", "OPENCODE_EVAL_REDACTION_VALUES", "OPENCODE_EVAL_NORMAL_OBSERVATION_PAYLOAD_POLICY"):
+                if host_env.get(name) and name not in extra_envs:
+                    command += ["--env", name]
+        else:
+            command += ["--env", "OPENCODE_EVAL_REDACTION_VALUES"]
         command.append(image)
 
         proc = subprocess.run(
@@ -1544,10 +2269,9 @@ def invoke_container(
                 "stdout": "",
                 "infrastructure_error": True,
             }, secrets)
-        return enforce_reasoning_contract(
-            prepare_transport_result(result, secrets),
-            reasoning,
-        )
+        prepared = prepare_transport_result(result, secrets, inventory)
+        prepared = attach_observer_capture(prepared, project, secrets)
+        return enforce_reasoning_contract(prepared, reasoning)
 
 
 def normalize_tool(value: str) -> str:
@@ -1882,6 +2606,11 @@ def result_evidence_events(tool_results: dict[str, Any] | None) -> list[dict[str
     """Combine outer results and structured inner invocations without borrowing parent output."""
     if not isinstance(tool_results, dict) or not isinstance(tool_results.get("events"), list):
         return []
+    if tool_results.get("schema") == OBSERVER_SCHEMA:
+        events = tool_results["events"]
+        if not nested_tool_capture_complete(tool_results):
+            return []
+        return sorted(events, key=lambda event: event["sequence"])
     combined: list[dict[str, Any]] = []
     for parent in tool_results["events"]:
         if not isinstance(parent, dict):
@@ -3129,6 +3858,13 @@ def run_case(
         )
         target_seconds = time.perf_counter() - target_started
         target_error = transport_error(target)
+        target_safety = target.get("evidence_safety")
+        target_fields = target_safety.get("fields") if isinstance(target_safety, dict) else None
+        if not target_error and isinstance(target_fields, dict) and any(
+            isinstance(target_fields.get(field), dict) and target_fields[field].get("state") != "exact"
+            for field in ("text", "actions", "tools", "skills_loaded")
+        ):
+            target_error = "non-evidence: required transport payload was redacted or omitted"
         print(
             f"{case_label} target {'ERROR' if target_error else 'done'} in {target_seconds:.1f}s",
             flush=True,
@@ -3191,6 +3927,12 @@ def run_case(
             )
             judge_seconds = time.perf_counter() - judge_started
             judge_error = transport_error(judge_result)
+            judge_safety = judge_result.get("evidence_safety")
+            judge_fields = judge_safety.get("fields") if isinstance(judge_safety, dict) else None
+            if not judge_error and isinstance(judge_fields, dict) and (
+                isinstance(judge_fields.get("text"), dict) and judge_fields["text"].get("state") != "exact"
+            ):
+                judge_error = "non-evidence: judge response was redacted or omitted"
             print(
                 f"{case_label} judge {'ERROR' if judge_error else 'done'} in {judge_seconds:.1f}s",
                 flush=True,

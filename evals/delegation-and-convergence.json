@@ -793,6 +793,201 @@
         }
       ],
       "default": false
+    },
+    {
+      "id": "CONCIERGE-CONTINUITY-01",
+      "agent": "general",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-006",
+        "BR-019",
+        "BR-020"
+      ],
+      "prompt": "Reviewer has just returned PASS for the current foreground review. Authoritative Loom state now shows the next implementation step runnable, already authorized by the accepted plan, within budget, and admissible for Worker. The supported foreground dispatch/result path is available in this same flow. The user has not asked to pause, redirect, or make a new decision. Decide what General does next.",
+      "trap": "Give an excellent status explanation, name Worker as next, or acknowledge a Worker launch and then yield even though General still owns an authorized continuation whose result can be obtained in the current flow.",
+      "expectations": [
+        "Carries the authorized continuation forward by dispatching Worker through Loom rather than returning coordination to the user.",
+        "Treats a launch acknowledgement as transfer of execution, not as the Worker result or completion of General's current service obligation.",
+        "Plans to follow the supported foreground result path, re-read authoritative Loom state after the result, and continue as that state permits."
+      ],
+      "must_not": [
+        "Must not ask the user whether to continue routine already-authorized work.",
+        "Must not stop after merely saying Worker is next or that Worker was dispatched.",
+        "Must not claim Worker is actively executing or finished from dispatch acknowledgement alone."
+      ]
+    },
+    {
+      "id": "CONCIERGE-NEW-INTENT-01",
+      "agent": "general",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-006",
+        "BR-019",
+        "BR-020"
+      ],
+      "prompt": "Authoritative Loom state currently says the workflow is active and Reviewer is runnable. Before General dispatches Reviewer, the user says: \"Cancel this workflow; I want to take a different direction.\" Decide the immediate action and what General may truthfully report.",
+      "trap": "Treat persisted active state as permission to continue the old workflow, or treat the user's cancellation request as proof that cancellation already happened.",
+      "expectations": [
+        "Treats the new user instruction as superseding routine continuation and reconciles the requested cancellation through Loom before dispatching more old-path work.",
+        "Keeps current authoritative state and requested future state distinct until Loom confirms the cancellation.",
+        "Only reports the workflow as cancelled after authoritative Loom state reflects the transition."
+      ],
+      "must_not": [
+        "Must not dispatch Reviewer merely because the previous state still said runnable.",
+        "Must not claim cancellation, rollback, or termination before Loom confirms it."
+      ]
+    },
+    {
+      "id": "CONCIERGE-FOREGROUND-FAILURE-01",
+      "agent": "general",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-006",
+        "BR-007",
+        "BR-019",
+        "BR-020"
+      ],
+      "prompt": "General launched a required foreground Worker dispatch. The launch was admitted, but the supported result path returned a timeout and there is no authoritative completion result. Loom still shows the step unfinished. Decide what General does and tells the user.",
+      "trap": "Convert successful launch admission into 'Worker is working on it', convert silence into completion, or hand the coordination problem back to the user without using Loom's supported recovery path.",
+      "expectations": [
+        "Treats the timeout as an uncertain/failed result path, not as evidence of active execution or completion.",
+        "Re-reads authoritative Loom state and uses the supported Loom recovery/continuation path when available before asking the user to coordinate anything.",
+        "Explains the uncertainty and the next owned recovery action without fabricating liveness."
+      ],
+      "must_not": [
+        "Must not say the Worker is still working merely because dispatch was admitted.",
+        "Must not mark the step complete, invent a returned result, or silently retry outside Loom's recovery rules."
+      ]
+    },
+    {
+      "id": "CONCIERGE-CONTINUITY-RUNTIME-01",
+      "agent": "general",
+      "execution": "runtime",
+      "target_timeout_seconds": 360,
+      "requirements": [
+        "BR-006",
+        "BR-019",
+        "BR-020"
+      ],
+      "prompt": "Reviewer has already passed the current gate in the active Loom workflow. Continue the already-authorized Worker step through its foreground result and then carry the newly unlocked independent Reviewer gate forward too. Do not make me trigger either routine continuation.",
+      "trap": "Explain that Worker or Reviewer is next, or stop after either dispatch acknowledgement, instead of following each foreground result through the next authorized transition.",
+      "expectations": [
+        "Reads the existing authoritative workflow rather than starting or replacing it.",
+        "Launches Worker in foreground through Loom's admitted dispatch path, receives its returned result, and continues from authoritative Loom state into the newly runnable Reviewer gate.",
+        "Launches Reviewer in foreground through Loom's admitted dispatch path, receives the Reviewer result, and re-reads authoritative Loom state to the resulting terminal or genuine boundary.",
+        "Does not return routine coordination to the user while either authorized foreground continuation remains available, and does not describe dispatch or attachment alone as proof of active execution or completion."
+      ],
+      "must_not": [
+        "Must not call loom_start, loom_route, or ask the user whether to continue.",
+        "Must not stop after only naming Worker/Reviewer as next or acknowledging either launch.",
+        "Must not claim the workflow is complete unless returned specialist results and authoritative Loom state establish it."
+      ],
+      "tools": {
+        "requires": [
+          "subagent"
+        ]
+      },
+      "actions": {
+        "requires": [
+          {
+            "tool": "subagent",
+            "arg": "agent",
+            "equals": "worker"
+          },
+          {
+            "tool": "subagent",
+            "arg": "agent",
+            "equals": "reviewer"
+          },
+          {
+            "tool": "subagent",
+            "arg": "background",
+            "equals": false
+          }
+        ]
+      },
+      "fixture_files": [
+        {
+          "path": ".loom/project-id",
+          "content": "{\"schemaVersion\":1,\"projectId\":\"00000000-0000-4000-8000-000000000118\"}\n"
+        },
+        {
+          "path": ".opencode/plugins/eval-concierge-continuity-seed.ts",
+          "content": "import { Database } from \"bun:sqlite\"\nimport { join } from \"node:path\"\n\nconst PROJECT_ID = \"00000000-0000-4000-8000-000000000118\"\nconst WORKFLOW_ID = \"eval-concierge-continuity\"\n\nfunction scoped(key: string) {\n  return `project/${PROJECT_ID}/${key}`\n}\n\nexport default {\n  id: \"eval-concierge-continuity-seed\",\n  async setup(ctx: any) {\n    const seeded = new Set<string>()\n\n    await ctx.session.hook(\"context\", async (event: any) => {\n      const sessionID = String(event?.sessionID ?? \"\").trim()\n      if (!sessionID || event?.agent !== \"general\" || seeded.has(sessionID)) return\n      seeded.add(sessionID)\n\n      const stateHome = String(process.env.XDG_STATE_HOME ?? \"\").trim()\n      if (!stateHome) throw new Error(\"concierge-continuity eval requires XDG_STATE_HOME\")\n\n      const db = new Database(join(stateHome, \"loom\", \"execution-state.sqlite\"), { create: true })\n      db.run(\"CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY NOT NULL, value TEXT NOT NULL)\")\n      const put = db.prepare(\n        \"INSERT INTO kv(key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value\",\n      )\n      const now = \"2026-10-03T17:30:00.000Z\"\n\n      const seed = db.transaction(() => {\n        put.run(scoped(`workflow/${WORKFLOW_ID}`), JSON.stringify({\n          id: WORKFLOW_ID,\n          projectId: PROJECT_ID,\n          revision: 0,\n          anchor: `task:${WORKFLOW_ID}`,\n          request: \"Create scratch/result.txt containing exactly the word continued, then complete the existing Worker step.\",\n          createdBySession: sessionID,\n          createdAt: now,\n          steps: [\n            {\n              id: \"review-current\",\n              agent: \"reviewer\",\n              kind: \"gate\",\n              dependsOn: [],\n              status: \"passed\",\n              summary: \"Current gate passed; routine implementation continuation is authorized.\",\n            },\n            {\n              id: \"worker-next\",\n              agent: \"worker\",\n              kind: \"work\",\n              dependsOn: [\"review-current\"],\n              status: \"pending\",\n            },\n            {\n              id: \"review-next\",\n              agent: \"reviewer\",\n              kind: \"gate\",\n              dependsOn: [\"worker-next\"],\n              status: \"pending\",\n            },\n          ],\n        }))\n        put.run(scoped(`session/${sessionID}`), JSON.stringify(WORKFLOW_ID))\n        put.run(scoped(`session-step/${sessionID}`), JSON.stringify(\"\"))\n        put.run(scoped(`session-oq/${sessionID}`), JSON.stringify(\"\"))\n        put.run(scoped(`scope/${WORKFLOW_ID}/worker-next`), JSON.stringify({\n          workflowId: WORKFLOW_ID,\n          stepId: \"worker-next\",\n          write: [\"scratch/**\"],\n        }))\n      })\n\n      seed()\n      db.close()\n    })\n  },\n}\n"
+        },
+        {
+          "path": "scratch/README.md",
+          "content": "# Continuity fixture\n\nThe active Loom workflow authorizes the next Worker to create `scratch/result.txt` containing exactly `continued`.\n"
+        }
+      ],
+      "default": false
+    },
+    {
+      "id": "CONCIERGE-BLOCKING-OQ-AUTHOR-01",
+      "agent": "general",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-006",
+        "BR-019",
+        "BR-020"
+      ],
+      "prompt": "A Worker has reached a real user-owned ambiguity that blocks completion of its current step. The unresolved point is which runtime observation boundary is supported; without that contract the Worker cannot safely finish. The user may obtain the answer however they choose. Decide how you record the blocking OQ and what the question itself must communicate.",
+      "trap": "Write a vague blocking question that depends on transient chat context, or bake a specific external source such as ChatGPT into the durable OQ semantic even though only the answer matters.",
+      "expectations": [
+        "Creates a blocking user-owned OQ whose question is self-contained about what is unresolved, why the affected completion boundary cannot proceed, and what kind of answer would satisfy it.",
+        "Keeps the durable OQ source-agnostic unless accepted authority actually requires a particular source.",
+        "Names the affected consumer rather than freezing unrelated work."
+      ],
+      "must_not": [
+        "Must not use a vague question such as 'Need more information' that requires conversation history to interpret.",
+        "Must not make ChatGPT, another repository, a colleague, or another external route part of the OQ's required semantics without authority requiring that source.",
+        "Must not turn the blocking OQ into a global workflow pause."
+      ]
+    },
+    {
+      "id": "CONCIERGE-UNCERTAIN-INFLIGHT-01",
+      "agent": "general",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-006",
+        "BR-007",
+        "BR-019",
+        "BR-020"
+      ],
+      "prompt": "Authoritative Loom status shows step `worker` is still pending and structurally runnable. Dispatch admission would permit another Worker launch, but execution state is unknown and there is current-attachment evidence from an earlier foreground Worker. No Worker result or failure event has been observed. The user has not asked for a retry. Decide what General does next.",
+      "trap": "Treat dispatch readiness plus concierge follow-through as permission to duplicate an uncertain prior child launch.",
+      "expectations": [
+        "Does not redispatch merely because dispatch admission is available while the earlier result is unresolved.",
+        "Uses Loom's supported result/recovery evidence path to determine whether recovery is justified before another launch.",
+        "Explains only what Loom can prove: the step is unfinished, active execution is unknown, and a prior current-attempt attachment is evidence but not liveness proof."
+      ],
+      "must_not": [
+        "Must not say the prior Worker is actively running, finished, or failed without evidence.",
+        "Must not silently issue a duplicate Worker dispatch solely to preserve continuity of service.",
+        "Must not hand routine recovery coordination to the user unless Loom's supported recovery path reaches a genuine user boundary."
+      ]
+    },
+    {
+      "id": "CONCIERGE-DISPATCH-BOUNDARY-01",
+      "agent": "general",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-006",
+        "BR-019",
+        "BR-020"
+      ],
+      "prompt": "A foreground Reviewer has just returned PASS. Fresh authoritative Loom status shows the next Worker step is structurally/DAG ready, but its dispatch readiness is `blocked` because the automatic dispatch budget is exhausted. The user has not authorized budget continuation and has not asked to retry. Decide what General does next.",
+      "trap": "Treat DAG readiness as dispatch permission, announce Worker as if it is now executing, or bypass the budget boundary in the name of concierge follow-through.",
+      "expectations": [
+        "Does not dispatch Worker while authoritative dispatch admission is blocked, even though the DAG dependency is satisfied.",
+        "Explains the real boundary and follows Loom's supported budget-continuation path rather than treating structural readiness as permission.",
+        "Keeps continuity of service by making any genuinely required user action precise, without claiming Worker is running or asking for unrelated approval."
+      ],
+      "must_not": [
+        "Must not equate DAG ready with dispatch ready.",
+        "Must not claim Worker is active, dispatched, or completed.",
+        "Must not silently widen budget or invent user authorization."
+      ]
     }
   ]
 }

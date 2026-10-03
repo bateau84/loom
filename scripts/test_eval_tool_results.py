@@ -6,6 +6,7 @@ import argparse
 import importlib.util
 import json
 import os
+import shutil
 from contextlib import redirect_stdout
 from io import StringIO
 from pathlib import Path
@@ -19,11 +20,11 @@ RUN = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(RUN)
 
 
-def event(tool="loom_status", output="complete", *, status="completed", args=None, call_id="call-1", **extra):
+def event(tool="loom_status", output="complete", *, status="completed", args=None, call_id="call-1", session_id="parent-session", **extra):
     state = {"status": status, "input": args or {}, **extra}
     if output is not None:
         state["output"] = output
-    return {"type": "tool_use", "sessionID": "parent-session", "part": {
+    return {"type": "tool_use", "sessionID": session_id, "part": {
         "type": "tool", "tool": tool, "callID": call_id, "state": state,
     }}
 
@@ -41,6 +42,205 @@ def scenario(execution="runtime"):
 class ToolResultEvidenceTests(unittest.TestCase):
     def capture(self, *events, secrets=()):
         return RUN.extract_tool_result_evidence(raw(*events), list(secrets))
+
+    def test_observer_pairs_real_inner_result_not_parent_aggregate(self):
+        records = [
+            {"kind": "header", "schema": "loom-eval-tool-observer/v1"},
+            {"kind": "before", "sequence": 1, "tool": "execute", "call_id": "parent-1",
+             "session_id": "session-1", "agent": "worker", "message_id": "message-1", "input": {"code": "discard"}},
+            {"kind": "before", "sequence": 2, "tool": "loom_status", "call_id": "inner-1",
+             "session_id": "session-1", "agent": "worker", "message_id": "message-1",
+             "input": {"workflowId": "wf-1"}, "parent": {"tool": "execute", "call_id": "parent-1",
+             "session_id": "session-1", "agent": "worker", "message_id": "message-1"}},
+            {"kind": "after", "sequence": 3, "tool": "loom_status", "call_id": "inner-1",
+             "session_id": "session-1", "agent": "worker", "message_id": "message-1",
+             "input": {"workflowId": "wf-1"}, "status": "completed",
+             "result": {"content": "actual inner sentinel"}},
+            {"kind": "after", "sequence": 4, "tool": "execute", "call_id": "parent-1",
+             "session_id": "session-1", "agent": "worker", "message_id": "message-1", "input": {"code": "discard"},
+             "status": "completed", "result": {"content": "aggregate must not be used"}},
+            {"kind": "footer", "schema": "loom-eval-tool-observer/v1", "complete": True,
+             "event_count": 4},
+        ]
+
+        evidence = self.observer_capture(records)
+
+        self.assertTrue(RUN.nested_tool_capture_complete(evidence), repr(evidence))
+        nested, complete = RUN.nested_metadata_call_events(evidence)
+        self.assertTrue(complete)
+        self.assertEqual(nested[0]["tool"], "loom_status")
+        self.assertEqual(nested[0]["parent_call_id"], "parent-1")
+        self.assertEqual(json.loads(nested[0]["output"]), {"content": "actual inner sentinel"})
+
+    def observer_capture(self, records, secrets=(), outer_stdout=None):
+        registration_ids = sorted({
+            identity
+            for record in records
+            for identity in (
+                [record.get("tool")] +
+                ([record["parent"].get("tool")] if isinstance(record.get("parent"), dict) else [])
+            )
+            if isinstance(identity, str)
+        })
+        records = [dict(record) for record in records]
+        in_flight = {}
+        parent_hook_ids = {}
+        for record in records[1:-1]:
+            key = (record.get("session_id"), record.get("message_id"), record.get("call_id"))
+            if record.get("kind") == "before":
+                record["hook_id"] = str(record["sequence"])
+                record["registered_tool"] = record["tool"]
+                in_flight.setdefault(key, []).append(record["hook_id"])
+                if record.get("tool") == "execute":
+                    parent_hook_ids[record.get("call_id")] = record["hook_id"]
+                if isinstance(record.get("parent"), dict):
+                    record["parent"]["hook_id"] = parent_hook_ids.get(record["parent"].get("call_id"))
+                    record["parent"]["registered_tool"] = record["parent"].get("tool")
+            elif record.get("kind") == "after":
+                pending = in_flight.get(key, [])
+                record["hook_id"] = pending.pop(0) if len(pending) == 1 else "ambiguous"
+                record["registered_tool"] = record["tool"]
+        outer_events = [
+            event(record["tool"], output="outer result is not inner evidence", args=record["input"],
+                  call_id=record["call_id"], session_id=record["session_id"])
+            for record in records[1:-1]
+            if record.get("kind") == "before" and record.get("parent") is None
+        ]
+        records[-1]["registration_ids"] = registration_ids
+        return RUN.capture_observer_tool_result_evidence(
+            "\n".join(json.dumps(record) for record in records) + "\n",
+            list(secrets),
+            outer_stdout=outer_stdout if outer_stdout is not None else raw(*outer_events),
+        )
+
+    def test_observer_distinguishes_returned_domain_denial_from_thrown_failure(self):
+        records = [
+            {"kind": "header", "schema": "loom-eval-tool-observer/v1"},
+            {"kind": "before", "sequence": 1, "tool": "loom_budget_grant", "call_id": "denial",
+             "session_id": "s", "agent": "general", "message_id": "m", "input": {"workflowId": "wf"}, "parent": None},
+            {"kind": "after", "sequence": 2, "tool": "loom_budget_grant", "call_id": "denial",
+             "session_id": "s", "agent": "general", "message_id": "m", "input": {"workflowId": "wf"},
+             "status": "completed", "result": {"content": "denied by policy"}},
+            {"kind": "before", "sequence": 3, "tool": "loom_status", "call_id": "throw",
+             "session_id": "s", "agent": "general", "message_id": "m", "input": {"workflowId": "wf"}, "parent": None},
+            {"kind": "after", "sequence": 4, "tool": "loom_status", "call_id": "throw",
+             "session_id": "s", "agent": "general", "message_id": "m", "input": {"workflowId": "wf"},
+             "status": "error", "error": {"message": "runtime failure"}},
+            {"kind": "footer", "schema": "loom-eval-tool-observer/v1", "complete": True, "event_count": 4},
+        ]
+
+        captured = self.observer_capture(records)
+
+        self.assertTrue(RUN.nested_tool_capture_complete(captured), repr(captured))
+        self.assertEqual(captured["events"][0]["status"], "completed")
+        self.assertIn("denied by policy", captured["events"][0]["output"])
+        self.assertEqual(captured["events"][1]["status"], "error")
+        self.assertNotIn("output", captured["events"][1])
+        self.assertIn("runtime failure", captured["events"][1]["error"])
+
+    def test_observer_rejects_missing_duplicate_forged_and_ambiguous_pairs(self):
+        complete = [
+            {"kind": "header", "schema": "loom-eval-tool-observer/v1"},
+            {"kind": "before", "sequence": 1, "tool": "loom_status", "call_id": "id",
+             "session_id": "s", "agent": "worker", "message_id": "m", "input": {}, "parent": None},
+            {"kind": "after", "sequence": 2, "tool": "loom_status", "call_id": "id",
+             "session_id": "s", "agent": "worker", "message_id": "m", "input": {},
+             "status": "completed", "result": {"content": "actual"}},
+            {"kind": "footer", "schema": "loom-eval-tool-observer/v1", "complete": True, "event_count": 2},
+        ]
+        missing = self.observer_capture(complete[:-2] + [complete[-1]])
+        duplicate = self.observer_capture(complete[:-1] + [complete[2], complete[-1]])
+        forged = self.observer_capture([
+            *complete[:-2], {**complete[2], "input": {"workflowId": "other"}}, complete[-1]
+        ])
+        ambiguous = self.observer_capture([
+            *complete[:-2], {**complete[1], "parent_ambiguous": True}, complete[2], complete[-1]
+        ])
+        repeated_parallel = self.observer_capture([
+            complete[0],
+            {**complete[1], "sequence": 1},
+            {**complete[1], "sequence": 2},
+            {**complete[2], "sequence": 3},
+            {**complete[2], "sequence": 4},
+            {**complete[-1], "event_count": 4},
+        ])
+
+        for evidence in (missing, duplicate, forged, ambiguous, repeated_parallel):
+            self.assertFalse(RUN.nested_tool_capture_complete(evidence))
+
+        outer_forgery = self.observer_capture(
+            complete,
+            outer_stdout=raw(event("loom_status", args={"different": True}, call_id="id", session_id="s")),
+        )
+        self.assertFalse(RUN.nested_tool_capture_complete(outer_forgery))
+
+    def test_observer_preserves_call_start_order_separately_from_parallel_completion(self):
+        records = [
+            {"kind": "header", "schema": "loom-eval-tool-observer/v1"},
+            {"kind": "before", "sequence": 1, "tool": "execute", "call_id": "p",
+             "session_id": "s", "agent": "worker", "message_id": "m", "input": {}, "parent": None},
+            {"kind": "before", "sequence": 2, "tool": "loom_status", "call_id": "first",
+             "session_id": "s", "agent": "worker", "message_id": "m", "input": {"n": 1},
+             "parent": {"tool": "execute", "call_id": "p", "session_id": "s", "agent": "worker", "message_id": "m"}},
+            {"kind": "before", "sequence": 3, "tool": "loom_status", "call_id": "second",
+             "session_id": "s", "agent": "worker", "message_id": "m", "input": {"n": 2},
+             "parent": {"tool": "execute", "call_id": "p", "session_id": "s", "agent": "worker", "message_id": "m"}},
+            {"kind": "after", "sequence": 4, "tool": "loom_status", "call_id": "second",
+             "session_id": "s", "agent": "worker", "message_id": "m", "input": {"n": 2},
+             "status": "completed", "result": {"n": 2}},
+            {"kind": "after", "sequence": 5, "tool": "loom_status", "call_id": "first",
+             "session_id": "s", "agent": "worker", "message_id": "m", "input": {"n": 1},
+             "status": "completed", "result": {"n": 1}},
+            {"kind": "after", "sequence": 6, "tool": "execute", "call_id": "p",
+             "session_id": "s", "agent": "worker", "message_id": "m", "input": {},
+             "status": "completed", "result": {"content": "transformed"}},
+            {"kind": "footer", "schema": "loom-eval-tool-observer/v1", "complete": True, "event_count": 6},
+        ]
+
+        evidence = self.observer_capture(records)
+
+        self.assertTrue(RUN.nested_tool_capture_complete(evidence))
+        children = [event for event in RUN.result_evidence_events(evidence) if event["tool"] == "loom_status"]
+        self.assertEqual([json.loads(event["input"]) for event in children], [{"n": 1}, {"n": 2}])
+        self.assertEqual([event["completed_sequence"] for event in children], [5, 4])
+
+    def test_observer_redacts_credentials_before_clipping_and_fails_closed_on_oversize(self):
+        secret = "observer-secret-should-not-survive"
+        records = [
+            {"kind": "header", "schema": "loom-eval-tool-observer/v1"},
+            {"kind": "before", "sequence": 1, "tool": "execute", "call_id": "p",
+             "session_id": "s", "agent": "worker", "message_id": "m", "input": {}, "parent": None},
+            {"kind": "before", "sequence": 2, "tool": "loom_status", "call_id": "c",
+             "session_id": "s", "agent": "worker", "message_id": "m", "input": {"credential": secret},
+             "parent": {"tool": "execute", "call_id": "p", "session_id": "s", "agent": "worker", "message_id": "m"}},
+            {"kind": "after", "sequence": 3, "tool": "loom_status", "call_id": "c",
+             "session_id": "s", "agent": "worker", "message_id": "m", "input": {"credential": secret},
+             "status": "completed", "result": {"text": secret + "x" * 7000}},
+            {"kind": "after", "sequence": 4, "tool": "execute", "call_id": "p",
+             "session_id": "s", "agent": "worker", "message_id": "m", "input": {},
+             "status": "completed", "result": {"content": "discarded"}},
+            {"kind": "footer", "schema": "loom-eval-tool-observer/v1", "complete": True, "event_count": 4},
+        ]
+
+        captured = self.observer_capture(records, secrets=(secret,))
+        oversize = self.observer_capture([
+            *records[:-2], {**records[-2], "result": {"text": "x" * 70_000}}, records[-1]
+        ])
+
+        self.assertNotIn(secret, json.dumps(captured))
+        self.assertFalse(RUN.nested_tool_capture_complete(captured))
+        self.assertFalse(RUN.nested_tool_capture_complete(oversize))
+
+    def test_runtime_project_materializes_observer_and_missing_records_are_non_evidence(self):
+        temp, target, _judge = RUN.setup_projects(scenario("runtime"))
+        try:
+            plugin = target / ".opencode" / "plugins" / "eval-tool-observer.ts"
+            self.assertTrue(plugin.is_file())
+            result = RUN.attach_observer_capture({"text": "done"}, target, [])
+            self.assertFalse(RUN.nested_tool_capture_complete(result["observed_tool_results"]))
+            self.assertFalse(result["observed_tool_results"]["capture_file_present"])
+        finally:
+            shutil.rmtree(temp, ignore_errors=True)
 
     def test_reviewer_result_and_final_workflow_state_survive(self):
         captured = self.capture(
@@ -105,6 +305,18 @@ class ToolResultEvidenceTests(unittest.TestCase):
         self.assertTrue(item["output"].startswith("START"))
         self.assertTrue(item["output"].endswith("END ERROR"))
         self.assertLessEqual(len(item["output"]), RUN.TOOL_RESULT_FIELD_LIMIT)
+
+    def test_public_projection_omits_size_limited_field_instead_of_persisting_a_preview(self):
+        prepared = RUN.prepare_transport_result({
+            "stdout": raw(event(output="x" * (RUN.TOOL_RESULT_FIELD_LIMIT + 1))),
+        }, [])
+        field = prepared["observed_tool_results"]["events"][0]
+
+        self.assertNotIn("output", field)
+        self.assertEqual(field["evidence_safety"]["output"], {
+            "state": "omitted", "reason": "size_limit", "stage": "capture",
+        })
+        self.assertFalse(prepared["observed_tool_results"]["evidence_safety"]["coverage_complete"])
 
     def test_count_and_total_budgets_retain_latest_results_and_mark_omissions(self):
         captured = self.capture(*(event(output="x" * 5000, call_id=str(i)) for i in range(100)), event(output="LAST: blocked", call_id="last"))
@@ -251,7 +463,7 @@ class ToolResultEvidenceTests(unittest.TestCase):
         evidence = prepared["observed_tool_results"]
         bounded_raw = RUN.extract_tool_result_evidence(raw(*raw_events), [])
         self.assertGreater(bounded_raw["omitted_events"], 0)
-        self.assertTrue(evidence["metadata_tool_capture_complete"])
+        self.assertFalse(evidence["metadata_tool_capture_complete"])
         self.assertEqual(evidence["nested_tool_calls_observed"], 10)
         nested_actions = [
             action for action in RUN.tool_result_actions(evidence)
@@ -852,10 +1064,8 @@ class ToolResultEvidenceTests(unittest.TestCase):
             "stdout_total_chars": 250000,
         }
         prepared = RUN.prepare_transport_result(result, [secret])
-        self.assertEqual(
-            prepared["stdout"],
-            "[upstream-truncated stdout omitted before secret redaction]",
-        )
+        self.assertNotIn("stdout", prepared)
+        self.assertEqual(prepared["evidence_safety"]["fields"]["stdout"]["reason"], "upstream_clipped")
         self.assertNotIn(secret[:10], json.dumps(prepared))
 
     def test_truncated_stderr_is_omitted_when_secret_redaction_cannot_be_complete(self):
@@ -869,10 +1079,8 @@ class ToolResultEvidenceTests(unittest.TestCase):
             "stdout_total_chars": 0,
         }
         prepared = RUN.prepare_transport_result(result, [secret])
-        self.assertEqual(
-            prepared["stderr"],
-            "[upstream-truncated stderr omitted before secret redaction]",
-        )
+        self.assertNotIn("stderr", prepared)
+        self.assertEqual(prepared["evidence_safety"]["fields"]["stderr"]["reason"], "upstream_clipped")
         self.assertNotIn(secret[:10], json.dumps(prepared))
 
     def test_runner_truncated_field_is_omitted_when_secret_may_straddle_clip(self):
@@ -902,9 +1110,13 @@ class ToolResultEvidenceTests(unittest.TestCase):
         encoded = json.dumps(prepared["observed_tool_results"])
         self.assertNotIn(secret[:8], encoded)
         self.assertNotIn(secret[-8:], encoded)
-        self.assertIn("upstream-truncated field omitted", encoded)
+        event = prepared["observed_tool_results"]["events"][0]
+        self.assertNotIn("output", event)
+        self.assertEqual(event["evidence_safety"]["output"], {
+            "state": "omitted", "reason": "upstream_clipped", "stage": "runner",
+        })
 
-    def test_runner_projection_redacts_json_escaped_secret_in_input_and_object_output(self):
+    def test_runner_projection_omits_unsafe_sensitive_key_fields_without_renaming_keys(self):
         secret = 'sk-quote-"line\npath\\tail-0123456789'
         escaped = json.dumps(secret, ensure_ascii=False)[1:-1]
         result = {
@@ -932,7 +1144,47 @@ class ToolResultEvidenceTests(unittest.TestCase):
         encoded = json.dumps(prepared, ensure_ascii=False)
         self.assertNotIn(secret, encoded)
         self.assertNotIn(escaped, encoded)
-        self.assertIn("***REDACTED***", encoded)
+        event = prepared["observed_tool_results"]["events"][0]
+        self.assertNotIn("input", event)
+        self.assertNotIn("output", event)
+        self.assertEqual(event["evidence_safety"]["input"]["state"], "omitted")
+        self.assertEqual(event["evidence_safety"]["output"]["reason"], "sensitive_key")
+        self.assertFalse(prepared["observed_tool_results"]["evidence_safety"]["coverage_complete"])
+
+    def test_short_credentials_do_not_corrupt_transport_protocol_or_json_payload(self):
+        secrets = ["0", "1", "text", "low"]
+        event_record = {
+            "sequence": 1,
+            "truncated_fields": [],
+            "tool": "loom_status",
+            "status": "completed",
+            "input": json.dumps({"workflowId": "wf-1", "text": "payload"}),
+            "output": json.dumps({"text": "text", "state": "ready", "count": 1}),
+        }
+        result = {
+            "stdout": "",
+            "stdout_truncated": False,
+            "tool_result_evidence": {
+                "schema": "opencode-eval-runner/tool-results/v1",
+                "source": "opencode.event-stream.full",
+                "observed_events": 1,
+                "omitted_events": 0,
+                "events": [event_record],
+            },
+        }
+
+        prepared = RUN.prepare_transport_result(result, secrets)
+        evidence = prepared["observed_tool_results"]
+        captured = evidence["events"][0]
+
+        self.assertEqual(evidence["schema"], "opencode-eval-runner/tool-results/v1")
+        self.assertEqual(captured["tool"], "loom_status")
+        self.assertEqual(captured["status"], "completed")
+        self.assertEqual(captured["evidence_safety"]["output"]["state"], "redacted")
+        self.assertIn("output", captured["truncated_fields"])
+        self.assertEqual(json.loads(captured["output"])["state"], "ready")
+        self.assertEqual(json.loads(captured["output"])["count"], 1)
+        self.assertEqual(json.loads(captured["output"])["text"], "***REDACTED***")
 
     def test_runner_projection_redacts_repeatedly_json_encoded_secret(self):
         secret = 'sk-nested-"line\npath\\tail-0123456789'
@@ -964,7 +1216,7 @@ class ToolResultEvidenceTests(unittest.TestCase):
             self.assertNotIn(variant, encoded)
         self.assertIn("***REDACTED***", encoded)
 
-    def test_nontruncated_raw_jsonl_redacts_json_escaped_secret_forms(self):
+    def test_nontruncated_raw_jsonl_is_omitted_when_secret_occurs(self):
         secret = 'sk-quote-"line\npath\\tail-0123456789'
         raw_stdout = raw(event(
             "read",
@@ -984,7 +1236,9 @@ class ToolResultEvidenceTests(unittest.TestCase):
         encoded = json.dumps(prepared, ensure_ascii=False)
         self.assertNotIn(secret, encoded)
         self.assertNotIn(json.dumps(secret, ensure_ascii=False)[1:-1], encoded)
-        self.assertIn("***REDACTED***", encoded)
+        self.assertNotIn("stdout", prepared)
+        self.assertEqual(prepared["evidence_safety"]["fields"]["stdout"]["state"], "omitted")
+        self.assertFalse(prepared["observed_tool_results"]["evidence_safety"]["coverage_complete"])
 
     def test_redaction_covers_sensitive_dictionary_keys_after_decoding(self):
         secret = 'sk-key-"quoted\nvalue\\tail-0123456789'
@@ -1028,11 +1282,14 @@ class ToolResultEvidenceTests(unittest.TestCase):
                     if runner:
                         Path(command[command.index("--output") + 1]).write_text(json.dumps(target))
                     return argparse.Namespace(returncode=0, stdout=json.dumps(target), stderr="")
-                with patch.dict(os.environ, {"OPENAI_API_KEY": secret, "OPENCODE_EVAL_RUNNER_BIN": runner or ""}), \
+                with patch.dict(os.environ, {"OPENAI_API_KEY": secret, "OPENCODE_CONFIG_DIR": "", "OPENCODE_EVAL_RUNNER_BIN": runner or ""}, clear=False), \
                      patch.object(RUN.shutil, "which", return_value=None), \
                      patch.object(RUN.subprocess, "run", side_effect=fake_run):
                     result = RUN.invoke_container(engine="podman", image="fixture", transport="opencode", model="test", agent="general", prompt="test", system="", project=Path(tmp), auth=None, config=None, models_catalog=None, database_seed=None, config_root=None, expected_plugin=None, timeout=30, container_timeout=60, mount_node_modules=False, workspace_mode="ro", extra_envs=[])
-                self.assertEqual(result["observed_tool_results"]["events"][0]["output"], "***REDACTED***")
+                self.assertEqual(len(result["observed_tool_results"]["events"]), 1)
+                self.assertNotIn("input", result["observed_tool_results"]["events"][0])
+                self.assertFalse(result["observed_tool_results"]["evidence_safety"]["inventory_complete"])
+                self.assertNotIn(secret, json.dumps(result))
 
     def test_run_case_delivers_same_result_evidence_to_judge_and_artifact(self):
         case = scenario()
@@ -1051,6 +1308,82 @@ class ToolResultEvidenceTests(unittest.TestCase):
             self.assertEqual(result["observed_tool_results"], target["observed_tool_results"])
             saved = json.loads((artifact_dir / "RESULTS-01.json").read_text())
             self.assertEqual(saved["observed_tool_results"], result["observed_tool_results"])
+
+
+class SensitiveEnvironmentValueTests(unittest.TestCase):
+    def test_only_credential_intent_envs_are_collected_and_trace_json_stays_parseable(self):
+        secrets = RUN.collect_sensitive_values(
+            {
+                "OPENCODE_EVAL_OBSERVATIONS": "1",
+                "EVAL_OBSERVER_FIXTURE_THROW": "0",
+                "EVAL_CASE_LABEL": "1",
+                "OPENAI_BASE_URL": "https://example.invalid/v1",
+                "MODEL_MAX_TOKENS": "8192",
+                "SYNTHETIC_API_TOKEN": "xy",
+            },
+            [
+                "OPENCODE_EVAL_OBSERVATIONS",
+                "EVAL_OBSERVER_FIXTURE_THROW",
+                "EVAL_CASE_LABEL",
+                "OPENAI_BASE_URL",
+                "MODEL_MAX_TOKENS",
+                "SYNTHETIC_API_TOKEN",
+            ],
+            None,
+            None,
+            None,
+            None,
+        )
+
+        self.assertEqual(secrets, ["xy"])
+        source = raw(event(output="observed status=1 retries=0"))
+        evidence = RUN.extract_tool_result_evidence(source, secrets)
+        self.assertEqual(evidence["observed_events"], 1)
+        self.assertEqual(evidence["events"][0]["output"], "observed status=1 retries=0")
+
+    def test_config_matching_uses_credential_names_not_incidental_substrings(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config = Path(directory) / "config.json"
+            config.write_text(
+                json.dumps({
+                    "model": {
+                        "name": "openai/gpt-5.5",
+                        "max_tokens": "4096",
+                        "accessibility": "enabled",
+                    },
+                    "auth": {"client_secret": "short-secret"},
+                    "label": "ordinary",
+                }),
+                encoding="utf-8",
+            )
+            secrets = RUN.collect_sensitive_values({}, [], None, config, None, None)
+
+        self.assertEqual(secrets, ["short-secret"])
+
+    def test_public_harness_flags_do_not_corrupt_stdout_but_short_credentials_still_redact(self):
+        secrets = RUN.collect_sensitive_values(
+            {
+                "OPENCODE_EVAL_OBSERVATIONS": "1",
+                "EVAL_OBSERVER_FIXTURE_THROW": "0",
+                "SYNTHETIC_API_TOKEN": "xy",
+            },
+            ["OPENCODE_EVAL_OBSERVATIONS", "EVAL_OBSERVER_FIXTURE_THROW", "SYNTHETIC_API_TOKEN"],
+            None,
+            None,
+            None,
+            None,
+        )
+
+        self.assertNotIn("1", secrets)
+        self.assertNotIn("0", secrets)
+        self.assertIn("xy", secrets)
+        source = raw(event(output="native-sentinel", timestamp=1))
+        prepared = RUN.prepare_transport_result({"text": "success 1 xy", "stdout": source}, secrets)
+
+        self.assertEqual(prepared["text"], "success 1 ***REDACTED***")
+        self.assertEqual(prepared["stdout"], source)
+        self.assertEqual(len(prepared["observed_tool_results"]["events"]), 1)
+        self.assertEqual(prepared["observed_tool_results"]["events"][0]["output"], "native-sentinel")
 
 
 if __name__ == "__main__":
