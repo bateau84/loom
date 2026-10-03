@@ -33,8 +33,8 @@ export type StepDispatchReadiness = {
 }
 
 export type StepExecutionObservation = {
-  state: "attached" | "not_observed"
-  activity: "unknown"
+  state: "unknown"
+  evidence?: "current_attachment"
   attachedAt?: string
 }
 
@@ -199,8 +199,7 @@ export function compactWorkflowState(
           reason: "Dispatch admission was not evaluated for this status projection.",
         },
         execution: observed?.execution ?? {
-          state: "not_observed" as const,
-          activity: "unknown" as const,
+          state: "unknown" as const,
         },
         completion: {
           eligible: constraints.some((constraint) => constraint.boundary === "completion")
@@ -417,8 +416,7 @@ export function renderStatusMarkdown(view: StatusView, artifact?: StatusArtifact
       if (step.dispatch.state === "ready") details.push("dispatch ready")
       if (step.dispatch.state === "blocked") details.push(`dispatch blocked: ${clippedSummary(step.dispatch.reason) ?? "admission denied"}`)
       if (step.dispatch.state === "unknown") details.push("dispatch readiness unknown")
-      if (step.execution.state === "attached") details.push("attached; active execution unknown")
-      else details.push("no current execution observed")
+      details.push("active execution unknown")
       const completionBlocks = step.completion.constraints.filter(
         (constraint) => constraint.boundary === "completion",
       )
@@ -602,9 +600,7 @@ function currentHtml(view: StatusView) {
               : step.dispatch.state === "blocked"
                 ? `dispatch blocked: ${step.dispatch.reason ?? "admission denied"}`
                 : "dispatch readiness unknown",
-            step.execution.state === "attached"
-              ? "attached; active execution unknown"
-              : "no current execution observed",
+            "active execution unknown",
           ]
           const completionBlocks = step.completion.constraints.filter(
             (constraint) => constraint.boundary === "completion",
