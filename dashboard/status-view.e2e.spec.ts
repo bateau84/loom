@@ -12,7 +12,7 @@ function view(): StatusView {
       kind: "work",
       structurallyRunnable: true,
       dispatch: { state: "ready" },
-      execution: { state: "not_observed", activity: "unknown" },
+      execution: { state: "unknown" },
       completion: { eligible: "unknown", constraints: [] },
     }],
     userAttention: [],
