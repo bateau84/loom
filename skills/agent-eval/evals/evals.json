@@ -1,25 +1,25 @@
 {
   "skill": "agent-eval",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "shape": 1,
   "cases": [
     {
       "id": "Agent-Eval-01",
       "name": "separate-judgment-proof-from-runtime-proof",
-      "trap": "Use one uniform execution mode for two regressions and either overspend on simple judgment evidence or accept stated intent as proof of real recovery execution.",
-      "prompt": "Two behavioral regressions need coverage. In one, Reviewer approved an implementation even though supplied evidence directly contradicted an accepted requirement. In the other, General told the user an exhausted Worker had been resumed, but no Worker was actually dispatched or attached. Design the minimum focused evaluation coverage for both regressions and explain what each result would and would not prove.",
+      "trap": "Cost pressure encourages one uniform execution mode: use runtime for both regressions, or use role-decision for both and accept stated recovery intent as proof that real recovery happened.",
+      "prompt": "Two behavioral regressions need coverage, and maintainers would prefer one reusable eval pattern if that can still prove both claims cheaply. In one regression, Reviewer approved an implementation even though supplied evidence directly contradicted an accepted requirement. In the other, General told the user an exhausted Worker had been resumed, but no Worker was actually dispatched or attached. Design the minimum focused evaluation coverage and explain what each result would and would not prove.",
       "expectations": [
         "Separates the regressions because they require different evidence rather than forcing both through one execution mode.",
         "Uses role-decision for the Reviewer regression because the load-bearing claim is the review judgment against supplied authority/evidence.",
         "Does not require real tool calls for the Reviewer role-decision case and does not claim that its PASS proves full workflow composition.",
         "Uses runtime for the recovery regression because the load-bearing claim is that production actions actually occurred against workflow state.",
-        "Requires observed recovery actions bound to the intended existing workflow rather than accepting a final answer that says recovery happened.",
-        "Treats provider or harness failure as non-evidence rather than a behavioral verdict."
+        "Requires observed recovery actions bound to the intended existing workflow rather than accepting a final answer that says recovery happened."
       ],
       "negative_expectations": [
         "Must not use runtime for both cases merely because runtime sounds stronger.",
         "Must not use a tool-less decision response as proof that Worker was actually dispatched and attached.",
-        "Must not require tool calls from the role-decision case."
+        "Must not require tool calls from the role-decision case.",
+        "Must not accept the presence of recovery tools alone when their arguments do not bind the actions to the intended existing workflow."
       ]
     },
     {
@@ -39,6 +39,24 @@
         "Must not make escalation the only safe strategy across the corpus.",
         "Must not encode one historical transcript or exact wording as the contract.",
         "Must not invent new product or architecture semantics in the benchmark."
+      ]
+    },
+    {
+      "id": "Agent-Eval-03",
+      "name": "separate-behavioral-failure-from-non-evidence",
+      "trap": "Turn provider or harness failure into a behavioral FAIL/PASS, or treat a real semantic violation as mere infrastructure noise.",
+      "prompt": "The same role eval is run three times. Run A never starts the target because the provider reports Model unavailable before any tool/action is observed. Run B completes normally and the observed response crosses the authority boundary the case forbids. Run C produces a target response, but the judge/provider fails before a semantic verdict can be established. Explain how the three results should be classified and what, if anything, should be retried.",
+      "expectations": [
+        "Classifies Run A as provider/transport non-evidence rather than behavioral PASS or FAIL because target behavior was never observed.",
+        "Classifies Run B as a behavioral FAIL because execution completed and the observed behavior violates the case contract.",
+        "Classifies Run C as non-evidence when the evaluation cannot establish a semantic verdict, rather than guessing from incomplete judge/provider execution.",
+        "Keeps non-evidence outcomes separate from the behavioral pass/fail rate and reports the missing evidence explicitly.",
+        "Allows retry of non-evidence infrastructure/provider outcomes under the harness retry/safety rules, while not retrying a genuine semantic FAIL merely to seek a better answer."
+      ],
+      "negative_expectations": [
+        "Must not count provider or harness failure as evidence that the role behaved incorrectly.",
+        "Must not relabel an observed semantic contract violation as infrastructure noise.",
+        "Must not convert missing evidence into PASS."
       ]
     }
   ]
