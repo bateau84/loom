@@ -590,6 +590,17 @@ describe("Loom registered plugin boundary", () => {
         byKey: { "step:reviewer-budget": 1 },
         seenDispatches: ["reviewer-budget-seed"],
       })
+      await h.durableStorage.set("dispatch-grant/stale-worker-grant", {
+        schemaVersion: 1,
+        grantId: "stale-worker-grant",
+        projectId: h.runtime.projectId,
+        workflowId,
+        stepId: "stale-worker",
+        expectedAgent: "worker",
+        issuingParentSessionId: general,
+        createdAt: now,
+        expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      })
       await h.durableStorage.set(`oq-index/${workflowId}`, ["OQ-17"])
       await h.durableStorage.set(`oq/${workflowId}/OQ-17`, {
         id: "OQ-17",
