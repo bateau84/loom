@@ -27,6 +27,70 @@ export function clippedSummary(value?: string, max = 180) {
   return normalized.length <= max ? normalized : normalized.slice(0, max - 1) + "…"
 }
 
+export type StepDispatchReadiness = {
+  state: "ready" | "blocked" | "unknown"
+  reason?: string
+}
+
+export type StepExecutionObservation = {
+  state: "attached" | "not_observed"
+  activity: "unknown"
+  attachedAt?: string
+}
+
+export type StepReadinessObservation = {
+  dispatch: StepDispatchReadiness
+  execution: StepExecutionObservation
+}
+
+export type StepCompletionConstraint = {
+  source: string
+  kind: "oq" | "verification"
+  boundary: "completion"
+  state: "awaiting_answer" | "reconciliation_pending" | "verification_pending"
+  detail?: string
+  responder?: string
+}
+
+function completionConstraints(
+  workflow: Workflow,
+  questions: OpenQuestion[],
+  stepId: string,
+): StepCompletionConstraint[] {
+  const oqConstraints = questions
+    .filter(
+      (question) =>
+        question.status !== "closed" &&
+        question.blocking &&
+        question.consumerStepIds.includes(stepId) &&
+        (!question.answer || !question.reconciliations[stepId]),
+    )
+    .map((question): StepCompletionConstraint => ({
+      source: question.id,
+      kind: "oq",
+      boundary: "completion",
+      state: question.answer ? "reconciliation_pending" : "awaiting_answer",
+      detail: clippedSummary(question.question, 180),
+      responder: question.requiredAuthority,
+    }))
+
+  const verificationConstraints = (workflow.verification ?? [])
+    .filter(
+      (requirement) =>
+        requirement.status === "open" &&
+        requirement.beforeStepId === stepId,
+    )
+    .map((requirement): StepCompletionConstraint => ({
+      source: requirement.id,
+      kind: "verification",
+      boundary: "completion",
+      state: "verification_pending",
+      detail: clippedSummary(requirement.statement, 180),
+    }))
+
+  return [...oqConstraints, ...verificationConstraints]
+}
+
 export function compactQuestions(questions: OpenQuestion[], workflow: Workflow) {
   const unresolved = questions.filter((question) => question.status !== "closed")
   return {
@@ -35,8 +99,11 @@ export function compactQuestions(questions: OpenQuestion[], workflow: Workflow) 
       .filter((question) => !question.answer)
       .map((question) => ({
         questionId: question.id,
+        question: clippedSummary(question.question, 220),
         responder: question.requiredAuthority,
         blocking: question.blocking,
+        consumers: [...question.consumerStepIds],
+        state: "awaiting_answer" as const,
       })),
     reconcile: (workflow.cancellation ? [] : unresolved)
       .filter((question) => Boolean(question.answer))
@@ -45,8 +112,11 @@ export function compactQuestions(questions: OpenQuestion[], workflow: Workflow) 
           .filter((stepId) => !question.reconciliations[stepId])
           .map((stepId) => ({
             questionId: question.id,
+            question: clippedSummary(question.question, 220),
+            blocking: question.blocking,
             stepId,
             agent: workflow.steps.find((step) => step.id === stepId)?.agent,
+            state: "reconciliation_pending" as const,
           })),
       ),
   }
@@ -74,6 +144,7 @@ export function compactWorkflowState(
   limits: ExecutionLimits,
   acceptance?: AcceptancePlan,
   knowledge?: KnowledgeReport,
+  stepReadiness: Record<string, StepReadinessObservation> = {},
 ) {
   const ready = runnable(workflow)
   const finished = workflow.steps.filter((step) => ["complete", "passed", "failed"].includes(step.status))
@@ -81,6 +152,13 @@ export function compactWorkflowState(
   const pending = workflow.steps.filter((step) => step.status === "pending")
   const readyIds = new Set(ready.map((step) => step.id))
   const blockedPending = pending.filter((step) => !readyIds.has(step.id))
+  const questionsSummary = compactQuestions(questions, workflow)
+  const userAttention = questionsSummary.routes.filter(
+    (question) =>
+      question.blocking &&
+      question.responder === "user" &&
+      question.consumers.some((stepId) => readyIds.has(stepId)),
+  )
 
   const state =
     workflow.cancellation ? "cancelled" :
@@ -100,7 +178,29 @@ export function compactWorkflowState(
       total: workflow.steps.length,
       failed: failed.length,
     },
-    now: ready.map((step) => ({ step: step.id, agent: step.agent, kind: step.kind })),
+    now: ready.map((step) => {
+      const constraints = completionConstraints(workflow, questions, step.id)
+      const observed = stepReadiness[step.id]
+      return {
+        step: step.id,
+        agent: step.agent,
+        kind: step.kind,
+        structurallyRunnable: true as const,
+        dispatch: observed?.dispatch ?? {
+          state: "unknown" as const,
+          reason: "Dispatch admission was not evaluated for this status projection.",
+        },
+        execution: observed?.execution ?? {
+          state: "not_observed" as const,
+          activity: "unknown" as const,
+        },
+        completion: {
+          eligible: constraints.length > 0 ? false as const : "unknown" as const,
+          constraints,
+        },
+      }
+    }),
+    userAttention,
     userDecisions: userDecisionWaitSteps(workflow).map(({ step, ready, waitsFor }) => ({
       step: step.id,
       taskId: step.task.id,
@@ -128,7 +228,7 @@ export function compactWorkflowState(
           ),
       ),
     })),
-    questions: compactQuestions(questions, workflow),
+    questions: questionsSummary,
     verification: compactVerification(workflow),
     budget: {
       dispatches: budget.totalDispatches,
@@ -161,9 +261,18 @@ export function buildStatusView(
   acceptance?: AcceptancePlan,
   knowledge?: KnowledgeReport,
   work?: WorkHierarchy,
+  stepReadiness: Record<string, StepReadinessObservation> = {},
 ): StatusView {
   return {
-    ...compactWorkflowState(workflow, questions, budget, limits, acceptance, knowledge),
+    ...compactWorkflowState(
+      workflow,
+      questions,
+      budget,
+      limits,
+      acceptance,
+      knowledge,
+      stepReadiness,
+    ),
     work: work
       ? {
           tree: workTree(work),
@@ -292,11 +401,35 @@ export function renderStatusMarkdown(view: StatusView, artifact?: StatusArtifact
   }
 
   if (view.now.length) {
-    lines.push("", "### Now")
+    lines.push("", "### Execution readiness")
     for (const step of view.now.slice(0, 5)) {
-      lines.push(`- → **${step.agent}** · ${markdownCode(step.step)}`)
+      const details = ["DAG ready"]
+      if (step.dispatch.state === "ready") details.push("dispatch ready")
+      if (step.dispatch.state === "blocked") details.push(`dispatch blocked: ${clippedSummary(step.dispatch.reason) ?? "admission denied"}`)
+      if (step.dispatch.state === "unknown") details.push("dispatch readiness unknown")
+      if (step.execution.state === "attached") details.push("attached; active execution unknown")
+      else details.push("no current execution observed")
+      if (step.completion.constraints.length > 0) {
+        details.push(
+          "cannot complete: " +
+            step.completion.constraints
+              .map((constraint) => `${constraint.source} ${constraint.state.replaceAll("_", " ")}`)
+              .join(", "),
+        )
+      }
+      lines.push(`- → **${step.agent}** · ${markdownCode(step.step)} · ${details.join(" · ")}`)
     }
-    if (view.now.length > 5) lines.push(`- … +${view.now.length - 5} more runnable steps`)
+    if (view.now.length > 5) lines.push(`- … +${view.now.length - 5} more structurally runnable steps`)
+  }
+
+  if (view.userAttention.length) {
+    lines.push("", "### Needs your input")
+    for (const question of view.userAttention.slice(0, 4)) {
+      lines.push(`- **${markdownCode(question.questionId)}:** ${question.question ?? "User input required."}`)
+      if (question.consumers.length) {
+        lines.push(`  - Affects completion of ${question.consumers.map(markdownCode).join(", ")}`)
+      }
+    }
   }
 
   if (view.userDecisions.length) {
@@ -427,12 +560,30 @@ function hierarchyHtml(view: StatusView) {
 function currentHtml(view: StatusView) {
   const current = view.now.length
     ? view.now
-        .map(
-          (step) =>
-            `<li><span class="agent">${esc(step.agent)}</span><code>${esc(step.step)}</code><span class="muted">${esc(step.kind)}</span></li>`,
-        )
+        .map((step) => {
+          const details = [
+            "DAG ready",
+            step.dispatch.state === "ready"
+              ? "dispatch ready"
+              : step.dispatch.state === "blocked"
+                ? `dispatch blocked: ${step.dispatch.reason ?? "admission denied"}`
+                : "dispatch readiness unknown",
+            step.execution.state === "attached"
+              ? "attached; active execution unknown"
+              : "no current execution observed",
+          ]
+          if (step.completion.constraints.length > 0) {
+            details.push(
+              "completion constrained by " +
+                step.completion.constraints
+                  .map((constraint) => `${constraint.source} (${constraint.state.replaceAll("_", " ")})`)
+                  .join(", "),
+            )
+          }
+          return `<li><span class="agent">${esc(step.agent)}</span><code>${esc(step.step)}</code><span class="muted">${esc(details.join(" · "))}</span></li>`
+        })
         .join("")
-    : '<li class="muted">No runnable step.</li>'
+    : '<li class="muted">No structurally runnable step.</li>'
 
   const upcoming = view.upcoming.length
     ? view.upcoming
@@ -442,6 +593,16 @@ function currentHtml(view: StatusView) {
         )
         .join("")
     : '<li class="muted">No blocked upcoming step.</li>'
+
+  const userAttention = view.userAttention.length
+    ? view.userAttention
+        .map((question) => `<li>
+          <strong>${esc(question.questionId)}</strong>
+          <span>${esc(question.question ?? "User input required.")}</span>
+          <span class="muted">Blocks completion of ${esc(question.consumers.join(", "))}</span>
+        </li>`)
+        .join("")
+    : '<li class="muted">No blocking user OQ affects current runnable work.</li>'
 
   const decisions = view.userDecisions.length
     ? view.userDecisions
@@ -456,8 +617,9 @@ function currentHtml(view: StatusView) {
     : '<li class="muted">No pending user decisions.</li>'
 
   return `<section class="split">
-    <div class="panel"><h2>Now</h2><ul class="flat">${current}</ul></div>
+    <div class="panel"><h2>Execution readiness</h2><ul class="flat">${current}</ul></div>
     <div class="panel"><h2>Upcoming</h2><ul class="flat">${upcoming}</ul></div>
+    <div class="panel"><h2>Needs your input</h2><ul class="flat">${userAttention}</ul></div>
     <div class="panel"><h2>User decisions · not dispatchable</h2><ul class="flat">${decisions}</ul></div>
   </section>`
 }
