@@ -1254,6 +1254,55 @@ class ToolResultEvidenceTests(unittest.TestCase):
 
 
 class SensitiveEnvironmentValueTests(unittest.TestCase):
+    def test_only_credential_intent_envs_are_collected_and_trace_json_stays_parseable(self):
+        secrets = RUN.collect_sensitive_values(
+            {
+                "OPENCODE_EVAL_OBSERVATIONS": "1",
+                "EVAL_OBSERVER_FIXTURE_THROW": "0",
+                "EVAL_CASE_LABEL": "1",
+                "OPENAI_BASE_URL": "https://example.invalid/v1",
+                "MODEL_MAX_TOKENS": "8192",
+                "SYNTHETIC_API_TOKEN": "xy",
+            },
+            [
+                "OPENCODE_EVAL_OBSERVATIONS",
+                "EVAL_OBSERVER_FIXTURE_THROW",
+                "EVAL_CASE_LABEL",
+                "OPENAI_BASE_URL",
+                "MODEL_MAX_TOKENS",
+                "SYNTHETIC_API_TOKEN",
+            ],
+            None,
+            None,
+            None,
+            None,
+        )
+
+        self.assertEqual(secrets, ["xy"])
+        source = raw(event(output="observed status=1 retries=0"))
+        evidence = RUN.extract_tool_result_evidence(source, secrets)
+        self.assertEqual(evidence["observed_events"], 1)
+        self.assertEqual(evidence["events"][0]["output"], "observed status=1 retries=0")
+
+    def test_config_matching_uses_credential_names_not_incidental_substrings(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config = Path(directory) / "config.json"
+            config.write_text(
+                json.dumps({
+                    "model": {
+                        "name": "openai/gpt-5.5",
+                        "max_tokens": "4096",
+                        "accessibility": "enabled",
+                    },
+                    "auth": {"client_secret": "short-secret"},
+                    "label": "ordinary",
+                }),
+                encoding="utf-8",
+            )
+            secrets = RUN.collect_sensitive_values({}, [], None, config, None, None)
+
+        self.assertEqual(secrets, ["short-secret"])
+
     def test_public_harness_flags_do_not_corrupt_stdout_but_short_credentials_still_redact(self):
         secrets = RUN.collect_sensitive_values(
             {

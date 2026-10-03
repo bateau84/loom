@@ -699,23 +699,24 @@ def pass_env(command: list[str], names: tuple[str, ...] | list[str], host_env: d
 
 
 def _sensitive_key(name: str) -> bool:
-    lowered = name.lower().replace("-", "_")
-    if lowered == "key" or lowered.endswith("_key"):
+    # Match credential fields as words rather than substrings: e.g.
+    # ``accessibility`` and ``max_tokens`` are ordinary settings, while
+    # ``access_token`` and ``api-key`` identify credentials.
+    parts = re.findall(r"[a-z0-9]+", name.lower())
+    if not parts:
+        return False
+    normalized = "_".join(parts)
+    if normalized.endswith("_key") or normalized in {"key", "apikey"}:
         return True
-    return any(
-        token in lowered
-        for token in (
-            "api_key",
-            "apikey",
-            "token",
-            "secret",
-            "password",
-            "credential",
-            "access",
-            "refresh",
-            "authorization",
-            "cookie",
-        )
+    if normalized.endswith("_token") or normalized == "token":
+        return True
+    if any(
+        normalized == field or normalized.endswith("_" + field)
+        for field in ("secret", "password", "credential", "authorization", "cookie")
+    ):
+        return True
+    return normalized in {"access", "refresh"} or normalized.endswith(
+        ("_access_token", "_refresh_token")
     )
 
 
@@ -745,8 +746,12 @@ def collect_sensitive_values(
     database_seed: Path | None,
 ) -> list[str]:
     found: set[str] = set()
-    nonsecret_harness_flags = {"OPENCODE_EVAL_OBSERVATIONS", "EVAL_OBSERVER_FIXTURE_THROW"}
-    env_names = set(PROVIDER_ENVS) | set(COPILOT_ENVS) | (set(extra_envs) - nonsecret_harness_flags) | {"OPENCODE_API_KEY"}
+    env_names = (
+        set(PROVIDER_ENVS)
+        | set(COPILOT_ENVS)
+        | {"OPENCODE_API_KEY"}
+        | {name for name in extra_envs if _sensitive_key(name)}
+    )
     for name in env_names:
         value = host_env.get(name, "")
         if value:
