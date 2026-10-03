@@ -88,6 +88,16 @@ describe("interactive Loom status presentation", () => {
         { id: "task:b", agent: "reviewer", kind: "gate", dependsOn: [], status: "pending", attempt: 0 },
         { id: "task:c", agent: "worker", kind: "work", dependsOn: ["missing"], status: "pending", attempt: 0 },
       ],
+      verification: [{
+        id: "verify-b",
+        createdByStepId: "task:a",
+        createdByAgent: "worker",
+        beforeStepId: "task:b",
+        kind: "test",
+        statement: "Run the independent integration verification.",
+        status: "open",
+        createdAt: "now",
+      }],
     }
     const questions = [{
       id: "OQ-17",
@@ -143,7 +153,15 @@ describe("interactive Loom status presentation", () => {
       structurallyRunnable: true,
       dispatch: { state: "blocked", reason: "dispatch budget exhausted" },
       execution: { state: "not_observed", activity: "unknown" },
-      completion: { eligible: "unknown", constraints: [] },
+      completion: {
+        eligible: "unknown",
+        constraints: [{
+          source: "verify-b",
+          kind: "verification",
+          boundary: "pass",
+          state: "verification_pending",
+        }],
+      },
     })
     expect(view.upcoming).toContainEqual({
       step: "task:c",
@@ -210,6 +228,7 @@ describe("interactive Loom status presentation", () => {
     expect(markdown).toContain("attached; active execution unknown")
     expect(markdown).toContain("dispatch blocked: dispatch budget exhausted")
     expect(markdown).toContain("cannot complete: OQ-17 awaiting answer")
+    expect(markdown).toContain("cannot pass: verify-b verification pending")
     expect(markdown).toContain("### Needs your input")
     expect(markdown).not.toContain("still running")
   })
