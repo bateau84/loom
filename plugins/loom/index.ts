@@ -2923,17 +2923,28 @@ async function statusStepReadiness(
       }
     }
 
+    const attempt = step.attempt ?? 0
     const binding = (await ctx.storage.get(
-      stepSessionBindingKey(workflow.id, step.id, step.attempt ?? 0),
+      stepSessionBindingKey(workflow.id, step.id, attempt),
     )) as StepSessionBinding | undefined
+    const bindingCurrent = Boolean(
+      binding &&
+      binding.schemaVersion === 1 &&
+      binding.workflowId === workflow.id &&
+      binding.stepId === step.id &&
+      binding.attempt === attempt &&
+      binding.agent === step.agent &&
+      await exactStepAttemptBinding(ctx, binding.sessionID, workflow.id, step.id) &&
+      await ctx.storage.get(`session-deletion-fence/${binding.sessionID}`) === undefined,
+    )
 
     result[step.id] = {
       dispatch,
-      execution: binding
+      execution: bindingCurrent
         ? {
             state: "attached",
             activity: "unknown",
-            attachedAt: binding.attachedAt,
+            attachedAt: binding!.attachedAt,
           }
         : {
             state: "not_observed",
