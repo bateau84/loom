@@ -299,7 +299,7 @@ function markdownCode(value: string) {
 function statusGlyph(status: string) {
   if (status === "complete" || status === "passed") return "✓"
   if (status === "failed" || status === "blocked") return "!"
-  if (status === "active" || status === "runnable") return "→"
+  if (status === "active" || status === "dag-ready") return "→"
   if (status === "cancelled" || status === "superseded") return "×"
   return "○"
 }
@@ -502,7 +502,7 @@ function htmlStatus(status: string) {
 
 function taskRuntimeStatus(view: StatusView, taskId: string, stored: WorkNodeStatus) {
   if (stored !== "pending") return stored
-  return view.now.some((step) => step.step === `task:${taskId}`) ? "runnable" : stored
+  return view.now.some((step) => step.step === `task:${taskId}`) ? "dag-ready" : stored
 }
 
 function nodeOpen(status: string) {
@@ -667,7 +667,7 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wra
 .muted { color: var(--muted); }
 .status { white-space: nowrap; font-size: .9rem; }
 .status[data-status="blocked"], .status[data-status="failed"] { font-weight: 700; }
-.status[data-status="active"], .status[data-status="runnable"] { font-weight: 700; }
+.status[data-status="active"], .status[data-status="dag-ready"] { font-weight: 700; }
 .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(145px, 1fr)); gap: 10px; margin-bottom: 18px; }
 .card, .panel { border: 1px solid var(--border); border-radius: 10px; background: var(--surface); }
 .card { padding: 12px; }
@@ -732,7 +732,7 @@ ul { margin: 0; padding-left: 22px; }
       <div class="field"><label for="status-filter">Status</label><select id="status-filter">
         <option value="all">All</option>
         <option value="attention">Needs attention</option>
-        <option value="runnable">Runnable</option>
+        <option value="dag-ready">DAG ready</option>
         <option value="active">Active</option>
         <option value="blocked">Blocked</option>
         <option value="pending">Pending</option>
@@ -753,7 +753,7 @@ ul { margin: 0; padding-left: 22px; }
 
   const statusMatch = (status, wanted) => {
     if (wanted === "all") return true;
-    if (wanted === "attention") return ["active", "blocked", "failed", "runnable"].includes(status);
+    if (wanted === "attention") return ["active", "blocked", "failed", "dag-ready"].includes(status);
     return status === wanted;
   };
 
