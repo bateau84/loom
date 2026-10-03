@@ -1,0 +1,54 @@
+{
+  "skill": "prototyping",
+  "version": "2.0.0",
+  "shape": 1,
+  "cases": [
+    {
+      "id": "PROTO-INTERACTIVE-01",
+      "name": "format-follows-interaction-question",
+      "prompt": "Two designs for a web command palette look fine in screenshots. The unresolved question is whether delayed results, arrow-key selection, Escape, and returning to the editor preserve focus without a noticeable jump. A browser and an isolated prototype workspace are available to the implementation team. Specify the smallest useful experiment and the behavior it needs to exercise, inline; do not execute tools or create files.",
+      "trap": "A text walkthrough or static screenshot is treated as enough to establish actual focus and timing behavior.",
+      "expectations": [
+        "Selects a bounded interactive prototype for the focus/timing question, not a full product build.",
+        "Defines the delayed-results, selection, Escape, and focus-return paths and an observation that could change the decision.",
+        "Uses common conditions for the alternatives and names the scope, simulation limits, and stopping point.",
+        "Distinguishes a planned experiment from one actually executed."
+      ],
+      "negative_expectations": [
+        "Do not claim the interaction was observed or validated from the prompt.",
+        "Do not require Figma or ban interactive work simply because the designer is an AI agent.",
+        "Do not connect real credentials or production services merely to test this question."
+      ]
+    },
+    {
+      "id": "PROTO-STATIC-01",
+      "name": "static-rendering-remains-valid",
+      "prompt": "The behavior of a specimen search page is settled. We need to choose between two visual densities using long real specimen names and thumbnail images. Which prototype format would resolve that question most cheaply, and how would you compare the results? Answer inline.",
+      "trap": "Adding interactive prototyping becomes a new mandatory step even when a static rendering answers the question.",
+      "expectations": [
+        "Selects rendered static compositions with representative content and common viewport conditions.",
+        "Defines what to inspect for hierarchy, density, and long-content fit.",
+        "Limits the conclusion to the visual question rather than runtime behavior or observed user success."
+      ],
+      "negative_expectations": [
+        "Do not require a backend or working interactions just because executable prototypes are possible.",
+        "Do not call an unrendered ASCII sketch proof of actual visual density."
+      ]
+    },
+    {
+      "id": "PROTO-LIMITS-01",
+      "name": "no-tools-is-bounded-not-validated",
+      "prompt": "We only have this chat today. The proposed CLI prompts before overwriting an export; --json is used in automation. Work out a useful prototype of the command/stream behavior and identify what would still need observation. Do not create files or run commands.",
+      "trap": "Tool absence causes either universal refusal or a fabricated claim that the prototype was run.",
+      "expectations": [
+        "Provides concrete illustrative commands with separated stdout/stderr and outcomes, including a non-interactive overwrite case.",
+        "Surfaces the unresolved interaction between confirmation and automation without silently creating destructive semantics.",
+        "Marks the transcript as a proposal and identifies execution/real-user limits."
+      ],
+      "negative_expectations": [
+        "Do not refuse to do useful text exploration just because no renderer exists.",
+        "Do not claim commands ran, persistence was verified, or actual users succeeded."
+      ]
+    }
+  ]
+}
