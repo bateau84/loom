@@ -652,6 +652,13 @@ describe("Loom registered plugin boundary", () => {
         waitsFor: ["worker-open"],
       })
 
+      const detailed = await h.call("status", { workflowId, detail: true }, "general", general)
+      expect(detailed.dagRunnable).toEqual([
+        { id: "worker-open", agent: "worker" },
+        { id: "reviewer-budget", agent: "reviewer" },
+      ])
+      expect(detailed.runnable).toBeUndefined()
+
       await h.durableStorage.set(`oq-index/${workflowId}`, ["OQ-17", "OQ-18"])
       await h.durableStorage.set(`oq/${workflowId}/OQ-18`, {
         id: "OQ-18",
