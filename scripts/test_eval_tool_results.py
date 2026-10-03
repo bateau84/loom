@@ -1253,5 +1253,32 @@ class ToolResultEvidenceTests(unittest.TestCase):
             self.assertEqual(saved["observed_tool_results"], result["observed_tool_results"])
 
 
+class SensitiveEnvironmentValueTests(unittest.TestCase):
+    def test_public_harness_flags_do_not_corrupt_stdout_but_short_credentials_still_redact(self):
+        secrets = RUN.collect_sensitive_values(
+            {
+                "OPENCODE_EVAL_OBSERVATIONS": "1",
+                "EVAL_OBSERVER_FIXTURE_THROW": "0",
+                "SYNTHETIC_API_TOKEN": "xy",
+            },
+            ["OPENCODE_EVAL_OBSERVATIONS", "EVAL_OBSERVER_FIXTURE_THROW", "SYNTHETIC_API_TOKEN"],
+            None,
+            None,
+            None,
+            None,
+        )
+
+        self.assertNotIn("1", secrets)
+        self.assertNotIn("0", secrets)
+        self.assertIn("xy", secrets)
+        source = raw(event(output="native-sentinel", timestamp=1))
+        prepared = RUN.prepare_transport_result({"text": "success 1 xy", "stdout": source}, secrets)
+
+        self.assertEqual(prepared["text"], "success 1 ***REDACTED***")
+        self.assertEqual(prepared["stdout"], source)
+        self.assertEqual(len(prepared["observed_tool_results"]["events"]), 1)
+        self.assertEqual(prepared["observed_tool_results"]["events"][0]["output"], "native-sentinel")
+
+
 if __name__ == "__main__":
     unittest.main()
