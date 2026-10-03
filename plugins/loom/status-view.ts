@@ -46,7 +46,7 @@ export type StepReadinessObservation = {
 export type StepCompletionConstraint = {
   source: string
   kind: "oq" | "verification"
-  boundary: "completion"
+  boundary: "completion" | "pass"
   state: "awaiting_answer" | "reconciliation_pending" | "verification_pending"
   detail?: string
   responder?: string
@@ -83,7 +83,7 @@ function completionConstraints(
     .map((requirement): StepCompletionConstraint => ({
       source: requirement.id,
       kind: "verification",
-      boundary: "completion",
+      boundary: "pass",
       state: "verification_pending",
       detail: clippedSummary(requirement.statement, 180),
     }))
@@ -203,7 +203,9 @@ export function compactWorkflowState(
           activity: "unknown" as const,
         },
         completion: {
-          eligible: constraints.length > 0 ? false as const : "unknown" as const,
+          eligible: constraints.some((constraint) => constraint.boundary === "completion")
+            ? false as const
+            : "unknown" as const,
           constraints,
         },
       }
@@ -417,10 +419,29 @@ export function renderStatusMarkdown(view: StatusView, artifact?: StatusArtifact
       if (step.dispatch.state === "unknown") details.push("dispatch readiness unknown")
       if (step.execution.state === "attached") details.push("attached; active execution unknown")
       else details.push("no current execution observed")
-      if (step.completion.constraints.length > 0) {
+      const completionBlocks = step.completion.constraints.filter(
+        (constraint) => constraint.boundary === "completion",
+      )
+      const passBlocks = step.completion.constraints.filter(
+        (constraint) => constraint.boundary === "pass",
+      )
+      if (completionBlocks.length > 0) {
         details.push(
           "cannot complete: " +
-            step.completion.constraints
+            completionBlocks
+              .map((constraint) => {
+                const state = constraint.state.replaceAll("_", " ")
+                return constraint.detail
+                  ? `${constraint.source} ${state}: ${constraint.detail}`
+                  : `${constraint.source} ${state}`
+              })
+              .join(", "),
+        )
+      }
+      if (passBlocks.length > 0) {
+        details.push(
+          "cannot pass: " +
+            passBlocks
               .map((constraint) => {
                 const state = constraint.state.replaceAll("_", " ")
                 return constraint.detail
@@ -585,10 +606,29 @@ function currentHtml(view: StatusView) {
               ? "attached; active execution unknown"
               : "no current execution observed",
           ]
-          if (step.completion.constraints.length > 0) {
+          const completionBlocks = step.completion.constraints.filter(
+            (constraint) => constraint.boundary === "completion",
+          )
+          const passBlocks = step.completion.constraints.filter(
+            (constraint) => constraint.boundary === "pass",
+          )
+          if (completionBlocks.length > 0) {
             details.push(
-              "completion constrained by " +
-                step.completion.constraints
+              "completion blocked by " +
+                completionBlocks
+                  .map((constraint) => {
+                    const state = constraint.state.replaceAll("_", " ")
+                    return constraint.detail
+                      ? `${constraint.source} (${state}: ${constraint.detail})`
+                      : `${constraint.source} (${state})`
+                  })
+                  .join(", "),
+            )
+          }
+          if (passBlocks.length > 0) {
+            details.push(
+              "PASS blocked by " +
+                passBlocks
                   .map((constraint) => {
                     const state = constraint.state.replaceAll("_", " ")
                     return constraint.detail
