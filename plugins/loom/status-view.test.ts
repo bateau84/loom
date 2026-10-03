@@ -158,6 +158,52 @@ describe("interactive Loom status presentation", () => {
       consumers: ["task:a"],
       state: "awaiting_answer",
     }])
+    expect(view.questions.routes).toEqual([{
+      questionId: "OQ-17",
+      responder: "user",
+      blocking: true,
+    }])
+
+    const answered = structuredClone(questions) as any[]
+    answered[0].status = "answered"
+    answered[0].answer = {
+      by: "user",
+      source: "user",
+      text: "Use the supported child-tool observation boundary.",
+      evidence: [],
+      at: "later",
+    }
+    const reconciling = compactWorkflowState(
+      workflow,
+      answered,
+      { totalDispatches: 0, byKey: {}, seenDispatches: [] },
+      DEFAULT_LIMITS,
+      undefined,
+      undefined,
+      {
+        "task:a": {
+          dispatch: { state: "ready" },
+          execution: { state: "attached", activity: "unknown", attachedAt: "now" },
+        },
+        "task:b": {
+          dispatch: { state: "blocked", reason: "dispatch budget exhausted" },
+          execution: { state: "not_observed", activity: "unknown" },
+        },
+      },
+    )
+    expect(reconciling.userAttention).toEqual([])
+    expect(reconciling.now.find((step) => step.step === "task:a")?.completion).toMatchObject({
+      eligible: false,
+      constraints: [{
+        source: "OQ-17",
+        state: "reconciliation_pending",
+      }],
+    })
+    expect(reconciling.questions.reconcile).toContainEqual({
+      questionId: "OQ-17",
+      stepId: "task:a",
+      agent: "worker",
+    })
 
     const markdown = renderStatusMarkdown({ ...view, work: null })
     expect(markdown).toContain("### Execution readiness")
