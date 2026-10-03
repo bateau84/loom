@@ -38,7 +38,7 @@ function statusView(): StatusView {
       kind: "work",
       structurallyRunnable: true,
       dispatch: { state: "ready" },
-      execution: { state: "not_observed", activity: "unknown" },
+      execution: { state: "unknown" },
       completion: { eligible: "unknown", constraints: [] },
     }],
     userAttention: [],
@@ -124,11 +124,11 @@ describe("interactive Loom status presentation", () => {
       {
         "task:a": {
           dispatch: { state: "ready" },
-          execution: { state: "attached", activity: "unknown", attachedAt: "now" },
+          execution: { state: "unknown", evidence: "current_attachment", attachedAt: "now" },
         },
         "task:b": {
           dispatch: { state: "blocked", reason: "dispatch budget exhausted" },
-          execution: { state: "not_observed", activity: "unknown" },
+          execution: { state: "unknown" },
         },
       },
     )
@@ -137,7 +137,7 @@ describe("interactive Loom status presentation", () => {
     expect(view.now[0]).toMatchObject({
       structurallyRunnable: true,
       dispatch: { state: "ready" },
-      execution: { state: "attached", activity: "unknown" },
+      execution: { state: "unknown", evidence: "current_attachment" },
       completion: {
         eligible: false,
         constraints: [{
@@ -152,7 +152,7 @@ describe("interactive Loom status presentation", () => {
     expect(view.now[1]).toMatchObject({
       structurallyRunnable: true,
       dispatch: { state: "blocked", reason: "dispatch budget exhausted" },
-      execution: { state: "not_observed", activity: "unknown" },
+      execution: { state: "unknown" },
       completion: {
         eligible: "unknown",
         constraints: [{
@@ -201,11 +201,11 @@ describe("interactive Loom status presentation", () => {
       {
         "task:a": {
           dispatch: { state: "ready" },
-          execution: { state: "attached", activity: "unknown", attachedAt: "now" },
+          execution: { state: "unknown", evidence: "current_attachment", attachedAt: "now" },
         },
         "task:b": {
           dispatch: { state: "blocked", reason: "dispatch budget exhausted" },
-          execution: { state: "not_observed", activity: "unknown" },
+          execution: { state: "unknown" },
         },
       },
     )
@@ -225,7 +225,7 @@ describe("interactive Loom status presentation", () => {
 
     const markdown = renderStatusMarkdown({ ...view, work: null })
     expect(markdown).toContain("### Execution readiness")
-    expect(markdown).toContain("attached; active execution unknown")
+    expect(markdown).toContain("active execution unknown")
     expect(markdown).toContain("dispatch blocked: dispatch budget exhausted")
     expect(markdown).toContain("cannot complete: OQ-17 awaiting answer")
     expect(markdown).toContain("cannot pass: verify-b verification pending")
