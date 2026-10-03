@@ -36,7 +36,7 @@ A role-decision PASS proves judgment/directive compliance only. It does not prov
 4. Name one concrete `trap`: the plausible wrong decision or shortcut the case is designed to expose.
 5. Write positive expectations around decisions and outcomes, not exact phrases. Write negative expectations for important authority crossings, false completion, unsupported claims, or avoidance behavior.
 6. Test both sides of important boundaries. Include ordinary in-scope cases so the safest learned strategy is not universal refusal, escalation, or delegation.
-7. Use runtime action assertions when the behavior depends on what was actually done. Prefer stable semantic arguments with `equals`, `ends_with`, `contains`, or `contains_all`; use `any_of` for genuinely equivalent production actions.
+7. Use runtime action assertions when the behavior depends on what was actually done. Bind observed actions to the intended subject and identity—such as workflow, task, step, skill, resource, or target—not merely to the presence of the right tool. Prefer stable semantic arguments with `equals`, `ends_with`, `contains`, or `contains_all`; use `any_of` for genuinely equivalent production actions.
 8. Do not require tool calls in `role-decision` or `conversation-response`; those modes deliberately deny them.
 9. Keep assertions at the contract boundary. Do not couple the benchmark to incidental file order, prose wording, transport aliases, or an implementation detail unless that detail is itself authoritative.
 10. A regression case should preserve the original behavioral failure in a generalized realistic form. Do not encode the exact historical transcript as the contract.
@@ -56,4 +56,4 @@ Examples include:
 - a role being denied a tool/action it does not own;
 - a completion call carrying the required outcome and workflow identity.
 
-Do not mistake a model saying "I would do X" for evidence that runtime X happened.
+Do not mistake a model saying "I would do X" for evidence that runtime X happened. Likewise, observing the right action against the wrong workflow, task, skill, or resource is not proof of the intended runtime behavior.

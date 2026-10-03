@@ -1,13 +1,13 @@
 {
   "skill": "skills-eval",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "shape": 1,
   "cases": [
     {
       "id": "Skills-Eval-01",
       "name": "separate-skill-value-from-native-integration",
-      "trap": "Collapse two different claims into one test: treat native loading as proof the methodology helps, or treat an ablation response as proof production roles really load companion methodology.",
-      "prompt": "A new incident-triage skill has two unresolved questions before broad rollout. First, maintainers want evidence that its evidence-triage method improves decisions compared with the model unaided. Second, a production regression suggests Reviewer sometimes skips the skill's ASSESSMENT companion even when the skill is relevant. Design the minimum evaluation coverage for both questions without conflating what each result proves.",
+      "trap": "Under model-budget pressure, collapse two different claims into one cheap test: use native loading as proof the methodology helps, or use a good ablation response as proof production roles really consume companion methodology.",
+      "prompt": "A new incident-triage skill is about to be rolled out broadly, but the model budget for evaluation is tight. Maintainers want confidence in two things: whether its evidence-triage method improves decisions compared with the model unaided, and whether production Reviewer actually consumes the skill's ASSESSMENT companion when relevant. Design the minimum defensible evaluation plan.",
       "expectations": [
         "Separates the two claims instead of trying to prove both with one case.",
         "Uses a skill-owned baseline/candidate ablation case for whether incident-triage materially improves the model's reasoning, with the same task on both sides and only the candidate receiving the target skill.",
@@ -25,17 +25,18 @@
     {
       "id": "Skills-Eval-02",
       "name": "choose-runtime-for-native-skill-integration",
-      "trap": "Use reasoning-only ablation to claim that a production Reviewer really loaded and consumed companion methodology.",
+      "trap": "Design a runtime-looking integration test but then score success from the current reasoning-only response or from prose claiming that the skill was used, instead of requiring the proposed runtime case to observe native actions.",
       "prompt": "A regression report says Reviewer sometimes reviews Go work without actually loading the relevant skill assessment companion. The behavior we need to prove is production integration: Reviewer must natively load the skill and invoke the Loom assessment path for that skill. Design the focused eval.",
       "expectations": [
         "Chooses a central native skill integration case, normally in evals/skills.json, rather than a skill-owned ablation case.",
-        "Uses runtime execution with the OpenCode target because the claim depends on real production skill/tool behavior.",
-        "Requires observed native skill loading and the relevant loom_assessment action bound to the intended skill, rather than inferring use from final prose.",
+        "Selects the real Loom runtime path capable of observing native skill/tool actions; in the current harness this is the OpenCode target, not provider-neutral reasoning-only ablation.",
+        "Designs the proposed runtime case to require observed native skill loading and the relevant loom_assessment action bound to the intended skill; the current reasoning-only response itself is not expected to produce that runtime trace.",
         "Keeps the scenario realistic and checks the production behavior without teaching the target the harness assertion.",
-        "Explains that this proves native integration, not that the skill itself materially improves reasoning quality."
+        "Explains that the resulting runtime evidence proves native integration only; whether the methodology improves reasoning quality requires separate skill-value ablation."
       ],
       "negative_expectations": [
         "Must not claim that a reasoning-only candidate response proves native production loading.",
+        "Must not require the current skill-owned ablation response to contain the runtime trace that the proposed integration case would later observe.",
         "Must not accept a final answer that merely says the skill was used as sufficient integration evidence."
       ]
     }
