@@ -14,9 +14,9 @@ A Loom skill directory can expose three deliberately different contexts:
 
 The split is about epistemic independence, not severity. `QA.md` is not "ASSESSMENT but stricter."
 
-OpenCode discovers only `SKILL.md`. When a role loads a skill, the native skill tool also returns the skill base directory and a sampled companion-file list. Reviewer may then read `ASSESSMENT.md` if present; Critic may read `QA.md` if present.
+OpenCode discovers only `SKILL.md`. The native skill tool resolves the skill directory and supplies practitioner background. When consuming companion methodology, Reviewer uses `loom_assessment(skill=...)` and Critic uses `loom_qa(skill=...)`, as required by their role charters. A plain file read is appropriate when a companion is itself the artifact being inspected; it is not evidence of native methodology loading.
 
-Because the native skill tool injects `SKILL.md` while resolving that directory, Reviewer/Critic may also see practitioner guidance. That text is background only: Reviewer-specific criteria live in `ASSESSMENT.md`, Critic-specific adversarial methodology lives in `QA.md`.
+Practitioner guidance remains background in an independent review. Reviewer-specific criteria live in `ASSESSMENT.md`; Critic-specific adversarial methodology lives in `QA.md`. Missing native tools or unsuccessful method calls must remain explicit evidence limits, not reported as successful gate execution.
 
 ## Core role methodology
 
@@ -28,10 +28,10 @@ Because the native skill tool injects `SKILL.md` while resolving that directory,
 | Planner | risk-driven-planning; work-decomposition |
 | Acceptance | product-acceptance |
 | Documenter | documentation |
-| Reviewer | relevant skill `ASSESSMENT.md` files; design-review for design artifacts |
+| Reviewer | relevant skill `ASSESSMENT.md` files via `loom_assessment`; design-review for design artifacts |
 | Worker | task-relevant engineering/domain `SKILL.md`; design-implementation for UI implementation |
 | Diagnostic | narrow troubleshooting/domain `SKILL.md` matching the observed failure |
-| Critic | small set of load-bearing/risky skill `QA.md` files |
+| Critic | small set of load-bearing/risky skill `QA.md` files via `loom_qa` |
 
 ## Authoring and evaluation support
 
@@ -60,6 +60,6 @@ For human-facing work, combine cross-surface skills (`information-architecture`,
 
 Use `feature-handoff` when work in one component or session discovers functionality that another independently handled component, repository, or fresh session must provide. The skill produces a standalone copy/paste request rather than transferring conversation history.
 
-Design role-judgment cases live in `evals/design.json`. Native skill loading/consumption cases live in `evals/skills.json`, as specified by `skills-eval`; skill-owned ablations remain under each skill's `evals/`. Native loading, method value, and real rendered product quality are separate evidence claims. The four `DESIGN-NATIVE-*` cases remain opt-in and source-only: even a live PASS does not prove a rendered product or edit-time ordering. Package dependency tests in `scripts/test_ci_design_dependencies.py` cover declared inline file links from three bundled entrypoints, not prose references, the entire design family, or model behavior.
+Design role-judgment cases live in `evals/design.json`. Native skill loading/consumption cases live in `evals/skills.json`, as specified by `skills-eval`; skill-owned ablations remain under each skill's `evals/`. Native loading, method value, and real rendered product quality are separate evidence claims. The four `DESIGN-NATIVE-*` cases remain opt-in and source-only: even a live PASS does not prove a rendered product or edit-time ordering. Their action assertions and semantic judgments do not replace inspection of successful tool results when successful loading is the claim. Package dependency tests in `scripts/test_ci_design_dependencies.py` cover declared inline file links from three bundled entrypoints, not prose references, the entire design family, or model behavior.
 
 See `PORTING.md` for provenance and deferred source skills.
