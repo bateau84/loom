@@ -12,6 +12,9 @@ Critic-only adversarial contract. Assume competent production and Reviewer confo
 - Remove visual styling/mockups mentally and check whether behavioral intent is still implementable.
 - Search for nonexistent/mock product capability that makes an accepted journey look complete.
 - Challenge design alternatives that differ only cosmetically when the underlying interaction direction was genuinely open.
+- Give the handoff to a cold implementation reader: could a stale template or generic recipe contradict an accepted exception while appearing compliant? Could the named project patterns be missing or fail to compose?
+- Test whether the stated product character constrains actual choices or is interchangeable decoration. Challenge unsupported novelty or polish requirements as well as generic output that ignores accepted direction.
+- Check whether a prototype's confidence has been enlarged into production or user-research claims as it passed through the handoff.
 
 ## QA depth
 
