@@ -6,7 +6,16 @@ function view(): StatusView {
     workflowId: "wf-browser",
     state: "active",
     progress: { finished: 2, total: 5, failed: 0 },
-    now: [{ step: "task:api", agent: "worker", kind: "work" }],
+    readiness: [{
+      step: "task:api",
+      agent: "worker",
+      kind: "work",
+      structurallyRunnable: true,
+      dispatch: { state: "ready" },
+      execution: { state: "unknown" },
+      completion: { eligible: "unknown", constraints: [] },
+    }],
+    userAttention: [],
     userDecisions: [],
     recent: [],
     upcoming: [],
@@ -35,7 +44,7 @@ function view(): StatusView {
               progress: { finished: 0, total: 2 },
               tasks: [
                 { id: "api", title: "Implement API", status: "pending" },
-                { id: "later", title: "Later task", status: "pending" },
+                { id: "later", title: "Later task", status: "runnable" },
               ],
             },
             {
@@ -78,9 +87,10 @@ test("workflow status artifact supports keyboard-native expansion and filtering"
   await expect(page.getByRole("status")).toContainText("3 visible tasks")
 
   await page.getByLabel("Search work").fill("")
-  await page.getByLabel("Status").selectOption("runnable")
+  await page.getByLabel("Status").selectOption("dag-ready")
   await expect(page.getByText("Implement API", { exact: true })).toBeVisible()
-  await expect(page.getByText("Later task", { exact: true })).not.toBeVisible()
+  await expect(page.getByText("Later task", { exact: true })).toBeVisible()
+  await expect(page.locator("li.task").filter({ hasText: "Later task" })).toContainText("DAG ready")
 })
 
 
@@ -88,12 +98,12 @@ test("cancelled status explains preserved work without advertising runnable step
   const cancelled = view()
   cancelled.state = "cancelled"
   cancelled.cancellation = { at: "2026-09-23T12:00:00Z", reason: "User replaced the old plan <script>bad()</script>" }
-  cancelled.now = []
+  cancelled.readiness = []
   await page.setContent(renderStatusHtml(cancelled))
   await expect(page.getByRole("heading", { name: "Workflow cancelled" })).toBeVisible()
   await expect(page.getByText("No pending user decisions.", { exact: true })).toBeVisible()
   await expect(page.getByText("Completed work is preserved. Unfinished checks are not passes. Start a new workflow to continue.")).toBeVisible()
-  await expect(page.getByText("No runnable step.", { exact: true })).toBeVisible()
+  await expect(page.getByText("No structurally runnable step.", { exact: true })).toBeVisible()
   await expect(page.getByRole("region", { name: "Cancellation" })).toContainText("<script>bad()</script>")
   await expect(page.getByRole("region", { name: "Cancellation" }).locator("script")).toHaveCount(0)
   await page.getByRole("button", { name: "Expand all" }).click()
