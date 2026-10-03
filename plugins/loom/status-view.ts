@@ -99,11 +99,8 @@ export function compactQuestions(questions: OpenQuestion[], workflow: Workflow) 
       .filter((question) => !question.answer)
       .map((question) => ({
         questionId: question.id,
-        question: clippedSummary(question.question, 220),
         responder: question.requiredAuthority,
         blocking: question.blocking,
-        consumers: [...question.consumerStepIds],
-        state: "awaiting_answer" as const,
       })),
     reconcile: (workflow.cancellation ? [] : unresolved)
       .filter((question) => Boolean(question.answer))
@@ -112,11 +109,8 @@ export function compactQuestions(questions: OpenQuestion[], workflow: Workflow) 
           .filter((stepId) => !question.reconciliations[stepId])
           .map((stepId) => ({
             questionId: question.id,
-            question: clippedSummary(question.question, 220),
-            blocking: question.blocking,
             stepId,
             agent: workflow.steps.find((step) => step.id === stepId)?.agent,
-            state: "reconciliation_pending" as const,
           })),
       ),
   }
@@ -153,12 +147,26 @@ export function compactWorkflowState(
   const readyIds = new Set(ready.map((step) => step.id))
   const blockedPending = pending.filter((step) => !readyIds.has(step.id))
   const questionsSummary = compactQuestions(questions, workflow)
-  const userAttention = questionsSummary.routes.filter(
-    (question) =>
-      question.blocking &&
-      question.responder === "user" &&
-      question.consumers.some((stepId) => readyIds.has(stepId)),
-  )
+  const userAttention = workflow.cancellation
+    ? []
+    : questions
+        .filter(
+          (question) =>
+            question.status !== "closed" &&
+            !question.answer &&
+            question.blocking &&
+            question.requiredAuthority === "user" &&
+            question.consumerStepIds.some((stepId) => readyIds.has(stepId)),
+        )
+        .slice(0, 4)
+        .map((question) => ({
+          questionId: question.id,
+          question: clippedSummary(question.question, 220),
+          responder: question.requiredAuthority,
+          blocking: question.blocking,
+          consumers: [...question.consumerStepIds],
+          state: "awaiting_answer" as const,
+        }))
 
   const state =
     workflow.cancellation ? "cancelled" :
@@ -413,7 +421,12 @@ export function renderStatusMarkdown(view: StatusView, artifact?: StatusArtifact
         details.push(
           "cannot complete: " +
             step.completion.constraints
-              .map((constraint) => `${constraint.source} ${constraint.state.replaceAll("_", " ")}`)
+              .map((constraint) => {
+                const state = constraint.state.replaceAll("_", " ")
+                return constraint.detail
+                  ? `${constraint.source} ${state}: ${constraint.detail}`
+                  : `${constraint.source} ${state}`
+              })
               .join(", "),
         )
       }
@@ -576,7 +589,12 @@ function currentHtml(view: StatusView) {
             details.push(
               "completion constrained by " +
                 step.completion.constraints
-                  .map((constraint) => `${constraint.source} (${constraint.state.replaceAll("_", " ")})`)
+                  .map((constraint) => {
+                    const state = constraint.state.replaceAll("_", " ")
+                    return constraint.detail
+                      ? `${constraint.source} (${state}: ${constraint.detail})`
+                      : `${constraint.source} (${state})`
+                  })
                   .join(", "),
             )
           }
