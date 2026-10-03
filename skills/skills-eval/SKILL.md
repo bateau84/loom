@@ -30,6 +30,16 @@ Use a **central native integration case** in `evals/skills.json` when the questi
 
 Do not use native skill loading as a proxy for skill usefulness, and do not use reasoning-only ablation to prove runtime integration.
 
+## Native integration proof checklist
+
+When the claim is production skill/companion integration:
+
+1. Put the case in the central native-integration corpus, normally `evals/skills.json`.
+2. Use a target transport that can expose the real Loom/OpenCode native actions. In the current harness that means an **OpenCode target**; provider-neutral reasoning-only ablation cannot prove native loading.
+3. Assert the native `skill` load and the relevant `loom_assessment` or `loom_qa` action, bound to the same intended skill. A final answer claiming the skill was used is not evidence.
+4. Judge the final professional response separately from the integration trace. Tool presence alone does not prove that the methodology was applied correctly.
+5. State the scope of the result explicitly: native runtime evidence proves **integration**, not that the skill improves reasoning quality. If methodology value is also a claim, add a separate skill-owned baseline/candidate ablation.
+
 ## Authoring method
 
 1. State the behavioral claim before writing the case. Name the decision, method, distinction, or failure mode the skill is supposed to improve.
