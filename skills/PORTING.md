@@ -34,6 +34,19 @@ These were rewritten because the source versions encoded old AOS roles, gates, r
 - design-review
 - design-validation
 - report-to-keep
+- hallmark
+- design-implementation
+- prototyping
+
+### Hallmark and design-craft adaptation
+
+Hallmark is now included in the trusted baseline as a self-contained Loom-native adaptation, not a verbatim import of the large source overlay. Source inspected: `nrkno/mats-opencode-setup/skills/hallmark/SKILL.md`, version `1.1.0`, Git blob `bc6ef6237a286a791461b14dc81d0e3eefd6f965`. The adaptation preserves context-led visual production, meaningful structural exploration, existing-system inspection, honest copy, token discipline, and deliberate craft.
+
+The upstream theme catalog, provider branding/integration, automatic theme rotation, universal eight-state quotas, append-only tokens, fixed layout recipes, self-awarded scores, and extra user checkpoints are not imported. The two bundled Hallmark references replace dependencies on the old cookbook; `design-implementation` no longer points to absent upstream files. This is not a promise of compatibility with the upstream command verbs, numbered gates, or theme catalog.
+
+`prototyping` retains scenario walkthroughs, command transcripts, state/key maps, pseudocode, comparative analysis, and static rendered exploration; compact text templates are in its `references/`. It now also supports scoped interactive experiments. Static HTML existed before this change; the corrected gap was interactive/surface capability and evidence boundaries, not the total absence of visual prototypes.
+
+Design direction and production-pattern references extend the existing Experience Design handoff. Designer and Worker have explicit loading/consumption hooks; the existing review and validation methods evaluate craft without a new agent, authority document, or approval gate. No tool permission, runtime schema, or workflow state is changed by these methodology edits.
 
 ## Baseline reusable families
 
@@ -41,7 +54,7 @@ The baseline includes reusable methodology for:
 
 - accessibility and human-centered design;
 - CLI, TUI, desktop, and web interface design;
-- information architecture, interaction design, user flows, visual hierarchy, and prototyping;
+- information architecture, interaction design, user flows, visual hierarchy, context-led web visual craft, and prototyping;
 - Git commit/conflict/PR discipline;
 - Go implementation, testing, debugging, TUI, database, concurrency, observability, security, performance, and common libraries/tooling;
 - Python implementation, async, database/ORM, FastAPI, Pydantic, testing, linting, typing, observability, and error handling;
@@ -60,8 +73,7 @@ Legacy role nouns in copied house skills were normalized to current Loom termino
 - `compress` — destructive external-model overwrite workflow.
 - `find-skills` — external skill discovery/installation is outside the trusted baseline.
 - `graphify` — optional external CLI/index integration.
-- `hallmark` — large opinionated design overlay; may be added explicitly for projects that want it.
-- `visual-companion` — interactive browser-side workflow.
+- `visual-companion` — interactive browser-side workflow; not required by prototyping, which uses only actually available tools and current permissions.
 - `teach-me` and `i-have-adhd` — user/persona modes, not autonomous workflow methodology.
 - `azure-image-builder` — useful but specialized infrastructure workflow; add when a Loom-managed project needs Azure image building.
 - `golang-samber-*` — package-specific optional skills; add when a project actually uses the corresponding Samber package.

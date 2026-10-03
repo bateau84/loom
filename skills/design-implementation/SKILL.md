@@ -1,71 +1,53 @@
 ---
 name: design-implementation
-description: "Implementing UI from a Design Spec — eight-state discipline, responsive non-negotiables, motion with purpose, component cookbook loading, copy rules, and token-locked output. Use when building or modifying UI components or pages from a Design Spec."
+description: Implement human-facing UI from accepted design, carrying product direction, real components/tokens/flows, applicable states, and observed quality through to the assembled experience. Use before interface implementation edits, including preparing the concrete implementation approach. Not for inventing unresolved design or production capabilities.
 license: MIT
 metadata:
   author: Bateau
-  version: "1.0.0"
+  version: "2.0.0"
 ---
 
-**Persona:** You are a UI implementation engineer. You implement pixel-accurate, accessible, state-complete UI from Design Specs. You never improvise tokens, never skip states, and never ship motion without a reason.
+# Design Implementation
 
-## When to load
+Implement the accepted experience, not a generic recipe. Product/design authority and the current role's permissions win over this skill. A project pattern is evidence of existing practice, not permission to override accepted intent.
 
-Load this skill when a task involves implementing UI — components or full pages — from a Design Spec. The spec is the contract; this skill teaches how to honor it.
+## Consume the handoff before editing
 
-## Eight-state discipline
+Read the current accepted design and the smallest relevant slice of its scenarios, design direction, states, accessibility decisions, and exceptions. Follow references to the actual project templates, complete flow examples, components, and token definitions needed for the change; do not merely repeat their names from a coordinator summary.
 
-Every interactive element ships all eight states. An element missing any state is unfinished.
+For each material part of the implementation, establish:
 
-| State | Required treatment |
-|---|---|
-| **Default** | Base styling |
-| **Hover** | Subtle shift — colour, 1px translate, or border (only `@media (hover: hover)`) |
-| **Focus** | Visible ring via `:focus-visible`, 2–3px, ≥ 3:1 contrast |
-| **Active** | Pressed-in: darker, `translate(0 1px)` |
-| **Disabled** | `opacity: 0.5`, `cursor: not-allowed`, `aria-disabled` |
-| **Loading** | Inline spinner or progress, label stays readable |
-| **Error** | Red border, error icon, message, `aria-invalid` |
-| **Success** | Green check, confirmation, auto-dismiss |
+```text
+accepted intent -> real project pattern/component -> planned change -> check
+```
 
-→ Full specs: [`interaction-and-states.md`](skills/hallmark/references/interaction-and-states.md)
+Preserve the rationale that makes the result specific to this product. Check reference versions or status where supplied; stale examples do not defeat current authority. Identify absent references or real capability gaps rather than inventing a component/API or a backend promise. Missing product-wide branding alone is not a blocker for a bounded change that safely inherits the existing interface. Resolve consequential design choices through the existing Designer/OQ path; do not block unrelated work or create a new approval stage.
 
-## Responsive — five non-negotiables
+For web visual production load `hallmark`, which is bundled with Loom. Load relevant surface and accessibility methodology only when it materially applies. For program-bearing edits also follow the role's normal engineering baseline.
 
-1. **Mobile-first.** Base styles for smallest viewport. `min-width` media queries scale up. Never `max-width` as primary direction.
-2. **No horizontal scroll.** Root carries `overflow-x: clip` on both `html` and `body` — never `hidden`.
-3. **No wrapping clickable text.** Buttons, nav links, and CTAs are single-line at every viewport.
-4. **Content-driven breakpoints in rem.** Break where content breaks, not where devices sit.
-5. **Viewport units.** Use `dvh`/`svh` for heights interacting with mobile chrome. Never `width: 100vw`.
-6. **Safe areas.** Respect `env(safe-area-inset-*)` for iOS notch / Android nav bars.
+## Separate invariants, defaults, and choices
 
-→ Full specs: [`responsive.md`](skills/hallmark/references/responsive.md)
+**Invariants** come from accepted authority and applicable accessibility/behavior contracts. **Defaults** are useful starting points. **Open choices** require professional judgment within the assigned authority. Do not turn a heuristic into a product requirement.
 
-## Microinteractions — four principles
+- Implement all reachable, meaningful states: default, hover where supported, focus, active, disabled, loading, empty, validation/error, success, stale/interrupted, and domain states as applicable. Do not manufacture all eight states for every element. A navigation link is not an asynchronous save operation.
+- Reuse semantic tokens. Add, change, or remove tokens only within accepted design and mutation scope, inspecting affected consumers. Neither append-only growth nor an unreviewed global token change is a valid universal rule.
+- Let accepted content and tasks drive responsive behavior. Wrapping a long control label or deliberately scrolling a data table can be correct. Fix unintended page overflow; do not clip inaccessible content just to hide it. Test the project's actual viewport/terminal/input constraints rather than an unrelated fixed width checklist.
+- Respect focus, keyboard, touch/pointer, semantics, announcements, and reduced-motion needs. Do not hard-code a particular color, opacity, or animation as the accessibility contract.
+- Use motion to clarify or express accepted character without obscuring state or delaying frequent work. Provide the required non-motion alternative.
+- Use optimistic updates, retries, undo, and rollback only when supported by accepted semantics and real capability. Do not make a simulated success state stand in for persistence or completion.
 
-1. **Motion has intent or motion is cut.** Every animation clarifies, guides, or confirms. If you cannot name what it communicates, it is decoration.
-2. **Silent success.** A visible result does not need a "Done!" toast. Reserve toasts for failures and hidden-effect actions.
-3. **Optimism with rollback.** Update UI immediately, request in background, animate rollback + Undo on failure.
-4. **Keyboard first, hover second.** Every hover affordance has a focus equivalent.
+## Build the flow, not isolated components
 
-→ Timing/easing canon, recipes, and named tells: [`microinteractions.md`](skills/hallmark/references/microinteractions.md)
+Carry the same user-visible identity, vocabulary, and state meaning through entry, action, feedback, error, recovery, and return. Reuse complete project flow patterns where they fit; verify the composition still serves the scenario.
 
-## Component cookbook loading
+Use realistic content, including long labels, missing data, permission limits, and reachable failure states. Write specific action labels and useful, honest feedback. Never invent metrics, testimonials, causes of failure, or product guarantees. No mandatory macrostructure comments, taste scores, theme rotation, or page-level ceremony belong on a small component change.
 
-Do not load the whole cookbook. Read the archetype index in [`component-cookbook.md`](skills/hallmark/references/component-cookbook.md), pick the archetypes the Design Spec names, then load only those individual component files from `skills/hallmark/references/components/`. A typical build needs 5–7 files: 1 hero + 1 section head + 1–2 features + 1 CTA + 1 footer + 1 nav. Verify mobile collapse per the cookbook's per-archetype table.
+A disposable prototype is not production delivery. Keep its fixtures and simulated behavior isolated; its use does not relax production scope or accepted design.
 
-## Copy rules
+## Check the result and hand back evidence
 
-- **Specific verbs.** "Save changes" beats "Submit". "Create account" beats "OK".
-- **Labels describe.** "Email address" beats "Email". Link text stands alone.
-- **Error structure.** What broke → why → what to do. One sentence if possible. Never apologetic for user input.
-- **Banned phrases.** "Click here", "Oops!", "Something went wrong", startup clichés (Unleash, Supercharge, Empower, Seamless).
-- **No fabricated metrics.** If the user did not supply a number, do not invent one. Use a placeholder (`—` + label) or pick a different layout.
+Inspect the actual rendered/interactive result when tools are available and that observation is material. Exercise the relevant whole journey and important negative paths. Compare both behavior and intended character with accepted design; a build passing or a component screenshot alone is insufficient evidence for the assembled experience.
 
-→ Full rules and voice samples: [`copy.md`](skills/hallmark/references/copy.md)
+Correct implementation drift within the task, then recheck affected paths. Route a necessary new design decision to Designer rather than silently redesigning the contract to fit the implementation. Separate defects from optional polish and stop at the assigned outcome and accepted quality bar; no endless refinement or new craft gate.
 
-## Output contract
-
-- **Tokens only.** Every colour and font-family references a named token from the Design Spec's theme block. No inline hex, OKLCH, or font strings.
-- **Append-only.** Add new tokens and components. Do not modify existing tokens or theme blocks.
-- **Stamp.** Every file gets a macrostructure comment: `/* · macrostructure: <name> · archetypes: <list> · knobs: <values> · */`.
+Record the relevant source/build, context, exercised scenarios, concrete observations, and remaining limits for downstream review. When no renderer or interaction tool is available, say which claims are static only. Never report observed visual quality, focus behavior, animation timing, or product success from code inference or a prototype substitute. Independent review and `design-validation` retain their existing roles.
