@@ -6255,7 +6255,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       addLoomTool({
         name: "oq_raise",
         description:
-          "Raise a shared peer OQ to any Loom role or the user. For a user-owned Plan Task wait, General raises a blocking OQ with its exact taskId and sole Task consumerStepId; only the actual user answer recorded with source=user resolves that wait. Other planned Task questions inherit their exact Task context. Ask the role that owns or can best answer the specific question; an OQ answer does not substitute for an independent gate.",
+          "Raise a shared peer OQ to any Loom role or the user. A blocking OQ must be self-contained enough for a fresh session to understand what is unresolved, why that affected boundary cannot proceed, and what kind of answer would satisfy the question; do not make a particular external source part of the OQ semantic unless accepted authority actually requires that source. For a user-owned Plan Task wait, General raises a blocking OQ with its exact taskId and sole Task consumerStepId; only the actual user answer recorded with source=user resolves that wait. Other planned Task questions inherit their exact Task context. Ask the role that owns or can best answer the specific question; an OQ answer does not substitute for an independent gate.",
         input: {
           type: "object",
           properties: {
