@@ -32,7 +32,16 @@ function statusView(): StatusView {
     workflowId: "wf-status",
     state: "active",
     progress: { finished: 3, total: 7, failed: 0 },
-    now: [{ step: "task:implement", agent: "worker", kind: "work" }],
+    now: [{
+      step: "task:implement",
+      agent: "worker",
+      kind: "work",
+      structurallyRunnable: true,
+      dispatch: { state: "ready" },
+      execution: { state: "not_observed", activity: "unknown" },
+      completion: { eligible: "unknown", constraints: [] },
+    }],
+    userAttention: [],
     userDecisions: [],
     recent: [],
     upcoming: [{ step: "review", agent: "reviewer", waitsFor: ["task:implement"] }],
@@ -70,6 +79,95 @@ function statusView(): StatusView {
 }
 
 describe("interactive Loom status presentation", () => {
+  test("keeps DAG readiness, execution observation, and completion constraints distinct", () => {
+    const workflow: Workflow = {
+      id: "wf-readiness", projectId: "project-test", revision: 0,
+      anchor: "docs/anchors/product/anchor.md", createdBySession: "session-1", createdAt: "now",
+      steps: [
+        { id: "task:a", agent: "worker", kind: "work", dependsOn: [], status: "pending", attempt: 2 },
+        { id: "task:b", agent: "reviewer", kind: "gate", dependsOn: [], status: "pending", attempt: 0 },
+        { id: "task:c", agent: "worker", kind: "work", dependsOn: ["missing"], status: "pending", attempt: 0 },
+      ],
+    }
+    const questions = [{
+      id: "OQ-17",
+      workflowId: workflow.id,
+      question: "Which runtime observation contract is supported?",
+      raisedByAgent: "worker",
+      raisedByStepId: "task:a",
+      requiredAuthority: "user" as const,
+      blocking: true,
+      consumerStepIds: ["task:a"],
+      evidence: [],
+      status: "open" as const,
+      reconciliations: {},
+      createdAt: "now",
+    }]
+
+    const view = compactWorkflowState(
+      workflow,
+      questions,
+      { totalDispatches: 0, byKey: {}, seenDispatches: [] },
+      DEFAULT_LIMITS,
+      undefined,
+      undefined,
+      {
+        "task:a": {
+          dispatch: { state: "ready" },
+          execution: { state: "attached", activity: "unknown", attachedAt: "now" },
+        },
+        "task:b": {
+          dispatch: { state: "blocked", reason: "dispatch budget exhausted" },
+          execution: { state: "not_observed", activity: "unknown" },
+        },
+      },
+    )
+
+    expect(view.now.map((step) => step.step)).toEqual(["task:a", "task:b"])
+    expect(view.now[0]).toMatchObject({
+      structurallyRunnable: true,
+      dispatch: { state: "ready" },
+      execution: { state: "attached", activity: "unknown" },
+      completion: {
+        eligible: false,
+        constraints: [{
+          source: "OQ-17",
+          kind: "oq",
+          boundary: "completion",
+          state: "awaiting_answer",
+          responder: "user",
+        }],
+      },
+    })
+    expect(view.now[1]).toMatchObject({
+      structurallyRunnable: true,
+      dispatch: { state: "blocked", reason: "dispatch budget exhausted" },
+      execution: { state: "not_observed", activity: "unknown" },
+      completion: { eligible: "unknown", constraints: [] },
+    })
+    expect(view.upcoming).toContainEqual({
+      step: "task:c",
+      agent: "worker",
+      waitsFor: ["missing"],
+    })
+    expect(view.userAttention).toEqual([{
+      questionId: "OQ-17",
+      question: "Which runtime observation contract is supported?",
+      responder: "user",
+      blocking: true,
+      consumers: ["task:a"],
+      state: "awaiting_answer",
+    }])
+
+    const markdown = renderStatusMarkdown({ ...view, work: null })
+    expect(markdown).toContain("### Execution readiness")
+    expect(markdown).toContain("attached; active execution unknown")
+    expect(markdown).toContain("dispatch blocked: dispatch budget exhausted")
+    expect(markdown).toContain("cannot complete: OQ-17 awaiting answer")
+    expect(markdown).toContain("### Needs your input")
+    expect(markdown).not.toContain("still running")
+  })
+
   test("shows a ready exact user decision before an OQ exists and clears only after completion", () => {
     const workflow: Workflow = {
       id: "wf-decision", projectId: "project-test", revision: 0,
