@@ -186,7 +186,7 @@ export function compactWorkflowState(
       total: workflow.steps.length,
       failed: failed.length,
     },
-    now: ready.map((step) => {
+    readiness: ready.map((step) => {
       const constraints = completionConstraints(workflow, questions, step.id)
       const observed = stepReadiness[step.id]
       return {
@@ -409,9 +409,9 @@ export function renderStatusMarkdown(view: StatusView, artifact?: StatusArtifact
     }
   }
 
-  if (view.now.length) {
+  if (view.readiness.length) {
     lines.push("", "### Execution readiness")
-    for (const step of view.now.slice(0, 5)) {
+    for (const step of view.readiness.slice(0, 5)) {
       const details = ["DAG ready"]
       if (step.dispatch.state === "ready") details.push("dispatch ready")
       if (step.dispatch.state === "blocked") details.push(`dispatch blocked: ${clippedSummary(step.dispatch.reason) ?? "admission denied"}`)
@@ -451,7 +451,7 @@ export function renderStatusMarkdown(view: StatusView, artifact?: StatusArtifact
       }
       lines.push(`- → **${step.agent}** · ${markdownCode(step.step)} · ${details.join(" · ")}`)
     }
-    if (view.now.length > 5) lines.push(`- … +${view.now.length - 5} more structurally runnable steps`)
+    if (view.readiness.length > 5) lines.push(`- … +${view.readiness.length - 5} more structurally runnable steps`)
   }
 
   if (view.userAttention.length) {
@@ -521,7 +521,7 @@ function htmlStatus(status: string) {
 
 function taskRuntimeStatus(view: StatusView, taskId: string, stored: WorkNodeStatus) {
   if (stored !== "pending") return stored
-  return view.now.some((step) => step.step === `task:${taskId}`) ? "dag-ready" : stored
+  return view.readiness.some((step) => step.step === `task:${taskId}`) ? "dag-ready" : stored
 }
 
 function nodeOpen(status: string) {
@@ -590,8 +590,8 @@ function hierarchyHtml(view: StatusView) {
 }
 
 function currentHtml(view: StatusView) {
-  const current = view.now.length
-    ? view.now
+  const current = view.readiness.length
+    ? view.readiness
         .map((step) => {
           const details = [
             "DAG ready",
