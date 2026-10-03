@@ -1,0 +1,29 @@
+{
+  "schema": "loom-eval-evidence-safety-vectors/v1",
+  "credentialAliases": {
+    "accessToken": "SYNTH-access-token",
+    "refreshToken": "SYNTH-refresh-token",
+    "clientSecret": "SYNTH-client-secret",
+    "secretKey": "SYNTH-secret-key",
+    "apiKey": "SYNTH-api-key"
+  },
+  "publicSettings": {
+    "MODEL_MAX_TOKENS": "4096",
+    "MODEL_NAME": "provider/model",
+    "ACCESSIBILITY_MODE": "standard"
+  },
+  "credentialObject": {
+    "credential": {
+      "type": "oauth",
+      "accessToken": "SYNTH-descendant-token",
+      "context": "text",
+      "scope": "low"
+    }
+  },
+  "shortCredentials": ["0", "1", "text", "low"],
+  "payload": {
+    "text": "text",
+    "low": "low",
+    "nested": {"label": "public label", "count": 1}
+  }
+}

@@ -660,6 +660,180 @@ class SkillOwnedEvalDiscoveryTests(unittest.TestCase):
 
 
 class EvidenceRedactionTests(unittest.TestCase):
+    def test_unconfirmed_runner_defaults_keep_inventory_incomplete(self):
+        inventory = RUN_EVALS.collect_credential_inventory({}, [], None, None, None, None)
+
+        self.assertFalse(inventory.complete)
+        self.assertEqual(inventory.sources["config_root"], "incomplete")
+
+    def test_shared_synthetic_vectors_cover_aliases_metadata_and_short_values(self):
+        vectors = json.loads((Path(__file__).parent / "fixtures" / "eval-evidence-safety-vectors.json").read_text())
+        with tempfile.TemporaryDirectory() as tmp:
+            auth = Path(tmp) / "auth.json"
+            auth.write_text(json.dumps(vectors["credentialObject"]), encoding="utf-8")
+            inventory = RUN_EVALS.collect_credential_inventory(
+                {**vectors["credentialAliases"], **vectors["publicSettings"]},
+                list(vectors["credentialAliases"]) + list(vectors["publicSettings"]),
+                auth, None, None, None, runner_defaults_known=True,
+            )
+
+        self.assertTrue(inventory.complete)
+        self.assertEqual(set(inventory.values), set(vectors["credentialAliases"].values()) | {
+            "SYNTH-descendant-token",
+        })
+        self.assertTrue(set(vectors["publicSettings"].values()).isdisjoint(inventory.values))
+        self.assertNotIn("oauth", inventory.values)
+        self.assertNotIn("text", inventory.values)
+        self.assertNotIn("low", inventory.values)
+
+        short_inventory = RUN_EVALS.credential_inventory_from_values(vectors["shortCredentials"])
+        event = {"schema": "text", "sequence": 1, "status": "completed",
+                 "output": vectors["payload"]}
+        projected = RUN_EVALS.project_evidence_event(event, short_inventory)
+        self.assertEqual(projected["value"]["schema"], "text")
+        self.assertEqual(projected["value"]["sequence"], 1)
+        self.assertEqual(projected["fields"]["output"]["state"], "redacted")
+        self.assertEqual(projected["value"]["output"]["nested"]["count"], 1)
+
+    def test_source_inventory_recognizes_camel_case_credentials_without_public_aliases(self):
+        inventory = RUN_EVALS.collect_credential_inventory(
+            host_env={
+                "MODEL_MAX_TOKENS": "4096",
+                "EXTRA_ACCESS_TOKEN": "env-access-secret",
+                "CLIENT_SECRET": "env-client-secret",
+            },
+            extra_envs=["MODEL_MAX_TOKENS", "EXTRA_ACCESS_TOKEN", "CLIENT_SECRET"],
+            auth=None,
+            config=None,
+            models_catalog=None,
+            database_seed=None,
+            runner_defaults_known=True,
+        )
+
+        self.assertTrue(inventory.complete)
+        self.assertEqual(
+            {item.value for item in inventory.entries if item.role == "credential"},
+            {"env-access-secret", "env-client-secret"},
+        )
+        self.assertNotIn("4096", inventory.values)
+
+    def test_camel_case_source_inventory_protects_public_transport_across_seed_sources(self):
+        env_secret = "SYNTH-env-access"
+        auth_secret = "SYNTH-auth-refresh"
+        config_secret = "SYNTH-config-client"
+        model_secret = "SYNTH-model-key"
+        database_secret = "SYNTH-db-secret"
+        database_json_secret = "SYNTH-db-json-token"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            auth = root / "auth.json"
+            auth.write_text(json.dumps({"refreshToken": auth_secret, "credential": {
+                "type": "oauth", "accessToken": "SYNTH-nested-access", "context": "metadata",
+            }}), encoding="utf-8")
+            config = root / "config.json"
+            config.write_text(json.dumps({"clientSecret": config_secret, "MODEL_MAX_TOKENS": 4096}), encoding="utf-8")
+            models = root / "models.json"
+            models.write_text(json.dumps({"secretKey": model_secret}), encoding="utf-8")
+            database = root / "seed.db"
+            import sqlite3
+            with sqlite3.connect(database) as db:
+                db.execute("CREATE TABLE credential (provider TEXT, refreshToken TEXT, data TEXT)")
+                db.execute("INSERT INTO credential VALUES (?, ?, ?)", (
+                    "openai", database_secret, json.dumps({"accessToken": database_json_secret}),
+                ))
+            inventory = RUN_EVALS.collect_credential_inventory(
+                {"EXTRA_ACCESS_TOKEN": env_secret, "MODEL_MAX_TOKENS": "4096"},
+                ["EXTRA_ACCESS_TOKEN", "MODEL_MAX_TOKENS"], auth, config, models, database,
+                runner_defaults_known=True,
+            )
+            values = set(inventory.values)
+            public = "workflow follow low-level context text 0 1"
+            prepared = RUN_EVALS.prepare_transport_result(
+                {"text": public + " " + " ".join(values), "stdout": json.dumps(
+                    {"type": "tool_use", "part": {"type": "tool", "tool": "loom_status",
+                     "callID": "call-safe", "state": {"status": "completed", "input": {},
+                     "output": {"text": database_json_secret, "count": 1}}}}
+                )}, list(values), inventory,
+            )
+
+        encoded = json.dumps(prepared, ensure_ascii=False)
+        self.assertTrue(inventory.complete)
+        self.assertEqual(values, {
+            env_secret, auth_secret, "SYNTH-nested-access", config_secret, model_secret,
+            database_secret, database_json_secret,
+        })
+        for secret in values:
+            self.assertNotIn(secret, encoded)
+        self.assertNotIn("stdout", prepared)
+        self.assertEqual(prepared["evidence_safety"]["fields"]["text"]["state"], "redacted")
+        self.assertFalse(prepared["observed_tool_results"]["evidence_safety"]["coverage_complete"])
+        self.assertIn("workflow follow low-level context text 0 1", encoded)
+
+    def test_sensitive_container_metadata_is_not_credential_material(self):
+        secret = "DESC-TOKEN"
+        with tempfile.TemporaryDirectory() as tmp:
+            auth = Path(tmp) / "auth.json"
+            auth.write_text(json.dumps({
+                "credential": {
+                    "type": "oauth",
+                    "accessToken": secret,
+                    "context": "text",
+                    "scope": "low",
+                }
+            }), encoding="utf-8")
+            inventory = RUN_EVALS.collect_credential_inventory(
+                host_env={}, extra_envs=[], auth=auth, config=None,
+                models_catalog=None, database_seed=None, runner_defaults_known=True,
+            )
+
+        self.assertTrue(inventory.complete)
+        self.assertEqual(inventory.values, (secret,))
+        self.assertIn(("auth", "credential.type", "public", "oauth"), inventory.entries_as_tuples())
+
+    def test_typed_projection_keeps_protocol_structure_and_omits_unsafe_payload_keys(self):
+        inventory = RUN_EVALS.credential_inventory_from_values(["1", "text"])
+        projected = RUN_EVALS.project_evidence_event({
+            "schema": "text",
+            "sequence": 1,
+            "status": "completed",
+            "input": {"credential": "1", "text": "payload"},
+            "output": {"text": "text", "nested": {"safe": "visible"}},
+        }, inventory)
+
+        self.assertEqual(projected["value"]["schema"], "text")
+        self.assertEqual(projected["value"]["sequence"], 1)
+        self.assertEqual(projected["fields"]["input"]["state"], "omitted")
+        self.assertEqual(projected["fields"]["output"]["state"], "redacted")
+        self.assertEqual(
+            json.loads(json.dumps(projected["value"]["output"])),
+            {"text": "***REDACTED***", "nested": {"safe": "visible"}},
+        )
+        self.assertNotIn('"credential"', json.dumps(projected))
+
+    def test_incomplete_inventory_omits_selectors_and_blocks_capture_completeness(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            missing_auth = Path(tmp) / "missing-auth.json"
+            inventory = RUN_EVALS.collect_credential_inventory(
+                {}, [], missing_auth, None, None, None,
+            )
+        evidence = {
+            "schema": "loom-tool-results/v1", "source": "target.stdout",
+            "metadata_tool_capture_complete": True,
+            "events": [{"tool": "loom_status", "input": '{"workflowId":"wf"}',
+                        "output": '{"state":"ready"}', "truncated_fields": []}],
+            "nested_tool_calls": [],
+        }
+
+        projected = RUN_EVALS.apply_evidence_projection(evidence, inventory)
+
+        self.assertFalse(projected["evidence_safety"]["inventory_complete"])
+        self.assertFalse(projected["evidence_safety"]["coverage_complete"])
+        self.assertFalse(projected["metadata_tool_capture_complete"])
+        self.assertNotIn("input", projected["events"][0])
+        self.assertIn("input", projected["events"][0]["truncated_fields"])
+        self.assertEqual(projected["events"][0]["evidence_safety"]["input"]["reason"], "inventory_incomplete")
+
+
     def test_redacts_environment_auth_and_database_credentials(self):
         env_secret = "sk-env-secret-123456"
         auth_secret = "auth-access-secret-234567"
@@ -756,7 +930,7 @@ class EvidenceRedactionTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp, patch.dict(
             os.environ,
-            {"OPENAI_API_KEY": secret},
+            {"OPENAI_API_KEY": secret, "OPENCODE_CONFIG_DIR": ""},
             clear=False,
         ):
             project = Path(tmp)
@@ -789,7 +963,41 @@ class EvidenceRedactionTests(unittest.TestCase):
 
         encoded = json.dumps(result)
         self.assertNotIn(secret, encoded)
-        self.assertIn("***REDACTED***", encoded)
+        self.assertNotIn("text", result)
+        self.assertFalse(result["evidence_safety"]["inventory_complete"])
+
+    def test_legacy_observer_policy_does_not_forward_seed_credentials_to_target_environment(self):
+        secret = "SYNTH-seed-access-token"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            auth = root / "auth.json"
+            auth.write_text(json.dumps({"accessToken": secret}), encoding="utf-8")
+            observed: dict[str, str] = {}
+
+            class Result:
+                returncode = 0
+                stdout = '{"exit_code":0,"text":"done","tools":[],"actions":[]}'
+                stderr = ""
+
+            def fake_run(_command, **kwargs):
+                observed.update(kwargs["env"])
+                return Result()
+
+            with patch.dict(os.environ, {"OPENCODE_CONFIG_DIR": "", "OPENCODE_EVAL_NORMAL_OBSERVATIONS": ""}, clear=False), \
+                 patch.object(RUN_EVALS.shutil, "which", return_value=None), \
+                 patch.object(RUN_EVALS.subprocess, "run", side_effect=fake_run):
+                RUN_EVALS.invoke_container(
+                    engine="podman", image="test-image", transport="opencode", model="openai/test",
+                    agent="general", prompt="test", system="", project=root, auth=auth,
+                    config=None, models_catalog=None, database_seed=None, config_root=None,
+                    expected_plugin=None, timeout=30, container_timeout=60, mount_node_modules=False,
+                    workspace_mode="ro", extra_envs=[],
+                )
+
+        policy = json.loads(observed["OPENCODE_EVAL_REDACTION_VALUES"])
+        self.assertFalse(policy["complete"])
+        self.assertEqual(policy["values"], [])
+        self.assertNotIn(secret, json.dumps(policy))
 
 
     def test_invoke_container_redacts_secret_on_runner_failure_path(self):

@@ -306,6 +306,18 @@ class ToolResultEvidenceTests(unittest.TestCase):
         self.assertTrue(item["output"].endswith("END ERROR"))
         self.assertLessEqual(len(item["output"]), RUN.TOOL_RESULT_FIELD_LIMIT)
 
+    def test_public_projection_omits_size_limited_field_instead_of_persisting_a_preview(self):
+        prepared = RUN.prepare_transport_result({
+            "stdout": raw(event(output="x" * (RUN.TOOL_RESULT_FIELD_LIMIT + 1))),
+        }, [])
+        field = prepared["observed_tool_results"]["events"][0]
+
+        self.assertNotIn("output", field)
+        self.assertEqual(field["evidence_safety"]["output"], {
+            "state": "omitted", "reason": "size_limit", "stage": "capture",
+        })
+        self.assertFalse(prepared["observed_tool_results"]["evidence_safety"]["coverage_complete"])
+
     def test_count_and_total_budgets_retain_latest_results_and_mark_omissions(self):
         captured = self.capture(*(event(output="x" * 5000, call_id=str(i)) for i in range(100)), event(output="LAST: blocked", call_id="last"))
         self.assertLessEqual(len(captured["events"]), RUN.TOOL_RESULT_EVENT_LIMIT)
@@ -451,7 +463,7 @@ class ToolResultEvidenceTests(unittest.TestCase):
         evidence = prepared["observed_tool_results"]
         bounded_raw = RUN.extract_tool_result_evidence(raw(*raw_events), [])
         self.assertGreater(bounded_raw["omitted_events"], 0)
-        self.assertTrue(evidence["metadata_tool_capture_complete"])
+        self.assertFalse(evidence["metadata_tool_capture_complete"])
         self.assertEqual(evidence["nested_tool_calls_observed"], 10)
         nested_actions = [
             action for action in RUN.tool_result_actions(evidence)
@@ -1052,10 +1064,8 @@ class ToolResultEvidenceTests(unittest.TestCase):
             "stdout_total_chars": 250000,
         }
         prepared = RUN.prepare_transport_result(result, [secret])
-        self.assertEqual(
-            prepared["stdout"],
-            "[upstream-truncated stdout omitted before secret redaction]",
-        )
+        self.assertNotIn("stdout", prepared)
+        self.assertEqual(prepared["evidence_safety"]["fields"]["stdout"]["reason"], "upstream_clipped")
         self.assertNotIn(secret[:10], json.dumps(prepared))
 
     def test_truncated_stderr_is_omitted_when_secret_redaction_cannot_be_complete(self):
@@ -1069,10 +1079,8 @@ class ToolResultEvidenceTests(unittest.TestCase):
             "stdout_total_chars": 0,
         }
         prepared = RUN.prepare_transport_result(result, [secret])
-        self.assertEqual(
-            prepared["stderr"],
-            "[upstream-truncated stderr omitted before secret redaction]",
-        )
+        self.assertNotIn("stderr", prepared)
+        self.assertEqual(prepared["evidence_safety"]["fields"]["stderr"]["reason"], "upstream_clipped")
         self.assertNotIn(secret[:10], json.dumps(prepared))
 
     def test_runner_truncated_field_is_omitted_when_secret_may_straddle_clip(self):
@@ -1102,9 +1110,13 @@ class ToolResultEvidenceTests(unittest.TestCase):
         encoded = json.dumps(prepared["observed_tool_results"])
         self.assertNotIn(secret[:8], encoded)
         self.assertNotIn(secret[-8:], encoded)
-        self.assertIn("upstream-truncated field omitted", encoded)
+        event = prepared["observed_tool_results"]["events"][0]
+        self.assertNotIn("output", event)
+        self.assertEqual(event["evidence_safety"]["output"], {
+            "state": "omitted", "reason": "upstream_clipped", "stage": "runner",
+        })
 
-    def test_runner_projection_redacts_json_escaped_secret_in_input_and_object_output(self):
+    def test_runner_projection_omits_unsafe_sensitive_key_fields_without_renaming_keys(self):
         secret = 'sk-quote-"line\npath\\tail-0123456789'
         escaped = json.dumps(secret, ensure_ascii=False)[1:-1]
         result = {
@@ -1132,7 +1144,47 @@ class ToolResultEvidenceTests(unittest.TestCase):
         encoded = json.dumps(prepared, ensure_ascii=False)
         self.assertNotIn(secret, encoded)
         self.assertNotIn(escaped, encoded)
-        self.assertIn("***REDACTED***", encoded)
+        event = prepared["observed_tool_results"]["events"][0]
+        self.assertNotIn("input", event)
+        self.assertNotIn("output", event)
+        self.assertEqual(event["evidence_safety"]["input"]["state"], "omitted")
+        self.assertEqual(event["evidence_safety"]["output"]["reason"], "sensitive_key")
+        self.assertFalse(prepared["observed_tool_results"]["evidence_safety"]["coverage_complete"])
+
+    def test_short_credentials_do_not_corrupt_transport_protocol_or_json_payload(self):
+        secrets = ["0", "1", "text", "low"]
+        event_record = {
+            "sequence": 1,
+            "truncated_fields": [],
+            "tool": "loom_status",
+            "status": "completed",
+            "input": json.dumps({"workflowId": "wf-1", "text": "payload"}),
+            "output": json.dumps({"text": "text", "state": "ready", "count": 1}),
+        }
+        result = {
+            "stdout": "",
+            "stdout_truncated": False,
+            "tool_result_evidence": {
+                "schema": "opencode-eval-runner/tool-results/v1",
+                "source": "opencode.event-stream.full",
+                "observed_events": 1,
+                "omitted_events": 0,
+                "events": [event_record],
+            },
+        }
+
+        prepared = RUN.prepare_transport_result(result, secrets)
+        evidence = prepared["observed_tool_results"]
+        captured = evidence["events"][0]
+
+        self.assertEqual(evidence["schema"], "opencode-eval-runner/tool-results/v1")
+        self.assertEqual(captured["tool"], "loom_status")
+        self.assertEqual(captured["status"], "completed")
+        self.assertEqual(captured["evidence_safety"]["output"]["state"], "redacted")
+        self.assertIn("output", captured["truncated_fields"])
+        self.assertEqual(json.loads(captured["output"])["state"], "ready")
+        self.assertEqual(json.loads(captured["output"])["count"], 1)
+        self.assertEqual(json.loads(captured["output"])["text"], "***REDACTED***")
 
     def test_runner_projection_redacts_repeatedly_json_encoded_secret(self):
         secret = 'sk-nested-"line\npath\\tail-0123456789'
@@ -1164,7 +1216,7 @@ class ToolResultEvidenceTests(unittest.TestCase):
             self.assertNotIn(variant, encoded)
         self.assertIn("***REDACTED***", encoded)
 
-    def test_nontruncated_raw_jsonl_redacts_json_escaped_secret_forms(self):
+    def test_nontruncated_raw_jsonl_is_omitted_when_secret_occurs(self):
         secret = 'sk-quote-"line\npath\\tail-0123456789'
         raw_stdout = raw(event(
             "read",
@@ -1184,7 +1236,9 @@ class ToolResultEvidenceTests(unittest.TestCase):
         encoded = json.dumps(prepared, ensure_ascii=False)
         self.assertNotIn(secret, encoded)
         self.assertNotIn(json.dumps(secret, ensure_ascii=False)[1:-1], encoded)
-        self.assertIn("***REDACTED***", encoded)
+        self.assertNotIn("stdout", prepared)
+        self.assertEqual(prepared["evidence_safety"]["fields"]["stdout"]["state"], "omitted")
+        self.assertFalse(prepared["observed_tool_results"]["evidence_safety"]["coverage_complete"])
 
     def test_redaction_covers_sensitive_dictionary_keys_after_decoding(self):
         secret = 'sk-key-"quoted\nvalue\\tail-0123456789'
@@ -1228,11 +1282,14 @@ class ToolResultEvidenceTests(unittest.TestCase):
                     if runner:
                         Path(command[command.index("--output") + 1]).write_text(json.dumps(target))
                     return argparse.Namespace(returncode=0, stdout=json.dumps(target), stderr="")
-                with patch.dict(os.environ, {"OPENAI_API_KEY": secret, "OPENCODE_EVAL_RUNNER_BIN": runner or ""}), \
+                with patch.dict(os.environ, {"OPENAI_API_KEY": secret, "OPENCODE_CONFIG_DIR": "", "OPENCODE_EVAL_RUNNER_BIN": runner or ""}, clear=False), \
                      patch.object(RUN.shutil, "which", return_value=None), \
                      patch.object(RUN.subprocess, "run", side_effect=fake_run):
                     result = RUN.invoke_container(engine="podman", image="fixture", transport="opencode", model="test", agent="general", prompt="test", system="", project=Path(tmp), auth=None, config=None, models_catalog=None, database_seed=None, config_root=None, expected_plugin=None, timeout=30, container_timeout=60, mount_node_modules=False, workspace_mode="ro", extra_envs=[])
-                self.assertEqual(result["observed_tool_results"]["events"][0]["output"], "***REDACTED***")
+                self.assertEqual(len(result["observed_tool_results"]["events"]), 1)
+                self.assertNotIn("input", result["observed_tool_results"]["events"][0])
+                self.assertFalse(result["observed_tool_results"]["evidence_safety"]["inventory_complete"])
+                self.assertNotIn(secret, json.dumps(result))
 
     def test_run_case_delivers_same_result_evidence_to_judge_and_artifact(self):
         case = scenario()

@@ -1,7 +1,42 @@
 import { describe, expect, test } from "bun:test"
-import { observerMustOmitEvent, observerOmissionReason } from "./fixtures/loom-normal-invoke-observer"
+import { readFileSync } from "node:fs"
+import { observerMustOmitEvent, observerOmissionReason, parseCredentialInventoryPolicy } from "./fixtures/loom-normal-invoke-observer"
+import { eventContainsCredential, parseCredentialInventory } from "./fixtures/eval-tool-observer"
+
+const safetyVectors = JSON.parse(readFileSync(new URL("./fixtures/eval-evidence-safety-vectors.json", import.meta.url), "utf8"))
+const completeSources = { auth: "not_selected", config: "not_selected", config_root: "not_selected",
+  credential_seed: "not_selected", env: "complete", models: "not_selected" }
 
 describe("pre-persistence normal-invoke secret omission", () => {
+  test("accepts only complete versioned inventory policies", () => {
+    const policy = { schema: "loom-eval-credential-inventory/v1", policy_version: "source-path-roles/v1",
+      complete: true, sources: completeSources, values: ["CAMEL-TOKEN", "short"] }
+    expect(parseCredentialInventoryPolicy(JSON.stringify(policy))).toEqual(["CAMEL-TOKEN", "short"])
+    expect(parseCredentialInventoryPolicy(JSON.stringify({ ...policy, complete: false }))).toBeNull()
+    expect(parseCredentialInventoryPolicy(JSON.stringify({ ...policy, schema: "unknown/v2" }))).toBeNull()
+    expect(parseCredentialInventoryPolicy(JSON.stringify({ ...policy, values: [""] }))).toBeNull()
+    expect(parseCredentialInventoryPolicy(JSON.stringify({ ...policy, extra: "unowned" }))).toBeNull()
+  })
+
+  test("applies the shared synthetic credential and short-value vectors before observer persistence", () => {
+    const credentialValues = Object.values(safetyVectors.credentialAliases) as string[]
+    const secrets = [...credentialValues, safetyVectors.credentialObject.credential.accessToken]
+    expect(observerMustOmitEvent({ result: safetyVectors.credentialObject }, secrets)).toBe(true)
+    expect(observerMustOmitEvent({ result: safetyVectors.publicSettings }, secrets)).toBe(false)
+    expect(observerMustOmitEvent({ result: safetyVectors.payload }, safetyVectors.shortCredentials)).toBe(true)
+    expect(eventContainsCredential({ result: safetyVectors.credentialObject }, secrets)).toBe(true)
+    expect(eventContainsCredential({ result: safetyVectors.payload }, safetyVectors.shortCredentials)).toBe(true)
+    expect(eventContainsCredential({ result: safetyVectors.publicSettings }, secrets)).toBe(false)
+  })
+
+  test("legacy first-sink parser rejects incomplete inventory and sensitive events", () => {
+    const policy = { schema: "loom-eval-credential-inventory/v1", policy_version: "source-path-roles/v1",
+      complete: true, sources: completeSources, values: ["SYNTH-access-token"] }
+    expect(parseCredentialInventory(JSON.stringify(policy))).toEqual(policy.values)
+    expect(parseCredentialInventory(JSON.stringify({ ...policy, complete: false }))).toBeNull()
+    expect(eventContainsCredential({ input: { accessToken: "SYNTH-access-token" } }, policy.values)).toBe(true)
+  })
+
   test("omits literal, nested, quoted, and newline-escaped credential values", () => {
     const secret = 'bearer "two\nlines"'
     const encoded = JSON.stringify(JSON.stringify(secret))

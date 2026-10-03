@@ -7,6 +7,69 @@ const EVENT_LIMIT = 512
 const FIELD_BYTES_LIMIT = 64_000
 const TOTAL_BYTES_LIMIT = 2_000_000
 
+export function parseCredentialInventory(raw: string): string[] | null {
+  try {
+    const policy = JSON.parse(raw) as Record<string, unknown>
+    const sources = policy.sources
+    const sourceNames = ["auth", "config", "config_root", "credential_seed", "env", "models"]
+    const sourceStates = new Set(["complete", "incomplete", "not_selected"])
+    const sourcesValid = !!sources && typeof sources === "object" && !Array.isArray(sources) &&
+      Object.keys(sources).sort().join(",") === sourceNames.join(",") &&
+      Object.values(sources).every((state) => typeof state === "string" && sourceStates.has(state))
+    const complete = sourcesValid && Object.values(sources as Record<string, string>)
+      .every((state) => state === "complete" || state === "not_selected")
+    if (policy.schema !== "loom-eval-credential-inventory/v1" ||
+        policy.policy_version !== "source-path-roles/v1" || !sourcesValid || policy.complete !== complete ||
+        policy.complete !== true ||
+        !Array.isArray(policy.values) || policy.values.some((value) => typeof value !== "string" || !value) ||
+        Object.keys(policy).sort().join(",") !== "complete,policy_version,schema,sources,values") return null
+    return [...new Set(policy.values as string[])]
+  } catch {
+    return null
+  }
+}
+
+function sensitiveKey(name: string): boolean {
+  const normalized = name.replace(/([A-Z]+)([A-Z][a-z])/g, "$1_$2")
+    .replace(/([a-z0-9])([A-Z])/g, "$1_$2").toLowerCase().match(/[a-z0-9]+/g)?.join("_") ?? ""
+  return normalized === "key" || normalized === "apikey" || normalized.endsWith("_key") ||
+    normalized === "token" || normalized === "access_token" || normalized === "refresh_token" ||
+    ["secret", "password", "credential", "authorization", "cookie"].some((word) =>
+      normalized === word || normalized.endsWith(`_${word}`))
+}
+
+export function eventContainsCredential(value: unknown, secrets: string[]): boolean {
+  return containsPattern(value, credentialPatterns(secrets))
+}
+
+function credentialPatterns(secrets: string[]): Set<string> {
+  const patterns = new Set<string>()
+  for (const secret of secrets) {
+    let frontier = new Set([secret])
+    patterns.add(secret)
+    for (let depth = 0; depth < 3; depth += 1) {
+      const next = new Set<string>()
+      for (const current of frontier) {
+        const encoded = JSON.stringify(current).slice(1, -1)
+        if (encoded && !patterns.has(encoded)) next.add(encoded)
+        patterns.add(encoded)
+      }
+      frontier = next
+    }
+  }
+  return patterns
+}
+
+function containsPattern(value: unknown, patterns: Set<string>): boolean {
+  if (typeof value === "string") return [...patterns].some((secret) => secret && value.includes(secret))
+  if (Array.isArray(value)) return value.some((item) => containsPattern(item, patterns))
+  if (value && typeof value === "object") {
+    return Object.entries(value).some(([key, item]) =>
+      sensitiveKey(key) || containsPattern(key, patterns) || containsPattern(item, patterns))
+  }
+  return false
+}
+
 function jsonValue(value: unknown): unknown {
   if (value instanceof Error) {
     return { name: value.name, message: value.message }
@@ -21,6 +84,11 @@ function jsonValue(value: unknown): unknown {
 export default Plugin.define({
   id: "loom.eval-tool-observer",
   async setup(ctx) {
+    const rawPolicy = process.env.OPENCODE_EVAL_REDACTION_VALUES ?? ""
+    delete process.env.OPENCODE_EVAL_REDACTION_VALUES
+    const secrets = parseCredentialInventory(rawPolicy)
+    if (secrets === null) return
+    const patterns = credentialPatterns(secrets)
     const path = join(ctx.location.directory, ".loom-eval-tool-observer.jsonl")
     const registrations = await ctx.tool.list()
     const registrationIDs = new Set(registrations.map((tool) => tool.id))
@@ -36,6 +104,10 @@ export default Plugin.define({
 
     const emit = async (record: Record<string, unknown>) => {
       if (!complete || eventCount >= EVENT_LIMIT) {
+        complete = false
+        return
+      }
+      if (containsPattern(record, patterns)) {
         complete = false
         return
       }
