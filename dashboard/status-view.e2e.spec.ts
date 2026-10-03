@@ -44,7 +44,7 @@ function view(): StatusView {
               progress: { finished: 0, total: 2 },
               tasks: [
                 { id: "api", title: "Implement API", status: "pending" },
-                { id: "later", title: "Later task", status: "pending" },
+                { id: "later", title: "Later task", status: "runnable" },
               ],
             },
             {
@@ -89,7 +89,8 @@ test("workflow status artifact supports keyboard-native expansion and filtering"
   await page.getByLabel("Search work").fill("")
   await page.getByLabel("Status").selectOption("dag-ready")
   await expect(page.getByText("Implement API", { exact: true })).toBeVisible()
-  await expect(page.getByText("Later task", { exact: true })).not.toBeVisible()
+  await expect(page.getByText("Later task", { exact: true })).toBeVisible()
+  await expect(page.getByText("DAG ready", { exact: true }).first()).toBeVisible()
 })
 
 
