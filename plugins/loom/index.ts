@@ -3011,7 +3011,7 @@ function questionState(questions: OpenQuestion[], workflow: Workflow) {
   return {
     unresolved: unresolved.map((question) => ({
       id: question.id,
-      question: clippedSummary(question.question, 220),
+      question: question.question,
       status: question.status,
       responder: question.requiredAuthority,
       blocking: question.blocking,
