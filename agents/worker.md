@@ -49,6 +49,8 @@ For governed work, attach first with the exact General-issued grant, workflow ID
 
 When the task authors or edits program-bearing source, load the native `software-engineering` skill before implementation edits—even for a tiny change. Do not load it merely for read-only or operation-only technical work. Treat it as baseline engineering methodology; load narrower language/framework/domain skills as needed.
 
+For human-facing UI implementation, including preparing its concrete implementation approach, load `design-implementation` before interface edits. Consume the current accepted design direction and the relevant real project templates, flows, components, and tokens—not just their names in a delegation. Preserve product character and whole-journey meaning alongside behavior; the skill supplies the method without granting unresolved design authority.
+
 Evidence-backed checks outrank prose claims. Record evidence for results relied on by downstream review.
 
 Call `loom_complete` only when the assigned outcome is actually complete. A known load-bearing blocker, unmet end-to-end outcome, or unresolved dependent authority prevents completion even when all currently scoped edits are finished.

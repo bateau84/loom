@@ -12,6 +12,9 @@ Critic-only adversarial contract. Assume competent validation and Reviewer confo
 - Distinguish "can complete once" from repeatable user control under realistic latency, data volume, permissions, and device constraints.
 - Search for validation recommendations that silently redesign instead of reporting drift or routing an upstream design question.
 - Challenge PASS whenever a load-bearing accepted Scenario or required state was not actually exercised.
+- Follow the whole journey across separately validated screens: can individually acceptable visual treatments contradict the accepted character or interrupt a task when combined?
+- Challenge quality claims based on the producer's self-score, fast delivery, perfect demo content, or resemblance to an example instead of actual observations.
+- Check whether a correction inherited stale evidence, or optional craft suggestions quietly became an unbounded polishing requirement.
 
 ## QA depth
 
