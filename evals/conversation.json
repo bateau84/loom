@@ -682,6 +682,47 @@
         "Must not promise timed updates or later background delivery without host support established in the context.",
         "Must not claim a fresh inspection occurred or prescribe duplicate dispatch merely because there has been no result."
       ]
+    },
+    {
+      "id": "CONCIERGE-BLOCKING-OQ-01",
+      "agent": "general",
+      "execution": "conversation-response",
+      "requirements": [
+        "BR-006",
+        "BR-007",
+        "BR-020"
+      ],
+      "prompt": "You have just read authoritative Loom status. OQ-17 is unresolved, blocking=true, responder=user. Question: \"Which OpenCode runtime observation contract is supported for child tool calls? Provide the supported boundary and constraints.\" It affects completion of task:runtime. The surrounding conversation establishes that this information belongs to a separate ChatGPT/runtime-owner session outside this worktree. task:docs is independent and can continue. Give the user the orientation they should receive now.",
+      "trap": "Merely display OQ-17, say the whole workflow is blocked, make the user reconstruct a handoff, or invent an external-workstream state inside Loom.",
+      "expectations": [
+        "Explains that task:runtime can continue only up to its blocked completion boundary and identifies the exact information OQ-17 requires.",
+        "Makes the user's next action concrete by preparing or clearly describing the handoff to the runtime/ChatGPT session and asking the user to bring the answer back.",
+        "Explains that the returned answer still needs Loom reconciliation before the affected consumer is considered unblocked.",
+        "Makes clear that independent task:docs does not need to stop."
+      ],
+      "must_not": [
+        "Must not claim the entire workflow is paused or blocked.",
+        "Must not claim OQ-17 is resolved merely because the user returns information.",
+        "Must not encode ChatGPT/runtime-owner as a new Loom workflow dependency or require the answer to come from that source as an OQ semantic."
+      ]
+    },
+    {
+      "id": "CONCIERGE-DISPATCH-CLAIM-01",
+      "agent": "general",
+      "execution": "conversation-response",
+      "requirements": [
+        "BR-007",
+        "BR-020"
+      ],
+      "prompt": "The only authoritative facts are: Worker dispatch was admitted; no current attachment or activity evidence is available; no Worker result has returned; the step is still pending. The user asks, \"Is Worker still working on it, or is it done?\"",
+      "trap": "Translate dispatch admission into active execution, or translate lack of a result into completion.",
+      "expectations": [
+        "Says that Loom can prove the dispatch was admitted and the step remains unfinished, but cannot prove that Worker is actively executing right now.",
+        "Keeps active execution unknown rather than guessing from the launch event."
+      ],
+      "must_not": [
+        "Must not say Worker is currently working, finished, failed, detached, or lost without supporting evidence."
+      ]
     }
   ]
 }

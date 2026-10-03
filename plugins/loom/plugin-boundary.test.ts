@@ -540,6 +540,153 @@ describe("Loom registered plugin boundary", () => {
     }
   })
 
+  test("status derives dispatch, attachment, OQ, and completion readiness without conflating them", async () => {
+    const h = await harness()
+    try {
+      const workflowId = "status-readiness-derived"
+      const general = "status-readiness-general"
+      const child = "status-readiness-worker"
+      const now = new Date().toISOString()
+
+      await h.durableStorage.set(`workflow/${workflowId}`, {
+        id: workflowId,
+        projectId: h.runtime.projectId,
+        revision: 0,
+        anchor: `task:${workflowId}`,
+        createdBySession: general,
+        createdAt: now,
+        steps: [
+          { id: "worker-open", agent: "worker", kind: "work", dependsOn: [], status: "pending", attempt: 0 },
+          { id: "reviewer-budget", agent: "reviewer", kind: "gate", dependsOn: [], status: "pending", attempt: 0 },
+          { id: "later", agent: "worker", kind: "work", dependsOn: ["worker-open"], status: "pending", attempt: 0 },
+        ],
+      })
+      await h.durableStorage.set(`session/${general}`, workflowId)
+      await h.durableStorage.set(`session/${child}`, workflowId)
+      await h.durableStorage.set(`session-step/${child}`, "worker-open")
+      await h.durableStorage.set(`session-step-attempt/${encodeURIComponent(child)}`, 0)
+      await h.durableStorage.set(
+        `step-session/${encodeURIComponent(workflowId)}/${encodeURIComponent("worker-open")}/0`,
+        {
+          schemaVersion: 1,
+          workflowId,
+          stepId: "worker-open",
+          attempt: 0,
+          sessionID: child,
+          agent: "worker",
+          attachedAt: now,
+        },
+      )
+      await h.durableStorage.set(`limits/${workflowId}`, {
+        maxTotalDispatches: 20,
+        maxDispatchesPerStep: 3,
+        maxReviewerDispatchesPerStep: 1,
+        maxCriticDispatchesPerStep: 2,
+        maxExtraDispatchesPerStep: 3,
+        maxProviderRetries: 2,
+      })
+      await h.durableStorage.set(`budget/${workflowId}`, {
+        totalDispatches: 1,
+        byKey: { "step:reviewer-budget": 1 },
+        seenDispatches: ["reviewer-budget-seed"],
+      })
+      await h.durableStorage.set("dispatch-grant/stale-worker-grant", {
+        schemaVersion: 1,
+        grantId: "stale-worker-grant",
+        projectId: h.runtime.projectId,
+        workflowId,
+        stepId: "stale-worker",
+        expectedAgent: "worker",
+        issuingParentSessionId: general,
+        createdAt: now,
+        expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      })
+      await h.durableStorage.set(`oq-index/${workflowId}`, ["OQ-17"])
+      await h.durableStorage.set(`oq/${workflowId}/OQ-17`, {
+        id: "OQ-17",
+        workflowId,
+        question: "Which runtime observation contract is supported?",
+        raisedByAgent: "worker",
+        raisedByStepId: "worker-open",
+        requiredAuthority: "user",
+        blocking: true,
+        consumerStepIds: ["worker-open"],
+        evidence: [],
+        status: "open",
+        reconciliations: {},
+        createdAt: now,
+      })
+
+      const status = await h.call("status", { workflowId }, "general", general)
+
+      expect(status.readiness).toHaveLength(2)
+      expect(status.readiness.find((step: any) => step.step === "worker-open")).toMatchObject({
+        structurallyRunnable: true,
+        dispatch: { state: "ready" },
+        execution: { state: "unknown", evidence: "current_attachment" },
+        completion: {
+          eligible: false,
+          constraints: [{
+            source: "OQ-17",
+            boundary: "completion",
+            state: "awaiting_answer",
+          }],
+        },
+      })
+      expect(status.readiness.find((step: any) => step.step === "reviewer-budget")).toMatchObject({
+        structurallyRunnable: true,
+        dispatch: { state: "blocked" },
+        execution: { state: "unknown" },
+      })
+      expect(status.userAttention).toEqual([{
+        questionId: "OQ-17",
+        question: "Which runtime observation contract is supported?",
+        responder: "user",
+        blocking: true,
+        consumers: ["worker-open"],
+        state: "awaiting_answer",
+      }])
+      expect(status.upcoming).toContainEqual({
+        step: "later",
+        agent: "worker",
+        waitsFor: ["worker-open"],
+      })
+
+      const detailed = await h.call("status", { workflowId, detail: true }, "general", general)
+      expect(detailed.dagRunnable).toEqual([
+        { id: "worker-open", agent: "worker" },
+        { id: "reviewer-budget", agent: "reviewer" },
+      ])
+      expect(detailed.runnable).toBeUndefined()
+
+      await h.durableStorage.set(`oq-index/${workflowId}`, ["OQ-17", "OQ-18"])
+      await h.durableStorage.set(`oq/${workflowId}/OQ-18`, {
+        id: "OQ-18",
+        workflowId,
+        question: "Worker-owned peer question",
+        raisedByAgent: "reviewer",
+        raisedByStepId: "reviewer-budget",
+        requiredAuthority: "worker",
+        blocking: false,
+        consumerStepIds: [],
+        evidence: [],
+        status: "open",
+        reconciliations: {},
+        createdAt: now,
+      })
+
+      const ambiguous = await h.call("status", { workflowId }, "general", general)
+      expect(ambiguous.readiness.find((step: any) => step.step === "worker-open")?.dispatch).toMatchObject({
+        state: "unknown",
+      })
+      expect(
+        ambiguous.readiness.find((step: any) => step.step === "worker-open")?.dispatch.reason,
+      ).toContain("Multiple current targets are owned by worker")
+    } finally {
+      h.restore()
+    }
+  })
+
   test("registers native and Code Mode coordinator resumption executors", async () => {
     const { registered, restore } = await harness()
     try {
@@ -4136,7 +4283,7 @@ describe("Loom registered plugin boundary", () => {
         "worker-session",
       )
       expect(completed.error).toBeUndefined()
-      expect(completed.runnable).toEqual([{ id: "review-implementation", agent: "reviewer" }])
+      expect(completed.dagRunnable).toEqual([{ id: "review-implementation", agent: "reviewer" }])
 
       const reviewerGrant = await call(
         "dispatch_grant",
@@ -9198,7 +9345,7 @@ Verdict: FAIL
         "terminal-conversation-reviewer",
       )
       expect(completed.error).toBeUndefined()
-      expect(completed.runnable).toEqual([])
+      expect(completed.dagRunnable).toEqual([])
 
       for (const target of ["research", "diagnostic"] as const) {
         const conversational: any = {
@@ -9394,7 +9541,7 @@ Verdict: FAIL
         diagnosticSession,
       )
       expect(completed.error).toBeUndefined()
-      expect(completed.runnable).toContainEqual({ id: "review-task", agent: "reviewer" })
+      expect(completed.dagRunnable).toContainEqual({ id: "review-task", agent: "reviewer" })
 
       const afterCompletedStep = await observeShell("post-complete", "git status --short")
       expect(afterCompletedStep.workflowId).toBeUndefined()
@@ -12142,7 +12289,7 @@ describe("workflow cancellation and reviewed-history boundaries", () => {
       expect(sidebar.state).toBe("cancelled")
       expect(sidebar.now).toEqual([])
       const status = await h.call("status", { detail: true }, "general", "parent")
-      expect(status.runnable).toEqual([])
+      expect(status.dagRunnable).toEqual([])
       expect(status.summary.upcoming).toEqual([])
       // A pre-cancellation external tool may return; it is passive history, not new governed proof.
       await h.toolHooks.get("execute.after")!({ tool: "shell", sessionID: child, agent: "worker", callID: "late-observation", input: { command: "bun test" }, status: "completed", result: "late result" })
