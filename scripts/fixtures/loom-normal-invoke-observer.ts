@@ -35,6 +35,41 @@ function secretPatterns(secrets: string[]): { exact: Set<string> } {
   return { exact }
 }
 
+export function parseCredentialInventoryPolicy(raw: string): string[] | null {
+  try {
+    const policy = JSON.parse(raw) as Record<string, unknown>
+    const sources = policy.sources
+    const sourceNames = ["auth", "config", "config_root", "credential_seed", "env", "models"]
+    const sourceStates = new Set(["complete", "incomplete", "not_selected"])
+    const sourcesValid = !!sources && typeof sources === "object" && !Array.isArray(sources) &&
+      Object.keys(sources).sort().join(",") === sourceNames.join(",") &&
+      Object.values(sources).every((state) => typeof state === "string" && sourceStates.has(state))
+    const complete = sourcesValid && Object.values(sources as Record<string, string>)
+      .every((state) => state === "complete" || state === "not_selected")
+    if (!policy || policy.schema !== "loom-eval-credential-inventory/v1" ||
+        policy.policy_version !== "source-path-roles/v1" || !sourcesValid || policy.complete !== complete ||
+        policy.complete !== true ||
+        !Array.isArray(policy.values) || policy.values.some((value) => typeof value !== "string" || !value) ||
+        Object.keys(policy).sort().join(",") !== "complete,policy_version,schema,sources,values") return null
+    return [...new Set(policy.values as string[])]
+  } catch {
+    return null
+  }
+}
+
+function sensitiveKey(name: string): boolean {
+  const words = name
+    .replace(/([A-Z]+)([A-Z][a-z])/g, "$1_$2")
+    .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
+    .toLowerCase()
+    .match(/[a-z0-9]+/g) ?? []
+  const normalized = words.join("_")
+  return normalized === "key" || normalized === "apikey" || normalized.endsWith("_key") ||
+    normalized === "token" || normalized === "access_token" || normalized === "refresh_token" ||
+    ["secret", "password", "credential", "authorization", "cookie"].some((word) =>
+      normalized === word || normalized.endsWith(`_${word}`))
+}
+
 function containsSensitive(
   value: unknown,
   patterns: ReturnType<typeof secretPatterns>,
@@ -42,7 +77,7 @@ function containsSensitive(
   clippedValue = false,
   eventRoot = false,
 ): boolean {
-  if (/key|token|secret|password|credential|authorization|cookie/i.test(key)) return true
+  if (sensitiveKey(key)) return true
   if (typeof value === "string") {
     if (!(eventRoot && key === "schema")) {
       for (const secret of patterns.exact) if (secret && value.includes(secret)) return true
@@ -204,14 +239,10 @@ export default Plugin.define({
     const payloadPolicy = requestedPolicy === SYNTHETIC_FIXTURE_PAYLOADS
       ? SYNTHETIC_FIXTURE_PAYLOADS
       : OMIT_OPAQUE_PAYLOADS
-    let secrets: string[]
-    try {
-      const values = JSON.parse(process.env.OPENCODE_EVAL_REDACTION_VALUES ?? "")
-      if (!Array.isArray(values) || values.some((value) => typeof value !== "string")) return
-      secrets = values
-    } catch {
-      return
-    }
+    const rawPolicy = process.env.OPENCODE_EVAL_REDACTION_VALUES ?? ""
+    delete process.env.OPENCODE_EVAL_REDACTION_VALUES
+    const secrets = parseCredentialInventoryPolicy(rawPolicy)
+    if (secrets === null) return
     const redactionPatterns = secretPatterns(secrets)
     let count = 0
     let bytes = 0
