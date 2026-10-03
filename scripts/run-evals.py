@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.util
 import json
 import os
 import re
@@ -396,32 +397,64 @@ def write_project_config(project: Path, agent: str) -> None:
 
 
 OBSERVER_FILENAME = ".loom-eval-tool-observer.jsonl"
+NORMAL_INVOKE_OBSERVER_FILENAME = ".loom-normal-invoke-diagnostic.jsonl"
+NORMAL_PAYLOAD_POLICY_OMIT = "omit-opaque-payloads/v1"
+NORMAL_PAYLOAD_POLICY_FIXTURE = "synthetic-secret-free-fixture/v1"
+
+
+def normal_invoke_observations_enabled() -> bool:
+    return os.environ.get("OPENCODE_EVAL_NORMAL_OBSERVATIONS") == "1"
+
+
+def parse_normal_invoke_diagnostic(raw: str | bytes) -> dict[str, Any]:
+    parser_path = ROOT / "scripts" / "normal_invoke_observation.py"
+    spec = importlib.util.spec_from_file_location("loom_normal_invoke_observation", parser_path)
+    if not spec or not spec.loader:
+        return {"schema": "loom-normal-invoke-diagnostic/v1", "diagnostic_only": True,
+                "evidence_eligible": False, "capture_valid": False, "events": [],
+                "reason": "parser_unavailable"}
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.parse_diagnostic_capture(raw)
 
 
 def attach_observer_capture(
     result: dict[str, Any], project: Path, secrets: list[str]
 ) -> dict[str, Any]:
     """Replace runtime result projection only when a complete hook ledger exists."""
-    if not (project / ".opencode" / "plugins" / "eval-tool-observer.ts").is_file():
+    legacy_observer_enabled = (project / ".opencode" / "plugins" / "eval-tool-observer.ts").is_file()
+    normal_observer_enabled = normal_invoke_observations_enabled()
+    if not legacy_observer_enabled and not normal_observer_enabled:
         return result
-    capture_path = project / OBSERVER_FILENAME
-    try:
-        if capture_path.stat().st_size > TOTAL_OBSERVER_BYTES_LIMIT:
-            raw_capture = ""
-        else:
-            raw_capture = capture_path.read_text(encoding="utf-8")
-    except OSError:
-        raw_capture = ""
-    capture = capture_observer_tool_result_evidence(
-        raw_capture,
-        secrets,
-        outer_stdout=str(result.get("stdout") or ""),
-        stdout_truncated=bool(result.get("stdout_truncated")),
-    )
-    capture["capture_file_present"] = bool(raw_capture)
     redacted_result = dict(result)
     redacted_result.pop("tool_result_evidence", None)
-    redacted_result["observed_tool_results"] = capture
+    if legacy_observer_enabled:
+        capture_path = project / OBSERVER_FILENAME
+        try:
+            if capture_path.stat().st_size > TOTAL_OBSERVER_BYTES_LIMIT:
+                raw_capture = ""
+            else:
+                raw_capture = capture_path.read_text(encoding="utf-8")
+        except OSError:
+            raw_capture = ""
+        capture = capture_observer_tool_result_evidence(
+            raw_capture,
+            secrets,
+            outer_stdout=str(result.get("stdout") or ""),
+            stdout_truncated=bool(result.get("stdout_truncated")),
+        )
+        capture["capture_file_present"] = bool(raw_capture)
+        redacted_result["observed_tool_results"] = capture
+    if normal_observer_enabled:
+        normal_path = project / NORMAL_INVOKE_OBSERVER_FILENAME
+        try:
+            normal_text = normal_path.read_bytes() if normal_path.is_file() and normal_path.stat().st_size <= 4_000_000 else b""
+        except OSError:
+            normal_text = b""
+        diagnostic = redact_sensitive_values(parse_normal_invoke_diagnostic(normal_text), secrets)
+        # This channel is diagnostic-only and deliberately never participates
+        # in action/result scoring or evidence eligibility.
+        redacted_result["normal_invoke_diagnostic"] = diagnostic
     return redacted_result
 
 
@@ -451,9 +484,14 @@ def setup_projects(case: dict[str, Any]) -> tuple[Path, Path, Path]:
             if source.stem == case["agent"]:
                 agent_text = promote_agent(agent_text)
             (target_oc / "agents" / source.name).write_text(agent_text, encoding="utf-8")
-        observer_plugin = target_oc / "plugins" / "eval-tool-observer.ts"
-        observer_plugin.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(ROOT / "scripts" / "fixtures" / "eval-tool-observer.ts", observer_plugin)
+        if normal_invoke_observations_enabled():
+            normal_plugin = target_oc / "plugins" / "loom-normal-invoke-observer.ts"
+            normal_plugin.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(ROOT / "scripts" / "fixtures" / "loom-normal-invoke-observer.ts", normal_plugin)
+        else:
+            observer_plugin = target_oc / "plugins" / "eval-tool-observer.ts"
+            observer_plugin.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(ROOT / "scripts" / "fixtures" / "eval-tool-observer.ts", observer_plugin)
     else:
         source_agent = (ROOT / "agents" / (case["agent"] + ".md")).read_text(encoding="utf-8")
         if case["execution"] == "conversation-response":
@@ -694,7 +732,7 @@ def _collect_json_secrets(value: Any, found: set[str], *, sensitive: bool = Fals
         for child in value:
             _collect_json_secrets(child, found, sensitive=sensitive)
         return
-    if sensitive and isinstance(value, str) and len(value) >= 8:
+    if sensitive and isinstance(value, str) and value:
         found.add(value)
 
 
@@ -707,10 +745,11 @@ def collect_sensitive_values(
     database_seed: Path | None,
 ) -> list[str]:
     found: set[str] = set()
-    env_names = set(PROVIDER_ENVS) | set(COPILOT_ENVS) | set(extra_envs) | {"OPENCODE_API_KEY"}
+    nonsecret_harness_flags = {"OPENCODE_EVAL_OBSERVATIONS", "EVAL_OBSERVER_FIXTURE_THROW"}
+    env_names = set(PROVIDER_ENVS) | set(COPILOT_ENVS) | (set(extra_envs) - nonsecret_harness_flags) | {"OPENCODE_API_KEY"}
     for name in env_names:
         value = host_env.get(name, "")
-        if len(value) >= 8:
+        if value:
             found.add(value)
 
     for path in (auth, config, models_catalog):
@@ -740,7 +779,7 @@ def collect_sensitive_values(
                                     continue
                             if not isinstance(value, str):
                                 continue
-                            if _sensitive_key(column) and len(value) >= 8:
+                            if _sensitive_key(column) and value:
                                 found.add(value)
                                 continue
                             if value[:1] in ("{", "["):
@@ -1644,12 +1683,23 @@ def invoke_container(
     skill: str | None = None,
     network: str | None = None,
     reasoning: str | None = None,
+    normal_observation_payload_policy: str = NORMAL_PAYLOAD_POLICY_OMIT,
 ) -> dict[str, Any]:
     node_modules = prepare_node_modules_mount(
         project,
         ROOT / "node_modules" if mount_node_modules else None,
     )
     host_env = host_environment_for_transport(transport)
+    if normal_invoke_observations_enabled():
+        host_env["OPENCODE_EVAL_HOST_OBSERVATIONS"] = "1"
+        host_env["OPENCODE_EVAL_OBSERVATIONS"] = "1"
+        host_env["OPENCODE_EVAL_NORMAL_OBSERVATION_PAYLOAD_POLICY"] = (
+            normal_observation_payload_policy
+            if normal_observation_payload_policy in {
+                NORMAL_PAYLOAD_POLICY_OMIT, NORMAL_PAYLOAD_POLICY_FIXTURE
+            }
+            else NORMAL_PAYLOAD_POLICY_OMIT
+        )
     secrets = collect_sensitive_values(
         host_env,
         extra_envs,
@@ -1658,6 +1708,15 @@ def invoke_container(
         models_catalog,
         database_seed,
     )
+    if normal_invoke_observations_enabled():
+        redaction_values = json.dumps(secrets, ensure_ascii=False, separators=(",", ":"))
+        # If the complete redaction set cannot be transported, disable capture
+        # in the plugin rather than persist a partly-redacted event stream.
+        host_env["OPENCODE_EVAL_REDACTION_VALUES"] = (
+            redaction_values
+            if len(redaction_values.encode("utf-8")) <= 128_000
+            else "!invalid-redaction-set!"
+        )
     runner_bin = os.environ.get("OPENCODE_EVAL_RUNNER_BIN") or shutil.which("opencode-eval-runner")
     if runner_bin:
         with tempfile.TemporaryDirectory(prefix="loom-eval-runner-cli-") as tmp:
@@ -1707,6 +1766,10 @@ def invoke_container(
                 command += ["--mount", f"{node_modules}:/workspace/node_modules:ro"]
             for name in extra_envs:
                 command += ["--env", name]
+            if normal_invoke_observations_enabled():
+                for name in ("OPENCODE_EVAL_HOST_OBSERVATIONS", "OPENCODE_EVAL_OBSERVATIONS", "OPENCODE_EVAL_REDACTION_VALUES", "OPENCODE_EVAL_NORMAL_OBSERVATION_PAYLOAD_POLICY"):
+                    if name not in extra_envs:
+                        command += ["--env", name]
 
             proc = subprocess.run(
                 command,
@@ -1838,6 +1901,10 @@ def invoke_container(
         if transport == "github-copilot-cli":
             pass_env(command, COPILOT_ENVS, host_env)
         pass_env(command, extra_envs, host_env)
+        if normal_invoke_observations_enabled():
+            for name in ("OPENCODE_EVAL_HOST_OBSERVATIONS", "OPENCODE_EVAL_OBSERVATIONS", "OPENCODE_EVAL_REDACTION_VALUES", "OPENCODE_EVAL_NORMAL_OBSERVATION_PAYLOAD_POLICY"):
+                if host_env.get(name) and name not in extra_envs:
+                    command += ["--env", name]
         command.append(image)
 
         proc = subprocess.run(
