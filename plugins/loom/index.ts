@@ -2846,12 +2846,20 @@ async function statusStepReadiness(
   ctx: any,
   runtime: LoomRuntimeIdentity,
   workflow: Workflow,
+  questions: OpenQuestion[],
   work: WorkHierarchy | undefined,
   budget: BudgetState,
   limits: ExecutionLimits,
   sessionID: string,
 ): Promise<Record<string, StepReadinessObservation>> {
   const now = Date.now()
+  const currentRunnable = runnable(workflow)
+  const currentRunnableIds = new Set(currentRunnable.map((step) => step.id))
+  const currentUnansweredQuestionIds = new Set(
+    questions
+      .filter((question) => question.status !== "closed" && !question.answer)
+      .map((question) => question.id),
+  )
   const usableGrants: DispatchGrantV1[] = []
   let after: string | undefined
   do {
@@ -2870,7 +2878,11 @@ async function statusStepReadiness(
         !grant.admittedAt &&
         !grant.consumedAt &&
         !grant.revokedAt &&
-        Date.parse(grant.expiresAt) > now
+        Date.parse(grant.expiresAt) > now &&
+        (
+          (grant.stepId !== undefined && currentRunnableIds.has(grant.stepId)) ||
+          (grant.oqId !== undefined && currentUnansweredQuestionIds.has(grant.oqId))
+        )
       ) {
         usableGrants.push(grant)
       }
@@ -2879,7 +2891,7 @@ async function statusStepReadiness(
   } while (after)
 
   const result: Record<string, StepReadinessObservation> = {}
-  for (const step of runnable(workflow)) {
+  for (const step of currentRunnable) {
     let dispatch: StepReadinessObservation["dispatch"] = { state: "ready" }
 
     try {
@@ -5557,6 +5569,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             ctx,
             runtime,
             workflow,
+            questions,
             work,
             budget,
             limits,
