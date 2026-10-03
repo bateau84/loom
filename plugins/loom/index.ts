@@ -2928,13 +2928,12 @@ async function statusStepReadiness(
       dispatch,
       execution: bindingCurrent
         ? {
-            state: "attached",
-            activity: "unknown",
+            state: "unknown",
+            evidence: "current_attachment",
             attachedAt: binding!.attachedAt,
           }
         : {
-            state: "not_observed",
-            activity: "unknown",
+            state: "unknown",
           },
     }
   }
