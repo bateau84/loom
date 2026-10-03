@@ -60,6 +60,6 @@ For human-facing work, combine cross-surface skills (`information-architecture`,
 
 Use `feature-handoff` when work in one component or session discovers functionality that another independently handled component, repository, or fresh session must provide. The skill produces a standalone copy/paste request rather than transferring conversation history.
 
-Design role judgment and native loading/consumption cases live in the topic suite `evals/design.json`; skill-owned ablations remain under each skill's `evals/`. Native loading, method value, and real rendered product quality are separate evidence claims. Package dependency tests run through `scripts/test_ci_design_dependencies.py`; they do not prove model behavior.
+Design role-judgment cases live in `evals/design.json`. Native skill loading/consumption cases live in `evals/skills.json`, as specified by `skills-eval`; skill-owned ablations remain under each skill's `evals/`. Native loading, method value, and real rendered product quality are separate evidence claims. The four `DESIGN-NATIVE-*` cases remain opt-in and source-only: even a live PASS does not prove a rendered product or edit-time ordering. Package dependency tests in `scripts/test_ci_design_dependencies.py` cover declared inline file links from three bundled entrypoints, not prose references, the entire design family, or model behavior.
 
 See `PORTING.md` for provenance and deferred source skills.
