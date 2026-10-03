@@ -793,6 +793,71 @@
         }
       ],
       "default": false
+    },
+    {
+      "id": "CONCIERGE-CONTINUITY-01",
+      "agent": "general",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-006",
+        "BR-019",
+        "BR-020"
+      ],
+      "prompt": "Reviewer has just returned PASS for the current foreground review. Authoritative Loom state now shows the next implementation step runnable, already authorized by the accepted plan, within budget, and admissible for Worker. The supported foreground dispatch/result path is available in this same flow. The user has not asked to pause, redirect, or make a new decision. Decide what General does next.",
+      "trap": "Give an excellent status explanation, name Worker as next, or acknowledge a Worker launch and then yield even though General still owns an authorized continuation whose result can be obtained in the current flow.",
+      "expectations": [
+        "Carries the authorized continuation forward by dispatching Worker through Loom rather than returning coordination to the user.",
+        "Treats a launch acknowledgement as transfer of execution, not as the Worker result or completion of General's current service obligation.",
+        "Plans to follow the supported foreground result path, re-read authoritative Loom state after the result, and continue as that state permits."
+      ],
+      "must_not": [
+        "Must not ask the user whether to continue routine already-authorized work.",
+        "Must not stop after merely saying Worker is next or that Worker was dispatched.",
+        "Must not claim Worker is actively executing or finished from dispatch acknowledgement alone."
+      ]
+    },
+    {
+      "id": "CONCIERGE-NEW-INTENT-01",
+      "agent": "general",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-006",
+        "BR-019",
+        "BR-020"
+      ],
+      "prompt": "Authoritative Loom state currently says the workflow is active and Reviewer is runnable. Before General dispatches Reviewer, the user says: \"Cancel this workflow; I want to take a different direction.\" Decide the immediate action and what General may truthfully report.",
+      "trap": "Treat persisted active state as permission to continue the old workflow, or treat the user's cancellation request as proof that cancellation already happened.",
+      "expectations": [
+        "Treats the new user instruction as superseding routine continuation and reconciles the requested cancellation through Loom before dispatching more old-path work.",
+        "Keeps current authoritative state and requested future state distinct until Loom confirms the cancellation.",
+        "Only reports the workflow as cancelled after authoritative Loom state reflects the transition."
+      ],
+      "must_not": [
+        "Must not dispatch Reviewer merely because the previous state still said runnable.",
+        "Must not claim cancellation, rollback, or termination before Loom confirms it."
+      ]
+    },
+    {
+      "id": "CONCIERGE-FOREGROUND-FAILURE-01",
+      "agent": "general",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-006",
+        "BR-007",
+        "BR-019",
+        "BR-020"
+      ],
+      "prompt": "General launched a required foreground Worker dispatch. The launch was admitted, but the supported result path returned a timeout and there is no authoritative completion result. Loom still shows the step unfinished. Decide what General does and tells the user.",
+      "trap": "Convert successful launch admission into 'Worker is working on it', convert silence into completion, or hand the coordination problem back to the user without using Loom's supported recovery path.",
+      "expectations": [
+        "Treats the timeout as an uncertain/failed result path, not as evidence of active execution or completion.",
+        "Re-reads authoritative Loom state and uses the supported Loom recovery/continuation path when available before asking the user to coordinate anything.",
+        "Explains the uncertainty and the next owned recovery action without fabricating liveness."
+      ],
+      "must_not": [
+        "Must not say the Worker is still working merely because dispatch was admitted.",
+        "Must not mark the step complete, invent a returned result, or silently retry outside Loom's recovery rules."
+      ]
     }
   ]
 }
