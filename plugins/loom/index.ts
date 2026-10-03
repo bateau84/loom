@@ -6,7 +6,7 @@ import { execFile } from "node:child_process"
 import { promisify } from "node:util"
 import { captureEvidenceAdmission, observationCallKey, persistEvidenceObservation, sessionAttachmentKey, type EvidenceAdmission } from "./evidence-admission"
 import type * as OpenCodePlugin from "@opencode/plugin"
-import { RUNTIME_STATE_VERSION, admitDispatchGrantLocked, consumeDispatchGrantLocked, createProjectStorage, createTransactionalStorage, ensureRuntimeStateVersion, findUsableDispatchGrant, importLegacyPluginStorage, issueDispatchGrantLocked, migrateLegacySessionState, resolveRuntimeIdentity, sessionBoundToOq, sessionBoundToStep, sessionBoundToWorkflow, tryAcquireRuntimeLocks, withRuntimeAdvisoryLock, withRuntimeAdvisoryLocks, withRuntimeLock, withRuntimeLocks, type DispatchGrantV1, type LoomRuntimeIdentity } from "./runtime"
+import { RUNTIME_STATE_VERSION, admitDispatchGrantLocked, consumeDispatchGrantLocked, createProjectStorage, createTransactionalStorage, ensureRuntimeStateVersion, findUsableDispatchGrant, importLegacyPluginStorage, issueDispatchGrantLocked, migrateLegacySessionState, resolveRuntimeIdentity, sessionBoundToOq, sessionBoundToStep, sessionBoundToWorkflow, tryAcquireRuntimeLocks, withRuntimeAdvisoryLock, withRuntimeAdvisoryLocks, withRuntimeLock, withRuntimeLocks, type LoomRuntimeIdentity } from "./runtime"
 import { LoomRpc } from "./rpc"
 import { assertLoomToolAdmission, assertCancelledChildToolAdmission, cancelWorkflow, ensureCompletedWaveHistory, workflowBindingTerminal, type CancelWorkflowInput } from "./lifecycle"
 import { buildSidebarSnapshot } from "./sidebar"
@@ -2844,51 +2844,32 @@ async function readQuestions(ctx: any, workflowId: string): Promise<OpenQuestion
 
 async function statusStepReadiness(
   ctx: any,
-  runtime: LoomRuntimeIdentity,
   workflow: Workflow,
   questions: OpenQuestion[],
   work: WorkHierarchy | undefined,
   budget: BudgetState,
   limits: ExecutionLimits,
-  sessionID: string,
 ): Promise<Record<string, StepReadinessObservation>> {
-  const now = Date.now()
   const currentRunnable = runnable(workflow)
-  const currentRunnableIds = new Set(currentRunnable.map((step) => step.id))
-  const currentUnansweredQuestionIds = new Set(
-    questions
-      .filter((question) => question.status !== "closed" && !question.answer)
-      .map((question) => question.id),
-  )
-  const usableGrants: DispatchGrantV1[] = []
-  let after: string | undefined
-  do {
-    const page = await ctx.storage.scan({
-      prefix: "dispatch-grant/",
-      limit: 100,
-      ...(after ? { after } : {}),
-    })
-    for (const entry of page.entries ?? []) {
-      const grant = entry.value as DispatchGrantV1
-      if (
-        grant?.schemaVersion === 1 &&
-        grant.projectId === runtime.projectId &&
-        grant.workflowId === workflow.id &&
-        grant.issuingParentSessionId === sessionID &&
-        !grant.admittedAt &&
-        !grant.consumedAt &&
-        !grant.revokedAt &&
-        Date.parse(grant.expiresAt) > now &&
-        (
-          (grant.stepId !== undefined && currentRunnableIds.has(grant.stepId)) ||
-          (grant.oqId !== undefined && currentUnansweredQuestionIds.has(grant.oqId))
-        )
-      ) {
-        usableGrants.push(grant)
-      }
+  const currentTargetCounts = new Map<string, number>()
+
+  for (const step of currentRunnable) {
+    currentTargetCounts.set(step.agent, (currentTargetCounts.get(step.agent) ?? 0) + 1)
+  }
+  for (const question of questions) {
+    if (
+      question.status === "closed" ||
+      question.answer ||
+      question.requiredAuthority === "user" ||
+      question.requiredAuthority === "general"
+    ) {
+      continue
     }
-    after = page.next
-  } while (after)
+    currentTargetCounts.set(
+      question.requiredAuthority,
+      (currentTargetCounts.get(question.requiredAuthority) ?? 0) + 1,
+    )
+  }
 
   const result: Record<string, StepReadinessObservation> = {}
   for (const step of currentRunnable) {
@@ -2900,21 +2881,6 @@ async function statusStepReadiness(
       dispatch = {
         state: "blocked",
         reason: error instanceof Error ? error.message : String(error),
-      }
-    }
-
-    if (dispatch.state === "ready") {
-      const conflicting = usableGrants.find(
-        (grant) =>
-          grant.expectedAgent === step.agent &&
-          (grant.stepId !== step.id || Boolean(grant.oqId)),
-      )
-      if (conflicting) {
-        dispatch = {
-          state: "blocked",
-          reason:
-            `An unadmitted ${step.agent} dispatch grant already targets ${conflicting.stepId ? `step ${conflicting.stepId}` : `OQ ${conflicting.oqId}`}.`,
-        }
       }
     }
 
@@ -2932,6 +2898,14 @@ async function statusStepReadiness(
           state: "blocked",
           reason: probe.reason ?? "Dispatch budget admission would deny this target.",
         }
+      }
+    }
+
+    if (dispatch.state === "ready" && (currentTargetCounts.get(step.agent) ?? 0) > 1) {
+      dispatch = {
+        state: "unknown",
+        reason:
+          `Multiple current targets are owned by ${step.agent}; exact dispatch-grant issuance must revalidate same-agent grant selection.`,
       }
     }
 
@@ -5567,13 +5541,11 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
           const stepReadiness = await statusStepReadiness(
             ctx,
-            runtime,
             workflow,
             questions,
             work,
             budget,
             limits,
-            tool.sessionID,
           )
           const view = buildStatusView(
             workflow,
