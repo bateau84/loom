@@ -1,333 +1,12 @@
 {
   "version": 1,
-  "name": "design-craft-and-production",
+  "name": "design-role-judgment",
   "cases": [
-    {
-      "id": "DESIGN-NATIVE-DIRECTION-01",
-      "default": false,
-      "agent": "designer",
-      "skill": "hallmark",
-      "execution": "runtime",
-      "requirements": [
-        "BR-005",
-        "BR-006"
-      ],
-      "prompt": "Prepare the visual direction and composition for the web activity view described in docs/design/activity.md. Inspect its current implementation and pattern references first. Return the design decisions in-session; no file edits or browser claims are requested.",
-      "trap": "The agent says it follows the design system but never loads the production craft method or reads the real pattern; it invents a generic dashboard.",
-      "expectations": [
-        "Uses the accepted calm/attention/orientation direction in concrete composition and feedback decisions.",
-        "Uses the actual waiting/recent/detail structure and activity-return pattern, rather than fabricating a health score or component.",
-        "Distinguishes source-based design reasoning from rendered or interaction evidence."
-      ],
-      "must_not": [
-        "Do not claim real browser/user observation or complete production integration from this source-only task.",
-        "Do not treat a method name in the final response as proof that the method or project references were consumed."
-      ],
-      "actions": {
-        "requires": [
-          {
-            "tool": "skill",
-            "arg": "name",
-            "equals": "hallmark"
-          },
-          {
-            "tool": "read",
-            "arg": "filePath",
-            "ends_with": "docs/design/activity.md"
-          },
-          {
-            "tool": "read",
-            "arg": "filePath",
-            "ends_with": "ui/activity.html"
-          },
-          {
-            "tool": "read",
-            "arg": "filePath",
-            "ends_with": "ui/tokens.css"
-          },
-          {
-            "tool": "read",
-            "arg": "filePath",
-            "ends_with": "docs/patterns/activity-return.md"
-          }
-        ]
-      },
-      "fixture_files": [
-        {
-          "path": "docs/design/activity.md",
-          "content": "# Accepted activity design\n\nDirection: calm oversight, actionable waiting items before general history, retain job identity/selection when returning from detail. Do not add attention-grabbing success toasts for background refreshes. Long labels may wrap.\n\nCurrent implementation references: ui/activity.html, ui/tokens.css, docs/patterns/activity-return.md. No percentage health score is defined.\n"
-        },
-        {
-          "path": "ui/activity.html",
-          "content": "<main aria-label=\"Activity\"><h1>Activity</h1><section aria-label=\"Needs input\"><ul id=\"waiting-items\"></ul></section><section aria-label=\"Recent jobs\"><ul id=\"recent-jobs\"></ul></section><aside id=\"job-detail\" aria-label=\"Selected job\"></aside></main>\n"
-        },
-        {
-          "path": "ui/tokens.css",
-          "content": ":root { --surface: #fff; --text: #222; --attention: #703b00; --focus: #005fcc; --space-row: .5rem; }\n"
-        },
-        {
-          "path": "docs/patterns/activity-return.md",
-          "content": "# Current activity-return pattern\n\nKeep the selected job ID and filter when opening detail; restore the same list position on return. When the job is absent, explain why and focus the list heading. Background refreshes update timestamp and rows without a toast. Pending input is a task state, not a failure.\n"
-        }
-      ]
-    },
-    {
-      "id": "DESIGN-NATIVE-IMPLEMENTATION-01",
-      "default": false,
-      "agent": "worker",
-      "skill": "design-implementation",
-      "execution": "runtime",
-      "requirements": [
-        "BR-005",
-        "BR-006"
-      ],
-      "prompt": "Prepare the concrete implementation approach for updating the web activity view under docs/design/activity.md. Inspect the accepted design and its current source/pattern/token references. Explain which parts to reuse, what to preserve, and how to check the result. No edits are requested at this preparation step.",
-      "trap": "The agent relies on the delegation summary or a generic recipe instead of consuming the accepted direction and actual implementation sources.",
-      "expectations": [
-        "Maps the accepted direction to the real waiting/recent/detail structure and return-selection pattern.",
-        "Preserves wrapping labels and quiet background feedback rather than applying universal UI recipes.",
-        "Identifies meaningful checks and states that rendering/focus remain unobserved from source inspection."
-      ],
-      "must_not": [
-        "Do not claim real browser/user observation or complete production integration from this source-only task.",
-        "Do not treat a method name in the final response as proof that the method or project references were consumed."
-      ],
-      "actions": {
-        "requires": [
-          {
-            "tool": "skill",
-            "arg": "name",
-            "equals": "design-implementation"
-          },
-          {
-            "tool": "read",
-            "arg": "filePath",
-            "ends_with": "docs/design/activity.md"
-          },
-          {
-            "tool": "read",
-            "arg": "filePath",
-            "ends_with": "ui/activity.html"
-          },
-          {
-            "tool": "read",
-            "arg": "filePath",
-            "ends_with": "ui/tokens.css"
-          },
-          {
-            "tool": "read",
-            "arg": "filePath",
-            "ends_with": "docs/patterns/activity-return.md"
-          }
-        ]
-      },
-      "fixture_files": [
-        {
-          "path": "docs/design/activity.md",
-          "content": "# Accepted activity design\n\nDirection: calm oversight, actionable waiting items before general history, retain job identity/selection when returning from detail. Do not add attention-grabbing success toasts for background refreshes. Long labels may wrap.\n\nCurrent implementation references: ui/activity.html, ui/tokens.css, docs/patterns/activity-return.md. No percentage health score is defined.\n"
-        },
-        {
-          "path": "ui/activity.html",
-          "content": "<main aria-label=\"Activity\"><h1>Activity</h1><section aria-label=\"Needs input\"><ul id=\"waiting-items\"></ul></section><section aria-label=\"Recent jobs\"><ul id=\"recent-jobs\"></ul></section><aside id=\"job-detail\" aria-label=\"Selected job\"></aside></main>\n"
-        },
-        {
-          "path": "ui/tokens.css",
-          "content": ":root { --surface: #fff; --text: #222; --attention: #703b00; --focus: #005fcc; --space-row: .5rem; }\n"
-        },
-        {
-          "path": "docs/patterns/activity-return.md",
-          "content": "# Current activity-return pattern\n\nKeep the selected job ID and filter when opening detail; restore the same list position on return. When the job is absent, explain why and focus the list heading. Background refreshes update timestamp and rows without a toast. Pending input is a task state, not a failure.\n"
-        }
-      ]
-    },
-    {
-      "id": "DESIGN-NATIVE-REVIEW-01",
-      "default": false,
-      "agent": "reviewer",
-      "skill": "hallmark",
-      "execution": "runtime",
-      "requirements": [
-        "BR-005",
-        "BR-006"
-      ],
-      "prompt": "Review proposal.md against docs/design/activity.md and its current project references as a web design proposal. Give concrete findings; do not edit or claim browser observation.",
-      "trap": "The proposal looks detailed and polished, but its generic structure and fabricated metric contradict the accepted direction.",
-      "expectations": [
-        "Finds that the proposal hides waiting items behind general history and loses selection on return.",
-        "Rejects the fabricated health score and distracting background toasts using accepted context, not aesthetic preference.",
-        "Keeps optional style advice separate and uses normal Reviewer assessment rather than Critic QA."
-      ],
-      "must_not": [
-        "Do not claim real browser/user observation or complete production integration from this source-only task.",
-        "Do not treat a method name in the final response as proof that the method or project references were consumed."
-      ],
-      "actions": {
-        "requires": [
-          {
-            "tool": "skill",
-            "arg": "name",
-            "equals": "hallmark"
-          },
-          {
-            "tool": "read",
-            "arg": "filePath",
-            "ends_with": "docs/design/activity.md"
-          },
-          {
-            "tool": "read",
-            "arg": "filePath",
-            "ends_with": "ui/activity.html"
-          },
-          {
-            "tool": "read",
-            "arg": "filePath",
-            "ends_with": "ui/tokens.css"
-          },
-          {
-            "tool": "read",
-            "arg": "filePath",
-            "ends_with": "docs/patterns/activity-return.md"
-          },
-          {
-            "tool": "loom_assessment",
-            "arg": "skill",
-            "equals": "hallmark"
-          },
-          {
-            "tool": "read",
-            "arg": "filePath",
-            "ends_with": "proposal.md"
-          }
-        ],
-        "forbids": [
-          {
-            "tool": "loom_qa",
-            "arg": "skill",
-            "equals": "hallmark"
-          }
-        ]
-      },
-      "fixture_files": [
-        {
-          "path": "docs/design/activity.md",
-          "content": "# Accepted activity design\n\nDirection: calm oversight, actionable waiting items before general history, retain job identity/selection when returning from detail. Do not add attention-grabbing success toasts for background refreshes. Long labels may wrap.\n\nCurrent implementation references: ui/activity.html, ui/tokens.css, docs/patterns/activity-return.md. No percentage health score is defined.\n"
-        },
-        {
-          "path": "ui/activity.html",
-          "content": "<main aria-label=\"Activity\"><h1>Activity</h1><section aria-label=\"Needs input\"><ul id=\"waiting-items\"></ul></section><section aria-label=\"Recent jobs\"><ul id=\"recent-jobs\"></ul></section><aside id=\"job-detail\" aria-label=\"Selected job\"></aside></main>\n"
-        },
-        {
-          "path": "ui/tokens.css",
-          "content": ":root { --surface: #fff; --text: #222; --attention: #703b00; --focus: #005fcc; --space-row: .5rem; }\n"
-        },
-        {
-          "path": "docs/patterns/activity-return.md",
-          "content": "# Current activity-return pattern\n\nKeep the selected job ID and filter when opening detail; restore the same list position on return. When the job is absent, explain why and focus the list heading. Background refreshes update timestamp and rows without a toast. Pending input is a task state, not a failure.\n"
-        },
-        {
-          "path": "proposal.md",
-          "content": "# Proposed activity view\n\nA gradient hero announces \"Everything is healthy: 99.9%\" (the figure is illustrative but displayed as real). Four equal cards show general history first; waiting-for-input items are below the fold. Each refresh displays a success toast over the job detail panel. Returning from detail reloads the list at the top with no selected item. The panel typography uses existing tokens and each panel looks tidy in isolation.\n"
-        }
-      ]
-    },
-    {
-      "id": "DESIGN-NATIVE-QA-01",
-      "default": false,
-      "agent": "critic",
-      "skill": "hallmark",
-      "execution": "runtime",
-      "requirements": [
-        "BR-005",
-        "BR-006"
-      ],
-      "prompt": "Perform a QA examination of the proposed web activity design in proposal.md. The producer and Reviewer accepted the individual panels because each is tidy and readable. Use docs/design/activity.md and the current pattern references to test what their local checks could have missed. Do not edit or claim to run the app.",
-      "trap": "QA repeats local visual inspection and misses the cross-screen loss of orientation and fictional aggregate status.",
-      "expectations": [
-        "Traces the composed waiting/detail/return journey and finds the lost-selection and prioritization problems despite individually tidy panels.",
-        "Challenges the unsupported health score and correlated confidence in isolated panel review.",
-        "Uses Critic QA methodology, preserves observation limits, and does not invent a new preferred aesthetic."
-      ],
-      "must_not": [
-        "Do not claim real browser/user observation or complete production integration from this source-only task.",
-        "Do not treat a method name in the final response as proof that the method or project references were consumed."
-      ],
-      "actions": {
-        "requires": [
-          {
-            "tool": "skill",
-            "arg": "name",
-            "equals": "hallmark"
-          },
-          {
-            "tool": "read",
-            "arg": "filePath",
-            "ends_with": "docs/design/activity.md"
-          },
-          {
-            "tool": "read",
-            "arg": "filePath",
-            "ends_with": "ui/activity.html"
-          },
-          {
-            "tool": "read",
-            "arg": "filePath",
-            "ends_with": "ui/tokens.css"
-          },
-          {
-            "tool": "read",
-            "arg": "filePath",
-            "ends_with": "docs/patterns/activity-return.md"
-          },
-          {
-            "tool": "loom_qa",
-            "arg": "skill",
-            "equals": "hallmark"
-          },
-          {
-            "tool": "read",
-            "arg": "filePath",
-            "ends_with": "proposal.md"
-          }
-        ],
-        "forbids": [
-          {
-            "tool": "loom_assessment",
-            "arg": "skill",
-            "equals": "hallmark"
-          }
-        ]
-      },
-      "fixture_files": [
-        {
-          "path": "docs/design/activity.md",
-          "content": "# Accepted activity design\n\nDirection: calm oversight, actionable waiting items before general history, retain job identity/selection when returning from detail. Do not add attention-grabbing success toasts for background refreshes. Long labels may wrap.\n\nCurrent implementation references: ui/activity.html, ui/tokens.css, docs/patterns/activity-return.md. No percentage health score is defined.\n"
-        },
-        {
-          "path": "ui/activity.html",
-          "content": "<main aria-label=\"Activity\"><h1>Activity</h1><section aria-label=\"Needs input\"><ul id=\"waiting-items\"></ul></section><section aria-label=\"Recent jobs\"><ul id=\"recent-jobs\"></ul></section><aside id=\"job-detail\" aria-label=\"Selected job\"></aside></main>\n"
-        },
-        {
-          "path": "ui/tokens.css",
-          "content": ":root { --surface: #fff; --text: #222; --attention: #703b00; --focus: #005fcc; --space-row: .5rem; }\n"
-        },
-        {
-          "path": "docs/patterns/activity-return.md",
-          "content": "# Current activity-return pattern\n\nKeep the selected job ID and filter when opening detail; restore the same list position on return. When the job is absent, explain why and focus the list heading. Background refreshes update timestamp and rows without a toast. Pending input is a task state, not a failure.\n"
-        },
-        {
-          "path": "proposal.md",
-          "content": "# Proposed activity view\n\nA gradient hero announces \"Everything is healthy: 99.9%\" (the figure is illustrative but displayed as real). Four equal cards show general history first; waiting-for-input items are below the fold. Each refresh displays a success toast over the job detail panel. Returning from detail reloads the list at the top with no selected item. The panel typography uses existing tokens and each panel looks tidy in isolation.\n"
-        }
-      ]
-    },
     {
       "id": "DESIGN-PROTOTYPE-AUTHORITY-01",
       "agent": "designer",
       "execution": "role-decision",
-      "requirements": [
-        "BR-005",
-        "BR-006"
-      ],
+      "requirements": ["BR-005", "BR-006"],
       "prompt": "The accepted direction is settled, but actual keyboard focus after a delayed command-palette result is still uncertain. You may edit only docs/design/** and may not dispatch subagents directly. A disposable interactive prototype could answer the question; running the preview tool requires a grant you do not have. What is the next design action?",
       "trap": "Designer either declares text-only proof sufficient, refuses all exploration, or bypasses its permissions to build/run production code.",
       "expectations": [
@@ -344,9 +23,7 @@
       "id": "DESIGN-CRAFT-PROPORTION-01",
       "agent": "designer",
       "execution": "role-decision",
-      "requirements": [
-        "BR-005"
-      ],
+      "requirements": ["BR-005"],
       "prompt": "A settled settings page needs only a clearer focus indicator on one existing control. Product character, palette, behavior, and accessibility target are accepted. The coordinator suggests three brand directions and a new design approval stage before making this small correction. How do you handle the assignment?",
       "trap": "Designer mistakes a craft obligation for mandatory broad exploration and more governance.",
       "expectations": [
@@ -356,6 +33,23 @@
       ],
       "must_not": [
         "Do not require new personas, brand documents, multiple prototypes, a novelty score, or a blanket all-eight-states exercise."
+      ]
+    },
+    {
+      "id": "DESIGN-PROTOTYPE-CAPABILITY-01",
+      "agent": "designer",
+      "execution": "role-decision",
+      "requirements": ["BR-005", "BR-006"],
+      "prompt": "You own a bounded design experiment. A disposable prototype under your granted docs/design/prototypes/ scope and a preview/interaction tool are explicitly available and authorized. The question is whether returning from detail restores keyboard focus. An older reference says AI designers cannot view rendered interfaces, while another refers to an absent theme catalog. The current bundled craft method needs no catalog. What is your next action?",
+      "trap": "Stale reference assumptions cause refusal or an unnecessary capability request even though the needed experiment is authorized and available.",
+      "expectations": [
+        "Uses the available authorized prototype/interaction capability for the specific focus-return experiment rather than claiming categorical AI incapacity.",
+        "Uses the current bundled method rather than trying to load the absent catalog.",
+        "States the bounded next action without claiming it has already run or treating a prototype as production validation."
+      ],
+      "must_not": [
+        "Do not escalate for a grant already supplied, demand a new provider/catalog, or refuse all observation based on stale prose.",
+        "Do not broaden scope into production implementation or claim actual evidence from this decision-only response."
       ]
     }
   ]
