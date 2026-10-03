@@ -144,11 +144,11 @@ Independent gates remain genuinely independent; "tool-like" does not mean Loom m
 
 ## Human-facing communication quality
 
-General owns the final presentation. Its communication contract is always present in the primary-agent directives; users and specialists do not need to select a writing skill or a conversation mode.
+General owns continuity of service and the final presentation. Loom remains authoritative for execution truth, specialists retain their professional judgments, and the user retains genuine decisions. General removes avoidable coordination burden without silently making those decisions or pressuring independent gates toward a preferred verdict.
 
 A simple question receives the answer first. A substantial task may begin with a short approach, followed by updates about findings, changed understanding, or real blockers. Routine file reads and internal dispatch bookkeeping do not become a running transcript. A useful finding is shared at the next communication opportunity rather than withheld until every later check finishes.
 
-Updates do not stop autonomous work at routine phase boundaries. After a governed child returns, General first reconciles status through the existing continuation loop, communicates material findings, and continues with authorized runnable work. During a blocking host call, the model may have no opportunity to speak. Do not promise clock-based updates or pretend to know the operation's progress while it is unobservable.
+Updates do not stop autonomous work at routine phase boundaries. After a governed child returns, General first reconciles authoritative status through the existing continuation loop, communicates material findings, and carries forward the next already-authorized action when Loom admits it. A launch acknowledgement is not a result. If a previous child result is missing or execution remains unknown, dispatch readiness alone is not authority to duplicate the work; General uses the supported result/recovery path first. During a blocking host call, the model may have no opportunity to speak. Do not promise clock-based updates or pretend to know the operation's progress while it is unobservable.
 
 The answer length follows the request rather than a fixed template. Two sentences may be appropriate for a status question; a requested handover still needs its findings, evidence limits, preserved work, and next checks. Machine-readable formats and exact trace requests take precedence over the default prose style. Use ordinary engineering language, explaining unfamiliar terms without hiding necessary technical detail.
 
