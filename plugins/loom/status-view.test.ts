@@ -32,7 +32,16 @@ function statusView(): StatusView {
     workflowId: "wf-status",
     state: "active",
     progress: { finished: 3, total: 7, failed: 0 },
-    now: [{ step: "task:implement", agent: "worker", kind: "work" }],
+    readiness: [{
+      step: "task:implement",
+      agent: "worker",
+      kind: "work",
+      structurallyRunnable: true,
+      dispatch: { state: "ready" },
+      execution: { state: "unknown" },
+      completion: { eligible: "unknown", constraints: [] },
+    }],
+    userAttention: [],
     userDecisions: [],
     recent: [],
     upcoming: [{ step: "review", agent: "reviewer", waitsFor: ["task:implement"] }],
@@ -70,6 +79,160 @@ function statusView(): StatusView {
 }
 
 describe("interactive Loom status presentation", () => {
+  test("keeps DAG readiness, execution observation, and completion constraints distinct", () => {
+    const workflow: Workflow = {
+      id: "wf-readiness", projectId: "project-test", revision: 0,
+      anchor: "docs/anchors/product/anchor.md", createdBySession: "session-1", createdAt: "now",
+      steps: [
+        { id: "task:a", agent: "worker", kind: "work", dependsOn: [], status: "pending", attempt: 2 },
+        { id: "task:b", agent: "reviewer", kind: "gate", dependsOn: [], status: "pending", attempt: 0 },
+        { id: "task:c", agent: "worker", kind: "work", dependsOn: ["missing"], status: "pending", attempt: 0 },
+      ],
+      verification: [{
+        id: "verify-b",
+        createdByStepId: "task:a",
+        createdByAgent: "worker",
+        beforeStepId: "task:b",
+        kind: "test",
+        statement: "Run the independent integration verification.",
+        status: "open",
+        createdAt: "now",
+      }],
+    }
+    const questions = [{
+      id: "OQ-17",
+      workflowId: workflow.id,
+      question: "Which runtime observation contract is supported?",
+      raisedByAgent: "worker",
+      raisedByStepId: "task:a",
+      requiredAuthority: "user" as const,
+      blocking: true,
+      consumerStepIds: ["task:a"],
+      evidence: [],
+      status: "open" as const,
+      reconciliations: {},
+      createdAt: "now",
+    }]
+
+    const view = compactWorkflowState(
+      workflow,
+      questions,
+      { totalDispatches: 0, byKey: {}, seenDispatches: [] },
+      DEFAULT_LIMITS,
+      undefined,
+      undefined,
+      {
+        "task:a": {
+          dispatch: { state: "ready" },
+          execution: { state: "unknown", evidence: "current_attachment", attachedAt: "now" },
+        },
+        "task:b": {
+          dispatch: { state: "blocked", reason: "dispatch budget exhausted" },
+          execution: { state: "unknown" },
+        },
+      },
+    )
+
+    expect(view.readiness.map((step) => step.step)).toEqual(["task:a", "task:b"])
+    expect(view.readiness[0]).toMatchObject({
+      structurallyRunnable: true,
+      dispatch: { state: "ready" },
+      execution: { state: "unknown", evidence: "current_attachment" },
+      completion: {
+        eligible: false,
+        constraints: [{
+          source: "OQ-17",
+          kind: "oq",
+          boundary: "completion",
+          state: "awaiting_answer",
+          responder: "user",
+        }],
+      },
+    })
+    expect(view.readiness[1]).toMatchObject({
+      structurallyRunnable: true,
+      dispatch: { state: "blocked", reason: "dispatch budget exhausted" },
+      execution: { state: "unknown" },
+      completion: {
+        eligible: "unknown",
+        constraints: [{
+          source: "verify-b",
+          kind: "verification",
+          boundary: "pass",
+          state: "verification_pending",
+        }],
+      },
+    })
+    expect(view.upcoming).toContainEqual({
+      step: "task:c",
+      agent: "worker",
+      waitsFor: ["missing"],
+    })
+    expect(view.userAttention).toEqual([{
+      questionId: "OQ-17",
+      question: "Which runtime observation contract is supported?",
+      responder: "user",
+      blocking: true,
+      consumers: ["task:a"],
+      state: "awaiting_answer",
+    }])
+    expect(view.questions.routes).toEqual([{
+      questionId: "OQ-17",
+      responder: "user",
+      blocking: true,
+    }])
+
+    const answered = structuredClone(questions) as any[]
+    answered[0].status = "answered"
+    answered[0].answer = {
+      by: "user",
+      source: "user",
+      text: "Use the supported child-tool observation boundary.",
+      evidence: [],
+      at: "later",
+    }
+    const reconciling = compactWorkflowState(
+      workflow,
+      answered,
+      { totalDispatches: 0, byKey: {}, seenDispatches: [] },
+      DEFAULT_LIMITS,
+      undefined,
+      undefined,
+      {
+        "task:a": {
+          dispatch: { state: "ready" },
+          execution: { state: "unknown", evidence: "current_attachment", attachedAt: "now" },
+        },
+        "task:b": {
+          dispatch: { state: "blocked", reason: "dispatch budget exhausted" },
+          execution: { state: "unknown" },
+        },
+      },
+    )
+    expect(reconciling.userAttention).toEqual([])
+    expect(reconciling.readiness.find((step) => step.step === "task:a")?.completion).toMatchObject({
+      eligible: false,
+      constraints: [{
+        source: "OQ-17",
+        state: "reconciliation_pending",
+      }],
+    })
+    expect(reconciling.questions.reconcile).toContainEqual({
+      questionId: "OQ-17",
+      stepId: "task:a",
+      agent: "worker",
+    })
+
+    const markdown = renderStatusMarkdown({ ...view, work: null })
+    expect(markdown).toContain("### Execution readiness")
+    expect(markdown).toContain("active execution unknown")
+    expect(markdown).toContain("dispatch blocked: dispatch budget exhausted")
+    expect(markdown).toContain("cannot complete: OQ-17 awaiting answer")
+    expect(markdown).toContain("cannot pass: verify-b verification pending")
+    expect(markdown).toContain("### Needs your input")
+    expect(markdown).not.toContain("still running")
+  })
+
   test("shows a ready exact user decision before an OQ exists and clears only after completion", () => {
     const workflow: Workflow = {
       id: "wf-decision", projectId: "project-test", revision: 0,
@@ -89,7 +252,7 @@ describe("interactive Loom status presentation", () => {
     const project = () => compactWorkflowState(workflow, [], { totalDispatches: 0, byKey: {}, seenDispatches: [] }, DEFAULT_LIMITS)
     const view = project()
 
-    expect(view.now).toEqual([])
+    expect(view.readiness).toEqual([])
     expect(view.questions.open).toBe(0)
     expect(view.userDecisions).toEqual([{
       step: "task:decision", taskId: "decision", title: "Choose the release mode",
@@ -131,7 +294,7 @@ describe("interactive Loom status presentation", () => {
     const view = statusView()
     view.state = "complete"
     view.planningOnly = true
-    view.now = []
+    view.readiness = []
     view.upcoming = []
     const markdown = renderStatusMarkdown(view)
     expect(markdown).toContain("Mode:** planning only")
