@@ -1,4 +1,4 @@
-"""Opt-in provider-free composition check for the current runner image."""
+"""Opt-in provider-free composition checks for diagnostic and RSP runner images."""
 from __future__ import annotations
 
 import importlib.util
@@ -209,9 +209,65 @@ class NormalInvokeImageComposition(unittest.TestCase):
         self.assertFalse(SMOKE.RUN.nested_tool_capture_complete(evidence))
         self.assertFalse(any(event.get("tool") == "evalFixture_inner_sentinel" for event in evidence["events"]))
         self.assertIn("public-native-sentinel", json.dumps(public_native["output"]))
-        self.assertIn({
+        public_action = {
             "tool": "evalFixture_native_sentinel", "args": {"marker": "public-native-sentinel"},
-        }, SMOKE.RUN.tool_result_actions(evidence))
+        }
+        self.assertIn(public_action, SMOKE.RUN.tool_result_actions(evidence))
+
+        base_case = {
+            "id": "RSP-COMPOSITION-01", "agent": "general", "execution": "runtime",
+            "prompt": "synthetic fixture", "trap": "", "expectations": [], "must_not": [],
+        }
+        positive_case = {
+            **base_case,
+            "actions": {"requires": [public_action]},
+        }
+        positive_failures = SMOKE.RUN.deterministic_failures(
+            positive_case, safe.get("tools", []), [], tool_results=evidence,
+        )
+        self.assertFalse(any(message.startswith("required action not observed:") for message in positive_failures))
+
+        absence_case = {
+            **base_case,
+            "actions": {"forbids": [{"tool": "browser_preview", "args": {"path": "private.png"}}]},
+        }
+        absence_failures = SMOKE.RUN.deterministic_failures(
+            absence_case, safe.get("tools", []), [], tool_results=evidence,
+        )
+        self.assertTrue(any(message.startswith("non-evidence:") for message in absence_failures))
+
+        result_case = {
+            **base_case,
+            "tool_results": {"requires": [{
+                "tool": "evalFixture_native_sentinel",
+                "args": {"marker": "public-native-sentinel"},
+                "output_contains": "public-native-sentinel",
+            }]},
+        }
+        result_failures = SMOKE.RUN.deterministic_failures(
+            result_case, safe.get("tools", []), [], tool_results=evidence,
+        )
+        self.assertTrue(any(message.startswith("non-evidence:") for message in result_failures))
+
+        prompt = SMOKE.RUN.judge_prompt(
+            base_case, safe["text"], safe.get("tools", []), [], evidence,
+        )
+        self.assertIn('"coverage_complete": false', prompt)
+        self.assertNotIn(secret, prompt)
+        with tempfile.TemporaryDirectory(prefix="loom-rsp-artifact-") as artifact_temp:
+            args = type("ArtifactArgs", (), {"iterations": 1, "artifact_dir": artifact_temp,
+                                              "eval_run_id": "a" * 32})()
+            artifact = {
+                "case": base_case["id"], "classification": "non-evidence", "passed": False,
+                "target": safe, "observed_tool_results": evidence,
+                "deterministic_failures": result_failures,
+            }
+            SMOKE.RUN.write_case_artifact(base_case, args, 1, artifact)
+            SMOKE.RUN.verify_case_artifact(base_case, args, 1, artifact)
+            replayed = json.loads((Path(artifact_temp) / f"{base_case['id']}.json").read_text())
+            self.assertEqual(replayed["observed_tool_results"]["evidence_safety"],
+                             evidence["evidence_safety"])
+            self.assertNotIn(secret, json.dumps(replayed))
 
 
 if __name__ == "__main__":
