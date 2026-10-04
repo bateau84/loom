@@ -12449,19 +12449,36 @@ test("background governed step completion queues General while foreground comple
       undefined,
       (sessionID) =>
         sessionID === generalSession
-          ? [{
-              role: "assistant",
-              parts: [{
-                type: "tool",
-                state: {
-                  metadata: {
-                    background,
-                    sessionId: childSession,
-                    jobId: childSession,
+          ? [
+              {
+                role: "assistant",
+                parts: [{
+                  type: "tool",
+                  state: {
+                    metadata: {
+                      parentSessionId: generalSession,
+                      sessionId: childSession,
+                      model: { providerID: "test", modelID: "test" },
+                      ...(!background ? { background: true, jobId: childSession } : {}),
+                    },
                   },
-                },
-              }],
-            }]
+                }],
+              },
+              {
+                role: "assistant",
+                parts: [{
+                  type: "tool",
+                  state: {
+                    metadata: {
+                      parentSessionId: generalSession,
+                      sessionId: childSession,
+                      model: { providerID: "test", modelID: "test" },
+                      ...(background ? { background: true, jobId: childSession } : {}),
+                    },
+                  },
+                }],
+              },
+            ]
           : [],
     )
 
@@ -12559,6 +12576,99 @@ test("background governed step completion queues General while foreground comple
   }
 })
 
+test("background completion stays committed when the General return wake fails", async () => {
+  const generalSession = "background-return-failure-general"
+  const childSession = "background-return-failure-worker"
+  const h = await harness(
+    undefined,
+    (sessionID, projectID) =>
+      sessionID === childSession
+        ? { id: sessionID, projectID, parentID: generalSession }
+        : { id: sessionID, projectID },
+    undefined,
+    () => {
+      throw new Error("background return wake unavailable")
+    },
+    undefined,
+    (sessionID) =>
+      sessionID === generalSession
+        ? [{
+            parts: [{
+              type: "tool",
+              state: {
+                metadata: {
+                  parentSessionId: generalSession,
+                  sessionId: childSession,
+                  model: { providerID: "test", modelID: "test" },
+                  background: true,
+                },
+              },
+            }],
+          }]
+        : [],
+  )
+  try {
+    const started = await h.call(
+      "start",
+      { request: "Complete one bounded background task despite notification failure." },
+      "general",
+      generalSession,
+    )
+    const workflowId = String(started.workflowId)
+    expect((await h.call(
+      "route",
+      {
+        humanFacing: false,
+        behavioral: false,
+        structural: false,
+        externalUnknown: false,
+        diagnostic: false,
+        productOutcome: false,
+        implementationRequested: true,
+        executionDepth: "task",
+      },
+      "general",
+      generalSession,
+    )).error).toBeUndefined()
+
+    const grant = await h.call(
+      "dispatch_grant",
+      { workflowId, stepId: "worker" },
+      "general",
+      generalSession,
+    )
+    expect((await h.call(
+      "attach",
+      { grantId: grant.grantId, workflowId, stepId: "worker" },
+      "worker",
+      childSession,
+    )).attached).toBe(true)
+
+    const completed = await h.call(
+      "complete",
+      {
+        workflowId,
+        stepId: "worker",
+        summary: "The authoritative background work is complete.",
+      },
+      "worker",
+      childSession,
+    )
+    expect(completed.error).toBeUndefined()
+    expect(completed.coordinatorNotification).toEqual({
+      notified: [],
+      failed: [{
+        target: "general",
+        error: "background return wake unavailable",
+      }],
+    })
+    expect((await h.durableStorage.get(`workflow/${workflowId}`) as any)
+      .steps.find((step: any) => step.id === "worker")?.status).toBe("complete")
+  } finally {
+    h.restore()
+  }
+})
+
 test("background OQ responder queues General after persisting its answer", async () => {
   const generalSession = "background-oq-general"
   const childSession = "background-oq-architect"
@@ -12578,8 +12688,10 @@ test("background OQ responder queues General after persisting its answer", async
               type: "tool",
               state: {
                 metadata: {
-                  background: true,
+                  parentSessionId: generalSession,
                   sessionId: childSession,
+                  model: { providerID: "test", modelID: "test" },
+                  background: true,
                 },
               },
             }],
@@ -12689,8 +12801,10 @@ test("background child hard scope boundary queues General before the child stops
               type: "tool",
               state: {
                 metadata: {
-                  background: true,
+                  parentSessionId: generalSession,
                   sessionId: childSession,
+                  model: { providerID: "test", modelID: "test" },
+                  background: true,
                 },
               },
             }],
