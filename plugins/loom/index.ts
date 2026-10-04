@@ -3079,40 +3079,20 @@ function subagentRequestedBackground(input: unknown) {
   return recordValue(input) && input.background === true
 }
 
-function subagentResultMetadata(value: unknown, depth = 0): Record<string, unknown> | undefined {
-  if (depth > 10 || value === null || value === undefined) return undefined
-  if (typeof value === "string") {
-    try {
-      return subagentResultMetadata(JSON.parse(value), depth + 1)
-    } catch {
-      return undefined
-    }
-  }
-  if (Array.isArray(value)) {
-    for (let index = value.length - 1; index >= 0; index--) {
-      const metadata = subagentResultMetadata(value[index], depth + 1)
-      if (metadata) return metadata
-    }
-    return undefined
-  }
+function subagentResultMetadata(value: unknown): Record<string, unknown> | undefined {
+  // OpenCode V2 exposes built-in Task metadata on the host-owned tool result
+  // envelope. Never inspect or parse child-controlled output text for identity.
   if (!recordValue(value)) return undefined
-
   const metadata = recordValue(value.metadata) ? value.metadata : undefined
   if (
-    metadata &&
-    typeof metadata.parentSessionId === "string" &&
-    typeof metadata.sessionId === "string" &&
-    recordValue(metadata.model)
+    !metadata ||
+    typeof metadata.parentSessionId !== "string" ||
+    typeof metadata.sessionId !== "string" ||
+    !recordValue(metadata.model)
   ) {
-    return metadata
+    return undefined
   }
-
-  const entries = Object.values(value)
-  for (let index = entries.length - 1; index >= 0; index--) {
-    const metadata = subagentResultMetadata(entries[index], depth + 1)
-    if (metadata) return metadata
-  }
-  return undefined
+  return metadata
 }
 
 function backgroundSubagentBindingInContext(
