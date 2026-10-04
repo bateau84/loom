@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import shutil
 import json
+import sqlite3
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -139,12 +140,22 @@ class NormalInvokeImageComposition(unittest.TestCase):
             kwargs["runner_defaults_known"] = True
             return original_invoke(**kwargs)
 
-        with tempfile.TemporaryDirectory(prefix="loom-rsp-home-") as temp:
+        Path("/tmp/opencode").mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix="loom-rsp-seeds-", dir="/tmp/opencode") as temp:
             root = Path(temp)
+            auth = root / "auth.json"
+            auth.write_text(json.dumps({"openai": {"type": "api", "key": secret}}), encoding="utf-8")
+            models = root / "models.json"
+            models.write_text("{}", encoding="utf-8")
+            database = root / "credentials.db"
+            with sqlite3.connect(database) as db:
+                db.execute("CREATE TABLE credential (provider TEXT, data TEXT)")
+                db.execute("INSERT INTO credential VALUES (?, ?)", (
+                    "openai", json.dumps({"accessToken": secret}),
+                ))
+                db.execute("CREATE TABLE session (id TEXT PRIMARY KEY)")
             environment = {
-                "HOME": str(root / "home"),
-                "XDG_DATA_HOME": str(root / "data"),
-                "XDG_CACHE_HOME": str(root / "cache"),
+                "TMPDIR": "/tmp/opencode",
                 "OPENCODE_CONFIG_DIR": "",
                 "OPENCODE_EVAL_RUNNER_AUTH": "",
                 "OPENCODE_EVAL_RUNNER_CONFIG": "",
@@ -161,18 +172,22 @@ class NormalInvokeImageComposition(unittest.TestCase):
                 "GITHUB_TOKEN": "",
                 "OPENCODE_EVAL_RUNNER_BIN": str(Path(runner_bin).resolve()),
             }
-            for directory in ("home", "data", "cache"):
-                (root / directory).mkdir()
             with patch.dict(os.environ, environment, clear=False), \
                  patch.object(SMOKE.RUN, "invoke_container", wraps=original_invoke) as invoke:
                 # The wrapper below changes only the host adapter's opt-in and
-                # the resolved-seed declaration; both runs use the same fixture.
-                invoke.side_effect = lambda **kwargs: isolated_invoke(safety=False, **kwargs)
+                # the explicitly selected synthetic seeds; both runs use the same fixture.
+                def seed_args(kwargs):
+                    kwargs["auth"] = auth
+                    kwargs["models_catalog"] = models
+                    kwargs["database_seed"] = database
+                    return kwargs
+
+                invoke.side_effect = lambda **kwargs: isolated_invoke(safety=False, **seed_args(kwargs))
                 baseline, _probe, baseline_requests, baseline_errors, _ = SMOKE.ObserverPinnedImageSmoke().invoke_fixture(
                     image, safety_fixture=True,
                 )
                 self.assertEqual(invoke.call_count, 1)
-                invoke.side_effect = lambda **kwargs: isolated_invoke(safety=True, **kwargs)
+                invoke.side_effect = lambda **kwargs: isolated_invoke(safety=True, **seed_args(kwargs))
                 safe, _probe, safe_requests, safe_errors, _ = SMOKE.ObserverPinnedImageSmoke().invoke_fixture(
                     image, safety_fixture=True,
                 )
@@ -254,7 +269,7 @@ class NormalInvokeImageComposition(unittest.TestCase):
         )
         self.assertIn('"coverage_complete": false', prompt)
         self.assertNotIn(secret, prompt)
-        with tempfile.TemporaryDirectory(prefix="loom-rsp-artifact-") as artifact_temp:
+        with tempfile.TemporaryDirectory(prefix="loom-rsp-artifact-", dir="/tmp/opencode") as artifact_temp:
             args = type("ArtifactArgs", (), {"iterations": 1, "artifact_dir": artifact_temp,
                                               "eval_run_id": "a" * 32})()
             artifact = {
