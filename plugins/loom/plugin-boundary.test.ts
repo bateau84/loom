@@ -12600,6 +12600,7 @@ test("background governed step completion queues General while foreground comple
 test("durable background binding survives compacted parent context", async () => {
   const generalSession = "background-durable-general"
   const childSession = "background-durable-worker"
+  let compacted = false
   const h = await harness(
     undefined,
     (sessionID, projectID) =>
@@ -12609,7 +12610,7 @@ test("durable background binding survives compacted parent context", async () =>
     undefined,
     undefined,
     undefined,
-    () => [],
+    (sessionID) => compacted ? [] : subagentDispatchContext(generalSession, true)(sessionID),
   )
   try {
     const started = await h.call(
@@ -12641,6 +12642,8 @@ test("durable background binding survives compacted parent context", async () =>
       "general",
       generalSession,
     )
+    await admitTestSubagentDispatch(h, generalSession, "worker")
+    compacted = true
     expect((await h.call(
       "attach",
       { grantId: grant.grantId, workflowId, stepId: "worker" },
@@ -12648,20 +12651,6 @@ test("durable background binding survives compacted parent context", async () =>
       childSession,
     )).attached).toBe(true)
 
-    await h.toolHooks.get("execute.after")!({
-      tool: "subagent",
-      sessionID: generalSession,
-      agent: "general",
-      status: "completed",
-      metadata: {
-        parentSessionId: generalSession,
-        sessionId: childSession,
-        model: { providerID: "test", modelID: "test" },
-        background: true,
-        jobId: childSession,
-      },
-      output: "Background task started.",
-    })
 
     const completed = await h.call(
       "complete",
