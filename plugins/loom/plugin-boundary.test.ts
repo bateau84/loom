@@ -12670,6 +12670,108 @@ test("background OQ responder queues General after persisting its answer", async
   }
 })
 
+test("background child hard scope boundary queues General before the child stops", async () => {
+  const generalSession = "background-scope-general"
+  const childSession = "background-scope-worker"
+  const h = await harness(
+    undefined,
+    (sessionID, projectID) =>
+      sessionID === childSession
+        ? { id: sessionID, projectID, parentID: generalSession }
+        : { id: sessionID, projectID },
+    undefined,
+    undefined,
+    undefined,
+    (sessionID) =>
+      sessionID === generalSession
+        ? [{
+            parts: [{
+              type: "tool",
+              state: {
+                metadata: {
+                  background: true,
+                  sessionId: childSession,
+                },
+              },
+            }],
+          }]
+        : [],
+  )
+  try {
+    const started = await h.call(
+      "start",
+      { request: "Implement one bounded change that discovers a hard boundary." },
+      "general",
+      generalSession,
+    )
+    const workflowId = String(started.workflowId)
+    expect((await h.call(
+      "route",
+      {
+        humanFacing: false,
+        behavioral: false,
+        structural: false,
+        externalUnknown: false,
+        diagnostic: false,
+        productOutcome: false,
+        implementationRequested: true,
+        executionDepth: "task",
+      },
+      "general",
+      generalSession,
+    )).error).toBeUndefined()
+
+    const grant = await h.call(
+      "dispatch_grant",
+      { workflowId, stepId: "worker" },
+      "general",
+      generalSession,
+    )
+    expect((await h.call(
+      "attach",
+      { grantId: grant.grantId, workflowId, stepId: "worker" },
+      "worker",
+      childSession,
+    )).attached).toBe(true)
+
+    const outside = join(dirname(h.root), "background-return-external.txt")
+    const result = await h.call(
+      "scope_elevate",
+      {
+        workflowId,
+        stepId: "worker",
+        paths: [outside],
+        reason: "The implementation discovered one required path outside the current project.",
+      },
+      "worker",
+      childSession,
+    )
+    expect(result.error).toBeUndefined()
+    expect(result.status).toBe("user_authorization_required")
+    expect(result.continue).toBe(false)
+    expect(result.coordinatorNotification).toEqual({
+      notified: ["general"],
+      failed: [],
+    })
+    expect(h.syntheticMessages.at(-1)).toMatchObject({
+      sessionID: generalSession,
+      delivery: "queue",
+      resume: true,
+      metadata: {
+        kind: "background-child-return",
+        workflowId,
+        childSessionID: childSession,
+        agent: "worker",
+        returnKind: "scope-boundary",
+        stepId: "worker",
+        requestId: result.hardBoundary.requestId,
+      },
+    })
+  } finally {
+    h.restore()
+  }
+})
+
 test("blocking child OQ gently queues General for routing without steering an active turn", async () => {
   const h = await harness()
   try {
