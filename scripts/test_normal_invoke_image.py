@@ -129,6 +129,7 @@ class NormalInvokeImageComposition(unittest.TestCase):
 
     def test_runner_evidence_safety_candidate_admits_safe_result_and_preserves_inner_non_evidence(self):
         image = SMOKE.RUN.RUNNER_SAFETY_IMAGE
+        baseline_image = SMOKE.RUN.DEFAULT_IMAGES["opencode"]
         runner_bin = os.environ.get("OPENCODE_EVAL_RUNNER_BIN") or shutil.which("opencode-eval-runner")
         self.assertTrue(runner_bin, "candidate runner executable must be explicitly available")
         original_invoke = SMOKE.RUN.invoke_container
@@ -184,7 +185,7 @@ class NormalInvokeImageComposition(unittest.TestCase):
 
                 invoke.side_effect = lambda **kwargs: isolated_invoke(safety=False, **seed_args(kwargs))
                 baseline, _probe, baseline_requests, baseline_errors, _ = SMOKE.ObserverPinnedImageSmoke().invoke_fixture(
-                    image, safety_fixture=True,
+                    baseline_image, safety_fixture=True,
                 )
                 self.assertEqual(invoke.call_count, 1)
                 invoke.side_effect = lambda **kwargs: isolated_invoke(safety=True, **seed_args(kwargs))
@@ -192,7 +193,14 @@ class NormalInvokeImageComposition(unittest.TestCase):
                     image, safety_fixture=True,
                 )
 
-        self.assertEqual((baseline_requests, safe_requests), (4, 4))
+        self.assertEqual(baseline_requests, 4, f"ordinary baseline failed before fixture: {baseline!r}")
+        if safe_requests != 4:
+            self.fail(
+                "RSP candidate stopped before the deterministic fixture; "
+                f"preflight={safe.get('evidence_safety_preflight')!r}; "
+                f"load={safe.get('evidence_load')!r}; error={safe.get('stderr')!r}"
+            )
+        self.assertEqual(safe_requests, 4)
         self.assertEqual(baseline_errors, [])
         self.assertEqual(safe_errors, [])
         self.assertFalse(baseline.get("infrastructure_error"), baseline.get("stderr"))
