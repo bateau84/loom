@@ -12454,6 +12454,7 @@ test("background governed step completion queues General while foreground comple
                 role: "assistant",
                 parts: [{
                   type: "tool",
+                  tool: "subagent",
                   state: {
                     metadata: {
                       parentSessionId: generalSession,
