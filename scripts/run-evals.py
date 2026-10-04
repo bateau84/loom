@@ -2309,15 +2309,13 @@ def invoke_container(
     runner_defaults_known: bool = False,
     normal_observation_payload_policy: str = NORMAL_PAYLOAD_POLICY_OMIT,
 ) -> dict[str, Any]:
+    if image == RUNNER_SAFETY_IMAGE and not require_runner_evidence_safety:
+        return runner_safety_failure("runner safety image requires --runner-evidence-safety")
     if require_runner_evidence_safety and (
         transport != "opencode" or image != RUNNER_SAFETY_IMAGE or
         "OPENCODE_EVAL_REDACTION_VALUES" in extra_envs
     ):
         return runner_safety_failure()
-    node_modules = prepare_node_modules_mount(
-        project,
-        ROOT / "node_modules" if mount_node_modules else None,
-    )
     host_env = host_environment_for_transport(transport)
     if normal_invoke_observations_enabled():
         host_env["OPENCODE_EVAL_HOST_OBSERVATIONS"] = "1"
@@ -2339,6 +2337,10 @@ def invoke_container(
         config_root,
         runner_defaults_known=runner_defaults_known,
     )
+    if require_runner_evidence_safety and not inventory.complete:
+        # Do not spend a target invocation if the approved input profile cannot
+        # be completely classified (notably runtime config-root defaults).
+        return runner_safety_failure("credential inventory incomplete; target not launched")
     secrets = list(inventory.values)
     policy = inventory.private_policy()
     if not normal_invoke_observations_enabled() and any(
@@ -2359,6 +2361,10 @@ def invoke_container(
     if require_runner_evidence_safety and not runner_bin:
         # Safety mode must not fall back to the unacknowledged direct-container path.
         return runner_safety_failure()
+    node_modules = prepare_node_modules_mount(
+        project,
+        ROOT / "node_modules" if mount_node_modules else None,
+    )
     if runner_bin:
         with tempfile.TemporaryDirectory(prefix="loom-eval-runner-cli-") as tmp:
             root = Path(tmp)
