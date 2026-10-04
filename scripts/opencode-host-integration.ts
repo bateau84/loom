@@ -319,6 +319,7 @@ function subagentAction(
   else throw new Error("Real Loom subagent tool exposes no prompt argument")
 
   if (supported.has("background")) args.background = background
+  else if (background) throw new Error("Real OpenCode subagent tool does not expose background mode")
   if (supported.has("description")) args.description = description
 
   const missing = required.filter((key: string) => args[key] === undefined)
