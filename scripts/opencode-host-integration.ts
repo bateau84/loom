@@ -167,6 +167,13 @@ type MockProviderState = {
   tuiBudgetInitialGrantObserved: boolean
   tuiBudgetDenialObserved: boolean
   tuiBudgetApprovalObserved: boolean
+  backgroundWorkflowId?: string
+  backgroundGrantId?: string
+  backgroundWorkerAttached: boolean
+  backgroundWorkerCompleted: boolean
+  backgroundLaunchObserved: boolean
+  backgroundReturnObserved: boolean
+  backgroundReturnStatusObserved: boolean
 }
 
 function openAiMessageText(content: unknown) {
@@ -294,6 +301,7 @@ function subagentAction(
   agent: string,
   prompt: string,
   description: string,
+  background = false,
 ) {
   const schema = state.subagentToolSchema as any
   const properties = schema?.properties && typeof schema.properties === "object"
@@ -310,7 +318,8 @@ function subagentAction(
   if (supported.has("prompt")) args.prompt = prompt
   else throw new Error("Real Loom subagent tool exposes no prompt argument")
 
-  if (supported.has("background")) args.background = false
+  if (supported.has("background")) args.background = background
+  else if (background) throw new Error("Real OpenCode subagent tool does not expose background mode")
   if (supported.has("description")) args.description = description
 
   const missing = required.filter((key: string) => args[key] === undefined)
@@ -512,6 +521,97 @@ function chooseMockAction(prompt: string, results: Map<string, unknown>, state: 
       return null
     }
 
+    return null
+  }
+
+  if (
+    prompt.includes("Loom background child worker produced authoritative workflow progress (step-terminal)") &&
+    state.backgroundWorkflowId
+  ) {
+    state.backgroundReturnObserved = true
+    const status = results.get("loom_status") as any
+    const worker = status?.workflow?.steps?.find((step: any) => step.id === "worker")
+    if (worker?.status === "complete") state.backgroundReturnStatusObserved = true
+    if (!results.has("loom_status")) {
+      return { name: "loom_status", args: { workflowId: state.backgroundWorkflowId, detail: true } }
+    }
+    return null
+  }
+
+  if (prompt.includes("LOOM_INTEGRATION_BACKGROUND_RETURN_PARENT")) {
+    if (startResult?.workflowId) state.backgroundWorkflowId = String(startResult.workflowId)
+    const grant = results.get("loom_dispatch_grant") as any
+    if (grant?.grantId && grant?.expectedAgent === "worker") {
+      state.backgroundGrantId = String(grant.grantId)
+    }
+    if (results.has("subagent") && !toolRejected(results.get("subagent"))) {
+      state.backgroundLaunchObserved = true
+    }
+
+    if (!results.has("loom_start")) {
+      return { name: "loom_start", args: { request: "Verify real background child return to General." } }
+    }
+    if (!results.has("loom_route")) {
+      return {
+        name: "loom_route",
+        args: {
+          humanFacing: false,
+          behavioral: false,
+          structural: false,
+          externalUnknown: false,
+          diagnostic: false,
+          productOutcome: false,
+          implementationRequested: true,
+          executionDepth: "task",
+        },
+      }
+    }
+    if (!results.has("loom_dispatch_grant")) {
+      return {
+        name: "loom_dispatch_grant",
+        args: { workflowId: state.backgroundWorkflowId, stepId: "worker" },
+      }
+    }
+    if (!results.has("subagent")) {
+      return subagentAction(
+        state,
+        "worker",
+        "LOOM_INTEGRATION_BACKGROUND_RETURN_WORKER",
+        "Background return worker",
+        true,
+      )
+    }
+    return null
+  }
+
+  if (prompt.includes("LOOM_INTEGRATION_BACKGROUND_RETURN_WORKER")) {
+    const attach = results.get("loom_attach") as any
+    if (attach?.attached) state.backgroundWorkerAttached = true
+    const complete = results.get("loom_complete") as any
+    if (complete && !complete.error) state.backgroundWorkerCompleted = true
+    if (!state.backgroundWorkflowId || !state.backgroundGrantId) {
+      throw new Error("Background-return Worker fixture was not initialized")
+    }
+    if (!results.has("loom_attach")) {
+      return {
+        name: "loom_attach",
+        args: {
+          grantId: state.backgroundGrantId,
+          workflowId: state.backgroundWorkflowId,
+          stepId: "worker",
+        },
+      }
+    }
+    if (!results.has("loom_complete")) {
+      return {
+        name: "loom_complete",
+        args: {
+          workflowId: state.backgroundWorkflowId,
+          stepId: "worker",
+          summary: "Real background Worker completed through Loom.",
+        },
+      }
+    }
     return null
   }
 
@@ -939,6 +1039,11 @@ async function startMockProvider() {
     tuiBudgetInitialGrantObserved: false,
     tuiBudgetDenialObserved: false,
     tuiBudgetApprovalObserved: false,
+    backgroundWorkerAttached: false,
+    backgroundWorkerCompleted: false,
+    backgroundLaunchObserved: false,
+    backgroundReturnObserved: false,
+    backgroundReturnStatusObserved: false,
     requests: [],
     prompts: [],
   }
@@ -1770,6 +1875,7 @@ async function startServer(
     OPENCODE_DB: join(isolated, "opencode.db"),
     OPENCODE_DISABLE_AUTOUPDATE: "1",
     OPENCODE_ENABLE_QUESTION_TOOL: "1",
+    OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS: "true",
     OPENCODE_SERVER_USERNAME: "opencode",
     OPENCODE_SERVER_PASSWORD: password,
     LOOM_TOOL_OUTPUT: "json",
@@ -2555,6 +2661,38 @@ try {
     throw new Error("Restarted real OpenCode sessions did not reconcile to the legacy workflow")
   }
 
+  const backgroundParent = await jsonRequestAny(
+    [`${serverA.baseUrl}/api/session`, `${serverA.baseUrl}/session`],
+    serverA.authorization,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(sessionCreateBody("Loom background return integration", "general")),
+    },
+  )
+  if (!backgroundParent?.id) throw new Error("Could not create real background-return parent session")
+  await sendPrompt(serverA, backgroundParent.id, "LOOM_INTEGRATION_BACKGROUND_RETURN_PARENT")
+  await waitForCondition(
+    () =>
+      mock.state.backgroundLaunchObserved &&
+      mock.state.backgroundWorkerAttached &&
+      mock.state.backgroundWorkerCompleted &&
+      mock.state.backgroundReturnObserved &&
+      mock.state.backgroundReturnStatusObserved,
+    "real OpenCode background child returning authoritative Loom progress to General",
+    () => ({
+      workflowId: mock.state.backgroundWorkflowId,
+      grantId: mock.state.backgroundGrantId,
+      launched: mock.state.backgroundLaunchObserved,
+      attached: mock.state.backgroundWorkerAttached,
+      completed: mock.state.backgroundWorkerCompleted,
+      returnObserved: mock.state.backgroundReturnObserved,
+      statusObserved: mock.state.backgroundReturnStatusObserved,
+      prompts: mock.state.prompts.slice(-12),
+    }),
+    30_000,
+  )
+
   await runLifecycleHostScenarios({
     project: projectA,
     create: async (agent, parent) => {
@@ -2592,6 +2730,7 @@ try {
     },
   })
 
+  console.log("PASS real-host background return: background Worker completion queues General and General re-reads authoritative Loom state")
   console.log("PASS OpenCode host integration")
   console.log(` - workflow: ${mock.state.workflowId}`)
   console.log(` - worker/reviewer attached: ${mock.state.workerAttached}/${mock.state.reviewerAttached}`)

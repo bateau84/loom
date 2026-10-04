@@ -68,13 +68,14 @@ type RegisteredTool = {
 
 async function harness(
   seed?: (storage: MemoryStorage, root: string, projectID: string) => void | Promise<void>,
-  sessionInfo?: (sessionID: string, projectID: string) => { id: string; projectID?: string },
+  sessionInfo?: (sessionID: string, projectID: string) => { id: string; projectID?: string; parentID?: string },
   existing?: { root: string; storage: MemoryStorage },
   synthetic?: (input: Record<string, any>) => void | Promise<void>,
   agentList: (input?: { location?: { directory?: string } }) => {
     location: { directory: string }
     data: readonly { name: string; description?: string }[]
   } = (input) => ({ location: { directory: input?.location?.directory ?? "" }, data: [] }),
+  sessionContext: (sessionID: string, projectID: string) => readonly unknown[] = () => [],
 ) {
   const root = existing?.root ?? await mkdtemp(join(tmpdir(), "loom-plugin-boundary-"))
   if (!existing) roots.push(root)
@@ -138,6 +139,8 @@ async function harness(
           id: sessionID,
           projectID,
         },
+      context: async ({ sessionID }: { sessionID: string }) =>
+        sessionContext(sessionID, projectID),
       synthetic: async (input: Record<string, any>) => {
         syntheticMessages.push(input)
         await synthetic?.(input)
@@ -12431,6 +12434,922 @@ describe("cancellation replay and grant boundaries", () => {
 })
 
 
+const BACKGROUND_DISPATCH_MESSAGE = "background-dispatch-message"
+const BACKGROUND_DISPATCH_CALL = "background-dispatch-call"
+
+function subagentDispatchContext(generalSession: string, background: boolean) {
+  return (sessionID: string) =>
+    sessionID === generalSession
+      ? [{
+          info: { id: BACKGROUND_DISPATCH_MESSAGE, role: "assistant" },
+          parts: [{
+            id: BACKGROUND_DISPATCH_CALL,
+            type: "tool",
+            tool: "subagent",
+            messageID: BACKGROUND_DISPATCH_MESSAGE,
+            callID: BACKGROUND_DISPATCH_CALL,
+            state: {
+              status: "running",
+              input: {
+                subagent_type: "worker",
+                prompt: "Test exact admitted dispatch mode.",
+                background,
+              },
+              metadata: {},
+              time: { start: 1 },
+            },
+          }],
+        }]
+      : []
+}
+
+async function admitTestSubagentDispatch(
+  h: Awaited<ReturnType<typeof harness>>,
+  generalSession: string,
+  agent: string,
+) {
+  const event: any = {
+    agent: "general",
+    action: "subagent",
+    resources: [agent],
+    sessionID: generalSession,
+    source: {
+      type: "tool",
+      messageID: BACKGROUND_DISPATCH_MESSAGE,
+      id: BACKGROUND_DISPATCH_CALL,
+      callID: BACKGROUND_DISPATCH_CALL,
+    },
+    effect: "ask",
+    message: "",
+  }
+  await h.permissionHooks.get("evaluate")!(event)
+  expect(event.effect).not.toBe("deny")
+}
+
+test("background governed step completion queues General while foreground completion stays quiet", async () => {
+  const run = async (background: boolean) => {
+    const generalSession = `background-return-general-${background}`
+    const childSession = `background-return-worker-${background}`
+    const h = await harness(
+      undefined,
+      (sessionID, projectID) =>
+        sessionID === childSession
+          ? { id: sessionID, projectID, parentID: generalSession }
+          : { id: sessionID, projectID },
+      undefined,
+      undefined,
+      undefined,
+      subagentDispatchContext(generalSession, background),
+    )
+
+    try {
+      const started = await h.call(
+        "start",
+        { request: "Implement one bounded background-safe change." },
+        "general",
+        generalSession,
+      )
+      const workflowId = String(started.workflowId)
+      expect((await h.call(
+        "route",
+        {
+          humanFacing: false,
+          behavioral: false,
+          structural: false,
+          externalUnknown: false,
+          diagnostic: false,
+          productOutcome: false,
+          implementationRequested: true,
+          executionDepth: "task",
+        },
+        "general",
+        generalSession,
+      )).error).toBeUndefined()
+
+      const grant = await h.call(
+        "dispatch_grant",
+        { workflowId, stepId: "worker" },
+        "general",
+        generalSession,
+      )
+      await admitTestSubagentDispatch(h, generalSession, "worker")
+      expect((await h.call(
+        "attach",
+        { grantId: grant.grantId, workflowId, stepId: "worker" },
+        "worker",
+        childSession,
+      )).attached).toBe(true)
+
+      const completed = await h.call(
+        "complete",
+        {
+          workflowId,
+          stepId: "worker",
+          summary: "Background-safe work finished.",
+        },
+        "worker",
+        childSession,
+      )
+      expect(completed.error).toBeUndefined()
+      return { h, workflowId, completed, generalSession, childSession }
+    } catch (error) {
+      h.restore()
+      throw error
+    }
+  }
+
+  const background = await run(true)
+  try {
+    expect(background.completed.coordinatorNotification).toEqual({
+      notified: ["general"],
+      failed: [],
+    })
+    expect(background.h.syntheticMessages).toHaveLength(1)
+    expect(background.h.syntheticMessages[0]).toMatchObject({
+      sessionID: background.generalSession,
+      description: "Loom background child returned",
+      delivery: "queue",
+      resume: true,
+      metadata: {
+        source: "loom",
+        kind: "background-child-return",
+        workflowId: background.workflowId,
+        childSessionID: background.childSession,
+        agent: "worker",
+        returnKind: "step-terminal",
+        stepId: "worker",
+        outcome: "complete",
+      },
+    })
+  } finally {
+    background.h.restore()
+  }
+
+  const foreground = await run(false)
+  try {
+    expect(foreground.completed.coordinatorNotification).toEqual({
+      notified: [],
+      failed: [],
+    })
+    expect(foreground.h.syntheticMessages).toEqual([])
+  } finally {
+    foreground.h.restore()
+  }
+})
+
+test("durable background binding survives compacted parent context", async () => {
+  const generalSession = "background-durable-general"
+  const childSession = "background-durable-worker"
+  let compacted = false
+  const h = await harness(
+    undefined,
+    (sessionID, projectID) =>
+      sessionID === childSession
+        ? { id: sessionID, projectID, parentID: generalSession }
+        : { id: sessionID, projectID },
+    undefined,
+    undefined,
+    undefined,
+    (sessionID) => compacted ? [] : subagentDispatchContext(generalSession, true)(sessionID),
+  )
+  try {
+    const started = await h.call(
+      "start",
+      { request: "Complete one background task after parent context compaction." },
+      "general",
+      generalSession,
+    )
+    const workflowId = String(started.workflowId)
+    expect((await h.call(
+      "route",
+      {
+        humanFacing: false,
+        behavioral: false,
+        structural: false,
+        externalUnknown: false,
+        diagnostic: false,
+        productOutcome: false,
+        implementationRequested: true,
+        executionDepth: "task",
+      },
+      "general",
+      generalSession,
+    )).error).toBeUndefined()
+
+    const grant = await h.call(
+      "dispatch_grant",
+      { workflowId, stepId: "worker" },
+      "general",
+      generalSession,
+    )
+    await admitTestSubagentDispatch(h, generalSession, "worker")
+    compacted = true
+    expect((await h.call(
+      "attach",
+      { grantId: grant.grantId, workflowId, stepId: "worker" },
+      "worker",
+      childSession,
+    )).attached).toBe(true)
+
+
+    const completed = await h.call(
+      "complete",
+      {
+        workflowId,
+        stepId: "worker",
+        summary: "Compacted-parent background work completed.",
+      },
+      "worker",
+      childSession,
+    )
+    expect(completed.error).toBeUndefined()
+    expect(completed.coordinatorNotification).toEqual({
+      notified: ["general"],
+      failed: [],
+    })
+  } finally {
+    h.restore()
+  }
+})
+
+test("current foreground Task metadata overrides an older durable background binding", async () => {
+  const generalSession = "background-resume-general"
+  const childSession = "background-resume-worker"
+  const h = await harness(
+    undefined,
+    (sessionID, projectID) =>
+      sessionID === childSession
+        ? { id: sessionID, projectID, parentID: generalSession }
+        : { id: sessionID, projectID },
+    undefined,
+    undefined,
+    undefined,
+    subagentDispatchContext(generalSession, false),
+  )
+  try {
+    const started = await h.call(
+      "start",
+      { request: "Resume one previously backgrounded child in foreground." },
+      "general",
+      generalSession,
+    )
+    const workflowId = String(started.workflowId)
+    expect((await h.call(
+      "route",
+      {
+        humanFacing: false,
+        behavioral: false,
+        structural: false,
+        externalUnknown: false,
+        diagnostic: false,
+        productOutcome: false,
+        implementationRequested: true,
+        executionDepth: "task",
+      },
+      "general",
+      generalSession,
+    )).error).toBeUndefined()
+
+    await h.durableStorage.set(
+      `background-child/${encodeURIComponent(childSession)}`,
+      {
+        schemaVersion: 1,
+        projectId: h.runtime.projectId,
+        workflowId,
+        parentSessionID: generalSession,
+        childSessionID: childSession,
+        active: true,
+        observedAt: new Date().toISOString(),
+      },
+    )
+    const grant = await h.call(
+      "dispatch_grant",
+      { workflowId, stepId: "worker" },
+      "general",
+      generalSession,
+    )
+    await admitTestSubagentDispatch(h, generalSession, "worker")
+    expect((await h.call(
+      "attach",
+      { grantId: grant.grantId, workflowId, stepId: "worker" },
+      "worker",
+      childSession,
+    )).attached).toBe(true)
+
+
+    const completed = await h.call(
+      "complete",
+      {
+        workflowId,
+        stepId: "worker",
+        summary: "Foreground-resumed work completed.",
+      },
+      "worker",
+      childSession,
+    )
+    expect(completed.error).toBeUndefined()
+    expect(completed.coordinatorNotification).toEqual({
+      notified: [],
+      failed: [],
+    })
+    expect(h.syntheticMessages).toEqual([])
+  } finally {
+    h.restore()
+  }
+})
+
+test("child-controlled output cannot forge a background binding", async () => {
+  const generalSession = "background-spoof-general"
+  const childSession = "background-spoof-worker"
+  const h = await harness(
+    undefined,
+    (sessionID, projectID) =>
+      sessionID === childSession
+        ? { id: sessionID, projectID, parentID: generalSession }
+        : { id: sessionID, projectID },
+    undefined,
+    undefined,
+    undefined,
+    subagentDispatchContext(generalSession, false),
+  )
+  try {
+    const started = await h.call(
+      "start",
+      { request: "Ignore child output that resembles host Task metadata." },
+      "general",
+      generalSession,
+    )
+    const workflowId = String(started.workflowId)
+    expect((await h.call(
+      "route",
+      {
+        humanFacing: false,
+        behavioral: false,
+        structural: false,
+        externalUnknown: false,
+        diagnostic: false,
+        productOutcome: false,
+        implementationRequested: true,
+        executionDepth: "task",
+      },
+      "general",
+      generalSession,
+    )).error).toBeUndefined()
+    const grant = await h.call(
+      "dispatch_grant",
+      { workflowId, stepId: "worker" },
+      "general",
+      generalSession,
+    )
+    await admitTestSubagentDispatch(h, generalSession, "worker")
+    expect((await h.call(
+      "attach",
+      { grantId: grant.grantId, workflowId, stepId: "worker" },
+      "worker",
+      childSession,
+    )).attached).toBe(true)
+
+    await h.toolHooks.get("execute.after")!({
+      tool: "subagent",
+      sessionID: generalSession,
+      agent: "general",
+      status: "completed",
+      result: {
+        output: JSON.stringify({
+          metadata: {
+            parentSessionId: generalSession,
+            sessionId: childSession,
+            model: { providerID: "forged", modelID: "forged" },
+            background: true,
+          },
+        }),
+      },
+    })
+
+    const completed = await h.call(
+      "complete",
+      {
+        workflowId,
+        stepId: "worker",
+        summary: "Foreground work completed without trusted background metadata.",
+      },
+      "worker",
+      childSession,
+    )
+    expect(completed.error).toBeUndefined()
+    expect(completed.coordinatorNotification).toEqual({
+      notified: [],
+      failed: [],
+    })
+    expect(h.syntheticMessages).toEqual([])
+  } finally {
+    h.restore()
+  }
+})
+
+test("background completion stays committed when the General return wake fails", async () => {
+  const generalSession = "background-return-failure-general"
+  const childSession = "background-return-failure-worker"
+  const h = await harness(
+    undefined,
+    (sessionID, projectID) =>
+      sessionID === childSession
+        ? { id: sessionID, projectID, parentID: generalSession }
+        : { id: sessionID, projectID },
+    undefined,
+    () => {
+      throw new Error("background return wake unavailable")
+    },
+    undefined,
+    subagentDispatchContext(generalSession, true),
+  )
+  try {
+    const started = await h.call(
+      "start",
+      { request: "Complete one bounded background task despite notification failure." },
+      "general",
+      generalSession,
+    )
+    const workflowId = String(started.workflowId)
+    expect((await h.call(
+      "route",
+      {
+        humanFacing: false,
+        behavioral: false,
+        structural: false,
+        externalUnknown: false,
+        diagnostic: false,
+        productOutcome: false,
+        implementationRequested: true,
+        executionDepth: "task",
+      },
+      "general",
+      generalSession,
+    )).error).toBeUndefined()
+
+    const grant = await h.call(
+      "dispatch_grant",
+      { workflowId, stepId: "worker" },
+      "general",
+      generalSession,
+    )
+    await admitTestSubagentDispatch(h, generalSession, "worker")
+    expect((await h.call(
+      "attach",
+      { grantId: grant.grantId, workflowId, stepId: "worker" },
+      "worker",
+      childSession,
+    )).attached).toBe(true)
+
+    const completed = await h.call(
+      "complete",
+      {
+        workflowId,
+        stepId: "worker",
+        summary: "The authoritative background work is complete.",
+      },
+      "worker",
+      childSession,
+    )
+    expect(completed.error).toBeUndefined()
+    expect(completed.coordinatorNotification).toEqual({
+      notified: [],
+      failed: [{
+        target: "general",
+        error: "background return wake unavailable",
+      }],
+    })
+    expect((await h.durableStorage.get(`workflow/${workflowId}`) as any)
+      .steps.find((step: any) => step.id === "worker")?.status).toBe("complete")
+  } finally {
+    h.restore()
+  }
+})
+
+test("background OQ responder queues General after persisting its answer", async () => {
+  const generalSession = "background-oq-general"
+  const childSession = "background-oq-architect"
+  const h = await harness(
+    undefined,
+    (sessionID, projectID) =>
+      sessionID === childSession
+        ? { id: sessionID, projectID, parentID: generalSession }
+        : { id: sessionID, projectID },
+    undefined,
+    undefined,
+    undefined,
+    subagentDispatchContext(generalSession, true),
+  )
+  try {
+    const started = await h.call(
+      "start",
+      { request: "Resolve one bounded architecture question." },
+      "general",
+      generalSession,
+    )
+    const workflowId = String(started.workflowId)
+    expect((await h.call(
+      "route",
+      {
+        humanFacing: false,
+        behavioral: false,
+        structural: true,
+        externalUnknown: false,
+        diagnostic: false,
+        productOutcome: false,
+        implementationRequested: false,
+        executionDepth: "change",
+      },
+      "general",
+      generalSession,
+    )).error).toBeUndefined()
+
+    const raised = await h.call(
+      "oq_raise",
+      {
+        workflowId,
+        question: "Which structural boundary owns this interface?",
+        responder: "architect",
+        blocking: false,
+      },
+      "general",
+      generalSession,
+    )
+    expect(raised.error).toBeUndefined()
+
+    const grant = await h.call(
+      "dispatch_grant",
+      { workflowId, questionId: raised.question.id },
+      "general",
+      generalSession,
+    )
+    await admitTestSubagentDispatch(h, generalSession, "architect")
+    expect((await h.call(
+      "attach",
+      { grantId: grant.grantId, workflowId, questionId: raised.question.id },
+      "architect",
+      childSession,
+    )).attached).toBe(true)
+
+    const answered = await h.call(
+      "oq_answer",
+      {
+        workflowId,
+        questionId: raised.question.id,
+        answer: "The interface belongs to the runtime boundary.",
+        source: "agent",
+      },
+      "architect",
+      childSession,
+    )
+    expect(answered.error).toBeUndefined()
+    expect(answered.coordinatorNotification).toEqual({
+      notified: ["general"],
+      failed: [],
+    })
+    expect(h.syntheticMessages.at(-1)).toMatchObject({
+      sessionID: generalSession,
+      delivery: "queue",
+      resume: true,
+      metadata: {
+        kind: "background-child-return",
+        workflowId,
+        childSessionID: childSession,
+        agent: "architect",
+        returnKind: "oq-answered",
+        questionId: raised.question.id,
+      },
+    })
+  } finally {
+    h.restore()
+  }
+})
+
+test("background child hard scope boundary queues General before the child stops", async () => {
+  const generalSession = "background-scope-general"
+  const childSession = "background-scope-worker"
+  const h = await harness(
+    undefined,
+    (sessionID, projectID) =>
+      sessionID === childSession
+        ? { id: sessionID, projectID, parentID: generalSession }
+        : { id: sessionID, projectID },
+    undefined,
+    undefined,
+    undefined,
+    subagentDispatchContext(generalSession, true),
+  )
+  try {
+    const started = await h.call(
+      "start",
+      { request: "Implement one bounded change that discovers a hard boundary." },
+      "general",
+      generalSession,
+    )
+    const workflowId = String(started.workflowId)
+    expect((await h.call(
+      "route",
+      {
+        humanFacing: false,
+        behavioral: false,
+        structural: false,
+        externalUnknown: false,
+        diagnostic: false,
+        productOutcome: false,
+        implementationRequested: true,
+        executionDepth: "task",
+      },
+      "general",
+      generalSession,
+    )).error).toBeUndefined()
+
+    const grant = await h.call(
+      "dispatch_grant",
+      { workflowId, stepId: "worker" },
+      "general",
+      generalSession,
+    )
+    await admitTestSubagentDispatch(h, generalSession, "worker")
+    expect((await h.call(
+      "attach",
+      { grantId: grant.grantId, workflowId, stepId: "worker" },
+      "worker",
+      childSession,
+    )).attached).toBe(true)
+
+    const outside = join(dirname(h.root), "background-return-external.txt")
+    const result = await h.call(
+      "scope_elevate",
+      {
+        workflowId,
+        stepId: "worker",
+        paths: [outside],
+        reason: "The implementation discovered one required path outside the current project.",
+      },
+      "worker",
+      childSession,
+    )
+    expect(result.error).toBeUndefined()
+    expect(result.status).toBe("user_authorization_required")
+    expect(result.continue).toBe(false)
+    expect(result.coordinatorNotification).toEqual({
+      notified: ["general"],
+      failed: [],
+    })
+    expect(h.syntheticMessages.at(-1)).toMatchObject({
+      sessionID: generalSession,
+      delivery: "queue",
+      resume: true,
+      metadata: {
+        kind: "background-child-return",
+        workflowId,
+        childSessionID: childSession,
+        agent: "worker",
+        returnKind: "scope-boundary",
+        stepId: "worker",
+        requestId: result.hardBoundary.requestId,
+      },
+    })
+  } finally {
+    h.restore()
+  }
+})
+
+test("blocking child OQ gently queues General for routing without steering an active turn", async () => {
+  const h = await harness()
+  try {
+    const generalSession = "oq-raised-general"
+    const childSession = "oq-raised-worker"
+    const started = await h.call(
+      "start",
+      { request: "Implement one bounded change with cross-role clarification." },
+      "general",
+      generalSession,
+    )
+    const workflowId = String(started.workflowId)
+    expect((await h.call(
+      "route",
+      {
+        humanFacing: false,
+        behavioral: false,
+        structural: false,
+        externalUnknown: false,
+        diagnostic: false,
+        productOutcome: false,
+        implementationRequested: true,
+        executionDepth: "task",
+      },
+      "general",
+      generalSession,
+    )).error).toBeUndefined()
+
+    const grant = await h.call(
+      "dispatch_grant",
+      { workflowId, stepId: "worker" },
+      "general",
+      generalSession,
+    )
+    expect((await h.call(
+      "attach",
+      { grantId: grant.grantId, workflowId, stepId: "worker" },
+      "worker",
+      childSession,
+    )).attached).toBe(true)
+
+    const responders = ["general", "user", "architect"] as const
+    const raised: any[] = []
+    for (const responder of responders) {
+      const question = `Blocking question for ${responder}.`
+      const result = await h.call(
+        "oq_raise",
+        {
+          workflowId,
+          stepId: "worker",
+          question,
+          responder,
+          blocking: true,
+        },
+        "worker",
+        childSession,
+      )
+      expect(result.error).toBeUndefined()
+      expect(result.notifications).toEqual({
+        notified: ["general"],
+        failed: [],
+      })
+      raised.push({ result, question, responder })
+    }
+
+    expect(h.syntheticMessages).toHaveLength(responders.length)
+    for (const [index, entry] of raised.entries()) {
+      const message = h.syntheticMessages[index]
+      expect(message).toMatchObject({
+        sessionID: generalSession,
+        description: "Loom blocking OQ raised",
+        delivery: "queue",
+        resume: true,
+        metadata: {
+          source: "loom",
+          kind: "oq-raised",
+          workflowId,
+          questionId: entry.result.question.id,
+          responder: entry.responder,
+          raisedByAgent: "worker",
+        },
+      })
+      expect(String(message?.text)).toContain(entry.result.question.id)
+      expect(String(message?.text)).toContain("loom_oq_list")
+      expect(String(message?.text)).not.toContain(entry.question)
+    }
+  } finally {
+    h.restore()
+  }
+})
+
+test("non-blocking child OQ stays in shared state without waking General", async () => {
+  const h = await harness()
+  try {
+    const generalSession = "oq-nonblocking-general"
+    const childSession = "oq-nonblocking-worker"
+    const started = await h.call(
+      "start",
+      { request: "Implement one bounded change with optional peer input." },
+      "general",
+      generalSession,
+    )
+    const workflowId = String(started.workflowId)
+    expect((await h.call(
+      "route",
+      {
+        humanFacing: false,
+        behavioral: false,
+        structural: false,
+        externalUnknown: false,
+        diagnostic: false,
+        productOutcome: false,
+        implementationRequested: true,
+        executionDepth: "task",
+      },
+      "general",
+      generalSession,
+    )).error).toBeUndefined()
+
+    const grant = await h.call(
+      "dispatch_grant",
+      { workflowId, stepId: "worker" },
+      "general",
+      generalSession,
+    )
+    expect((await h.call(
+      "attach",
+      { grantId: grant.grantId, workflowId, stepId: "worker" },
+      "worker",
+      childSession,
+    )).attached).toBe(true)
+
+    const raised = await h.call(
+      "oq_raise",
+      {
+        workflowId,
+        stepId: "worker",
+        question: "Can Architect provide optional context later?",
+        responder: "architect",
+        blocking: false,
+      },
+      "worker",
+      childSession,
+    )
+    expect(raised.error).toBeUndefined()
+    expect(raised.notifications).toEqual({
+      notified: [],
+      failed: [],
+    })
+    expect(h.syntheticMessages).toEqual([])
+    expect((await h.durableStorage.get(
+      `oq/${workflowId}/${raised.question.id}`,
+    ) as any).status).toBe("open")
+  } finally {
+    h.restore()
+  }
+})
+
+test("blocking OQ remains durable when the queued General wake fails", async () => {
+  const h = await harness(
+    undefined,
+    undefined,
+    undefined,
+    () => {
+      throw new Error("queued wake unavailable")
+    },
+  )
+  try {
+    const generalSession = "oq-raised-failure-general"
+    const childSession = "oq-raised-failure-worker"
+    const started = await h.call(
+      "start",
+      { request: "Implement one bounded change after clarification." },
+      "general",
+      generalSession,
+    )
+    const workflowId = String(started.workflowId)
+    expect((await h.call(
+      "route",
+      {
+        humanFacing: false,
+        behavioral: false,
+        structural: false,
+        externalUnknown: false,
+        diagnostic: false,
+        productOutcome: false,
+        implementationRequested: true,
+        executionDepth: "task",
+      },
+      "general",
+      generalSession,
+    )).error).toBeUndefined()
+
+    const grant = await h.call(
+      "dispatch_grant",
+      { workflowId, stepId: "worker" },
+      "general",
+      generalSession,
+    )
+    expect((await h.call(
+      "attach",
+      { grantId: grant.grantId, workflowId, stepId: "worker" },
+      "worker",
+      childSession,
+    )).attached).toBe(true)
+
+    const raised = await h.call(
+      "oq_raise",
+      {
+        workflowId,
+        stepId: "worker",
+        question: "Which architectural constraint owns this boundary?",
+        responder: "architect",
+        blocking: true,
+      },
+      "worker",
+      childSession,
+    )
+    expect(raised.error).toBeUndefined()
+    expect(raised.notifications).toEqual({
+      notified: [],
+      failed: [{
+        target: "general",
+        error: "queued wake unavailable",
+      }],
+    })
+    expect((await h.durableStorage.get(
+      `oq/${workflowId}/${raised.question.id}`,
+    ) as any).status).toBe("open")
+  } finally {
+    h.restore()
+  }
+})
+
+
 test("answered OQ steers only the latest attached consumer session", async () => {
   const h = await harness()
   try {
@@ -12518,8 +13437,11 @@ test("answered OQ steers only the latest attached consumer session", async () =>
       failed: [],
     })
 
-    expect(h.syntheticMessages).toHaveLength(1)
-    expect(h.syntheticMessages[0]).toMatchObject({
+    const answerMessages = h.syntheticMessages.filter(
+      (message) => message.metadata?.kind === "oq-answered",
+    )
+    expect(answerMessages).toHaveLength(1)
+    expect(answerMessages[0]).toMatchObject({
       sessionID: latestSession,
       description: "Loom OQ answered",
       delivery: "steer",
@@ -12533,11 +13455,11 @@ test("answered OQ steers only the latest attached consumer session", async () =>
         attempt: 0,
       },
     })
-    expect(String(h.syntheticMessages[0]?.text)).toContain(raised.question.id)
-    expect(String(h.syntheticMessages[0]?.text)).toContain("loom_oq_list")
-    expect(String(h.syntheticMessages[0]?.text)).toContain("loom_oq_reconcile")
-    expect(String(h.syntheticMessages[0]?.text)).not.toContain(authoritativeAnswer)
-    expect(h.syntheticMessages.some((message) => message.sessionID === firstSession)).toBe(false)
+    expect(String(answerMessages[0]?.text)).toContain(raised.question.id)
+    expect(String(answerMessages[0]?.text)).toContain("loom_oq_list")
+    expect(String(answerMessages[0]?.text)).toContain("loom_oq_reconcile")
+    expect(String(answerMessages[0]?.text)).not.toContain(authoritativeAnswer)
+    expect(answerMessages.some((message) => message.sessionID === firstSession)).toBe(false)
 
     const listed = await h.call(
       "oq_list",
@@ -12734,7 +13656,9 @@ test("answered OQ never revives a consumer session from an older step attempt", 
       notified: [],
       failed: [],
     })
-    expect(h.syntheticMessages).toEqual([])
+    expect(h.syntheticMessages.filter(
+      (message) => message.metadata?.kind === "oq-answered",
+    )).toEqual([])
 
     const persisted = await h.durableStorage.get(
       `oq/${workflowId}/${raised.question.id}`,
