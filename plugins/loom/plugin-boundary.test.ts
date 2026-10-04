@@ -12576,6 +12576,195 @@ test("background governed step completion queues General while foreground comple
   }
 })
 
+test("durable background binding survives compacted parent context", async () => {
+  const generalSession = "background-durable-general"
+  const childSession = "background-durable-worker"
+  const h = await harness(
+    undefined,
+    (sessionID, projectID) =>
+      sessionID === childSession
+        ? { id: sessionID, projectID, parentID: generalSession }
+        : { id: sessionID, projectID },
+    undefined,
+    undefined,
+    undefined,
+    () => [],
+  )
+  try {
+    const started = await h.call(
+      "start",
+      { request: "Complete one background task after parent context compaction." },
+      "general",
+      generalSession,
+    )
+    const workflowId = String(started.workflowId)
+    expect((await h.call(
+      "route",
+      {
+        humanFacing: false,
+        behavioral: false,
+        structural: false,
+        externalUnknown: false,
+        diagnostic: false,
+        productOutcome: false,
+        implementationRequested: true,
+        executionDepth: "task",
+      },
+      "general",
+      generalSession,
+    )).error).toBeUndefined()
+
+    const grant = await h.call(
+      "dispatch_grant",
+      { workflowId, stepId: "worker" },
+      "general",
+      generalSession,
+    )
+    expect((await h.call(
+      "attach",
+      { grantId: grant.grantId, workflowId, stepId: "worker" },
+      "worker",
+      childSession,
+    )).attached).toBe(true)
+
+    await h.toolHooks.get("execute.after")!({
+      tool: "subagent",
+      sessionID: generalSession,
+      agent: "general",
+      status: "completed",
+      result: {
+        metadata: {
+          parentSessionId: generalSession,
+          sessionId: childSession,
+          model: { providerID: "test", modelID: "test" },
+          background: true,
+          jobId: childSession,
+        },
+      },
+    })
+
+    const completed = await h.call(
+      "complete",
+      {
+        workflowId,
+        stepId: "worker",
+        summary: "Compacted-parent background work completed.",
+      },
+      "worker",
+      childSession,
+    )
+    expect(completed.error).toBeUndefined()
+    expect(completed.coordinatorNotification).toEqual({
+      notified: ["general"],
+      failed: [],
+    })
+  } finally {
+    h.restore()
+  }
+})
+
+test("resumed foreground task clears an older durable background binding", async () => {
+  const generalSession = "background-resume-general"
+  const childSession = "background-resume-worker"
+  const h = await harness(
+    undefined,
+    (sessionID, projectID) =>
+      sessionID === childSession
+        ? { id: sessionID, projectID, parentID: generalSession }
+        : { id: sessionID, projectID },
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    () => [],
+  )
+  try {
+    const started = await h.call(
+      "start",
+      { request: "Resume one previously backgrounded child in foreground." },
+      "general",
+      generalSession,
+    )
+    const workflowId = String(started.workflowId)
+    expect((await h.call(
+      "route",
+      {
+        humanFacing: false,
+        behavioral: false,
+        structural: false,
+        externalUnknown: false,
+        diagnostic: false,
+        productOutcome: false,
+        implementationRequested: true,
+        executionDepth: "task",
+      },
+      "general",
+      generalSession,
+    )).error).toBeUndefined()
+
+    const grant = await h.call(
+      "dispatch_grant",
+      { workflowId, stepId: "worker" },
+      "general",
+      generalSession,
+    )
+    expect((await h.call(
+      "attach",
+      { grantId: grant.grantId, workflowId, stepId: "worker" },
+      "worker",
+      childSession,
+    )).attached).toBe(true)
+
+    await h.toolHooks.get("execute.after")!({
+      tool: "subagent",
+      sessionID: generalSession,
+      agent: "general",
+      status: "completed",
+      result: {
+        metadata: {
+          parentSessionId: generalSession,
+          sessionId: childSession,
+          model: { providerID: "test", modelID: "test" },
+          background: true,
+        },
+      },
+    })
+
+    await h.toolHooks.get("execute.before")!({
+      tool: "subagent",
+      callID: "foreground-resume-call",
+      messageID: "foreground-resume-message",
+      sessionID: generalSession,
+      agent: "general",
+      input: {
+        task_id: childSession,
+        subagent_type: "worker",
+        prompt: "Resume in foreground.",
+        background: false,
+      },
+    })
+
+    const completed = await h.call(
+      "complete",
+      {
+        workflowId,
+        stepId: "worker",
+        summary: "Foreground-resumed work completed.",
+      },
+      "worker",
+      childSession,
+    )
+    expect(completed.error).toBeUndefined()
+    expect(completed.coordinatorNotification).toEqual({
+      notified: [],
+      failed: [],
+    })
+    expect(h.syntheticMessages).toEqual([])
+  } finally {
+    h.restore()
+  }
+})
+
 test("background completion stays committed when the General return wake fails", async () => {
   const generalSession = "background-return-failure-general"
   const childSession = "background-return-failure-worker"
