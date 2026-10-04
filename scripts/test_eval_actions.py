@@ -680,14 +680,40 @@ class EvidenceRedactionTests(unittest.TestCase):
                 models_catalog=None, database_seed=None, config_root=None, expected_plugin=None,
                 timeout=30, container_timeout=60, mount_node_modules=False,
                 workspace_mode="ro", extra_envs=[], require_runner_evidence_safety=True,
+                runner_defaults_known=True,
             )
             wrong_image = RUN_EVALS.invoke_container(image=RUN_EVALS.DEFAULT_IMAGES["opencode"], **kwargs)
             missing_cli = RUN_EVALS.invoke_container(image=RUN_EVALS.RUNNER_SAFETY_IMAGE, **kwargs)
+            legacy_candidate = RUN_EVALS.invoke_container(
+                image=RUN_EVALS.RUNNER_SAFETY_IMAGE,
+                **{**kwargs, "require_runner_evidence_safety": False},
+            )
 
         self.assertTrue(wrong_image["infrastructure_error"])
         self.assertTrue(missing_cli["infrastructure_error"])
         self.assertEqual(wrong_image["observed_tool_results"]["events"], [])
         self.assertEqual(missing_cli["observed_tool_results"]["events"], [])
+        self.assertIn("requires --runner-evidence-safety", legacy_candidate["stderr"])
+
+    def test_incomplete_config_root_safety_profile_stops_before_runner_launch(self):
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(
+            os.environ,
+            {"OPENCODE_EVAL_RUNNER_BIN": "", "OPENCODE_CONFIG_DIR": ""},
+            clear=False,
+        ), patch.object(RUN_EVALS.shutil, "which", return_value=None), patch.object(
+            RUN_EVALS.subprocess, "run", side_effect=AssertionError("incomplete profile launched runner"),
+        ):
+            result = RUN_EVALS.invoke_container(
+                engine="podman", image=RUN_EVALS.RUNNER_SAFETY_IMAGE, transport="opencode",
+                model="openai/test", agent="general", prompt="synthetic", system="",
+                project=Path(tmp), auth=None, config=None, models_catalog=None,
+                database_seed=None, config_root=Path(tmp), expected_plugin=None, timeout=30,
+                container_timeout=60, mount_node_modules=False, workspace_mode="ro", extra_envs=[],
+                require_runner_evidence_safety=True, runner_defaults_known=True,
+            )
+
+        self.assertTrue(result["infrastructure_error"])
+        self.assertIn("inventory incomplete", result["stderr"])
 
     def test_private_policy_file_is_mode_0600(self):
         inventory = RUN_EVALS.credential_inventory_from_values(["SYNTH-private-token"])
@@ -719,7 +745,11 @@ class EvidenceRedactionTests(unittest.TestCase):
             return Result()
 
         with tempfile.TemporaryDirectory() as tmp, patch.dict(
-            os.environ, {"OPENCODE_EVAL_RUNNER_BIN": "/runner-fixture", "OPENCODE_CONFIG_DIR": ""}, clear=False,
+            os.environ, {
+                "OPENCODE_EVAL_RUNNER_BIN": "/runner-fixture", "OPENCODE_CONFIG_DIR": "",
+                "OPENAI_API_KEY": "", "ANTHROPIC_API_KEY": "", "OPENROUTER_API_KEY": "",
+                "OPENCODE_API_KEY": "", "COPILOT_GITHUB_TOKEN": "", "GH_TOKEN": "", "GITHUB_TOKEN": "",
+            }, clear=False,
         ), patch.object(RUN_EVALS.subprocess, "run", side_effect=fake_run):
             result = RUN_EVALS.invoke_container(
                 engine="podman", image=RUN_EVALS.RUNNER_SAFETY_IMAGE, transport="opencode",
@@ -727,12 +757,12 @@ class EvidenceRedactionTests(unittest.TestCase):
                 project=Path(tmp), auth=None, config=None, models_catalog=None,
                 database_seed=None, config_root=None, expected_plugin=None, timeout=30,
                 container_timeout=60, mount_node_modules=False, workspace_mode="ro", extra_envs=[],
-                require_runner_evidence_safety=True,
+                require_runner_evidence_safety=True, runner_defaults_known=True,
             )
 
         self.assertIn("--require-evidence-safety", observed["command"])
         self.assertEqual(observed["mode"], 0o600)
-        self.assertFalse(observed["policy"]["complete"])
+        self.assertTrue(observed["policy"]["complete"])
         self.assertEqual(observed["policy"]["values"], [])
         self.assertTrue(result["infrastructure_error"])
         self.assertNotIn("legacy raw output", json.dumps(result))
