@@ -26,6 +26,8 @@ FAKE_KEY = "local-fixture-key-not-a-provider-credential"
 class ProviderFixture(BaseHTTPRequestHandler):
     requests = 0
     errors: list[str] = []
+    safety_fixture = False
+    native_marker = "native-sentinel"
 
     def log_message(self, *_args):
         return
@@ -34,11 +36,34 @@ class ProviderFixture(BaseHTTPRequestHandler):
         try:
             request = json.loads(self.rfile.read(int(self.headers.get("Content-Length", "0"))))
             tool_names = [tool["function"]["name"] for tool in request.get("tools", [])]
-            if ProviderFixture.requests == 0:
+            if ProviderFixture.safety_fixture and ProviderFixture.requests == 0:
                 name = next((name for name in tool_names if name == "evalFixture_native_sentinel"), None)
                 if not name:
                     raise AssertionError(f"native fixture tool not exposed: {tool_names!r}")
-                response = tool_response("native-call", name, {"marker": "native-sentinel"})
+                response = tool_response("safety-secret-call", name, {"marker": ProviderFixture.native_marker})
+            elif ProviderFixture.safety_fixture and ProviderFixture.requests == 1:
+                name = next((name for name in tool_names if name == "evalFixture_native_sentinel"), None)
+                if not name:
+                    raise AssertionError(f"native fixture tool not exposed: {tool_names!r}")
+                response = tool_response("safety-public-call", name, {"marker": "public-native-sentinel"})
+            elif ProviderFixture.safety_fixture and ProviderFixture.requests == 2:
+                name = next((name for name in tool_names if name == "execute"), None)
+                if not name:
+                    raise AssertionError(f"Code Mode execute tool not exposed: {tool_names!r}")
+                code = (
+                    'const discarded = await tools.evalFixture.inner_sentinel({marker:"discarded-sentinel"});\n'
+                    'const transformed = await tools.evalFixture.inner_sentinel({marker:"transformed-sentinel"});\n'
+                    'let caught = false;\n'
+                    'try { await tools.evalFixture.thrower({marker:"caught-sentinel"}); } '
+                    'catch (_error) { caught = true; }\n'
+                    'return {discarded: Boolean(discarded), transformed: "script-transformed", caught};'
+                )
+                response = tool_response("safety-codemode-call", name, {"code": code})
+            elif ProviderFixture.requests == 0:
+                name = next((name for name in tool_names if name == "evalFixture_native_sentinel"), None)
+                if not name:
+                    raise AssertionError(f"native fixture tool not exposed: {tool_names!r}")
+                response = tool_response("native-call", name, {"marker": ProviderFixture.native_marker})
             elif ProviderFixture.requests == 1:
                 name = next((name for name in tool_names if name == "execute"), None)
                 if not name:
@@ -122,10 +147,13 @@ def stream_response(response: dict) -> bytes:
 
 class ObserverPinnedImageSmoke(unittest.TestCase):
     def invoke_fixture(
-        self, image: str, *, observe_inner: bool = False, fail_observer: bool = False
+        self, image: str, *, observe_inner: bool = False, fail_observer: bool = False,
+        safety_fixture: bool = False,
     ):
         ProviderFixture.requests = 0
         ProviderFixture.errors = []
+        ProviderFixture.safety_fixture = safety_fixture
+        ProviderFixture.native_marker = FAKE_KEY if safety_fixture else "native-sentinel"
         server = ThreadingHTTPServer(("127.0.0.1", 0), ProviderFixture)
         server_thread = threading.Thread(target=server.serve_forever, daemon=True)
         server_thread.start()

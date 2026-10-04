@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import shutil
 import json
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -124,6 +125,93 @@ class NormalInvokeImageComposition(unittest.TestCase):
         self.assertGreater(diagnostic["omitted_events"], 0)
         self.assertFalse(diagnostic["evidence_eligible"])
         self.assertEqual(diagnostic["payload_policy"], "synthetic-secret-free-fixture/v1")
+
+    def test_runner_evidence_safety_candidate_admits_safe_result_and_preserves_inner_non_evidence(self):
+        image = SMOKE.RUN.RUNNER_SAFETY_IMAGE
+        runner_bin = os.environ.get("OPENCODE_EVAL_RUNNER_BIN") or shutil.which("opencode-eval-runner")
+        self.assertTrue(runner_bin, "candidate runner executable must be explicitly available")
+        original_invoke = SMOKE.RUN.invoke_container
+        secret = SMOKE.FAKE_KEY
+
+        def isolated_invoke(*, safety: bool, **kwargs):
+            kwargs["config_root"] = None
+            kwargs["require_runner_evidence_safety"] = safety
+            kwargs["runner_defaults_known"] = True
+            return original_invoke(**kwargs)
+
+        with tempfile.TemporaryDirectory(prefix="loom-rsp-home-") as temp:
+            root = Path(temp)
+            environment = {
+                "HOME": str(root / "home"),
+                "XDG_DATA_HOME": str(root / "data"),
+                "XDG_CACHE_HOME": str(root / "cache"),
+                "OPENCODE_CONFIG_DIR": "",
+                "OPENCODE_EVAL_RUNNER_AUTH": "",
+                "OPENCODE_EVAL_RUNNER_CONFIG": "",
+                "OPENCODE_EVAL_RUNNER_MODELS": "",
+                "OPENCODE_EVAL_RUNNER_DB": "",
+                "OPENCODE_EVAL_RUNNER_CONFIG_ROOT": "",
+                "OPENCODE_EVAL_NORMAL_OBSERVATIONS": "",
+                "OPENAI_API_KEY": "",
+                "ANTHROPIC_API_KEY": "",
+                "OPENROUTER_API_KEY": "",
+                "OPENCODE_API_KEY": "",
+                "COPILOT_GITHUB_TOKEN": "",
+                "GH_TOKEN": "",
+                "GITHUB_TOKEN": "",
+                "OPENCODE_EVAL_RUNNER_BIN": str(Path(runner_bin).resolve()),
+            }
+            for directory in ("home", "data", "cache"):
+                (root / directory).mkdir()
+            with patch.dict(os.environ, environment, clear=False), \
+                 patch.object(SMOKE.RUN, "invoke_container", wraps=original_invoke) as invoke:
+                # The wrapper below changes only the host adapter's opt-in and
+                # the resolved-seed declaration; both runs use the same fixture.
+                invoke.side_effect = lambda **kwargs: isolated_invoke(safety=False, **kwargs)
+                baseline, _probe, baseline_requests, baseline_errors, _ = SMOKE.ObserverPinnedImageSmoke().invoke_fixture(
+                    image, safety_fixture=True,
+                )
+                self.assertEqual(invoke.call_count, 1)
+                invoke.side_effect = lambda **kwargs: isolated_invoke(safety=True, **kwargs)
+                safe, _probe, safe_requests, safe_errors, _ = SMOKE.ObserverPinnedImageSmoke().invoke_fixture(
+                    image, safety_fixture=True,
+                )
+
+        self.assertEqual((baseline_requests, safe_requests), (4, 4))
+        self.assertEqual(baseline_errors, [])
+        self.assertEqual(safe_errors, [])
+        self.assertFalse(baseline.get("infrastructure_error"), baseline.get("stderr"))
+        self.assertFalse(safe.get("infrastructure_error"), safe.get("stderr"))
+        self.assertEqual(
+            (safe.get("exit_code"), safe.get("text"), safe.get("tools")),
+            (baseline.get("exit_code"), baseline.get("text"), baseline.get("tools")),
+        )
+        self.assertEqual(safe["evidence_load"]["image"], image)
+        self.assertEqual(safe["evidence_load"]["image_source_revision"], SMOKE.RUN.RUNNER_SAFETY_SOURCE)
+        self.assertEqual(safe["evidence_load"]["host_source_revision"], SMOKE.RUN.RUNNER_SAFETY_SOURCE)
+        self.assertTrue(safe["evidence_safety_validation"]["acknowledged"])
+        self.assertTrue(safe["evidence_safety_ack"]["policy_valid"])
+        self.assertTrue(safe["evidence_safety_ack"]["inventory_complete"])
+        self.assertNotIn(secret, json.dumps(safe))
+        self.assertNotIn("stdout", safe)
+        self.assertFalse(safe["evidence_safety"]["coverage_complete"])
+        evidence = safe["observed_tool_results"]
+        native = next(event for event in evidence["events"] if event.get("tool") == "evalFixture_native_sentinel")
+        public_native = next(
+            event for event in evidence["events"]
+            if event.get("tool") == "evalFixture_native_sentinel" and
+            event.get("evidence_safety", {}).get("input", {}).get("state") == "exact"
+        )
+        self.assertEqual(native["evidence_safety"]["input"]["state"], "redacted")
+        self.assertEqual(native["evidence_safety"]["output"]["state"], "omitted")
+        self.assertIn("input", native["truncated_fields"])
+        self.assertIn("output", native["truncated_fields"])
+        self.assertFalse(SMOKE.RUN.nested_tool_capture_complete(evidence))
+        self.assertFalse(any(event.get("tool") == "evalFixture_inner_sentinel" for event in evidence["events"]))
+        self.assertIn("public-native-sentinel", json.dumps(public_native["output"]))
+        self.assertIn({
+            "tool": "evalFixture_native_sentinel", "args": {"marker": "public-native-sentinel"},
+        }, SMOKE.RUN.tool_result_actions(evidence))
 
 
 if __name__ == "__main__":
