@@ -12684,7 +12684,6 @@ test("current foreground Task metadata overrides an older durable background bin
     undefined,
     undefined,
     undefined,
-    undefined,
     subagentDispatchContext(generalSession, false),
   )
   try {
@@ -12768,7 +12767,6 @@ test("child-controlled output cannot forge a background binding", async () => {
       sessionID === childSession
         ? { id: sessionID, projectID, parentID: generalSession }
         : { id: sessionID, projectID },
-    undefined,
     undefined,
     undefined,
     undefined,
