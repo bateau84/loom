@@ -3050,6 +3050,71 @@ function questionState(questions: OpenQuestion[], workflow: Workflow) {
   }
 }
 
+type BackgroundChildBinding = {
+  schemaVersion: 1
+  projectId: string
+  workflowId: string
+  parentSessionID: string
+  childSessionID: string
+  active: boolean
+  observedAt: string
+}
+
+function backgroundChildBindingKey(childSessionID: string) {
+  return `background-child/${encodeURIComponent(childSessionID)}`
+}
+
+function nativeSubagentTool(tool: string) {
+  const normalized = tool.toLowerCase()
+  return normalized === "task" || normalized === "subagent"
+}
+
+function subagentTaskID(input: unknown) {
+  if (!recordValue(input)) return undefined
+  const value = input.task_id ?? input.taskId
+  return typeof value === "string" && value.trim() ? value.trim() : undefined
+}
+
+function subagentRequestedBackground(input: unknown) {
+  return recordValue(input) && input.background === true
+}
+
+function subagentResultMetadata(value: unknown, depth = 0): Record<string, unknown> | undefined {
+  if (depth > 10 || value === null || value === undefined) return undefined
+  if (typeof value === "string") {
+    try {
+      return subagentResultMetadata(JSON.parse(value), depth + 1)
+    } catch {
+      return undefined
+    }
+  }
+  if (Array.isArray(value)) {
+    for (let index = value.length - 1; index >= 0; index--) {
+      const metadata = subagentResultMetadata(value[index], depth + 1)
+      if (metadata) return metadata
+    }
+    return undefined
+  }
+  if (!recordValue(value)) return undefined
+
+  const metadata = recordValue(value.metadata) ? value.metadata : undefined
+  if (
+    metadata &&
+    typeof metadata.parentSessionId === "string" &&
+    typeof metadata.sessionId === "string" &&
+    recordValue(metadata.model)
+  ) {
+    return metadata
+  }
+
+  const entries = Object.values(value)
+  for (let index = entries.length - 1; index >= 0; index--) {
+    const metadata = subagentResultMetadata(entries[index], depth + 1)
+    if (metadata) return metadata
+  }
+  return undefined
+}
+
 function backgroundSubagentBindingInContext(
   value: unknown,
   childSessionID: string,
@@ -3089,9 +3154,23 @@ function backgroundSubagentBindingInContext(
 
 async function backgroundCoordinatorSessionForChild(
   ctx: any,
+  runtime: LoomRuntimeIdentity,
   workflow: Workflow,
   childSessionID: string,
 ) {
+  const persisted = (await ctx.storage.get(
+    backgroundChildBindingKey(childSessionID),
+  )) as BackgroundChildBinding | undefined
+  if (
+    persisted?.schemaVersion === 1 &&
+    persisted.projectId === runtime.projectId &&
+    persisted.workflowId === workflow.id &&
+    persisted.parentSessionID === workflow.createdBySession &&
+    persisted.childSessionID === childSessionID
+  ) {
+    return persisted.active ? persisted.parentSessionID : undefined
+  }
+
   try {
     const child = await ctx.session.get({ sessionID: childSessionID })
     const parentID = typeof child?.parentID === "string" ? child.parentID : ""
@@ -3102,8 +3181,9 @@ async function backgroundCoordinatorSessionForChild(
       ? parentID
       : undefined
   } catch {
-    // Background-return assistance is best effort. Authoritative Loom state
-    // must remain valid even when host session metadata cannot be inspected.
+    // A brand-new background child can finish before the parent's Task
+    // execute-after hook persists its binding. Context inspection is only that
+    // race-safe fallback; durable bindings own normal and compacted histories.
     return undefined
   }
 }
@@ -3130,6 +3210,7 @@ async function notifyBackgroundChildCoordinator(
 
   const generalSessionID = await backgroundCoordinatorSessionForChild(
     ctx,
+    runtime,
     workflow,
     childSessionID,
   )
@@ -12147,6 +12228,29 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
       await revalidateDirectMutationUnderLock(raw, directMutationPaths)
 
+      if (nativeSubagentTool(tool) && raw.sessionID) {
+        const parentSessionID = String(raw.sessionID)
+        const input = toolHookInput(raw)
+        const existingChildSessionID = subagentTaskID(input)
+        if (existingChildSessionID) {
+          const workflow = await activeWorkflow(ctx, parentSessionID, ensureLegacySession)
+          if (workflow?.createdBySession === parentSessionID) {
+            await ctx.storage.set(
+              backgroundChildBindingKey(existingChildSessionID),
+              {
+                schemaVersion: 1,
+                projectId: runtime.projectId,
+                workflowId: workflow.id,
+                parentSessionID,
+                childSessionID: existingChildSessionID,
+                active: subagentRequestedBackground(input),
+                observedAt: new Date().toISOString(),
+              } satisfies BackgroundChildBinding,
+            )
+          }
+        }
+      }
+
       if (tool === "question") {
         const sessionID = String(raw.sessionID ?? "").trim()
         if (!sessionID) {
@@ -12330,6 +12434,33 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       if (!tool) return
 
       try {
+      if (nativeSubagentTool(tool) && raw.sessionID) {
+        const parentSessionID = String(raw.sessionID)
+        const metadata = subagentResultMetadata(raw.result ?? raw.output)
+        const childSessionID =
+          typeof metadata?.sessionId === "string" ? metadata.sessionId : undefined
+        if (
+          childSessionID &&
+          metadata?.parentSessionId === parentSessionID
+        ) {
+          const workflow = await activeWorkflow(ctx, parentSessionID, ensureLegacySession)
+          if (workflow?.createdBySession === parentSessionID) {
+            await ctx.storage.set(
+              backgroundChildBindingKey(childSessionID),
+              {
+                schemaVersion: 1,
+                projectId: runtime.projectId,
+                workflowId: workflow.id,
+                parentSessionID,
+                childSessionID,
+                active: metadata.background === true,
+                observedAt: new Date().toISOString(),
+              } satisfies BackgroundChildBinding,
+            )
+          }
+        }
+      }
+
       if (tool === "question" && raw.sessionID) {
         const sessionID = String(raw.sessionID)
         const input = toolHookInput(raw)
