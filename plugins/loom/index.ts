@@ -3069,16 +3069,6 @@ function nativeSubagentTool(tool: string) {
   return normalized === "task" || normalized === "subagent"
 }
 
-function subagentTaskID(input: unknown) {
-  if (!recordValue(input)) return undefined
-  const value = input.task_id ?? input.taskId
-  return typeof value === "string" && value.trim() ? value.trim() : undefined
-}
-
-function subagentRequestedBackground(input: unknown) {
-  return recordValue(input) && input.background === true
-}
-
 function subagentResultMetadata(value: unknown): Record<string, unknown> | undefined {
   // OpenCode V2 exposes built-in Task metadata on the host-owned tool result
   // envelope. Never inspect or parse child-controlled output text for identity.
@@ -3112,17 +3102,23 @@ function backgroundSubagentBindingInContext(
   if (!recordValue(value)) return undefined
 
   let observed: boolean | undefined
-  const metadata = recordValue(value.metadata) ? value.metadata : undefined
   if (
-    metadata &&
-    metadata.sessionId === childSessionID &&
-    typeof metadata.parentSessionId === "string" &&
-    recordValue(metadata.model)
+    value.type === "tool" &&
+    nativeSubagentTool(String(value.tool ?? value.name ?? "")) &&
+    recordValue(value.state)
   ) {
-    // OpenCode keeps historical Task parts in session context. The same child
-    // session may later be resumed via task_id, so only the latest matching
-    // Task metadata decides whether its current invocation is backgrounded.
-    observed = metadata.background === true
+    const metadata = recordValue(value.state.metadata) ? value.state.metadata : undefined
+    if (
+      metadata &&
+      metadata.sessionId === childSessionID &&
+      typeof metadata.parentSessionId === "string" &&
+      recordValue(metadata.model)
+    ) {
+      // OpenCode keeps historical Task parts in session context. The same child
+      // session may later be resumed via task_id, so only the latest matching
+      // host-owned Task part decides whether its current invocation is backgrounded.
+      observed = metadata.background === true
+    }
   }
 
   for (const entry of Object.values(value)) {
@@ -3138,6 +3134,21 @@ async function backgroundCoordinatorSessionForChild(
   workflow: Workflow,
   childSessionID: string,
 ) {
+  let parentID = ""
+  try {
+    const child = await ctx.session.get({ sessionID: childSessionID })
+    parentID = typeof child?.parentID === "string" ? child.parentID : ""
+    if (!parentID || parentID !== workflow.createdBySession) return undefined
+
+    const parentContext = await ctx.session.context({ sessionID: parentID })
+    const current = backgroundSubagentBindingInContext(parentContext, childSessionID)
+    if (current !== undefined) return current ? parentID : undefined
+  } catch {
+    // Fall through to Loom's durable background binding. Current host Task
+    // metadata is preferred whenever available because it reflects task_id
+    // reuse and foreground/background promotion without stale-history guesses.
+  }
+
   const persisted = (await ctx.storage.get(
     backgroundChildBindingKey(childSessionID),
   )) as BackgroundChildBinding | undefined
@@ -3146,26 +3157,12 @@ async function backgroundCoordinatorSessionForChild(
     persisted.projectId === runtime.projectId &&
     persisted.workflowId === workflow.id &&
     persisted.parentSessionID === workflow.createdBySession &&
-    persisted.childSessionID === childSessionID
+    persisted.childSessionID === childSessionID &&
+    persisted.active
   ) {
-    return persisted.active ? persisted.parentSessionID : undefined
+    return persisted.parentSessionID
   }
-
-  try {
-    const child = await ctx.session.get({ sessionID: childSessionID })
-    const parentID = typeof child?.parentID === "string" ? child.parentID : ""
-    if (!parentID || parentID !== workflow.createdBySession) return undefined
-
-    const parentContext = await ctx.session.context({ sessionID: parentID })
-    return backgroundSubagentBindingInContext(parentContext, childSessionID)
-      ? parentID
-      : undefined
-  } catch {
-    // A brand-new background child can finish before the parent's Task
-    // execute-after hook persists its binding. Context inspection is only that
-    // race-safe fallback; durable bindings own normal and compacted histories.
-    return undefined
-  }
+  return undefined
 }
 
 type BackgroundCoordinatorReturn = {
@@ -12207,29 +12204,6 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       )
 
       await revalidateDirectMutationUnderLock(raw, directMutationPaths)
-
-      if (nativeSubagentTool(tool) && raw.sessionID) {
-        const parentSessionID = String(raw.sessionID)
-        const input = toolHookInput(raw)
-        const existingChildSessionID = subagentTaskID(input)
-        if (existingChildSessionID) {
-          const workflow = await activeWorkflow(ctx, parentSessionID, ensureLegacySession)
-          if (workflow?.createdBySession === parentSessionID) {
-            await ctx.storage.set(
-              backgroundChildBindingKey(existingChildSessionID),
-              {
-                schemaVersion: 1,
-                projectId: runtime.projectId,
-                workflowId: workflow.id,
-                parentSessionID,
-                childSessionID: existingChildSessionID,
-                active: subagentRequestedBackground(input),
-                observedAt: new Date().toISOString(),
-              } satisfies BackgroundChildBinding,
-            )
-          }
-        }
-      }
 
       if (tool === "question") {
         const sessionID = String(raw.sessionID ?? "").trim()
