@@ -12499,40 +12499,7 @@ test("background governed step completion queues General while foreground comple
       undefined,
       undefined,
       undefined,
-      (sessionID) =>
-        sessionID === generalSession
-          ? [
-              {
-                role: "assistant",
-                parts: [{
-                  type: "tool",
-                  tool: "subagent",
-                  state: {
-                    metadata: {
-                      parentSessionId: generalSession,
-                      sessionId: childSession,
-                      model: { providerID: "test", modelID: "test" },
-                      ...(!background ? { background: true, jobId: childSession } : {}),
-                    },
-                  },
-                }],
-              },
-              {
-                role: "assistant",
-                parts: [{
-                  type: "tool",
-                  state: {
-                    metadata: {
-                      parentSessionId: generalSession,
-                      sessionId: childSession,
-                      model: { providerID: "test", modelID: "test" },
-                      ...(background ? { background: true, jobId: childSession } : {}),
-                    },
-                  },
-                }],
-              },
-            ]
-          : [],
+      subagentDispatchContext(generalSession, background),
     )
 
     try {
@@ -12565,6 +12532,7 @@ test("background governed step completion queues General while foreground comple
         "general",
         generalSession,
       )
+      await admitTestSubagentDispatch(h, generalSession, "worker")
       expect((await h.call(
         "attach",
         { grantId: grant.grantId, workflowId, stepId: "worker" },
