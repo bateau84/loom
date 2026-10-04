@@ -729,6 +729,308 @@ class CredentialInventory:
         return {(item.source, item.location, item.role, item.value) for item in self.entries}
 
 
+RUNNER_SAFETY_IMAGE = (
+    "ghcr.io/bateau84/opencode-eval-runner@"
+    "sha256:328723ec9f0196a694ecf631fc76e2108094c005aed8f01d2dfab0d0c585b03a"
+)
+RUNNER_SAFETY_SOURCE = "d2ce384b49d888f1ab106b2ef66b4def2d4d7de6"
+RUNNER_SAFE_RESULT_SCHEMA = "opencode-eval-runner/safe-result/v1"
+RUNNER_SAFE_EVENTS_SCHEMA = "opencode-eval-runner/safe-tool-results/v1"
+RUNNER_SAFETY_ACK_SCHEMA = "opencode-eval-runner/evidence-safety-ack/v1"
+RUNNER_SAFETY_VALIDATION_SCHEMA = "opencode-eval-runner/evidence-safety-validation/v1"
+EVIDENCE_SAFETY_SCHEMA = "loom-eval-evidence-safety/v1"
+EVIDENCE_SAFETY_REASONS = {
+    "credential_match", "sensitive_key", "inventory_incomplete", "upstream_clipped",
+    "unsupported_schema", "unsupported_representation", "opaque_payload_unverified",
+    "size_limit", "missing", "invalid", "write_failed",
+}
+
+
+def _sha256_file(path: str) -> str | None:
+    try:
+        digest = hashlib.sha256()
+        with open(path, "rb") as stream:
+            for block in iter(lambda: stream.read(1024 * 1024), b""):
+                digest.update(block)
+        return digest.hexdigest()
+    except OSError:
+        return None
+
+
+def _valid_evidence_safety_summary(value: Any, inventory: CredentialInventory) -> bool:
+    if not isinstance(value, dict) or set(value) != {
+        "schema", "policy_version", "inventory_complete", "coverage_complete", "fields", "loss_counts",
+    }:
+        return False
+    if (value.get("schema") != EVIDENCE_SAFETY_SCHEMA or
+            value.get("policy_version") != "source-path-roles/v1" or
+            type(value.get("inventory_complete")) is not bool or
+            type(value.get("coverage_complete")) is not bool or
+            type(value.get("fields")) is not list or
+            len(value["fields"]) > 10_000):
+        return False
+    if inventory.complete is False and value["inventory_complete"] is True:
+        return False
+    loss_counts = value.get("loss_counts")
+    if (not isinstance(loss_counts, dict) or set(loss_counts) != EVIDENCE_SAFETY_REASONS or
+            any(type(count) is not int or count < 0 for count in loss_counts.values())):
+        return False
+    seen: set[tuple[int | None, str]] = set()
+    observed_counts = dict.fromkeys(EVIDENCE_SAFETY_REASONS, 0)
+    for entry in value["fields"]:
+        if not isinstance(entry, dict):
+            return False
+        state = entry.get("state")
+        expected_keys = {"event", "field", "state"} if state == "exact" else {
+            "event", "field", "state", "reason", "stage",
+        }
+        event_id, field = entry.get("event"), entry.get("field")
+        if (set(entry) != expected_keys or event_id is not None and
+                (type(event_id) is not int or event_id < 0) or
+                not isinstance(field, str) or not field or
+                (event_id, field) in seen or state not in {"exact", "redacted", "omitted"}):
+            return False
+        seen.add((event_id, field))
+        if state != "exact":
+            reason = entry.get("reason")
+            if (reason not in EVIDENCE_SAFETY_REASONS or
+                    entry.get("stage") != "runner" or
+                    state == "redacted" and reason != "credential_match"):
+                return False
+            observed_counts[reason] += 1
+        if not value["inventory_complete"] and state != "omitted":
+            return False
+    return observed_counts == loss_counts
+
+
+def _admit_runner_safety_result(
+    result: Any,
+    inventory: CredentialInventory,
+    image: str,
+    runner_bin: str,
+) -> dict[str, Any] | None:
+    """Validate the pinned RSP candidate envelope before exposing any payload."""
+    try:
+        if not isinstance(result, dict) or result.get("schema") != RUNNER_SAFE_RESULT_SCHEMA:
+            return None
+        acknowledgement = result.get("evidence_safety_ack")
+        loaded = result.get("evidence_load")
+        validation = result.get("evidence_safety_validation")
+        if not isinstance(acknowledgement, dict) or not isinstance(loaded, dict) or not isinstance(validation, dict):
+            return None
+        if set(acknowledgement) != {
+            "schema", "consumer", "run_id", "policy_schema", "policy_version", "projection_schema",
+            "stages", "policy_valid", "inventory_complete", "module_sha256",
+            "image_source_revision", "policy_receipt",
+        } or set(loaded) != {
+            "image", "image_config", "image_source_revision", "host_executable_sha256",
+            "host_adapter_sha256", "policy_module_sha256", "host_source_revision",
+            "host_tracked_tree_clean",
+        } or set(validation) != {"schema", "acknowledged", "stages"}:
+            return None
+        expected_stages = ["container.before_clip", "container.before_output"]
+        if (acknowledgement.get("schema") != RUNNER_SAFETY_ACK_SCHEMA or
+                acknowledgement.get("consumer") != "runner-evidence-safety/v1" or
+                acknowledgement.get("policy_schema") != "loom-eval-credential-inventory/v1" or
+                acknowledgement.get("policy_version") != "source-path-roles/v1" or
+                acknowledgement.get("projection_schema") != EVIDENCE_SAFETY_SCHEMA or
+                acknowledgement.get("stages") != expected_stages or
+                acknowledgement.get("policy_valid") is not True or
+                type(acknowledgement.get("inventory_complete")) is not bool or
+                acknowledgement["inventory_complete"] and not inventory.complete or
+                not re.fullmatch(r"[0-9a-f]{64}", str(acknowledgement.get("run_id") or "")) or
+                not re.fullmatch(r"[0-9a-f]{64}", str(acknowledgement.get("module_sha256") or "")) or
+                acknowledgement.get("image_source_revision") != RUNNER_SAFETY_SOURCE or
+                not re.fullmatch(r"[0-9a-f]{64}", str(acknowledgement.get("policy_receipt") or ""))):
+            return None
+        if (validation.get("schema") != RUNNER_SAFETY_VALIDATION_SCHEMA or
+                validation.get("acknowledged") is not True or
+                validation.get("stages") != ["host.before_write", "host.before_print"]):
+            return None
+        if (loaded.get("image") != image or image != RUNNER_SAFETY_IMAGE or
+                loaded.get("image_source_revision") != RUNNER_SAFETY_SOURCE or
+                loaded.get("host_source_revision") != RUNNER_SAFETY_SOURCE or
+                loaded.get("host_tracked_tree_clean") is not True or
+                loaded.get("host_executable_sha256") != _sha256_file(runner_bin) or
+                not re.fullmatch(r"sha256:[0-9a-f]{64}", str(loaded.get("image_config") or "")) or
+                any(not re.fullmatch(r"[0-9a-f]{64}", str(loaded.get(name) or "")) for name in (
+                    "host_adapter_sha256", "policy_module_sha256")) or
+                acknowledgement.get("module_sha256") != loaded.get("policy_module_sha256")):
+            return None
+        safety = result.get("evidence_safety")
+        if (not _valid_evidence_safety_summary(safety, inventory) or
+                safety["inventory_complete"] != acknowledgement["inventory_complete"]):
+            return None
+        top_dispositions = {
+            entry["field"]: entry for entry in safety["fields"] if entry.get("event") is None
+        }
+        required_dispositions = {
+            "model", "reasoning", "agent", "skill", "session_id", "credential_source",
+            "stdout", "stderr", "plugin_diagnostic", "plugin_preflight", "text", "tools",
+            "actions", "skills_loaded", "timing", "tool_result_evidence",
+        }
+        if not required_dispositions.issubset(top_dispositions):
+            return None
+        for name in required_dispositions:
+            disposition = top_dispositions[name]
+            if name in result:
+                if disposition["state"] == "omitted":
+                    return None
+            elif disposition["state"] != "omitted":
+                return None
+        allowed_root = {
+            "schema", "transport", "reasoning_source", "exit_code", "timed_out", "infrastructure_error",
+            "stdout_total_chars", "stderr_total_chars", "stdout_truncated", "stderr_truncated",
+            "model", "reasoning", "agent", "skill", "session_id", "credential_source", "text", "tools",
+            "actions", "skills_loaded", "timing", "tool_result_evidence", "evidence_safety",
+            "evidence_safety_ack", "evidence_load", "evidence_safety_validation",
+        }
+        if set(result) - allowed_root:
+            return None
+        for name in ("text", "tools", "actions", "skills_loaded", "model", "reasoning", "agent", "skill", "session_id"):
+            disposition = next((entry for entry in safety["fields"]
+                                if entry.get("event") is None and entry.get("field") == name), None)
+            if name in result and (disposition is None or disposition.get("state") == "omitted"):
+                return None
+            if name not in result and disposition is not None and disposition.get("state") != "omitted":
+                return None
+        events = result.get("tool_result_evidence")
+        if events is not None:
+            if (not isinstance(events, dict) or set(events) != {
+                    "schema", "source", "observed_events", "omitted_events", "events"} or
+                    events.get("schema") != RUNNER_SAFE_EVENTS_SCHEMA or
+                    events.get("source") != "opencode.event-stream.full" or
+                    type(events.get("observed_events")) is not int or events["observed_events"] < 0 or
+                    type(events.get("omitted_events")) is not int or events["omitted_events"] < 0 or
+                    not isinstance(events.get("events"), list) or len(events["events"]) > 64 or
+                    events["observed_events"] - events["omitted_events"] != len(events["events"])):
+                return None
+            rows = []
+            seen_sequences: set[int] = set()
+            for event in events["events"]:
+                if (not isinstance(event, dict) or set(event) - {
+                        "sequence", "status", "tool", "call_id", "session_id", "input", "output", "error"} or
+                        type(event.get("sequence")) is not int or event["sequence"] < 1 or
+                        event.get("status") not in {"pending", "running", "completed", "error"}):
+                    return None
+                if event["sequence"] > events["observed_events"] or event["sequence"] in seen_sequences:
+                    return None
+                seen_sequences.add(event["sequence"])
+                ordinal = event["sequence"] - 1
+                dispositions = {entry["field"]: entry for entry in safety["fields"] if entry["event"] == ordinal}
+                row = {"sequence": event["sequence"], "status": event["status"],
+                       "truncated_fields": [], "missing_fields": [], "evidence_safety": {}}
+                checked_fields = ["tool", "call_id", "session_id", "input"]
+                if event["status"] == "error":
+                    checked_fields.append("error")
+                elif event["status"] == "completed":
+                    checked_fields.append("output")
+                elif any(field in event for field in ("output", "error")):
+                    checked_fields.extend(field for field in ("output", "error") if field in event)
+                else:
+                    checked_fields.append("output")
+                for field in checked_fields:
+                    disposition = dispositions.get(field)
+                    if disposition is None:
+                        return None
+                    row["evidence_safety"][field] = {
+                        key: value for key, value in disposition.items() if key not in {"event", "field"}
+                    }
+                    if disposition["state"] != "exact":
+                        row["truncated_fields"].append(field)
+                    if field in event:
+                        if disposition["state"] == "omitted":
+                            return None
+                        value = event[field]
+                        if field == "input":
+                            if not isinstance(value, dict):
+                                return None
+                            value = json.dumps(value, ensure_ascii=False, sort_keys=True)
+                        elif field in {"output", "error"} and not isinstance(value, str):
+                            value = json.dumps(value, ensure_ascii=False, sort_keys=True)
+                        row[field] = value
+                    elif disposition["state"] != "omitted":
+                        return None
+                    elif field in {"input", "output", "error"}:
+                        row["missing_fields"].append(field)
+                if "input" in row and not isinstance(json.loads(row["input"]), dict):
+                    return None
+                if event["status"] == "error" and "output" in row:
+                    return None
+                if event["status"] == "completed" and "error" in row:
+                    return None
+                rows.append(row)
+            result = {**result, "tool_result_evidence": {
+                "schema": RUNNER_SAFE_EVENTS_SCHEMA,
+                "source": "opencode.event-stream.full",
+                "observed_events": events["observed_events"],
+                "omitted_events": events["omitted_events"],
+                "invalid_events": 0,
+                "unparsed_lines": 0,
+                "execute_events": sum(row.get("tool") == "execute" for row in rows),
+                "nested_metadata_parents": 0,
+                "nested_tool_calls_observed": 0,
+                "nested_tool_calls_omitted": 0,
+                "metadata_tool_capture_complete": not any(row.get("tool") == "execute" for row in rows),
+                "nested_tool_calls": [],
+                "events": rows,
+                "evidence_safety": safety,
+            }}
+        return result
+    except (KeyError, TypeError, ValueError, RecursionError):
+        return None
+
+
+def runner_safety_failure(reason: str = "runner evidence-safety admission failed") -> dict[str, Any]:
+    return {
+        "exit_code": 2,
+        "text": "",
+        "tools": [],
+        "actions": [],
+        "stderr": reason,
+        "infrastructure_error": True,
+        "evidence_safety": {
+            "schema": EVIDENCE_SAFETY_SCHEMA,
+            "policy_version": "source-path-roles/v1",
+            "inventory_complete": False,
+            "coverage_complete": False,
+            "fields": {},
+        },
+        "observed_tool_results": {
+            "schema": RUNNER_SAFE_EVENTS_SCHEMA,
+            "source": "unavailable",
+            "observed_events": 0,
+            "omitted_events": 0,
+            "events": [],
+            "metadata_tool_capture_complete": False,
+            "nested_tool_calls": [],
+            "nested_tool_calls_observed": 0,
+            "nested_tool_calls_omitted": 0,
+            "execute_events": 0,
+            "nested_metadata_parents": 0,
+            "evidence_safety": {
+                "schema": EVIDENCE_SAFETY_SCHEMA,
+                "policy_version": "source-path-roles/v1",
+                "inventory_complete": False,
+                "coverage_complete": False,
+                "fields": [],
+                "loss_counts": dict.fromkeys(EVIDENCE_SAFETY_REASONS, 0),
+            },
+        },
+    }
+
+
+def write_private_policy(path: Path, policy: dict[str, Any]) -> None:
+    raw = json.dumps(policy, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    if len(raw) > 128_000:
+        raise ValueError("credential inventory exceeds the runner policy limit")
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, "wb") as stream:
+        stream.write(raw)
+        stream.flush()
+
+
+
 def credential_inventory_from_values(values: list[str]) -> CredentialInventory:
     """Build a complete private matcher inventory for focused synthetic tests."""
     return CredentialInventory(
@@ -1848,9 +2150,8 @@ def transport_tool_result_evidence(
 def prepare_transport_result(
     result: dict[str, Any], secrets: list[str], inventory: CredentialInventory | None = None,
 ) -> dict[str, Any]:
-    # Compute evidence before constructing the public transport result. With an
-    # empty secret set, redact_sensitive_values returns its input unchanged, so
-    # mutating that object first would erase the runner projection we need.
+    # Project from the source result before constructing the public transport
+    # object; later field omission must not erase the event stream being parsed.
     evidence = transport_tool_result_evidence(result, secrets, inventory)
     redacted: dict[str, Any] = {}
     transport_fields: dict[str, dict[str, Any]] = {}
@@ -1998,8 +2299,14 @@ def invoke_container(
     skill: str | None = None,
     network: str | None = None,
     reasoning: str | None = None,
+    require_runner_evidence_safety: bool = False,
     normal_observation_payload_policy: str = NORMAL_PAYLOAD_POLICY_OMIT,
 ) -> dict[str, Any]:
+    if require_runner_evidence_safety and (
+        transport != "opencode" or image != RUNNER_SAFETY_IMAGE or
+        "OPENCODE_EVAL_REDACTION_VALUES" in extra_envs
+    ):
+        return runner_safety_failure()
     node_modules = prepare_node_modules_mount(
         project,
         ROOT / "node_modules" if mount_node_modules else None,
@@ -2041,14 +2348,23 @@ def invoke_container(
         policy_bytes = json.dumps(policy, separators=(",", ":")).encode("utf-8")
     host_env["OPENCODE_EVAL_REDACTION_VALUES"] = policy_bytes.decode("utf-8")
     runner_bin = os.environ.get("OPENCODE_EVAL_RUNNER_BIN") or shutil.which("opencode-eval-runner")
+    if require_runner_evidence_safety and not runner_bin:
+        # Safety mode must not fall back to the unacknowledged direct-container path.
+        return runner_safety_failure()
     if runner_bin:
         with tempfile.TemporaryDirectory(prefix="loom-eval-runner-cli-") as tmp:
             root = Path(tmp)
             prompt_file = root / "prompt.txt"
             system_file = root / "system.txt"
             result_file = root / "result.json"
+            policy_file = root / "inventory.json"
             prompt_file.write_text(prompt, encoding="utf-8")
             system_file.write_text(system, encoding="utf-8")
+            if require_runner_evidence_safety:
+                try:
+                    write_private_policy(policy_file, inventory.private_policy())
+                except (OSError, ValueError):
+                    return runner_safety_failure()
 
             command = [
                 runner_bin,
@@ -2085,11 +2401,13 @@ def invoke_container(
                 command += ["--config-root", str(config_root)]
             if expected_plugin:
                 command += ["--expected-plugin", expected_plugin]
+            if require_runner_evidence_safety:
+                command += ["--require-evidence-safety", "--evidence-policy-file", str(policy_file)]
             if node_modules:
                 command += ["--mount", f"{node_modules}:/workspace/node_modules:ro"]
             for name in extra_envs:
                 command += ["--env", name]
-            if normal_invoke_observations_enabled():
+            if normal_invoke_observations_enabled() and not require_runner_evidence_safety:
                 for name in ("OPENCODE_EVAL_HOST_OBSERVATIONS", "OPENCODE_EVAL_OBSERVATIONS", "OPENCODE_EVAL_REDACTION_VALUES", "OPENCODE_EVAL_NORMAL_OBSERVATION_PAYLOAD_POLICY"):
                     if name not in extra_envs:
                         command += ["--env", name]
@@ -2104,6 +2422,8 @@ def invoke_container(
                 check=False,
             )
             if not result_file.is_file():
+                if require_runner_evidence_safety:
+                    return runner_safety_failure()
                 detail = " | ".join(
                     redact_sensitive_text(part, secrets).strip()
                     for part in (proc.stderr, proc.stdout)
@@ -2121,7 +2441,9 @@ def invoke_container(
                 }
             try:
                 result = json.loads(result_file.read_text(encoding="utf-8"))
-            except json.JSONDecodeError as exc:
+            except (OSError, json.JSONDecodeError):
+                if require_runner_evidence_safety:
+                    return runner_safety_failure()
                 return redact_sensitive_values({
                     "exit_code": proc.returncode,
                     "text": "",
@@ -2132,6 +2454,8 @@ def invoke_container(
                     "infrastructure_error": True,
                 }, secrets)
             if not isinstance(result, dict):
+                if require_runner_evidence_safety:
+                    return runner_safety_failure()
                 return redact_sensitive_values({
                     "exit_code": proc.returncode,
                     "text": "",
@@ -2141,8 +2465,37 @@ def invoke_container(
                     "stdout": redacted_prefix(proc.stdout, secrets, 100000),
                     "infrastructure_error": True,
                 }, secrets)
-            prepared = prepare_transport_result(result, secrets, inventory)
-            prepared = attach_observer_capture(prepared, project, secrets)
+            if require_runner_evidence_safety:
+                admitted = _admit_runner_safety_result(result, inventory, image, runner_bin)
+                if admitted is None:
+                    return runner_safety_failure()
+                prepared = {
+                    **{key: value for key, value in admitted.items() if key not in {
+                        "evidence_safety_ack", "evidence_safety_validation", "evidence_load", "tool_result_evidence",
+                    }},
+                    "evidence_load": admitted.get("evidence_load"),
+                    "evidence_safety_ack": admitted.get("evidence_safety_ack"),
+                    "evidence_safety_validation": admitted.get("evidence_safety_validation"),
+                    "evidence_safety": admitted["evidence_safety"],
+                    "observed_tool_results": admitted.get("tool_result_evidence") or {
+                        "schema": RUNNER_SAFE_EVENTS_SCHEMA,
+                        "source": "opencode.event-stream.full",
+                        "observed_events": 0,
+                        "omitted_events": 0,
+                        "events": [],
+                        "metadata_tool_capture_complete": False,
+                        "nested_tool_calls": [],
+                        "nested_tool_calls_observed": 0,
+                        "nested_tool_calls_omitted": 0,
+                        "execute_events": 0,
+                        "nested_metadata_parents": 0,
+                        "evidence_safety": admitted["evidence_safety"],
+                    },
+                }
+            else:
+                prepared = prepare_transport_result(result, secrets, inventory)
+            if not require_runner_evidence_safety:
+                prepared = attach_observer_capture(prepared, project, secrets)
             return enforce_reasoning_contract(prepared, reasoning)
 
     with tempfile.TemporaryDirectory(prefix="loom-eval-invoke-") as tmp:
@@ -2356,6 +2709,9 @@ def tool_result_actions(tool_results: dict[str, Any] | None) -> list[dict[str, A
         schema == "opencode-eval-runner/tool-results/v1" and
         tool_results.get("source") == "opencode.event-stream.full"
     ) or (
+        schema == RUNNER_SAFE_EVENTS_SCHEMA and
+        tool_results.get("source") == "opencode.event-stream.full"
+    ) or (
         schema == "loom-tool-results/v1" and
         tool_results.get("source") == "target.stdout"
     )
@@ -2369,10 +2725,14 @@ def tool_result_actions(tool_results: dict[str, Any] | None) -> list[dict[str, A
             continue
         if any(field in (event.get("truncated_fields") or []) for field in ("tool", "input")):
             continue
-        try:
-            args = json.loads(str(event.get("input") or "{}"))
-        except (TypeError, ValueError, RecursionError):
-            continue
+        input_value = event.get("input")
+        if isinstance(input_value, dict) and schema == RUNNER_SAFE_EVENTS_SCHEMA:
+            args = input_value
+        else:
+            try:
+                args = json.loads(str(input_value or "{}"))
+            except (TypeError, ValueError, RecursionError):
+                continue
         if isinstance(args, dict):
             actions.append({"tool": event["tool"], "args": args})
     nested, _ = nested_metadata_call_events(tool_results)
@@ -3186,6 +3546,19 @@ def retryable_transport_error(result: dict[str, Any]) -> bool:
     return "provider.no-route" in lowered and "model unavailable" in lowered
 
 
+def transport_field_disposition(result: dict[str, Any], field: str) -> dict[str, Any] | None:
+    safety = result.get("evidence_safety")
+    fields = safety.get("fields") if isinstance(safety, dict) else None
+    if isinstance(fields, dict):
+        value = fields.get(field)
+        return value if isinstance(value, dict) else None
+    if isinstance(fields, list):
+        for value in fields:
+            if isinstance(value, dict) and value.get("event") is None and value.get("field") == field:
+                return value
+    return None
+
+
 def invoke_container_with_retry(
     *,
     retries: int = 2,
@@ -3518,6 +3891,7 @@ def run_skill_ablation_case(
             skill=skill if with_skill and args.target_transport == "opencode" else None,
             network=args.network,
             reasoning=target_reasoning,
+            require_runner_evidence_safety=getattr(args, "runner_evidence_safety", False),
         )
 
     def run_judge(target: dict[str, Any]) -> tuple[dict[str, Any] | None, dict[str, Any] | None, str | None]:
@@ -3545,6 +3919,7 @@ def run_skill_ablation_case(
             skill=None,
             network=args.network,
             reasoning=judge_reasoning,
+            require_runner_evidence_safety=getattr(args, "runner_evidence_safety", False),
         )
         error = transport_error(result)
         if error:
@@ -3855,13 +4230,13 @@ def run_case(
             ),
             network=args.network,
             reasoning=target_reasoning,
+            require_runner_evidence_safety=getattr(args, "runner_evidence_safety", False),
         )
         target_seconds = time.perf_counter() - target_started
         target_error = transport_error(target)
-        target_safety = target.get("evidence_safety")
-        target_fields = target_safety.get("fields") if isinstance(target_safety, dict) else None
-        if not target_error and isinstance(target_fields, dict) and any(
-            isinstance(target_fields.get(field), dict) and target_fields[field].get("state") != "exact"
+        if not target_error and any(
+            isinstance(transport_field_disposition(target, field), dict) and
+            transport_field_disposition(target, field).get("state") != "exact"
             for field in ("text", "actions", "tools", "skills_loaded")
         ):
             target_error = "non-evidence: required transport payload was redacted or omitted"
@@ -3924,14 +4299,13 @@ def run_case(
                 skill=None,
                 network=args.network,
                 reasoning=judge_reasoning,
+                require_runner_evidence_safety=getattr(args, "runner_evidence_safety", False),
             )
             judge_seconds = time.perf_counter() - judge_started
             judge_error = transport_error(judge_result)
-            judge_safety = judge_result.get("evidence_safety")
-            judge_fields = judge_safety.get("fields") if isinstance(judge_safety, dict) else None
-            if not judge_error and isinstance(judge_fields, dict) and (
-                isinstance(judge_fields.get("text"), dict) and judge_fields["text"].get("state") != "exact"
-            ):
+            judge_text_disposition = transport_field_disposition(judge_result, "text")
+            if (not judge_error and isinstance(judge_text_disposition, dict) and
+                    judge_text_disposition.get("state") != "exact"):
                 judge_error = "non-evidence: judge response was redacted or omitted"
             print(
                 f"{case_label} judge {'ERROR' if judge_error else 'done'} in {judge_seconds:.1f}s",
@@ -4078,6 +4452,11 @@ def main() -> int:
     parser.add_argument("--image", help="Override both transport images with one explicit image.")
     parser.add_argument("--opencode-image")
     parser.add_argument("--copilot-image")
+    parser.add_argument(
+        "--runner-evidence-safety",
+        action="store_true",
+        help="Opt in to the candidate runner RSP adapter; requires its explicit immutable OpenCode image digest.",
+    )
     parser.add_argument("--auth")
     parser.add_argument("--provider-config")
     parser.add_argument("--models-catalog")
@@ -4152,6 +4531,15 @@ def main() -> int:
                 ",".join(case["requirements"]),
             ))
         return 0
+
+    if args.runner_evidence_safety and (
+        args.target_transport != "opencode" or args.judge_transport != "opencode" or
+        (args.image or args.opencode_image) != RUNNER_SAFETY_IMAGE
+    ):
+        parser.error(
+            "--runner-evidence-safety requires both OpenCode transports and explicit "
+            f"--opencode-image/--image {RUNNER_SAFETY_IMAGE}"
+        )
 
     if not args.model:
         parser.error("live evals require --model")

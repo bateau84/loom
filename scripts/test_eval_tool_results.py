@@ -40,6 +40,142 @@ def scenario(execution="runtime"):
 
 
 class ToolResultEvidenceTests(unittest.TestCase):
+    def test_safety_runner_result_requires_loaded_pair_and_preserves_dispositions(self):
+        inventory = RUN.collect_credential_inventory(
+            {}, [], None, None, None, None, runner_defaults_known=True,
+        )
+        policy = inventory.private_policy()
+        fake_runner = Path(__file__).resolve()
+        module_sha = "a" * 64
+        fields = [
+            *[{
+                "event": None, "field": field, "state": "omitted",
+                "reason": "missing", "stage": "runner",
+            } for field in ("model", "reasoning", "agent", "skill", "session_id", "credential_source",
+                            "plugin_diagnostic", "plugin_preflight", "timing")],
+            {"event": None, "field": "text", "state": "exact"},
+            {"event": None, "field": "tools", "state": "exact"},
+            {"event": None, "field": "actions", "state": "exact"},
+            {"event": None, "field": "skills_loaded", "state": "exact"},
+            {"event": None, "field": "tool_result_evidence", "state": "exact"},
+            {"event": None, "field": "stdout", "state": "omitted",
+             "reason": "opaque_payload_unverified", "stage": "runner"},
+            {"event": None, "field": "stderr", "state": "omitted",
+             "reason": "opaque_payload_unverified", "stage": "runner"},
+            *[{
+                "event": 0, "field": field, "state": "exact",
+            } for field in ("tool", "call_id", "session_id", "input", "output")],
+        ]
+        losses = dict.fromkeys(RUN.EVIDENCE_SAFETY_REASONS, 0)
+        losses["opaque_payload_unverified"] = 2
+        losses["missing"] = 9
+        result = {
+            "schema": RUN.RUNNER_SAFE_RESULT_SCHEMA,
+            "transport": "opencode",
+            "exit_code": 0,
+            "text": "diagnostic text",
+            "tools": [],
+            "actions": [],
+            "skills_loaded": [],
+            "tool_result_evidence": {
+                "schema": RUN.RUNNER_SAFE_EVENTS_SCHEMA,
+                "source": "opencode.event-stream.full",
+                "observed_events": 1,
+                "omitted_events": 0,
+                "events": [{
+                    "sequence": 1,
+                    "status": "completed",
+                    "tool": "loom_status",
+                    "call_id": "call-1",
+                    "session_id": "session-1",
+                    "input": {"workflowId": "wf"},
+                    "output": {"state": "ready"},
+                }],
+            },
+            "evidence_safety": {
+                "schema": RUN.EVIDENCE_SAFETY_SCHEMA,
+                "policy_version": "source-path-roles/v1",
+                "inventory_complete": True,
+                "coverage_complete": False,
+                "fields": fields,
+                "loss_counts": losses,
+            },
+            "evidence_safety_ack": {
+                "schema": RUN.RUNNER_SAFETY_ACK_SCHEMA,
+                "consumer": "runner-evidence-safety/v1",
+                "run_id": "b" * 64,
+                "policy_schema": policy["schema"],
+                "policy_version": policy["policy_version"],
+                "projection_schema": RUN.EVIDENCE_SAFETY_SCHEMA,
+                "stages": ["container.before_clip", "container.before_output"],
+                "policy_valid": True,
+                "inventory_complete": True,
+                "module_sha256": module_sha,
+                "image_source_revision": RUN.RUNNER_SAFETY_SOURCE,
+                "policy_receipt": "c" * 64,
+            },
+            "evidence_load": {
+                "image": RUN.RUNNER_SAFETY_IMAGE,
+                "image_config": "sha256:" + "d" * 64,
+                "image_source_revision": RUN.RUNNER_SAFETY_SOURCE,
+                "host_executable_sha256": RUN._sha256_file(str(fake_runner)),
+                "host_adapter_sha256": "e" * 64,
+                "policy_module_sha256": module_sha,
+                "host_source_revision": RUN.RUNNER_SAFETY_SOURCE,
+                "host_tracked_tree_clean": True,
+            },
+            "evidence_safety_validation": {
+                "schema": RUN.RUNNER_SAFETY_VALIDATION_SCHEMA,
+                "acknowledged": True,
+                "stages": ["host.before_write", "host.before_print"],
+            },
+        }
+
+        admitted = RUN._admit_runner_safety_result(
+            result, inventory, RUN.RUNNER_SAFETY_IMAGE, str(fake_runner),
+        )
+        stale_pair = {**result, "evidence_load": {**result["evidence_load"], "host_tracked_tree_clean": False}}
+
+        self.assertIsNotNone(admitted)
+        self.assertEqual(admitted["tool_result_evidence"]["schema"], RUN.RUNNER_SAFE_EVENTS_SCHEMA)
+        self.assertEqual(admitted["tool_result_evidence"]["events"][0]["input"], '{"workflowId": "wf"}')
+        self.assertFalse(admitted["evidence_safety"]["coverage_complete"])
+        self.assertEqual(RUN.tool_result_actions(admitted["tool_result_evidence"]), [
+            {"tool": "loom_status", "args": {"workflowId": "wf"}},
+        ])
+        self.assertFalse(RUN.nested_tool_capture_complete(admitted["tool_result_evidence"]))
+        action_case = {
+            "id": "SAFE-ASSERTION", "agent": "general", "execution": "runtime", "prompt": "",
+            "trap": "", "expectations": [], "must_not": [],
+            "actions": {"requires": [{"tool": "loom_status", "args": {"workflowId": "wf"}}]},
+        }
+        absence_case = {
+            **action_case,
+            "actions": {"forbids": [{"tool": "browser_preview", "args": {"path": "private.png"}}]},
+        }
+        self.assertFalse(any(message.startswith("required action not observed:") for message in
+                             RUN.deterministic_failures(action_case, [], [], tool_results=admitted["tool_result_evidence"])))
+        self.assertTrue(any(message.startswith("non-evidence:") for message in
+                            RUN.deterministic_failures(absence_case, [], [], tool_results=admitted["tool_result_evidence"])))
+        required_action = {
+            "id": "SAFE-01", "agent": "general", "execution": "runtime", "prompt": "",
+            "trap": "", "expectations": [], "must_not": [],
+            "actions": {"requires": [{"tool": "loom_status", "args": {"workflowId": "wf"}}]},
+        }
+        forbidden_absence = {
+            **required_action,
+            "actions": {"forbids": [{"tool": "browser_preview", "args": {"path": "private.png"}}]},
+        }
+        self.assertEqual(RUN.deterministic_failures(
+            required_action, [], [], tool_results=admitted["tool_result_evidence"],
+        ), [])
+        self.assertTrue(any(message.startswith("non-evidence:") for message in RUN.deterministic_failures(
+            forbidden_absence, [], [], tool_results=admitted["tool_result_evidence"],
+        )))
+        self.assertIsNone(RUN._admit_runner_safety_result(
+            stale_pair, inventory, RUN.RUNNER_SAFETY_IMAGE, str(fake_runner),
+        ))
+
     def capture(self, *events, secrets=()):
         return RUN.extract_tool_result_evidence(raw(*events), list(secrets))
 
