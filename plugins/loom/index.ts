@@ -3054,29 +3054,37 @@ function backgroundSubagentBindingInContext(
   value: unknown,
   childSessionID: string,
   depth = 0,
-): boolean {
-  if (depth > 12 || value === null || value === undefined) return false
+): boolean | undefined {
+  if (depth > 12 || value === null || value === undefined) return undefined
   if (Array.isArray(value)) {
-    return value.some((entry) => backgroundSubagentBindingInContext(entry, childSessionID, depth + 1))
-  }
-  if (!recordValue(value)) return false
-
-  const metadata = recordValue(value.metadata) ? value.metadata : undefined
-  if (metadata?.background === true) {
-    const sessionCandidates = [
-      metadata.sessionId,
-      metadata.sessionID,
-      metadata.jobId,
-      metadata.jobID,
-    ]
-    if (sessionCandidates.some((candidate) => candidate === childSessionID)) {
-      return true
+    let observed: boolean | undefined
+    for (const entry of value) {
+      const candidate = backgroundSubagentBindingInContext(entry, childSessionID, depth + 1)
+      if (candidate !== undefined) observed = candidate
     }
+    return observed
+  }
+  if (!recordValue(value)) return undefined
+
+  let observed: boolean | undefined
+  const metadata = recordValue(value.metadata) ? value.metadata : undefined
+  if (
+    metadata &&
+    metadata.sessionId === childSessionID &&
+    typeof metadata.parentSessionId === "string" &&
+    recordValue(metadata.model)
+  ) {
+    // OpenCode keeps historical Task parts in session context. The same child
+    // session may later be resumed via task_id, so only the latest matching
+    // Task metadata decides whether its current invocation is backgrounded.
+    observed = metadata.background === true
   }
 
-  return Object.values(value).some((entry) =>
-    backgroundSubagentBindingInContext(entry, childSessionID, depth + 1),
-  )
+  for (const entry of Object.values(value)) {
+    const candidate = backgroundSubagentBindingInContext(entry, childSessionID, depth + 1)
+    if (candidate !== undefined) observed = candidate
+  }
+  return observed
 }
 
 async function backgroundCoordinatorSessionForChild(
