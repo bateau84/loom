@@ -12434,6 +12434,58 @@ describe("cancellation replay and grant boundaries", () => {
 })
 
 
+const BACKGROUND_DISPATCH_MESSAGE = "background-dispatch-message"
+const BACKGROUND_DISPATCH_CALL = "background-dispatch-call"
+
+function subagentDispatchContext(generalSession: string, background: boolean) {
+  return (sessionID: string) =>
+    sessionID === generalSession
+      ? [{
+          info: { id: BACKGROUND_DISPATCH_MESSAGE, role: "assistant" },
+          parts: [{
+            id: BACKGROUND_DISPATCH_CALL,
+            type: "tool",
+            tool: "subagent",
+            messageID: BACKGROUND_DISPATCH_MESSAGE,
+            callID: BACKGROUND_DISPATCH_CALL,
+            state: {
+              status: "running",
+              input: {
+                subagent_type: "worker",
+                prompt: "Test exact admitted dispatch mode.",
+                background,
+              },
+              metadata: {},
+              time: { start: 1 },
+            },
+          }],
+        }]
+      : []
+}
+
+async function admitTestSubagentDispatch(
+  h: Awaited<ReturnType<typeof harness>>,
+  generalSession: string,
+  agent: string,
+) {
+  const event: any = {
+    agent: "general",
+    action: "subagent",
+    resources: [agent],
+    sessionID: generalSession,
+    source: {
+      type: "tool",
+      messageID: BACKGROUND_DISPATCH_MESSAGE,
+      id: BACKGROUND_DISPATCH_CALL,
+      callID: BACKGROUND_DISPATCH_CALL,
+    },
+    effect: "ask",
+    message: "",
+  }
+  await h.permissionHooks.get("evaluate")!(event)
+  expect(event.effect).not.toBe("deny")
+}
+
 test("background governed step completion queues General while foreground completion stays quiet", async () => {
   const run = async (background: boolean) => {
     const generalSession = `background-return-general-${background}`
