@@ -3050,6 +3050,246 @@ function questionState(questions: OpenQuestion[], workflow: Workflow) {
   }
 }
 
+function backgroundSubagentBindingInContext(
+  value: unknown,
+  childSessionID: string,
+  depth = 0,
+): boolean {
+  if (depth > 12 || value === null || value === undefined) return false
+  if (Array.isArray(value)) {
+    return value.some((entry) => backgroundSubagentBindingInContext(entry, childSessionID, depth + 1))
+  }
+  if (!recordValue(value)) return false
+
+  const metadata = recordValue(value.metadata) ? value.metadata : undefined
+  if (metadata?.background === true) {
+    const sessionCandidates = [
+      metadata.sessionId,
+      metadata.sessionID,
+      metadata.jobId,
+      metadata.jobID,
+    ]
+    if (sessionCandidates.some((candidate) => candidate === childSessionID)) {
+      return true
+    }
+  }
+
+  return Object.values(value).some((entry) =>
+    backgroundSubagentBindingInContext(entry, childSessionID, depth + 1),
+  )
+}
+
+async function backgroundCoordinatorSessionForChild(
+  ctx: any,
+  workflow: Workflow,
+  childSessionID: string,
+) {
+  try {
+    const child = await ctx.session.get({ sessionID: childSessionID })
+    const parentID = typeof child?.parentID === "string" ? child.parentID : ""
+    if (!parentID || parentID !== workflow.createdBySession) return undefined
+
+    const parentContext = await ctx.session.context({ sessionID: parentID })
+    return backgroundSubagentBindingInContext(parentContext, childSessionID)
+      ? parentID
+      : undefined
+  } catch {
+    // Background-return assistance is best effort. Authoritative Loom state
+    // must remain valid even when host session metadata cannot be inspected.
+    return undefined
+  }
+}
+
+type BackgroundCoordinatorReturn = {
+  kind: "step-terminal" | "oq-answered" | "scope-boundary"
+  stepId?: string
+  questionId?: string
+  requestId?: string
+  outcome?: string
+}
+
+async function notifyBackgroundChildCoordinator(
+  ctx: any,
+  runtime: LoomRuntimeIdentity,
+  workflow: Workflow,
+  childSessionID: string,
+  agent: string,
+  event: BackgroundCoordinatorReturn,
+) {
+  const notified: string[] = []
+  const failed: Array<{ target: "general"; error: string }> = []
+  if (agent === "general") return { notified, failed }
+
+  const generalSessionID = await backgroundCoordinatorSessionForChild(
+    ctx,
+    workflow,
+    childSessionID,
+  )
+  if (!generalSessionID) return { notified, failed }
+
+  try {
+    const delivered = await withRuntimeAdvisoryLocks(
+      runtime,
+      [
+        { aggregate: "workflow", resourceIdentity: workflow.id },
+        { aggregate: "session-coordinator", resourceIdentity: generalSessionID },
+      ],
+      async () => {
+        const [currentWorkflow, currentGeneralBinding] = await Promise.all([
+          readWorkflow(ctx, workflow.id),
+          ctx.storage.get(sessionKey(generalSessionID)) as Promise<string | undefined>,
+        ])
+        if (
+          !currentWorkflow ||
+          currentWorkflow.cancellation ||
+          currentWorkflow.createdBySession !== generalSessionID ||
+          currentGeneralBinding !== workflow.id ||
+          await ctx.storage.get(`session-deletion-fence/${generalSessionID}`) !== undefined
+        ) {
+          return false
+        }
+
+        if (event.kind === "step-terminal") {
+          const step = currentWorkflow.steps.find((candidate) => candidate.id === event.stepId)
+          const expectedStatus =
+            event.outcome === "pass" ? "passed" :
+            event.outcome === "fail" ? "failed" :
+            "complete"
+          if (!step || step.agent !== agent || step.status !== expectedStatus) return false
+        } else if (event.kind === "oq-answered") {
+          const question = event.questionId
+            ? await ctx.storage.get(oqKey(workflow.id, event.questionId)) as OpenQuestion | undefined
+            : undefined
+          if (!question?.answer || question.answer.by !== agent || question.status === "open") return false
+        } else if (event.kind === "scope-boundary") {
+          if (!event.requestId) return false
+          const request = await ctx.storage.get(
+            scopeBoundaryRequestKey(generalSessionID, event.requestId),
+          ) as ScopeBoundaryRequest | undefined
+          if (
+            !request ||
+            request.workflowId !== workflow.id ||
+            request.agent !== agent ||
+            request.requestedBySessionId !== childSessionID ||
+            request.resolvedAt
+          ) {
+            return false
+          }
+        }
+
+        await ctx.session.synthetic({
+          sessionID: generalSessionID,
+          text:
+            `Loom background child ${agent} produced authoritative workflow progress (${event.kind}) for workflow ${workflow.id}. Re-read Loom state before continuing. OpenCode may also deliver its native background task result; if that result refers to the same child work already reflected in Loom state, treat it as corroborating information rather than starting duplicate work.`,
+          description: "Loom background child returned",
+          metadata: {
+            source: "loom",
+            kind: "background-child-return",
+            workflowId: workflow.id,
+            childSessionID,
+            agent,
+            returnKind: event.kind,
+            ...(event.stepId ? { stepId: event.stepId } : {}),
+            ...(event.questionId ? { questionId: event.questionId } : {}),
+            ...(event.requestId ? { requestId: event.requestId } : {}),
+            ...(event.outcome ? { outcome: event.outcome } : {}),
+          },
+          delivery: "queue",
+          resume: true,
+        })
+        return true
+      },
+    )
+    if (delivered) notified.push("general")
+  } catch (error) {
+    failed.push({
+      target: "general",
+      error: error instanceof Error ? error.message : String(error),
+    })
+  }
+
+  return { notified, failed }
+}
+
+
+async function notifyRaisedBlockingQuestionCoordinator(
+  ctx: any,
+  runtime: LoomRuntimeIdentity,
+  question: OpenQuestion,
+) {
+  const notified: string[] = []
+  const failed: Array<{ target: "general"; error: string }> = []
+
+  if (!question.blocking || question.raisedByAgent === "general") {
+    return { notified, failed }
+  }
+
+  const workflow = await readWorkflow(ctx, question.workflowId)
+  const generalSessionID = workflow?.createdBySession
+  if (!workflow || !generalSessionID) return { notified, failed }
+
+  try {
+    const delivered = await withRuntimeAdvisoryLocks(
+      runtime,
+      [
+        { aggregate: "workflow", resourceIdentity: question.workflowId },
+        { aggregate: "session-coordinator", resourceIdentity: generalSessionID },
+      ],
+      async () => {
+        const [currentWorkflow, currentQuestion, currentGeneralBinding] = await Promise.all([
+          readWorkflow(ctx, question.workflowId),
+          ctx.storage.get(oqKey(question.workflowId, question.id)) as Promise<OpenQuestion | undefined>,
+          ctx.storage.get(sessionKey(generalSessionID)) as Promise<string | undefined>,
+        ])
+        if (
+          !currentWorkflow ||
+          currentWorkflow.cancellation ||
+          currentWorkflow.createdBySession !== generalSessionID ||
+          currentGeneralBinding !== question.workflowId ||
+          !currentQuestion ||
+          currentQuestion.status !== "open" ||
+          currentQuestion.answer ||
+          !currentQuestion.blocking ||
+          currentQuestion.raisedByAgent === "general" ||
+          JSON.stringify(currentQuestion) !== JSON.stringify(question)
+        ) {
+          return false
+        }
+        if (await ctx.storage.get(`session-deletion-fence/${generalSessionID}`) !== undefined) {
+          return false
+        }
+
+        await ctx.session.synthetic({
+          sessionID: generalSessionID,
+          text:
+            `Loom blocking OQ ${question.id} was raised for ${question.requiredAuthority}. Re-read the persisted OQ with loom_oq_list for workflow ${question.workflowId}. If the responder is general, answer it directly; if the responder is user, present the exact stored question and record the exact user answer; otherwise route the exact OQ through the normal dispatch path. The persisted OQ state is authoritative; this notification intentionally contains no question content.`,
+          description: "Loom blocking OQ raised",
+          metadata: {
+            source: "loom",
+            kind: "oq-raised",
+            workflowId: question.workflowId,
+            questionId: question.id,
+            responder: question.requiredAuthority,
+            raisedByAgent: question.raisedByAgent,
+          },
+          delivery: "queue",
+          resume: true,
+        })
+        return true
+      },
+    )
+    if (delivered) notified.push("general")
+  } catch (error) {
+    failed.push({
+      target: "general",
+      error: error instanceof Error ? error.message : String(error),
+    })
+  }
+
+  return { notified, failed }
+}
+
+
 async function notifyAnsweredQuestionConsumers(
   ctx: any,
   runtime: LoomRuntimeIdentity,
@@ -6074,6 +6314,19 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             return { content: renderToolOutput({ error: error instanceof Error ? error.message : String(error) }) }
           }
 
+          const coordinatorNotification = await notifyBackgroundChildCoordinator(
+            ctx,
+            runtime,
+            workflow,
+            tool.sessionID,
+            tool.agent,
+            {
+              kind: "step-terminal",
+              stepId,
+              outcome: resolvedOutcome,
+            },
+          )
+
           return {
             content: renderToolOutput({
               finished: stepId,
@@ -6082,6 +6335,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               blocked: workflow.steps.filter((candidate) => candidate.status === "failed").map((candidate) => candidate.id),
               dagRunnable: runnable(workflow).map((candidate) => ({ id: candidate.id, agent: candidate.agent })),
               questions: questionState(questions, workflow),
+              coordinatorNotification,
             }),
           }
         },
@@ -6294,7 +6548,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       addLoomTool({
         name: "oq_raise",
         description:
-          "Raise a shared peer OQ to any Loom role or the user. A blocking OQ must be self-contained enough for a fresh session to understand what is unresolved, why that affected boundary cannot proceed, and what kind of answer would satisfy the question; do not make a particular external source part of the OQ semantic unless accepted authority actually requires that source. For a user-owned Plan Task wait, General raises a blocking OQ with its exact taskId and sole Task consumerStepId; only the actual user answer recorded with source=user resolves that wait. Other planned Task questions inherit their exact Task context. Ask the role that owns or can best answer the specific question; an OQ answer does not substitute for an independent gate.",
+          "Raise a shared peer OQ to any Loom role or the user. A blocking OQ must be self-contained enough for a fresh session to understand what is unresolved, why that affected boundary cannot proceed, and what kind of answer would satisfy the question; do not make a particular external source part of the OQ semantic unless accepted authority actually requires that source. For a user-owned Plan Task wait, General raises a blocking OQ with its exact taskId and sole Task consumerStepId; only the actual user answer recorded with source=user resolves that wait. Other planned Task questions inherit their exact Task context. Ask the role that owns or can best answer the specific question; an OQ answer does not substitute for an independent gate. When a child raises a blocking OQ, Loom queues a resume-enabled routing notification to the workflow's bound General session without steering an active turn; specialist responders still require the normal exact OQ dispatch path.",
         input: {
           type: "object",
           properties: {
@@ -6488,10 +6742,16 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             if (tool.agent !== "general" && value.stepId) {
               await bindSessionEvidence(ctx, tool.sessionID, value.workflowId, value.stepId)
             }
+            const notifications = await notifyRaisedBlockingQuestionCoordinator(
+              ctx,
+              runtime,
+              question,
+            )
             return {
               content: renderToolOutput({
                 question: questionView(question),
                 routeTo: question.requiredAuthority,
+                notifications,
               }),
             }
           } catch (error) {
@@ -6660,10 +6920,22 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               runtime,
               question,
             )
+            const coordinatorNotification = await notifyBackgroundChildCoordinator(
+              ctx,
+              runtime,
+              workflow,
+              tool.sessionID,
+              tool.agent,
+              {
+                kind: "oq-answered",
+                questionId: question.id,
+              },
+            )
             return {
               content: renderToolOutput({
                 question: questionView(question),
                 notifications,
+                coordinatorNotification,
               }),
             }
           } catch (error) {
@@ -10103,6 +10375,21 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
             if (result.boundaryRequest) {
               const question = scopeBoundaryQuestionInput(result.boundaryRequest)
+              const currentWorkflow = await readWorkflow(ctx, value.workflowId)
+              const coordinatorNotification = currentWorkflow
+                ? await notifyBackgroundChildCoordinator(
+                    ctx,
+                    runtime,
+                    currentWorkflow,
+                    tool.sessionID,
+                    tool.agent,
+                    {
+                      kind: "scope-boundary",
+                      stepId: value.stepId,
+                      requestId: result.boundaryRequest.requestId,
+                    },
+                  )
+                : { notified: [], failed: [] }
               return {
                 content: renderToolOutput({
                   status: "user_authorization_required",
@@ -10125,6 +10412,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                     question,
                     rememberChoiceAllowed: false,
                   },
+                  coordinatorNotification,
                   requiredAction:
                     "Return control to General immediately. Do not continue this child turn, retry the blocked mutation, or assume access has been granted. General must ask the user with the exact supplied question payload; after an Allow once decision, General calls loom_scope_authorize_once and then resumes/redispatches this same step attempt.",
                 }),
