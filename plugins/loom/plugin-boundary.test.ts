@@ -12685,22 +12685,7 @@ test("current foreground Task metadata overrides an older durable background bin
     undefined,
     undefined,
     undefined,
-    (sessionID) =>
-      sessionID === generalSession
-        ? [{
-            parts: [{
-              type: "tool",
-              tool: "subagent",
-              state: {
-                metadata: {
-                  parentSessionId: generalSession,
-                  sessionId: childSession,
-                  model: { providerID: "test", modelID: "test" },
-                },
-              },
-            }],
-          }]
-        : [],
+    subagentDispatchContext(generalSession, false),
   )
   try {
     const started = await h.call(
@@ -12726,12 +12711,25 @@ test("current foreground Task metadata overrides an older durable background bin
       generalSession,
     )).error).toBeUndefined()
 
+    await h.durableStorage.set(
+      `background-child/${encodeURIComponent(childSession)}`,
+      {
+        schemaVersion: 1,
+        projectId: h.runtime.projectId,
+        workflowId,
+        parentSessionID: generalSession,
+        childSessionID: childSession,
+        active: true,
+        observedAt: new Date().toISOString(),
+      },
+    )
     const grant = await h.call(
       "dispatch_grant",
       { workflowId, stepId: "worker" },
       "general",
       generalSession,
     )
+    await admitTestSubagentDispatch(h, generalSession, "worker")
     expect((await h.call(
       "attach",
       { grantId: grant.grantId, workflowId, stepId: "worker" },
@@ -12739,20 +12737,6 @@ test("current foreground Task metadata overrides an older durable background bin
       childSession,
     )).attached).toBe(true)
 
-    await h.toolHooks.get("execute.after")!({
-      tool: "subagent",
-      sessionID: generalSession,
-      agent: "general",
-      status: "completed",
-      result: {
-        metadata: {
-          parentSessionId: generalSession,
-          sessionId: childSession,
-          model: { providerID: "test", modelID: "test" },
-          background: true,
-        },
-      },
-    })
 
     const completed = await h.call(
       "complete",
@@ -12788,7 +12772,7 @@ test("child-controlled output cannot forge a background binding", async () => {
     undefined,
     undefined,
     undefined,
-    () => [],
+    subagentDispatchContext(generalSession, false),
   )
   try {
     const started = await h.call(
@@ -12819,6 +12803,7 @@ test("child-controlled output cannot forge a background binding", async () => {
       "general",
       generalSession,
     )
+    await admitTestSubagentDispatch(h, generalSession, "worker")
     expect((await h.call(
       "attach",
       { grantId: grant.grantId, workflowId, stepId: "worker" },
@@ -12878,23 +12863,7 @@ test("background completion stays committed when the General return wake fails",
       throw new Error("background return wake unavailable")
     },
     undefined,
-    (sessionID) =>
-      sessionID === generalSession
-        ? [{
-            parts: [{
-              type: "tool",
-              tool: "subagent",
-              state: {
-                metadata: {
-                  parentSessionId: generalSession,
-                  sessionId: childSession,
-                  model: { providerID: "test", modelID: "test" },
-                  background: true,
-                },
-              },
-            }],
-          }]
-        : [],
+    subagentDispatchContext(generalSession, true),
   )
   try {
     const started = await h.call(
@@ -12926,6 +12895,7 @@ test("background completion stays committed when the General return wake fails",
       "general",
       generalSession,
     )
+    await admitTestSubagentDispatch(h, generalSession, "worker")
     expect((await h.call(
       "attach",
       { grantId: grant.grantId, workflowId, stepId: "worker" },
@@ -12970,23 +12940,7 @@ test("background OQ responder queues General after persisting its answer", async
     undefined,
     undefined,
     undefined,
-    (sessionID) =>
-      sessionID === generalSession
-        ? [{
-            parts: [{
-              type: "tool",
-              tool: "subagent",
-              state: {
-                metadata: {
-                  parentSessionId: generalSession,
-                  sessionId: childSession,
-                  model: { providerID: "test", modelID: "test" },
-                  background: true,
-                },
-              },
-            }],
-          }]
-        : [],
+    subagentDispatchContext(generalSession, true),
   )
   try {
     const started = await h.call(
@@ -13031,6 +12985,7 @@ test("background OQ responder queues General after persisting its answer", async
       "general",
       generalSession,
     )
+    await admitTestSubagentDispatch(h, generalSession, "architect")
     expect((await h.call(
       "attach",
       { grantId: grant.grantId, workflowId, questionId: raised.question.id },
@@ -13084,23 +13039,7 @@ test("background child hard scope boundary queues General before the child stops
     undefined,
     undefined,
     undefined,
-    (sessionID) =>
-      sessionID === generalSession
-        ? [{
-            parts: [{
-              type: "tool",
-              tool: "subagent",
-              state: {
-                metadata: {
-                  parentSessionId: generalSession,
-                  sessionId: childSession,
-                  model: { providerID: "test", modelID: "test" },
-                  background: true,
-                },
-              },
-            }],
-          }]
-        : [],
+    subagentDispatchContext(generalSession, true),
   )
   try {
     const started = await h.call(
@@ -13132,6 +13071,7 @@ test("background child hard scope boundary queues General before the child stops
       "general",
       generalSession,
     )
+    await admitTestSubagentDispatch(h, generalSession, "worker")
     expect((await h.call(
       "attach",
       { grantId: grant.grantId, workflowId, stepId: "worker" },
