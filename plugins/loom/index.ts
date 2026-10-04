@@ -12390,7 +12390,9 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       try {
       if (nativeSubagentTool(tool) && raw.sessionID) {
         const parentSessionID = String(raw.sessionID)
-        const metadata = subagentResultMetadata(raw.result ?? raw.output)
+        const metadata = subagentResultMetadata(
+          raw.result ?? (raw.metadata ? { metadata: raw.metadata } : raw.output),
+        )
         const childSessionID =
           typeof metadata?.sessionId === "string" ? metadata.sessionId : undefined
         if (
