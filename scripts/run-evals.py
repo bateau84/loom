@@ -867,7 +867,7 @@ def _admit_runner_safety_result(
         required_dispositions = {
             "model", "reasoning", "agent", "skill", "session_id", "credential_source",
             "stdout", "stderr", "plugin_diagnostic", "plugin_preflight", "text", "tools",
-            "actions", "skills_loaded", "timing", "tool_result_evidence",
+            "actions", "skills_loaded",
         }
         if not required_dispositions.issubset(top_dispositions):
             return None
@@ -877,6 +877,12 @@ def _admit_runner_safety_result(
                 if disposition["state"] == "omitted":
                     return None
             elif disposition["state"] != "omitted":
+                return None
+        for name in ("timing", "tool_result_evidence"):
+            disposition = top_dispositions.get(name)
+            if name in result and disposition is not None and disposition["state"] == "omitted":
+                return None
+            if name not in result and disposition is not None and disposition["state"] != "omitted":
                 return None
         allowed_root = {
             "schema", "transport", "reasoning_source", "exit_code", "timed_out", "infrastructure_error",
