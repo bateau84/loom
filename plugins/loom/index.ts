@@ -3060,8 +3060,26 @@ type BackgroundChildBinding = {
   observedAt: string
 }
 
+type AdmittedSubagentDispatchMode = {
+  schemaVersion: 1
+  projectId: string
+  workflowId: string
+  grantId: string
+  parentSessionID: string
+  expectedAgent: string
+  background: boolean
+  dispatchID: string
+  observedAt: string
+  stepId?: string
+  questionId?: string
+}
+
 function backgroundChildBindingKey(childSessionID: string) {
   return `background-child/${encodeURIComponent(childSessionID)}`
+}
+
+function admittedSubagentDispatchModeKey(grantId: string) {
+  return `dispatch-mode/${encodeURIComponent(grantId)}`
 }
 
 function nativeSubagentTool(tool: string) {
@@ -3069,63 +3087,67 @@ function nativeSubagentTool(tool: string) {
   return normalized === "task" || normalized === "subagent"
 }
 
-function subagentResultMetadata(value: unknown): Record<string, unknown> | undefined {
-  // OpenCode V2 exposes built-in Task metadata on the host-owned tool result
-  // envelope. Never inspect or parse child-controlled output text for identity.
-  if (!recordValue(value)) return undefined
-  const metadata = recordValue(value.metadata) ? value.metadata : undefined
-  if (
-    !metadata ||
-    typeof metadata.parentSessionId !== "string" ||
-    typeof metadata.sessionId !== "string" ||
-    !recordValue(metadata.model)
-  ) {
-    return undefined
+function exactSubagentBackgroundFromContext(
+  messages: unknown,
+  source: unknown,
+): boolean | undefined {
+  if (!Array.isArray(messages) || !recordValue(source)) return undefined
+  const messageID =
+    typeof source.messageID === "string" ? source.messageID : ""
+  const callID =
+    typeof source.callID === "string"
+      ? source.callID
+      : typeof source.id === "string"
+        ? source.id
+        : ""
+  if (!messageID || !callID) return undefined
+
+  for (let index = messages.length - 1; index >= 0; index--) {
+    const message = messages[index] as any
+    const info = recordValue(message?.info) ? message.info : message
+    const observedMessageID = String(
+      info?.id ?? message?.id ?? message?.messageID ?? "",
+    )
+    if (observedMessageID && observedMessageID !== messageID) continue
+    const parts = Array.isArray(message?.parts)
+      ? message.parts
+      : Array.isArray(message?.content)
+        ? message.content
+        : []
+    for (let partIndex = parts.length - 1; partIndex >= 0; partIndex--) {
+      const part = parts[partIndex] as any
+      if (
+        part?.type !== "tool" ||
+        !nativeSubagentTool(String(part?.tool ?? part?.name ?? ""))
+      ) {
+        continue
+      }
+      const observedCallID = String(
+        part?.callID ?? part?.toolCallID ?? part?.id ?? "",
+      )
+      if (observedCallID !== callID) continue
+      if (part?.messageID && String(part.messageID) !== messageID) continue
+      const state = recordValue(part?.state) ? part.state : undefined
+      const input = state && recordValue(state.input) ? state.input : undefined
+      if (!input) return undefined
+      return input.background === true
+    }
   }
-  return metadata
+  return undefined
 }
 
-function backgroundSubagentBindingInContext(
-  value: unknown,
-  childSessionID: string,
-  depth = 0,
-): boolean | undefined {
-  if (depth > 12 || value === null || value === undefined) return undefined
-  if (Array.isArray(value)) {
-    let observed: boolean | undefined
-    for (const entry of value) {
-      const candidate = backgroundSubagentBindingInContext(entry, childSessionID, depth + 1)
-      if (candidate !== undefined) observed = candidate
-    }
-    return observed
+async function subagentBackgroundRequestedForPermission(
+  ctx: any,
+  event: any,
+) {
+  try {
+    const context = await ctx.session.context({ sessionID: event.sessionID })
+    return exactSubagentBackgroundFromContext(context, event.source) ?? false
+  } catch {
+    // Absence of a positive exact background signal is foreground. The real-host
+    // integration proves background launches expose the exact Task input here.
+    return false
   }
-  if (!recordValue(value)) return undefined
-
-  let observed: boolean | undefined
-  if (
-    value.type === "tool" &&
-    nativeSubagentTool(String(value.tool ?? value.name ?? "")) &&
-    recordValue(value.state)
-  ) {
-    const metadata = recordValue(value.state.metadata) ? value.state.metadata : undefined
-    if (
-      metadata &&
-      metadata.sessionId === childSessionID &&
-      typeof metadata.parentSessionId === "string" &&
-      recordValue(metadata.model)
-    ) {
-      // OpenCode keeps historical Task parts in session context. The same child
-      // session may later be resumed via task_id, so only the latest matching
-      // host-owned Task part decides whether its current invocation is backgrounded.
-      observed = metadata.background === true
-    }
-  }
-
-  for (const entry of Object.values(value)) {
-    const candidate = backgroundSubagentBindingInContext(entry, childSessionID, depth + 1)
-    if (candidate !== undefined) observed = candidate
-  }
-  return observed
 }
 
 async function backgroundCoordinatorSessionForChild(
@@ -3134,35 +3156,29 @@ async function backgroundCoordinatorSessionForChild(
   workflow: Workflow,
   childSessionID: string,
 ) {
-  let parentID = ""
-  try {
-    const child = await ctx.session.get({ sessionID: childSessionID })
-    parentID = typeof child?.parentID === "string" ? child.parentID : ""
-    if (!parentID || parentID !== workflow.createdBySession) return undefined
-
-    const parentContext = await ctx.session.context({ sessionID: parentID })
-    const current = backgroundSubagentBindingInContext(parentContext, childSessionID)
-    if (current !== undefined) return current ? parentID : undefined
-  } catch {
-    // Fall through to Loom's durable background binding. Current host Task
-    // metadata is preferred whenever available because it reflects task_id
-    // reuse and foreground/background promotion without stale-history guesses.
-  }
-
   const persisted = (await ctx.storage.get(
     backgroundChildBindingKey(childSessionID),
   )) as BackgroundChildBinding | undefined
   if (
-    persisted?.schemaVersion === 1 &&
-    persisted.projectId === runtime.projectId &&
-    persisted.workflowId === workflow.id &&
-    persisted.parentSessionID === workflow.createdBySession &&
-    persisted.childSessionID === childSessionID &&
-    persisted.active
+    !persisted ||
+    persisted.schemaVersion !== 1 ||
+    persisted.projectId !== runtime.projectId ||
+    persisted.workflowId !== workflow.id ||
+    persisted.parentSessionID !== workflow.createdBySession ||
+    persisted.childSessionID !== childSessionID ||
+    !persisted.active
   ) {
-    return persisted.parentSessionID
+    return undefined
   }
-  return undefined
+
+  try {
+    const child = await ctx.session.get({ sessionID: childSessionID })
+    return child?.parentID === persisted.parentSessionID
+      ? persisted.parentSessionID
+      : undefined
+  } catch {
+    return undefined
+  }
 }
 
 type BackgroundCoordinatorReturn = {
@@ -10033,6 +10049,25 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 }
               }
 
+              const dispatchMode = (await ctx.storage.get(
+                admittedSubagentDispatchModeKey(value.grantId),
+              )) as AdmittedSubagentDispatchMode | undefined
+              if (
+                dispatchMode &&
+                (
+                  dispatchMode.schemaVersion !== 1 ||
+                  dispatchMode.projectId !== runtime.projectId ||
+                  dispatchMode.workflowId !== value.workflowId ||
+                  dispatchMode.grantId !== value.grantId ||
+                  dispatchMode.parentSessionID !== workflow.createdBySession ||
+                  dispatchMode.expectedAgent !== tool.agent ||
+                  dispatchMode.stepId !== value.stepId ||
+                  dispatchMode.questionId !== value.questionId
+                )
+              ) {
+                throw new Error("Dispatch mode provenance does not match this exact attachment.")
+              }
+
               await consumeDispatchGrantLocked(ctx.storage as any, runtime, {
                 grantId: value.grantId,
                 workflowId: value.workflowId,
@@ -10040,6 +10075,19 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 expectedAgent: tool.agent,
                 consumingSessionId: tool.sessionID,
               })
+
+              await ctx.storage.set(
+                backgroundChildBindingKey(tool.sessionID),
+                {
+                  schemaVersion: 1,
+                  projectId: runtime.projectId,
+                  workflowId: value.workflowId,
+                  parentSessionID: workflow.createdBySession,
+                  childSessionID: tool.sessionID,
+                  active: dispatchMode?.background === true,
+                  observedAt: new Date().toISOString(),
+                } satisfies BackgroundChildBinding,
+              )
 
               await ctx.storage.set(sessionKey(tool.sessionID), value.workflowId)
               await scopedStorage.delete?.(`session-deletion-fence/${tool.sessionID}`)
@@ -11935,6 +11983,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       const grantedTarget = grantedTargets[0]
       const runnableStep = grantedTarget.kind === "step" ? grantedTarget.step : undefined
       const openQuestion = grantedTarget.kind === "question" ? grantedTarget.question : undefined
+      const requestedBackground = await subagentBackgroundRequestedForPermission(ctx, event)
 
       const dispatchID = [
         event.sessionID,
@@ -12125,6 +12174,22 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         }
         return
       }
+
+      await ctx.storage.set(
+        admittedSubagentDispatchModeKey(grantedTarget.grant.grantId),
+        {
+          schemaVersion: 1,
+          projectId: runtime.projectId,
+          workflowId: workflow.id,
+          grantId: grantedTarget.grant.grantId,
+          parentSessionID: event.sessionID,
+          expectedAgent: target,
+          background: requestedBackground,
+          dispatchID,
+          observedAt: new Date().toISOString(),
+          ...(runnableStep ? { stepId: runnableStep.id } : { questionId: openQuestion!.id }),
+        } satisfies AdmittedSubagentDispatchMode,
+      )
 
       event.effect = "allow"
     }
@@ -12388,35 +12453,6 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       if (!tool) return
 
       try {
-      if (nativeSubagentTool(tool) && raw.sessionID) {
-        const parentSessionID = String(raw.sessionID)
-        const metadata = subagentResultMetadata(
-          raw.result ?? (raw.metadata ? { metadata: raw.metadata } : raw.output),
-        )
-        const childSessionID =
-          typeof metadata?.sessionId === "string" ? metadata.sessionId : undefined
-        if (
-          childSessionID &&
-          metadata?.parentSessionId === parentSessionID
-        ) {
-          const workflow = await activeWorkflow(ctx, parentSessionID, ensureLegacySession)
-          if (workflow?.createdBySession === parentSessionID) {
-            await ctx.storage.set(
-              backgroundChildBindingKey(childSessionID),
-              {
-                schemaVersion: 1,
-                projectId: runtime.projectId,
-                workflowId: workflow.id,
-                parentSessionID,
-                childSessionID,
-                active: metadata.background === true,
-                observedAt: new Date().toISOString(),
-              } satisfies BackgroundChildBinding,
-            )
-          }
-        }
-      }
-
       if (tool === "question" && raw.sessionID) {
         const sessionID = String(raw.sessionID)
         const input = toolHookInput(raw)
