@@ -12633,15 +12633,14 @@ test("durable background binding survives compacted parent context", async () =>
       sessionID: generalSession,
       agent: "general",
       status: "completed",
-      result: {
-        metadata: {
-          parentSessionId: generalSession,
-          sessionId: childSession,
-          model: { providerID: "test", modelID: "test" },
-          background: true,
-          jobId: childSession,
-        },
+      metadata: {
+        parentSessionId: generalSession,
+        sessionId: childSession,
+        model: { providerID: "test", modelID: "test" },
+        background: true,
+        jobId: childSession,
       },
+      output: "Background task started.",
     })
 
     const completed = await h.call(
