@@ -666,6 +666,77 @@ class EvidenceRedactionTests(unittest.TestCase):
         self.assertFalse(inventory.complete)
         self.assertEqual(inventory.sources["config_root"], "incomplete")
 
+    def test_runner_safety_mode_rejects_default_image_and_missing_cli_without_fallback(self):
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(
+            os.environ,
+            {"OPENCODE_EVAL_RUNNER_BIN": "", "OPENCODE_CONFIG_DIR": ""},
+            clear=False,
+        ), patch.object(RUN_EVALS.shutil, "which", return_value=None), patch.object(
+            RUN_EVALS.subprocess, "run", side_effect=AssertionError("unsafe execution fallback invoked"),
+        ):
+            kwargs = dict(
+                engine="podman", transport="opencode", model="openai/test", agent="general",
+                prompt="synthetic", system="", project=Path(tmp), auth=None, config=None,
+                models_catalog=None, database_seed=None, config_root=None, expected_plugin=None,
+                timeout=30, container_timeout=60, mount_node_modules=False,
+                workspace_mode="ro", extra_envs=[], require_runner_evidence_safety=True,
+            )
+            wrong_image = RUN_EVALS.invoke_container(image=RUN_EVALS.DEFAULT_IMAGES["opencode"], **kwargs)
+            missing_cli = RUN_EVALS.invoke_container(image=RUN_EVALS.RUNNER_SAFETY_IMAGE, **kwargs)
+
+        self.assertTrue(wrong_image["infrastructure_error"])
+        self.assertTrue(missing_cli["infrastructure_error"])
+        self.assertEqual(wrong_image["observed_tool_results"]["events"], [])
+        self.assertEqual(missing_cli["observed_tool_results"]["events"], [])
+
+    def test_private_policy_file_is_mode_0600(self):
+        inventory = RUN_EVALS.credential_inventory_from_values(["SYNTH-private-token"])
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "inventory.json"
+
+            RUN_EVALS.write_private_policy(path, inventory.private_policy())
+
+            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+            self.assertEqual(json.loads(path.read_text())["values"], ["SYNTH-private-token"])
+
+    def test_safety_cli_receives_private_policy_file_and_rejects_legacy_result(self):
+        observed = {}
+
+        class Result:
+            returncode = 0
+            stdout = ""
+            stderr = ""
+
+        def fake_run(command, **_kwargs):
+            observed["command"] = command
+            policy_path = Path(command[command.index("--evidence-policy-file") + 1])
+            observed["mode"] = policy_path.stat().st_mode & 0o777
+            observed["policy"] = json.loads(policy_path.read_text(encoding="utf-8"))
+            Path(command[command.index("--output") + 1]).write_text(
+                json.dumps({"schema": "opencode-eval-runner/v1", "text": "legacy raw output"}),
+                encoding="utf-8",
+            )
+            return Result()
+
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(
+            os.environ, {"OPENCODE_EVAL_RUNNER_BIN": "/runner-fixture", "OPENCODE_CONFIG_DIR": ""}, clear=False,
+        ), patch.object(RUN_EVALS.subprocess, "run", side_effect=fake_run):
+            result = RUN_EVALS.invoke_container(
+                engine="podman", image=RUN_EVALS.RUNNER_SAFETY_IMAGE, transport="opencode",
+                model="openai/test", agent="general", prompt="synthetic", system="",
+                project=Path(tmp), auth=None, config=None, models_catalog=None,
+                database_seed=None, config_root=None, expected_plugin=None, timeout=30,
+                container_timeout=60, mount_node_modules=False, workspace_mode="ro", extra_envs=[],
+                require_runner_evidence_safety=True,
+            )
+
+        self.assertIn("--require-evidence-safety", observed["command"])
+        self.assertEqual(observed["mode"], 0o600)
+        self.assertFalse(observed["policy"]["complete"])
+        self.assertEqual(observed["policy"]["values"], [])
+        self.assertTrue(result["infrastructure_error"])
+        self.assertNotIn("legacy raw output", json.dumps(result))
+
     def test_shared_synthetic_vectors_cover_aliases_metadata_and_short_values(self):
         vectors = json.loads((Path(__file__).parent / "fixtures" / "eval-evidence-safety-vectors.json").read_text())
         with tempfile.TemporaryDirectory() as tmp:
