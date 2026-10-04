@@ -694,6 +694,7 @@ class EvidenceRedactionTests(unittest.TestCase):
         self.assertEqual(wrong_image["observed_tool_results"]["events"], [])
         self.assertEqual(missing_cli["observed_tool_results"]["events"], [])
         self.assertIn("requires --runner-evidence-safety", legacy_candidate["stderr"])
+        self.assertFalse(legacy_candidate["evidence_safety_preflight"]["product_launched"])
 
     def test_incomplete_config_root_safety_profile_stops_before_runner_launch(self):
         with tempfile.TemporaryDirectory() as tmp, patch.dict(
@@ -714,6 +715,9 @@ class EvidenceRedactionTests(unittest.TestCase):
 
         self.assertTrue(result["infrastructure_error"])
         self.assertIn("inventory incomplete", result["stderr"])
+        self.assertFalse(result["evidence_safety_preflight"]["product_launched"])
+        self.assertEqual(result["evidence_safety_preflight"]["inventory_sources"]["config_root"], "incomplete")
+        self.assertNotIn("accessToken", json.dumps(result))
 
     def test_private_policy_file_is_mode_0600(self):
         inventory = RUN_EVALS.credential_inventory_from_values(["SYNTH-private-token"])

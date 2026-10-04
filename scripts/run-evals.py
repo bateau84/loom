@@ -987,8 +987,14 @@ def _admit_runner_safety_result(
         return None
 
 
-def runner_safety_failure(reason: str = "runner evidence-safety admission failed") -> dict[str, Any]:
-    return {
+def runner_safety_failure(
+    reason: str = "runner evidence-safety admission failed",
+    *,
+    inventory: CredentialInventory | None = None,
+    image: str | None = None,
+    preflight: bool = False,
+) -> dict[str, Any]:
+    result = {
         "exit_code": 2,
         "text": "",
         "tools": [],
@@ -1024,6 +1030,17 @@ def runner_safety_failure(reason: str = "runner evidence-safety admission failed
             },
         },
     }
+    if preflight:
+        result["evidence_safety_preflight"] = {
+            "schema": "loom-eval-runner/preflight/v1",
+            "mode": "runner-evidence-safety/v1",
+            "reason": reason,
+            "image": image if image == RUNNER_SAFETY_IMAGE else None,
+            "source_revision": RUNNER_SAFETY_SOURCE if image == RUNNER_SAFETY_IMAGE else None,
+            "inventory_sources": dict(inventory.sources) if inventory else {},
+            "product_launched": False,
+        }
+    return result
 
 
 def write_private_policy(path: Path, policy: dict[str, Any]) -> None:
@@ -2310,12 +2327,14 @@ def invoke_container(
     normal_observation_payload_policy: str = NORMAL_PAYLOAD_POLICY_OMIT,
 ) -> dict[str, Any]:
     if image == RUNNER_SAFETY_IMAGE and not require_runner_evidence_safety:
-        return runner_safety_failure("runner safety image requires --runner-evidence-safety")
+        return runner_safety_failure(
+            "runner safety image requires --runner-evidence-safety", image=image, preflight=True,
+        )
     if require_runner_evidence_safety and (
         transport != "opencode" or image != RUNNER_SAFETY_IMAGE or
         "OPENCODE_EVAL_REDACTION_VALUES" in extra_envs
     ):
-        return runner_safety_failure()
+        return runner_safety_failure("unsupported runner evidence-safety mode", image=image, preflight=True)
     host_env = host_environment_for_transport(transport)
     if normal_invoke_observations_enabled():
         host_env["OPENCODE_EVAL_HOST_OBSERVATIONS"] = "1"
@@ -2340,7 +2359,10 @@ def invoke_container(
     if require_runner_evidence_safety and not inventory.complete:
         # Do not spend a target invocation if the approved input profile cannot
         # be completely classified (notably runtime config-root defaults).
-        return runner_safety_failure("credential inventory incomplete; target not launched")
+        return runner_safety_failure(
+            "credential inventory incomplete; target not launched",
+            inventory=inventory, image=image, preflight=True,
+        )
     secrets = list(inventory.values)
     policy = inventory.private_policy()
     if not normal_invoke_observations_enabled() and any(
@@ -2360,7 +2382,10 @@ def invoke_container(
     runner_bin = os.environ.get("OPENCODE_EVAL_RUNNER_BIN") or shutil.which("opencode-eval-runner")
     if require_runner_evidence_safety and not runner_bin:
         # Safety mode must not fall back to the unacknowledged direct-container path.
-        return runner_safety_failure()
+        return runner_safety_failure(
+            "matching runner executable unavailable; target not launched",
+            inventory=inventory, image=image, preflight=True,
+        )
     node_modules = prepare_node_modules_mount(
         project,
         ROOT / "node_modules" if mount_node_modules else None,
@@ -2378,7 +2403,10 @@ def invoke_container(
                 try:
                     write_private_policy(policy_file, inventory.private_policy())
                 except (OSError, ValueError):
-                    return runner_safety_failure()
+                    return runner_safety_failure(
+                        "private inventory policy unavailable; target not launched",
+                        inventory=inventory, image=image, preflight=True,
+                    )
 
             command = [
                 runner_bin,
@@ -2505,6 +2533,15 @@ def invoke_container(
                         "nested_metadata_parents": 0,
                         "evidence_safety": admitted["evidence_safety"],
                     },
+                }
+                prepared["evidence_safety_preflight"] = {
+                    "schema": "loom-eval-runner/preflight/v1",
+                    "mode": "runner-evidence-safety/v1",
+                    "reason": "acknowledged",
+                    "image": image,
+                    "source_revision": RUNNER_SAFETY_SOURCE,
+                    "inventory_sources": dict(inventory.sources),
+                    "product_launched": True,
                 }
             else:
                 prepared = prepare_transport_result(result, secrets, inventory)
