@@ -2300,6 +2300,7 @@ def invoke_container(
     network: str | None = None,
     reasoning: str | None = None,
     require_runner_evidence_safety: bool = False,
+    runner_defaults_known: bool = False,
     normal_observation_payload_policy: str = NORMAL_PAYLOAD_POLICY_OMIT,
 ) -> dict[str, Any]:
     if require_runner_evidence_safety and (
@@ -2330,6 +2331,7 @@ def invoke_container(
         models_catalog,
         database_seed,
         config_root,
+        runner_defaults_known=runner_defaults_known,
     )
     secrets = list(inventory.values)
     policy = inventory.private_policy()
@@ -3892,6 +3894,7 @@ def run_skill_ablation_case(
             network=args.network,
             reasoning=target_reasoning,
             require_runner_evidence_safety=getattr(args, "runner_evidence_safety", False),
+            runner_defaults_known=True,
         )
 
     def run_judge(target: dict[str, Any]) -> tuple[dict[str, Any] | None, dict[str, Any] | None, str | None]:
@@ -3920,6 +3923,7 @@ def run_skill_ablation_case(
             network=args.network,
             reasoning=judge_reasoning,
             require_runner_evidence_safety=getattr(args, "runner_evidence_safety", False),
+            runner_defaults_known=True,
         )
         error = transport_error(result)
         if error:
@@ -4231,6 +4235,7 @@ def run_case(
             network=args.network,
             reasoning=target_reasoning,
             require_runner_evidence_safety=getattr(args, "runner_evidence_safety", False),
+            runner_defaults_known=True,
         )
         target_seconds = time.perf_counter() - target_started
         target_error = transport_error(target)
@@ -4300,6 +4305,7 @@ def run_case(
                 network=args.network,
                 reasoning=judge_reasoning,
                 require_runner_evidence_safety=getattr(args, "runner_evidence_safety", False),
+                runner_defaults_known=True,
             )
             judge_seconds = time.perf_counter() - judge_started
             judge_error = transport_error(judge_result)
