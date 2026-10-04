@@ -524,6 +524,20 @@ function chooseMockAction(prompt: string, results: Map<string, unknown>, state: 
     return null
   }
 
+  if (
+    prompt.includes("Loom background child worker produced authoritative workflow progress (step-terminal)") &&
+    state.backgroundWorkflowId
+  ) {
+    state.backgroundReturnObserved = true
+    const status = results.get("loom_status") as any
+    const worker = status?.workflow?.steps?.find((step: any) => step.id === "worker")
+    if (worker?.status === "complete") state.backgroundReturnStatusObserved = true
+    if (!results.has("loom_status")) {
+      return { name: "loom_status", args: { workflowId: state.backgroundWorkflowId, detail: true } }
+    }
+    return null
+  }
+
   if (prompt.includes("LOOM_INTEGRATION_BACKGROUND_RETURN_PARENT")) {
     if (startResult?.workflowId) state.backgroundWorkflowId = String(startResult.workflowId)
     const grant = results.get("loom_dispatch_grant") as any
@@ -597,20 +611,6 @@ function chooseMockAction(prompt: string, results: Map<string, unknown>, state: 
           summary: "Real background Worker completed through Loom.",
         },
       }
-    }
-    return null
-  }
-
-  if (
-    prompt.includes("Loom background child worker produced authoritative workflow progress (step-terminal)") &&
-    state.backgroundWorkflowId
-  ) {
-    state.backgroundReturnObserved = true
-    const status = results.get("loom_status") as any
-    const worker = status?.workflow?.steps?.find((step: any) => step.id === "worker")
-    if (worker?.status === "complete") state.backgroundReturnStatusObserved = true
-    if (!results.has("loom_status")) {
-      return { name: "loom_status", args: { workflowId: state.backgroundWorkflowId, detail: true } }
     }
     return null
   }
