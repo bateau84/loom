@@ -41,27 +41,30 @@ def scenario(execution="runtime"):
 
 class ToolResultEvidenceTests(unittest.TestCase):
     def test_non_safety_invalid_runner_json_returns_bounded_error_not_exception(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            project = Path(tmp) / "workspace"
-            project.mkdir()
+        deep_object = b'{"x":' * 700 + b'0' + b'}' * 700
+        for result_bytes in (b"{not-json", b"\xff", deep_object):
+            with self.subTest(size=len(result_bytes)), tempfile.TemporaryDirectory() as tmp:
+                project = Path(tmp) / "workspace"
+                project.mkdir()
 
-            def malformed_result(command, **_kwargs):
-                output_path = Path(command[command.index("--output") + 1])
-                output_path.write_text("{not-json", encoding="utf-8")
-                return RUN.subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+                def malformed_result(command, **_kwargs):
+                    output_path = Path(command[command.index("--output") + 1])
+                    output_path.write_bytes(result_bytes)
+                    return RUN.subprocess.CompletedProcess(command, 0, stdout="", stderr="")
 
-            with patch.object(RUN.shutil, "which", return_value="/bin/fake-runner"), \
-                 patch.object(RUN.subprocess, "run", side_effect=malformed_result):
-                result = RUN.invoke_container(
-                    engine="podman", image="fixture-image", transport="opencode",
-                    model="fixture/model", agent="general", prompt="synthetic", system="",
-                    project=project, auth=None, config=None, models_catalog=None,
-                    database_seed=None, config_root=None, expected_plugin=None,
-                    timeout=10, container_timeout=20, mount_node_modules=False,
-                    workspace_mode="ro", extra_envs=[], runner_defaults_known=True,
-                )
-        self.assertTrue(result["infrastructure_error"])
-        self.assertIn("invalid JSON", result["stderr"])
+                with patch.object(RUN.shutil, "which", return_value="/bin/fake-runner"), \
+                     patch.object(RUN.subprocess, "run", side_effect=malformed_result):
+                    result = RUN.invoke_container(
+                        engine="podman", image="fixture-image", transport="opencode",
+                        model="fixture/model", agent="general", prompt="synthetic", system="",
+                        project=project, auth=None, config=None, models_catalog=None,
+                        database_seed=None, config_root=None, expected_plugin=None,
+                        timeout=10, container_timeout=20, mount_node_modules=False,
+                        workspace_mode="ro", extra_envs=[], runner_defaults_known=True,
+                    )
+                self.assertTrue(result["infrastructure_error"])
+                self.assertRegex(result["stderr"], "invalid JSON|representation limits")
+                self.assertNotIn(result_bytes.decode("utf-8", errors="replace"), result["stderr"])
 
     def test_disposable_policy_and_runtime_state_reject_unproved_sources(self):
         inventory = RUN.collect_credential_inventory(
@@ -1547,9 +1550,12 @@ class ToolResultEvidenceTests(unittest.TestCase):
 
     def test_run_case_delivers_same_result_evidence_to_judge_and_artifact(self):
         case = scenario()
-        target = RUN.prepare_transport_result({"exit_code": 0, "text": "Done", "tools": ["loom_status"], "actions": [{"tool": "loom_status", "args": {}}], "stdout": raw(event(output="complete - 3/3"))}, [])
+        target = RUN.prepare_transport_result({"exit_code": 0, "text": "Done", "tools": ["loom_status"],
+                                               "actions": [{"tool": "loom_status", "args": {}}],
+                                               "skills_loaded": [], "stdout": raw(event(output="complete - 3/3"))}, [])
         grade = {"passed": True, "expectations": [{"met": True}], "violations": [{"violated": False}], "trap_observed": False, "trap_evidence": "none"}
-        judge = {"exit_code": 0, "text": json.dumps(grade)}
+        judge = {"exit_code": 0, "text": json.dumps(grade),
+                 "evidence_safety": {"fields": {"text": {"state": "exact"}}}}
         with tempfile.TemporaryDirectory() as tmp:
             artifact_dir = Path(tmp) / "artifacts"
             args = argparse.Namespace(iterations=1, target_transport="opencode", judge_transport="opencode", judge_model=None, model="test", auth=None, provider_config=None, models_catalog=None, database=None, timeout_seconds=30, container_timeout=60, env=[], network=None, image="fixture", opencode_image=None, copilot_image=None, artifact_dir=str(artifact_dir), keep_temp=True)
