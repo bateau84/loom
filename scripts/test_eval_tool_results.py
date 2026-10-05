@@ -40,6 +40,31 @@ def scenario(execution="runtime"):
 
 
 class ToolResultEvidenceTests(unittest.TestCase):
+    def test_safety_runner_rejects_reserved_profile_overrides_before_launch(self):
+        for name in (
+            "EVAL_OPENCODE_STATE_PROFILE",
+            "EVAL_OPENCODE_AUTH_SOURCE",
+            "EVAL_OPENCODE_DATABASE_SOURCE",
+        ):
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as tmp:
+                with patch.object(RUN.subprocess, "run") as run, patch.object(
+                    RUN.shutil, "which", return_value="/bin/true",
+                ), patch.object(RUN, "host_environment_for_transport", return_value={}):
+                    result = RUN.invoke_container(
+                        engine="podman", image=RUN.RUNNER_SAFETY_IMAGE,
+                        transport="opencode", model="test", agent="general",
+                        prompt="test", system="", project=Path(tmp), auth=None,
+                        config=None, models_catalog=None, database_seed=None,
+                        config_root=None, expected_plugin=None, timeout=1,
+                        container_timeout=1, mount_node_modules=False,
+                        workspace_mode="ro", extra_envs=[name],
+                        require_runner_evidence_safety=True, runner_defaults_known=True,
+                    )
+                self.assertTrue(result["infrastructure_error"])
+                self.assertIn("reserved", result.get("stderr", "").lower())
+                self.assertFalse(result["observed_tool_results"]["evidence_safety"]["coverage_complete"])
+                run.assert_not_called()
+
     def test_safety_runner_result_requires_loaded_pair_and_preserves_dispositions(self):
         inventory = RUN.collect_credential_inventory(
             {}, [], None, None, None, None, runner_defaults_known=True,

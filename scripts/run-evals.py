@@ -739,6 +739,11 @@ RUNNER_SAFE_EVENTS_SCHEMA = "opencode-eval-runner/safe-tool-results/v1"
 RUNNER_SAFETY_ACK_SCHEMA = "opencode-eval-runner/evidence-safety-ack/v1"
 RUNNER_SAFETY_VALIDATION_SCHEMA = "opencode-eval-runner/evidence-safety-validation/v1"
 EVIDENCE_SAFETY_SCHEMA = "loom-eval-evidence-safety/v1"
+RUNNER_SAFETY_RESERVED_ENV = {
+    "EVAL_OPENCODE_STATE_PROFILE",
+    "EVAL_OPENCODE_AUTH_SOURCE",
+    "EVAL_OPENCODE_DATABASE_SOURCE",
+}
 EVIDENCE_SAFETY_REASONS = {
     "credential_match", "sensitive_key", "inventory_incomplete", "upstream_clipped",
     "unsupported_schema", "unsupported_representation", "opaque_payload_unverified",
@@ -2332,9 +2337,13 @@ def invoke_container(
         )
     if require_runner_evidence_safety and (
         transport != "opencode" or image != RUNNER_SAFETY_IMAGE or
-        "OPENCODE_EVAL_REDACTION_VALUES" in extra_envs
+        "OPENCODE_EVAL_REDACTION_VALUES" in extra_envs or
+        RUNNER_SAFETY_RESERVED_ENV.intersection(extra_envs)
     ):
-        return runner_safety_failure("unsupported runner evidence-safety mode", image=image, preflight=True)
+        return runner_safety_failure(
+            "unsupported runner evidence-safety mode or reserved input-profile override",
+            image=image, preflight=True,
+        )
     host_env = host_environment_for_transport(transport)
     if normal_invoke_observations_enabled():
         host_env["OPENCODE_EVAL_HOST_OBSERVATIONS"] = "1"
