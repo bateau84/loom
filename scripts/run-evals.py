@@ -864,8 +864,14 @@ def _runner_result_rejection_code(result: Any, inventory: CredentialInventory, i
     if not isinstance(result, dict) or result.get("schema") != RUNNER_SAFE_RESULT_SCHEMA:
         return "result-schema"
     ack = result.get("evidence_safety_ack")
-    if not isinstance(ack, dict) or ack.get("schema") != RUNNER_SAFETY_ACK_SCHEMA:
-        return "ack-schema"
+    if ack is None:
+        return "ack-missing"
+    if not isinstance(ack, dict):
+        return "ack-not-object"
+    if type(ack.get("schema")) is not str:
+        return "ack-schema-type"
+    if ack.get("schema") != RUNNER_SAFETY_ACK_SCHEMA:
+        return "ack-schema-unexpected"
     validation = result.get("evidence_safety_validation")
     if not isinstance(validation, dict) or validation.get("schema") != RUNNER_SAFETY_VALIDATION_SCHEMA:
         return "host-validation-schema"
