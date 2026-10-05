@@ -66,13 +66,13 @@ def _finite_json(value: Any) -> bool:
 
 
 def _actor(value: Any) -> bool:
-    return isinstance(value, dict) and all(
+    return _exact_keys(value, {"agent", "session_id", "message_id"}) and all(
         _nonempty(value.get(field)) for field in ("agent", "session_id", "message_id")
     )
 
 
 def _parent(value: Any) -> bool:
-    return isinstance(value, dict) and all(
+    return _exact_keys(value, {"invocation_id", "session_id", "message_id", "call_id"}) and all(
         _nonempty(value.get(field))
         for field in ("invocation_id", "session_id", "message_id", "call_id")
     )

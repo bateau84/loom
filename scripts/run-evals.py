@@ -5,6 +5,7 @@ import argparse
 import hashlib
 import importlib.util
 import json
+import math
 import os
 import re
 import shutil
@@ -757,7 +758,36 @@ EVIDENCE_SAFETY_REASONS = {
     "unsupported_schema", "unsupported_representation", "opaque_payload_unverified",
     "size_limit", "missing", "invalid", "write_failed",
 }
+MAX_SAFE_JSON_DEPTH = 64
+MAX_SAFE_JSON_NODES = 100_000
 RUNNER_POLICY_SOURCES = {"env", "auth", "config", "models", "credential_seed", "config_root"}
+
+
+def _safe_json_shape(value: Any) -> bool:
+    """Bound untrusted runner JSON before recursive projection or persistence."""
+    pending = [(value, 0)]
+    visited = 0
+    while pending:
+        current, depth = pending.pop()
+        visited += 1
+        if visited > MAX_SAFE_JSON_NODES or depth > MAX_SAFE_JSON_DEPTH:
+            return False
+        if current is None or type(current) in {str, bool, int}:
+            continue
+        if type(current) is float:
+            if not math.isfinite(current):
+                return False
+            continue
+        if isinstance(current, list):
+            pending.extend((item, depth + 1) for item in current)
+            continue
+        if isinstance(current, dict):
+            if any(not isinstance(key, str) for key in current):
+                return False
+            pending.extend((item, depth + 1) for item in current.values())
+            continue
+        return False
+    return True
 
 
 def _valid_runner_private_policy(policy: Any) -> bool:
@@ -1255,6 +1285,8 @@ def _collect_json_inventory(
     location: str = "",
     *,
     in_credential_object: bool = False,
+    public_metadata_allowed: bool = False,
+    credential_header_context: bool = False,
 ) -> bool:
     """Collect only classified leaves; report unsupported credential descendants."""
     complete = True
@@ -1278,16 +1310,25 @@ def _collect_json_inventory(
                     if isinstance(child, (dict, list)):
                         complete = _collect_json_inventory(
                             child, entries, source, child_location, in_credential_object=True,
+                            public_metadata_allowed=public_metadata_allowed,
+                            credential_header_context=credential_header_context,
                         ) and complete
             elif normalized in _CREDENTIAL_BEARING_CONTAINERS:
                 if isinstance(child, (dict, list)):
                     complete = _collect_json_inventory(
                         child, entries, source, child_location, in_credential_object=True,
+                        public_metadata_allowed=(
+                            normalized in {"credential", "credentials"} and not credential_header_context
+                        ),
+                        credential_header_context=(
+                            credential_header_context or normalized in {"header", "headers", "custom_headers", "http_headers"}
+                        ),
                     ) and complete
                 else:
                     entries.append(CredentialEntry(source, child_location, "unknown", None))
                     complete = False
-            elif credential_container and normalized in _PUBLIC_CREDENTIAL_METADATA and isinstance(child, str):
+            elif (in_credential_object and public_metadata_allowed and
+                  normalized in _PUBLIC_CREDENTIAL_METADATA and isinstance(child, str)):
                 entries.append(CredentialEntry(source, child_location, "public", child))
             elif in_credential_object and not _sensitive_key(key_text):
                 entries.append(CredentialEntry(source, child_location, "unknown", None))
@@ -1296,11 +1337,15 @@ def _collect_json_inventory(
                     complete = _collect_json_inventory(
                         child, entries, source, child_location,
                         in_credential_object=True,
+                        public_metadata_allowed=public_metadata_allowed,
+                        credential_header_context=credential_header_context,
                     ) and complete
             else:
                 complete = _collect_json_inventory(
                     child, entries, source, child_location,
                     in_credential_object=credential_container,
+                    public_metadata_allowed=public_metadata_allowed,
+                    credential_header_context=credential_header_context,
                 ) and complete
         return complete
     if isinstance(value, list):
@@ -1308,6 +1353,8 @@ def _collect_json_inventory(
             complete = _collect_json_inventory(
                 child, entries, source, f"{location}[{index}]",
                 in_credential_object=in_credential_object,
+                public_metadata_allowed=public_metadata_allowed,
+                credential_header_context=credential_header_context,
             ) and complete
         return complete
     return True
@@ -1431,7 +1478,10 @@ def _project_payload(value: Any, secrets: tuple[str, ...]) -> tuple[Any, bool, s
         for key, item in value.items():
             if isinstance(key, str) and _sensitive_key(key):
                 return None, True, "sensitive_key"
-            if isinstance(key, str) and any(secret and secret in key for secret in secrets):
+            if isinstance(key, str) and any(
+                variant and variant in key
+                for secret in secrets for variant in sensitive_text_variants(secret)
+            ):
                 # Never retain a payload key containing credential material: a
                 # renamed key could collide, and deleting just that member can
                 # silently alter the payload's meaning.
@@ -2698,10 +2748,10 @@ def invoke_container(
                 }
             try:
                 result = json.loads(result_file.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError) as exc:
+            except (OSError, UnicodeError, json.JSONDecodeError, RecursionError):
                 if require_runner_evidence_safety:
                     return runner_safety_failure(
-                        "runner safe-result JSON invalid; target evidence unavailable",
+                        "runner safe-result encoding or JSON invalid; target evidence unavailable",
                         inventory=inventory, image=image,
                     )
                 return redact_sensitive_values({
@@ -2709,7 +2759,7 @@ def invoke_container(
                     "text": "",
                     "tools": [],
                     "actions": [],
-                    "stderr": "opencode-eval-runner result was invalid JSON: " + str(exc),
+                    "stderr": "opencode-eval-runner result was invalid JSON or encoding",
                     "stdout": redacted_prefix(proc.stdout, secrets, 100000),
                     "infrastructure_error": True,
                 }, secrets)
@@ -2728,6 +2778,20 @@ def invoke_container(
                     "stdout": redacted_prefix(proc.stdout, secrets, 100000),
                     "infrastructure_error": True,
                 }, secrets)
+            if not _safe_json_shape(result):
+                if require_runner_evidence_safety:
+                    return runner_safety_failure(
+                        "runner result exceeds supported JSON representation limits",
+                        inventory=inventory, image=image,
+                    )
+                return {
+                    "exit_code": proc.returncode,
+                    "text": "",
+                    "tools": [],
+                    "actions": [],
+                    "stderr": "opencode-eval-runner result exceeds supported JSON representation limits",
+                    "infrastructure_error": True,
+                }
             if require_runner_evidence_safety:
                 admitted = _admit_runner_safety_result(result, inventory, image, runner_bin)
                 if admitted is None:
@@ -2770,7 +2834,17 @@ def invoke_container(
                     "product_launched": True,
                 }
             else:
-                prepared = prepare_transport_result(result, secrets, inventory)
+                try:
+                    prepared = prepare_transport_result(result, secrets, inventory)
+                except (RecursionError, TypeError, ValueError, OverflowError):
+                    return {
+                        "exit_code": proc.returncode,
+                        "text": "",
+                        "tools": [],
+                        "actions": [],
+                        "stderr": "opencode-eval-runner result could not be safely projected",
+                        "infrastructure_error": True,
+                    }
             if not require_runner_evidence_safety:
                 prepared = attach_observer_capture(prepared, project, secrets)
             return enforce_reasoning_contract(prepared, reasoning)
@@ -3859,6 +3933,14 @@ def judge_text_evidence_error(result: dict[str, Any]) -> str | None:
     return None
 
 
+def target_scoring_evidence_error(result: dict[str, Any]) -> str | None:
+    for field in ("text", "tools", "actions", "skills_loaded"):
+        error = exact_transport_field_error(result, field)
+        if error:
+            return error
+    return judge_text_evidence_error(result)
+
+
 def invoke_container_with_retry(
     *,
     retries: int = 2,
@@ -4196,7 +4278,7 @@ def run_skill_ablation_case(
         )
 
     def run_judge(target: dict[str, Any]) -> tuple[dict[str, Any] | None, dict[str, Any] | None, str | None]:
-        evidence_error = judge_text_evidence_error(target)
+        evidence_error = target_scoring_evidence_error(target)
         if evidence_error:
             return None, None, evidence_error
         result = invoke_container_with_retry(
@@ -4248,7 +4330,7 @@ def run_skill_ablation_case(
         baseline_target_seconds = time.perf_counter() - phase_started
         baseline_target_error = transport_error(baseline_target)
         if not baseline_target_error:
-            baseline_target_error = judge_text_evidence_error(baseline_target)
+            baseline_target_error = target_scoring_evidence_error(baseline_target)
         print(
             f"{case_label} baseline target "
             f"{'ERROR' if baseline_target_error else 'done'} in {baseline_target_seconds:.1f}s",
@@ -4315,7 +4397,7 @@ def run_skill_ablation_case(
         candidate_target_seconds = time.perf_counter() - phase_started
         candidate_target_error = transport_error(candidate_target)
         if not candidate_target_error:
-            candidate_target_error = judge_text_evidence_error(candidate_target)
+            candidate_target_error = target_scoring_evidence_error(candidate_target)
         print(
             f"{case_label} candidate target "
             f"{'ERROR' if candidate_target_error else 'done'} in {candidate_target_seconds:.1f}s",
@@ -4548,13 +4630,7 @@ def run_case(
         target_seconds = time.perf_counter() - target_started
         target_error = transport_error(target)
         if not target_error:
-            target_error = judge_text_evidence_error(target)
-        if not target_error and any(
-            isinstance(transport_field_disposition(target, field), dict) and
-            transport_field_disposition(target, field).get("state") != "exact"
-            for field in ("text", "actions", "tools", "skills_loaded")
-        ):
-            target_error = "non-evidence: required transport payload was redacted or omitted"
+            target_error = target_scoring_evidence_error(target)
         print(
             f"{case_label} target {'ERROR' if target_error else 'done'} in {target_seconds:.1f}s",
             flush=True,
@@ -4619,10 +4695,8 @@ def run_case(
             )
             judge_seconds = time.perf_counter() - judge_started
             judge_error = transport_error(judge_result)
-            judge_text_disposition = transport_field_disposition(judge_result, "text")
-            if (not judge_error and isinstance(judge_text_disposition, dict) and
-                    judge_text_disposition.get("state") != "exact"):
-                judge_error = "non-evidence: judge response was redacted or omitted"
+            if not judge_error:
+                judge_error = exact_transport_field_error(judge_result, "text")
             print(
                 f"{case_label} judge {'ERROR' if judge_error else 'done'} in {judge_seconds:.1f}s",
                 flush=True,
