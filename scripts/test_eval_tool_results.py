@@ -45,6 +45,8 @@ class ToolResultEvidenceTests(unittest.TestCase):
             {}, [], None, None, None, None, runner_defaults_known=True,
         )
         self.assertTrue(RUN._valid_runner_private_policy(inventory.private_policy()))
+        self.assertEqual(RUN._runner_result_rejection_code({}, inventory, RUN.RUNNER_SAFETY_IMAGE, "runner"),
+                         "result-schema")
         incomplete = inventory.private_policy()
         incomplete["complete"] = True
         incomplete["sources"]["config_root"] = "incomplete"
