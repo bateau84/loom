@@ -731,9 +731,15 @@ class CredentialInventory:
 
 RUNNER_SAFETY_IMAGE = (
     "ghcr.io/bateau84/opencode-eval-runner@"
-    "sha256:328723ec9f0196a694ecf631fc76e2108094c005aed8f01d2dfab0d0c585b03a"
+    "sha256:9295898c1ae1aeb26f55a88379ae0a92db055357c868f91e4ef87746357990e9"
 )
-RUNNER_SAFETY_SOURCE = "d2ce384b49d888f1ab106b2ef66b4def2d4d7de6"
+RUNNER_SAFETY_SOURCE = "03339e592433ef7edfc07736d57482efc51cdd17"
+RUNNER_SAFETY_IMAGE_CONFIG = "sha256:5a7a4ed67f00cb7d4e74a866b04c4e6eac3866106222681a553499a8fb3808c7"
+RUNNER_PACKAGE_INIT_SHA256 = "5d3517b806e3e674fd156b262caebadff4c6589d10b60ea6f856ddef870331a0"
+RUNNER_POLICY_MODULE_SHA256 = "0c949eeeb4f60236942ef384db2c30a316304994d31131e40030f9fe84badda8"
+RUNNER_INVOKE_SHA256 = "7357597d11a56fbb01152a620bb4c537d26e6ee09c4f2b58a688e99a2cbd95cc"
+RUNNER_HOST_EXECUTABLE_SHA256 = "91bf5ab73f299e1bcd94659cb52385ed7e58e44ffbd782d840c87c6b140d49b2"
+RUNNER_HOST_ADAPTER_SHA256 = "8b9fdb9bfcbde4bd9886347fb094cbba09a9422fe91a2cffe588150b6c535726"
 RUNNER_SAFE_RESULT_SCHEMA = "opencode-eval-runner/safe-result/v1"
 RUNNER_SAFE_EVENTS_SCHEMA = "opencode-eval-runner/safe-tool-results/v1"
 RUNNER_SAFETY_ACK_SCHEMA = "opencode-eval-runner/evidence-safety-ack/v1"
@@ -743,12 +749,32 @@ RUNNER_SAFETY_RESERVED_ENV = {
     "EVAL_OPENCODE_STATE_PROFILE",
     "EVAL_OPENCODE_AUTH_SOURCE",
     "EVAL_OPENCODE_DATABASE_SOURCE",
+    "OPENCODE_EVAL_RUNNER_AUTH", "OPENCODE_EVAL_RUNNER_DB", "OPENCODE_EVAL_RUNNER_CONFIG",
+    "OPENCODE_EVAL_RUNNER_CONFIG_ROOT", "OPENCODE_EVAL_RUNNER_MODELS",
 }
 EVIDENCE_SAFETY_REASONS = {
     "credential_match", "sensitive_key", "inventory_incomplete", "upstream_clipped",
     "unsupported_schema", "unsupported_representation", "opaque_payload_unverified",
     "size_limit", "missing", "invalid", "write_failed",
 }
+RUNNER_POLICY_SOURCES = {"env", "auth", "config", "models", "credential_seed", "config_root"}
+
+
+def _valid_runner_private_policy(policy: Any) -> bool:
+    return (
+        isinstance(policy, dict) and set(policy) == {"schema", "policy_version", "complete", "sources", "values"}
+        and policy.get("schema") == "loom-eval-credential-inventory/v1"
+        and policy.get("policy_version") == "source-path-roles/v1"
+        and type(policy.get("complete")) is bool
+        and isinstance(policy.get("sources"), dict)
+        and set(policy["sources"]) == RUNNER_POLICY_SOURCES
+        and all(state in {"complete", "incomplete", "not_selected"} for state in policy["sources"].values())
+        and (not policy["complete"] or "incomplete" not in policy["sources"].values())
+        and policy["sources"].get("credential_seed") == "not_selected"
+        and isinstance(policy.get("values"), list) and len(policy["values"]) <= 4096
+        and all(isinstance(value, str) and value for value in policy["values"])
+        and len(json.dumps(policy, ensure_ascii=False, allow_nan=False, separators=(",", ":")).encode("utf-8")) <= 128_000
+    )
 
 
 def _sha256_file(path: str) -> str | None:
@@ -808,6 +834,31 @@ def _valid_evidence_safety_summary(value: Any, inventory: CredentialInventory) -
     return observed_counts == loss_counts
 
 
+def _valid_disposable_runtime_state(value: Any) -> bool:
+    expected = {
+        "schema", "profile", "database_source", "database_created", "database_seed_present",
+        "auth_source", "session_rows_before_inference", "credential_rows_before_inference",
+        "migration_count", "first_migration", "last_migration",
+    }
+    if not isinstance(value, dict) or set(value) != expected:
+        return False
+    if (value.get("schema") != "opencode-eval-runner/runtime-state/v1" or
+            value.get("profile") != "disposable" or
+            value.get("database_source") != "runtime-bootstrap" or
+            value.get("database_created") is not True or
+            value.get("database_seed_present") is not False or
+            value.get("auth_source") not in {"none", "explicit"} or
+            value.get("session_rows_before_inference") != 0 or
+            value.get("credential_rows_before_inference") != 0 or
+            value.get("migration_count") != 48 or
+            value.get("first_migration") != "20260127222353_familiar_lady_ursula" or
+            value.get("last_migration") != "20260923013825_project_time_active"):
+        return False
+    return all(type(value[key]) is int and 0 <= value[key] <= 2**53 - 1 for key in (
+        "session_rows_before_inference", "credential_rows_before_inference", "migration_count",
+    ))
+
+
 def _admit_runner_safety_result(
     result: Any,
     inventory: CredentialInventory,
@@ -817,6 +868,12 @@ def _admit_runner_safety_result(
     """Validate the pinned RSP candidate envelope before exposing any payload."""
     try:
         if not isinstance(result, dict) or result.get("schema") != RUNNER_SAFE_RESULT_SCHEMA:
+            return None
+        if (result.get("transport") != "opencode" or type(result.get("exit_code")) is not int or
+                any(type(result.get(name)) is not int or result[name] < 0 for name in (
+                    "stdout_total_chars", "stderr_total_chars")) or
+                any(name in result and type(result[name]) is not bool for name in (
+                    "timed_out", "infrastructure_error", "stdout_truncated", "stderr_truncated"))):
             return None
         acknowledgement = result.get("evidence_safety_ack")
         loaded = result.get("evidence_load")
@@ -828,9 +885,9 @@ def _admit_runner_safety_result(
             "stages", "policy_valid", "inventory_complete", "module_sha256",
             "image_source_revision", "policy_receipt",
         } or set(loaded) != {
-            "image", "image_config", "image_source_revision", "host_executable_sha256",
-            "host_adapter_sha256", "policy_module_sha256", "host_source_revision",
-            "host_tracked_tree_clean",
+            "image", "image_config", "image_source_revision", "image_package_init_sha256",
+            "image_policy_module_sha256", "image_invoke_sha256", "host_executable_sha256",
+            "host_adapter_sha256", "policy_module_sha256", "host_source_revision", "host_tracked_tree_clean",
         } or set(validation) != {"schema", "acknowledged", "stages"}:
             return None
         expected_stages = ["container.before_clip", "container.before_output"]
@@ -857,9 +914,13 @@ def _admit_runner_safety_result(
                 loaded.get("host_source_revision") != RUNNER_SAFETY_SOURCE or
                 loaded.get("host_tracked_tree_clean") is not True or
                 loaded.get("host_executable_sha256") != _sha256_file(runner_bin) or
-                not re.fullmatch(r"sha256:[0-9a-f]{64}", str(loaded.get("image_config") or "")) or
-                any(not re.fullmatch(r"[0-9a-f]{64}", str(loaded.get(name) or "")) for name in (
-                    "host_adapter_sha256", "policy_module_sha256")) or
+                loaded.get("image_config") != RUNNER_SAFETY_IMAGE_CONFIG or
+                loaded.get("image_package_init_sha256") != RUNNER_PACKAGE_INIT_SHA256 or
+                loaded.get("image_policy_module_sha256") != RUNNER_POLICY_MODULE_SHA256 or
+                loaded.get("image_invoke_sha256") != RUNNER_INVOKE_SHA256 or
+                loaded.get("policy_module_sha256") != RUNNER_POLICY_MODULE_SHA256 or
+                loaded.get("host_adapter_sha256") != RUNNER_HOST_ADAPTER_SHA256 or
+                loaded.get("host_executable_sha256") != RUNNER_HOST_EXECUTABLE_SHA256 or
                 acknowledgement.get("module_sha256") != loaded.get("policy_module_sha256")):
             return None
         safety = result.get("evidence_safety")
@@ -871,7 +932,7 @@ def _admit_runner_safety_result(
         }
         required_dispositions = {
             "model", "reasoning", "agent", "skill", "session_id", "credential_source",
-            "stdout", "stderr", "plugin_diagnostic", "plugin_preflight", "text", "tools",
+            "runtime_state", "stdout", "stderr", "plugin_diagnostic", "plugin_preflight", "text", "tools",
             "actions", "skills_loaded",
         }
         if not required_dispositions.issubset(top_dispositions):
@@ -883,6 +944,15 @@ def _admit_runner_safety_result(
                     return None
             elif disposition["state"] != "omitted":
                 return None
+        if "runtime_state" in result:
+            if (top_dispositions["runtime_state"]["state"] != "exact" or
+                    not _valid_disposable_runtime_state(result["runtime_state"]) or
+                    result["runtime_state"]["auth_source"] != (
+                        "explicit" if inventory.sources.get("auth") == "complete" else "none"
+                    )):
+                return None
+        else:
+            return None
         for name in ("timing", "tool_result_evidence"):
             disposition = top_dispositions.get(name)
             if name in result and disposition is not None and disposition["state"] == "omitted":
@@ -894,7 +964,7 @@ def _admit_runner_safety_result(
             "stdout_total_chars", "stderr_total_chars", "stdout_truncated", "stderr_truncated",
             "model", "reasoning", "agent", "skill", "session_id", "credential_source", "text", "tools",
             "actions", "skills_loaded", "timing", "tool_result_evidence", "evidence_safety",
-            "evidence_safety_ack", "evidence_load", "evidence_safety_validation",
+            "evidence_safety_ack", "evidence_load", "evidence_safety_validation", "runtime_state",
         }
         if set(result) - allowed_root:
             return None
@@ -904,6 +974,8 @@ def _admit_runner_safety_result(
             if name in result and (disposition is None or disposition.get("state") == "omitted"):
                 return None
             if name not in result and disposition is not None and disposition.get("state") != "omitted":
+                return None
+            if name in {"model", "reasoning", "agent", "skill", "session_id"} and name in result and disposition["state"] != "exact":
                 return None
         events = result.get("tool_result_evidence")
         if events is not None:
@@ -931,7 +1003,7 @@ def _admit_runner_safety_result(
                 dispositions = {entry["field"]: entry for entry in safety["fields"] if entry["event"] == ordinal}
                 row = {"sequence": event["sequence"], "status": event["status"],
                        "truncated_fields": [], "missing_fields": [], "evidence_safety": {}}
-                checked_fields = ["tool", "call_id", "session_id", "input"]
+                checked_fields = ["status", "tool", "call_id", "session_id", "input"]
                 if event["status"] == "error":
                     checked_fields.append("error")
                 elif event["status"] == "completed":
@@ -944,6 +1016,8 @@ def _admit_runner_safety_result(
                     disposition = dispositions.get(field)
                     if disposition is None:
                         return None
+                    if field in {"status", "tool", "call_id", "session_id"} and field in event and disposition["state"] != "exact":
+                        return None
                     row["evidence_safety"][field] = {
                         key: value for key, value in disposition.items() if key not in {"event", "field"}
                     }
@@ -953,7 +1027,10 @@ def _admit_runner_safety_result(
                         if disposition["state"] == "omitted":
                             return None
                         value = event[field]
-                        if field == "input":
+                        if field == "status":
+                            if disposition["state"] != "exact":
+                                return None
+                        elif field == "input":
                             if not isinstance(value, dict):
                                 return None
                             value = json.dumps(value, ensure_ascii=False, sort_keys=True)
@@ -2338,7 +2415,9 @@ def invoke_container(
     if require_runner_evidence_safety and (
         transport != "opencode" or image != RUNNER_SAFETY_IMAGE or
         "OPENCODE_EVAL_REDACTION_VALUES" in extra_envs or
-        RUNNER_SAFETY_RESERVED_ENV.intersection(extra_envs)
+        RUNNER_SAFETY_RESERVED_ENV.intersection(extra_envs) or
+        database_seed is not None or
+        any(os.environ.get(name) for name in RUNNER_SAFETY_RESERVED_ENV)
     ):
         return runner_safety_failure(
             "unsupported runner evidence-safety mode or reserved input-profile override",
@@ -2374,6 +2453,11 @@ def invoke_container(
         )
     secrets = list(inventory.values)
     policy = inventory.private_policy()
+    if require_runner_evidence_safety and not _valid_runner_private_policy(policy):
+        return runner_safety_failure(
+            "disposable runner inventory policy is unsupported; target not launched",
+            inventory=inventory, image=image, preflight=True,
+        )
     if not normal_invoke_observations_enabled() and any(
         entry.role == "credential" and entry.source != "env" for entry in inventory.entries
     ):
@@ -2453,7 +2537,8 @@ def invoke_container(
             if expected_plugin:
                 command += ["--expected-plugin", expected_plugin]
             if require_runner_evidence_safety:
-                command += ["--require-evidence-safety", "--evidence-policy-file", str(policy_file)]
+                command += ["--opencode-state-profile", "disposable", "--require-evidence-safety",
+                            "--evidence-policy-file", str(policy_file)]
             if node_modules:
                 command += ["--mount", f"{node_modules}:/workspace/node_modules:ro"]
             for name in extra_envs:
