@@ -831,17 +831,36 @@ class EvidenceRedactionTests(unittest.TestCase):
                 "providers": {"fixture": {"settings": {
                     "headers": {
                         "X-Custom-Auth": "SYNTH-unclassified-header",
-                        "scope": "SYNTH-public-name-collision",
+                        "type": "SYNTH-public-type-name",
+                        "provider": "SYNTH-public-provider-name",
+                        "id": "SYNTH-public-id-name",
+                        "scope": "SYNTH-public-scope-name",
+                        "context": "SYNTH-public-context-name",
                     },
                 }}}
             }), encoding="utf-8")
             wrong_type = root / "auth.json"
             wrong_type.write_text(json.dumps({"credential": {"apiKey": 1}}), encoding="utf-8")
+            scalar_root = root / "scalar-config.json"
+            scalar_root.write_text(json.dumps("unclassified-secret-root"), encoding="utf-8")
+            unkeyed = root / "unkeyed-credentials.json"
+            unkeyed.write_text(json.dumps({"credentials": ["SYNTH-unkeyed"]}), encoding="utf-8")
+            duplicate = root / "duplicate-config.json"
+            duplicate.write_text('{"apiKey":"first","apiKey":"second"}', encoding="utf-8")
             custom_header = RUN_EVALS.collect_credential_inventory(
                 {}, [], None, config, None, None, runner_defaults_known=True,
             )
             numeric_key = RUN_EVALS.collect_credential_inventory(
                 {}, [], wrong_type, None, None, None, runner_defaults_known=True,
+            )
+            scalar_source = RUN_EVALS.collect_credential_inventory(
+                {}, [], None, scalar_root, None, None, runner_defaults_known=True,
+            )
+            unkeyed_source = RUN_EVALS.collect_credential_inventory(
+                {}, [], None, unkeyed, None, None, runner_defaults_known=True,
+            )
+            duplicate_source = RUN_EVALS.collect_credential_inventory(
+                {}, [], None, duplicate, None, None, runner_defaults_known=True,
             )
 
         self.assertFalse(custom_header.complete)
@@ -849,6 +868,9 @@ class EvidenceRedactionTests(unittest.TestCase):
         self.assertNotIn("SYNTH-unclassified-header", custom_header.values)
         self.assertFalse(numeric_key.complete)
         self.assertEqual(numeric_key.sources["auth"], "incomplete")
+        self.assertFalse(scalar_source.complete)
+        self.assertFalse(unkeyed_source.complete)
+        self.assertFalse(duplicate_source.complete)
 
     def test_disposition_and_judge_budget_vetoes_require_complete_text(self):
         exact = {"text": "complete", "evidence_safety": {"fields": {"text": {"state": "exact"}}}}
@@ -1058,14 +1080,37 @@ class EvidenceRedactionTests(unittest.TestCase):
 
     def test_json_escaped_credential_payload_keys_are_omitted(self):
         secret = 'quote" newline\n path\\suffix'
-        encoded_key = json.dumps(secret, ensure_ascii=False)[1:-1]
+        inventory = RUN_EVALS.credential_inventory_from_values([secret])
+        self.assertEqual(inventory.values, (secret,))
+        encoded_key = secret
+        for depth in range(4):
+            with self.subTest(depth=depth):
+                projected = RUN_EVALS.project_evidence_event(
+                    {"output": {"nested": {encoded_key: "value"}}}, inventory,
+                )
+                self.assertNotIn("output", projected["value"])
+                self.assertEqual(projected["fields"]["output"]["state"], "omitted")
+                self.assertEqual(projected["fields"]["output"]["reason"], "sensitive_key")
+            encoded_key = json.dumps(encoded_key, ensure_ascii=False)[1:-1]
+
+        unsupported_key = encoded_key
         projected = RUN_EVALS.project_evidence_event(
-            {"output": {"nested": {encoded_key: "value"}}},
-            RUN_EVALS.credential_inventory_from_values([secret]),
+            {"output": {unsupported_key: "value"}}, inventory,
         )
         self.assertNotIn("output", projected["value"])
-        self.assertEqual(projected["fields"]["output"]["state"], "omitted")
-        self.assertEqual(projected["fields"]["output"]["reason"], "sensitive_key")
+        self.assertEqual(projected["fields"]["output"]["reason"], "unsupported_representation")
+
+        encoded_value = secret
+        for _depth in range(4):
+            projected = RUN_EVALS.project_evidence_event({"output": encoded_value}, inventory)
+            self.assertEqual(projected["value"]["output"], "***REDACTED***")
+            self.assertEqual(projected["fields"]["output"]["state"], "redacted")
+            encoded_value = json.dumps(encoded_value, ensure_ascii=False)[1:-1]
+        self.assertIn("\\", encoded_value)
+        self.assertEqual(RUN_EVALS._project_payload(encoded_value, inventory.values)[2], "unsupported_representation")
+        projected = RUN_EVALS.project_evidence_event({"output": encoded_value}, inventory)
+        self.assertNotEqual(projected["fields"]["output"]["state"], "exact", projected)
+        self.assertNotIn(secret, json.dumps(projected["value"], ensure_ascii=False))
 
     def test_incomplete_inventory_omits_selectors_and_blocks_capture_completeness(self):
         with tempfile.TemporaryDirectory() as tmp:
