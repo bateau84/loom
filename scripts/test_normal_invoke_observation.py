@@ -119,6 +119,22 @@ class NormalInvokeDiagnosticParserTests(unittest.TestCase):
                 self.assertFalse(parsed["capture_valid"])
                 self.assertFalse(parsed["evidence_eligible"])
 
+    def test_rejects_extended_actor_and_parent_identity_objects(self):
+        for field in ("actor", "parent"):
+            records = valid_events()
+            mutated = []
+            for record in records:
+                event_value = record["event"]
+                identity = event_value.get(field)
+                if isinstance(identity, dict):
+                    event_value = {**event_value, field: {**identity, "extension": "ignored"}}
+                    record = {**record, "event": event_value}
+                mutated.append(record)
+            with self.subTest(field=field):
+                parsed = PARSER.parse_diagnostic_capture(capture(mutated))
+                self.assertFalse(parsed["capture_valid"])
+                self.assertFalse(parsed["evidence_eligible"])
+
     def test_reconciles_orphans_duplicate_starts_parent_counters_and_runtime_loss(self):
         valid = valid_events()
         parent_end = valid[4]
