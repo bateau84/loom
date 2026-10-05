@@ -20,6 +20,28 @@ from io import StringIO
 from pathlib import Path
 from typing import Any
 
+
+def _json_object_without_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate JSON object key")
+        result[key] = value
+    return result
+
+
+def _reject_json_constant(value: str) -> None:
+    raise ValueError("non-JSON numeric constant")
+
+
+def strict_json_loads(raw: str | bytes) -> Any:
+    """Parse JSON without duplicate-key or non-finite-value ambiguity."""
+    return json.loads(
+        raw,
+        object_pairs_hook=_json_object_without_duplicate_keys,
+        parse_constant=_reject_json_constant,
+    )
+
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_IMAGES = {
     "opencode": "ghcr.io/bateau84/opencode-eval-runner@sha256:68ef7322c75aede0e8cc76d0e3531e8b82dd417bbb5e5100264a89eab7fe8627",
@@ -772,7 +794,13 @@ def _safe_json_shape(value: Any) -> bool:
         visited += 1
         if visited > MAX_SAFE_JSON_NODES or depth > MAX_SAFE_JSON_DEPTH:
             return False
-        if current is None or type(current) in {str, bool, int}:
+        if isinstance(current, str):
+            try:
+                current.encode("utf-8", errors="strict")
+            except UnicodeEncodeError:
+                return False
+            continue
+        if current is None or type(current) in {bool, int}:
             continue
         if type(current) is float:
             if not math.isfinite(current):
@@ -782,8 +810,13 @@ def _safe_json_shape(value: Any) -> bool:
             pending.extend((item, depth + 1) for item in current)
             continue
         if isinstance(current, dict):
-            if any(not isinstance(key, str) for key in current):
-                return False
+            for key in current:
+                if not isinstance(key, str):
+                    return False
+                try:
+                    key.encode("utf-8", errors="strict")
+                except UnicodeEncodeError:
+                    return False
             pending.extend((item, depth + 1) for item in current.values())
             continue
         return False
@@ -1289,6 +1322,14 @@ def _collect_json_inventory(
     credential_header_context: bool = False,
 ) -> bool:
     """Collect only classified leaves; report unsupported credential descendants."""
+    if location == "" and not isinstance(value, dict):
+        # Selected auth/config/models sources have a reviewed object root; a
+        # scalar or array root is not a successfully empty credential source.
+        return False
+    if in_credential_object and not isinstance(value, (dict, list)):
+        # Unkeyed scalar leaves in a credential/header container have no
+        # reviewed public/credential role and must not certify completeness.
+        return False
     complete = True
     if isinstance(value, dict):
         for key, child in value.items():
@@ -1386,9 +1427,9 @@ def collect_credential_inventory(
             sources[source] = "not_selected"
             continue
         try:
-            parsed = json.loads(path.read_text(encoding="utf-8"))
+            parsed = strict_json_loads(path.read_text(encoding="utf-8"))
             sources[source] = "complete" if _collect_json_inventory(parsed, entries, source) else "incomplete"
-        except (OSError, UnicodeError, json.JSONDecodeError, RecursionError):
+        except (OSError, UnicodeError, ValueError, RecursionError):
             sources[source] = "incomplete"
 
     if database_seed is None:
@@ -1425,8 +1466,8 @@ def collect_credential_inventory(
                             continue
                         if value[:1] in ("{", "["):
                             try:
-                                parsed = json.loads(value)
-                            except (json.JSONDecodeError, RecursionError):
+                                parsed = strict_json_loads(value)
+                            except (ValueError, RecursionError):
                                 complete = False
                                 continue
                             complete = _collect_json_inventory(
@@ -1460,7 +1501,9 @@ def _project_payload(value: Any, secrets: tuple[str, ...]) -> tuple[Any, bool, s
     """Return a projected payload, change flag, and an omission reason if unsafe."""
     if isinstance(value, str):
         changed = redact_sensitive_text(value, list(secrets))
-        return changed, changed != value, False
+        if secrets and "\\" in value and changed != "***REDACTED***":
+            return None, False, "unsupported_representation"
+        return changed, changed != value, None
     if isinstance(value, list):
         output = []
         changed = False
@@ -1486,6 +1529,8 @@ def _project_payload(value: Any, secrets: tuple[str, ...]) -> tuple[Any, bool, s
                 # renamed key could collide, and deleting just that member can
                 # silently alter the payload's meaning.
                 return None, True, "sensitive_key"
+            if isinstance(key, str) and secrets and "\\" in key:
+                return None, False, "unsupported_representation"
             projected, item_changed, item_unsafe_reason = _project_payload(item, secrets)
             output[key] = projected
             changed = changed or item_changed
@@ -1750,23 +1795,27 @@ def extract_tool_result_evidence(raw_stdout: str, secrets: list[str]) -> dict[st
     identity_recent: deque[dict[str, Any]] = deque(maxlen=TOOL_RESULT_EVENT_LIMIT)
     for raw in StringIO(raw_stdout if isinstance(raw_stdout, str) else ""):
         try:
-            event = json.loads(raw)
+            event = strict_json_loads(raw)
         except (ValueError, RecursionError):
             if raw.strip():
                 evidence["unparsed_lines"] += 1
+                evidence["metadata_tool_capture_complete"] = False
             continue
         if not isinstance(event, dict) or event.get("type") != "tool_use":
             continue
         part = event.get("part")
         if not isinstance(part, dict) or part.get("type") != "tool":
             evidence["invalid_events"] += 1
+            evidence["metadata_tool_capture_complete"] = False
             continue
         if not isinstance(part.get("tool"), str) or not part["tool"]:
             evidence["invalid_events"] += 1
+            evidence["metadata_tool_capture_complete"] = False
             continue
         state = part.get("state")
         if not isinstance(state, dict):
             evidence["invalid_events"] += 1
+            evidence["metadata_tool_capture_complete"] = False
             continue
         evidence["observed_events"] += 1
         identity_input, identity_input_clipped = _tool_result_field(
@@ -1857,6 +1906,7 @@ def extract_tool_result_evidence(raw_stdout: str, secrets: list[str]) -> dict[st
         if "input" not in state or not isinstance(state.get("input"), dict):
             item["missing_fields"].append("input")
             evidence["invalid_events"] += 1
+            evidence["metadata_tool_capture_complete"] = False
         for key, value in (("call_id", part.get("callID", part.get("id"))), ("session_id", event.get("sessionID"))):
             if value is not None:
                 fields[key] = (value, 256)
@@ -1865,6 +1915,7 @@ def extract_tool_result_evidence(raw_stdout: str, secrets: list[str]) -> dict[st
                 fields[key] = (state[key], TOOL_RESULT_FIELD_LIMIT)
         if "output" not in state and "error" not in state:
             item["missing_fields"].append("result")
+            evidence["metadata_tool_capture_complete"] = False
         for key, (value, limit) in fields.items():
             item[key], clipped = _tool_result_field(value, secrets, limit)
             if clipped:
@@ -2747,8 +2798,8 @@ def invoke_container(
                     "infrastructure_error": True,
                 }
             try:
-                result = json.loads(result_file.read_text(encoding="utf-8"))
-            except (OSError, UnicodeError, json.JSONDecodeError, RecursionError):
+                result = strict_json_loads(result_file.read_text(encoding="utf-8"))
+            except (OSError, UnicodeError, ValueError, RecursionError):
                 if require_runner_evidence_safety:
                     return runner_safety_failure(
                         "runner safe-result encoding or JSON invalid; target evidence unavailable",
