@@ -901,6 +901,35 @@ def _runner_result_rejection_code(result: Any, inventory: CredentialInventory, i
     return "projection-admission"
 
 
+def _safe_runner_rejection_facts(result: Any, inventory: CredentialInventory) -> str:
+    """Bounded schema/state facts only; never include runner payloads or strings."""
+    facts: list[str] = []
+    if not isinstance(result, dict):
+        return "root=non-object"
+    ack = result.get("evidence_safety_ack")
+    facts.append("ack=" + ("absent" if ack is None else "object" if isinstance(ack, dict) else "non-object"))
+    if isinstance(ack, dict):
+        facts.append("ack_schema=" + ("expected" if ack.get("schema") == RUNNER_SAFETY_ACK_SCHEMA else "unexpected"))
+    safety = result.get("evidence_safety")
+    facts.append("safety=" + ("absent" if safety is None else "object" if isinstance(safety, dict) else "non-object"))
+    if isinstance(safety, dict):
+        facts.append("runner_inventory=" + ("true" if safety.get("inventory_complete") is True else
+                                               "false" if safety.get("inventory_complete") is False else "unknown"))
+        facts.append("runner_coverage=" + ("true" if safety.get("coverage_complete") is True else
+                                             "false" if safety.get("coverage_complete") is False else "unknown"))
+    runtime_state = result.get("runtime_state")
+    facts.append("runtime_state=" + ("absent" if runtime_state is None else
+                                     "valid" if _valid_disposable_runtime_state(runtime_state) else "invalid"))
+    facts.append("infrastructure_error=" + ("true" if result.get("infrastructure_error") is True else
+                                             "false" if result.get("infrastructure_error") is False else "unknown"))
+    code = result.get("exit_code")
+    facts.append("exit_code=" + str(code) if type(code) is int and -255 <= code <= 255 else "exit_code=unknown")
+    facts.append("inventory_sources=" + ",".join(
+        f"{name}:{inventory.sources.get(name, 'unknown')}" for name in sorted(RUNNER_POLICY_SOURCES)
+    ))
+    return ";".join(facts)
+
+
 def _admit_runner_safety_result(
     result: Any,
     inventory: CredentialInventory,
@@ -2657,7 +2686,8 @@ def invoke_container(
                 if admitted is None:
                     code = _runner_result_rejection_code(result, inventory, image, runner_bin)
                     return runner_safety_failure(
-                        f"runner evidence-safety admission failed [{code}]",
+                        f"runner evidence-safety admission failed [{code}] "
+                        f"({_safe_runner_rejection_facts(result, inventory)})",
                         inventory=inventory, image=image,
                     )
                 prepared = {

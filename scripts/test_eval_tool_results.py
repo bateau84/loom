@@ -47,6 +47,14 @@ class ToolResultEvidenceTests(unittest.TestCase):
         self.assertTrue(RUN._valid_runner_private_policy(inventory.private_policy()))
         self.assertEqual(RUN._runner_result_rejection_code({}, inventory, RUN.RUNNER_SAFETY_IMAGE, "runner"),
                          "result-schema")
+        facts = RUN._safe_runner_rejection_facts({
+            "evidence_safety_ack": None, "runtime_state": None,
+            "infrastructure_error": True, "exit_code": 4,
+            "stderr": "synthetic secret must not appear",
+        }, inventory)
+        self.assertIn("ack=absent", facts)
+        self.assertIn("inventory_sources=", facts)
+        self.assertNotIn("synthetic secret", facts)
         incomplete = inventory.private_policy()
         incomplete["complete"] = True
         incomplete["sources"]["config_root"] = "incomplete"
