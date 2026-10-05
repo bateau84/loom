@@ -859,6 +859,42 @@ def _valid_disposable_runtime_state(value: Any) -> bool:
     ))
 
 
+def _runner_result_rejection_code(result: Any, inventory: CredentialInventory, image: str, runner_bin: str) -> str:
+    """Return a fixed, non-sensitive admission stage for test diagnostics."""
+    if not isinstance(result, dict) or result.get("schema") != RUNNER_SAFE_RESULT_SCHEMA:
+        return "result-schema"
+    ack = result.get("evidence_safety_ack")
+    if not isinstance(ack, dict) or ack.get("schema") != RUNNER_SAFETY_ACK_SCHEMA:
+        return "ack-schema"
+    validation = result.get("evidence_safety_validation")
+    if not isinstance(validation, dict) or validation.get("schema") != RUNNER_SAFETY_VALIDATION_SCHEMA:
+        return "host-validation-schema"
+    loaded = result.get("evidence_load")
+    if not isinstance(loaded, dict):
+        return "load-missing"
+    if (loaded.get("image") != image or loaded.get("image_source_revision") != RUNNER_SAFETY_SOURCE or
+            loaded.get("host_source_revision") != RUNNER_SAFETY_SOURCE or
+            loaded.get("image_config") != RUNNER_SAFETY_IMAGE_CONFIG or
+            loaded.get("image_package_init_sha256") != RUNNER_PACKAGE_INIT_SHA256 or
+            loaded.get("image_policy_module_sha256") != RUNNER_POLICY_MODULE_SHA256 or
+            loaded.get("image_invoke_sha256") != RUNNER_INVOKE_SHA256 or
+            loaded.get("policy_module_sha256") != RUNNER_POLICY_MODULE_SHA256 or
+            loaded.get("host_adapter_sha256") != RUNNER_HOST_ADAPTER_SHA256 or
+            loaded.get("host_executable_sha256") != RUNNER_HOST_EXECUTABLE_SHA256 or
+            loaded.get("host_executable_sha256") != _sha256_file(runner_bin) or
+            loaded.get("host_tracked_tree_clean") is not True):
+        return "load-source-mismatch"
+    if not _valid_disposable_runtime_state(result.get("runtime_state")):
+        return "runtime-state"
+    if not _valid_evidence_safety_summary(result.get("evidence_safety"), inventory):
+        return "safety-summary"
+    if (ack.get("image_source_revision") != RUNNER_SAFETY_SOURCE or
+            ack.get("policy_valid") is not True or
+            ack.get("inventory_complete") is not True):
+        return "acknowledgement"
+    return "projection-admission"
+
+
 def _admit_runner_safety_result(
     result: Any,
     inventory: CredentialInventory,
@@ -2559,7 +2595,10 @@ def invoke_container(
             )
             if not result_file.is_file():
                 if require_runner_evidence_safety:
-                    return runner_safety_failure()
+                    return runner_safety_failure(
+                        "runner safe-result output missing; target evidence unavailable",
+                        inventory=inventory, image=image,
+                    )
                 detail = " | ".join(
                     redact_sensitive_text(part, secrets).strip()
                     for part in (proc.stderr, proc.stdout)
@@ -2579,7 +2618,10 @@ def invoke_container(
                 result = json.loads(result_file.read_text(encoding="utf-8"))
             except (OSError, json.JSONDecodeError):
                 if require_runner_evidence_safety:
-                    return runner_safety_failure()
+                    return runner_safety_failure(
+                        "runner safe-result JSON invalid; target evidence unavailable",
+                        inventory=inventory, image=image,
+                    )
                 return redact_sensitive_values({
                     "exit_code": proc.returncode,
                     "text": "",
@@ -2591,7 +2633,10 @@ def invoke_container(
                 }, secrets)
             if not isinstance(result, dict):
                 if require_runner_evidence_safety:
-                    return runner_safety_failure()
+                    return runner_safety_failure(
+                        "runner safe-result root invalid; target evidence unavailable",
+                        inventory=inventory, image=image,
+                    )
                 return redact_sensitive_values({
                     "exit_code": proc.returncode,
                     "text": "",
@@ -2604,7 +2649,11 @@ def invoke_container(
             if require_runner_evidence_safety:
                 admitted = _admit_runner_safety_result(result, inventory, image, runner_bin)
                 if admitted is None:
-                    return runner_safety_failure()
+                    code = _runner_result_rejection_code(result, inventory, image, runner_bin)
+                    return runner_safety_failure(
+                        f"runner evidence-safety admission failed [{code}]",
+                        inventory=inventory, image=image,
+                    )
                 prepared = {
                     **{key: value for key, value in admitted.items() if key not in {
                         "evidence_safety_ack", "evidence_safety_validation", "evidence_load", "tool_result_evidence",
