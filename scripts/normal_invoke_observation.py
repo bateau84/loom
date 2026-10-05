@@ -20,6 +20,15 @@ def _invalid_constant(value: str) -> None:
     raise ValueError(f"non-JSON numeric constant: {value}")
 
 
+def _unique_object_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate JSON object key")
+        result[key] = value
+    return result
+
+
 def _nonempty(value: Any) -> bool:
     return isinstance(value, str) and bool(value)
 
@@ -215,7 +224,8 @@ def parse_diagnostic_capture(raw: str | bytes) -> dict[str, Any]:
     if not 2 <= len(lines) <= MAX_EVENTS + 2:
         return result
     try:
-        records = [json.loads(line, parse_constant=_invalid_constant) for line in lines]
+        records = [json.loads(line, parse_constant=_invalid_constant, object_pairs_hook=_unique_object_pairs)
+                   for line in lines]
     except (ValueError, RecursionError):
         result["reasons"] = ["malformed_json"]
         return result

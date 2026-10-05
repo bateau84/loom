@@ -119,6 +119,12 @@ class NormalInvokeDiagnosticParserTests(unittest.TestCase):
                 self.assertFalse(parsed["capture_valid"])
                 self.assertFalse(parsed["evidence_eligible"])
 
+    def test_rejects_duplicate_json_object_keys(self):
+        duplicate_header = capture([]).replace('"kind": "header"', '"kind": "header", "kind": "header"', 1)
+        parsed = PARSER.parse_diagnostic_capture(duplicate_header)
+        self.assertFalse(parsed["capture_valid"])
+        self.assertEqual(parsed["reasons"], ["malformed_json"])
+
     def test_rejects_extended_actor_and_parent_identity_objects(self):
         for field in ("actor", "parent"):
             records = valid_events()

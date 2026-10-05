@@ -42,7 +42,11 @@ def scenario(execution="runtime"):
 class ToolResultEvidenceTests(unittest.TestCase):
     def test_non_safety_invalid_runner_json_returns_bounded_error_not_exception(self):
         deep_object = b'{"x":' * 700 + b'0' + b'}' * 700
-        for result_bytes in (b"{not-json", b"\xff", deep_object):
+        for result_bytes in (
+            b"{not-json", b"\xff", deep_object,
+            b'{"text":"first","text":"second"}',
+            b'{"text":"\\ud800"}',
+        ):
             with self.subTest(size=len(result_bytes)), tempfile.TemporaryDirectory() as tmp:
                 project = Path(tmp) / "workspace"
                 project.mkdir()
@@ -1443,7 +1447,7 @@ class ToolResultEvidenceTests(unittest.TestCase):
         self.assertIn("output", captured["truncated_fields"])
         self.assertNotIn("output", captured)
 
-    def test_runner_projection_redacts_repeatedly_json_encoded_secret(self):
+    def test_runner_projection_omits_unsupported_repeatedly_json_encoded_secret(self):
         secret = 'sk-nested-"line\npath\\tail-0123456789'
         nested = json.dumps({"payload": json.dumps({"token": secret}, ensure_ascii=False)}, ensure_ascii=False)
         result = {
@@ -1471,7 +1475,11 @@ class ToolResultEvidenceTests(unittest.TestCase):
         encoded = json.dumps(prepared, ensure_ascii=False)
         for variant in RUN.sensitive_text_variants(secret):
             self.assertNotIn(variant, encoded)
-        self.assertIn("***REDACTED***", encoded)
+        event_row = prepared["observed_tool_results"]["events"][0]
+        self.assertNotIn("input", event_row)
+        self.assertNotIn("output", event_row)
+        self.assertEqual(event_row["evidence_safety"]["output"]["reason"], "unsupported_representation")
+        self.assertNotIn(secret, encoded)
 
     def test_nontruncated_raw_jsonl_is_omitted_when_secret_occurs(self):
         secret = 'sk-quote-"line\npath\\tail-0123456789'
