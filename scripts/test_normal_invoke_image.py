@@ -125,7 +125,7 @@ class NormalInvokeImageComposition(unittest.TestCase):
         self.assertGreater(evidence.get("observed_events", 0), 0)
         self.assertTrue(any(event.get("tool") == "evalFixture_native_sentinel" for event in evidence["events"]))
         key_probe = next(event for event in evidence["events"] if event.get("tool") == "evalFixture_payload_echo")
-        self.assertNotIn("input", key_probe)
+        self.assertTrue("input" not in key_probe, "runner result omitted expected protected input")
         self.assertEqual(key_probe["evidence_safety"]["input"]["state"], "omitted")
         self.assertEqual(key_probe["evidence_safety"]["input"]["reason"], "unsupported_representation")
         self.assertEqual(key_probe["evidence_safety"]["input"]["stage"], "runner")
@@ -136,7 +136,7 @@ class NormalInvokeImageComposition(unittest.TestCase):
         # before Loom admission, not only the later public projection.
         stored_events = runner_result_files[0]["tool_result_evidence"]["events"]
         stored_key_probe = next(event for event in stored_events if event.get("tool") == "evalFixture_payload_echo")
-        self.assertNotIn("output", stored_key_probe)
+        self.assertTrue("output" not in stored_key_probe, "runner result retained echoed output")
         stored_output_disposition = next(
             item for item in runner_result_files[0]["evidence_safety"]["fields"]
             if item.get("event") == stored_key_probe["sequence"] - 1 and item.get("field") == "output"
@@ -144,7 +144,7 @@ class NormalInvokeImageComposition(unittest.TestCase):
         self.assertEqual(stored_output_disposition["state"], "omitted")
         self.assertEqual(stored_output_disposition["reason"], "unsupported_representation")
         self.assertEqual(stored_output_disposition["stage"], "runner")
-        self.assertNotIn("output", key_probe)
+        self.assertTrue("output" not in key_probe, "admitted result retained echoed output")
         self.assertEqual(key_probe["evidence_safety"]["output"]["state"], "omitted")
         self.assertEqual(key_probe["evidence_safety"]["output"]["reason"], "unsupported_representation")
         self.assertEqual(key_probe["evidence_safety"]["output"]["stage"], "runner")
@@ -153,7 +153,7 @@ class NormalInvokeImageComposition(unittest.TestCase):
         self.assertEqual(len(runner_result_files), 1)
         stored_projection = runner_result_files[0]
         self.assertEqual(stored_key_probe["status"], "completed")
-        self.assertNotIn("input", stored_key_probe)
+        self.assertTrue("input" not in stored_key_probe, "runner result retained echoed input")
         result_json += json.dumps(stored_projection, ensure_ascii=False)
         secret_variants = {escaped_test_secret}
         secret_variant = escaped_test_secret
@@ -161,7 +161,7 @@ class NormalInvokeImageComposition(unittest.TestCase):
             secret_variant = json.dumps(secret_variant, ensure_ascii=False)[1:-1]
             secret_variants.add(secret_variant)
         for secret_variant in secret_variants:
-            self.assertNotIn(secret_variant, result_json)
+            self.assertNotIn(secret_variant, result_json, "encoded credential material appeared in result")
         runtime_state = result.get("runtime_state")
         self.assertTrue(SMOKE.RUN._valid_disposable_runtime_state(runtime_state), runtime_state)
         case = {"id": "RSP-NATIVE", "agent": "general", "execution": "runtime", "prompt": "",
