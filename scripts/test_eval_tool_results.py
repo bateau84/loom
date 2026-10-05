@@ -40,6 +40,29 @@ def scenario(execution="runtime"):
 
 
 class ToolResultEvidenceTests(unittest.TestCase):
+    def test_non_safety_invalid_runner_json_returns_bounded_error_not_exception(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "workspace"
+            project.mkdir()
+
+            def malformed_result(command, **_kwargs):
+                output_path = Path(command[command.index("--output") + 1])
+                output_path.write_text("{not-json", encoding="utf-8")
+                return RUN.subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+            with patch.object(RUN.shutil, "which", return_value="/bin/fake-runner"), \
+                 patch.object(RUN.subprocess, "run", side_effect=malformed_result):
+                result = RUN.invoke_container(
+                    engine="podman", image="fixture-image", transport="opencode",
+                    model="fixture/model", agent="general", prompt="synthetic", system="",
+                    project=project, auth=None, config=None, models_catalog=None,
+                    database_seed=None, config_root=None, expected_plugin=None,
+                    timeout=10, container_timeout=20, mount_node_modules=False,
+                    workspace_mode="ro", extra_envs=[], runner_defaults_known=True,
+                )
+        self.assertTrue(result["infrastructure_error"])
+        self.assertIn("invalid JSON", result["stderr"])
+
     def test_disposable_policy_and_runtime_state_reject_unproved_sources(self):
         inventory = RUN.collect_credential_inventory(
             {}, [], None, None, None, None, runner_defaults_known=True,
@@ -95,6 +118,33 @@ class ToolResultEvidenceTests(unittest.TestCase):
                 self.assertIn("reserved", result.get("stderr", "").lower())
                 self.assertFalse(result["observed_tool_results"]["evidence_safety"]["coverage_complete"])
                 run.assert_not_called()
+
+    def test_disposable_profile_rejects_unknown_custom_auth_header_before_launch(self):
+        secret = "SYNTH-unclassified-header"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            project = root / "workspace"
+            project.mkdir()
+            config = root / "provider.json"
+            config.write_text(json.dumps({"providers": {"fixture": {"settings": {
+                "headers": {"X-Custom-Auth": secret},
+            }}}}), encoding="utf-8")
+            with patch.object(RUN, "host_environment_for_transport", return_value={}), \
+                 patch.object(RUN.shutil, "which", return_value="/bin/fake-runner"), \
+                 patch.object(RUN.subprocess, "run") as run:
+                result = RUN.invoke_container(
+                    engine="podman", image=RUN.RUNNER_SAFETY_IMAGE, transport="opencode",
+                    model="fixture/model", agent="general", prompt="synthetic", system="",
+                    project=project, auth=None, config=config, models_catalog=None,
+                    database_seed=None, config_root=None, expected_plugin=None,
+                    timeout=10, container_timeout=20, mount_node_modules=False,
+                    workspace_mode="rw", extra_envs=[], require_runner_evidence_safety=True,
+                    runner_defaults_known=True,
+                )
+            self.assertTrue(result["infrastructure_error"])
+            self.assertIn("inventory incomplete", result["stderr"])
+            self.assertNotIn(secret, json.dumps(result))
+            run.assert_not_called()
 
     def test_safety_runner_result_requires_loaded_pair_and_preserves_dispositions(self):
         inventory = RUN.collect_credential_inventory(
@@ -1386,11 +1436,9 @@ class ToolResultEvidenceTests(unittest.TestCase):
         self.assertEqual(evidence["schema"], "opencode-eval-runner/tool-results/v1")
         self.assertEqual(captured["tool"], "loom_status")
         self.assertEqual(captured["status"], "completed")
-        self.assertEqual(captured["evidence_safety"]["output"]["state"], "redacted")
+        self.assertEqual(captured["evidence_safety"]["output"]["state"], "omitted")
         self.assertIn("output", captured["truncated_fields"])
-        self.assertEqual(json.loads(captured["output"])["state"], "ready")
-        self.assertEqual(json.loads(captured["output"])["count"], 1)
-        self.assertEqual(json.loads(captured["output"])["text"], "***REDACTED***")
+        self.assertNotIn("output", captured)
 
     def test_runner_projection_redacts_repeatedly_json_encoded_secret(self):
         secret = 'sk-nested-"line\npath\\tail-0123456789'

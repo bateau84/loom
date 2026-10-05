@@ -1245,6 +1245,7 @@ def _sensitive_key(name: str) -> bool:
 
 
 _PUBLIC_CREDENTIAL_METADATA = {"type", "provider", "id", "scope", "context"}
+_CREDENTIAL_BEARING_CONTAINERS = {"credential", "credentials", "header", "headers", "custom_headers", "http_headers"}
 
 
 def _collect_json_inventory(
@@ -1262,12 +1263,33 @@ def _collect_json_inventory(
             key_text = str(key)
             child_location = f"{location}.{key_text}" if location else key_text
             normalized = "_".join(_normalized_key_words(key_text))
-            credential_container = in_credential_object or normalized in {"credential", "credentials"}
-            if isinstance(child, str) and _sensitive_key(key_text) and child:
-                entries.append(CredentialEntry(source, child_location, "credential", child))
+            credential_container = in_credential_object or normalized in _CREDENTIAL_BEARING_CONTAINERS
+            if _sensitive_key(key_text) and not (
+                normalized in {"credential", "credentials"} and isinstance(child, (dict, list))
+            ):
+                if isinstance(child, str):
+                    if child:
+                        entries.append(CredentialEntry(source, child_location, "credential", child))
+                else:
+                    # A credential-shaped field with an unsupported type cannot
+                    # be declared absent: it may be an encoded/structured secret.
+                    entries.append(CredentialEntry(source, child_location, "unknown", None))
+                    complete = False
+                    if isinstance(child, (dict, list)):
+                        complete = _collect_json_inventory(
+                            child, entries, source, child_location, in_credential_object=True,
+                        ) and complete
+            elif normalized in _CREDENTIAL_BEARING_CONTAINERS:
+                if isinstance(child, (dict, list)):
+                    complete = _collect_json_inventory(
+                        child, entries, source, child_location, in_credential_object=True,
+                    ) and complete
+                else:
+                    entries.append(CredentialEntry(source, child_location, "unknown", None))
+                    complete = False
             elif credential_container and normalized in _PUBLIC_CREDENTIAL_METADATA and isinstance(child, str):
                 entries.append(CredentialEntry(source, child_location, "public", child))
-            elif credential_container and not _sensitive_key(key_text):
+            elif in_credential_object and not _sensitive_key(key_text):
                 entries.append(CredentialEntry(source, child_location, "unknown", None))
                 complete = False
                 if isinstance(child, (dict, list)):
@@ -1338,17 +1360,23 @@ def collect_credential_inventory(
                 for row_index, row in enumerate(rows):
                     for column, value in zip(columns, row):
                         location = f"credential[{row_index}].{column}"
+                        if value is None or value == "":
+                            continue
+                        if _sensitive_key(column):
+                            if isinstance(value, str):
+                                entries.append(CredentialEntry("credential_seed", location, "credential", value))
+                            else:
+                                complete = False
+                            continue
                         if isinstance(value, bytes):
                             try:
                                 value = value.decode("utf-8", errors="strict")
                             except UnicodeDecodeError:
                                 complete = False
                                 continue
-                        if not isinstance(value, str) or not value:
+                        if not isinstance(value, str):
                             continue
-                        if _sensitive_key(column):
-                            entries.append(CredentialEntry("credential_seed", location, "credential", value))
-                        elif value[:1] in ("{", "["):
+                        if value[:1] in ("{", "["):
                             try:
                                 parsed = json.loads(value)
                             except (json.JSONDecodeError, RecursionError):
@@ -1381,34 +1409,49 @@ def collect_sensitive_values(
     ).values)
 
 
-def _project_payload(value: Any, secrets: tuple[str, ...]) -> tuple[Any, bool, bool]:
-    """Return projected payload, changed flag, and unsafe-key flag."""
+def _project_payload(value: Any, secrets: tuple[str, ...]) -> tuple[Any, bool, str | None]:
+    """Return a projected payload, change flag, and an omission reason if unsafe."""
     if isinstance(value, str):
         changed = redact_sensitive_text(value, list(secrets))
         return changed, changed != value, False
     if isinstance(value, list):
         output = []
         changed = False
-        unsafe = False
+        unsafe_reason: str | None = None
         for item in value:
-            projected, item_changed, item_unsafe = _project_payload(item, secrets)
+            projected, item_changed, item_unsafe_reason = _project_payload(item, secrets)
             output.append(projected)
             changed = changed or item_changed
-            unsafe = unsafe or item_unsafe
-        return output, changed, unsafe
+            unsafe_reason = unsafe_reason or item_unsafe_reason
+        return output, changed, unsafe_reason
     if isinstance(value, dict):
         output: dict[str, Any] = {}
         changed = False
-        unsafe = False
+        unsafe_reason: str | None = None
         for key, item in value.items():
             if isinstance(key, str) and _sensitive_key(key):
-                return None, True, True
-            projected, item_changed, item_unsafe = _project_payload(item, secrets)
+                return None, True, "sensitive_key"
+            if isinstance(key, str) and any(secret and secret in key for secret in secrets):
+                # Never retain a payload key containing credential material: a
+                # renamed key could collide, and deleting just that member can
+                # silently alter the payload's meaning.
+                return None, True, "sensitive_key"
+            projected, item_changed, item_unsafe_reason = _project_payload(item, secrets)
             output[key] = projected
             changed = changed or item_changed
-            unsafe = unsafe or item_unsafe
-        return output, changed, unsafe
-    return value, False, False
+            unsafe_reason = unsafe_reason or item_unsafe_reason
+        return output, changed, unsafe_reason
+    if value is None or type(value) in {bool, int, float}:
+        try:
+            encoded = json.dumps(value, ensure_ascii=False, allow_nan=False, separators=(",", ":"))
+        except (TypeError, ValueError, OverflowError):
+            return None, False, "unsupported_representation"
+        if any(secret and secret in encoded for secret in secrets):
+            # Preserve scalar type rather than masking its JSON encoding into a
+            # different value; omit the enclosing payload field instead.
+            return None, False, "credential_match"
+        return value, False, None
+    return None, False, "unsupported_representation"
 
 
 def project_evidence_event(event: dict[str, Any], inventory: CredentialInventory) -> dict[str, Any]:
@@ -1422,9 +1465,9 @@ def project_evidence_event(event: dict[str, Any], inventory: CredentialInventory
         if not inventory.complete:
             dispositions[field] = {"state": "omitted", "reason": "inventory_incomplete", "stage": "transport"}
             continue
-        value, changed, unsafe_key = _project_payload(event[field], inventory.values)
-        if unsafe_key:
-            dispositions[field] = {"state": "omitted", "reason": "sensitive_key", "stage": "transport"}
+        value, changed, unsafe_reason = _project_payload(event[field], inventory.values)
+        if unsafe_reason:
+            dispositions[field] = {"state": "omitted", "reason": unsafe_reason, "stage": "transport"}
         else:
             projected[field] = value
             dispositions[field] = (
@@ -1616,8 +1659,8 @@ def _tool_result_field(value: Any, secrets: list[str], limit: int) -> tuple[str,
         text = redact_sensitive_text(value, secrets)
         changed = text != value
     else:
-        value, changed, unsafe_key = _project_payload(value, tuple(secrets))
-        if unsafe_key:
+        value, changed, unsafe_reason = _project_payload(value, tuple(secrets))
+        if unsafe_reason:
             return "", True
         text = json.dumps(value, ensure_ascii=False, sort_keys=True)
     if len(text) <= limit:
@@ -2340,11 +2383,15 @@ def prepare_transport_result(
             redacted[key] = value
             continue
         if not inventory or inventory.complete:
-            projected, changed, unsafe_key = _project_payload(value, tuple(secrets))
+            projected, changed, unsafe_reason = _project_payload(value, tuple(secrets))
         else:
-            projected, changed, unsafe_key = None, False, True
-        if unsafe_key:
-            transport_fields[key] = {"state": "omitted", "reason": "sensitive_key" if inventory and inventory.complete else "inventory_incomplete", "stage": "transport"}
+            projected, changed, unsafe_reason = None, False, "inventory_incomplete"
+        if unsafe_reason:
+            transport_fields[key] = {
+                "state": "omitted",
+                "reason": unsafe_reason if inventory and inventory.complete else "inventory_incomplete",
+                "stage": "transport",
+            }
         elif changed and key == "stdout":
             # Raw JSONL is not a safe place for literal replacement: short values
             # can corrupt its syntax. The separately typed projection remains.
@@ -2651,7 +2698,7 @@ def invoke_container(
                 }
             try:
                 result = json.loads(result_file.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError):
+            except (OSError, json.JSONDecodeError) as exc:
                 if require_runner_evidence_safety:
                     return runner_safety_failure(
                         "runner safe-result JSON invalid; target evidence unavailable",
@@ -3554,6 +3601,8 @@ def judge_prompt(
     actions: list[dict[str, Any]] | None = None,
     tool_results: dict[str, Any] | None = None,
 ) -> str:
+    if len(text) > JUDGE_TEXT_LIMIT:
+        raise ValueError("complete assistant text exceeds judge prompt budget")
     lines = [
         "Evaluate this Loom behavioral case.",
         "",
@@ -3590,7 +3639,7 @@ def judge_prompt(
     lines += [
         "",
         "OBSERVED ASSISTANT TEXT:",
-        text[:30000] if text else "(no assistant text observed)",
+        text if text else "(no assistant text observed)",
         "",
         "Return the required strict JSON judgment.",
     ]
@@ -3786,6 +3835,27 @@ def transport_field_disposition(result: dict[str, Any], field: str) -> dict[str,
         for value in fields:
             if isinstance(value, dict) and value.get("event") is None and value.get("field") == field:
                 return value
+    return None
+
+
+def exact_transport_field_error(result: dict[str, Any], field: str) -> str | None:
+    disposition = transport_field_disposition(result, field)
+    if field not in result or not isinstance(disposition, dict) or disposition.get("state") != "exact":
+        return f"non-evidence: required transport field {field} is not exact"
+    return None
+
+
+JUDGE_TEXT_LIMIT = 30_000
+
+
+def judge_text_evidence_error(result: dict[str, Any]) -> str | None:
+    error = exact_transport_field_error(result, "text")
+    if error:
+        return error
+    if not isinstance(result["text"], str):
+        return "non-evidence: assistant text is not a supported string"
+    if len(result["text"]) > JUDGE_TEXT_LIMIT:
+        return "non-evidence: assistant text exceeds the complete judge-input budget"
     return None
 
 
@@ -4126,6 +4196,9 @@ def run_skill_ablation_case(
         )
 
     def run_judge(target: dict[str, Any]) -> tuple[dict[str, Any] | None, dict[str, Any] | None, str | None]:
+        evidence_error = judge_text_evidence_error(target)
+        if evidence_error:
+            return None, None, evidence_error
         result = invoke_container_with_retry(
             retries=getattr(args, "transport_retries", 2),
             engine=engine,
@@ -4156,6 +4229,9 @@ def run_skill_ablation_case(
         error = transport_error(result)
         if error:
             return result, None, error
+        error = exact_transport_field_error(result, "text")
+        if error:
+            return result, None, error
         try:
             return result, parse_judge(str(result.get("text") or "")), None
         except Exception as exc:
@@ -4171,6 +4247,8 @@ def run_skill_ablation_case(
         baseline_target = run_target(baseline_project, with_skill=False)
         baseline_target_seconds = time.perf_counter() - phase_started
         baseline_target_error = transport_error(baseline_target)
+        if not baseline_target_error:
+            baseline_target_error = judge_text_evidence_error(baseline_target)
         print(
             f"{case_label} baseline target "
             f"{'ERROR' if baseline_target_error else 'done'} in {baseline_target_seconds:.1f}s",
@@ -4236,6 +4314,8 @@ def run_skill_ablation_case(
         candidate_target = run_target(candidate_project, with_skill=True)
         candidate_target_seconds = time.perf_counter() - phase_started
         candidate_target_error = transport_error(candidate_target)
+        if not candidate_target_error:
+            candidate_target_error = judge_text_evidence_error(candidate_target)
         print(
             f"{case_label} candidate target "
             f"{'ERROR' if candidate_target_error else 'done'} in {candidate_target_seconds:.1f}s",
@@ -4467,6 +4547,8 @@ def run_case(
         )
         target_seconds = time.perf_counter() - target_started
         target_error = transport_error(target)
+        if not target_error:
+            target_error = judge_text_evidence_error(target)
         if not target_error and any(
             isinstance(transport_field_disposition(target, field), dict) and
             transport_field_disposition(target, field).get("state") != "exact"

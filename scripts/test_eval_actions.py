@@ -797,8 +797,9 @@ class EvidenceRedactionTests(unittest.TestCase):
         projected = RUN_EVALS.project_evidence_event(event, short_inventory)
         self.assertEqual(projected["value"]["schema"], "text")
         self.assertEqual(projected["value"]["sequence"], 1)
-        self.assertEqual(projected["fields"]["output"]["state"], "redacted")
-        self.assertEqual(projected["value"]["output"]["nested"]["count"], 1)
+        self.assertEqual(projected["fields"]["output"]["state"], "omitted")
+        self.assertEqual(projected["fields"]["output"]["reason"], "sensitive_key")
+        self.assertNotIn("output", projected["value"])
 
     def test_source_inventory_recognizes_camel_case_credentials_without_public_aliases(self):
         inventory = RUN_EVALS.collect_credential_inventory(
@@ -821,6 +822,105 @@ class EvidenceRedactionTests(unittest.TestCase):
             {"env-access-secret", "env-client-secret"},
         )
         self.assertNotIn("4096", inventory.values)
+
+    def test_unknown_custom_header_and_wrong_typed_credential_fail_closed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config = root / "config.json"
+            config.write_text(json.dumps({
+                "providers": {"fixture": {"settings": {
+                    "headers": {"X-Custom-Auth": "SYNTH-unclassified-header"},
+                }}}
+            }), encoding="utf-8")
+            wrong_type = root / "auth.json"
+            wrong_type.write_text(json.dumps({"credential": {"apiKey": 1}}), encoding="utf-8")
+            custom_header = RUN_EVALS.collect_credential_inventory(
+                {}, [], None, config, None, None, runner_defaults_known=True,
+            )
+            numeric_key = RUN_EVALS.collect_credential_inventory(
+                {}, [], wrong_type, None, None, None, runner_defaults_known=True,
+            )
+
+        self.assertFalse(custom_header.complete)
+        self.assertEqual(custom_header.sources["config"], "incomplete")
+        self.assertNotIn("SYNTH-unclassified-header", custom_header.values)
+        self.assertFalse(numeric_key.complete)
+        self.assertEqual(numeric_key.sources["auth"], "incomplete")
+
+    def test_disposition_and_judge_budget_vetoes_require_complete_text(self):
+        exact = {"text": "complete", "evidence_safety": {"fields": {"text": {"state": "exact"}}}}
+        self.assertIsNone(RUN_EVALS.judge_text_evidence_error(exact))
+        redacted = {"text": "***REDACTED***", "evidence_safety": {"fields": {"text": {"state": "redacted"}}}}
+        self.assertIsNotNone(RUN_EVALS.judge_text_evidence_error(redacted))
+        omitted = {"evidence_safety": {"fields": {"text": {"state": "omitted"}}}}
+        self.assertIsNotNone(RUN_EVALS.judge_text_evidence_error(omitted))
+        over_budget = {**exact, "text": "x" * (RUN_EVALS.JUDGE_TEXT_LIMIT + 1)}
+        self.assertIn("budget", RUN_EVALS.judge_text_evidence_error(over_budget))
+        case = {"id": "JUDGE-BUDGET", "agent": "general", "execution": "role-decision",
+                "trap": "", "expectations": [], "must_not": []}
+        with self.assertRaisesRegex(ValueError, "complete assistant text"):
+            RUN_EVALS.judge_prompt(case, over_budget["text"], [])
+
+    def test_skill_ablation_cannot_pass_from_redacted_candidate_or_judge_text(self):
+        case = {
+            "id": "SKILL-DISPOSITION", "agent": RUN_EVALS.SKILL_EVAL_AGENT,
+            "execution": "runtime", "skill": "software-engineering", "prompt": "Act.",
+            "expectations": ["Complete the task."], "must_not": ["Do not fabricate."],
+            "trap": "", "_skill_owned": True, "_skill_trap_declared": False,
+        }
+        args = argparse.Namespace(
+            auth=None, provider_config=None, models_catalog=None, database=None,
+            target_transport="opencode", judge_transport="opencode", judge_model=None,
+            model="fixture/model", iterations=1, target_reasoning=None, judge_reasoning=None,
+            timeout_seconds=10, container_timeout=20, network=None, env=[],
+            transport_retries=0, runner_evidence_safety=False, keep_temp=True,
+            artifact_dir="unused", image=None, opencode_image=None, copilot_image=None,
+        )
+        exact = {"state": "exact"}
+        grade = json.dumps({
+            "passed": True,
+            "expectations": [{"expectation": "Complete the task.", "met": True, "reason": "ok"}],
+            "violations": [{"rule": "Do not fabricate.", "violated": False, "reason": "ok"}],
+            "trap_observed": False, "trap_evidence": "none", "summary": "pass",
+        })
+        baseline_target = {"exit_code": 0, "text": "baseline", "tools": [], "actions": [],
+                           "skills_loaded": [], "evidence_safety": {"fields": {"text": exact}}}
+        candidate_target = {"exit_code": 0, "text": "***REDACTED***", "tools": [], "actions": [],
+                            "skills_loaded": ["software-engineering"],
+                            "evidence_safety": {"fields": {"text": {"state": "redacted"}}}}
+        judge_result = {"exit_code": 0, "text": grade,
+                        "evidence_safety": {"fields": {"text": exact}}}
+        with tempfile.TemporaryDirectory() as tmp, \
+             patch.object(RUN_EVALS, "setup_skill_ablation_projects", return_value=(
+                 Path(tmp), Path(tmp) / "baseline", Path(tmp) / "candidate", Path(tmp) / "judge")), \
+             patch.object(RUN_EVALS, "resolve_optional_file", return_value=None), \
+             patch.object(RUN_EVALS, "invoke_container_with_retry",
+                          side_effect=[baseline_target, judge_result, candidate_target]) as invoke, \
+             patch.object(RUN_EVALS, "write_case_artifact"):
+            result = RUN_EVALS.run_skill_ablation_case(case, args, "podman")
+
+        self.assertEqual(invoke.call_count, 3)
+        self.assertFalse(result["passed"])
+        self.assertEqual(result["classification"], "non-evidence")
+        self.assertNotIn("candidate_absolute_pass", result)
+        self.assertIn("not exact", result["candidate"]["target_error"])
+
+        candidate_exact = {**candidate_target, "text": "candidate", "evidence_safety": {"fields": {"text": exact}}}
+        judge_redacted = {"exit_code": 0, "text": grade,
+                          "evidence_safety": {"fields": {"text": {"state": "redacted"}}}}
+        with tempfile.TemporaryDirectory() as tmp, \
+             patch.object(RUN_EVALS, "setup_skill_ablation_projects", return_value=(
+                 Path(tmp), Path(tmp) / "baseline", Path(tmp) / "candidate", Path(tmp) / "judge")), \
+             patch.object(RUN_EVALS, "resolve_optional_file", return_value=None), \
+             patch.object(RUN_EVALS, "invoke_container_with_retry",
+                          side_effect=[baseline_target, judge_result, candidate_exact, judge_redacted]), \
+             patch.object(RUN_EVALS, "write_case_artifact"):
+            judge_loss_result = RUN_EVALS.run_skill_ablation_case(case, args, "podman")
+        self.assertFalse(judge_loss_result["passed"])
+        self.assertEqual(judge_loss_result["classification"], "non-evidence")
+        self.assertNotIn("candidate_absolute_pass", judge_loss_result)
+        self.assertIn("not exact", judge_loss_result["candidate"]["judge_error"])
+
 
     def test_camel_case_source_inventory_protects_public_transport_across_seed_sources(self):
         env_secret = "SYNTH-env-access"
@@ -908,12 +1008,18 @@ class EvidenceRedactionTests(unittest.TestCase):
         self.assertEqual(projected["value"]["schema"], "text")
         self.assertEqual(projected["value"]["sequence"], 1)
         self.assertEqual(projected["fields"]["input"]["state"], "omitted")
-        self.assertEqual(projected["fields"]["output"]["state"], "redacted")
-        self.assertEqual(
-            json.loads(json.dumps(projected["value"]["output"])),
-            {"text": "***REDACTED***", "nested": {"safe": "visible"}},
-        )
+        self.assertEqual(projected["fields"]["output"]["state"], "omitted")
+        self.assertNotIn("output", projected["value"])
         self.assertNotIn('"credential"', json.dumps(projected))
+
+    def test_payload_credential_keys_and_matching_scalars_are_omitted(self):
+        for secret, payload in (("opaque93z", {"opaque93z": "safe"}), ("1", {"count": 1})):
+            with self.subTest(secret=secret):
+                projected = RUN_EVALS.project_evidence_event(
+                    {"output": payload}, RUN_EVALS.credential_inventory_from_values([secret]),
+                )
+                self.assertNotIn("output", projected["value"])
+                self.assertEqual(projected["fields"]["output"]["state"], "omitted")
 
     def test_incomplete_inventory_omits_selectors_and_blocks_capture_completeness(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -2227,6 +2333,7 @@ class ActionAssertionTests(unittest.TestCase):
             "actions": [],
             "skills_loaded": [],
             "stdout": "",
+            "evidence_safety": {"fields": {"text": {"state": "exact"}}},
         }
         judge = {
             "exit_code": 0,
@@ -2243,6 +2350,7 @@ class ActionAssertionTests(unittest.TestCase):
             "tools": [],
             "actions": [],
             "stdout": "",
+            "evidence_safety": {"fields": {"text": {"state": "exact"}}},
         }
 
         with tempfile.TemporaryDirectory() as tmp:
