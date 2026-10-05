@@ -128,15 +128,39 @@ class NormalInvokeImageComposition(unittest.TestCase):
         self.assertNotIn("input", key_probe)
         self.assertEqual(key_probe["evidence_safety"]["input"]["state"], "omitted")
         self.assertEqual(key_probe["evidence_safety"]["input"]["reason"], "unsupported_representation")
+        self.assertEqual(key_probe["evidence_safety"]["input"]["stage"], "runner")
         self.assertIn("input", key_probe["missing_fields"])
+        # The external producer must also omit its serialized Tool.Result: the
+        # same selected credential reappears inside the output JSON string after
+        # Code Mode/test-tool serialization. Check the host result-file snapshot
+        # before Loom admission, not only the later public projection.
+        stored_events = runner_result_files[0]["tool_result_evidence"]["events"]
+        stored_key_probe = next(event for event in stored_events if event.get("tool") == "evalFixture_payload_echo")
+        self.assertNotIn("output", stored_key_probe)
+        stored_output_disposition = next(
+            item for item in runner_result_files[0]["evidence_safety"]["fields"]
+            if item.get("event") == stored_key_probe["sequence"] - 1 and item.get("field") == "output"
+        )
+        self.assertEqual(stored_output_disposition["state"], "omitted")
+        self.assertEqual(stored_output_disposition["reason"], "unsupported_representation")
+        self.assertEqual(stored_output_disposition["stage"], "runner")
+        self.assertNotIn("output", key_probe)
+        self.assertEqual(key_probe["evidence_safety"]["output"]["state"], "omitted")
+        self.assertEqual(key_probe["evidence_safety"]["output"]["reason"], "unsupported_representation")
+        self.assertEqual(key_probe["evidence_safety"]["output"]["stage"], "runner")
         escaped_test_secret = 'synthetic-"credential"\npath\\suffix'
         result_json = json.dumps(result, ensure_ascii=False)
         self.assertEqual(len(runner_result_files), 1)
         stored_projection = runner_result_files[0]
-        self.assertEqual(stored_projection["tool_result_evidence"]["events"][1]["status"], "completed")
-        self.assertNotIn("input", stored_projection["tool_result_evidence"]["events"][1])
+        self.assertEqual(stored_key_probe["status"], "completed")
+        self.assertNotIn("input", stored_key_probe)
         result_json += json.dumps(stored_projection, ensure_ascii=False)
-        for secret_variant in SMOKE.RUN.sensitive_text_variants(escaped_test_secret):
+        secret_variants = {escaped_test_secret}
+        secret_variant = escaped_test_secret
+        for _depth in range(10):
+            secret_variant = json.dumps(secret_variant, ensure_ascii=False)[1:-1]
+            secret_variants.add(secret_variant)
+        for secret_variant in secret_variants:
             self.assertNotIn(secret_variant, result_json)
         runtime_state = result.get("runtime_state")
         self.assertTrue(SMOKE.RUN._valid_disposable_runtime_state(runtime_state), runtime_state)
