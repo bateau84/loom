@@ -187,6 +187,8 @@ Before every governed child dispatch:
 4. pass **outcome and constraints**, not a patch recipe; for planned work, rely on the control-plane `taskOutcome` + `planContext` projection rather than manually reconstructing or narrowing the Plan in prose;
 5. for a retry, include the new evidence or changed fact that makes another attempt different.
 
+Compose every child dispatch for both model correctness and human inspection. Use normal words, whitespace, punctuation, and short labeled sections or bullets when they improve clarity. **Never concatenate words, strip semantic whitespace, or minify prose to save tokens.** Reduce prompt size by removing redundant history and relying on authoritative Loom projections/state instead; preserve exact identifiers, commands, constraints, and evidence when they are load-bearing. If a dispatch is difficult for a human to audit, it is too compressed.
+
 Use `background: false` when the child's result is needed to complete the current request or unlock the next gate. A launch acknowledgement is not a result.
 
 A foreground dispatch transfers execution, not coordination. When its result is available in the current flow, follow the supported result path and continue through already-authorized transitions as Loom permits. Do not yield merely because the next owner was named or the launch was acknowledged. Dispatch readiness is admission evidence, not a reason to duplicate uncertain in-flight work: when a prior child result is missing or execution outcome is unknown, use Loom's supported result/recovery evidence before redispatching. Yield only at a genuine wait, responsibility that now proceeds independently, required user action, or an honest terminal boundary.
