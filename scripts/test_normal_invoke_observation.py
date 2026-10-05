@@ -74,9 +74,11 @@ def valid_events() -> list[dict]:
 class NormalInvokeDiagnosticParserTests(unittest.TestCase):
     def test_preserves_exact_native_and_inner_events_as_ineligible_diagnostics(self):
         records = valid_events()
+        for record in records:
+            self.assertTrue(PARSER._valid_event_shape(record["event"], record["schema"]), record["event"])
         parsed = PARSER.parse_diagnostic_capture(capture(records))
 
-        self.assertTrue(parsed["capture_valid"])
+        self.assertTrue(parsed["capture_valid"], parsed["reasons"])
         self.assertFalse(parsed["evidence_eligible"])
         self.assertFalse(parsed["runwide_complete"])
         self.assertEqual(parsed["upstream_clipping_coverage"], "unattested")
@@ -95,6 +97,24 @@ class NormalInvokeDiagnosticParserTests(unittest.TestCase):
         ]
         for records in malformed:
             with self.subTest(records=records[1]):
+                parsed = PARSER.parse_diagnostic_capture(capture(records))
+                self.assertFalse(parsed["capture_valid"])
+                self.assertFalse(parsed["evidence_eligible"])
+
+    def test_rejects_unknown_wrapper_and_event_fields(self):
+        good = valid_events()
+        bad_wrapper = [{**good[0], "new_wrapper_field": True}, *good[1:]]
+        bad_event = [
+            {**good[0], "event": {**good[0]["event"], "new_event_field": "ignored"}},
+            *good[1:],
+        ]
+        bad_payload_wrapper = [
+            {**good[0], "event": {**good[0]["event"],
+                                   "input": {"state": "available", "value": {}, "extra": True}}},
+            *good[1:],
+        ]
+        for records in (bad_wrapper, bad_event, bad_payload_wrapper):
+            with self.subTest(record=records[0]):
                 parsed = PARSER.parse_diagnostic_capture(capture(records))
                 self.assertFalse(parsed["capture_valid"])
                 self.assertFalse(parsed["evidence_eligible"])
