@@ -85,16 +85,27 @@ class NormalInvokeImageComposition(unittest.TestCase):
 
     def test_disposable_rsp_profile_composes_with_transport_and_action_scoring(self):
         original_invoke = SMOKE.RUN.invoke_container
+        original_admit = SMOKE.RUN._admit_runner_safety_result
+        runner_result_files = []
 
         def invoke_disposable(**kwargs):
             kwargs["require_runner_evidence_safety"] = True
             kwargs["runner_defaults_known"] = True
             return original_invoke(**kwargs)
 
-        with patch.object(SMOKE.RUN, "invoke_container", invoke_disposable):
-            result, _probe, requests, errors, _observer = SMOKE.ObserverPinnedImageSmoke().invoke_fixture(RSP_IMAGE)
+        def observe_runner_result_file(result, *args, **kwargs):
+            # Observe the exact decoded bytes Loom read from the runner-owned
+            # result file, then preserve the real admission validator.
+            runner_result_files.append(result)
+            return original_admit(result, *args, **kwargs)
+
+        with patch.object(SMOKE.RUN, "invoke_container", invoke_disposable), \
+             patch.object(SMOKE.RUN, "_admit_runner_safety_result", observe_runner_result_file):
+            result, _probe, requests, errors, _observer = SMOKE.ObserverPinnedImageSmoke().invoke_fixture(
+                RSP_IMAGE, payload_key_probe=True,
+            )
         self.assertFalse(result.get("infrastructure_error"), result.get("stderr"))
-        self.assertEqual(requests, 3)
+        self.assertEqual(requests, 4)
         self.assertEqual(errors, [])
         evidence = result.get("observed_tool_results")
         self.assertIsInstance(evidence, dict)
@@ -113,6 +124,20 @@ class NormalInvokeImageComposition(unittest.TestCase):
         self.assertEqual(ack.get("image_source_revision"), SMOKE.RUN.RUNNER_SAFETY_SOURCE)
         self.assertGreater(evidence.get("observed_events", 0), 0)
         self.assertTrue(any(event.get("tool") == "evalFixture_native_sentinel" for event in evidence["events"]))
+        key_probe = next(event for event in evidence["events"] if event.get("tool") == "evalFixture_payload_echo")
+        self.assertNotIn("input", key_probe)
+        self.assertEqual(key_probe["evidence_safety"]["input"]["state"], "omitted")
+        self.assertEqual(key_probe["evidence_safety"]["input"]["reason"], "unsupported_representation")
+        self.assertIn("input", key_probe["missing_fields"])
+        escaped_test_secret = 'synthetic-"credential"\npath\\suffix'
+        result_json = json.dumps(result, ensure_ascii=False)
+        self.assertEqual(len(runner_result_files), 1)
+        stored_projection = runner_result_files[0]
+        self.assertEqual(stored_projection["tool_result_evidence"]["events"][1]["status"], "completed")
+        self.assertNotIn("input", stored_projection["tool_result_evidence"]["events"][1])
+        result_json += json.dumps(stored_projection, ensure_ascii=False)
+        for secret_variant in SMOKE.RUN.sensitive_text_variants(escaped_test_secret):
+            self.assertNotIn(secret_variant, result_json)
         runtime_state = result.get("runtime_state")
         self.assertTrue(SMOKE.RUN._valid_disposable_runtime_state(runtime_state), runtime_state)
         case = {"id": "RSP-NATIVE", "agent": "general", "execution": "runtime", "prompt": "",
