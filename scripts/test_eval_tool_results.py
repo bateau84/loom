@@ -40,6 +40,27 @@ def scenario(execution="runtime"):
 
 
 class ToolResultEvidenceTests(unittest.TestCase):
+    def test_disposable_policy_and_runtime_state_reject_unproved_sources(self):
+        inventory = RUN.collect_credential_inventory(
+            {}, [], None, None, None, None, runner_defaults_known=True,
+        )
+        self.assertTrue(RUN._valid_runner_private_policy(inventory.private_policy()))
+        incomplete = inventory.private_policy()
+        incomplete["complete"] = True
+        incomplete["sources"]["config_root"] = "incomplete"
+        self.assertFalse(RUN._valid_runner_private_policy(incomplete))
+        state = {
+            "schema": "opencode-eval-runner/runtime-state/v1", "profile": "disposable",
+            "database_source": "runtime-bootstrap", "database_created": True,
+            "database_seed_present": False, "auth_source": "none",
+            "session_rows_before_inference": 0, "credential_rows_before_inference": 0,
+            "migration_count": 48, "first_migration": "20260127222353_familiar_lady_ursula",
+            "last_migration": "20260923013825_project_time_active",
+        }
+        self.assertTrue(RUN._valid_disposable_runtime_state(state))
+        self.assertFalse(RUN._valid_disposable_runtime_state({**state, "session_rows_before_inference": False}))
+        self.assertFalse(RUN._valid_disposable_runtime_state({**state, "database_seed_present": True}))
+
     def test_safety_runner_rejects_reserved_profile_overrides_before_launch(self):
         for name in (
             "EVAL_OPENCODE_STATE_PROFILE",
@@ -71,13 +92,13 @@ class ToolResultEvidenceTests(unittest.TestCase):
         )
         policy = inventory.private_policy()
         fake_runner = Path(__file__).resolve()
-        module_sha = "a" * 64
         fields = [
             *[{
                 "event": None, "field": field, "state": "omitted",
                 "reason": "missing", "stage": "runner",
             } for field in ("model", "reasoning", "agent", "skill", "session_id", "credential_source",
-                            "plugin_diagnostic", "plugin_preflight", "timing")],
+                             "plugin_diagnostic", "plugin_preflight", "timing")],
+            {"event": None, "field": "runtime_state", "state": "exact"},
             {"event": None, "field": "text", "state": "exact"},
             {"event": None, "field": "tools", "state": "exact"},
             {"event": None, "field": "actions", "state": "exact"},
@@ -89,7 +110,7 @@ class ToolResultEvidenceTests(unittest.TestCase):
              "reason": "opaque_payload_unverified", "stage": "runner"},
             *[{
                 "event": 0, "field": field, "state": "exact",
-            } for field in ("tool", "call_id", "session_id", "input", "output")],
+            } for field in ("status", "tool", "call_id", "session_id", "input", "output")],
         ]
         losses = dict.fromkeys(RUN.EVIDENCE_SAFETY_REASONS, 0)
         losses["opaque_payload_unverified"] = 2
@@ -98,10 +119,20 @@ class ToolResultEvidenceTests(unittest.TestCase):
             "schema": RUN.RUNNER_SAFE_RESULT_SCHEMA,
             "transport": "opencode",
             "exit_code": 0,
+            "stdout_total_chars": 0,
+            "stderr_total_chars": 0,
             "text": "diagnostic text",
             "tools": [],
             "actions": [],
             "skills_loaded": [],
+            "runtime_state": {
+                "schema": "opencode-eval-runner/runtime-state/v1", "profile": "disposable",
+                "database_source": "runtime-bootstrap", "database_created": True,
+                "database_seed_present": False, "auth_source": "none",
+                "session_rows_before_inference": 0, "credential_rows_before_inference": 0,
+                "migration_count": 48, "first_migration": "20260127222353_familiar_lady_ursula",
+                "last_migration": "20260923013825_project_time_active",
+            },
             "tool_result_evidence": {
                 "schema": RUN.RUNNER_SAFE_EVENTS_SCHEMA,
                 "source": "opencode.event-stream.full",
@@ -135,17 +166,20 @@ class ToolResultEvidenceTests(unittest.TestCase):
                 "stages": ["container.before_clip", "container.before_output"],
                 "policy_valid": True,
                 "inventory_complete": True,
-                "module_sha256": module_sha,
+                "module_sha256": RUN.RUNNER_POLICY_MODULE_SHA256,
                 "image_source_revision": RUN.RUNNER_SAFETY_SOURCE,
                 "policy_receipt": "c" * 64,
             },
             "evidence_load": {
                 "image": RUN.RUNNER_SAFETY_IMAGE,
-                "image_config": "sha256:" + "d" * 64,
+                "image_config": RUN.RUNNER_SAFETY_IMAGE_CONFIG,
                 "image_source_revision": RUN.RUNNER_SAFETY_SOURCE,
+                "image_package_init_sha256": RUN.RUNNER_PACKAGE_INIT_SHA256,
+                "image_policy_module_sha256": RUN.RUNNER_POLICY_MODULE_SHA256,
+                "image_invoke_sha256": RUN.RUNNER_INVOKE_SHA256,
                 "host_executable_sha256": RUN._sha256_file(str(fake_runner)),
-                "host_adapter_sha256": "e" * 64,
-                "policy_module_sha256": module_sha,
+                "host_adapter_sha256": RUN.RUNNER_HOST_ADAPTER_SHA256,
+                "policy_module_sha256": RUN.RUNNER_POLICY_MODULE_SHA256,
                 "host_source_revision": RUN.RUNNER_SAFETY_SOURCE,
                 "host_tracked_tree_clean": True,
             },
@@ -156,9 +190,10 @@ class ToolResultEvidenceTests(unittest.TestCase):
             },
         }
 
-        admitted = RUN._admit_runner_safety_result(
-            result, inventory, RUN.RUNNER_SAFETY_IMAGE, str(fake_runner),
-        )
+        with patch.object(RUN, "RUNNER_HOST_EXECUTABLE_SHA256", RUN._sha256_file(str(fake_runner))):
+            admitted = RUN._admit_runner_safety_result(
+                result, inventory, RUN.RUNNER_SAFETY_IMAGE, str(fake_runner),
+            )
         stale_pair = {**result, "evidence_load": {**result["evidence_load"], "host_tracked_tree_clean": False}}
 
         self.assertIsNotNone(admitted)
