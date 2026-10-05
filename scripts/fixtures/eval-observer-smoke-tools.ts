@@ -14,6 +14,15 @@ const input = {
   additionalProperties: false,
 }
 
+const payloadInput = {
+  type: "object" as const,
+  properties: {
+    payload: { type: "object" as const, additionalProperties: true },
+  },
+  required: ["payload"],
+  additionalProperties: false,
+}
+
 export default Plugin.define({
   id: "loom.eval-observer-smoke-tools",
   async setup(ctx) {
@@ -41,6 +50,13 @@ export default Plugin.define({
         execute: async (args) => {
           throw new Error(`fixture thrown error: ${marker(args)}`)
         },
+      })
+      editor.add({
+        name: "payload_echo",
+        description: "Echo a synthetic payload to verify protected capture omission",
+        input: payloadInput,
+        options: { namespace: "evalFixture", codemode: false },
+        execute: async (args) => ({ content: JSON.stringify((args as { payload: unknown }).payload) }),
       })
     })
     await ctx.tool.hook("execute.after", (event) => {
