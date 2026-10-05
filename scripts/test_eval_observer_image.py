@@ -26,6 +26,7 @@ FAKE_KEY = "local-fixture-key-not-a-provider-credential"
 class ProviderFixture(BaseHTTPRequestHandler):
     requests = 0
     errors: list[str] = []
+    payload_key_probe = False
 
     def log_message(self, *_args):
         return
@@ -39,7 +40,17 @@ class ProviderFixture(BaseHTTPRequestHandler):
                 if not name:
                     raise AssertionError(f"native fixture tool not exposed: {tool_names!r}")
                 response = tool_response("native-call", name, {"marker": "native-sentinel"})
-            elif ProviderFixture.requests == 1:
+            elif ProviderFixture.requests == 1 and ProviderFixture.payload_key_probe:
+                name = next((name for name in tool_names if name == "evalFixture_payload_echo"), None)
+                if not name:
+                    raise AssertionError(f"payload-key fixture tool not exposed: {tool_names!r}")
+                key = os.environ["EVAL_FIXTURE_ESCAPE_KEY"]
+                for _ in range(4):
+                    key = json.dumps(key, ensure_ascii=False)[1:-1]
+                response = tool_response("payload-key-call", name, {
+                    "payload": {"outer": {"inner": {key: "synthetic-value"}}},
+                })
+            elif ProviderFixture.requests == (2 if ProviderFixture.payload_key_probe else 1):
                 name = next((name for name in tool_names if name == "execute"), None)
                 if not name:
                     raise AssertionError(f"Code Mode execute tool not exposed: {tool_names!r}")
@@ -122,10 +133,12 @@ def stream_response(response: dict) -> bytes:
 
 class ObserverPinnedImageSmoke(unittest.TestCase):
     def invoke_fixture(
-        self, image: str, *, observe_inner: bool = False, fail_observer: bool = False
+        self, image: str, *, observe_inner: bool = False, fail_observer: bool = False,
+        payload_key_probe: bool = False,
     ):
         ProviderFixture.requests = 0
         ProviderFixture.errors = []
+        ProviderFixture.payload_key_probe = payload_key_probe
         server = ThreadingHTTPServer(("127.0.0.1", 0), ProviderFixture)
         server_thread = threading.Thread(target=server.serve_forever, daemon=True)
         server_thread.start()
@@ -157,6 +170,9 @@ class ObserverPinnedImageSmoke(unittest.TestCase):
             }), encoding="utf-8")
             environment = {"EVAL_FIXTURE_KEY": FAKE_KEY}
             extra_envs = ["EVAL_FIXTURE_KEY"]
+            if payload_key_probe:
+                environment["EVAL_FIXTURE_ESCAPE_KEY"] = 'synthetic-"credential"\npath\\suffix'
+                extra_envs.append("EVAL_FIXTURE_ESCAPE_KEY")
             if is_experimental:
                 environment["OPENCODE_EVAL_OBSERVATIONS"] = "1" if observe_inner else "0"
                 environment["EVAL_OBSERVER_FIXTURE_THROW"] = "1" if fail_observer else "0"
@@ -195,6 +211,7 @@ class ObserverPinnedImageSmoke(unittest.TestCase):
             server_thread.join(timeout=2)
             tempfile.tempdir = old_tempdir
             shutil.rmtree(temp, ignore_errors=True)
+            ProviderFixture.payload_key_probe = False
 
     def test_old_pinned_image_remains_fail_closed_for_inner_results(self):
         self.assertEqual(RUN.DEFAULT_IMAGES["opencode"], IMAGE)
