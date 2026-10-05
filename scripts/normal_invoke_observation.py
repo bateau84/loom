@@ -28,6 +28,10 @@ def _counter(value: Any) -> bool:
     return type(value) is int and value >= 0
 
 
+def _exact_keys(value: Any, expected: set[str]) -> bool:
+    return isinstance(value, dict) and set(value) == expected
+
+
 def _finite_json(value: Any) -> bool:
     pending = [(value, 0)]
     visited = 0
@@ -78,8 +82,49 @@ def _field(value: Any, *, available: bool) -> bool:
     if not isinstance(value, dict):
         return False
     if available:
-        return value.get("state") == "available" and "value" in value
-    return value.get("state") == "omitted" and _nonempty(value.get("reason"))
+        return _exact_keys(value, {"state", "value"}) and value.get("state") == "available"
+    return (_exact_keys(value, {"state", "reason"}) and value.get("state") == "omitted" and
+            value.get("reason") in {"sensitive_value", "unsupported_event_field", "oversized_event",
+                                    "opaque_payload_unverified", "unknown_payload_policy"})
+
+
+def _valid_event_shape(event: Any, schema: str) -> bool:
+    if not isinstance(event, dict) or not isinstance(event.get("kind"), str):
+        return False
+    common = {"schema", "sequence", "actor", "observer_failures", "kind"}
+    if schema == NATIVE_SCHEMA:
+        shapes = {
+            "call_start": common | {"invocation_id", "call_id", "tool", "mode", "parent", "input", "boundary"},
+            "call_end": common | {"invocation_id", "call_id", "boundary", "unavailable_fields", "outcome"},
+        }
+    elif schema == LOCAL_SCHEMA:
+        shapes = {
+            "parent_start": common | {"parent", "boundary", "mode"},
+            "parent_end": common | {"parent", "admitted", "dispatched", "terminals",
+                                    "missing_terminals", "unsupported_dispatches", "unavailable_fields",
+                                    "scope", "evidence_eligible"},
+            "call_start": common | {"parent", "invocation_id", "tool", "catalog_path", "input", "boundary"},
+            "call_end": common | {"parent", "invocation_id", "dispatched", "boundary", "outcome"},
+        }
+    else:
+        return False
+    expected = shapes.get(event["kind"])
+    if expected is None:
+        return False
+    if event["kind"] == "call_end":
+        outcome = event.get("outcome")
+        if outcome == "returned":
+            expected = expected | {"result"}
+        elif outcome == "threw":
+            expected = expected | {"error", "error_representation"}
+        elif schema == LOCAL_SCHEMA and outcome == "interrupted":
+            pass
+        else:
+            return False
+        # Native call_end may include unavailable_fields; local call_end does not.
+        if schema == NATIVE_SCHEMA:
+            expected = expected | {"unavailable_fields"}
+    return set(event) == expected
 
 
 def _valid_start(event: dict[str, Any], schema: str) -> bool:
@@ -179,11 +224,14 @@ def parse_diagnostic_capture(raw: str | bytes) -> dict[str, Any]:
         return result
     header, footer = records[0], records[-1]
     payload_policy = header.get("payload_policy") if isinstance(header, dict) else None
-    if (not isinstance(header, dict) or header.get("kind") != "header" or
+    if (not _exact_keys(header, {"kind", "schema", "payload_policy", "diagnostic_only", "evidence_eligible"}) or
+            header.get("kind") != "header" or
             header.get("schema") != DIAGNOSTIC_SCHEMA or header.get("diagnostic_only") is not True or
             header.get("evidence_eligible") is not False or
             not isinstance(payload_policy, str) or payload_policy not in _PAYLOAD_POLICIES or
-            not isinstance(footer, dict) or footer.get("kind") != "footer" or
+            not _exact_keys(footer, {"kind", "schema", "payload_policy", "event_count", "omitted_events",
+                                     "writes_complete", "diagnostic_only", "evidence_eligible"}) or
+            footer.get("kind") != "footer" or
             footer.get("schema") != DIAGNOSTIC_SCHEMA or footer.get("diagnostic_only") is not True or
             footer.get("evidence_eligible") is not False or footer.get("writes_complete") is not True or
             footer.get("payload_policy") != payload_policy or
@@ -209,6 +257,10 @@ def parse_diagnostic_capture(raw: str | bytes) -> dict[str, Any]:
             reasons.add("invalid_record_type")
             continue
         if record.get("event_omitted") is True:
+            if not _exact_keys(record, {"schema", "payload_policy", "diagnostic_only", "evidence_eligible",
+                                        "event_omitted", "omission_reason"}):
+                reasons.add("invalid_omission_record_shape")
+                continue
             result["omitted_events"] += 1
             reasons.add(str(record.get("omission_reason") or "event_omitted"))
             continue
@@ -216,10 +268,14 @@ def parse_diagnostic_capture(raw: str | bytes) -> dict[str, Any]:
         if (record.get("diagnostic_only") is not True or record.get("evidence_eligible") is not False or
                 record.get("payload_policy") != payload_policy or
                 not isinstance(schema, str) or schema not in _ALLOWED or
+                not _exact_keys(record, {"schema", "payload_policy", "diagnostic_only", "evidence_eligible", "event"}) or
                 not isinstance(record.get("event"), dict)):
             reasons.add("invalid_event_or_schema")
             continue
         event = record["event"]
+        if not _valid_event_shape(event, schema):
+            reasons.add("invalid_event_shape")
+            continue
         if (payload_policy == "omit-opaque-payloads/v1" and
                 isinstance(event.get("kind"), str) and event.get("kind") in {"call_start", "call_end"}):
             reasons.add("opaque_payload_persisted_under_omit_policy")
