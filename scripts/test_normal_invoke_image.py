@@ -2,10 +2,12 @@
 from __future__ import annotations
 
 import importlib.util
+import argparse
 import os
 from pathlib import Path
 import shutil
 import json
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -17,6 +19,7 @@ SMOKE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(SMOKE)
 
 IMAGE = "ghcr.io/bateau84/opencode-eval-runner@sha256:9ee84a581db820c24d92e3a672db457498d3e1478a400e87704391a6f24f0250"
+RSP_IMAGE = SMOKE.RUN.RUNNER_SAFETY_IMAGE
 RUNNER_AVAILABLE = bool(os.environ.get("OPENCODE_EVAL_RUNNER_BIN") or shutil.which("opencode-eval-runner"))
 
 
@@ -24,12 +27,15 @@ RUNNER_AVAILABLE = bool(os.environ.get("OPENCODE_EVAL_RUNNER_BIN") or shutil.whi
                      "requires podman and an explicitly available runner CLI")
 class NormalInvokeImageComposition(unittest.TestCase):
     def test_normal_invoke_events_are_diagnostic_and_do_not_change_result(self):
-        baseline, _probe, baseline_requests, baseline_errors, _ = SMOKE.ObserverPinnedImageSmoke().invoke_fixture(IMAGE)
         original_invoke = SMOKE.RUN.invoke_container
 
         def invoke_fixture_values(**kwargs):
             kwargs["normal_observation_payload_policy"] = SMOKE.RUN.NORMAL_PAYLOAD_POLICY_FIXTURE
             return original_invoke(**kwargs)
+
+        with patch.object(SMOKE.RUN, "invoke_container", invoke_fixture_values), \
+             patch.dict(os.environ, {"OPENCODE_EVAL_NORMAL_OBSERVATIONS": "1"}):
+            baseline, _probe, baseline_requests, baseline_errors, _ = SMOKE.ObserverPinnedImageSmoke().invoke_fixture(IMAGE)
 
         with patch.object(SMOKE.RUN, "invoke_container", invoke_fixture_values), \
              patch.dict(os.environ, {"OPENCODE_EVAL_NORMAL_OBSERVATIONS": "1"}):
@@ -63,8 +69,8 @@ class NormalInvokeImageComposition(unittest.TestCase):
         self.assertIn("native-sentinel", json.dumps(native_end["result"]["value"]))
         inner_starts = [event for event in local if event.get("kind") == "call_start"]
         inner_terminals = {event["invocation_id"]: event for event in local if event.get("kind") == "call_end"}
-        observed_inputs = [event["input"]["value"]["marker"] for event in inner_starts]
-        self.assertEqual(observed_inputs, ["discarded-sentinel", "transformed-sentinel", "caught-sentinel"])
+        self.assertEqual([event["input"]["value"]["marker"] for event in inner_starts],
+                         ["discarded-sentinel", "transformed-sentinel", "caught-sentinel"])
         self.assertEqual([inner_terminals[event["invocation_id"]]["outcome"] for event in inner_starts],
                          ["returned", "returned", "threw"])
         self.assertIn("FINAL-discarded-sentinel", json.dumps(inner_terminals[inner_starts[0]["invocation_id"]]["result"]["value"]))
@@ -76,6 +82,58 @@ class NormalInvokeImageComposition(unittest.TestCase):
         self.assertFalse(SMOKE.RUN.nested_tool_capture_complete(diagnostic))
         self.assertEqual(SMOKE.RUN.tool_result_actions(diagnostic), [])
         self.assertFalse(diagnostic["runwide_complete"])
+
+    def test_disposable_rsp_profile_composes_with_transport_and_action_scoring(self):
+        original_invoke = SMOKE.RUN.invoke_container
+
+        def invoke_disposable(**kwargs):
+            kwargs["require_runner_evidence_safety"] = True
+            kwargs["runner_defaults_known"] = True
+            return original_invoke(**kwargs)
+
+        with patch.object(SMOKE.RUN, "invoke_container", invoke_disposable):
+            result, _probe, requests, errors, _observer = SMOKE.ObserverPinnedImageSmoke().invoke_fixture(RSP_IMAGE)
+        self.assertFalse(result.get("infrastructure_error"), result.get("stderr"))
+        self.assertEqual(requests, 3)
+        self.assertEqual(errors, [])
+        evidence = result.get("observed_tool_results")
+        self.assertIsInstance(evidence, dict)
+        self.assertEqual(evidence.get("schema"), SMOKE.RUN.RUNNER_SAFE_EVENTS_SCHEMA)
+        self.assertGreater(evidence.get("observed_events", 0), 0)
+        self.assertTrue(any(event.get("tool") == "evalFixture_native_sentinel" for event in evidence["events"]))
+        runtime_state = result.get("runtime_state")
+        self.assertTrue(SMOKE.RUN._valid_disposable_runtime_state(runtime_state), runtime_state)
+        case = {"id": "RSP-NATIVE", "agent": "general", "execution": "runtime", "prompt": "",
+                "trap": "", "expectations": [], "must_not": [],
+                "actions": {"requires": [{"tool": "evalFixture_native_sentinel",
+                                             "args": {"marker": "native-sentinel"}}]}}
+        observed = SMOKE.RUN.tool_result_actions(evidence)
+        self.assertEqual(SMOKE.RUN.deterministic_failures(case, [], observed, tool_results=evidence), [])
+        prompt = SMOKE.RUN.judge_prompt(case, result.get("text", ""), [], observed, evidence)
+        self.assertIn("OBSERVED TOOL RESULTS", prompt)
+        self.assertIn("evalFixture_native_sentinel", prompt)
+        with tempfile.TemporaryDirectory(dir="/tmp/opencode") as artifact_dir:
+            args = argparse.Namespace(iterations=1, artifact_dir=artifact_dir, eval_run_id="a" * 32)
+            artifact = {
+                "case": case["id"], "iteration": 1, "agent": case["agent"],
+                "execution": case["execution"], "target_image": RSP_IMAGE,
+                "judge_image": RSP_IMAGE, "container_engine": "podman",
+                "target_transport": "opencode", "judge_transport": "opencode",
+                "model": "fixture/deterministic", "reasoning": None,
+                "reasoning_source": "provider-default", "judge_model": "fixture/deterministic",
+                "judge_reasoning": None, "judge_reasoning_source": "provider-default",
+                "timing": {"target_seconds": 0, "judge_seconds": 0, "total_seconds": 0},
+                "classification": "unproven", "passed": False, "target": result,
+                "target_error": None, "observed_actions": observed,
+                "observed_tool_results": evidence, "deterministic_failures": [],
+                "judge_transport_result": None, "semantic": None, "judge_error": None,
+            }
+            SMOKE.RUN.write_case_artifact(case, args, 1, artifact)
+            SMOKE.RUN.verify_case_artifact(case, args, 1, artifact)
+            saved = json.loads((Path(artifact_dir) / (case["id"] + ".json")).read_text())
+            self.assertEqual(saved["target"]["runtime_state"], runtime_state)
+            self.assertEqual(saved["observed_tool_results"], evidence)
+        self.assertFalse(SMOKE.RUN.nested_tool_capture_complete(evidence))
 
     def test_sensitive_event_values_are_omitted_before_diagnostic_persistence(self):
         secret = SMOKE.FAKE_KEY
