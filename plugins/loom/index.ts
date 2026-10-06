@@ -34,7 +34,9 @@ import {
   WorkflowCancelledError,
   addVerificationRequirement,
   applyTaskPlan,
+  authorizeReviewerRepair,
   buildSteps,
+  completeReviewerRepair,
   executableTaskPlanFingerprint,
   planningOnlyObjective,
   resolveExecutionDepth,
@@ -47,6 +49,12 @@ import {
   reopenFrom,
   resetVerificationAfterReopen,
   runnable,
+  knownReviewerSessions,
+  prepareReviewerAfterProducerRepair,
+  recordReviewerAttachment,
+  recordReviewerVerdict,
+  reviewAssignmentMode,
+  reviewerSessionEligibleForIndependentReview,
   type Effects,
   type Workflow,
 } from "./workflow"
@@ -222,6 +230,18 @@ const reportProducerAgents = new Set([
 ])
 
 const execFileAsync = promisify(execFile)
+
+async function repositoryHeadSha(projectDirectory: string) {
+  const { stdout } = await execFileAsync("git", ["rev-parse", "HEAD"], {
+    cwd: projectDirectory,
+    encoding: "utf8",
+  })
+  const headSha = String(stdout).trim()
+  if (!/^[0-9a-f]{40}$/i.test(headSha)) {
+    throw new Error("Cannot establish the repository HEAD for review evidence.")
+  }
+  return headSha
+}
 
 const artifactWriteDefaults: Record<string, string[]> = {
   designer: ["docs/design/**", "ephemeral-reports/designer/**"],
