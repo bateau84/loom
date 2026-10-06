@@ -30,4 +30,8 @@ tags: [requirements, loom, index]
 - [BR-021 — Preserve Holistic Plan Context Across Handoffs](br-021-preserve-holistic-plan-context.md)
 - [BR-022 — Support Planning-Only Objective Completion](br-022-support-planning-only-objective-completion.md)
 
+## Obligation contracts
+
+- [OC-001 — Review Repair Ownership and Independent Approval](obligation-contracts/oc-001-review-repair-independence.md)
+
 Each requirement is its own OKF document so relationships, dependencies, retrieval, and future supersession remain explicit and machine-discoverable.
