@@ -5087,6 +5087,16 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             const currentStep = workflow.steps.find(
               (candidate) => candidate.id === stepId,
             )
+            if (
+              tool.agent === "reviewer" &&
+              currentStep &&
+              (resolvedOutcome === "pass" || resolvedOutcome === "fail") &&
+              reviewAssignmentMode(currentStep) === "repair-authorized"
+            ) {
+              throw new Error(
+                "Repair-authorized Reviewer work is self-verification, not an independent verdict. Commit and verify the bounded correction, then call loom_review_repair_complete.",
+              )
+            }
             const reviewerAcceptanceVerdict =
               tool.agent === "reviewer" &&
               (resolvedOutcome === "pass" || resolvedOutcome === "fail") &&
@@ -5188,6 +5198,25 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               step.task && step.status === "complete"
                 ? await stepClaims(ctx, workflowId, stepId)
                 : []
+
+            if (
+              tool.agent === "reviewer" &&
+              (resolvedOutcome === "pass" || resolvedOutcome === "fail")
+            ) {
+              const headSha = await repositoryHeadSha(ctx.location.directory)
+              const currentAttempt = step.attempt ?? 0
+              const reviewClaims = (await stepClaims(ctx, workflowId, stepId))
+                .filter((claim) => (claim.attempt ?? 0) === currentAttempt)
+              recordReviewerVerdict(step, {
+                sessionId: tool.sessionID,
+                outcome: resolvedOutcome,
+                summary,
+                headSha,
+                evidenceBound,
+                evidenceClaimIds: reviewClaims.map((claim) => claim.id),
+                recordedAt: new Date().toISOString(),
+              })
+            }
 
             if (workflow.work) {
               const work = await readWork(ctx, workflow.work.objectiveId)
@@ -5294,6 +5323,16 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               finished: stepId,
               evidenceBound,
               outcome: resolvedOutcome,
+              ...(step.agent === "reviewer"
+                ? {
+                    review: {
+                      mode: reviewAssignmentMode(step),
+                      independentApprovalPending:
+                        step.review?.independentApprovalPending ?? false,
+                      receipt: step.review?.receipts?.at(-1) ?? null,
+                    },
+                  }
+                : {}),
               blocked: workflow.steps.filter((candidate) => candidate.status === "failed").map((candidate) => candidate.id),
               runnable: runnable(workflow).map((candidate) => ({ id: candidate.id, agent: candidate.agent })),
               questions: questionState(questions, workflow),
