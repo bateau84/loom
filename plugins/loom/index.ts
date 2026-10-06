@@ -232,15 +232,19 @@ const reportProducerAgents = new Set([
 const execFileAsync = promisify(execFile)
 
 async function repositoryHeadSha(projectDirectory: string) {
-  const { stdout } = await execFileAsync("git", ["rev-parse", "HEAD"], {
-    cwd: projectDirectory,
-    encoding: "utf8",
-  })
-  const headSha = String(stdout).trim()
-  if (!/^[0-9a-f]{40}$/i.test(headSha)) {
-    throw new Error("Cannot establish the repository HEAD for review evidence.")
+  try {
+    const { stdout } = await execFileAsync("git", ["rev-parse", "HEAD"], {
+      cwd: projectDirectory,
+      encoding: "utf8",
+    })
+    const headSha = String(stdout).trim()
+    return /^[0-9a-f]{40}$/i.test(headSha) ? headSha : "unavailable"
+  } catch {
+    // Some synthetic/legacy review surfaces are not Git-backed. Normal review
+    // can preserve that limitation in its receipt; Reviewer-repair paths below
+    // fail closed when exact revision evidence is required.
+    return "unavailable"
   }
-  return headSha
 }
 
 const artifactWriteDefaults: Record<string, string[]> = {
