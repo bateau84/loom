@@ -9136,7 +9136,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                   // Review-only/independent gates always recompute their narrow
                   // role-owned surface. A repair-authorized session may retain
                   // elevations from this exact attempt across safe resume.
-                  scope = sameAttemptRepairScope
+                  scope = sameAttemptRepairScope && currentScope
                     ? currentScope
                     : {
                         workflowId: value.workflowId,
