@@ -620,8 +620,8 @@ export function completeReviewerRepair(
   const headSha = input.headSha.trim()
   const changeSummary = input.changeSummary.trim()
   const verificationSummary = input.verificationSummary.trim()
-  if (!headSha || !changeSummary || !verificationSummary) {
-    throw new Error("Reviewer repair completion requires revision, change, and verification evidence.")
+  if (!headSha || headSha === "unavailable" || !changeSummary || !verificationSummary) {
+    throw new Error("Reviewer repair completion requires exact revision, change, and verification evidence.")
   }
 
   review.receipts!.push({
@@ -702,6 +702,15 @@ export function recordReviewerVerdict(
     !reviewerSessionEligibleForIndependentReview(step, input.sessionId)
   ) {
     throw new Error("This Reviewer session authored repair and is ineligible for independent re-review.")
+  }
+  if (
+    review.mode === "independent-re-review" &&
+    input.outcome === "pass" &&
+    input.headSha === "unavailable"
+  ) {
+    throw new Error(
+      "Independent re-review PASS requires exact repository revision evidence.",
+    )
   }
 
   review.receipts!.push({
