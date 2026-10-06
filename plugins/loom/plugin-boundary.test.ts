@@ -9920,3 +9920,503 @@ describe("Skill methodology evidence lifecycle", () => {
   })
 
 })
+
+
+describe("Reviewer repair authorization and re-review boundary", () => {
+  test("review-only cannot mutate, repair is self-verified, and the repairer cannot independently approve it", async () => {
+    const h = await harness()
+    try {
+      await initializeGitFixture(h.root)
+      const implementationPath = "src/reviewer-repair.ts"
+      await writeFile(join(h.root, implementationPath), "export const value = 1\n")
+      await git(h.root, ["add", implementationPath])
+      await git(h.root, ["commit", "-q", "-m", "test: initial implementation"])
+
+      const generalSession = "review-repair-general"
+      const workerSession = "review-repair-worker"
+      const reviewerA = "review-repair-a"
+      const reviewerB = "review-repair-b"
+
+      const started = await h.call(
+        "start",
+        { request: "Make one bounded implementation change." },
+        "general",
+        generalSession,
+      )
+      const workflowId = String(started.workflowId)
+      expect((await h.call(
+        "route",
+        {
+          humanFacing: false,
+          behavioral: false,
+          structural: false,
+          externalUnknown: false,
+          diagnostic: false,
+          productOutcome: false,
+          implementationRequested: true,
+          executionDepth: "task",
+        },
+        "general",
+        generalSession,
+      )).error).toBeUndefined()
+
+      expect((await h.call(
+        "task_scope",
+        { workflowId, stepId: "worker", write: [implementationPath] },
+        "general",
+        generalSession,
+      )).error).toBeUndefined()
+      const workerGrant = await h.call(
+        "dispatch_grant",
+        { workflowId, stepId: "worker" },
+        "general",
+        generalSession,
+      )
+      expect((await h.call(
+        "attach",
+        { grantId: workerGrant.grantId, workflowId, stepId: "worker" },
+        "worker",
+        workerSession,
+      )).attached).toBe(true)
+      expect((await h.call(
+        "complete",
+        { workflowId, stepId: "worker", summary: "implementation ready" },
+        "worker",
+        workerSession,
+      )).error).toBeUndefined()
+
+      const reviewGrant = await h.call(
+        "dispatch_grant",
+        { workflowId, stepId: "review-implementation" },
+        "general",
+        generalSession,
+      )
+      expect(reviewGrant.reviewMode).toBe("review-only")
+      const attached = await h.call(
+        "attach",
+        {
+          grantId: reviewGrant.grantId,
+          workflowId,
+          stepId: "review-implementation",
+        },
+        "reviewer",
+        reviewerA,
+      )
+      expect(attached.reviewAssignment.mode).toBe("review-only")
+
+      const evaluate = h.permissionHooks.get("evaluate")!
+      const deniedEdit: any = {
+        agent: "reviewer",
+        action: "edit",
+        resources: [implementationPath],
+        sessionID: reviewerA,
+        effect: "ask",
+      }
+      await evaluate(deniedEdit)
+      expect(deniedEdit.effect).toBe("deny")
+      expect(deniedEdit.message).toContain("current Loom write scope")
+
+      const failed = await h.call(
+        "complete",
+        {
+          workflowId,
+          stepId: "review-implementation",
+          outcome: "fail",
+          summary: "Finding: value must be 2.",
+        },
+        "reviewer",
+        reviewerA,
+      )
+      expect(failed.error).toBeUndefined()
+      expect(failed.review.receipt).toMatchObject({
+        kind: "review",
+        outcome: "fail",
+        assurance: "independent",
+        sessionId: reviewerA,
+      })
+
+      const authorized = await h.call(
+        "review_repair_authorize",
+        {
+          workflowId,
+          stepId: "review-implementation",
+          finding: "value must be 2",
+          reason: "The intended value is established and the correction is one line.",
+        },
+        "general",
+        generalSession,
+      )
+      expect(authorized).toMatchObject({
+        authorized: true,
+        reviewMode: "repair-authorized",
+        resumeSessionId: reviewerA,
+        independentApprovalPending: true,
+      })
+
+      const repairGrant = await h.call(
+        "dispatch_grant",
+        { workflowId, stepId: "review-implementation" },
+        "general",
+        generalSession,
+      )
+      expect(repairGrant).toMatchObject({
+        reviewMode: "repair-authorized",
+        resumeSessionId: reviewerA,
+      })
+
+      const wrongRepairSession = await h.call(
+        "attach",
+        {
+          grantId: repairGrant.grantId,
+          workflowId,
+          stepId: "review-implementation",
+        },
+        "reviewer",
+        "review-repair-wrong",
+      )
+      expect(wrongRepairSession.error).toContain("exact Reviewer session")
+
+      const repairGrant2 = await h.call(
+        "dispatch_grant",
+        { workflowId, stepId: "review-implementation" },
+        "general",
+        generalSession,
+      )
+      expect((await h.call(
+        "attach",
+        {
+          grantId: repairGrant2.grantId,
+          workflowId,
+          stepId: "review-implementation",
+        },
+        "reviewer",
+        reviewerA,
+      )).reviewAssignment.mode).toBe("repair-authorized")
+
+      const elevated = await h.call(
+        "scope_elevate",
+        {
+          workflowId,
+          stepId: "review-implementation",
+          paths: [implementationPath],
+          reason: "Repair the exact reviewed implementation finding.",
+        },
+        "reviewer",
+        reviewerA,
+      )
+      expect(elevated).toMatchObject({
+        status: "granted",
+        continue: true,
+      })
+      expect(elevated.elevation.crossesRoleDefault).toBe(true)
+
+      const allowedEdit: any = {
+        agent: "reviewer",
+        action: "edit",
+        resources: [implementationPath],
+        sessionID: reviewerA,
+        effect: "ask",
+      }
+      await evaluate(allowedEdit)
+      expect(allowedEdit.effect).not.toBe("deny")
+
+      const editEvent = {
+        tool: "edit",
+        callID: "review-repair-edit",
+        messageID: "review-repair-edit-message",
+        sessionID: reviewerA,
+        agent: "reviewer",
+        input: {
+          filePath: join(h.root, implementationPath),
+          oldString: "export const value = 1\n",
+          newString: "export const value = 2\n",
+        },
+      }
+      await h.toolHooks.get("execute.before")!(editEvent)
+      await writeFile(join(h.root, implementationPath), "export const value = 2\n")
+      await h.toolHooks.get("execute.after")!({
+        ...editEvent,
+        status: "completed",
+        result: "updated",
+      })
+
+      const stageCommand = `git add -- ${implementationPath}`
+      const stagePermission: any = {
+        agent: "reviewer",
+        action: "shell",
+        resources: [stageCommand],
+        sessionID: reviewerA,
+        effect: "ask",
+      }
+      await evaluate(stagePermission)
+      expect(stagePermission.effect).toBe("allow")
+      const stageEvent = {
+        tool: "shell",
+        callID: "review-repair-stage",
+        messageID: "review-repair-stage-message",
+        sessionID: reviewerA,
+        agent: "reviewer",
+        input: { command: stageCommand },
+      }
+      await h.toolHooks.get("execute.before")!(stageEvent)
+      await git(h.root, ["add", "--", implementationPath])
+      await h.toolHooks.get("execute.after")!({
+        ...stageEvent,
+        status: "completed",
+        result: "staged",
+      })
+
+      const commitCommand =
+        "git -c core.hooksPath=/dev/null commit -m 'fix: reviewer bounded repair'"
+      const commitPermission: any = {
+        agent: "reviewer",
+        action: "shell",
+        resources: [commitCommand],
+        sessionID: reviewerA,
+        effect: "ask",
+      }
+      await evaluate(commitPermission)
+      expect(commitPermission.effect).toBe("allow")
+      const commitEvent = {
+        tool: "shell",
+        callID: "review-repair-commit",
+        messageID: "review-repair-commit-message",
+        sessionID: reviewerA,
+        agent: "reviewer",
+        input: { command: commitCommand },
+      }
+      await h.toolHooks.get("execute.before")!(commitEvent)
+      await git(h.root, [
+        "-c",
+        "core.hooksPath=/dev/null",
+        "commit",
+        "-q",
+        "-m",
+        "fix: reviewer bounded repair",
+      ])
+      await h.toolHooks.get("execute.after")!({
+        ...commitEvent,
+        status: "completed",
+        result: "committed",
+      })
+
+      const selfVerified = await h.call(
+        "review_repair_complete",
+        {
+          workflowId,
+          stepId: "review-implementation",
+          changeSummary: "Changed the bounded value from 1 to 2.",
+          verificationSummary: "Inspected the committed one-line correction.",
+        },
+        "reviewer",
+        reviewerA,
+      )
+      expect(selfVerified).toMatchObject({
+        assurance: "self-verified",
+        reviewMode: "independent-re-review",
+        independentApprovalPending: true,
+      })
+      expect(selfVerified.headSha).toMatch(/^[0-9a-f]{40}$/)
+      expect(selfVerified.ineligibleReviewerSessionIds).toContain(reviewerA)
+
+      const independentGrant = await h.call(
+        "dispatch_grant",
+        { workflowId, stepId: "review-implementation" },
+        "general",
+        generalSession,
+      )
+      expect(independentGrant).toMatchObject({
+        reviewMode: "independent-re-review",
+        freshSessionRequired: true,
+      })
+      expect(independentGrant.ineligibleReviewerSessionIds).toContain(reviewerA)
+
+      const sameAuthor = await h.call(
+        "attach",
+        {
+          grantId: independentGrant.grantId,
+          workflowId,
+          stepId: "review-implementation",
+        },
+        "reviewer",
+        reviewerA,
+      )
+      expect(sameAuthor.error).toContain("cannot attach as the independent re-reviewer")
+
+      const independentGrant2 = await h.call(
+        "dispatch_grant",
+        { workflowId, stepId: "review-implementation" },
+        "general",
+        generalSession,
+      )
+      expect((await h.call(
+        "attach",
+        {
+          grantId: independentGrant2.grantId,
+          workflowId,
+          stepId: "review-implementation",
+        },
+        "reviewer",
+        reviewerB,
+      )).reviewAssignment.mode).toBe("independent-re-review")
+
+      const passed = await h.call(
+        "complete",
+        {
+          workflowId,
+          stepId: "review-implementation",
+          outcome: "pass",
+          summary: "Repair and affected behavior independently verified.",
+        },
+        "reviewer",
+        reviewerB,
+      )
+      expect(passed.error).toBeUndefined()
+      expect(passed.review.independentApprovalPending).toBe(false)
+      expect(passed.review.receipt).toMatchObject({
+        kind: "review",
+        outcome: "pass",
+        assurance: "independent",
+        sessionId: reviewerB,
+        headSha: selfVerified.headSha,
+      })
+    } finally {
+      h.restore()
+    }
+  })
+
+  test("Worker repair exposes the prior non-authoring Reviewer as the resumable session", async () => {
+    const h = await harness()
+    try {
+      const generalSession = "review-continuity-general"
+      const workerSession = "review-continuity-worker"
+      const reviewerSession = "review-continuity-reviewer"
+      const started = await h.call(
+        "start",
+        { request: "Fix one bounded implementation defect." },
+        "general",
+        generalSession,
+      )
+      const workflowId = String(started.workflowId)
+      await h.call(
+        "route",
+        {
+          humanFacing: false,
+          behavioral: false,
+          structural: false,
+          externalUnknown: false,
+          diagnostic: false,
+          productOutcome: false,
+          implementationRequested: true,
+          executionDepth: "task",
+        },
+        "general",
+        generalSession,
+      )
+      await h.call(
+        "task_scope",
+        { workflowId, stepId: "worker", write: ["src/**"] },
+        "general",
+        generalSession,
+      )
+      const workerGrant = await h.call(
+        "dispatch_grant",
+        { workflowId, stepId: "worker" },
+        "general",
+        generalSession,
+      )
+      await h.call(
+        "attach",
+        { grantId: workerGrant.grantId, workflowId, stepId: "worker" },
+        "worker",
+        workerSession,
+      )
+      await h.call(
+        "complete",
+        { workflowId, stepId: "worker", summary: "initial implementation" },
+        "worker",
+        workerSession,
+      )
+      const reviewerGrant = await h.call(
+        "dispatch_grant",
+        { workflowId, stepId: "review-implementation" },
+        "general",
+        generalSession,
+      )
+      await h.call(
+        "attach",
+        {
+          grantId: reviewerGrant.grantId,
+          workflowId,
+          stepId: "review-implementation",
+        },
+        "reviewer",
+        reviewerSession,
+      )
+      await h.call(
+        "complete",
+        {
+          workflowId,
+          stepId: "review-implementation",
+          outcome: "fail",
+          summary: "Producer-owned correction required.",
+        },
+        "reviewer",
+        reviewerSession,
+      )
+
+      const reopened = await h.call(
+        "reopen",
+        {
+          workflowId,
+          stepId: "worker",
+          reason: "Reviewer supplied a concrete producer-owned correction.",
+          newEvidence: true,
+          changedHypothesis: false,
+          changedStrategy: false,
+          reducedUnresolved: true,
+        },
+        "general",
+        generalSession,
+      )
+      expect(reopened.reviewContinuation).toMatchObject({
+        mode: "review-only",
+        resumeSessionId: reviewerSession,
+        independentApprovalPending: false,
+      })
+
+      const workerGrant2 = await h.call(
+        "dispatch_grant",
+        { workflowId, stepId: "worker" },
+        "general",
+        generalSession,
+      )
+      await h.call(
+        "attach",
+        { grantId: workerGrant2.grantId, workflowId, stepId: "worker" },
+        "worker",
+        "review-continuity-worker-2",
+      )
+      await h.call(
+        "complete",
+        { workflowId, stepId: "worker", summary: "producer correction complete" },
+        "worker",
+        "review-continuity-worker-2",
+      )
+
+      const recheckGrant = await h.call(
+        "dispatch_grant",
+        { workflowId, stepId: "review-implementation" },
+        "general",
+        generalSession,
+      )
+      expect(recheckGrant).toMatchObject({
+        reviewMode: "review-only",
+        resumeSessionId: reviewerSession,
+        freshSessionRequired: false,
+      })
+    } finally {
+      h.restore()
+    }
+  })
+})
