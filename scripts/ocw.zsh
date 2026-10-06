@@ -2,12 +2,8 @@
 # ocw - OpenCode Worktree Launcher (Zsh / OpenCode 2.0.x)
 #
 # Source profiles stay native V2 under ~/.config/opencode/profiles/*.jsonc.
-# For OpenCode 2.0.11, ocw lowers the selected profile into the compatibility
-# runtime shape consumed by the current agent resolver:
-#   agents -> agent
-#   providers -> provider
-#   provider/model#variant -> model + variant
-#   compaction.prune -> removed (unsupported by 2.0.11)
+# ocw deep-merges the selected profile over the base config and exposes the
+# merged native V2 config through OPENCODE_CONFIG_DIR.
 #
 # Usage:
 #   ocw <branch> [base] [--profile PROFILE] [--explain] [--no-worktree] [-- opencode-args...]
@@ -22,65 +18,20 @@ _ocw_find_json() {
   return 1
 }
 
-_ocw_lower_jq='
-  def selection:
-    if type == "string" then
-      (index("#")) as $i |
-      if $i == null then {model: .}
-      else {model: .[0:$i], variant: .[$i + 1:]}
-      end
-    elif type == "object" then
-      {
-        model: (((.providerID // .provider // "") | tostring) + "/" + ((.model // .modelID // .id // "") | tostring))
-      } + (if .variant != null then {variant: (.variant | tostring)} else {} end)
-    else {}
-    end;
-
-  def lower_agent:
-    . as $a |
-    ($a | del(.model, .system, .disabled, .request, .permissions))
-    + (if $a.model != null then ($a.model | selection) else {} end)
-    + (if $a.system != null then {prompt: $a.system} else {} end)
-    + (if $a.disabled != null then {disable: $a.disabled} else {} end)
-    + (if $a.request?.body != null then {options: $a.request.body} else {} end);
-
-  def lower_agents:
-    with_entries(.value |= lower_agent);
-
-  . as $cfg |
-  if $cfg.permissions? != null then error("ocw: cannot safely lower top-level V2 permissions")
-  elif any((($cfg.agent // {}) | to_entries[]); .value.permissions? != null) then error("ocw: cannot safely lower agent V2 permissions")
-  elif any((($cfg.agents // {}) | to_entries[]); .value.permissions? != null) then error("ocw: cannot safely lower agent V2 permissions")
-  elif any((($cfg.agent // {}) | to_entries[]); .value.request?.headers? != null) then error("ocw: cannot safely lower agent request.headers")
-  elif any((($cfg.agents // {}) | to_entries[]); .value.request?.headers? != null) then error("ocw: cannot safely lower agent request.headers")
-  else . end |
-  (($cfg.agent // {}) | lower_agents) as $legacy_agents |
-  (($cfg.agents // {}) | lower_agents) as $native_agents |
-  (($legacy_agents * $native_agents)) as $agents |
-  (($cfg.provider // {}) * ($cfg.providers // {})) as $providers |
-  (((($cfg.plugin // []) + ($cfg.plugins // [])) | unique)) as $plugins |
-
-  del(.agents, .providers, .plugins)
-  | .agent = $agents
-  | if ($providers | length) > 0 then .provider = $providers else . end
-  | if ($plugins | length) > 0 then .plugin = $plugins else . end
-  | if .compaction? != null then .compaction |= del(.prune) else . end
-'
-
 _ocw_prepare_profile_root() {
   setopt local_options null_glob
   local cfg="$1" profile="$2" profile_file="$3"
-  local root base tmp merged item name
+  local root base merged item name
 
   command -v jq >/dev/null 2>&1 || {
-    echo "ocw: jq is required for profile compatibility generation" >&2
+    echo "ocw: jq is required for profile generation" >&2
     return 2
   }
 
   root="${XDG_RUNTIME_DIR:-/tmp}/ocw-opencode-${UID:-$(id -u)}-${profile}"
   mkdir -p "$root" || return 1
 
-  # Make normal OpenCode assets visible from the compatibility root.
+  # Make normal OpenCode assets visible from the profile runtime root.
   for item in "$cfg"/* "$cfg"/.[!.]* "$cfg"/..?*; do
     [ -e "$item" ] || continue
     name="${item##*/}"
@@ -94,30 +45,23 @@ _ocw_prepare_profile_root() {
   done
 
   base="$(_ocw_find_json "$cfg/opencode" 2>/dev/null || true)"
-  tmp="$root/.opencode.json.tmp.$$"
-  merged="$root/.merged.json.tmp.$$"
+  merged="$root/.opencode.json.tmp.$$"
 
   if [ -n "$base" ]; then
     jq -s '.[0] * .[1]' "$base" "$profile_file" > "$merged" || {
-      rm -f "$tmp" "$merged"
+      rm -f "$merged"
       echo "ocw: failed to merge $base with $profile_file" >&2
       return 2
     }
   else
     jq '.' "$profile_file" > "$merged" || {
-      rm -f "$tmp" "$merged"
+      rm -f "$merged"
       echo "ocw: failed to parse $profile_file" >&2
       return 2
     }
   fi
 
-  jq "$_ocw_lower_jq" "$merged" > "$tmp" || {
-    rm -f "$tmp" "$merged"
-    echo "ocw: failed to lower profile '$profile' for OpenCode 2.0.x" >&2
-    return 2
-  }
-  rm -f "$merged"
-  mv -f "$tmp" "$root/opencode.json" || return 1
+  mv -f "$merged" "$root/opencode.json" || return 1
   printf '%s\n' "$root"
 }
 
@@ -151,7 +95,7 @@ _ocw_runtime_rows() {
   local runtime_file="$1"
   jq -r "
     $_ocw_model_fields_jq
-    (.agent // {})
+    (.agents // .agent // {})
     | to_entries[]
     | select(.value.model != null)
     | (.value | fields) as \$m
@@ -191,12 +135,6 @@ _ocw_explain() {
     return $?
   fi
 
-  printf '\ncompatibility lowering (OpenCode 2.0.x)\n'
-  printf '  agents -> agent\n'
-  printf '  providers -> provider\n'
-  printf '  model#variant -> model + variant\n'
-  printf '  compaction.prune -> removed\n'
-
   [ -f "$runtime_file" ] || {
     echo "ocw: runtime config missing: $runtime_file" >&2
     return 3
@@ -204,7 +142,7 @@ _ocw_explain() {
 
   source_rows="$(_ocw_source_rows "$profile_file")" || return 2
 
-  printf '\nprofile compatibility verification\n'
+  printf '\nprofile merge verification\n'
   printf '  %-18s %-29s %-10s %-29s %-10s %s\n' \
     agent 'source model' variant 'runtime model' variant status
 
@@ -222,7 +160,7 @@ _ocw_explain() {
 
     row_status="OK"
     if [ "$runtime_model" != "$expected_model" ] || [ "$runtime_variant" != "$expected_variant" ]; then
-      row_status="LOWER-MISMATCH"
+      row_status="MERGE-MISMATCH"
       mismatch=1
     fi
 
@@ -237,11 +175,11 @@ _ocw_explain() {
   fi
 
   if [ "$mismatch" -ne 0 ]; then
-    printf '\nocw: profile lowering FAILED\n' >&2
+    printf '\nocw: profile merge verification FAILED\n' >&2
     return 3
   fi
 
-  printf '\nOpenCode 2.0.11 debug visibility (informational only)\n'
+  printf '\nOpenCode debug visibility (informational only)\n'
   if agents_json="$(opencode debug agents 2>/dev/null)" && \
      printf '%s\n' "$agents_json" | jq -e 'type == "array"' >/dev/null 2>&1; then
     printf '  %-18s %-29s %-10s\n' agent 'debug model' variant
@@ -255,7 +193,7 @@ _ocw_explain() {
     done <<< "$source_rows"
     printf '  explicit models exposed: %s/%s\n' "$exposed" "$count"
     if [ "$exposed" -eq 0 ]; then
-      printf '  note: debug agents does not expose the lowered per-agent model map on this 2.0.11 path.\n'
+      printf '  note: debug agents does not expose the configured per-agent model map.\n'
     fi
   else
     printf '  unavailable (opencode debug agents failed or returned an unexpected shape)\n'
@@ -351,36 +289,6 @@ ocw() {
     fi
 
     if [ -n "$profile" ]; then
-      # OpenCode 2.0.11 debug config/agents do not expose the compatibility
-      # runtime profile correctly. Project those diagnostics from the generated
-      # runtime config so profiled debug commands remain useful and JSON-safe.
-      if [ "${1:-}" = "debug" ] && [ "${2:-}" = "config" ]; then
-        echo "ocw: active profile -> [$profile] (compat debug config)" >&2
-        jq -n \
-          --arg path "$runtime_root/opencode.json" \
-          --arg dir "$runtime_root" \
-          --slurpfile cfg "$runtime_root/opencode.json" \
-          '[{type:"document", path:$path, info:$cfg[0]}, {type:"directory", path:$dir}]'
-        exit $?
-      fi
-
-      if [ "${1:-}" = "debug" ] && [ "${2:-}" = "agents" ]; then
-        echo "ocw: active profile -> [$profile] (compat-projected debug agents)" >&2
-        agents_json="$(opencode debug agents 2>/dev/null)" || exit $?
-        printf '%s\n' "$agents_json" | jq --slurpfile cfg "$runtime_root/opencode.json" '
-          ($cfg[0].agent // {}) as $a
-          | map(
-              . as $x
-              | ($x.id // $x.name) as $id
-              | if $a[$id] == null then .
-                else .
-                  + (if $a[$id].model != null then {model:$a[$id].model} else {} end)
-                  + (if $a[$id].variant != null then {variant:$a[$id].variant} else {} end)
-                end
-            )'
-        exit $?
-      fi
-
       case "${1:-}" in
         run)
           echo "ocw: active profile -> [$profile] (standalone)" >&2
