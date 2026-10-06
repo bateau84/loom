@@ -20,6 +20,7 @@ tags: [architecture, loom, index]
   - [Dashboard Projection Transport](decisions/dashboard-projection-transport.md)
   - [Dashboard Projection Specification](specs/dashboard-projection.md)
 - [Verification Model](verification.md)
+  - [Reviewer Repair and Re-review Runtime](specs/reviewer-repair-and-rereview.md)
 - [Knowledge and Learning](knowledge-and-learning.md)
 
 These documents describe one architecture. Split exists for retrieval and relationship clarity, not separate approval ceremonies.
