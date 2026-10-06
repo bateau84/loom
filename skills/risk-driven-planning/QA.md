@@ -4,11 +4,12 @@ Critic-only adversarial contract. Assume competent production and Reviewer confo
 
 ## QA criteria
 
-- Find an assumption classified carryable whose opposite answer would actually invalidate the plan.
+- Find an assumption classified carryable whose opposite answer would actually invalidate the current product/design/architecture commitment or plan.
 - Search for correlated assumptions that make several tasks fail together despite looking independent.
 - Attack low-probability/high-impact risks hidden by expected-case planning.
 - Ask whether the plan's earliest irreversible work occurs before the most important uncertainty is resolved.
-- Look for verification scheduled so late that failure produces maximal sunk cost.
+- Look for verification scheduled so late that failure produces maximal sunk cost, including assumptions first investigated by Planner after the solution has already been elaborated.
+- Distinguish an experiment designed to test uncertainty from a downstream commitment that quietly assumes the experiment succeeded.
 
 ## QA depth
 

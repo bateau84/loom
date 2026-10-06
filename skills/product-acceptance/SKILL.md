@@ -17,7 +17,7 @@ A mock/stub/fake that replaces a mandatory product-owned component cannot prove 
 
 ## Method
 
-1. Select the smallest scenarios that materially cover accepted outcomes.
+1. Select the smallest scenarios that materially cover accepted outcomes. Consume relevant `solution-synthesis` and `product-lifecycle` coverage when present: include accepted setup-to-first-result, recovery, and supported-change paths without turning optional suggestions into new criteria. Acceptance retains the executable scenario strategy.
 2. Map each scenario to the accepted criterion it proves.
 3. Enter through a meaningful external/product boundary.
 4. Exercise the real product-owned composition.
