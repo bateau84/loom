@@ -1,0 +1,74 @@
+{
+  "skill": "skill-authoring",
+  "version": "1.0.0",
+  "shape": 1,
+  "cases": [
+    {
+      "id": "Authoring-01",
+      "name": "description-is-a-retrieval-contract",
+      "trap": "Write a polished but generic description that summarizes the workflow, omits realistic symptom/tool/file triggers, or claims broad sibling territory.",
+      "prompt": "Create the frontmatter description for a reusable skill that teaches investigation of flaky Go tests caused by timing, goroutine leaks, shared mutable state, or nondeterministic test setup. The repository already has a general golang-testing skill that owns ordinary test structure and assertions. Explain the description choices briefly.",
+      "expectations": [
+        "Leads with the capability the skill provides rather than a workflow summary such as 'comprehensive guide for'.",
+        "Includes concrete retrieval anchors such as flaky tests, nondeterminism, timing, goroutines, shared state, race-like symptoms, or relevant test situations.",
+        "Defines narrow negative space toward ordinary Go test structure or the existing golang-testing sibling rather than claiming all Go testing.",
+        "Keeps detailed investigation procedure out of the frontmatter description and explains that the description is discovery metadata."
+      ],
+      "negative_expectations": [
+        "Must not write a miniature multi-step debugging workflow in the description.",
+        "Must not make the skill a catch-all replacement for general golang-testing.",
+        "Must not rely only on the exact proposed skill name as the retrieval trigger."
+      ]
+    },
+    {
+      "id": "Authoring-02",
+      "name": "split-monolith-and-keep-volatile-facts-out",
+      "trap": "Create one giant operations skill that embeds current cluster names, owners, endpoints, and incident facts alongside several unrelated reusable procedures.",
+      "prompt": "A proposed 'platform-operations' skill contains Kubernetes rollout diagnosis, Grafana dashboard construction, PostgreSQL query tuning, current production cluster names, today's on-call person, live API endpoints, and the details of an ongoing incident. Review the proposed skill design and recommend the reusable skill structure.",
+      "expectations": [
+        "Separates independently useful capabilities instead of preserving one monolithic platform-operations methodology.",
+        "Keeps durable procedures, heuristics, and decision rules in Skills while directing volatile cluster, owner, endpoint, incident, or live-metric facts to authoritative runtime sources.",
+        "Explains how the smaller Skills can compose when one task genuinely spans multiple concerns.",
+        "Preserves a load-bearing normal path in each SKILL.md and uses references for depth rather than hiding core behavior."
+      ],
+      "negative_expectations": [
+        "Must not hard-code today's on-call owner, live incident state, or current endpoints as durable reusable methodology.",
+        "Must not solve composability by forcing every platform task to load every proposed sibling."
+      ]
+    },
+    {
+      "id": "Authoring-03",
+      "name": "behavioral-rule-needs-red-grounding",
+      "trap": "Turn a plausible preference into a permanent MUST rule and write an eval that rewards the exact new sentence instead of the failure mechanism.",
+      "prompt": "A maintainer says: 'Agents sometimes make code too abstract. Add a skill rule that they MUST NEVER create an interface until there are at least three implementations.' There is no incident, review finding, transcript, or eval showing that three is the right threshold. Decide how to update the skill and its eval coverage.",
+      "expectations": [
+        "Refuses to manufacture evidence for the numeric rule and asks for or derives an observed failure/counterexample before making the threshold permanent.",
+        "Distinguishes the likely reusable mechanism (premature abstraction or unnecessary indirection) from the unsupported exact threshold.",
+        "Proposes a realistic RED scenario or uses real review/work history to establish the failure before tightening discipline.",
+        "Designs eval expectations around observable unnecessary abstraction and appropriate judgment rather than checking for the exact words 'three implementations'."
+      ],
+      "negative_expectations": [
+        "Must not encode the requested numeric MUST/NEVER rule as authoritative merely because it sounds reasonable.",
+        "Must not invent a baseline failure result.",
+        "Must not treat phrase presence as behavioral proof."
+      ]
+    },
+    {
+      "id": "Authoring-04",
+      "name": "match-specificity-to-risk",
+      "trap": "Use the same prescriptive style for exploratory low-risk design work and a destructive security-sensitive protocol operation.",
+      "prompt": "You are authoring two reusable skills. One helps an experienced engineer brainstorm low-risk CLI help-text layouts where several solutions are acceptable. The other governs rotation of a production signing key where ordering mistakes can revoke the wrong key or leave both old and new authority active. Explain how the instruction style should differ.",
+      "expectations": [
+        "Keeps the low-risk CLI guidance outcome/constraint/quality-bar oriented and leaves room for professional judgment.",
+        "Makes the key-rotation guidance substantially more exact, including ordering/invariants and fail-closed or verification conditions where needed.",
+        "Explains that instruction specificity should scale with consequence, fragility, and protocol constraints rather than follow one house style.",
+        "Moves mechanically enforceable safety invariants to validators/runtime policy where possible instead of relying only on prose."
+      ],
+      "negative_expectations": [
+        "Must not over-script the low-risk task solely for consistency.",
+        "Must not leave the destructive security-sensitive sequence as loose suggestions.",
+        "Must not imply that skill prose itself grants key-management authority."
+      ]
+    }
+  ]
+}

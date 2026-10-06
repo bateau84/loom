@@ -43,17 +43,25 @@ Absence of either companion file is valid. Do not generate boilerplate merely fo
 
 ## Create or port a skill
 
-1. Define a narrow trigger in frontmatter: what work should load the skill and important exclusions.
-2. Put the reusable practitioner method in `SKILL.md`. Move bulky examples/reference material to `references/` only when the main method remains understandable without loading everything.
-3. Decide independently whether domain-specific Reviewer assessment and Critic QA add real discriminating value.
-4. Keep terminology role-neutral unless the method genuinely differs by Loom role.
-5. When mentioning roles, use current Loom names: General, Designer, Specifier, Architect, Reviewer, Critic, Acceptance, Planner, Worker, Research, Diagnostic, Documenter.
-6. Never embed a second workflow engine. Loom control-plane state and the active role directive win over skill prose.
-7. Replace old AOS concepts such as hub/spoke routing, Solution Readiness, Task-manager gates, ephemeral report contracts, or routine user checkpoints.
-8. Make verification concrete. A skill may recommend checks, but Loom evidence rules decide whether proof is sufficient.
-9. Preserve licenses/attribution for copied third-party material.
-10. Keep external dependencies explicit; do not assume a CLI/service is installed.
-11. If a skill changes behavioral decisions rather than merely technical method, add a realistic eval for that decision boundary.
+When discovery, structure, behavioral guidance, or eval design is load-bearing, read [Portable authoring principles](references/authoring-principles.md) before editing. Loom owns the runtime/eval machinery; this skill owns the portable methodology for making a reusable skill worth loading.
+
+1. **Start from the job, not the document.** Define what the skill enables, the concrete situations that should retrieve it, nearby sibling territory, and what observable failure or quality gap justifies the skill.
+2. **Treat the description as a retrieval contract.** Lead with the capability; include concrete `Use when` verbs, filenames, tools, symptoms, or situations; add a narrow `Not for ...` sibling pointer where territory overlaps. Do not turn the description into a miniature workflow. When editing a proven description, dropped trigger anchors are a reason to re-test discovery, not proof of causality.
+3. **Choose a shape that fits the work.** Technique, reference, pattern-recognition, and discipline/governance skills need different bodies. Do not force every skill into one universal section template.
+4. **Keep the load-bearing normal path in `SKILL.md`.** Move bulky schemas, API tables, examples, or specialized variants to direct references only when the core method remains understandable without loading them. Avoid reference chains whose real answer is several hops away.
+5. **Match instruction specificity to risk.** Low-risk work with many valid approaches should state goals, constraints, and quality bars. Preferred patterns may use ordered guidance. Fragile, destructive, security-sensitive, or protocol-bound work should use exact sequences and fail-closed conditions where needed.
+6. **Prefer durable method over volatile facts.** Encode procedures, heuristics, interpretation rules, invariants, and decision structure. Fast-changing environment facts such as current deployments, owners, incidents, endpoints, versions, or live metrics should come from authoritative runtime sources unless the skill is explicitly a maintained reference and freshness is part of its contract.
+7. **Design for composition.** A skill should be independently useful while avoiding ownership that belongs to siblings. Split monoliths when several reusable capabilities can be selected separately; do not duplicate shared methodology merely to make one skill self-contained.
+8. **Ground behavioral rules in observed failure.** For a new discipline-enforcing skill, obtain realistic RED evidence before drafting when practical: show the concrete failure without the candidate. For updates, a user counterexample, review finding, production incident, or prior eval failure can supply the RED input. Never invent a baseline result.
+9. Put the reusable practitioner method in `SKILL.md`; decide independently whether domain-specific Reviewer assessment and Critic QA add real discriminating value.
+10. Keep terminology role-neutral unless the method genuinely differs by Loom role.
+11. When mentioning roles, use current Loom names: General, Designer, Specifier, Architect, Reviewer, Critic, Acceptance, Planner, Worker, Research, Diagnostic, Documenter.
+12. Never embed a second workflow engine. Loom control-plane state, the central eval harness, and the active role directive win over skill prose.
+13. Replace old AOS concepts such as hub/spoke routing, Solution Readiness, Task-manager gates, ephemeral report contracts, or routine user checkpoints.
+14. Make verification concrete. Evals should resemble real work, name the trap being prevented, include positive and negative expectations, and prefer produced artifacts or observed actions over transcript self-report when those are the claimed outputs. Loom evidence rules decide whether proof is sufficient.
+15. Preserve licenses and attribution for copied third-party material. Curate sources deliberately: keep the generalizable principle, record meaningful lineage, and discard obsolete workflow mechanics rather than copying them for historical symmetry.
+16. Keep external dependencies explicit; do not assume a CLI/service is installed.
+17. If a skill changes behavioral decisions rather than merely technical method, add or update a realistic eval for that decision boundary. Prefer real incidents and observed work as scenario sources; use Loom's central skill-ablation machinery rather than inventing a skill-local execution lifecycle.
 
 ## Companion quality tests
 
@@ -70,3 +78,8 @@ A useful `QA.md` should expose failure modes that a competent producer **and** c
 
 A good Loom skill answers: "How should an authorized role do this work well?"
 Its companions answer how Reviewer assesses that work and how Critic attacks residual confidence. None answers who is authorized, what phase Loom is in, or whether a control-plane gate may be bypassed.
+
+## Portable references
+
+- [Portable authoring principles](references/authoring-principles.md) — discovery/retrieval, progressive disclosure, skill shapes, risk-matched specificity, composability, durable-vs-volatile knowledge, RED grounding, source curation, and eval design.
+- [Loom behavioral evals](../../evals/README.md) — authoritative execution/evidence mechanics for runtime cases and skill ablations.

@@ -53,6 +53,23 @@ The baseline includes reusable methodology for:
 
 Legacy role nouns in copied house skills were normalized to current Loom terminology where practical. Current Loom role directives/control-plane state always override stale coordination wording inside a technical reference.
 
+
+## Recovered portable authoring knowledge
+
+The initial Loom port intentionally rewrote `skill-authoring` to remove old AOS governance. That rewrite preserved the main authority boundary but compressed several portable authoring conclusions too aggressively. Loom now explicitly restores the generalizable parts without restoring the old workflow engine:
+
+- descriptions are retrieval contracts: capability first, concrete trigger anchors, narrow sibling exclusions, and re-testing after meaningful trigger compression;
+- progressive disclosure keeps the load-bearing normal path in `SKILL.md` while direct references carry depth;
+- skill structure follows the work type rather than one universal template;
+- instruction specificity scales with risk and fragility;
+- Skills preferentially encode durable procedure/heuristics while fast-changing operational facts come from current runtime sources;
+- reusable Skills should compose rather than grow into monoliths;
+- new behavioral/discipline rules should be grounded in observed RED evidence when practical;
+- examples, source claims, and imported methodology remain honest and attributable;
+- realistic behavioral evals verify outcomes/decisions, while Loom's central eval system owns execution, isolation, judging, evidence, cost control, and ablation.
+
+Portable source lineage includes `nrkno/mats-opencode-setup/skills/skill-authoring/references/authoring-principles.md`, the accepted skill-system architecture, and the later skill-authoring lifecycle. AOS-specific hub/spoke routing, old readiness/task-manager gates, report contracts, skill-local provider scheduling, and historical approval choreography remain intentionally excluded.
+
 ## Deliberately deferred from the trusted baseline
 
 - `readiness` — duplicates obsolete Solution Readiness composition gating.
