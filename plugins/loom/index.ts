@@ -5751,8 +5751,45 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 }
               }
 
+              const reviewBeforeReopen = workflow.steps.find(
+                (candidate) => candidate.id === "review-implementation" && candidate.agent === "reviewer",
+              )
+              const reviewAttemptBeforeReopen = reviewBeforeReopen?.attempt ?? 0
+              const reviewBindingBeforeReopen = reviewBeforeReopen
+                ? ((await ctx.storage.get(
+                    stepSessionBindingKey(
+                      workflowId,
+                      reviewBeforeReopen.id,
+                      reviewAttemptBeforeReopen,
+                    ),
+                  )) as StepSessionBinding | undefined)
+                : undefined
+              const priorReviewerSessionId =
+                reviewBindingBeforeReopen?.agent === "reviewer"
+                  ? reviewBindingBeforeReopen.sessionID
+                  : reviewBeforeReopen?.review?.lastReviewerSessionId
+
               reset = reopenFrom(workflow, stepId)
               resetVerificationAfterReopen(workflow, reset)
+              if (reset.includes("review-implementation")) {
+                const reopenedReview = workflow.steps.find(
+                  (candidate) => candidate.id === "review-implementation" && candidate.agent === "reviewer",
+                )
+                if (reopenedReview) {
+                  prepareReviewerAfterProducerRepair(
+                    reopenedReview,
+                    priorReviewerSessionId,
+                  )
+                  await ctx.storage.set(
+                    scopeKey(workflowId, reopenedReview.id),
+                    {
+                      workflowId,
+                      stepId: reopenedReview.id,
+                      write: [...(artifactWriteDefaults.reviewer ?? [])],
+                    } satisfies TaskScope,
+                  )
+                }
+              }
               if (workflow.work && reset.includes("review-plan")) {
                 delete workflow.work.reviewedPlanRevision
                 delete workflow.work.reviewedPlanFingerprint
@@ -5834,11 +5871,26 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               commitReopen,
             )
 
+            const reopenedReview = workflow.steps.find(
+              (candidate) => candidate.id === "review-implementation" && reset.includes(candidate.id),
+            )
             return {
               content: renderToolOutput({
                 reopened: stepId,
                 reset,
                 runnable: runnable(workflow).map((candidate) => ({ id: candidate.id, agent: candidate.agent })),
+                ...(reopenedReview
+                  ? {
+                      reviewContinuation: {
+                        mode: reviewAssignmentMode(reopenedReview),
+                        resumeSessionId: reopenedReview.review?.preferredSessionId,
+                        independentApprovalPending:
+                          reopenedReview.review?.independentApprovalPending ?? false,
+                        ineligibleReviewerSessionIds:
+                          reopenedReview.review?.ineligibleIndependentSessionIds ?? [],
+                      },
+                    }
+                  : {}),
               }),
             }
           } catch (error) {
