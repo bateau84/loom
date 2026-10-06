@@ -9003,7 +9003,16 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             )
 
           const roleWriteDefault = artifactWriteDefaults[tool.agent] ?? []
-          if (!productScopeElevatingAgents.has(tool.agent)) {
+          let reviewerRepairCandidate = false
+          if (tool.agent === "reviewer") {
+            const workflow = await readWorkflow(ctx, value.workflowId)
+            const step = workflow?.steps.find((candidate) => candidate.id === value.stepId)
+            reviewerRepairCandidate =
+              Boolean(step) &&
+              reviewAssignmentMode(step!) === "repair-authorized" &&
+              step!.review?.repairSessionId === tool.sessionID
+          }
+          if (!productScopeElevatingAgents.has(tool.agent) && !reviewerRepairCandidate) {
             const outsideRoleOutput =
               hardBoundaryPaths.length > 0 ||
               projectPaths.some(
@@ -9014,7 +9023,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               return {
                 content: renderToolOutput({
                   error:
-                    `${tool.agent} is an independent/advisory role and cannot self-elevate into product or hard-boundary mutation authority. Keep writes inside its role-owned output surface or return the implementation work to a producing role.`,
+                    `${tool.agent} is an independent/advisory role and cannot self-elevate into product or hard-boundary mutation authority. Reviewer product repair requires an explicit repair-authorized implementation-review assignment. Keep writes inside the role-owned output surface or return implementation work to a producing role.`,
                   roleWriteDefault,
                 }),
               }
@@ -9067,6 +9076,23 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                   throw new Error(
                     "Scope elevation requires the exact currently runnable pending step.",
                   )
+                }
+
+                const reviewerRepair =
+                  tool.agent === "reviewer" &&
+                  reviewAssignmentMode(step) === "repair-authorized" &&
+                  step.review?.repairSessionId === tool.sessionID
+                if (!productScopeElevatingAgents.has(tool.agent) && !reviewerRepair) {
+                  const outsideRoleOutput =
+                    hardBoundaryPaths.length > 0 ||
+                    projectPaths.some(
+                      (path) => !resourcesWithinScope([path], roleWriteDefault),
+                    )
+                  if (outsideRoleOutput) {
+                    throw new Error(
+                      `${tool.agent} cannot elevate outside its role-owned output surface without explicit repair authority.`,
+                    )
+                  }
                 }
 
                 const existing = (await ctx.storage.get(
