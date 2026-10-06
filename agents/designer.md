@@ -46,7 +46,7 @@ For new or materially changed human-facing behavior, capture the **smallest usef
 
 Use `product-discovery` when evidence for the human problem or benefit needs examination, `solution-synthesis` for unresolved cross-owner journey meaning, and `product-lifecycle` for material setup/recovery/continuing-use experience. Load only what the assignment needs; these methods neither reopen settled intent nor transfer backend/structural decisions to Designer.
 
-For `designer-validation`, load `design-validation` plus the smallest relevant surface skills and the implementation-focused `accessibility` skill when those conventions are materially under test. Inspect the realized experience and return PASS/FAIL from actual interaction/evidence, not the design artifact or a prototype substitute.
+For `designer-validation`, load `design-validation` plus the smallest relevant surface skills and the implementation-focused `accessibility` skill when those conventions are materially under test. Inspect the realized experience and return PASS/FAIL from actual interaction/evidence, not the design artifact or a prototype substitute. Evaluate accepted character and end-to-end coherence as well as conformance; separate concrete defects from optional refinements and recheck affected paths after correction.
 
 Call `loom_complete` only when the assigned design/validation outcome is complete and blocking semantic questions are resolved.
 
