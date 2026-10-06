@@ -8501,6 +8501,15 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               await bumpWorkflowRevisionLocked(ctx, runtime, value.workflowId)
               return created
             })
+            const reviewStep = value.stepId
+              ? active.steps.find((candidate) => candidate.id === value.stepId && candidate.agent === "reviewer")
+              : undefined
+            const reviewMode = reviewStep ? reviewAssignmentMode(reviewStep) : undefined
+            const resumeSessionId = reviewStep
+              ? reviewMode === "repair-authorized"
+                ? reviewStep.review?.repairSessionId
+                : reviewStep.review?.preferredSessionId
+              : undefined
             return {
               content: renderToolOutput({
                 grantId: grant.grantId,
@@ -8508,6 +8517,18 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 ...(grant.stepId ? { stepId: grant.stepId } : { questionId: grant.oqId }),
                 expectedAgent: grant.expectedAgent,
                 expiresAt: grant.expiresAt,
+                ...(reviewStep
+                  ? {
+                      reviewMode,
+                      ...(resumeSessionId ? { resumeSessionId } : {}),
+                      freshSessionRequired:
+                        reviewMode === "independent-re-review" && !resumeSessionId,
+                      ineligibleReviewerSessionIds:
+                        reviewStep.review?.ineligibleIndependentSessionIds ?? [],
+                      independentApprovalPending:
+                        reviewStep.review?.independentApprovalPending ?? false,
+                    }
+                  : {}),
               }),
             }
           } catch (error) {
@@ -8628,6 +8649,27 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                   throw new Error("Step is not currently runnable; dependencies or prior gates are incomplete.")
                 }
 
+                if (tool.agent === "reviewer") {
+                  const mode = reviewAssignmentMode(step)
+                  if (
+                    mode === "repair-authorized" &&
+                    step.review?.repairSessionId !== tool.sessionID
+                  ) {
+                    throw new Error(
+                      "Reviewer repair must resume the exact Reviewer session explicitly authorized to author this repair.",
+                    )
+                  }
+                  if (
+                    mode === "independent-re-review" &&
+                    !reviewerSessionEligibleForIndependentReview(step, tool.sessionID)
+                  ) {
+                    throw new Error(
+                      "This Reviewer session authored repair and cannot attach as the independent re-reviewer.",
+                    )
+                  }
+                  recordReviewerAttachment(step, tool.sessionID)
+                }
+
                 task = step.task
                 taskOutcome = step.task?.objective
                 stepAttempt = step.attempt ?? 0
@@ -8661,15 +8703,28 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                   scopeKey(value.workflowId, value.stepId),
                 )) as TaskScope | undefined
                 if (tool.agent === "reviewer") {
-                  // Reviewer mutation authority is derived from the exact
-                  // current gate shape, not inherited from a prior attempt.
-                  // Recompute it on every fresh attachment so reopen/reroute
-                  // cannot retain stale acceptance-write authority.
-                  scope = {
-                    workflowId: value.workflowId,
-                    stepId: value.stepId,
-                    write: reviewerAcceptanceWriteScope(step),
-                  }
+                  const currentScope = (await ctx.storage.get(
+                    scopeKey(value.workflowId, value.stepId),
+                  )) as TaskScope | undefined
+                  const repairMode = reviewAssignmentMode(step) === "repair-authorized"
+                  const currentAttempt = step.attempt ?? 0
+                  const sameAttemptRepairScope =
+                    repairMode &&
+                    currentScope?.elevations?.some(
+                      (elevation) =>
+                        elevation.attempt === currentAttempt &&
+                        elevation.bySessionId === tool.sessionID,
+                    )
+                  // Review-only/independent gates always recompute their narrow
+                  // role-owned surface. A repair-authorized session may retain
+                  // elevations from this exact attempt across safe resume.
+                  scope = sameAttemptRepairScope
+                    ? currentScope
+                    : {
+                        workflowId: value.workflowId,
+                        stepId: value.stepId,
+                        write: reviewerAcceptanceWriteScope(step),
+                      }
                   await ctx.storage.set(
                     scopeKey(value.workflowId, value.stepId),
                     scope,
@@ -8826,7 +8881,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               } else {
                 await ctx.storage.set(sessionPlanReviewKey(tool.sessionID), null)
               }
-              await bumpWorkflowRevisionLocked(ctx, runtime, value.workflowId)
+              await persistWorkflowMutationLocked(ctx, runtime, workflow)
               if (previousBinding && previousBinding !== value.workflowId) {
                 await bumpWorkflowRevisionLocked(ctx, runtime, previousBinding, true)
               }
@@ -8874,6 +8929,29 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               } : {}),
               ...(task ? { task } : {}),
               ...(producerSkills ? { producerSkills } : {}),
+              ...(value.stepId && tool.agent === "reviewer"
+                ? {
+                    reviewAssignment: {
+                      mode: reviewAssignmentMode(
+                        (await readWorkflow(ctx, value.workflowId))!.steps.find(
+                          (candidate) => candidate.id === value.stepId,
+                        )!,
+                      ),
+                      independentApprovalPending:
+                        (await readWorkflow(ctx, value.workflowId))!.steps.find(
+                          (candidate) => candidate.id === value.stepId,
+                        )?.review?.independentApprovalPending ?? false,
+                      preferredSessionId:
+                        (await readWorkflow(ctx, value.workflowId))!.steps.find(
+                          (candidate) => candidate.id === value.stepId,
+                        )?.review?.preferredSessionId,
+                      ineligibleIndependentSessionIds:
+                        (await readWorkflow(ctx, value.workflowId))!.steps.find(
+                          (candidate) => candidate.id === value.stepId,
+                        )?.review?.ineligibleIndependentSessionIds ?? [],
+                    },
+                  }
+                : {}),
             }),
           }
         },
