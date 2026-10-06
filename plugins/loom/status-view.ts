@@ -100,12 +100,33 @@ export function compactWorkflowState(
       total: workflow.steps.length,
       failed: failed.length,
     },
-    now: ready.map((step) => ({ step: step.id, agent: step.agent, kind: step.kind })),
+    now: ready.map((step) => ({
+      step: step.id,
+      agent: step.agent,
+      kind: step.kind,
+      ...(step.agent === "reviewer"
+        ? {
+            reviewMode: step.review?.mode ?? "review-only",
+            independentApprovalPending:
+              step.review?.independentApprovalPending ?? false,
+            resumeSessionId: step.review?.preferredSessionId,
+            ineligibleReviewerSessionIds:
+              step.review?.ineligibleIndependentSessionIds ?? [],
+          }
+        : {}),
+    })),
     recent: finished.slice(-5).map((step) => ({
       step: step.id,
       agent: step.agent,
       status: step.status,
       ...(step.summary ? { summary: clippedSummary(step.summary) } : {}),
+      ...(step.agent === "reviewer" && step.review?.receipts?.length
+        ? {
+            reviewReceipt: step.review.receipts.at(-1),
+            independentApprovalPending:
+              step.review.independentApprovalPending ?? false,
+          }
+        : {}),
     })),
     upcoming: (workflow.cancellation ? [] : blockedPending.slice(0, 6)).map((step) => ({
       step: step.id,
@@ -284,7 +305,11 @@ export function renderStatusMarkdown(view: StatusView, artifact?: StatusArtifact
   if (view.now.length) {
     lines.push("", "### Now")
     for (const step of view.now.slice(0, 5)) {
-      lines.push(`- → **${step.agent}** · ${markdownCode(step.step)}`)
+      const review =
+        "reviewMode" in step && step.reviewMode
+          ? ` · ${step.reviewMode}${step.independentApprovalPending ? " · independent approval pending" : ""}`
+          : ""
+      lines.push(`- → **${step.agent}** · ${markdownCode(step.step)}${review}`)
     }
     if (view.now.length > 5) lines.push(`- … +${view.now.length - 5} more runnable steps`)
   }
@@ -408,8 +433,13 @@ function currentHtml(view: StatusView) {
   const current = view.now.length
     ? view.now
         .map(
-          (step) =>
-            `<li><span class="agent">${esc(step.agent)}</span><code>${esc(step.step)}</code><span class="muted">${esc(step.kind)}</span></li>`,
+          (step) => {
+            const review =
+              "reviewMode" in step && step.reviewMode
+                ? ` · ${esc(step.reviewMode)}${step.independentApprovalPending ? " · independent approval pending" : ""}`
+                : ""
+            return `<li><span class="agent">${esc(step.agent)}</span><code>${esc(step.step)}</code><span class="muted">${esc(step.kind)}${review}</span></li>`
+          },
         )
         .join("")
     : '<li class="muted">No runnable step.</li>'
