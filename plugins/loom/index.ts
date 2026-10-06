@@ -5342,6 +5342,329 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       })
 
       addLoomTool({
+        name: "review_repair_authorize",
+        description:
+          "Authorize one exact existing Reviewer session to repair a bounded finding from a failed implementation review. General only. This reopens the review gate in repair-authorized mode; it does not grant independent approval.",
+        input: {
+          type: "object",
+          properties: {
+            workflowId: { type: "string" },
+            stepId: { type: "string" },
+            finding: { type: "string" },
+            reason: { type: "string" },
+            repairSessionId: {
+              type: "string",
+              description:
+                "Optional exact prior Reviewer session to resume for repair. Defaults to the Reviewer session that produced the current failed verdict.",
+            },
+          },
+          required: ["workflowId", "stepId", "finding", "reason"],
+          additionalProperties: false,
+        },
+        options: { namespace: "loom", codemode: false },
+        execute: async (input, tool) => {
+          if (tool.agent !== "general") {
+            return { content: renderToolOutput({ error: "Only general may authorize Reviewer repair." }) }
+          }
+          const value = input as {
+            workflowId: string
+            stepId: string
+            finding: string
+            reason: string
+            repairSessionId?: string
+          }
+          const active = await readBoundWorkflow(ctx, tool.sessionID, value.workflowId, ensureLegacySession)
+          if (!active) {
+            return { content: renderToolOutput({ error: "Workflow not found or General is not bound to it." }) }
+          }
+
+          try {
+            const result = await withRuntimeLocks(
+              runtime,
+              [
+                { aggregate: "workflow", resourceIdentity: value.workflowId },
+                stepAuthorityResource(value.workflowId, value.stepId),
+              ],
+              async () => {
+                const workflow = await readWorkflow(ctx, value.workflowId)
+                if (!workflow) throw new Error("Workflow not found.")
+                await validateWorkflowMutationLocked(ctx, runtime, workflow)
+                const step = workflow.steps.find((candidate) => candidate.id === value.stepId)
+                if (
+                  !step ||
+                  step.id !== "review-implementation" ||
+                  step.agent !== "reviewer" ||
+                  step.kind !== "gate"
+                ) {
+                  throw new Error("Reviewer repair is available only for the implementation-review gate.")
+                }
+                if (step.status !== "failed") {
+                  throw new Error("Reviewer repair authorization requires a failed implementation review.")
+                }
+
+                const priorAttempt = step.attempt ?? 0
+                const priorBinding = (await ctx.storage.get(
+                  stepSessionBindingKey(value.workflowId, value.stepId, priorAttempt),
+                )) as StepSessionBinding | undefined
+                const known = new Set(knownReviewerSessions(step))
+                if (priorBinding?.agent === "reviewer") known.add(priorBinding.sessionID)
+                const requested = value.repairSessionId?.trim()
+                const repairSessionId =
+                  requested ||
+                  priorBinding?.sessionID ||
+                  step.review?.lastReviewerSessionId
+                if (!repairSessionId) {
+                  throw new Error(
+                    "Reviewer repair requires known authorship/session evidence from a prior Reviewer assignment.",
+                  )
+                }
+                if (!known.has(repairSessionId)) {
+                  throw new Error(
+                    "Requested repair session is not part of this gate's recorded Reviewer session history.",
+                  )
+                }
+
+                const preferredIndependentSessionId =
+                  priorBinding?.sessionID &&
+                  priorBinding.sessionID !== repairSessionId &&
+                  reviewerSessionEligibleForIndependentReview(step, priorBinding.sessionID)
+                    ? priorBinding.sessionID
+                    : undefined
+
+                authorizeReviewerRepair(step, {
+                  repairSessionId,
+                  finding: value.finding,
+                  reason: value.reason,
+                  ...(preferredIndependentSessionId
+                    ? { preferredIndependentSessionId }
+                    : {}),
+                })
+                await ctx.storage.set(scopeKey(value.workflowId, value.stepId), {
+                  workflowId: value.workflowId,
+                  stepId: value.stepId,
+                  write: [...(artifactWriteDefaults.reviewer ?? [])],
+                } satisfies TaskScope)
+                await persistWorkflowMutationLocked(ctx, runtime, workflow)
+                return {
+                  workflow,
+                  step,
+                  repairSessionId,
+                  preferredIndependentSessionId,
+                }
+              },
+            )
+
+            return {
+              content: renderToolOutput({
+                authorized: true,
+                workflowId: value.workflowId,
+                stepId: value.stepId,
+                attempt: result.step.attempt ?? 0,
+                reviewMode: reviewAssignmentMode(result.step),
+                resumeSessionId: result.repairSessionId,
+                finding: result.step.review?.repairFinding,
+                independentApprovalPending: true,
+                ...(result.preferredIndependentSessionId
+                  ? {
+                      preferredIndependentReviewerSessionId:
+                        result.preferredIndependentSessionId,
+                    }
+                  : {}),
+                requiredAction:
+                  "Issue a fresh loom_dispatch_grant for this review step, then resume exactly resumeSessionId as Reviewer. The repair remains self-verification until a later eligible independent Reviewer passes.",
+              }),
+            }
+          } catch (error) {
+            return {
+              content: renderToolOutput({
+                error: error instanceof Error ? error.message : String(error),
+              }),
+            }
+          }
+        },
+      })
+
+      addLoomTool({
+        name: "review_repair_complete",
+        description:
+          "Finish one bounded Reviewer-authored implementation repair as self-verified evidence. Reviewer only. This never PASSes the independent gate; it advances the same gate to independent re-review and makes the repairing session ineligible for that approval.",
+        input: {
+          type: "object",
+          properties: {
+            workflowId: { type: "string" },
+            stepId: { type: "string" },
+            changeSummary: { type: "string" },
+            verificationSummary: { type: "string" },
+          },
+          required: [
+            "workflowId",
+            "stepId",
+            "changeSummary",
+            "verificationSummary",
+          ],
+          additionalProperties: false,
+        },
+        options: { namespace: "loom", codemode: false },
+        execute: async (input, tool) => {
+          if (tool.agent !== "reviewer") {
+            return { content: renderToolOutput({ error: "Only reviewer may complete Reviewer repair." }) }
+          }
+          const value = input as {
+            workflowId: string
+            stepId: string
+            changeSummary: string
+            verificationSummary: string
+          }
+          const attached = await readBoundWorkflow(ctx, tool.sessionID, value.workflowId, ensureLegacySession)
+          if (!attached) {
+            return { content: renderToolOutput({ error: "Workflow not found or Reviewer is not bound to it." }) }
+          }
+          if (
+            !(await exactRunnableStepAttemptBinding(
+              ctx,
+              tool.sessionID,
+              value.workflowId,
+              value.stepId,
+            ))
+          ) {
+            return {
+              content: renderToolOutput({
+                error: "Reviewer repair completion requires the exact current runnable step attempt.",
+              }),
+            }
+          }
+
+          try {
+            const result = await withRuntimeLocks(
+              runtime,
+              [
+                { aggregate: "workflow", resourceIdentity: value.workflowId },
+                stepAuthorityResource(value.workflowId, value.stepId),
+              ],
+              async () => {
+                const workflow = await readWorkflow(ctx, value.workflowId)
+                if (!workflow) throw new Error("Workflow not found.")
+                await validateWorkflowMutationLocked(ctx, runtime, workflow)
+                const step = workflow.steps.find((candidate) => candidate.id === value.stepId)
+                if (!step || step.agent !== "reviewer") {
+                  throw new Error("Reviewer repair step not found.")
+                }
+                if (
+                  reviewAssignmentMode(step) !== "repair-authorized" ||
+                  step.review?.repairSessionId !== tool.sessionID
+                ) {
+                  throw new Error(
+                    "Current Reviewer session is not the exact repair-authorized session for this gate.",
+                  )
+                }
+
+                const questions = await readQuestions(ctx, value.workflowId)
+                if (blockingQuestionsForStep(questions, value.stepId).length > 0) {
+                  throw new Error("Reviewer repair has unresolved blocking questions.")
+                }
+
+                const declaredScope = (await ctx.storage.get(
+                  scopeKey(value.workflowId, value.stepId),
+                )) as TaskScope | undefined
+                const ownedWriteScope = committableWriteScope(
+                  declaredScope?.write.length
+                    ? declaredScope.write
+                    : (artifactWriteDefaults.reviewer ?? []),
+                )
+                const repairElevation = declaredScope?.elevations?.some(
+                  (elevation) =>
+                    elevation.attempt === (step.attempt ?? 0) &&
+                    elevation.byAgent === "reviewer" &&
+                    elevation.bySessionId === tool.sessionID &&
+                    elevation.crossesRoleDefault,
+                )
+                if (!repairElevation || ownedWriteScope.length === 0) {
+                  throw new Error(
+                    "Reviewer repair completion requires an explicit same-attempt product scope elevation.",
+                  )
+                }
+                const repositoryError = await uncommittedOwnedChangesError(
+                  ctx,
+                  tool.sessionID,
+                  ctx.location.directory,
+                  ownedWriteScope,
+                )
+                if (repositoryError) throw new Error(repositoryError)
+
+                const headSha = await repositoryHeadSha(ctx.location.directory)
+                const previousReview = [...(step.review?.receipts ?? [])]
+                  .reverse()
+                  .find((receipt) => receipt.kind === "review")
+                if (previousReview?.headSha === headSha) {
+                  throw new Error(
+                    "Reviewer repair completion requires a committed repository revision different from the reviewed failing state.",
+                  )
+                }
+
+                const evidenceBound = await bindSessionEvidence(
+                  ctx,
+                  tool.sessionID,
+                  value.workflowId,
+                  value.stepId,
+                )
+                const currentAttempt = step.attempt ?? 0
+                const evidenceClaimIds = (await stepClaims(
+                  ctx,
+                  value.workflowId,
+                  value.stepId,
+                ))
+                  .filter((claim) => (claim.attempt ?? 0) === currentAttempt)
+                  .map((claim) => claim.id)
+
+                completeReviewerRepair(step, {
+                  sessionId: tool.sessionID,
+                  headSha,
+                  changeSummary: value.changeSummary,
+                  verificationSummary: value.verificationSummary,
+                  evidenceBound,
+                  evidenceClaimIds,
+                  recordedAt: new Date().toISOString(),
+                })
+                await ctx.storage.set(scopeKey(value.workflowId, value.stepId), {
+                  workflowId: value.workflowId,
+                  stepId: value.stepId,
+                  write: [...(artifactWriteDefaults.reviewer ?? [])],
+                } satisfies TaskScope)
+                await persistWorkflowMutationLocked(ctx, runtime, workflow)
+                return { step, headSha, evidenceBound }
+              },
+            )
+
+            return {
+              content: renderToolOutput({
+                completed: true,
+                assurance: "self-verified",
+                workflowId: value.workflowId,
+                stepId: value.stepId,
+                headSha: result.headSha,
+                evidenceBound: result.evidenceBound,
+                reviewMode: reviewAssignmentMode(result.step),
+                independentApprovalPending:
+                  result.step.review?.independentApprovalPending ?? true,
+                preferredIndependentReviewerSessionId:
+                  result.step.review?.preferredSessionId,
+                ineligibleReviewerSessionIds:
+                  result.step.review?.ineligibleIndependentSessionIds ?? [],
+                requiredAction:
+                  "Independent approval remains pending. Issue a new dispatch grant and use an eligible non-authoring Reviewer. Do not resume an ineligible repair session as the independent reviewer.",
+              }),
+            }
+          } catch (error) {
+            return {
+              content: renderToolOutput({
+                error: error instanceof Error ? error.message : String(error),
+              }),
+            }
+          }
+        },
+      })
+
+      addLoomTool({
         name: "reopen",
         description:
           "Reopen one prior workflow step after failed review or new evidence. Resets only that step and downstream dependents. General only.",
