@@ -3249,6 +3249,8 @@ async function reusableCompletedTaskIds(
 ) {
   if (!workflow.work) return []
   const reusable: string[] = []
+  let checkedCleanHead = false
+  let currentCleanHead: string | undefined
 
   for (const taskStep of taskSteps) {
     if (!satisfied(taskStep)) continue
@@ -3276,6 +3278,36 @@ async function reusableCompletedTaskIds(
       throw new Error(
         `Completed Task ${taskStep.task!.id} cannot be reused because its Plan/dependency/authority receipt is missing or stale.`,
       )
+    }
+
+    // Modern receipts must stay valid across EVERY Plan reopen, not just the
+    // explicit reconciliation that first restored their workflow Step.
+    // Legacy receipts without modern provenance keep their historical path.
+    const receipt = workTask.result
+    if (receipt.completedAttempt !== undefined) {
+      if (!checkedCleanHead) {
+        currentCleanHead = await cleanRepositoryHead(ctx.location.directory)
+        checkedCleanHead = true
+      }
+      const contractDigest = createHash("sha256")
+        .update(JSON.stringify(taskStep.task)).digest("hex")
+      const changedDependency = taskStep.task!.dependsOn.some((dependencyId) => {
+        const dependency = work.nodes.find((node) =>
+          node.generation === workflow.work!.generation && node.type === "task" &&
+          node.logicalId === dependencyId && node.status !== "superseded")
+        return !dependency?.result || !receipt.dependencyResultDigests?.[dependencyId] ||
+          createHash("sha256").update(JSON.stringify(dependency.result)).digest("hex") !==
+            receipt.dependencyResultDigests[dependencyId]
+      })
+      if (!Number.isSafeInteger(receipt.completedAttempt) || !receipt.cleanRepositoryHead ||
+          receipt.cleanRepositoryHead !== currentCleanHead ||
+          !receipt.executableTaskFingerprint ||
+          receipt.executableTaskFingerprint !== contractDigest || changedDependency) {
+        if (invalidReceipt === "rerun") continue
+        throw new Error(
+          `Completed Task ${taskStep.task!.id} cannot be reused: original clean code, executable contract, or dependency result has changed.`,
+        )
+      }
     }
 
     // Reconciliation preserves the current (higher) workflow attempt to keep
