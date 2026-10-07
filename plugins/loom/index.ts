@@ -10323,6 +10323,10 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                   throw new Error("Compiled Task DAG differs from the independently reviewed Plan.")
                 }
                 assertWaveClaimForTasks(work, workflow.id, work.generation, allIds)
+                if (workflow.steps.some((step) =>
+                  step.id === "review-implementation" && step.status === "passed")) {
+                  throw new Error("Implementation review already passed; do not re-attest pending Task state.")
+                }
                 const ids = value.taskIds ?? allIds
                 if (!Array.isArray(ids) || ids.length < 1 || ids.length > 24 ||
                     new Set(ids).size !== ids.length || ids.some((id) => !allIds.includes(id))) {
@@ -10374,7 +10378,11 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                     refuse(id, "No matching clean repository HEAD at original completion and now; code continuity is uncertain.")
                     continue
                   }
-                  if (blockingQuestionsForStep(questions, step.id).length ||
+                  const outstanding = questions.some((question) =>
+                    question.id !== value.questionId && question.consumerStepIds.includes(step.id) &&
+                    question.status !== "closed" &&
+                    (!question.answer || !question.reconciliations[step.id]))
+                  if (blockingQuestionsForStep(questions, step.id).length || outstanding ||
                       workflow.verification?.some((requirement) =>
                         requirement.beforeStepId === step.id && requirement.status === "open")) {
                     refuse(id, "Unresolved blocking question or required pre-Task verification.")
@@ -10383,6 +10391,10 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                   const oldClaims = (await stepClaims(ctx, workflow.id, step.id)).filter(
                     (claim) => claim.byAgent === step.agent && (claim.attempt ?? 0) === receipt.completedAttempt,
                   )
+                  if (!Array.isArray(receipt.evidenceClaimIds)) {
+                    refuse(id, "Original evidence claim list is not a valid persisted receipt.")
+                    continue
+                  }
                   const storedIds = [...receipt.evidenceClaimIds].sort()
                   if (!storedIds.length ||
                       JSON.stringify(storedIds) !== JSON.stringify(oldClaims.map((claim) => claim.id).sort())) {
@@ -10438,7 +10450,8 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                   reconciled.push(id)
                 }
                 const auditId = crypto.randomUUID()
-                await ctx.storage.set("work-reconciliation/" + workflow.id + "/" + auditId, {
+                const auditKey = "work-reconciliation/" + workflow.id + "/" + auditId
+                const audit = {
                   workflowId: workflow.id, generation: work.generation, revision: plan.revision,
                   at: new Date().toISOString(), byAgent: tool.agent, bySessionId: tool.sessionID,
                   cleanHead: head ?? null,
@@ -10454,8 +10467,14 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                     }
                   }),
                   refused,
-                })
+                }
+                // Crash between audit and workflow persistence must not present
+                // a prepared record as a successful carry-forward.
+                await ctx.storage.set(auditKey, { ...audit, state: "prepared" })
                 if (reconciled.length) await persistWorkflowMutationLocked(ctx, runtime, workflow)
+                await ctx.storage.set(auditKey, {
+                  ...audit, state: "committed", workflowRevision: workflow.revision,
+                })
                 return {
                   auditId, reconciled, refused, alreadyComplete,
                   planRevision: plan.revision, budgetUnchanged: true,
