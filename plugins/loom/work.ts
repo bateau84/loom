@@ -17,7 +17,7 @@ export const MAX_WORK_RISK_BOUNDARIES = 64
 export const MAX_WORK_ACCEPTANCE_COVERAGE = 64
 export const MAX_WORK_RELATIONSHIPS = 64
 export const MAX_WORK_CORRECTION_ROUTES = 64
-export const MAX_WORK_AUTHORITY_REFS = 256
+export const MAX_WORK_AUTHORITY_REFS = 64
 
 export type WorkNodeStatus =
   | "pending"
@@ -159,6 +159,9 @@ export type WorkPlanTopLevelPatch = Partial<
     | "correctionRouting"
   >
 >
+
+/** Public in-place metadata patch. authorityRefs use explicit delta operations only. */
+export type WorkPlanAmendTopLevelPatch = Omit<WorkPlanTopLevelPatch, "authorityRefs">
 
 export type WorkPlanAmendOperation =
   | { action: "add-authority-ref"; authorityRef: string }
@@ -1291,20 +1294,19 @@ function protectedTaskIds(hierarchy: WorkHierarchy) {
   )
 }
 
-function planTaskSemanticFingerprint(plan: WorkPlanDefinition, taskId: string) {
+function planTaskFingerprintPayload(
+  plan: WorkPlanDefinition,
+  taskId: string,
+  authorityRefs: string[],
+) {
   const located = findPlanTask(plan, taskId)
   if (!located) return undefined
   const obligations = plan.obligations.filter((item) => item.taskIds.includes(taskId))
-  const relevantAuthorityRefs = new Set(located.task.authorityRefs)
-  for (const obligation of obligations) {
-    relevantAuthorityRefs.add(obligation.sourceRef)
-    if (obligation.dispositionAuthorityRef) relevantAuthorityRefs.add(obligation.dispositionAuthorityRef)
-  }
-  return JSON.stringify({
+  return {
     goal: plan.goal,
     assumptions: plan.assumptions,
     outOfScope: plan.outOfScope,
-    authorityRefs: plan.authorityRefs.filter((authorityRef) => relevantAuthorityRefs.has(authorityRef)),
+    authorityRefs,
     phase: { id: located.phase.id, title: located.phase.title, objective: located.phase.objective },
     wave: {
       id: located.wave.id,
@@ -1318,7 +1320,34 @@ function planTaskSemanticFingerprint(plan: WorkPlanDefinition, taskId: string) {
     acceptanceCoverage: plan.acceptanceCoverage.filter((item) => item.taskIds.includes(taskId)),
     relationships: plan.relationships.filter((item) => item.taskIds.includes(taskId)),
     correctionRouting: plan.correctionRouting.filter((item) => !item.taskId || item.taskId === taskId),
-  })
+  }
+}
+
+function relevantTaskAuthorityRefs(plan: WorkPlanDefinition, taskId: string) {
+  const located = findPlanTask(plan, taskId)
+  if (!located) return undefined
+  const relevant = new Set(located.task.authorityRefs)
+  for (const obligation of plan.obligations.filter((item) => item.taskIds.includes(taskId))) {
+    relevant.add(obligation.sourceRef)
+    if (obligation.dispositionAuthorityRef) relevant.add(obligation.dispositionAuthorityRef)
+  }
+  return plan.authorityRefs.filter((authorityRef) => relevant.has(authorityRef))
+}
+
+function planTaskSemanticFingerprint(plan: WorkPlanDefinition, taskId: string) {
+  const authorityRefs = relevantTaskAuthorityRefs(plan, taskId)
+  if (!authorityRefs) return undefined
+  const payload = planTaskFingerprintPayload(plan, taskId, authorityRefs)
+  return payload ? JSON.stringify(payload) : undefined
+}
+
+/**
+ * Pre-authority-delta fingerprint retained only to admit already-persisted
+ * in-flight workflow bindings across this runtime upgrade.
+ */
+function legacyPlanTaskSemanticFingerprint(plan: WorkPlanDefinition, taskId: string) {
+  const payload = planTaskFingerprintPayload(plan, taskId, plan.authorityRefs)
+  return payload ? JSON.stringify(payload) : undefined
 }
 
 export function taskSemanticFingerprintAtRevision(
@@ -1331,17 +1360,18 @@ export function taskSemanticFingerprintAtRevision(
   return snapshot ? planTaskSemanticFingerprint(snapshot, taskId) : undefined
 }
 
-export function workflowTaskSemanticFingerprint(
+function workflowTaskSemanticFingerprintUsing(
   hierarchy: WorkHierarchy,
   taskIds: string[],
-  generation = hierarchy.generation,
-  revision?: number,
+  generation: number,
+  revision: number | undefined,
+  taskFingerprint: (plan: WorkPlanDefinition, taskId: string) => string | undefined,
 ) {
   const snapshot = planSnapshot(hierarchy, generation, revision)
   if (!snapshot || taskIds.length === 0) return undefined
   const selected = [...new Set(taskIds)].sort()
   const fingerprints = selected.map((taskId) => {
-    const value = planTaskSemanticFingerprint(snapshot, taskId)
+    const value = taskFingerprint(snapshot, taskId)
     if (!value) throw new Error(`Task ${taskId} has no semantic Plan contract.`)
     return value
   })
@@ -1357,6 +1387,36 @@ export function workflowTaskSemanticFingerprint(
   return createHash("sha256")
     .update(JSON.stringify({ fingerprints, waveShapes }))
     .digest("hex")
+}
+
+export function workflowTaskSemanticFingerprint(
+  hierarchy: WorkHierarchy,
+  taskIds: string[],
+  generation = hierarchy.generation,
+  revision?: number,
+) {
+  return workflowTaskSemanticFingerprintUsing(
+    hierarchy,
+    taskIds,
+    generation,
+    revision,
+    planTaskSemanticFingerprint,
+  )
+}
+
+export function legacyWorkflowTaskSemanticFingerprint(
+  hierarchy: WorkHierarchy,
+  taskIds: string[],
+  generation = hierarchy.generation,
+  revision?: number,
+) {
+  return workflowTaskSemanticFingerprintUsing(
+    hierarchy,
+    taskIds,
+    generation,
+    revision,
+    legacyPlanTaskSemanticFingerprint,
+  )
 }
 
 function planWaveFingerprint(plan: WorkPlanDefinition, phaseId: string, waveId: string) {
@@ -1380,6 +1440,15 @@ function assertAmendmentDoesNotRewriteCompletedWork(
 ) {
   const protectedTasks = protectedTaskIds(hierarchy)
   if (protectedTasks.size === 0) return
+
+  const removedAuthorityRefs = before.authorityRefs.filter(
+    (authorityRef) => !after.authorityRefs.includes(authorityRef),
+  )
+  if (removedAuthorityRefs.length > 0) {
+    throw new Error(
+      `Plan authority references cannot be removed while Tasks are claimed or complete: ${removedAuthorityRefs.join(", ")}. Create a new Plan generation for that change.`,
+    )
+  }
 
   if (
     patch?.goal !== undefined ||
@@ -1608,7 +1677,7 @@ export function amendWorkPlan(
     reason: string
     by: string
     operations: WorkPlanAmendOperation[]
-    planPatch?: WorkPlanTopLevelPatch
+    planPatch?: WorkPlanAmendTopLevelPatch
   },
   now: string,
 ) {
@@ -1619,6 +1688,14 @@ export function amendWorkPlan(
   }
   const reason = nonEmpty(input.reason, "Plan amendment reason")
   if (input.operations.length > 16) throw new Error("Plan amendment exceeds maximum of 16 local operations.")
+  if (
+    input.planPatch &&
+    Object.prototype.hasOwnProperty.call(input.planPatch as Record<string, unknown>, "authorityRefs")
+  ) {
+    throw new Error(
+      "Plan authorityRefs must be amended with add-authority-ref/remove-authority-ref operations.",
+    )
+  }
   if (input.operations.length === 0 && !input.planPatch) {
     throw new Error("Plan amendment requires at least one local operation or Plan metadata patch.")
   }
