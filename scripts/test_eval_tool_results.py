@@ -14,7 +14,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-SPEC = importlib.util.spec_from_file_location("loom_run_evals", Path(__file__).with_name("run-evals.py"))
+SPEC = importlib.util.spec_from_file_location("loom_run_evals", Path(__file__).with_name("run-evals-legacy.py"))
 assert SPEC and SPEC.loader
 RUN = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(RUN)

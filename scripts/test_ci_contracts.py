@@ -195,8 +195,11 @@ class OpenCodeVersionContractTests(unittest.TestCase):
             f'opencode --version | grep -F "{plugin_version}"',
             workflow,
         )
+        # The isolated eval boundary is pinned independently from the host
+        # plugin dependency. Task 7 requires the reviewed runtime-evidence
+        # image, which currently carries stock OpenCode 2.0.23.
         self.assertIn(
-            f'docker run --rm --entrypoint opencode "$OPENCODE_EVAL_RUNNER_OPENCODE_IMAGE" --version | grep -F "{plugin_version}"',
+            'docker run --rm --entrypoint opencode "$OPENCODE_EVAL_RUNNER_OPENCODE_IMAGE" --version | grep -F "2.0.23"',
             workflow,
         )
         self.assertIn(
