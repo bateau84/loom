@@ -11,7 +11,8 @@ import loomPlugin from "./index"
 import { cancelWorkflow } from "./lifecycle"
 import { deleteWorkflowRecords } from "./workflow-cleanup"
 import { createWorkHierarchy, materializeWorkPlan, claimWorkflowWave, syncWorkTaskStatuses,
-  completeWaveForTasks, releaseCancelledWorkflowClaims, reopenWaveForTasks, type WorkPlanTask } from "./work"
+  completeWaveForTasks, releaseCancelledWorkflowClaims, reopenWaveForTasks,
+  legacyWorkflowTaskSemanticFingerprint, type WorkPlanTask } from "./work"
 import { buildSidebarSnapshot } from "./sidebar"
 import { prepareReportPromotion, publishPreparedReport, type ReportPromotionRecord } from "./reports"
 import {
@@ -10009,6 +10010,43 @@ async function waveLifecycleFixture(
   }
 }
 
+test("legacy persisted Task fingerprints remain admissible after authority-delta fingerprint refinement", async () => {
+  const h = await waveLifecycleFixture()
+  try {
+    const workflow = await h.workflow()
+    const work = await h.work()
+    const taskIds = workflow.steps
+      .filter((step: any) => step.task)
+      .map((step: any) => step.task.id)
+    const legacyFingerprint = legacyWorkflowTaskSemanticFingerprint(
+      work,
+      taskIds,
+      workflow.work.generation,
+    )
+    expect(legacyFingerprint).toBeDefined()
+    expect(legacyFingerprint).not.toBe(workflow.work.taskPlanFingerprint)
+
+    workflow.work.taskPlanFingerprint = legacyFingerprint
+    await h.durableStorage.set(`workflow/${h.workflowId}`, workflow)
+
+    const grant = await h.call("dispatch_grant", {
+      workflowId: h.workflowId,
+      stepId: "task:one",
+    }, "general", "parent")
+    expect(grant.error).toBeUndefined()
+
+    const attached = await h.call("attach", {
+      workflowId: h.workflowId,
+      stepId: "task:one",
+      grantId: grant.grantId,
+    }, "worker", "legacy-fingerprint-worker")
+    expect(attached.error).toBeUndefined()
+    expect(attached.attached).toBe(true)
+  } finally {
+    h.restore()
+  }
+})
+
 test("status, grant issuance, and launch share reviewed planned dispatch admission", async () => {
   const h = await waveLifecycleFixture()
   try {
@@ -10250,6 +10288,7 @@ test("Planner amendment schema accepts role corrections and role-owned Tasks in 
       expectedVersion: planned.version,
       reason: "Correct the accountable role and add a role-owned future Phase.",
       operations: [
+        { action: "add-authority-ref", authorityRef: "ARS-025" },
         { action: "patch-task", taskId: "existing", patch: { role: "architect", responsibility: "produce" } },
         { action: "add-phase", phase: {
           id: "future", title: "Future", objective: "Continue with explicit ownership.", waves: [{
@@ -10261,12 +10300,29 @@ test("Planner amendment schema accepts role corrections and role-owned Tasks in 
     expect(amended.error).toBeUndefined()
     const work = await h.durableStorage.get(`work/${encodeURIComponent(String(planned.objectiveId))}`) as any
     const currentPlan = work.plans.find((candidate: any) => candidate.generation === work.generation)
+    expect(currentPlan.authorityRefs).toContain("ARS-025")
     expect(currentPlan.phases.find((phase: any) => phase.id === "core").waves[0].tasks[0]).toMatchObject({
       id: "existing", role: "architect", responsibility: "produce",
     })
     expect(currentPlan.phases.find((phase: any) => phase.id === "future").waves[0].tasks[0]).toMatchObject({
       id: "added", role: "worker", responsibility: "execute",
     })
+
+    const amendSchema = h.registered.get("work_amend")?.input as any
+    expect(amendSchema?.properties?.operations?.items?.properties?.action?.enum)
+      .toEqual(expect.arrayContaining(["add-authority-ref", "remove-authority-ref"]))
+    expect(amendSchema?.properties?.planPatch?.properties?.authorityRefs).toBeUndefined()
+
+    const unsafeReplacement = await h.call("work_amend", {
+      workflowId,
+      expectedVersion: work.version,
+      reason: "Replace-all authority mutation must be rejected at the public control-plane boundary.",
+      operations: [],
+      planPatch: { authorityRefs: ["docs/anchors/test/anchor.md"] },
+    }, "planner", "role-amend-planner")
+    expect(unsafeReplacement.error).toContain(
+      "must be amended with add-authority-ref/remove-authority-ref",
+    )
   } finally {
     h.restore()
   }
