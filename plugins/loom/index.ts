@@ -7005,6 +7005,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             let hadTaskExecution = false
             let invalidatedPlanRecovery = false
             let staleCompiledPlan = false
+            let staleCompiledClaimBroken = false
             let unverifiedCompletedTaskIds: string[] = []
             const preservedTaskSteps = new Map<string, {
               status: "complete" | "passed"
@@ -7067,7 +7068,16 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                     workflow.steps.some((candidate) => candidate.id === "review-plan" && candidate.status === "passed")
                   if (reviewed) await ensureCompletedWaveHistory(ctx.storage as any, work, workflow)
                   else if (planReviewed && !invalidatedPlanRecovery) {
-                    if (!staleCompiledPlan) {
+                    if (staleCompiledPlan) {
+                      // Planner may have removed or moved an old claimed Task.
+                      // The claim is then structurally obsolete, not evidence
+                      // that General must be prevented from replanning.
+                      try {
+                        assertWaveClaimForTasks(work, workflow.id, workflow.work.generation, taskIds)
+                      } catch {
+                        staleCompiledClaimBroken = true
+                      }
+                    } else {
                       assertWaveClaimForTasks(work, workflow.id, workflow.work.generation, taskIds)
                     }
                     hadPlanReviewClaim = hasPlanReview
@@ -7150,6 +7160,15 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 // execution releases the mechanically acquired Wave claim so
                 // Planner can safely amend/recompile the unconsumed contract.
                 if (
+                  hadPlanReviewClaim &&
+                  staleCompiledClaimBroken &&
+                  reset.includes("review-plan")
+                ) {
+                  // A stale compiled Task set no longer constitutes one
+                  // claimed Wave. Release the old lease, including when some
+                  // old Task executions are preserved for later reuse.
+                  releaseCancelledWorkflowClaims(work, workflow.id, now)
+                } else if (
                   hadPlanReviewClaim &&
                   reset.includes("review-plan") &&
                   taskIds.length > 0 &&

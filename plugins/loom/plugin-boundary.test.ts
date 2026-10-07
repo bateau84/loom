@@ -12237,6 +12237,13 @@ test("Planner removal of a claimed Task can recover without redispatching comple
     }, "general", "parent")
     expect(reopened.error).toBeUndefined()
     expect(reopened.reset).not.toContain("task:one")
+    const releasedWork = await h.work()
+    expect(releasedWork.nodes.find(
+      (node: any) => node.type === "wave" && node.logicalId === "first",
+    ).claimedByWorkflowId).toBeUndefined()
+    expect(releasedWork.nodes.find(
+      (node: any) => node.type === "task" && node.logicalId === "one",
+    ).result.semanticClosureFingerprint).toEqual(expect.any(String))
 
     const planner = await h.attach("plan", "planner", "recompile-removed-task")
     const current = await h.work()
