@@ -356,6 +356,23 @@ class SkillAblationCutoverTests(unittest.TestCase):
             )
             self.assertEqual(real.target_spec(cases[0], candidate).skill, "skills-eval")
 
+    def test_importable_paired_runner_needs_no_cli_on_path(self):
+        # The generic paired API can already be supplied on PYTHONPATH.
+        with (
+            mock.patch.dict("os.environ", {"OPENCODE_EVAL_RUNNER_BIN": ""}),
+            mock.patch.object(bridge.shutil, "which", return_value=None),
+        ):
+            bridge._bootstrap_runner()
+
+    def test_missing_library_and_binary_gives_actionable_error(self):
+        with (
+            mock.patch.dict("os.environ", {"OPENCODE_EVAL_RUNNER_BIN": ""}),
+            mock.patch.object(bridge.importlib.util, "find_spec", return_value=None),
+            mock.patch.object(bridge.shutil, "which", return_value=None),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "PYTHONPATH"):
+                bridge._bootstrap_runner()
+
     def test_missing_paired_engine_refused_before_inference(self):
         with tempfile.TemporaryDirectory() as tmp:
             binary = Path(tmp) / "bin" / "opencode-eval-runner"
