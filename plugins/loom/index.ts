@@ -3231,11 +3231,13 @@ async function reusableCompletedTaskIds(
       claims.some((claim) => !claim) ||
       claims.some((claim) =>
         claim!.workflowId !== workTask.result!.workflowId ||
-        claim!.stepId !== taskStep.id
+        claim!.stepId !== taskStep.id ||
+        claim!.byAgent !== taskStep.agent ||
+        (claim!.attempt ?? 0) !== (taskStep.attempt ?? 0)
       )
     ) {
       throw new Error(
-        `Completed Task ${taskStep.task!.id} cannot be reused because its evidence receipt is missing or no longer matches.`,
+        `Completed Task ${taskStep.task!.id} cannot be reused because its evidence receipt is missing or no longer matches the preserved attempt.`,
       )
     }
 
@@ -3244,9 +3246,14 @@ async function reusableCompletedTaskIds(
         ctx.storage.get(evidenceKey(id)) as Promise<EvidenceObservation | undefined>,
       ),
     )
-    if (observations.some((observation) => !observation)) {
+    if (
+      observations.some((observation) => !observation) ||
+      observations.some((observation) =>
+        !observation || !observationMatchesStep(observation, workflow, taskStep.id)
+      )
+    ) {
       throw new Error(
-        `Completed Task ${taskStep.task!.id} cannot be reused because referenced evidence is missing.`,
+        `Completed Task ${taskStep.task!.id} cannot be reused because referenced evidence is missing or belongs to another attempt.`,
       )
     }
     reusable.push(taskStep.task!.id)
