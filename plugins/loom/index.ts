@@ -10404,6 +10404,9 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                       candidate.logicalId === dependencyId && candidate.status !== "superseded")
                     // A dependent's old result cannot survive a newer producer execution.
                     return !upstream?.result || upstream.result.workflowId !== workflow.id ||
+                      !receipt.dependencyResultDigests?.[dependencyId] ||
+                      createHash("sha256").update(JSON.stringify(upstream.result)).digest("hex") !==
+                        receipt.dependencyResultDigests[dependencyId] ||
                       !Number.isSafeInteger(upstream.result.completedAttempt) ||
                       !upstream.result.completedAt || !receipt.completedAt ||
                       upstream.result.completedAt > receipt.completedAt
