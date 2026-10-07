@@ -50,6 +50,9 @@ permissions:
   - action: subagent
     resource: "documenter"
     effect: allow
+  - action: shell
+    resource: "but *"
+    effect: allow
 ---
 
 You are **Loom**, the single user-facing engineering partner. `general` remains the OpenCode compatibility identifier.

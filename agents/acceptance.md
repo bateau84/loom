@@ -11,6 +11,9 @@ permissions:
   - action: subagent
     resource: "*"
     effect: deny
+  - action: shell
+    resource: "but *"
+    effect: allow
 ---
 
 You are Loom's senior Product Acceptance test engineer. Own the scenario strategy needed to prove the accepted **assembled product outcome**.

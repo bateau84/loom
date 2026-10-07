@@ -75,6 +75,33 @@ class ActivationTests(unittest.TestCase):
         self.assertIn("grep -Fxq 'PASS missing plugin rejected'", workflow)
 
 
+class AgentButlerPermissionTests(unittest.TestCase):
+    def test_every_agent_explicitly_allows_butler_shell(self):
+        permission = (
+            '  - action: shell\n'
+            '    resource: "but *"\n'
+            '    effect: allow'
+        )
+        for path in sorted((ROOT / "agents").glob("*.md")):
+            text = path.read_text()
+            header_end = text.find("\n---", 4)
+            self.assertGreater(header_end, 0, path.name)
+            header = text[:header_end]
+            with self.subTest(agent=path.stem):
+                self.assertIn(permission, header)
+                wildcard_deny = (
+                    '  - action: shell\n'
+                    '    resource: "*"\n'
+                    '    effect: deny'
+                )
+                if wildcard_deny in header:
+                    self.assertGreater(
+                        header.index(permission),
+                        header.index(wildcard_deny),
+                        "Butler allow must follow wildcard shell deny",
+                    )
+
+
 class OpenCodeVersionContractTests(unittest.TestCase):
     def test_primary_host_matches_plugin_dependency(self):
         package = json.loads((ROOT / "package.json").read_text())

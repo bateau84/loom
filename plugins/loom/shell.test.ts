@@ -1,10 +1,15 @@
 import { describe, expect, test } from "bun:test"
 import {
   authorGitShellResourcesAllowed,
+  butlerCommitSourceIds,
   diagnosticExecutionShellResourcesAllowed,
   diagnosticShellResourcesAllowed,
+  isAllowedButlerCommit,
   isAllowedGitCommit,
   isAllowedWorkerShell,
+  isButlerCommitShellCommand,
+  isButlerInspectionShellCommand,
+  isButlerShellCommand,
   isGitAuthoringShellCommand,
   scopedGitAddTargets,
   scopedGofmtWriteTargets,
@@ -13,6 +18,72 @@ import {
 } from "./shell"
 
 describe("Loom Worker shell policy", () => {
+
+  test("allows Butler inspection commands but keeps mutations classified", () => {
+    for (const command of [
+      "but status",
+      "but --json status -fv",
+      "but diff",
+      "but diff qs:5",
+      "but show abc",
+      "but branch",
+      "but branch list -r",
+      "but branch show feature",
+      "but oplog",
+      "but oplog list --since abc",
+      "but pull --check",
+      "but push feature --dry-run",
+      "but commit --help",
+    ]) {
+      expect(isButlerShellCommand(command)).toBe(true)
+      expect(isButlerInspectionShellCommand(command)).toBe(true)
+    }
+
+    for (const command of [
+      "but pull",
+      "but push feature",
+      "but branch new feature",
+      "but discard qs:5",
+      "but squash a -t b -m 'combine'",
+      "but pr new feature -t",
+    ]) {
+      expect(isButlerShellCommand(command)).toBe(true)
+      expect(isButlerInspectionShellCommand(command)).toBe(false)
+    }
+
+    expect(isButlerShellCommand("but -C ../other status")).toBe(false)
+  })
+
+  test("admits only explicit selected-ID Butler commits with messages", () => {
+    expect(
+      butlerCommitSourceIds(
+        "but commit -b feature -m 'fix(runtime): preserve ownership' qs:5 uo",
+      ),
+    ).toEqual(["qs:5", "uo"])
+    expect(
+      butlerCommitSourceIds(
+        "but --json commit --above abc -m 'feat: one' -m 'Verification: pass' qs:5",
+      ),
+    ).toEqual(["qs:5"])
+
+    expect(
+      isAllowedButlerCommit("but commit -b feature -m 'fix: scoped' qs:5"),
+    ).toBe(true)
+    expect(isButlerCommitShellCommand("but commit -m 'fix: scoped' qs:5")).toBe(true)
+
+    for (const command of [
+      "but commit -b feature -m 'fix: broad'",
+      "but commit -b feature qs:5",
+      "but commit --empty -b feature -m 'chore: marker'",
+      "but commit -i -m 'fix: interactive'",
+      "but commit --no-message qs:5",
+      "but commit -b feature -m 'fix: scoped' qs:5 && but commit -b feature -m 'test: scoped' uo",
+      "but -C ../other commit -b feature -m 'fix: scoped' qs:5",
+    ]) {
+      expect(isAllowedButlerCommit(command)).toBe(false)
+    }
+  })
+
   test("allows common inspection and verification commands", () => {
     for (const command of [
       "git status --short",

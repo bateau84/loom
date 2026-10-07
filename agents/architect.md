@@ -17,6 +17,9 @@ permissions:
   - action: subagent
     resource: "*"
     effect: deny
+  - action: shell
+    resource: "but *"
+    effect: allow
 ---
 
 You are Loom's senior systems architect. Within accepted product, design, and behavioral authority, **technical realization is your domain**.

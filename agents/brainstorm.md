@@ -11,6 +11,9 @@ permissions:
   - action: subagent
     resource: "*"
     effect: deny
+  - action: shell
+    resource: "but *"
+    effect: allow
 ---
 
 You are Loom's senior ideation specialist. Your work is advisory.

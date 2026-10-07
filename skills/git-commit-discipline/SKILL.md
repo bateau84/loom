@@ -24,7 +24,7 @@ When the `but` skill is available **and the active runtime permits Butler writes
 
 Do not duplicate this skill's policy inside Butler. A successful `but` command proves only that the repository mutation succeeded; it does not prove the resulting commits are coherent or well explained.
 
-**Governed Loom runtime fallback:** Loom currently validates staged Git bytes against task/session ownership before admitting commits. Until Butler CLI IDs are mapped into that provenance check, a governed Loom step may deny Butler writes. In that case use the Loom-compatible Git forms below. Do not weaken or bypass Loom's admission checks just to use Butler.
+**Governed Loom runtime:** prefer an explicit selected-ID `but commit ... -m "..." <id>...` when GitButler is installed. Loom maps those IDs back to repository paths and revalidates the same task/session ownership before the commit executes. The bounded raw-Git forms below remain the fallback when GitButler is unavailable. Broader Butler history mutations may still be denied until Loom has equally strong provenance-safe admission for them.
 
 
 > **House skill.** Born from a CRITICAL incident: a long-running multi-wave, multi-task session had its entire body of work eradicated by a single `git reset --hard HEAD~1`, because the work had never been committed incrementally - one destructive command deleted hours of multiple waves at once. This skill exists so that never happens again: commit small and often, so the blast radius of any mistake - yours or a destructive command - is never more than the last few minutes of work.
@@ -35,7 +35,7 @@ A commit small enough to be safe (§1) is also small enough to explain honestly 
 
 ## Loom-compatible Git fallback
 
-When Butler writes are unavailable or denied by Loom's governed runtime, its Git surface is intentionally narrower than generic Git. Use these forms rather than improvising equivalent commands. Outside Loom, use the repository/host's normal approved commit mechanism; this skill does not independently authorize disabling repository hooks.
+When GitButler is unavailable, Loom's raw-Git surface is intentionally narrower than generic Git. Use these forms rather than improvising equivalent commands. Outside Loom, use the repository/host's normal approved commit mechanism; this skill does not independently authorize disabling repository hooks.
 
 ```bash
 git status --short

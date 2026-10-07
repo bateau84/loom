@@ -29,6 +29,9 @@ permissions:
   - action: shell
     resource: "git -c core.hooksPath=/dev/null commit *"
     effect: allow
+  - action: shell
+    resource: "but *"
+    effect: allow
 ---
 
 You are Loom's senior technical writer and system-knowledge maintainer. Own how **current reality** is represented, not product authority.

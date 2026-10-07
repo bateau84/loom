@@ -176,6 +176,7 @@ export function isAllowedWorkerShell(command: string) {
 
   if (!normalized) return false
   if (hasForbiddenShellSyntax(normalized)) return false
+  if (isButlerInspectionShellCommand(normalized)) return true
 
   const parsed = parseEnvironmentPrefix(normalized)
   if (!parsed || !parsed.command) return false
@@ -242,6 +243,137 @@ function parsedCommandWords(command: string) {
   const parsed = parseEnvironmentPrefix(normalized)
   if (!parsed || !parsed.command || !environmentAllowed(parsed.assignments)) return undefined
   return splitShellWords(parsed.command)
+}
+
+
+type ParsedButlerCommand = {
+  subcommand: string
+  args: string[]
+}
+
+function parsedButlerCommand(command: string): ParsedButlerCommand | undefined {
+  const words = parsedCommandWords(command)
+  if (!words || words[0] !== "but") return undefined
+
+  const rest: string[] = []
+  for (let index = 1; index < words.length; index += 1) {
+    const word = words[index]
+    if (
+      word === "-C" ||
+      word === "--current-dir" ||
+      word.startsWith("--current-dir=")
+    ) return undefined
+    if (word === "--json" || word === "--status-after") continue
+    rest.push(word)
+  }
+
+  if (rest.some((word) => word === "--help" || word === "-h")) {
+    return { subcommand: "help", args: [] }
+  }
+  return {
+    subcommand: rest[0] ?? "",
+    args: rest.slice(1),
+  }
+}
+
+export function isButlerShellCommand(command: string) {
+  return Boolean(parsedButlerCommand(command))
+}
+
+export function isButlerInspectionShellCommand(command: string) {
+  const parsed = parsedButlerCommand(command)
+  if (!parsed) return false
+
+  if (["help", "status", "diff", "show"].includes(parsed.subcommand)) return true
+
+  if (parsed.subcommand === "branch") {
+    const action = parsed.args.find((word) => !word.startsWith("-")) ?? "list"
+    return action === "list" || action === "show"
+  }
+
+  if (parsed.subcommand === "oplog") {
+    const action = parsed.args.find((word) => !word.startsWith("-")) ?? "list"
+    return action === "list"
+  }
+
+  if (parsed.subcommand === "pull") {
+    return parsed.args.some((word) => word === "--check" || word === "-c")
+  }
+
+  if (parsed.subcommand === "push") {
+    return parsed.args.includes("--dry-run")
+  }
+
+  return false
+}
+
+export function isButlerCommitShellCommand(command: string) {
+  return parsedButlerCommand(command)?.subcommand === "commit"
+}
+
+export function butlerCommitSourceIds(command: string) {
+  const parsed = parsedButlerCommand(command)
+  if (!parsed || parsed.subcommand !== "commit") return undefined
+
+  let hasMessage = false
+  const sources: string[] = []
+
+  for (let index = 0; index < parsed.args.length; index += 1) {
+    const word = parsed.args[index]
+
+    if (word === "-m" || word === "--message") {
+      const value = parsed.args[index + 1]
+      if (!value) return undefined
+      hasMessage = true
+      index += 1
+      continue
+    }
+    if (word.startsWith("--message=")) {
+      if (!word.slice("--message=".length)) return undefined
+      hasMessage = true
+      continue
+    }
+
+    if (
+      word === "-b" ||
+      word === "--branch" ||
+      word === "-A" ||
+      word === "--above" ||
+      word === "-B" ||
+      word === "--below"
+    ) {
+      const value = parsed.args[index + 1]
+      if (!value || value.startsWith("-")) return undefined
+      index += 1
+      continue
+    }
+    if (
+      word.startsWith("--branch=") ||
+      word.startsWith("--above=") ||
+      word.startsWith("--below=")
+    ) {
+      const value = word.split("=", 2)[1]
+      if (!value) return undefined
+      continue
+    }
+
+    if (
+      word === "--no-message" ||
+      word === "--empty" ||
+      word === "-i" ||
+      word === "--interactive"
+    ) return undefined
+
+    if (word.startsWith("-")) return undefined
+    sources.push(word)
+  }
+
+  if (!hasMessage || sources.length === 0 || sources.length > 64) return undefined
+  return sources
+}
+
+export function isAllowedButlerCommit(command: string) {
+  return Boolean(butlerCommitSourceIds(command))
 }
 
 function splitSafeAndChain(command: string) {
