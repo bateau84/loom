@@ -119,6 +119,19 @@ class CompatValidationTests(unittest.TestCase):
         self.assertNotIn(str(w.LEGACY_RUNNER), command)
         self.assertIn("--transport-retries", command)
 
+    def test_legacy_scheduler_helpers_are_absent_from_imported_module(self):
+        legacy = self.w._legacy()
+        for name in (
+            "resolve_engine", "invoke_container", "invoke_container_with_retry",
+            "run_case", "run_skill_ablation_case", "eval_job_concurrency",
+            "claim_artifact_directory", "write_case_artifact",
+            "verify_case_artifact", "artifact_integrity_payload",
+        ):
+            with self.subTest(name=name):
+                self.assertFalse(hasattr(legacy, name))
+                with self.assertRaises(AttributeError):
+                    getattr(self.w, name)
+
     def test_retired_legacy_engine_cannot_be_invoked_directly(self):
         # The legacy module is still imported for Loom policy helpers, but it
         # must not remain a second executable scheduler or container runner.
