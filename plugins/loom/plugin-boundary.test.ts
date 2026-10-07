@@ -16726,6 +16726,19 @@ test("Plan reconciliation restores only a proven original producer attempt, with
     expect(planner.error).toBeUndefined()
     expect(planner.alreadyComplete).toEqual(["one"])
     expect(planner.reconciled).toEqual([])
+
+    // The next real Plan reopen must verify original attempt evidence without
+    // rolling back the current monotonic attempt or dispatching the Worker.
+    const secondReopen = await h.call("reopen", {
+      workflowId: h.workflowId, stepId: "plan",
+      reason: "Independently recheck the unchanged implementation after recovery.",
+      newEvidence: true, changedHypothesis: false,
+      changedStrategy: false, reducedUnresolved: false,
+    }, "general", "parent")
+    expect(secondReopen.error).toBeUndefined()
+    expect(secondReopen.reset).not.toContain("task:one")
+    expect((await h.workflow()).steps.find((candidate: any) => candidate.id === "task:one"))
+      .toMatchObject({ status: "complete", attempt: sourceAttempt + 1 })
   } finally {
     h.restore()
   }
@@ -16786,6 +16799,37 @@ test("Plan reconciliation fails closed for missing results, altered code and unr
       workflowId: h.workflowId, taskIds: ["one"],
     }, "general", "parent")
     expect(unreviewed.error).toContain("independent review-plan PASS")
+  } finally {
+    h.restore()
+  }
+})
+
+test("Plan reconciliation rejects a dependent whose upstream producer was rerun afterward", async () => {
+  const h = await waveLifecycleFixture("wave", false, "worker", true)
+  try {
+    const work = await h.work()
+    const producer = work.nodes.find((node: any) => node.type === "task" && node.logicalId === "one")
+    const dependent = work.nodes.find((node: any) => node.type === "task" && node.logicalId === "dependent")
+    const receipt = {
+      workflowId: h.workflowId, completedAttempt: 0, producerAgent: "worker",
+      planRevision: 1, semanticClosureFingerprint: "historical-only",
+      executableTaskFingerprint: "historical-only", evidenceClaimIds: ["original-claim"],
+    }
+    producer.result = {
+      ...receipt, completedAt: "2026-10-07T23:00:00Z",
+    }
+    dependent.result = {
+      ...receipt, completedAt: "2026-10-07T22:00:00Z",
+    }
+    await h.durableStorage.set(h.workKey, work)
+    const result = await h.call("work_reconcile", {
+      workflowId: h.workflowId, taskIds: ["dependent"],
+    }, "general", "parent")
+    expect(result.error).toBeUndefined()
+    expect(result.reconciled).toEqual([])
+    expect(result.refused[0].reason).toContain("replaced after this completion")
+    expect((await h.workflow()).steps.find((step: any) => step.id === "task:dependent").status)
+      .toBe("pending")
   } finally {
     h.restore()
   }
