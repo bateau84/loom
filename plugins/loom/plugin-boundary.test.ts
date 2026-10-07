@@ -16659,6 +16659,32 @@ test("Plan reconciliation restores only a proven original producer attempt, with
     resetStep.attempt += 1
     delete resetStep.summary
     await h.durableStorage.set("workflow/" + h.workflowId, reviewedWorkflow)
+
+    // Nonblocking questions do not gate normal Task completion, whether
+    // unanswered or answered but not reconciled. Carry-forward must not
+    // impose a stricter question gate on a proven original result.
+    const advisory = await h.call("oq_raise", {
+      workflowId: h.workflowId,
+      question: "Optional context; the Task contract is unchanged.",
+      responder: "general", blocking: false, consumerStepIds: ["task:one"],
+    }, "general", "parent")
+    expect(advisory.error).toBeUndefined()
+    const advisoryAnswer = await h.call("oq_answer", {
+      workflowId: h.workflowId, questionId: advisory.question.id,
+      answer: "No change to the already verified producer contract.", source: "agent",
+    }, "general", "parent")
+    expect(advisoryAnswer.error).toBeUndefined()
+    expect(advisoryAnswer.question).toMatchObject({ status: "answered", blocking: false })
+    expect(advisoryAnswer.question.reconciliations["task:one"]).toBeUndefined()
+    // Also exercise an unanswered, explicitly nonblocking advisory.
+    const unansweredAdvisory = await h.call("oq_raise", {
+      workflowId: h.workflowId,
+      question: "Optional follow-up, not a condition for the existing result.",
+      responder: "general", blocking: false, consumerStepIds: ["task:one"],
+    }, "general", "parent")
+    expect(unansweredAdvisory.error).toBeUndefined()
+    expect(unansweredAdvisory.question).toMatchObject({ status: "open", blocking: false })
+
     const budgetKey = "budget/" + h.workflowId
     const normalBudget = await h.durableStorage.get(budgetKey) as any
     await h.durableStorage.set(budgetKey, { ...normalBudget, totalDispatches: 40 })
@@ -16896,6 +16922,24 @@ test("Planner cannot exempt its own unresolved Task question from reconciliation
     expect(result.error).toBeUndefined()
     expect(result.reconciled).toEqual([])
     expect(result.refused[0].reason).toContain("Unresolved blocking question")
+    expect(result.refused[0].reason).toContain(raised.question.id)
+
+    // Answering a blocking question is not enough: its consumer must still
+    // reconcile the answer, and Planner cannot waive that requirement.
+    const answered = await h.call("oq_answer", {
+      workflowId: h.workflowId, questionId: raised.question.id,
+      answer: "Clarified, but the producer has not reconciled this answer.",
+      source: "agent",
+    }, "planner", plannerSession)
+    expect(answered.error).toBeUndefined()
+    expect(answered.question.status).toBe("answered")
+    expect(answered.question.reconciliations["task:one"]).toBeUndefined()
+    const stillBlocked = await h.call("work_reconcile", {
+      workflowId: h.workflowId, questionId: raised.question.id, taskIds: ["one"],
+    }, "planner", plannerSession)
+    expect(stillBlocked.error).toBeUndefined()
+    expect(stillBlocked.reconciled).toEqual([])
+    expect(stillBlocked.refused[0].reason).toContain(raised.question.id)
   } finally {
     h.restore()
   }
