@@ -2342,7 +2342,7 @@ describe("Loom runtime identity and scoped storage", () => {
 
 
 describe("production runtime writer fencing", () => {
-  test("legacy records survive v8 and all older fence-capable writers are rejected", async () => {
+  test("legacy records survive v9 and all older fence-capable writers are rejected", async () => {
     await withRoots(async (root) => {
       const project = join(root, "holistic-plan-upgrade")
       await mkdir(project, { recursive: true })
@@ -2377,11 +2377,15 @@ describe("production runtime writer fencing", () => {
       const priorV7 = createProjectStorage(raw, runtime.projectId, { expectedRuntimeVersion: 7 })
       expect(await priorV7.get("workflow/before-upgrade")).toEqual(history)
 
+      await ensureRuntimeStateVersion(raw, runtime, { targetVersion: 8 })
+      const priorV8 = createProjectStorage(raw, runtime.projectId, { expectedRuntimeVersion: 8 })
+      expect(await priorV8.get("workflow/before-upgrade")).toEqual(history)
+
       const schema = await ensureRuntimeStateVersion(raw, runtime)
       expect(schema.currentVersion).toBe(RUNTIME_STATE_VERSION)
-      expect(schema.lastUpgradeId).toBe("same-owner-coordinator-resumption-v8")
+      expect(schema.lastUpgradeId).toBe("plan-authority-delta-v9")
 
-      for (const stale of [old, draftV2, priorV3, priorV4, priorV5, priorV6, priorV7]) {
+      for (const stale of [old, draftV2, priorV3, priorV4, priorV5, priorV6, priorV7, priorV8]) {
         await expect(stale.set("workflow/before-upgrade", { overwritten: true })).rejects.toThrow("does not match")
         await expect(stale.get("workflow/before-upgrade")).rejects.toThrow("does not match")
       }
@@ -2389,7 +2393,7 @@ describe("production runtime writer fencing", () => {
       const current = createProjectStorage(raw, runtime.projectId, { expectedRuntimeVersion: RUNTIME_STATE_VERSION })
       expect(await current.get("workflow/before-upgrade")).toEqual(history)
       const receipts = await raw.scan({ prefix: "installation/runtime-upgrades/" })
-      expect(receipts.entries).toHaveLength(7)
+      expect(receipts.entries).toHaveLength(8)
       await ensureRuntimeStateVersion(raw, runtime)
       expect(await raw.scan({ prefix: "installation/runtime-upgrades/" })).toEqual(receipts)
       expect(await current.get("workflow/before-upgrade")).toEqual(history)

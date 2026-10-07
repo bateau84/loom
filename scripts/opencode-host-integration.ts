@@ -1116,6 +1116,31 @@ async function startMockProvider() {
       const latestUserIndex = messages.findLastIndex((message: any) => message?.role === "user")
       const turnMessages = latestUserIndex >= 0 ? messages.slice(latestUserIndex + 1) : messages
       const results = toolResults(turnMessages)
+
+      // A Loom synthetic background-return prompt and OpenCode's native
+      // <subagent> completion can be queued close together. If the native
+      // completion becomes the latest user message after General already
+      // called loom_status, the status result belongs to the preceding turn
+      // and is intentionally absent from turnMessages. Observe the complete
+      // session history so this integration assertion follows the actual tool
+      // result instead of depending on which queued message resumes first.
+      if (
+        state.backgroundReturnObserved &&
+        !state.backgroundReturnStatusObserved &&
+        state.backgroundWorkflowId
+      ) {
+        const backgroundStatus = toolResults(messages).get("loom_status") as any
+        const backgroundWorker = backgroundStatus?.workflow?.steps?.find(
+          (step: any) => step.id === "worker",
+        )
+        if (
+          backgroundStatus?.workflow?.id === state.backgroundWorkflowId &&
+          backgroundWorker?.status === "complete"
+        ) {
+          state.backgroundReturnStatusObserved = true
+        }
+      }
+
       if (prompt.includes("LOOM_TUI_BUDGET_ACCEPTANCE")) {
         const deadline = Date.now() + 3_000
         if (state.tuiBudgetPhase === 1) {

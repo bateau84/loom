@@ -49,7 +49,7 @@ const PROJECT_PREFIX = "project/"
 const GLOBAL_PREFIXES = ["installation/", "episode/", "heuristic/"]
 
 export const RUNTIME_BASELINE_VERSION = 1
-export const RUNTIME_STATE_VERSION = 8
+export const RUNTIME_STATE_VERSION = 9
 
 export type RuntimeUpgradePhase =
   | "canonical-upgrade"
@@ -151,6 +151,17 @@ const RUNTIME_UPGRADE_STEPS: RuntimeUpgradeStep[] = [{
   // Existing records are unchanged. Fence v7 writers that do not serialize
   // same-session Loom admission with coordinator binding transitions.
   applyInstallation: async () => ({ sameOwnerCoordinatorResumption: true }),
+}, {
+  id: "plan-authority-delta-v9",
+  fromVersion: 8,
+  toVersion: 9,
+  // Existing records remain readable. Fence v8 writers that can still replace
+  // bounded authorityRefs wholesale or persist only the legacy Task
+  // fingerprint semantics while v9 performs delta-only authority mutation.
+  applyInstallation: async () => ({
+    planAuthorityDelta: true,
+    taskFingerprintRefinement: true,
+  }),
 }]
 
 function sha256(value: string) {
