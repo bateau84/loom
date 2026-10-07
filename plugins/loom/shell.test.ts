@@ -106,7 +106,8 @@ describe("Loom Worker shell policy", () => {
       expect(isButlerInspectionShellCommand(command)).toBe(false)
     }
 
-    expect(isButlerShellCommand("but -C ../other status")).toBe(false)
+    expect(isButlerShellCommand("but -C ../other status")).toBe(true)
+    expect(isButlerInspectionShellCommand("but -C ../other status")).toBe(false)
   })
 
   test("admits only explicit selected-ID Butler commits with messages", () => {
