@@ -134,7 +134,12 @@ class SkillAblationCutoverTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         # Paired engine is an installed tool, never vendored into Loom.
-        bridge._bootstrap_runner()
+        # Local developer tests without the optional CLI can run the rest of
+        # Loom's suite; CI installs runner #64 and executes these tests in full.
+        try:
+            bridge._bootstrap_runner()
+        except RuntimeError as exc:
+            raise unittest.SkipTest(str(exc)) from exc
         from loom_eval_profile.skill_ablation import LoomSkillAblationProfile
         cls.Profile = LoomSkillAblationProfile
 
