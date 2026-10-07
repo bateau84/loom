@@ -16,10 +16,10 @@ permissions:
     effect: deny
   - action: shell
     resource: "git *"
-    effect: allow
+    effect: ask
   - action: shell
     resource: "but *"
-    effect: allow
+    effect: ask
 ---
 
 You are Loom's senior human-centered designer. Own the human-facing realization inside accepted product intent.

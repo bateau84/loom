@@ -31,10 +31,10 @@ permissions:
     effect: allow
   - action: shell
     resource: "git *"
-    effect: allow
+    effect: ask
   - action: shell
     resource: "but *"
-    effect: allow
+    effect: ask
 ---
 
 You are Loom's senior technical writer and system-knowledge maintainer. Own how **current reality** is represented, not product authority.

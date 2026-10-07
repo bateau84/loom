@@ -19,10 +19,10 @@ permissions:
     effect: deny
   - action: shell
     resource: "git *"
-    effect: allow
+    effect: ask
   - action: shell
     resource: "but *"
-    effect: allow
+    effect: ask
 ---
 
 You are Loom's senior systems architect. Within accepted product, design, and behavioral authority, **technical realization is your domain**.

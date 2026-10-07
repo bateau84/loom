@@ -76,11 +76,11 @@ class ActivationTests(unittest.TestCase):
 
 
 class AgentButlerPermissionTests(unittest.TestCase):
-    def test_every_agent_explicitly_allows_butler_shell(self):
+    def test_every_agent_exposes_butler_as_fail_safe_ask(self):
         permission = (
             '  - action: shell\n'
             '    resource: "but *"\n'
-            '    effect: allow'
+            '    effect: ask'
         )
         for path in sorted((ROOT / "agents").glob("*.md")):
             text = path.read_text()
@@ -98,22 +98,22 @@ class AgentButlerPermissionTests(unittest.TestCase):
                     self.assertGreater(
                         header.index(permission),
                         header.index(wildcard_deny),
-                        "Butler allow must follow wildcard shell deny",
+                        "Butler ask fallback must follow wildcard shell deny",
                     )
 
 
 class AgentGitPermissionTests(unittest.TestCase):
-    def test_every_agent_explicitly_allows_git_and_but_shell(self):
+    def test_every_agent_exposes_git_and_but_as_fail_safe_ask(self):
         permissions = [
             (
                 '  - action: shell\n'
                 '    resource: "git *"\n'
-                '    effect: allow'
+                '    effect: ask'
             ),
             (
                 '  - action: shell\n'
                 '    resource: "but *"\n'
-                '    effect: allow'
+                '    effect: ask'
             ),
         ]
         wildcard_deny = (
@@ -133,11 +133,16 @@ class AgentGitPermissionTests(unittest.TestCase):
                         self.assertGreater(
                             header.index(permission),
                             header.index(wildcard_deny),
-                            "Git/Butler allow must follow wildcard shell deny",
+                            "Git/Butler ask fallback must follow wildcard shell deny",
                         )
 
     def test_runtime_has_universal_git_inspection_and_fail_closed_fallback(self):
         source = (ROOT / "plugins/loom/index.ts").read_text()
+        agents = "\n".join(
+            path.read_text() for path in sorted((ROOT / "agents").glob("*.md"))
+        )
+        self.assertNotIn('resource: "git *"\n    effect: allow', agents)
+        self.assertNotIn('resource: "but *"\n    effect: allow', agents)
         self.assertIn("isGitInspectionShellCommand(resource)", source)
         self.assertIn(
             "Read-only repository inspection is universally available",
