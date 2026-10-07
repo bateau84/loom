@@ -5688,7 +5688,7 @@ Verdict: FAIL
       await evaluate!(diagnosticCommitScratch)
       expect(diagnosticCommitScratch.effect).toBe("deny")
       expect(diagnosticCommitScratch.message).toContain(
-        "role that can own the repository commit",
+        "committable repository scope",
       )
 
       const designStarted = await call(
