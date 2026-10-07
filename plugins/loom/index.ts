@@ -405,7 +405,7 @@ async function cleanRepositoryHead(projectDirectory: string): Promise<string | u
   try {
     const { stdout } = await execFileAsync(
       "git", ["status", "--porcelain=v1", "--untracked-files=all"],
-      { cwd: projectDirectory, encoding: "utf8", maxBuffer: 1024 * 1024 },
+      { cwd: projectDirectory, encoding: "utf8", maxBuffer: 1024 * 1024, timeout: 5_000 },
     )
     return stdout.trim() === "" ? head : undefined
   } catch {
