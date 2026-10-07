@@ -88,12 +88,36 @@ class CompatValidationTests(unittest.TestCase):
         self.assertEqual(status, 0)
         self.assertEqual(run.call_count, 2)
         generic = run.call_args_list[0].args[0]
-        legacy = run.call_args_list[1].args[0]
+        paired = run.call_args_list[1].args[0]
         self.assertEqual(generic[generic.index("--cases") + 1], "RUNTIME-1")
         self.assertIn(str(Path(temp) / "normal"), generic)
-        self.assertIn(str(w.LEGACY_RUNNER), legacy)
-        self.assertEqual(legacy[legacy.index("--cases") + 1], "SKILL-demo-S1")
-        self.assertIn(str(Path(temp) / "skill-ablation"), legacy)
+        self.assertIn(str(w.PAIRED_RUNNER), paired)
+        self.assertNotIn(str(w.LEGACY_RUNNER), paired)
+        self.assertEqual(paired[paired.index("--cases") + 1], "SKILL-demo-S1")
+        self.assertIn(str(Path(temp) / "skill-ablation"), paired)
+        self.assertIsNotNone(run.call_args_list[1].kwargs.get("env"))
+
+    def test_skill_only_uses_paired_without_normal_or_legacy_path(self):
+        w = self.w
+        skill = {
+            "id": "SKILL-demo-S1", "agent": "skill-eval", "execution": "runtime",
+            "skill": "demo", "requirements": [], "_skill_owned": True,
+        }
+        with tempfile.TemporaryDirectory() as temp:
+            runner = Path(temp) / "opencode-eval-runner"
+            runner.write_text("#!/bin/sh\n", encoding="utf-8")
+            with (
+                mock.patch.object(w, "resolve_selection", return_value=[skill]),
+                mock.patch.object(w, "_run", return_value=0) as run,
+                mock.patch.dict(os.environ, {"OPENCODE_EVAL_RUNNER_BIN": str(runner)}, clear=False),
+            ):
+                status = w.main(["--cases", skill["id"], "--model", "fixture/model", "--artifact-dir", temp])
+        self.assertEqual(status, 0)
+        self.assertEqual(run.call_count, 1)
+        command = run.call_args.args[0]
+        self.assertEqual(command[1], str(w.PAIRED_RUNNER))
+        self.assertNotIn(str(w.LEGACY_RUNNER), command)
+        self.assertIn("--transport-retries", command)
 
     def test_listing_remains_provider_free_legacy_compatibility(self):
         w = self.w
