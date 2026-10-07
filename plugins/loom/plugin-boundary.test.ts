@@ -12270,6 +12270,60 @@ test("Planner removal of a claimed Task can recover without redispatching comple
   }
 })
 
+test("Plan reopen reruns completed dependents when an upstream execution receipt is invalid", async () => {
+  const h = await waveLifecycleFixture("wave", false, "worker", true, "execute", "worker")
+  try {
+    expect((await h.finish("task:one", "worker")).error).toBeUndefined()
+    expect((await h.finish("task:dependent", "worker")).error).toBeUndefined()
+    const completed = await h.workflow()
+    const oldDependent = completed.steps.find((step: any) => step.id === "task:dependent")
+    expect(oldDependent.status).toBe("complete")
+
+    const work = await h.work()
+    const upstream = work.nodes.find((node: any) => node.type === "task" && node.logicalId === "one")
+    const dependent = work.nodes.find((node: any) => node.type === "task" && node.logicalId === "dependent")
+    expect(upstream.result.semanticClosureFingerprint).toEqual(expect.any(String))
+    expect(dependent.result.semanticClosureFingerprint).toEqual(expect.any(String))
+    // Force only the producer's old receipt to become untrusted. The dependent's
+    // own contract and evidence remain intact, but its consumed result cannot.
+    delete upstream.result.semanticClosureFingerprint
+    await h.durableStorage.set(h.workKey, work)
+
+    const reopened = await h.call("reopen", {
+      workflowId: h.workflowId, stepId: "plan",
+      reason: "Producer evidence is no longer trustworthy; rerun dependent work.",
+      newEvidence: true, changedHypothesis: false,
+      changedStrategy: false, reducedUnresolved: false,
+    }, "general", "parent")
+    expect(reopened.error).toBeUndefined()
+    expect(reopened.reset).toContain("task:one")
+    expect(reopened.reset).toContain("task:dependent")
+
+    const after = await h.workflow()
+    expect(after.steps.find((step: any) => step.id === "task:one").status).toBe("pending")
+    expect(after.steps.find((step: any) => step.id === "task:dependent")).toMatchObject({
+      status: "pending", attempt: oldDependent.attempt + 1,
+    })
+    const updated = await h.work()
+    for (const taskId of ["one", "dependent"]) {
+      const task = updated.nodes.find((node: any) => node.type === "task" && node.logicalId === taskId)
+      expect(task.result).toBeUndefined()
+      expect(task.priorResults?.at(-1).invalidatedReason).toContain("Plan reopened")
+    }
+
+    const planner = await h.attach("plan", "planner", "dependent-recovery-planner")
+    const currentTasks = updated.plans.at(-1).phases[0].waves[0].tasks
+    const compiled = await h.call("task_plan", {
+      workflowId: h.workflowId,
+      tasks: currentTasks.map((task: any) => ({ ...task, write: ["src/**"], skills: [] })),
+    }, "planner", planner)
+    expect(compiled.error).toBeUndefined()
+    expect(compiled.reusedTaskIds).toEqual([])
+  } finally {
+    h.restore()
+  }
+})
+
 test("Plan reopen reruns a completion whose claim list omits original evidence", async () => {
   const h = await waveLifecycleFixture("wave", false, "worker", true, "execute", "worker")
   try {
