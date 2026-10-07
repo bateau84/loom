@@ -30,7 +30,7 @@ import {
 } from "./upgrade-actions"
 
 export const LOOM_NATIVE_TOOL_GUIDANCE =
-  "Loom control-plane tools are available through two equivalent OpenCode surfaces: native loom_* tools and Code Mode mirrors under tools.loom.code.*. Use either surface directly according to the active tool paradigm. If using Code Mode, search for Loom tools and invoke the returned tools.loom.code.* signatures; do not fall back to shell/filesystem discovery for Loom commands. Reviewer/Critic methodology uses a two-part contract: load practitioner guidance with OpenCode's native skill tool, then consume the role companion through loom_assessment or loom_qa; a plain ASSESSMENT.md/QA.md read is artifact inspection, not methodology loading. Interactive status is dashboard-first and does not depend on model prose: the Loom sidebar exposes a stable workflow dashboard URL, while loom_status may also return presentation metadata. Desktop browser preview is optional metadata only; do not invoke tools.browser.preview merely because presentation metadata exists. Every Loom agent may use GitButler inspection commands such as `but status`, `but diff`, and `but show`. When a role owns durable repository changes, load git-commit-discipline before committing so the commit remains coherent and reviewable; load the `but` skill when GitButler mechanics matter. Loom admits selected-ID Butler commits only: use `but commit ... -m ... <file-or-hunk-id>...`; Loom resolves those IDs back to repository paths and revalidates current task/session ownership under lock. Bare commit-all, empty, interactive, current-directory override, and unsupported history-wide Butler mutations are denied. The existing bounded `git -c core.hooksPath=/dev/null commit -m ...` path remains a fallback; long Markdown messages may instead use `git -c core.hooksPath=/dev/null commit -F ephemeral-reports/<role>/commit-messages/<name>.md`. Compose that scratch file with edit/write tools, never shell redirection. Plain `git commit` is intentionally denied so repository hooks cannot change the staged scope after Loom validates it. Runtime write scope is discoverable: an attached child that needs additional project-local files calls loom_scope_elevate and continues immediately when granted. If any Loom tool returns continue=false, the child MUST stop its current turn and return control immediately; it must not retry the blocked mutation or continue assuming authority will arrive later."
+  "Loom control-plane tools are available through two equivalent OpenCode surfaces: native loom_* tools and Code Mode mirrors under tools.loom.code.*. Use either surface directly according to the active tool paradigm. If using Code Mode, search for Loom tools and invoke the returned tools.loom.code.* signatures; do not fall back to shell/filesystem discovery for Loom commands. Reviewer/Critic methodology uses a two-part contract: load practitioner guidance with OpenCode's native skill tool, then consume the role companion through loom_assessment or loom_qa; a plain ASSESSMENT.md/QA.md read is artifact inspection, not methodology loading. Interactive status is dashboard-first and does not depend on model prose: the Loom sidebar exposes a stable workflow dashboard URL, while loom_status may also return presentation metadata. Desktop browser preview is optional metadata only; do not invoke tools.browser.preview merely because presentation metadata exists. Every Loom agent may use GitButler inspection commands such as `but status`, `but diff`, and `but show`. When a role owns durable repository changes, load git-commit-discipline before committing so the commit remains coherent and reviewable; load the `but` skill when GitButler mechanics matter. Loom admits selected whole-file-ID Butler commits only: use `but commit ... -m ... <file-id>...`; Loom resolves those IDs back to repository paths and revalidates current task/session ownership under lock. Bare commit-all, empty, interactive, current-directory override, and unsupported history-wide Butler mutations are denied. The existing bounded `git -c core.hooksPath=/dev/null commit -m ...` path remains a fallback; long Markdown messages may instead use `git -c core.hooksPath=/dev/null commit -F ephemeral-reports/<role>/commit-messages/<name>.md`. Compose that scratch file with edit/write tools, never shell redirection. Plain `git commit` is intentionally denied so repository hooks cannot change the staged scope after Loom validates it. Runtime write scope is discoverable: an attached child that needs additional project-local files calls loom_scope_elevate and continues immediately when granted. If any Loom tool returns continue=false, the child MUST stop its current turn and return control immediately; it must not retry the blocked mutation or continue assuming authority will arrive later."
 import {
   assertWorkflowNotCancelled,
   WorkflowCancelledError,
@@ -723,7 +723,7 @@ async function resolveButlerCommitSelection(
         .filter(Boolean)
         .join("\n")
       throw new Error(
-        `Butler commit denied: could not resolve selected CLI ID ${source}: ${detail || "unknown GitButler error"}`,
+        `Butler commit denied: could not resolve selected whole-file CLI ID ${source}: ${detail || "unknown GitButler error"}`,
       )
     }
 
@@ -738,7 +738,23 @@ async function resolveButlerCommitSelection(
     const changes = Array.isArray(parsed?.changes) ? parsed.changes : []
     if (changes.length === 0) {
       throw new Error(
-        `Butler commit denied: selected CLI ID ${source} resolved to no changes.`,
+        `Butler commit denied: selected whole-file CLI ID ${source} resolved to no changes.`,
+      )
+    }
+
+    const sourcePaths = new Set(
+      changes
+        .map((change: any) => change?.path)
+        .filter((path: unknown): path is string => typeof path === "string" && path.length > 0),
+    )
+    const sourceOldPaths = new Set(
+      changes
+        .map((change: any) => change?.oldPath)
+        .filter((path: unknown): path is string => typeof path === "string" && path.length > 0),
+    )
+    if (sourcePaths.size !== 1 || sourceOldPaths.size > 0) {
+      throw new Error(
+        `Butler commit denied: ${source} must identify exactly one whole uncommitted file; hunk, workspace-wide, and rename-like selections are not admitted by Loom.`,
       )
     }
 
@@ -758,7 +774,7 @@ async function resolveButlerCommitSelection(
   }
 
   if (paths.size === 0) {
-    throw new Error("Butler commit denied: selected CLI IDs resolved to no repository paths.")
+    throw new Error("Butler commit denied: selected whole-file CLI IDs resolved to no repository paths.")
   }
 
   return {
@@ -4287,7 +4303,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       )
       if (!current || current.digest !== expected.digest) {
         throw new Error(
-          "Butler commit denied: selected CLI IDs changed before execution; re-read `but diff` and retry with current IDs.",
+          "Butler commit denied: selected whole-file CLI IDs changed before execution; re-read `but diff` and retry with current IDs.",
         )
       }
 
@@ -11840,7 +11856,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           ) {
             event.effect = "deny"
             event.message =
-              "Butler mutation is not admitted by Loom. Use read-only Butler inspection or an explicit selected-ID `but commit ... -m ... <id>...`; broad, interactive, empty, chained, and history-wide Butler mutations remain blocked."
+              "Butler mutation is not admitted by Loom. Use read-only Butler inspection or an explicit selected whole-file-ID `but commit ... -m ... <id>...`; broad, interactive, empty, chained, and history-wide Butler mutations remain blocked."
             return
           }
 

@@ -57,21 +57,23 @@ describe("Loom Worker shell policy", () => {
   test("admits only explicit selected-ID Butler commits with messages", () => {
     expect(
       butlerCommitSourceIds(
-        "but commit -b feature -m 'fix(runtime): preserve ownership' qs:5 uo",
+        "but commit -b feature -m 'fix(runtime): preserve ownership' qs uo",
       ),
-    ).toEqual(["qs:5", "uo"])
+    ).toEqual(["qs", "uo"])
     expect(
       butlerCommitSourceIds(
-        "but --json commit --above abc -m 'feat: one' -m 'Verification: pass' qs:5",
+        "but --json commit --above abc -m 'feat: one' -m 'Verification: pass' qs",
       ),
-    ).toEqual(["qs:5"])
+    ).toEqual(["qs"])
 
     expect(
-      isAllowedButlerCommit("but commit -b feature -m 'fix: scoped' qs:5"),
+      isAllowedButlerCommit("but commit -b feature -m 'fix: scoped' qs"),
     ).toBe(true)
-    expect(isButlerCommitShellCommand("but commit -m 'fix: scoped' qs:5")).toBe(true)
+    expect(isButlerCommitShellCommand("but commit -m 'fix: scoped' qs")).toBe(true)
 
     for (const command of [
+      "but commit -b feature -m 'fix: partial' qs:5",
+      "but commit -b feature -m 'fix: broad' zz",
       "but commit -b feature -m 'fix: broad'",
       "but commit -b feature qs:5",
       "but commit --empty -b feature -m 'chore: marker'",

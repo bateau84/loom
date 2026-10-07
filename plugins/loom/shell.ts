@@ -365,6 +365,7 @@ export function butlerCommitSourceIds(command: string) {
     ) return undefined
 
     if (word.startsWith("-")) return undefined
+    if (word.includes(":") || word === "zz") return undefined
     sources.push(word)
   }
 
