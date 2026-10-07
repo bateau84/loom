@@ -4600,6 +4600,27 @@ Verdict: FAIL
       const evaluate = permissionHooks.get("evaluate")
       expect(evaluate).toBeDefined()
 
+      for (const [command, expectedFragment] of [
+        ["git status && rm -f README.md", "Git command is not admitted"],
+        ["but status && but discard zz", "Butler mutation is not admitted"],
+        ["but pull --check", "Butler mutation is not admitted"],
+        ["but push feature --dry-run", "Butler mutation is not admitted"],
+        ["but status --refresh-prs", "Butler mutation is not admitted"],
+        ["but branch list --review", "Butler mutation is not admitted"],
+        ["but branch show feature --ai", "Butler mutation is not admitted"],
+      ] as const) {
+        const unsafeRepositoryCommand: any = {
+          agent: "architect",
+          action: "shell",
+          resources: [command],
+          sessionID: "conversation-repository-command-boundary",
+          effect: "allow",
+        }
+        await evaluate!(unsafeRepositoryCommand)
+        expect(unsafeRepositoryCommand.effect).toBe("deny")
+        expect(unsafeRepositoryCommand.message).toContain(expectedFragment)
+      }
+
       const crossRoleEdit: any = {
         agent: "reviewer",
         action: "edit",
@@ -5688,7 +5709,7 @@ Verdict: FAIL
       await evaluate!(diagnosticCommitScratch)
       expect(diagnosticCommitScratch.effect).toBe("deny")
       expect(diagnosticCommitScratch.message).toContain(
-        "role that can own the repository commit",
+        "committable repository scope",
       )
 
       const designStarted = await call(
@@ -5874,6 +5895,193 @@ Verdict: FAIL
       expect(unattachedWorker.message).toContain("loom_attach")
     } finally {
       restore()
+    }
+  })
+
+  test("Butler commit admission resolves file IDs and revalidates them under the repository lock", async () => {
+    const h = await harness()
+    const previousPath = process.env.PATH
+    const previousFakeState = process.env.LOOM_FAKE_BUT_STATE
+    try {
+      await initializeGitFixture(h.root)
+      await mkdir(join(h.root, "docs", "design"), { recursive: true })
+
+      const fakeBin = join(h.root, "fake-bin")
+      const fakeBut = join(fakeBin, "but")
+      const fakeState = join(h.root, "fake-but-count")
+      await mkdir(fakeBin, { recursive: true })
+
+      const writeFakeBut = async (
+        mode: "stable" | "stale" | "rename" | "linked-worktree",
+      ) => {
+        const stale = mode === "stale" ? "1" : "0"
+        const changeType = mode === "rename" ? "renamed" : "modified"
+        const linked = mode === "linked-worktree" ? "1" : "0"
+        await writeFile(
+          fakeBut,
+          `#!/bin/sh
+set -eu
+if [ "\$1" = "--json" ] && [ "\$2" = "status" ] && [ "\$3" = "-f" ]; then
+  status_path="docs/design/runtime.md"
+  if [ "${stale}" = "1" ] && [ -f "\$LOOM_FAKE_BUT_STATE" ]; then
+    count=\$(cat "\$LOOM_FAKE_BUT_STATE")
+    if [ "\$count" -ge 2 ]; then status_path="docs/design/other.md"; fi
+  fi
+  if [ "${linked}" = "1" ]; then
+    printf '{"uncommittedChanges":[],"stacks":[],"worktrees":[{"uncommittedChanges":[{"cliId":"qs","filePath":"%s","changeType":"${changeType}"}]}]}\\n' "\$status_path"
+  else
+    printf '{"uncommittedChanges":[{"cliId":"qs","filePath":"%s","changeType":"${changeType}"}],"stacks":[],"worktrees":[]}\\n' "\$status_path"
+  fi
+  exit 0
+fi
+if [ "\$1" != "--json" ] || [ "\$2" != "diff" ] || [ "\$3" != "qs" ]; then
+  echo "unexpected fake but invocation: \$*" >&2
+  exit 2
+fi
+path="docs/design/runtime.md"
+if [ "${stale}" = "1" ]; then
+  count=0
+  if [ -f "\$LOOM_FAKE_BUT_STATE" ]; then count=\$(cat "\$LOOM_FAKE_BUT_STATE"); fi
+  count=\$((count + 1))
+  printf '%s' "\$count" > "\$LOOM_FAKE_BUT_STATE"
+  if [ "\$count" -ge 3 ]; then path="docs/design/other.md"; fi
+fi
+printf '{"changes":[{"id":"qs:1","path":"%s","status":"modified","diff":{"type":"patch","hunks":[]}}]}\\n' "\$path"
+`,
+        )
+        await chmod(fakeBut, 0o755)
+      }
+
+      process.env.PATH = `${fakeBin}:${previousPath ?? ""}`
+      process.env.LOOM_FAKE_BUT_STATE = fakeState
+      await writeFakeBut("stable")
+
+      const started = await h.call(
+        "start",
+        { request: "Define one bounded user-facing design change." },
+        "general",
+        "butler-admission-general",
+      )
+      const workflowId = String(started.workflowId)
+      expect((await h.call(
+        "route",
+        {
+          humanFacing: true,
+          behavioral: false,
+          structural: false,
+          externalUnknown: false,
+          diagnostic: false,
+          productOutcome: true,
+          implementationRequested: true,
+          executionDepth: "change",
+        },
+        "general",
+        "butler-admission-general",
+      )).error).toBeUndefined()
+
+      const grant = await h.call(
+        "dispatch_grant",
+        { workflowId, stepId: "designer" },
+        "general",
+        "butler-admission-general",
+      )
+      expect((await h.call(
+        "attach",
+        { grantId: grant.grantId, workflowId, stepId: "designer" },
+        "designer",
+        "butler-admission-designer",
+      )).attached).toBe(true)
+
+      const evaluate = h.permissionHooks.get("evaluate")!
+      const editPermission: any = {
+        agent: "designer",
+        action: "edit",
+        resources: ["docs/design/runtime.md"],
+        sessionID: "butler-admission-designer",
+        effect: "ask",
+      }
+      await evaluate(editPermission)
+      expect(editPermission.effect).not.toBe("deny")
+
+      const editEvent = {
+        tool: "edit",
+        callID: "butler-owned-edit",
+        sessionID: "butler-admission-designer",
+        agent: "designer",
+        input: { filePath: join(h.root, "docs", "design", "runtime.md") },
+      }
+      await h.toolHooks.get("execute.before")?.(editEvent)
+      await writeFile(join(h.root, "docs", "design", "runtime.md"), "owned design\n")
+      await h.toolHooks.get("execute.after")?.({
+        ...editEvent,
+        status: "completed",
+        result: "updated",
+      })
+
+      const command = "but commit -m 'docs(design): runtime' qs"
+      const commitPermission: any = {
+        agent: "designer",
+        action: "shell",
+        resources: [command],
+        sessionID: "butler-admission-designer",
+        effect: "ask",
+      }
+      await evaluate(commitPermission)
+      expect(commitPermission.effect).toBe("allow")
+
+      const commitEvent = {
+        tool: "shell",
+        callID: "butler-scoped-commit",
+        sessionID: "butler-admission-designer",
+        agent: "designer",
+        input: { command },
+      }
+      await h.toolHooks.get("execute.before")?.(commitEvent)
+      await h.toolHooks.get("execute.after")?.({
+        ...commitEvent,
+        status: "error",
+        error: new Error("synthetic shell stop after admission"),
+      })
+
+      await writeFakeBut("rename")
+      const renamePermission: any = {
+        ...commitPermission,
+        effect: "ask",
+      }
+      await evaluate(renamePermission)
+      expect(renamePermission.effect).toBe("deny")
+      expect(renamePermission.message).toContain("is a rename")
+
+      await writeFakeBut("linked-worktree")
+      const worktreePermission: any = {
+        ...commitPermission,
+        effect: "ask",
+      }
+      await evaluate(worktreePermission)
+      expect(worktreePermission.effect).toBe("deny")
+      expect(worktreePermission.message).toContain("belongs to a linked worktree")
+
+      await rm(fakeState, { force: true })
+      await writeFakeBut("stale")
+      const stalePermission: any = {
+        ...commitPermission,
+        effect: "ask",
+      }
+      await evaluate(stalePermission)
+      expect(stalePermission.effect).toBe("allow")
+
+      await expect(
+        h.toolHooks.get("execute.before")?.({
+          ...commitEvent,
+          callID: "butler-stale-commit",
+        }),
+      ).rejects.toThrow("selected whole-file CLI IDs changed before execution")
+    } finally {
+      if (previousPath === undefined) delete process.env.PATH
+      else process.env.PATH = previousPath
+      if (previousFakeState === undefined) delete process.env.LOOM_FAKE_BUT_STATE
+      else process.env.LOOM_FAKE_BUT_STATE = previousFakeState
+      h.restore()
     }
   })
 

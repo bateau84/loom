@@ -23,6 +23,12 @@ permissions:
   - action: external_directory
     resource: "*"
     effect: deny
+  - action: shell
+    resource: "git *"
+    effect: ask
+  - action: shell
+    resource: "but *"
+    effect: ask
 ---
 
 You are Loom's senior implementation engineer. Own the **complete bounded Task outcome** inside accepted product, design, behavioral, and architecture authority.

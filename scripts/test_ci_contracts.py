@@ -75,6 +75,111 @@ class ActivationTests(unittest.TestCase):
         self.assertIn("grep -Fxq 'PASS missing plugin rejected'", workflow)
 
 
+class AgentButlerPermissionTests(unittest.TestCase):
+    def test_every_agent_exposes_butler_as_fail_safe_ask(self):
+        permission = (
+            '  - action: shell\n'
+            '    resource: "but *"\n'
+            '    effect: ask'
+        )
+        for path in sorted((ROOT / "agents").glob("*.md")):
+            text = path.read_text()
+            header_end = text.find("\n---", 4)
+            self.assertGreater(header_end, 0, path.name)
+            header = text[:header_end]
+            with self.subTest(agent=path.stem):
+                self.assertIn(permission, header)
+                wildcard_deny = (
+                    '  - action: shell\n'
+                    '    resource: "*"\n'
+                    '    effect: deny'
+                )
+                if wildcard_deny in header:
+                    self.assertGreater(
+                        header.index(permission),
+                        header.index(wildcard_deny),
+                        "Butler ask fallback must follow wildcard shell deny",
+                    )
+
+
+class AgentGitPermissionTests(unittest.TestCase):
+    def test_every_agent_exposes_git_and_but_as_fail_safe_ask(self):
+        permissions = [
+            (
+                '  - action: shell\n'
+                '    resource: "git *"\n'
+                '    effect: ask'
+            ),
+            (
+                '  - action: shell\n'
+                '    resource: "but *"\n'
+                '    effect: ask'
+            ),
+        ]
+        wildcard_deny = (
+            '  - action: shell\n'
+            '    resource: "*"\n'
+            '    effect: deny'
+        )
+        for path in sorted((ROOT / "agents").glob("*.md")):
+            text = path.read_text()
+            header_end = text.find("\n---", 4)
+            self.assertGreater(header_end, 0, path.name)
+            header = text[:header_end]
+            with self.subTest(agent=path.stem):
+                for permission in permissions:
+                    self.assertIn(permission, header)
+                    if wildcard_deny in header:
+                        self.assertGreater(
+                            header.index(permission),
+                            header.index(wildcard_deny),
+                            "Git/Butler ask fallback must follow wildcard shell deny",
+                        )
+
+    def test_runtime_has_universal_git_inspection_and_fail_closed_fallback(self):
+        source = (ROOT / "plugins/loom/index.ts").read_text()
+        agents = "\n".join(
+            path.read_text() for path in sorted((ROOT / "agents").glob("*.md"))
+        )
+        self.assertNotIn('resource: "git *"\n    effect: allow', agents)
+        self.assertNotIn('resource: "but *"\n    effect: allow', agents)
+        self.assertIn("isGitInspectionShellCommand(resource)", source)
+        self.assertIn(
+            "Read-only repository inspection is universally available",
+            source,
+        )
+
+
+class CommitScopeAuthorityTests(unittest.TestCase):
+    def test_commit_authority_is_scope_derived_not_role_allowlisted(self):
+        source = (ROOT / "plugins/loom/index.ts").read_text()
+        self.assertNotIn("repositoryCommitAgents", source)
+        self.assertNotIn("roleCanOwnRepositoryCommit", source)
+        self.assertIn(
+            'if (agent !== "general" && !loomAgents.has(agent)) return false',
+            source,
+        )
+        self.assertIn("committableWriteScope(effectiveWrite)", source)
+        self.assertIn("commitAuthorized: committableWrite.length > 0", source)
+
+    def test_scope_elevation_reports_commit_authority_from_effective_scope(self):
+        source = (ROOT / "plugins/loom/index.ts").read_text()
+        self.assertIn("grantedProjectPaths: projectPaths", source)
+        self.assertIn(
+            "committableWriteScope(\n                          result.scope?.write ?? result.roleWriteDefault",
+            source,
+        )
+        self.assertIn(
+            "Any durable project-local write scope, including scope granted by loom_scope_elevate",
+            source,
+        )
+        granted = source.index('status: "granted"')
+        next_tool = source.index('name: "scope_authorize_once"', granted)
+        granted_block = source[granted:next_tool]
+        self.assertIn("commitAuthorized:", granted_block)
+        self.assertIn("committableWrite:", granted_block)
+
+
 class OpenCodeVersionContractTests(unittest.TestCase):
     def test_primary_host_matches_plugin_dependency(self):
         package = json.loads((ROOT / "package.json").read_text())

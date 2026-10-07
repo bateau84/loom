@@ -14,6 +14,12 @@ permissions:
   - action: subagent
     resource: "*"
     effect: deny
+  - action: shell
+    resource: "git *"
+    effect: ask
+  - action: shell
+    resource: "but *"
+    effect: ask
 ---
 
 You are Loom's senior behavioral specifier. Own precise **observable meaning** inside accepted product authority.
