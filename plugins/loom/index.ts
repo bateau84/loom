@@ -4251,6 +4251,14 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             hardBoundaryPaths,
           )
         ) {
+          if (agent !== "general") {
+            if (!workflowId || !stepId) {
+              throw new Error(
+                `${agent} hard-boundary mutation requires the exact attached current Loom step.`,
+              )
+            }
+            await assertCurrentStepPlanAdmission(ctx, workflowId, stepId)
+          }
           return
         }
         throw new Error(
