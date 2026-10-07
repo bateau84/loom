@@ -30,7 +30,7 @@ import {
 } from "./upgrade-actions"
 
 export const LOOM_NATIVE_TOOL_GUIDANCE =
-  "Loom control-plane tools are available through two equivalent OpenCode surfaces: native loom_* tools and Code Mode mirrors under tools.loom.code.*. Use either surface directly according to the active tool paradigm. If using Code Mode, search for Loom tools and invoke the returned tools.loom.code.* signatures; do not fall back to shell/filesystem discovery for Loom commands. Reviewer/Critic methodology uses a two-part contract: load practitioner guidance with OpenCode's native skill tool, then consume the role companion through loom_assessment or loom_qa; a plain ASSESSMENT.md/QA.md read is artifact inspection, not methodology loading. Interactive status is dashboard-first and does not depend on model prose: the Loom sidebar exposes a stable workflow dashboard URL, while loom_status may also return presentation metadata. Desktop browser preview is optional metadata only; do not invoke tools.browser.preview merely because presentation metadata exists. When a role owns a repository commit, load git-commit-discipline before committing so the commit remains coherent and reviewable. Loom admits bounded role commits through `git -c core.hooksPath=/dev/null commit -m ...`; long Markdown messages may instead use `git -c core.hooksPath=/dev/null commit -F ephemeral-reports/<role>/commit-messages/<name>.md`. Compose that scratch file with edit/write tools, never shell redirection. Plain `git commit` is intentionally denied so repository hooks cannot change the staged scope after Loom validates it. Runtime write scope is discoverable: an attached child that needs additional project-local files calls loom_scope_elevate and continues immediately when granted. If any Loom tool returns continue=false, the child MUST stop its current turn and return control immediately; it must not retry the blocked mutation or continue assuming authority will arrive later."
+  "Loom control-plane tools are available through two equivalent OpenCode surfaces: native loom_* tools and Code Mode mirrors under tools.loom.code.*. Use either surface directly according to the active tool paradigm. If using Code Mode, search for Loom tools and invoke the returned tools.loom.code.* signatures; do not fall back to shell/filesystem discovery for Loom commands. Reviewer/Critic methodology uses a two-part contract: load practitioner guidance with OpenCode's native skill tool, then consume the role companion through loom_assessment or loom_qa; a plain ASSESSMENT.md/QA.md read is artifact inspection, not methodology loading. Interactive status is dashboard-first and does not depend on model prose: the Loom sidebar exposes a stable workflow dashboard URL, while loom_status may also return presentation metadata. Desktop browser preview is optional metadata only; do not invoke tools.browser.preview merely because presentation metadata exists. Every Loom agent may use both Git and GitButler for repository inspection: read-only Git commands such as `git status`, `git diff`, `git log`, `git show`, and `git rev-parse`, plus GitButler commands such as `but status`, `but diff`, and `but show`. When any role has durable project-local write scope, that same effective scope authorizes commits of the admitted bytes; this includes paths added by `loom_scope_elevate`. Load git-commit-discipline before committing so the commit remains coherent and reviewable; load the `but` skill when GitButler mechanics matter. Loom admits selected whole-file-ID Butler commits only: use untargeted `but commit -m ... <file-id>...`; Loom resolves those IDs back to repository paths and revalidates current task/session ownership under lock. Bare commit-all, empty, interactive, current-directory override, and unsupported history-wide Butler mutations are denied. The existing bounded `git -c core.hooksPath=/dev/null commit -m ...` path remains a fallback; long Markdown messages may instead use `git -c core.hooksPath=/dev/null commit -F ephemeral-reports/<role>/commit-messages/<name>.md`. Compose that scratch file with edit/write tools, never shell redirection. Plain `git commit` is intentionally denied so repository hooks cannot change the staged scope after Loom validates it. Runtime write scope is discoverable: an attached child that needs additional project-local files calls loom_scope_elevate and continues immediately when granted. If any Loom tool returns continue=false, the child MUST stop its current turn and return control immediately; it must not retry the blocked mutation or continue assuming authority will arrive later."
 import {
   assertWorkflowNotCancelled,
   WorkflowCancelledError,
@@ -119,11 +119,18 @@ import {
 } from "./diagnostic-sandbox"
 import {
   authorGitShellResourcesAllowed,
+  butlerCommitSourceIds,
   commitMessageScratchPath,
   diagnosticExecutionShellResourcesAllowed,
   gitCommitMessageFile,
   diagnosticShellResourcesAllowed,
+  isAllowedButlerCommit,
   isAllowedGitCommit,
+  isButlerCommitShellCommand,
+  isGitInspectionShellCommand,
+  isGitShellCommand,
+  isButlerInspectionShellCommand,
+  isButlerShellCommand,
   isGitAuthoringShellCommand,
   scopedGitAddTargets,
   scopedGofmtWriteTargets,
@@ -412,21 +419,11 @@ const productScopeElevatingAgents = new Set([
 
 const generalGitWriteScope = ["docs/anchors/**"]
 
-const repositoryCommitAgents = new Set([
-  "designer",
-  "specifier",
-  "architect",
-  "reviewer",
-  "documenter",
-  "worker",
-])
-
-function roleCanOwnRepositoryCommit(agent: string) {
-  return agent === "general" || repositoryCommitAgents.has(agent)
-}
-
+// Commit authority follows the current effective committable write scope, not
+// a role allowlist. This helper only establishes the role-owned scratch
+// namespace; permission to use it is checked against current write scope.
 function roleCommitMessagePath(agent: string, resource: string) {
-  if (!roleCanOwnRepositoryCommit(agent)) return false
+  if (agent !== "general" && !loomAgents.has(agent)) return false
   const normalized = commitMessageScratchPath(resource)
   return Boolean(
     normalized &&
@@ -711,6 +708,192 @@ async function gitCommandPaths(projectDirectory: string, args: string[]) {
     encoding: "utf8",
   })
   return String(stdout).split("\0").filter(Boolean).map(normalizeRepoPath)
+}
+
+
+type ButlerCommitSelection = {
+  paths: string[]
+  digest: string
+}
+
+
+type ButlerStatusFile = {
+  cliId: string
+  filePath: string
+  changeType: string
+  source: "workspace" | "linked-worktree"
+}
+
+function butlerStatusFiles(status: any): ButlerStatusFile[] {
+  const files: ButlerStatusFile[] = []
+  const append = (changes: unknown, source: ButlerStatusFile["source"]) => {
+    if (!Array.isArray(changes)) return
+    for (const change of changes) {
+      if (
+        !change ||
+        typeof change !== "object" ||
+        typeof (change as any).cliId !== "string" ||
+        typeof (change as any).filePath !== "string" ||
+        typeof (change as any).changeType !== "string"
+      ) continue
+      files.push({
+        cliId: String((change as any).cliId),
+        filePath: safeOwnedRepoPath(String((change as any).filePath)),
+        changeType: String((change as any).changeType),
+        source,
+      })
+    }
+  }
+
+  append(status?.uncommittedChanges, "workspace")
+  if (Array.isArray(status?.stacks)) {
+    for (const stack of status.stacks) {
+      append(stack?.assignedChanges, "workspace")
+    }
+  }
+  if (Array.isArray(status?.worktrees)) {
+    for (const worktree of status.worktrees) {
+      append(worktree?.uncommittedChanges, "linked-worktree")
+    }
+  }
+  return files
+}
+
+async function readButlerStatusFiles(projectDirectory: string) {
+  let stdout: string
+  try {
+    const result = await execFileAsync(
+      "but",
+      ["--json", "status", "-f"],
+      { cwd: projectDirectory, encoding: "utf8" },
+    )
+    stdout = String(result.stdout)
+  } catch (error: any) {
+    const detail = [error?.message, error?.stderr, error?.stdout]
+      .filter(Boolean)
+      .join("\n")
+    throw new Error(
+      `Butler commit denied: could not inspect current GitButler file identity: ${detail || "unknown GitButler error"}`,
+    )
+  }
+
+  try {
+    return butlerStatusFiles(JSON.parse(stdout))
+  } catch {
+    throw new Error(
+      "Butler commit denied: `but --json status -f` did not return valid JSON.",
+    )
+  }
+}
+
+async function resolveButlerCommitSelection(
+  projectDirectory: string,
+  command: string,
+): Promise<ButlerCommitSelection | undefined> {
+  const sources = butlerCommitSourceIds(command)
+  if (!sources) return undefined
+
+  const paths = new Set<string>()
+  const hash = createHash("sha256")
+  const statusFiles = await readButlerStatusFiles(projectDirectory)
+
+  for (const source of sources) {
+    let stdout: string
+    try {
+      const result = await execFileAsync(
+        "but",
+        ["--json", "diff", source],
+        { cwd: projectDirectory, encoding: "utf8" },
+      )
+      stdout = String(result.stdout)
+    } catch (error: any) {
+      const detail = [error?.message, error?.stderr, error?.stdout]
+        .filter(Boolean)
+        .join("\n")
+      throw new Error(
+        `Butler commit denied: could not resolve selected whole-file CLI ID ${source}: ${detail || "unknown GitButler error"}`,
+      )
+    }
+
+    let parsed: any
+    try {
+      parsed = JSON.parse(stdout)
+    } catch {
+      throw new Error(
+        `Butler commit denied: \`but --json diff ${source}\` did not return valid JSON.`,
+      )
+    }
+    const changes = Array.isArray(parsed?.changes) ? parsed.changes : []
+    if (changes.length === 0) {
+      throw new Error(
+        `Butler commit denied: selected whole-file CLI ID ${source} resolved to no changes.`,
+      )
+    }
+
+    const sourcePaths = new Set<string>(
+      changes
+        .map((change: any) => change?.path)
+        .filter((path: unknown): path is string => typeof path === "string" && path.length > 0),
+    )
+    const sourceOldPaths = new Set<string>(
+      changes
+        .map((change: any) => change?.oldPath)
+        .filter((path: unknown): path is string => typeof path === "string" && path.length > 0),
+    )
+    if (sourcePaths.size !== 1 || sourceOldPaths.size > 0) {
+      throw new Error(
+        `Butler commit denied: ${source} must identify exactly one whole uncommitted file; hunk, workspace-wide, and rename-like selections are not admitted by Loom.`,
+      )
+    }
+
+    const sourcePath = safeOwnedRepoPath([...sourcePaths][0])
+    const identityMatches = statusFiles.filter(
+      (file) =>
+        file.filePath === sourcePath &&
+        file.cliId.startsWith(source),
+    )
+    if (identityMatches.length !== 1) {
+      throw new Error(
+        `Butler commit denied: ${source} did not resolve to one unambiguous whole-file identity in current GitButler status.`,
+      )
+    }
+    const identity = identityMatches[0]
+    if (identity.source !== "workspace") {
+      throw new Error(
+        `Butler commit denied: ${source} belongs to a linked worktree; Loom commit authority applies only to the current project workspace.`,
+      )
+    }
+    if (identity.changeType.toLowerCase() === "renamed") {
+      throw new Error(
+        `Butler commit denied: ${source} is a rename; Loom cannot prove both rename endpoints from this CLI ID, so use the bounded Git fallback or split the change.`,
+      )
+    }
+
+    hash.update(source)
+    hash.update("\0")
+    hash.update(JSON.stringify(parsed))
+    hash.update("\0")
+    hash.update(JSON.stringify(identity))
+    hash.update("\0")
+
+    for (const change of changes) {
+      if (typeof change?.path === "string" && change.path) {
+        paths.add(safeOwnedRepoPath(change.path))
+      }
+      if (typeof change?.oldPath === "string" && change.oldPath) {
+        paths.add(safeOwnedRepoPath(change.oldPath))
+      }
+    }
+  }
+
+  if (paths.size === 0) {
+    throw new Error("Butler commit denied: selected whole-file CLI IDs resolved to no repository paths.")
+  }
+
+  return {
+    paths: [...paths].sort(),
+    digest: hash.digest("hex"),
+  }
 }
 
 async function projectHasGitWorktree(projectDirectory: string) {
@@ -1030,6 +1213,55 @@ async function resolveGitStagingOwnership(
   return { ownership, unowned, changed }
 }
 
+
+async function butlerCommitScopeError(
+  ctx: any,
+  sessionID: string,
+  projectDirectory: string,
+  paths: readonly string[],
+  writeScope: string[],
+) {
+  if (paths.length === 0) {
+    return "Butler commit denied: no selected repository paths were resolved."
+  }
+  if (
+    writeScope.length === 0 ||
+    !resourcesWithinScope(paths, writeScope)
+  ) {
+    return (
+      "Butler commit denied: selected changes are outside the current committable Loom write scope: " +
+      paths.join(", ")
+    )
+  }
+
+  const staged = await stagedGitPaths(projectDirectory)
+  if (staged.length > 0) {
+    return (
+      "Butler commit denied: the shared Git index is not clean. Finish the existing staged Git operation before using Butler so repository authoring cannot mix two commit mechanisms."
+    )
+  }
+
+  const ownership = await resolveGitStagingOwnership(
+    ctx,
+    sessionID,
+    projectDirectory,
+    paths,
+  )
+  if (ownership.unowned.length > 0) {
+    return (
+      "Butler commit denied: commit only exact bytes previously admitted by this current Loom step attempt: " +
+      ownership.unowned.join(", ")
+    )
+  }
+  if (ownership.changed.length > 0) {
+    return (
+      "Butler commit denied: these files changed after this step attempt's last admitted mutation: " +
+      ownership.changed.join(", ")
+    )
+  }
+  return undefined
+}
+
 async function changedOwnedPaths(
   ownership: GitSessionOwnership,
   projectDirectory: string,
@@ -1316,13 +1548,21 @@ function reviewerAcceptanceMetadataLine(line: string) {
 
 async function reviewerAcceptanceCommitError(
   projectDirectory: string,
-  staged: readonly string[],
+  paths: readonly string[],
+  source: "staged" | "worktree" = "staged",
 ) {
-  for (const raw of staged) {
+  for (const raw of paths) {
     const path = normalizeRepoPath(raw)
     const { stdout } = await execFileAsync(
       "git",
-      ["diff", "--cached", "--unified=0", "--no-renames", "--", path],
+      [
+        "diff",
+        ...(source === "staged" ? ["--cached"] : []),
+        "--unified=0",
+        "--no-renames",
+        "--",
+        path,
+      ],
       { cwd: projectDirectory, encoding: "utf8" },
     )
     const changed = String(stdout)
@@ -1389,6 +1629,38 @@ async function reviewerAcceptanceStagedCommitError(
 
   const staged = await stagedGitPaths(projectDirectory)
   return reviewerAcceptanceCommitError(projectDirectory, staged)
+}
+
+
+async function reviewerAcceptanceButlerCommitError(
+  ctx: any,
+  sessionID: string,
+  projectDirectory: string,
+  paths: readonly string[],
+) {
+  const workflowId = (await ctx.storage.get(
+    sessionKey(sessionID),
+  )) as string | undefined
+  const stepId = (await ctx.storage.get(
+    sessionStepKey(sessionID),
+  )) as string | undefined
+  if (!workflowId || !stepId) return undefined
+
+  const workflow = await readWorkflow(ctx, workflowId)
+  const step = workflow?.steps.find((candidate) => candidate.id === stepId)
+  if (
+    !step ||
+    step.agent !== "reviewer" ||
+    !reviewerOwnsAcceptanceBookkeeping(step)
+  ) {
+    return undefined
+  }
+
+  return reviewerAcceptanceCommitError(
+    projectDirectory,
+    paths,
+    "worktree",
+  )
 }
 
 async function commitScopeError(
@@ -4119,6 +4391,88 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           ctx,
           String(raw.sessionID),
           ctx.location.directory,
+        )
+        if (acceptanceError) throw new Error(acceptanceError)
+      }
+    }
+
+
+    const revalidateButlerCommitUnderLock = async (
+      raw: any,
+      expected: ButlerCommitSelection,
+    ) => {
+      const tool = String(raw.tool ?? "")
+      if (
+        (tool !== "shell" && tool !== "bash") ||
+        !raw.input ||
+        typeof raw.input !== "object"
+      ) return
+      const command = (raw.input as any).command
+      if (typeof command !== "string" || !isAllowedButlerCommit(command)) return
+
+      const current = await resolveButlerCommitSelection(
+        ctx.location.directory,
+        command,
+      )
+      if (!current || current.digest !== expected.digest) {
+        throw new Error(
+          "Butler commit denied: selected whole-file CLI IDs changed before execution; re-read `but diff` and retry with current IDs.",
+        )
+      }
+
+      const agent = String(raw.agent ?? "")
+      const sessionID = String(raw.sessionID ?? "")
+      let writeScope: string[]
+      if (agent === "general") {
+        writeScope = generalGitWriteScope
+      } else {
+        const workflowId = (await ctx.storage.get(
+          sessionKey(sessionID),
+        )) as string | undefined
+        const stepId = (await ctx.storage.get(
+          sessionStepKey(sessionID),
+        )) as string | undefined
+        if (
+          !workflowId ||
+          !stepId ||
+          !(await exactRunnableStepAttemptBinding(
+            ctx,
+            sessionID,
+            workflowId,
+            stepId,
+          ))
+        ) {
+          throw new Error(
+            "Butler authoring requires the role's exact current runnable Loom step attempt.",
+          )
+        }
+        if (agent === "worker") {
+          await assertWorkerWorkClaim(ctx, workflowId, stepId)
+        }
+        const declaredScope = (await ctx.storage.get(
+          scopeKey(workflowId, stepId),
+        )) as TaskScope | undefined
+        writeScope = declaredScope?.write.length
+          ? declaredScope.write
+          : (artifactWriteDefaults[agent] ?? [])
+      }
+
+      writeScope = committableWriteScope(writeScope)
+      const error = await butlerCommitScopeError(
+        ctx,
+        sessionID,
+        ctx.location.directory,
+        current.paths,
+        writeScope,
+      )
+      if (error) throw new Error(error)
+
+      if (agent === "reviewer") {
+        const acceptanceError = await reviewerAcceptanceButlerCommitError(
+          ctx,
+          sessionID,
+          ctx.location.directory,
+          current.paths,
         )
         if (acceptanceError) throw new Error(acceptanceError)
       }
@@ -10792,10 +11146,10 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 write: scope.write,
                 scopeSemantics: "starting-expectation-with-runtime-elevation",
                 scopeNote: taskOutcome
-                  ? "The attached write scope is the current mutation surface, not a prediction that every needed file is already known. taskOutcome is the bounded completion target and planContext preserves the parent goal, accepted authority, constraints, acceptance criteria, integration, dependencies, risks, and downstream acceptance context. Discover freely; call loom_scope_elevate before mutating additional project-local paths. Same-attempt admitted bytes are automatically commit-authorized across redispatch."
+                  ? "The attached write scope is the current mutation surface, not a prediction that every needed file is already known. taskOutcome is the bounded completion target and planContext preserves the parent goal, accepted authority, constraints, acceptance criteria, integration, dependencies, risks, and downstream acceptance context. Discover freely; call loom_scope_elevate before mutating additional project-local paths. Any durable project-local write scope, including scope granted by loom_scope_elevate, automatically carries commit authority for that step's admitted bytes across redispatch."
                   : acceptedOutcome
-                    ? "The attached write scope is the current mutation surface, not a prediction that every needed file is already known. acceptedOutcome is the bounded completion target and acceptedAuthority is its governing source. Discover freely; call loom_scope_elevate before mutating additional project-local paths. Same-attempt admitted bytes are automatically commit-authorized across redispatch."
-                    : "The attached write scope is the current mutation surface, not a prediction that every needed file is already known. acceptedAuthority identifies the governing source. Discover freely; call loom_scope_elevate before mutating additional project-local paths. Same-attempt admitted bytes are automatically commit-authorized across redispatch.",
+                    ? "The attached write scope is the current mutation surface, not a prediction that every needed file is already known. acceptedOutcome is the bounded completion target and acceptedAuthority is its governing source. Discover freely; call loom_scope_elevate before mutating additional project-local paths. Any durable project-local write scope, including scope granted by loom_scope_elevate, automatically carries commit authority for that step's admitted bytes across redispatch."
+                    : "The attached write scope is the current mutation surface, not a prediction that every needed file is already known. acceptedAuthority identifies the governing source. Discover freely; call loom_scope_elevate before mutating additional project-local paths. Any durable project-local write scope, including scope granted by loom_scope_elevate, automatically carries commit authority for that step's admitted bytes across redispatch.",
               } : {}),
               ...(task ? { task } : {}),
               ...(producerSkills ? { producerSkills } : {}),
@@ -10858,12 +11212,15 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           const scope = (await ctx.storage.get(scopeKey(workflowId, stepId))) as TaskScope | undefined
           const roleWriteDefault = artifactWriteDefaults[step.agent] ?? []
           const effectiveWrite = scope?.write.length ? scope.write : roleWriteDefault
+          const committableWrite = committableWriteScope(effectiveWrite)
           return {
             content: renderToolOutput({
               scope: scope ?? null,
               agent: step.agent,
               roleWriteDefault,
               effectiveWrite,
+              committableWrite,
+              commitAuthorized: committableWrite.length > 0,
               elevations: scope?.elevations ?? [],
               scopeSemantics: "starting-expectation-with-runtime-elevation",
             }),
@@ -11181,6 +11538,13 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                     ? {
                         grantedProjectPaths: projectPaths,
                         effectiveWrite: result.scope?.write ?? result.roleWriteDefault,
+                        committableWrite: committableWriteScope(
+                          result.scope?.write ?? result.roleWriteDefault,
+                        ),
+                        commitAuthorized:
+                          committableWriteScope(
+                            result.scope?.write ?? result.roleWriteDefault,
+                          ).length > 0,
                         elevation: result.elevation,
                       }
                     : {}),
@@ -11208,9 +11572,16 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 stepId: value.stepId,
                 scopeAdded: projectPaths,
                 effectiveWrite: result.scope?.write ?? result.roleWriteDefault,
+                committableWrite: committableWriteScope(
+                  result.scope?.write ?? result.roleWriteDefault,
+                ),
+                commitAuthorized:
+                  committableWriteScope(
+                    result.scope?.write ?? result.roleWriteDefault,
+                  ).length > 0,
                 elevation: result.elevation,
                 note:
-                  "Project-local scope elevation is active immediately and recorded. Continue the current step; no General round-trip is required.",
+                  "Project-local scope elevation is active immediately and recorded. Any durable committable path in the effective write scope is commit-authorized for this step's admitted bytes. Continue the current step; no General round-trip is required.",
               }),
             }
           } catch (error) {
@@ -12049,14 +12420,13 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             return
           }
           if (
-            !roleCanOwnRepositoryCommit(reportAgent) ||
             !commitMessageResources.every((resource: string) =>
               roleCommitMessagePath(reportAgent, resource),
             )
           ) {
             event.effect = "deny"
             event.message =
-              "Commit-message scratch is available only to a role that can own the repository commit, inside that role's own namespace."
+              "Commit-message scratch must stay inside the current Loom role's own ephemeral-reports/<role>/commit-messages/ namespace."
             return
           }
           if (reportAgent !== "general") {
@@ -12192,6 +12562,158 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           event.effect = "deny"
           event.message =
             "Shell access to ephemeral report storage is blocked. The only exception is a hookless git commit using -F with the current role's ephemeral-reports/<role>/commit-messages/ scratch file."
+          return
+        }
+      }
+
+      if (
+        event.action === "shell" &&
+        event.resources.length > 0 &&
+        event.resources.every((resource: string) =>
+          isGitInspectionShellCommand(resource)
+        )
+      ) {
+        event.effect = "allow"
+        return
+      }
+
+      if (event.action === "shell") {
+        const butlerCommands = event.resources.filter((resource: string) =>
+          isButlerShellCommand(resource),
+        )
+        if (butlerCommands.length > 0) {
+          if (butlerCommands.length !== event.resources.length) {
+            event.effect = "deny"
+            event.message =
+              "Do not mix Butler commands with unrelated shell commands in one tool call."
+            return
+          }
+
+          if (butlerCommands.every((resource: string) =>
+            isButlerInspectionShellCommand(resource)
+          )) {
+            event.effect = "allow"
+            return
+          }
+
+          const agent = String(event.agent ?? "")
+          const commitCommands = butlerCommands.filter((resource: string) =>
+            isButlerCommitShellCommand(resource)
+          )
+          if (
+            commitCommands.length === 0 ||
+            !butlerCommands.every((resource: string) =>
+              isButlerInspectionShellCommand(resource) ||
+              isAllowedButlerCommit(resource)
+            )
+          ) {
+            event.effect = "deny"
+            event.message =
+              "Butler mutation is not admitted by Loom. Use read-only Butler inspection or an explicit untargeted whole-file-ID `but commit -m ... <file-id>...`; broad, interactive, empty, chained, and explicit branch/history targeting and history-wide Butler mutations remain blocked."
+            return
+          }
+
+          let authorScope: string[]
+          if (agent === "general") {
+            authorScope = generalGitWriteScope
+          } else if (loomAgents.has(agent)) {
+            const workflowId = (await ctx.storage.get(
+              sessionKey(event.sessionID),
+            )) as string | undefined
+            const stepId = (await ctx.storage.get(
+              sessionStepKey(event.sessionID),
+            )) as string | undefined
+            if (
+              !workflowId ||
+              !stepId ||
+              !(await exactRunnableStepAttemptBinding(
+                ctx,
+                event.sessionID,
+                workflowId,
+                stepId,
+              ))
+            ) {
+              event.effect = "deny"
+              event.message =
+                "Butler authoring requires the role's exact current runnable Loom step attempt."
+              return
+            }
+            if (agent === "worker") {
+              try {
+                await assertWorkerWorkClaim(ctx, workflowId, stepId)
+              } catch (error) {
+                event.effect = "deny"
+                event.message =
+                  error instanceof Error ? error.message : String(error)
+                return
+              }
+            }
+            const declaredScope = (await ctx.storage.get(
+              scopeKey(workflowId, stepId),
+            )) as TaskScope | undefined
+            authorScope = declaredScope?.write.length
+              ? declaredScope.write
+              : (artifactWriteDefaults[agent] ?? [])
+          } else {
+            event.effect = "deny"
+            event.message = "Butler authoring is available only to Loom roles."
+            return
+          }
+
+          authorScope = committableWriteScope(authorScope)
+          if (authorScope.length === 0) {
+            event.effect = "deny"
+            event.message =
+              "This step has no committable repository write scope. Butler inspection remains available, but ephemeral-only work is intentionally not committed."
+            return
+          }
+
+          try {
+            const selections = await Promise.all(
+              commitCommands.map((command: string) =>
+                resolveButlerCommitSelection(
+                  ctx.location.directory,
+                  command,
+                ),
+              ),
+            )
+            const paths = [...new Set(
+              selections.flatMap((selection) => selection?.paths ?? []),
+            )].sort()
+            const error = await butlerCommitScopeError(
+              ctx,
+              event.sessionID,
+              ctx.location.directory,
+              paths,
+              authorScope,
+            )
+            if (error) {
+              event.effect = "deny"
+              event.message = error
+              return
+            }
+            if (agent === "reviewer") {
+              const acceptanceError =
+                await reviewerAcceptanceButlerCommitError(
+                  ctx,
+                  event.sessionID,
+                  ctx.location.directory,
+                  paths,
+                )
+              if (acceptanceError) {
+                event.effect = "deny"
+                event.message = acceptanceError
+                return
+              }
+            }
+          } catch (error) {
+            event.effect = "deny"
+            event.message =
+              error instanceof Error ? error.message : String(error)
+            return
+          }
+
+          event.effect = "allow"
           return
         }
       }
@@ -12528,6 +13050,18 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         }
 
         event.effect = "allow"
+        return
+      }
+
+      if (
+        event.action === "shell" &&
+        event.resources.some((resource: string) =>
+          isGitShellCommand(resource)
+        )
+      ) {
+        event.effect = "deny"
+        event.message =
+          "Git command is not admitted by Loom. Read-only repository inspection is universally available; mutations must use a specifically admitted scoped authoring or delivery operation."
         return
       }
 
@@ -12923,12 +13457,31 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         await ensureLegacyCancellationBoundary(String(raw.sessionID))
         await assertCancelledChildToolAdmission(ctx.storage as any, tool, raw.input, String(raw.sessionID))
       }
-      const mutationLockPaths = toolMutationLockPaths(
-        tool,
-        raw.input,
-        ctx.location.directory,
-      )
-      const lockGitIndex = toolNeedsGitIndexLock(tool, raw.input)
+      const shellCommand =
+        (tool === "shell" || tool === "bash") &&
+        raw.input &&
+        typeof raw.input === "object" &&
+        typeof (raw.input as any).command === "string"
+          ? String((raw.input as any).command)
+          : undefined
+      const butlerSelection =
+        shellCommand && isAllowedButlerCommit(shellCommand)
+          ? await resolveButlerCommitSelection(
+              ctx.location.directory,
+              shellCommand,
+            )
+          : undefined
+      const mutationLockPaths = [
+        ...toolMutationLockPaths(
+          tool,
+          raw.input,
+          ctx.location.directory,
+        ),
+        ...(butlerSelection?.paths ?? []),
+      ]
+      const lockGitIndex =
+        toolNeedsGitIndexLock(tool, raw.input) ||
+        Boolean(butlerSelection)
       const directMutationPaths = successfulMutationPaths(
         tool,
         raw.input,
@@ -13089,6 +13642,9 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         try {
           await acquireGitWriteLocks(raw, mutationLockPaths, lockGitIndex)
           await revalidateDirectMutationUnderLock(raw, directMutationPaths)
+          if (butlerSelection) {
+            await revalidateButlerCommitUnderLock(raw, butlerSelection)
+          }
           if (lockGitIndex) {
             await revalidateGitMutationUnderLock(raw)
             const command =

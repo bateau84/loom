@@ -176,10 +176,14 @@ export function isAllowedWorkerShell(command: string) {
 
   if (!normalized) return false
   if (hasForbiddenShellSyntax(normalized)) return false
+  if (isButlerInspectionShellCommand(normalized)) return true
 
   const parsed = parseEnvironmentPrefix(normalized)
   if (!parsed || !parsed.command) return false
   if (!environmentAllowed(parsed.assignments)) return false
+  if (isGitShellCommand(parsed.command)) {
+    return isGitInspectionShellCommand(parsed.command)
+  }
   if (writeFlags.some((pattern) => pattern.test(parsed.command))) return false
 
   if (/^find(?:\s|$)/.test(parsed.command)) {
@@ -242,6 +246,270 @@ function parsedCommandWords(command: string) {
   const parsed = parseEnvironmentPrefix(normalized)
   if (!parsed || !parsed.command || !environmentAllowed(parsed.assignments)) return undefined
   return splitShellWords(parsed.command)
+}
+
+
+type ParsedGitCommand = {
+  subcommand: string
+  args: string[]
+}
+
+function parsedGitCommand(command: string): ParsedGitCommand | undefined {
+  const words = parsedCommandWords(command)
+  if (!words || words[0] !== "git") return undefined
+
+  let index = 1
+  if (words[index] === "--no-pager") index += 1
+  if (!words[index] || words[index].startsWith("-")) return undefined
+
+  return {
+    subcommand: words[index],
+    args: words.slice(index + 1),
+  }
+}
+
+export function isGitShellCommand(command: string) {
+  return /^git(?:\s|$)/.test(command.trimStart())
+}
+
+function gitInspectionHasUnsafeOption(args: readonly string[]) {
+  return args.some((word) =>
+    word === "--ext-diff" ||
+    word === "--textconv" ||
+    word === "--no-index" ||
+    word === "--paginate" ||
+    word === "-P" ||
+    word === "--output" ||
+    word.startsWith("--output=") ||
+    word === "--open-files-in-pager" ||
+    word.startsWith("--open-files-in-pager=") ||
+    word === "-O" ||
+    word === "--filters"
+  )
+}
+
+export function isGitInspectionShellCommand(command: string) {
+  const parsed = parsedGitCommand(command)
+  if (!parsed || gitInspectionHasUnsafeOption(parsed.args)) return false
+
+  if (
+    [
+      "status",
+      "diff",
+      "log",
+      "show",
+      "rev-parse",
+      "grep",
+      "ls-files",
+      "blame",
+      "shortlog",
+      "describe",
+      "merge-base",
+      "name-rev",
+      "ls-tree",
+    ].includes(parsed.subcommand)
+  ) return true
+
+  if (parsed.subcommand === "branch") {
+    return parsed.args.length === 1 && parsed.args[0] === "--show-current"
+  }
+
+  if (parsed.subcommand === "remote") {
+    return (
+      parsed.args.length === 0 ||
+      (parsed.args.length === 1 && ["-v", "--verbose"].includes(parsed.args[0]))
+    )
+  }
+
+  if (parsed.subcommand === "tag") {
+    return parsed.args.length === 0 || parsed.args.every((word) =>
+      word === "-l" ||
+      word === "--list" ||
+      word.startsWith("--list=") ||
+      word.startsWith("--sort=") ||
+      word.startsWith("--format=")
+    )
+  }
+
+  return false
+}
+
+
+type ParsedButlerCommand = {
+  subcommand: string
+  args: string[]
+}
+
+function parsedButlerCommand(command: string): ParsedButlerCommand | undefined {
+  const words = parsedCommandWords(command)
+  if (!words || words[0] !== "but") return undefined
+
+  const rest: string[] = []
+  for (let index = 1; index < words.length; index += 1) {
+    const word = words[index]
+    if (
+      word === "-C" ||
+      word === "--current-dir" ||
+      word.startsWith("--current-dir=")
+    ) return undefined
+    if (word === "--json" || word === "--status-after") continue
+    rest.push(word)
+  }
+
+  if (rest.some((word) => word === "--help" || word === "-h")) {
+    return { subcommand: "help", args: [] }
+  }
+  return {
+    subcommand: rest[0] ?? "",
+    args: rest.slice(1),
+  }
+}
+
+export function isButlerShellCommand(command: string) {
+  return /^but(?:\s|$)/.test(command.trimStart())
+}
+
+export function isButlerInspectionShellCommand(command: string) {
+  const parsed = parsedButlerCommand(command)
+  if (!parsed) return false
+
+  if (parsed.subcommand === "help" || parsed.subcommand === "diff") return true
+
+  if (parsed.subcommand === "status") {
+    return parsed.args.every((word) =>
+      [
+        "-f",
+        "--files",
+        "-v",
+        "--verbose",
+        "-u",
+        "--upstream",
+        "--no-hint",
+        "--short",
+      ].includes(word) ||
+      /^-[fvu]{2,3}$/.test(word)
+    )
+  }
+
+  if (parsed.subcommand === "show") {
+    const positional = parsed.args.filter((word) => !word.startsWith("-"))
+    const flags = parsed.args.filter((word) => word.startsWith("-"))
+    return (
+      positional.length === 1 &&
+      flags.every((word) => word === "-v" || word === "--verbose")
+    )
+  }
+
+  if (parsed.subcommand === "branch") {
+    const actionIndex = parsed.args.findIndex((word) => !word.startsWith("-"))
+    const action = actionIndex >= 0 ? parsed.args[actionIndex] : "list"
+    const args = actionIndex >= 0
+      ? parsed.args.slice(actionIndex + 1)
+      : parsed.args
+
+    if (action === "list") {
+      return args.every((word) =>
+        word === "-l" ||
+        word === "--local" ||
+        word === "-r" ||
+        word === "--remote" ||
+        word === "-a" ||
+        word === "--all" ||
+        word === "--no-ahead" ||
+        word === "--no-check" ||
+        word === "--empty" ||
+        (!word.startsWith("-") && /^[A-Za-z0-9._/-]+$/.test(word))
+      )
+    }
+
+    if (action === "show") {
+      const positional = args.filter((word) => !word.startsWith("-"))
+      const flags = args.filter((word) => word.startsWith("-"))
+      return (
+        positional.length === 1 &&
+        flags.every((word) => word === "-f" || word === "--files")
+      )
+    }
+
+    return false
+  }
+
+  if (parsed.subcommand === "oplog") {
+    const actionIndex = parsed.args.findIndex((word) => !word.startsWith("-"))
+    const action = actionIndex >= 0 ? parsed.args[actionIndex] : "list"
+    const args = actionIndex >= 0
+      ? parsed.args.slice(actionIndex + 1)
+      : parsed.args
+    if (action !== "list") return false
+
+    for (let index = 0; index < args.length; index += 1) {
+      const word = args[index]
+      if (word === "--snapshot") continue
+      if (word === "--since") {
+        if (!args[index + 1] || args[index + 1].startsWith("-")) return false
+        index += 1
+        continue
+      }
+      if (word.startsWith("--since=") && word.length > "--since=".length) continue
+      return false
+    }
+    return true
+  }
+
+  return false
+}
+
+export function isButlerCommitShellCommand(command: string) {
+  return parsedButlerCommand(command)?.subcommand === "commit"
+}
+
+export function butlerCommitSourceIds(command: string) {
+  const parsed = parsedButlerCommand(command)
+  if (!parsed || parsed.subcommand !== "commit") return undefined
+
+  let hasMessage = false
+  const sources: string[] = []
+
+  for (let index = 0; index < parsed.args.length; index += 1) {
+    const word = parsed.args[index]
+
+    if (word === "-m" || word === "--message") {
+      const value = parsed.args[index + 1]
+      if (!value) return undefined
+      hasMessage = true
+      index += 1
+      continue
+    }
+    if (word.startsWith("--message=")) {
+      if (!word.slice("--message=".length)) return undefined
+      hasMessage = true
+      continue
+    }
+
+    if (
+      word === "-b" ||
+      word === "--branch" ||
+      word.startsWith("--branch=")
+    ) return undefined
+
+    if (
+      word === "--no-message" ||
+      word === "--empty" ||
+      word === "-i" ||
+      word === "--interactive"
+    ) return undefined
+
+    if (word.startsWith("-")) return undefined
+    if (word.includes(":") || word === "zz") return undefined
+    sources.push(word)
+  }
+
+  if (!hasMessage || sources.length === 0 || sources.length > 64) return undefined
+  return sources
+}
+
+export function isAllowedButlerCommit(command: string) {
+  return Boolean(butlerCommitSourceIds(command))
 }
 
 function splitSafeAndChain(command: string) {
