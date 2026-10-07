@@ -128,6 +128,35 @@ def resolve_selection(args: argparse.Namespace) -> list[dict[str, Any]]:
     return selected
 
 
+def list_cases(args: argparse.Namespace) -> int:
+    """List Loom-owned cases without launching the retired legacy CLI.
+
+    The list is provider-free, does not need the generic runner binary, and
+    intentionally retains the historical five-column developer format.
+    Generic job planning and execution remain solely in the reusable runner.
+    """
+    legacy = _legacy()
+    selected_ids = _csv(args.cases)
+    suite_paths = [Path(value).resolve() for value in args.suite] if args.suite else None
+    cases = legacy.load_cases(suite_paths, include_opt_in=bool(selected_ids))
+    cases.extend(legacy.load_skill_owned_cases(ROOT / "skills"))
+
+    ids = [str(case["id"]) for case in cases]
+    duplicates = sorted({case_id for case_id in ids if ids.count(case_id) > 1})
+    if duplicates:
+        raise CompatibilityError("duplicate behavioral eval case id(s): " + ", ".join(duplicates))
+
+    for case in cases:
+        print("\t".join((
+            str(case["id"]),
+            legacy.case_target_kind(case),
+            legacy.case_target_name(case),
+            str(case["execution"]),
+            ",".join(case["requirements"]),
+        )))
+    return 0
+
+
 def _runner_binary() -> str:
     configured = os.environ.get("OPENCODE_EVAL_RUNNER_BIN")
     if configured:
@@ -243,9 +272,9 @@ def _run(command: Sequence[str], *, env: dict[str, str] | None = None) -> int:
 def main(argv: Sequence[str] | None = None) -> int:
     raw = list(sys.argv[1:] if argv is None else argv)
     args = parser().parse_args(raw)
-    if args.list:
-        return _run([sys.executable, str(LEGACY_RUNNER), *raw])
     try:
+        if args.list:
+            return list_cases(args)
         _validate(args)
         selected = resolve_selection(args)
         normal = [case for case in selected if not case.get("_skill_owned")]
