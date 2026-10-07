@@ -7192,16 +7192,6 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               const restartedTaskIds = plannedTaskSteps(workflow)
                 .filter((step) => satisfiedBeforeReopen.has(step.id) && reset.includes(step.id))
                 .map((step) => step.task!.id)
-              if (work && workflow.work && restartedTaskIds.length > 0) {
-                invalidateWorkflowTaskResults(
-                  work, workflow.id, workflow.work.generation,
-                  restartedTaskIds,
-                  stepId === "plan"
-                    ? "Plan reopened: original completion lacks a valid current semantic receipt."
-                    : `Task reset by workflow reopen at ${stepId}.`,
-                  now,
-                )
-              }
               await ctx.storage.set(
                 `progress/${workflowId}/${stepId}/${crypto.randomUUID()}`,
                 { reason: value.reason, ...progress, at: now },
@@ -7250,6 +7240,20 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                   taskIds.length > 0
                 ) {
                   reopenWaveForTasks(work, workflow.id, workflow.work.generation, taskIds, now, expectedBindingFingerprint)
+                }
+
+                // A previously reviewed Wave must first be reclaimed through
+                // its independent-review receipt. Only then may restarted
+                // Task executions be invalidated and archived.
+                if (restartedTaskIds.length > 0) {
+                  invalidateWorkflowTaskResults(
+                    work, workflow.id, workflow.work.generation,
+                    restartedTaskIds,
+                    stepId === "plan"
+                      ? "Plan reopened: original completion lacks a valid current semantic receipt."
+                      : `Task reset by workflow reopen at ${stepId}.`,
+                    now,
+                  )
                 }
 
                 // Documentation-only reopening does not resurrect the Wave lease.
