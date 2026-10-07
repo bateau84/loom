@@ -10318,7 +10318,7 @@ test("Planner amendment schema accepts role corrections and role-owned Tasks in 
       id: "added", role: "worker", responsibility: "execute",
     })
 
-    const amendSchema = h.registered.get("work_amend")?.input as any
+    const amendSchema = h.registered.get("loom_work_amend")?.input as any
     expect(amendSchema?.properties?.operations?.items?.properties?.action?.enum)
       .toEqual(expect.arrayContaining(["add-authority-ref", "remove-authority-ref"]))
     expect(amendSchema?.properties?.planPatch?.properties?.authorityRefs).toBeUndefined()
