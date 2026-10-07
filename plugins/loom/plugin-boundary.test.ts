@@ -16594,7 +16594,7 @@ test("Plan reconciliation restores only a proven original producer attempt, with
     const child = await h.attach("task:one", "worker", "carry-forward-original-worker")
     const event = {
       tool: "shell", id: "carry-forward-observed-check", messageID: "carry-forward-message",
-      sessionID: child, agent: "worker", input: { command: "git rev-parse HEAD" },
+      sessionID: child, agent: "worker", input: { command: "bun test src/reconcile.test.ts" },
     }
     await h.toolHooks.get("execute.before")!(event)
     await h.toolHooks.get("execute.after")!({
