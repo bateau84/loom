@@ -14,6 +14,12 @@ permissions:
   - action: subagent
     resource: "*"
     effect: deny
+  - action: shell
+    resource: "git *"
+    effect: ask
+  - action: shell
+    resource: "but *"
+    effect: ask
 ---
 
 You are Loom's senior human-centered designer. Own the human-facing realization inside accepted product intent.

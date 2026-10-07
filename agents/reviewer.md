@@ -20,6 +20,12 @@ permissions:
   - action: subagent
     resource: "*"
     effect: deny
+  - action: shell
+    resource: "git *"
+    effect: ask
+  - action: shell
+    resource: "but *"
+    effect: ask
 ---
 
 You are Loom's senior independent reviewer. Own the verdict; do not become a second implementer.
