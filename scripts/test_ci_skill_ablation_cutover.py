@@ -201,6 +201,59 @@ class SkillAblationCutoverTests(unittest.TestCase):
             temp_root = baseline.target_workspace.parent
         self.assertFalse(temp_root.exists())
 
+    def test_skill_ablation_uses_ci_pinned_image_not_edge_by_default(self):
+        from loom_eval_profile.skill_ablation import PAIRED_TRANSPORT_IMAGES
+        with mock.patch.dict(
+            "os.environ",
+            {
+                "OPENCODE_EVAL_RUNNER_OPENCODE_IMAGE": "",
+                "OPENCODE_EVAL_RUNNER_COPILOT_IMAGE": "",
+                "OPENCODE_EVAL_RUNNER_IMAGE": "",
+            },
+        ):
+            with self.profile.prepare_pair(self.case, 1) as (baseline, candidate):
+                for side in (baseline, candidate):
+                    spec = self.profile.target_spec(self.case, side)
+                    self.assertEqual(spec.image, PAIRED_TRANSPORT_IMAGES["opencode"])
+                    self.assertIn("@sha256:", spec.image)
+                    self.assertNotIn("-edge", spec.image)
+                    self.assertEqual(
+                        self.profile._spec(
+                            side=side, skill="demo", phase="judge",
+                            prompt="test", system=None,
+                        ).image,
+                        PAIRED_TRANSPORT_IMAGES["opencode"],
+                    )
+
+    def test_explicit_transport_image_overrides_pinned_default(self):
+        from loom_eval_profile.skill_ablation import PAIRED_TRANSPORT_IMAGES
+        custom_open = "localhost/custom-opencode@sha256:123"
+        custom_generic = "localhost/shared@sha256:345"
+        with mock.patch.dict(
+            "os.environ",
+            {
+                "OPENCODE_EVAL_RUNNER_OPENCODE_IMAGE": custom_open,
+                "OPENCODE_EVAL_RUNNER_COPILOT_IMAGE": "",
+                "OPENCODE_EVAL_RUNNER_IMAGE": custom_generic,
+            },
+        ):
+            with self.profile.prepare_pair(self.case, 1) as (baseline, _):
+                self.assertEqual(self.profile.target_spec(self.case, baseline).image, custom_open)
+                self.assertEqual(
+                    self.profile._spec(
+                        side=baseline, skill="demo", phase="judge",
+                        prompt="test", system=None,
+                    ).image,
+                    custom_open,
+                )
+            self.assertNotEqual(PAIRED_TRANSPORT_IMAGES["opencode"], custom_open)
+            copilot = self.Profile(
+                args(target_transport="github-copilot-cli", judge_transport="github-copilot-cli"),
+                root=self.root,
+            )
+            with copilot.prepare_pair(self.case, 1) as (baseline, _):
+                self.assertEqual(copilot.target_spec(self.case, baseline).image, custom_generic)
+
     def test_ablation_score_trap_and_generic_paired_artifact(self):
         from runner.eval_artifacts import (
             ArtifactIdentity, claim_run_artifact_directory, validate_paired_eval_artifact,
