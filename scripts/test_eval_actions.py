@@ -114,6 +114,12 @@ class WorkflowCredentialTests(unittest.TestCase):
             self.assertIn(expected_action, workflow)
             self.assertIn(expected_image, workflow)
             self.assertIn(expected_copilot_image, workflow)
+        paired_profile = (
+            RUN_EVALS.ROOT / "scripts" / "loom_eval_profile" / "skill_ablation.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn(expected_image, paired_profile)
+        self.assertIn(expected_copilot_image, paired_profile)
+        self.assertIn("PASS large model catalog image safety", ci)
         # The migrated normal path uses the reviewed runtime-evidence runner
         # image independently of Loom's separate host/plugin compatibility pin.
         self.assertIn(
