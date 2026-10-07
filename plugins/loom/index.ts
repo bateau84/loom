@@ -398,6 +398,21 @@ async function repositoryHeadSha(projectDirectory: string) {
   }
 }
 
+/** A Git HEAD proves code continuity only when both sides have a clean tree. */
+async function cleanRepositoryHead(projectDirectory: string): Promise<string | undefined> {
+  const head = await repositoryHeadSha(projectDirectory)
+  if (head === "unavailable") return undefined
+  try {
+    const { stdout } = await execFileAsync(
+      "git", ["status", "--porcelain=v1", "--untracked-files=all"],
+      { cwd: projectDirectory, encoding: "utf8", maxBuffer: 1024 * 1024 },
+    )
+    return stdout.trim() === "" ? head : undefined
+  } catch {
+    return undefined
+  }
+}
+
 const artifactWriteDefaults: Record<string, string[]> = {
   designer: ["docs/design/**", "ephemeral-reports/designer/**"],
   specifier: ["docs/requirements/**"],
@@ -6887,6 +6902,10 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               workflow.work.reviewedPlanFingerprint = acceptedPlanReview.planFingerprint
             }
             evidenceBound = await bindSessionEvidence(ctx, tool.sessionID, workflowId, stepId)
+            const cleanTaskHead =
+              step.task && (step.status === "complete" || step.status === "passed")
+                ? await cleanRepositoryHead(ctx.location.directory)
+                : undefined
             const completedTaskClaims =
               step.task && (step.status === "complete" || step.status === "passed")
                 ? (await stepClaims(ctx, workflowId, stepId)).filter(
@@ -7003,6 +7022,9 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                             ...(taskStep.summary ? { summary: taskStep.summary } : {}),
                             evidenceClaimIds: completedTaskClaims.map((claim) => claim.id),
                             completedAt: now,
+                            completedAttempt: taskStep.attempt ?? 0,
+                            producerAgent: taskStep.agent,
+                            ...(cleanTaskHead ? { cleanRepositoryHead: cleanTaskHead } : {}),
                             ...(completedTaskPlanRevision ? { planRevision: completedTaskPlanRevision } : {}),
                             ...(completedTaskSemanticClosure
                               ? { semanticClosureFingerprint: completedTaskSemanticClosure }
