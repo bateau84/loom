@@ -16834,3 +16834,36 @@ test("Plan reconciliation rejects a dependent whose upstream producer was rerun 
     h.restore()
   }
 })
+
+test("Planner cannot exempt its own unresolved Task question from reconciliation", async () => {
+  const h = await waveLifecycleFixture("wave", false, "worker")
+  try {
+    const work = await h.work()
+    const task = work.nodes.find((node: any) => node.type === "task" && node.logicalId === "one")
+    task.result = {
+      workflowId: h.workflowId, evidenceClaimIds: ["historical"], completedAt: "2026-10-07T00:00:00Z",
+    }
+    await h.durableStorage.set(h.workKey, work)
+    const raised = await h.call("oq_raise", {
+      workflowId: h.workflowId, taskId: "one", question: "Clarify a pending producer obligation.",
+      responder: "planner", blocking: true, consumerStepIds: ["task:one"],
+    }, "general", "parent")
+    expect(raised.error).toBeUndefined()
+    const grant = await h.call("dispatch_grant", {
+      workflowId: h.workflowId, questionId: raised.question.id,
+    }, "general", "parent")
+    expect(grant.error).toBeUndefined()
+    const plannerSession = "outstanding-question-planner"
+    expect((await h.call("attach", {
+      workflowId: h.workflowId, questionId: raised.question.id, grantId: grant.grantId,
+    }, "planner", plannerSession)).error).toBeUndefined()
+    const result = await h.call("work_reconcile", {
+      workflowId: h.workflowId, questionId: raised.question.id, taskIds: ["one"],
+    }, "planner", plannerSession)
+    expect(result.error).toBeUndefined()
+    expect(result.reconciled).toEqual([])
+    expect(result.refused[0].reason).toContain("Unresolved blocking question")
+  } finally {
+    h.restore()
+  }
+})
