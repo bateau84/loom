@@ -81,7 +81,9 @@ class PairInvoker:
         self.calls: list[tuple[str, str]] = []
 
     def __call__(self, spec):
-        from container.runtime_evidence import unsupported_runtime_evidence
+        from container.runtime_evidence import (
+            build_runtime_evidence, field_available, unsupported_runtime_evidence,
+        )
         from runner.eval_execute import RESULT_SCHEMA
 
         side = "baseline" if spec.agent == "skill-baseline" or spec.workspace.name == "judge-baseline" else "candidate"
@@ -124,9 +126,43 @@ class PairInvoker:
             "text": payload,
             "tools": [],
             "actions": [],
+            "session_id": "fixture-session-1",
             "runtime_evidence": unsupported_runtime_evidence("loom_pair_provider_free"),
             "skills_loaded": ["demo"] if side == "candidate" and self.candidate_loaded and not is_judge else [],
         }
+        if spec.transport == "opencode":
+            records = []
+            if not is_judge and side == "candidate" and self.candidate_loaded:
+                shared = {
+                    "invocation_id": "native:fixture-skill-load",
+                    "tool": field_available("skill"),
+                    "agent": field_available("skill-eval"),
+                    "session_id": field_available("fixture-session-1"),
+                    "message_id": field_available("fixture-message-1"),
+                    "call_id": field_available("fixture-call-1"),
+                }
+                records = [
+                    {
+                        **shared, "kind": "native_start", "sequence": 1,
+                        "input": field_available({"id": "demo"}),
+                        "parent_session_id": field_available(None),
+                        "boundary": "decoded-tool-execute",
+                    },
+                    {
+                        **shared, "kind": "native_terminal", "sequence": 2,
+                        "outcome": "success",
+                        "result": field_available({"content": "demo skill loaded"}),
+                        "boundary": "session.tool.success",
+                    },
+                ]
+            result["runtime_evidence"] = build_runtime_evidence({
+                "capture_started": True,
+                "capture_ended": True,
+                "records": records,
+                "observer_failures": 0,
+                "callback_failures": 0,
+                "issues": [],
+            })
         if not is_judge and side == "baseline" and self.invalid_baseline:
             result["runtime_evidence"] = {"schema": "untrusted"}
         return 0, result
@@ -305,6 +341,132 @@ class SkillAblationCutoverTests(unittest.TestCase):
         self.assertEqual(outcome.candidate.classification, "fail")
         self.assertEqual(outcome.comparison.decision.classification, "fail")
         self.assertTrue(any(check.name == "skill.native-load" for check in outcome.candidate.deterministic_checks))
+
+    def test_target_requires_authoritative_native_boundary(self):
+        with self.profile.prepare_pair(self.case, 1) as (baseline, candidate):
+            for side in (baseline, candidate):
+                requirement = self.profile.side_input(self.case, side).evidence_requirement
+                self.assertEqual(requirement.boundaries, ("native",))
+
+    def test_diagnostic_skill_load_cannot_manufacture_native_success(self):
+        from container.runtime_evidence import build_runtime_evidence
+
+        class FakeNativeLoad(PairInvoker):
+            def __call__(self, spec):
+                status, result = super().__call__(spec)
+                if spec.agent == "skill-eval":
+                    # Product convenience field still says skill loaded, but
+                    # no runner-owned native tool invocation occurred.
+                    result["runtime_evidence"] = build_runtime_evidence({
+                        "capture_started": True,
+                        "capture_ended": True,
+                        "records": [],
+                        "observer_failures": 0,
+                        "callback_failures": 0,
+                        "issues": [],
+                    })
+                return status, result
+
+        outcome, artifact = self.pair(FakeNativeLoad())
+        self.assertEqual(outcome.candidate.classification, "fail")
+        self.assertEqual(outcome.comparison.decision.classification, "fail")
+        self.assertTrue(any(check.name == "skill.native-load" for check in outcome.candidate.deterministic_checks))
+
+    def test_unsupported_runtime_evidence_is_non_evidence_even_with_skill_projection(self):
+        from container.runtime_evidence import unsupported_runtime_evidence
+
+        class UnsupportedNative(PairInvoker):
+            def __call__(self, spec):
+                status, result = super().__call__(spec)
+                if spec.agent == "skill-eval":
+                    result["runtime_evidence"] = unsupported_runtime_evidence("no_native_capture")
+                return status, result
+
+        outcome, artifact = self.pair(UnsupportedNative())
+        self.assertEqual(outcome.candidate.classification, "non-evidence")
+        self.assertEqual(outcome.comparison.status, "non-evidence")
+        self.assertEqual(bridge._pair_outcome(artifact), "non-evidence")
+
+    def test_redacted_native_skill_input_cannot_be_backfilled_from_diagnostics(self):
+        from container.runtime_evidence import build_runtime_evidence, field_available
+
+        class RedactedInput(PairInvoker):
+            def __call__(self, spec):
+                status, result = super().__call__(spec)
+                if spec.agent == "skill-eval":
+                    fields = {
+                        "invocation_id": "native:fixture-load-redacted",
+                        "tool": field_available("skill"),
+                        "agent": field_available("skill-eval"),
+                        "session_id": field_available("fixture-session-1"),
+                        "message_id": field_available("fixture-message-1"),
+                        "call_id": field_available("fixture-call-1"),
+                    }
+                    result["runtime_evidence"] = build_runtime_evidence({
+                        "capture_started": True, "capture_ended": True,
+                        "records": [
+                            {
+                                **fields, "kind": "native_start", "sequence": 1,
+                                "input": {"state": "redacted", "reason": "credential_match"},
+                                "parent_session_id": field_available(None),
+                                "boundary": "decoded-tool-execute",
+                            },
+                            {
+                                **fields, "kind": "native_terminal", "sequence": 2,
+                                "outcome": "success",
+                                "result": field_available({"content": "loaded"}),
+                                "boundary": "session.tool.success",
+                            },
+                        ],
+                        "observer_failures": 0, "callback_failures": 0, "issues": [],
+                    })
+                return status, result
+
+        outcome, artifact = self.pair(RedactedInput())
+        self.assertEqual(outcome.candidate.classification, "non-evidence")
+        self.assertEqual(outcome.comparison.status, "non-evidence")
+        self.assertEqual(bridge._pair_outcome(artifact), "non-evidence")
+
+    def test_baseline_native_skill_contamination_blocks_comparison(self):
+        from container.runtime_evidence import build_runtime_evidence, field_available
+
+        class ContaminatedBaseline(PairInvoker):
+            def __call__(self, spec):
+                status, result = super().__call__(spec)
+                if spec.agent == "skill-baseline":
+                    common = {
+                        "invocation_id": "native:baseline-load",
+                        "tool": field_available("skill"),
+                        "agent": field_available("skill-baseline"),
+                        "session_id": field_available("fixture-session-1"),
+                        "message_id": field_available("fixture-message-1"),
+                        "call_id": field_available("fixture-call-1"),
+                    }
+                    result["runtime_evidence"] = build_runtime_evidence({
+                        "capture_started": True, "capture_ended": True,
+                        "records": [
+                            {
+                                **common, "kind": "native_start", "sequence": 1,
+                                "input": field_available({"id": "demo"}),
+                                "parent_session_id": field_available(None),
+                                "boundary": "decoded-tool-execute",
+                            },
+                            {
+                                **common, "kind": "native_terminal", "sequence": 2,
+                                "outcome": "success",
+                                "result": field_available({"content": "loaded"}),
+                                "boundary": "session.tool.success",
+                            },
+                        ],
+                        "observer_failures": 0, "callback_failures": 0, "issues": [],
+                    })
+                    # Contradictory diagnostic claims none loaded.
+                    result["skills_loaded"] = []
+                return status, result
+
+        outcome, artifact = self.pair(ContaminatedBaseline())
+        self.assertEqual(outcome.baseline.classification, "non-evidence")
+        self.assertEqual(outcome.comparison.status, "non-evidence")
 
     def test_missing_score_projection_is_non_evidence(self):
         class MissingProjection(PairInvoker):
