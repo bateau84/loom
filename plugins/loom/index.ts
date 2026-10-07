@@ -190,9 +190,11 @@ import {
   validateWorkflowWave,
   validatePlanRoleFeasibility,
   workflowTaskSemanticFingerprint,
+  legacyWorkflowTaskSemanticFingerprint,
   workTree,
   type WorkHierarchy,
   type WorkPlanAmendOperation,
+  type WorkPlanAmendTopLevelPatch,
   type WorkPlanDefinition,
   type WorkPlanTopLevelPatch,
 } from "./work"
@@ -275,7 +277,14 @@ function assertPlannedTaskAdmission(
   }
 
   const currentFingerprint = workflowTaskSemanticFingerprint(work, taskIds, generation)
-  if (!currentFingerprint || workflow.work.taskPlanFingerprint !== currentFingerprint) {
+  const legacyFingerprint = legacyWorkflowTaskSemanticFingerprint(work, taskIds, generation)
+  if (
+    !currentFingerprint ||
+    (
+      workflow.work.taskPlanFingerprint !== currentFingerprint &&
+      workflow.work.taskPlanFingerprint !== legacyFingerprint
+    )
+  ) {
     throw new Error("Task admission denied: compiled Task DAG is stale against the current Plan generation.")
   }
   assertWaveClaimForTasks(work, workflow.id, generation, taskIds)
@@ -312,9 +321,23 @@ function assertStepDispatchAdmission(
   const currentTaskFingerprint = work && binding
     ? workflowTaskSemanticFingerprint(work, taskIds, binding.generation)
     : undefined
-  const reviewedTaskFingerprint = work && binding && Number.isSafeInteger(reviewedRevision)
-    ? workflowTaskSemanticFingerprint(work, taskIds, binding.generation, reviewedRevision)
+  const currentLegacyTaskFingerprint = work && binding
+    ? legacyWorkflowTaskSemanticFingerprint(work, taskIds, binding.generation)
     : undefined
+  const bindingUsesLegacyFingerprint =
+    Boolean(binding?.taskPlanFingerprint) &&
+    binding!.taskPlanFingerprint !== currentTaskFingerprint &&
+    binding!.taskPlanFingerprint === currentLegacyTaskFingerprint
+  const reviewedTaskFingerprint = work && binding && Number.isSafeInteger(reviewedRevision)
+    ? (
+        bindingUsesLegacyFingerprint
+          ? legacyWorkflowTaskSemanticFingerprint(work, taskIds, binding.generation, reviewedRevision)
+          : workflowTaskSemanticFingerprint(work, taskIds, binding.generation, reviewedRevision)
+      )
+    : undefined
+  const expectedCurrentTaskFingerprint = bindingUsesLegacyFingerprint
+    ? currentLegacyTaskFingerprint
+    : currentTaskFingerprint
 
   if (
     !binding ||
@@ -324,11 +347,11 @@ function assertStepDispatchAdmission(
     !Number.isSafeInteger(reviewedRevision) ||
     reviewedRevision! > plan.revision ||
     !binding.reviewedPlanFingerprint ||
-    !currentTaskFingerprint ||
+    !expectedCurrentTaskFingerprint ||
     !reviewedTaskFingerprint ||
-    reviewedTaskFingerprint !== currentTaskFingerprint ||
+    reviewedTaskFingerprint !== expectedCurrentTaskFingerprint ||
     binding.taskPlanRevision !== plan.revision ||
-    binding.taskPlanFingerprint !== currentTaskFingerprint
+    binding.taskPlanFingerprint !== expectedCurrentTaskFingerprint
   ) {
     throw new Error(
       "Dispatch admission denied: the reviewed claimed-Wave contract or current Task DAG no longer matches.",
@@ -6179,9 +6202,13 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             const currentFingerprint = work
               ? workflowTaskSemanticFingerprint(work, taskIds, workflow.work.generation)
               : undefined
+            const legacyFingerprint = work
+              ? legacyWorkflowTaskSemanticFingerprint(work, taskIds, workflow.work.generation)
+              : undefined
             if (
               currentFingerprint &&
-              workflow.work.taskPlanFingerprint !== currentFingerprint
+              workflow.work.taskPlanFingerprint !== currentFingerprint &&
+              workflow.work.taskPlanFingerprint !== legacyFingerprint
             ) {
               return {
                 content: renderToolOutput({
@@ -8947,7 +8974,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       addLoomTool({
         name: "work_amend",
         description:
-          "Atomically amend a bounded part of the current Plan generation without replacing the whole Plan. Planner only. Pending/unclaimed Tasks may be edited/added/removed; completed semantic contracts cannot be rewritten. Supports local Phase/Wave/Task/subtask changes plus matching Plan metadata updates.",
+          "Atomically amend a bounded part of the current Plan generation without replacing the whole Plan. Planner only. Pending/unclaimed Tasks may be edited/added/removed; completed semantic contracts cannot be rewritten. Supports local Phase/Wave/Task/subtask changes, atomic authority-reference add/remove operations, plus matching Plan metadata updates. Prefer authority-reference operations over reconstructing the bounded Plan projection.",
         input: {
           type: "object",
           properties: {
@@ -8961,7 +8988,6 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 goal: { type: "string" },
                 assumptions: { type: "array", items: { type: "string" } },
                 outOfScope: { type: "array", items: { type: "string" } },
-                authorityRefs: { type: "array", items: { type: "string" } },
                 obligations: {
                   type: "array",
                   items: {
@@ -9046,6 +9072,8 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                   action: {
                     type: "string",
                     enum: [
+                      "add-authority-ref",
+                      "remove-authority-ref",
                       "patch-phase",
                       "patch-wave",
                       "patch-task",
@@ -9057,6 +9085,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                       "remove-task",
                     ],
                   },
+                  authorityRef: { type: "string" },
                   phaseId: { type: "string" },
                   waveId: { type: "string" },
                   taskId: { type: "string" },
@@ -9211,7 +9240,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             expectedVersion: number
             reason: string
             operations: WorkPlanAmendOperation[]
-            planPatch?: WorkPlanTopLevelPatch
+            planPatch?: WorkPlanAmendTopLevelPatch
           }
           const workflow = await readBoundWorkflow(ctx, tool.sessionID, value.workflowId, ensureLegacySession)
           if (!workflow?.work) {

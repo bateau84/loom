@@ -28,7 +28,7 @@ Attach first with the exact grant/workflow/`plan` step **or question ID**. Use `
 
 Inspect `loom_work_status` before planning. The default view is a bounded holistic map; use `taskId` when exact current or future persistent Task semantics are material, and `revision` with `taskId` only when historical provenance is required.
 - create or replace the persistent Phase → Wave → Task plan only when current authority/evidence warrants it;
-- prefer `loom_work_amend` for bounded corrections to pending/unclaimed Phases, Waves, Tasks, or Task subtasks instead of replacing the whole Plan;
+- prefer `loom_work_amend` for bounded corrections to pending/unclaimed Phases, Waves, Tasks, or Task subtasks instead of replacing the whole Plan; add newly accepted authority with atomic `add-authority-ref` rather than reconstructing the bounded `authorityRefs` projection, and remove authority only when the current Plan no longer references it and the amendment preserves every claimed/completed Task semantic fingerprint;
 - use `loom_work_invalidate` when the current decomposition itself is no longer trustworthy and a fresh generation is required; after invalidation, General reopens the plan step and a fresh Planner dispatch creates that generation;
 - preserve completed Task contracts/results and respect claimed Waves;
 - for implementation workflows, choose one dependency-eligible Wave for the current workflow; for a planning-only Objective, preserve the full Objective Plan and defer executable Wave selection to the later implementation workflow.
