@@ -10374,6 +10374,22 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                     refuse(id, "Current workflow does not own the Task claim.")
                     continue
                   }
+                  const staleDependency = step.task.dependsOn.some((dependencyId) => {
+                    const source = byId.get(dependencyId)
+                    if (!source) return false // Reviewed external-Wave edge
+                    const upstream = work.nodes.find((candidate) =>
+                      candidate.generation === work.generation && candidate.type === "task" &&
+                      candidate.logicalId === dependencyId && candidate.status !== "superseded")
+                    // A dependent's old result cannot survive a newer producer execution.
+                    return !upstream?.result || upstream.result.workflowId !== workflow.id ||
+                      !Number.isSafeInteger(upstream.result.completedAttempt) ||
+                      !upstream.result.completedAt || !receipt.completedAt ||
+                      upstream.result.completedAt > receipt.completedAt
+                  })
+                  if (staleDependency) {
+                    refuse(id, "Dependent producer result is missing or was replaced after this completion.")
+                    continue
+                  }
                   if (!Number.isSafeInteger(receipt.completedAttempt) ||
                       receipt.completedAttempt! < 0 || receipt.completedAttempt! >= (step.attempt ?? 0) ||
                       receipt.producerAgent !== step.agent || !receipt.planRevision) {
@@ -10450,22 +10466,6 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                         !observationsSupportKind(claim.kind, claimObservations)
                     })) {
                     refuse(id, "Original host observations are missing or belong to another producer attempt.")
-                    continue
-                  }
-                  const staleDependency = step.task.dependsOn.some((dependencyId) => {
-                    const source = byId.get(dependencyId)
-                    if (!source) return false // Reviewed external-Wave edge
-                    const upstream = work.nodes.find((candidate) =>
-                      candidate.generation === work.generation && candidate.type === "task" &&
-                      candidate.logicalId === dependencyId && candidate.status !== "superseded")
-                    // A dependent's old result cannot survive a newer producer execution.
-                    return !upstream?.result || upstream.result.workflowId !== workflow.id ||
-                      !upstream.result.completedAttempt && upstream.result.completedAttempt !== 0 ||
-                      !upstream.result.completedAt || !receipt.completedAt ||
-                      upstream.result.completedAt > receipt.completedAt
-                  })
-                  if (staleDependency) {
-                    refuse(id, "Dependent producer result is missing or was replaced after this completion.")
                     continue
                   }
                   eligible.set(id, { step, receipt })
