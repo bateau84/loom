@@ -26,6 +26,7 @@ from runner.eval_api import (
 from runner.eval_compare import ComparisonDecision
 from runner.eval_execute import TransientProviderRetryPolicy
 from runner.eval_paired import PairedSideExecution
+from container.runtime_evidence import BOUNDARY_NATIVE
 
 from ._runtime_assertions import target_text
 from ._shared import compatibility_env_names
@@ -84,6 +85,73 @@ def raw_case(case: NormalizedCase) -> dict[str, Any]:
     if not isinstance(data, dict) or data.get("_skill_owned") is not True:
         raise ValueError("paired skill eval requires a skill-owned Loom case")
     return data
+
+
+def observed_native_skill_load(
+    result: Mapping[str, Any], *, skill: str, agent: str,
+) -> tuple[str, str]:
+    """Verify native skill loading from runner-owned runtime observations.
+
+    Convenience `skills_loaded`, actions and model text are diagnostic, not
+    authoritative evidence. An incomplete boundary or unavailable identity
+    must never be backfilled from those projections.
+    """
+    evidence = result.get("runtime_evidence")
+    if not isinstance(evidence, Mapping):
+        return ("non-evidence", "native runtime_evidence unavailable")
+    coverage = evidence.get("coverage")
+    boundaries = coverage.get("boundaries") if isinstance(coverage, Mapping) else None
+    native = boundaries.get(BOUNDARY_NATIVE) if isinstance(boundaries, Mapping) else None
+    if (
+        evidence.get("status") != "complete"
+        or not isinstance(native, Mapping)
+        or native.get("status") != "complete"
+    ):
+        return ("non-evidence", "complete native runtime boundary unavailable")
+    observations = evidence.get("observations")
+    session = result.get("session_id")
+    if not isinstance(observations, list) or not isinstance(session, str) or not session:
+        return ("non-evidence", "native observations or target session identity unavailable")
+
+    matched = False
+    for observation in observations:
+        if not isinstance(observation, Mapping) or observation.get("mode") != "native":
+            continue
+        tool = observation.get("tool")
+        if not isinstance(tool, Mapping) or tool.get("state") != "available":
+            return ("non-evidence", "native tool identity unavailable")
+        if tool.get("value") != "skill":
+            continue
+        actor = observation.get("actor")
+        session_id = observation.get("session_id")
+        if not isinstance(actor, Mapping) or actor.get("state") != "available":
+            return ("non-evidence", "native skill actor identity unavailable")
+        if not isinstance(session_id, Mapping) or session_id.get("state") != "available":
+            return ("non-evidence", "native skill session identity unavailable")
+        if actor.get("value") != agent or session_id.get("value") != session:
+            continue  # Another actor/session cannot satisfy this side's load.
+
+        inputs = observation.get("input")
+        if not isinstance(inputs, Mapping) or inputs.get("state") != "available":
+            return ("non-evidence", "native skill arguments unavailable")
+        data = inputs.get("value")
+        if not isinstance(data, Mapping):
+            return ("non-evidence", "native skill arguments are not an object")
+        name = data.get("id") if isinstance(data.get("id"), str) else data.get("name")
+        if not isinstance(name, str):
+            return ("non-evidence", "native skill identifier unavailable")
+        if name != skill:
+            continue
+        if observation.get("outcome") == "missing":
+            return ("non-evidence", "native skill invocation has no terminal")
+        if observation.get("outcome") != "success":
+            continue  # A failed skill call is not a successfully loaded skill.
+        returned = observation.get("result")
+        if not isinstance(returned, Mapping) or returned.get("state") != "available":
+            return ("non-evidence", "native skill result unavailable")
+        matched = True
+
+    return ("loaded" if matched else "not-loaded", "authoritative native skill observation checked")
 
 
 @dataclass(frozen=True)
@@ -265,11 +333,19 @@ class LoomSkillAblationProfile:
         # methodology in its system prompt and excludes it from the baseline.
         if self.args.target_transport == "github-copilot-cli":
             return (CheckOutcome("skill.inline-methodology", "pass", "Copilot methodology boundary supplied by Loom", {}),)
-        if side.name == "baseline" and skill in loaded:
-            return (CheckOutcome("skill.baseline", "non-evidence", "baseline contaminated by tested skill", {}),)
-        if side.name == "candidate" and skill not in loaded:
-            return (CheckOutcome("skill.native-load", "fail", f"skill under test not confirmed loaded: {skill}", {}),)
-        return (CheckOutcome("skill.discovery", "pass", f"{side.name} skill scope verified", {}),)
+        agent = "skill-baseline" if side.name == "baseline" else "skill-eval"
+        load, reason = observed_native_skill_load(result, skill=skill, agent=agent)
+        if load == "non-evidence":
+            return (CheckOutcome("skill.native-evidence", "non-evidence", reason, {}),)
+        if side.name == "baseline":
+            if load == "loaded" or skill in loaded:
+                return (CheckOutcome("skill.baseline", "non-evidence", "baseline contaminated or contradictory skill-load projections", {}),)
+        else:
+            if load != "loaded":
+                return (CheckOutcome("skill.native-load", "fail", f"no completed native load of tested skill: {skill}", {}),)
+            if skill not in loaded:
+                return (CheckOutcome("skill.native-evidence", "non-evidence", "diagnostic skill-load projection conflicts with native runtime evidence", {}),)
+        return (CheckOutcome("skill.discovery", "pass", f"{side.name} skill scope verified by native observations", {}),)
 
     def judge_spec(
         self, case: NormalizedCase, side: SkillSide,
@@ -320,7 +396,11 @@ class LoomSkillAblationProfile:
             case=case,
             prepared=side,
             target_spec=self.target_spec(case, side),
-            evidence_requirement=EvidenceRequirement(()),
+            # A native skill-load assertion requires a complete, runner-owned
+            # native observation boundary. Copilot uses inline methodology.
+            evidence_requirement=EvidenceRequirement(
+                (BOUNDARY_NATIVE,) if self.args.target_transport == "opencode" else ()
+            ),
             profile=self,
             project_metadata={
                 **case.metadata,
