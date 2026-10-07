@@ -16661,10 +16661,38 @@ test("Plan reconciliation restores only a proven original producer attempt, with
     expect(replay.reconciled).toEqual([])
     expect(replay.alreadyComplete).toEqual(["one"])
     const audit = await h.durableStorage.get("work-reconciliation/" + h.workflowId + "/" + restored.auditId)
+    expect(audit.state).toBe("committed")
     expect(audit.recovered[0]).toMatchObject({
       taskId: "one", originalAttempt: sourceAttempt,
       evidenceClaimIds: [claim.claim.id],
     })
+
+    // Planner may inspect/reconcile only while attached to its exact OQ.
+    const raised = await h.call("oq_raise", {
+      workflowId: h.workflowId,
+      question: "Verify existing result carry-forward after the reviewed Plan change.",
+      responder: "planner", blocking: false,
+    }, "general", "parent")
+    expect(raised.error).toBeUndefined()
+    const wrongSession = await h.call("work_reconcile", {
+      workflowId: h.workflowId, questionId: raised.question.id, taskIds: ["one"],
+    }, "planner", "unattached-planner")
+    expect(wrongSession.error).toBeDefined()
+    const grant = await h.call("dispatch_grant", {
+      workflowId: h.workflowId, questionId: raised.question.id,
+    }, "general", "parent")
+    expect(grant.error).toBeUndefined()
+    const plannerSession = "carry-forward-question-planner"
+    const attached = await h.call("attach", {
+      workflowId: h.workflowId, questionId: raised.question.id, grantId: grant.grantId,
+    }, "planner", plannerSession)
+    expect(attached.error).toBeUndefined()
+    const planner = await h.call("work_reconcile", {
+      workflowId: h.workflowId, questionId: raised.question.id, taskIds: ["one"],
+    }, "planner", plannerSession)
+    expect(planner.error).toBeUndefined()
+    expect(planner.alreadyComplete).toEqual(["one"])
+    expect(planner.reconciled).toEqual([])
   } finally {
     h.restore()
   }
