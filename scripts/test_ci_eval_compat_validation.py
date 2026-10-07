@@ -132,6 +132,15 @@ class CompatValidationTests(unittest.TestCase):
                 with self.assertRaises(AttributeError):
                     getattr(self.w, name)
 
+    def test_loom_workspace_mode_remains_compatible_without_legacy_scheduler(self):
+        # Public conformance wiring still asks for Loom's workspace policy.
+        # Only this project-owned decision is exposed, not legacy execution.
+        self.assertEqual(self.w.case_workspace_mode({"execution": "role-decision"}), "ro")
+        self.assertEqual(self.w.case_workspace_mode({"execution": "conversation-response"}), "ro")
+        self.assertEqual(self.w.case_workspace_mode({"execution": "runtime"}), "rw")
+        self.assertFalse(hasattr(self.w, "invoke_container"))
+        self.assertFalse(hasattr(self.w, "run_case"))
+
     def test_retired_legacy_engine_cannot_be_invoked_directly(self):
         # The legacy module is still imported for Loom policy helpers, but it
         # must not remain a second executable scheduler or container runner.
