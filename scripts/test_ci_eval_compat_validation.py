@@ -132,6 +132,20 @@ class CompatValidationTests(unittest.TestCase):
                 with self.assertRaises(AttributeError):
                     getattr(self.w, name)
 
+    def test_retired_observer_and_transport_diagnostics_are_not_public_authority(self):
+        # Legacy diagnostic parsers may be kept for history, but the live
+        # compatibility module must never expose them as a verdict path.
+        for name in (
+            "attach_observer_capture",
+            "capture_observer_tool_result_evidence",
+            "transport_tool_result_evidence",
+            "prepare_transport_result",
+            "extract_tool_result_evidence",
+            "enforce_reasoning_contract",
+        ):
+            with self.subTest(name=name):
+                self.assertFalse(hasattr(self.w, name))
+
     def test_loom_workspace_mode_remains_compatible_without_legacy_scheduler(self):
         # Public conformance wiring still asks for Loom's workspace policy.
         # Only this project-owned decision is exposed, not legacy execution.
