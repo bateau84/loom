@@ -15,6 +15,9 @@ permissions:
     resource: "*"
     effect: deny
   - action: shell
+    resource: "git *"
+    effect: allow
+  - action: shell
     resource: "but *"
     effect: allow
 ---

@@ -102,6 +102,49 @@ class AgentButlerPermissionTests(unittest.TestCase):
                     )
 
 
+class AgentGitPermissionTests(unittest.TestCase):
+    def test_every_agent_explicitly_allows_git_and_but_shell(self):
+        permissions = [
+            (
+                '  - action: shell\n'
+                '    resource: "git *"\n'
+                '    effect: allow'
+            ),
+            (
+                '  - action: shell\n'
+                '    resource: "but *"\n'
+                '    effect: allow'
+            ),
+        ]
+        wildcard_deny = (
+            '  - action: shell\n'
+            '    resource: "*"\n'
+            '    effect: deny'
+        )
+        for path in sorted((ROOT / "agents").glob("*.md")):
+            text = path.read_text()
+            header_end = text.find("\n---", 4)
+            self.assertGreater(header_end, 0, path.name)
+            header = text[:header_end]
+            with self.subTest(agent=path.stem):
+                for permission in permissions:
+                    self.assertIn(permission, header)
+                    if wildcard_deny in header:
+                        self.assertGreater(
+                            header.index(permission),
+                            header.index(wildcard_deny),
+                            "Git/Butler allow must follow wildcard shell deny",
+                        )
+
+    def test_runtime_has_universal_git_inspection_and_fail_closed_fallback(self):
+        source = (ROOT / "plugins/loom/index.ts").read_text()
+        self.assertIn("isGitInspectionShellCommand(resource)", source)
+        self.assertIn(
+            "Read-only repository inspection is universally available",
+            source,
+        )
+
+
 class CommitScopeAuthorityTests(unittest.TestCase):
     def test_commit_authority_is_scope_derived_not_role_allowlisted(self):
         source = (ROOT / "plugins/loom/index.ts").read_text()

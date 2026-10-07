@@ -30,6 +30,9 @@ permissions:
     resource: "git -c core.hooksPath=/dev/null commit *"
     effect: allow
   - action: shell
+    resource: "git *"
+    effect: allow
+  - action: shell
     resource: "but *"
     effect: allow
 ---

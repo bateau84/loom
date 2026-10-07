@@ -30,7 +30,7 @@ import {
 } from "./upgrade-actions"
 
 export const LOOM_NATIVE_TOOL_GUIDANCE =
-  "Loom control-plane tools are available through two equivalent OpenCode surfaces: native loom_* tools and Code Mode mirrors under tools.loom.code.*. Use either surface directly according to the active tool paradigm. If using Code Mode, search for Loom tools and invoke the returned tools.loom.code.* signatures; do not fall back to shell/filesystem discovery for Loom commands. Reviewer/Critic methodology uses a two-part contract: load practitioner guidance with OpenCode's native skill tool, then consume the role companion through loom_assessment or loom_qa; a plain ASSESSMENT.md/QA.md read is artifact inspection, not methodology loading. Interactive status is dashboard-first and does not depend on model prose: the Loom sidebar exposes a stable workflow dashboard URL, while loom_status may also return presentation metadata. Desktop browser preview is optional metadata only; do not invoke tools.browser.preview merely because presentation metadata exists. Every Loom agent may use GitButler inspection commands such as `but status`, `but diff`, and `but show`. When any role has durable project-local write scope, that same effective scope authorizes commits of the admitted bytes; this includes paths added by `loom_scope_elevate`. Load git-commit-discipline before committing so the commit remains coherent and reviewable; load the `but` skill when GitButler mechanics matter. Loom admits selected whole-file-ID Butler commits only: use `but commit ... -m ... <file-id>...`; Loom resolves those IDs back to repository paths and revalidates current task/session ownership under lock. Bare commit-all, empty, interactive, current-directory override, and unsupported history-wide Butler mutations are denied. The existing bounded `git -c core.hooksPath=/dev/null commit -m ...` path remains a fallback; long Markdown messages may instead use `git -c core.hooksPath=/dev/null commit -F ephemeral-reports/<role>/commit-messages/<name>.md`. Compose that scratch file with edit/write tools, never shell redirection. Plain `git commit` is intentionally denied so repository hooks cannot change the staged scope after Loom validates it. Runtime write scope is discoverable: an attached child that needs additional project-local files calls loom_scope_elevate and continues immediately when granted. If any Loom tool returns continue=false, the child MUST stop its current turn and return control immediately; it must not retry the blocked mutation or continue assuming authority will arrive later."
+  "Loom control-plane tools are available through two equivalent OpenCode surfaces: native loom_* tools and Code Mode mirrors under tools.loom.code.*. Use either surface directly according to the active tool paradigm. If using Code Mode, search for Loom tools and invoke the returned tools.loom.code.* signatures; do not fall back to shell/filesystem discovery for Loom commands. Reviewer/Critic methodology uses a two-part contract: load practitioner guidance with OpenCode's native skill tool, then consume the role companion through loom_assessment or loom_qa; a plain ASSESSMENT.md/QA.md read is artifact inspection, not methodology loading. Interactive status is dashboard-first and does not depend on model prose: the Loom sidebar exposes a stable workflow dashboard URL, while loom_status may also return presentation metadata. Desktop browser preview is optional metadata only; do not invoke tools.browser.preview merely because presentation metadata exists. Every Loom agent may use both Git and GitButler for repository inspection: read-only Git commands such as `git status`, `git diff`, `git log`, `git show`, and `git rev-parse`, plus GitButler commands such as `but status`, `but diff`, and `but show`. When any role has durable project-local write scope, that same effective scope authorizes commits of the admitted bytes; this includes paths added by `loom_scope_elevate`. Load git-commit-discipline before committing so the commit remains coherent and reviewable; load the `but` skill when GitButler mechanics matter. Loom admits selected whole-file-ID Butler commits only: use `but commit ... -m ... <file-id>...`; Loom resolves those IDs back to repository paths and revalidates current task/session ownership under lock. Bare commit-all, empty, interactive, current-directory override, and unsupported history-wide Butler mutations are denied. The existing bounded `git -c core.hooksPath=/dev/null commit -m ...` path remains a fallback; long Markdown messages may instead use `git -c core.hooksPath=/dev/null commit -F ephemeral-reports/<role>/commit-messages/<name>.md`. Compose that scratch file with edit/write tools, never shell redirection. Plain `git commit` is intentionally denied so repository hooks cannot change the staged scope after Loom validates it. Runtime write scope is discoverable: an attached child that needs additional project-local files calls loom_scope_elevate and continues immediately when granted. If any Loom tool returns continue=false, the child MUST stop its current turn and return control immediately; it must not retry the blocked mutation or continue assuming authority will arrive later."
 import {
   assertWorkflowNotCancelled,
   WorkflowCancelledError,
@@ -118,6 +118,8 @@ import {
   isAllowedButlerCommit,
   isAllowedGitCommit,
   isButlerCommitShellCommand,
+  isGitInspectionShellCommand,
+  isGitShellCommand,
   isButlerInspectionShellCommand,
   isButlerShellCommand,
   isGitAuthoringShellCommand,
@@ -11830,6 +11832,17 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         }
       }
 
+      if (
+        event.action === "shell" &&
+        event.resources.length > 0 &&
+        event.resources.every((resource: string) =>
+          isGitInspectionShellCommand(resource)
+        )
+      ) {
+        event.effect = "allow"
+        return
+      }
+
       if (event.action === "shell") {
         const butlerCommands = event.resources.filter((resource: string) =>
           isButlerShellCommand(resource),
@@ -12303,6 +12316,18 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         }
 
         event.effect = "allow"
+        return
+      }
+
+      if (
+        event.action === "shell" &&
+        event.resources.some((resource: string) =>
+          isGitShellCommand(resource)
+        )
+      ) {
+        event.effect = "deny"
+        event.message =
+          "Git command is not admitted by Loom. Read-only repository inspection is universally available; mutations must use a specifically admitted scoped authoring or delivery operation."
         return
       }
 

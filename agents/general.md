@@ -51,6 +51,9 @@ permissions:
     resource: "documenter"
     effect: allow
   - action: shell
+    resource: "git *"
+    effect: allow
+  - action: shell
     resource: "but *"
     effect: allow
 ---

@@ -7,6 +7,8 @@ import {
   isAllowedButlerCommit,
   isAllowedGitCommit,
   isAllowedWorkerShell,
+  isGitInspectionShellCommand,
+  isGitShellCommand,
   isButlerCommitShellCommand,
   isButlerInspectionShellCommand,
   isButlerShellCommand,
@@ -18,6 +20,51 @@ import {
 } from "./shell"
 
 describe("Loom Worker shell policy", () => {
+
+  test("allows universal read-only Git inspection and rejects mutation-shaped or escaping forms", () => {
+    for (const command of [
+      "git status --short",
+      "git diff --stat",
+      "git --no-pager log --oneline -20",
+      "git show HEAD",
+      "git rev-parse --show-toplevel",
+      "git grep TODO",
+      "git ls-files",
+      "git blame src/runtime.ts",
+      "git shortlog -sn",
+      "git describe --always --dirty",
+      "git merge-base HEAD origin/main",
+      "git name-rev HEAD",
+      "git ls-tree -r HEAD",
+      "git branch --show-current",
+      "git remote -v",
+      "git tag --list",
+    ]) {
+      expect(isGitShellCommand(command)).toBe(true)
+      expect(isGitInspectionShellCommand(command)).toBe(true)
+      expect(isAllowedWorkerShell(command)).toBe(true)
+    }
+
+    for (const command of [
+      "git reset --hard HEAD",
+      "git checkout main",
+      "git restore .",
+      "git clean -fd",
+      "git branch -D feature",
+      "git remote set-url origin https://example.invalid/repo",
+      "git tag v1",
+      "git diff --output=diff.txt",
+      "git diff --no-index /etc/passwd README.md",
+      "git show --ext-diff HEAD",
+      "git log --output history.txt",
+      "git grep --open-files-in-pager=cat TODO",
+      "git -C ../other status",
+      "git -c core.pager=cat log",
+    ]) {
+      expect(isGitInspectionShellCommand(command)).toBe(false)
+    }
+  })
+
 
   test("allows Butler inspection commands but keeps mutations classified", () => {
     for (const command of [
