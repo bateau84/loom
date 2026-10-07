@@ -173,7 +173,7 @@ class SkillAblationCutoverTests(unittest.TestCase):
     def test_discovery_and_isolated_skill_workspace(self):
         cases = self.profile.discover_cases()
         self.assertEqual([case.id for case in cases], ["SKILL-demo-S1", "SKILL-demo-S2"])
-        self.assertIn("skill:demo", cases[0].selectors)
+        self.assertIn("S1", cases[0].selectors)
         self.assertEqual(cases[0].metadata["evaluation_mode"], "skill-ablation")
         with self.profile.prepare_pair(self.case, 2) as (baseline, candidate):
             self.assertFalse((baseline.target_workspace / ".opencode" / "skills" / "demo").exists())
