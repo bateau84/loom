@@ -17,6 +17,7 @@ export const MAX_WORK_RISK_BOUNDARIES = 64
 export const MAX_WORK_ACCEPTANCE_COVERAGE = 64
 export const MAX_WORK_RELATIONSHIPS = 64
 export const MAX_WORK_CORRECTION_ROUTES = 64
+export const MAX_WORK_AUTHORITY_REFS = 256
 
 export type WorkNodeStatus =
   | "pending"
@@ -160,6 +161,8 @@ export type WorkPlanTopLevelPatch = Partial<
 >
 
 export type WorkPlanAmendOperation =
+  | { action: "add-authority-ref"; authorityRef: string }
+  | { action: "remove-authority-ref"; authorityRef: string }
   | { action: "patch-phase"; phaseId: string; patch: WorkPlanPhasePatch }
   | { action: "patch-wave"; phaseId: string; waveId: string; patch: WorkPlanWavePatch }
   | { action: "patch-task"; taskId: string; patch: WorkPlanTaskPatch }
@@ -171,7 +174,11 @@ export type WorkPlanAmendOperation =
   | { action: "remove-task"; taskId: string }
 
 type WorkPlanInverseOperation =
-  | Exclude<WorkPlanAmendOperation, { action: "add-phase" | "add-wave" | "add-task" }>
+  | Exclude<
+      WorkPlanAmendOperation,
+      { action: "add-phase" | "add-wave" | "add-task" | "add-authority-ref" }
+    >
+  | { action: "add-authority-ref"; authorityRef: string; index?: number }
   | { action: "add-phase"; phase: WorkPlanPhase; index?: number }
   | { action: "add-wave"; phaseId: string; wave: WorkPlanWave; index?: number }
   | { action: "add-task"; phaseId: string; waveId: string; task: WorkPlanTask; index?: number }
@@ -476,7 +483,12 @@ export function validateWorkPlan(input: WorkPlanDefinition): WorkPlanDefinition 
     phases.flatMap((phase) => phase.waves.flatMap((wave) => wave.tasks.map((task) => task.id))),
   )
 
-  const planAuthorityRefs = normalizedTextList(input.authorityRefs, "Plan authorityRefs", true, 64)
+  const planAuthorityRefs = normalizedTextList(
+    input.authorityRefs,
+    "Plan authorityRefs",
+    true,
+    MAX_WORK_AUTHORITY_REFS,
+  )
   for (const task of phases.flatMap((phase) => phase.waves.flatMap((wave) => wave.tasks))) {
     for (const authorityRef of task.authorityRefs) {
       if (!planAuthorityRefs.includes(authorityRef)) {
@@ -843,6 +855,16 @@ function restoreArrayPosition<T>(items: T[], item: T, index?: number) {
 }
 
 function applyInverseOperation(plan: WorkPlanDefinition, operation: WorkPlanInverseOperation) {
+  if (operation.action === "add-authority-ref") {
+    if (!plan.authorityRefs.includes(operation.authorityRef)) {
+      restoreArrayPosition(plan.authorityRefs, operation.authorityRef, operation.index)
+    }
+    return
+  }
+  if (operation.action === "remove-authority-ref") {
+    plan.authorityRefs = plan.authorityRefs.filter((authorityRef) => authorityRef !== operation.authorityRef)
+    return
+  }
   if (operation.action === "patch-phase") {
     const phase = findPlanPhase(plan, operation.phaseId)
     if (phase) Object.assign(phase, structuredClone(operation.patch))
@@ -1034,6 +1056,7 @@ export function workPlanContext(
   const relevantRelationships = task
     ? snapshot.relationships.filter((relationship) => relationship.taskIds.includes(task.id))
     : snapshot.relationships
+  const authorityRefLimit = mode === "full" ? MAX_WORK_AUTHORITY_REFS : 32
 
   return {
     generation: snapshot.generation,
@@ -1056,7 +1079,7 @@ export function workPlanContext(
     goal: contextText(snapshot.goal),
     assumptions: contextList(snapshot.assumptions, 16),
     outOfScope: contextList(snapshot.outOfScope, 16),
-    authorityRefs: snapshot.authorityRefs.slice(0, 32),
+    authorityRefs: snapshot.authorityRefs.slice(0, authorityRefLimit),
     obligations: (mode === "full" || !task
       ? snapshot.obligations
       : snapshot.obligations.filter((obligation) => obligation.taskIds.includes(task.id))
@@ -1124,7 +1147,7 @@ export function workPlanContext(
       taskIdLimit: PLAN_CONTEXT_TASK_ID_LIMIT,
       mapTextLimit: PLAN_CONTEXT_MAP_TEXT_LIMIT,
       amendmentsOmitted: Math.max(0, (snapshot.amendments ?? []).length - 20),
-      authorityRefsOmitted: Math.max(0, snapshot.authorityRefs.length - 32),
+      authorityRefsOmitted: Math.max(0, snapshot.authorityRefs.length - authorityRefLimit),
     },
     ...(task
       ? {
@@ -1271,11 +1294,17 @@ function protectedTaskIds(hierarchy: WorkHierarchy) {
 function planTaskSemanticFingerprint(plan: WorkPlanDefinition, taskId: string) {
   const located = findPlanTask(plan, taskId)
   if (!located) return undefined
+  const obligations = plan.obligations.filter((item) => item.taskIds.includes(taskId))
+  const relevantAuthorityRefs = new Set(located.task.authorityRefs)
+  for (const obligation of obligations) {
+    relevantAuthorityRefs.add(obligation.sourceRef)
+    if (obligation.dispositionAuthorityRef) relevantAuthorityRefs.add(obligation.dispositionAuthorityRef)
+  }
   return JSON.stringify({
     goal: plan.goal,
     assumptions: plan.assumptions,
     outOfScope: plan.outOfScope,
-    authorityRefs: plan.authorityRefs,
+    authorityRefs: plan.authorityRefs.filter((authorityRef) => relevantAuthorityRefs.has(authorityRef)),
     phase: { id: located.phase.id, title: located.phase.title, objective: located.phase.objective },
     wave: {
       id: located.wave.id,
@@ -1284,7 +1313,7 @@ function planTaskSemanticFingerprint(plan: WorkPlanDefinition, taskId: string) {
       constraints: located.wave.constraints,
     },
     task: located.task,
-    obligations: plan.obligations.filter((item) => item.taskIds.includes(taskId)),
+    obligations,
     risks: plan.riskBoundaries.filter((item) => item.taskIds.includes(taskId)),
     acceptanceCoverage: plan.acceptanceCoverage.filter((item) => item.taskIds.includes(taskId)),
     relationships: plan.relationships.filter((item) => item.taskIds.includes(taskId)),
@@ -1343,24 +1372,22 @@ function planWaveKeys(plan: WorkPlanDefinition) {
   return plan.phases.flatMap((phase) => phase.waves.map((wave) => `${phase.id}/${wave.id}`))
 }
 
-function assertPlanPatchDoesNotRewriteCompletedWork(
+function assertAmendmentDoesNotRewriteCompletedWork(
   hierarchy: WorkHierarchy,
   before: WorkPlanSnapshot,
   after: WorkPlanDefinition,
   patch?: WorkPlanTopLevelPatch,
 ) {
-  if (!patch) return
   const protectedTasks = protectedTaskIds(hierarchy)
   if (protectedTasks.size === 0) return
 
   if (
-    patch.goal !== undefined ||
-    patch.assumptions !== undefined ||
-    patch.outOfScope !== undefined ||
-    patch.authorityRefs !== undefined
+    patch?.goal !== undefined ||
+    patch?.assumptions !== undefined ||
+    patch?.outOfScope !== undefined
   ) {
     throw new Error(
-      "Plan goal/assumption/scope/authority changes while Tasks are claimed or complete require a new Plan generation.",
+      "Plan goal/assumption/scope changes while Tasks are claimed or complete require a new Plan generation.",
     )
   }
 
@@ -1408,6 +1435,12 @@ function assertPlanPatchDoesNotRewriteCompletedWork(
     if (JSON.stringify(oldCorrectionRouting) !== JSON.stringify(newCorrectionRouting)) {
       throw new Error(
         `Plan amendment would rewrite correction routing for claimed/completed Task ${taskId}; release/replan or create a new Plan generation.`,
+      )
+    }
+
+    if (planTaskSemanticFingerprint(before, taskId) !== planTaskSemanticFingerprint(after, taskId)) {
+      throw new Error(
+        `Plan amendment would rewrite semantic context already consumed by claimed/completed Task ${taskId}.`,
       )
     }
   }
@@ -1503,6 +1536,10 @@ function assertPatchKeys(
 }
 
 function assertAmendOperationShape(operation: WorkPlanAmendOperation) {
+  if (operation.action === "add-authority-ref" || operation.action === "remove-authority-ref") {
+    nonEmpty(operation.authorityRef, `${operation.action} authorityRef`)
+    return
+  }
   if (operation.action === "patch-phase") {
     if (!operation.phaseId) throw new Error("patch-phase requires phaseId.")
     assertPatchKeys(operation.patch as Record<string, unknown>, ["title", "objective"], "patch-phase")
@@ -1544,6 +1581,9 @@ function assertAmendOperationShape(operation: WorkPlanAmendOperation) {
 }
 
 function operationLabel(operation: WorkPlanAmendOperation) {
+  if (operation.action === "add-authority-ref" || operation.action === "remove-authority-ref") {
+    return `${operation.action}:${operation.authorityRef}`
+  }
   if (operation.action === "patch-phase" || operation.action === "remove-phase") {
     return `${operation.action}:${operation.phaseId}`
   }
@@ -1635,6 +1675,25 @@ export function amendWorkPlan(
   const inverseOperations: WorkPlanInverseOperation[] = []
   for (const operation of input.operations) {
     assertAmendOperationShape(operation)
+    if (operation.action === "add-authority-ref") {
+      const authorityRef = nonEmpty(operation.authorityRef, "Plan authorityRef")
+      if (draft.authorityRefs.includes(authorityRef)) {
+        throw new Error(`Plan authority reference is already declared: ${authorityRef}.`)
+      }
+      inverseOperations.unshift({ action: "remove-authority-ref", authorityRef })
+      draft.authorityRefs.push(authorityRef)
+      continue
+    }
+
+    if (operation.action === "remove-authority-ref") {
+      const authorityRef = nonEmpty(operation.authorityRef, "Plan authorityRef")
+      const index = draft.authorityRefs.indexOf(authorityRef)
+      if (index < 0) throw new Error(`Plan authority reference not found: ${authorityRef}.`)
+      inverseOperations.unshift({ action: "add-authority-ref", authorityRef, index })
+      draft.authorityRefs.splice(index, 1)
+      continue
+    }
+
     if (operation.action === "patch-phase") {
       const phase = findPlanPhase(draft, operation.phaseId)
       if (phase) {
@@ -1810,7 +1869,7 @@ export function amendWorkPlan(
   }
 
   const validated = validateWorkPlan(draft)
-  assertPlanPatchDoesNotRewriteCompletedWork(hierarchy, snapshot, validated, input.planPatch)
+  assertAmendmentDoesNotRewriteCompletedWork(hierarchy, snapshot, validated, input.planPatch)
 
   const allTaskIds = new Set([...beforeTaskFingerprints.keys(), ...planTaskIds(validated)])
   const changedTaskIds = [...allTaskIds].filter(
