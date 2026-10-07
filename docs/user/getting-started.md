@@ -85,6 +85,8 @@ Used for broad product work that benefits from persistent planning and whole-pro
 
 An Objective can include a holistic Plan, multiple implementation Waves, Product Acceptance, documentation sync, product review, and a final Critic gate.
 
+**When the Plan needs to change:** explain the new finding or correction in the conversation. Loom's Planner can amend the current Plan as a new numbered revision even if work has started. Loom keeps earlier revisions for inspection; you can ask it to show what changed between revisions. Unchanged completed Tasks are reused only when their original result and evidence remain valid. Changed Tasks and affected dependents run again after a fresh independent Plan review. No earlier acceptance or review is silently carried forward.
+
 You do not choose Task, Change, or Objective yourself.
 
 ## 4. Let Loom handle professional decisions

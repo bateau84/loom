@@ -251,9 +251,13 @@ export function resetVerificationAfterReopen(workflow: Workflow, resetStepIds: s
       continue
     }
 
+    // Reopening only the consumer gate does not invalidate an existing proof.
+    // Proof follows the producer/evidence path; the fresh gate may review the
+    // same proof again without redispatching unchanged work.
     if (
       requirement.status === "satisfied" &&
-      (reset.has(requirement.beforeStepId) || (requirement.proof?.stepId && reset.has(requirement.proof.stepId)))
+      requirement.proof?.stepId &&
+      reset.has(requirement.proof.stepId)
     ) {
       requirement.status = "open"
       delete requirement.proof
@@ -844,7 +848,11 @@ function userDecisionContract(task: TaskSpec) {
   ])
 }
 
-export function applyTaskPlan(workflow: Workflow, tasks: TaskSpec[]) {
+export function applyTaskPlan(
+  workflow: Workflow,
+  tasks: TaskSpec[],
+  preserveSatisfiedTaskIds: string[] = [],
+) {
   const plan = workflow.steps.find((step) => step.id === "plan")
   if (!plan) throw new Error("Workflow has no planning step.")
   if (plan.status !== "pending") throw new Error("Planning step must be pending before replacing the task graph.")
@@ -853,21 +861,22 @@ export function applyTaskPlan(workflow: Workflow, tasks: TaskSpec[]) {
   }
 
   const existing = plannedTaskSteps(workflow)
-  const startedTasks = existing.filter((step) => {
-    const untouchedUserDecision =
-      step.kind === "wait" &&
-      step.status === "waiting" &&
-      step.agent === "user" &&
-      step.task?.role === "user" &&
-      step.task.responsibility === "obtain-user-decision"
-    return step.status !== "pending" && !untouchedUserDecision
-  })
-  if (startedTasks.length > 0) {
-    const details = startedTasks.map((step) => `${step.id} (${step.kind}/${step.status})`).join(", ")
-    throw new Error(`Task graph cannot change after task execution has started: ${details}.`)
+  const preserve = new Set(preserveSatisfiedTaskIds)
+  const preserved = existing.filter(
+    (step) => step.task && preserve.has(step.task.id) && satisfied(step),
+  )
+
+  for (const step of preserved) {
+    const refreshed = tasks.find((candidate) => candidate.id === step.task!.id)
+    if (refreshed && JSON.stringify(refreshed) !== JSON.stringify(step.task)) {
+      throw new Error(
+        `Completed Task ${step.task!.id} cannot reuse its result with a changed executable contract; invalidate/replan that Task instead.`,
+      )
+    }
   }
+
   for (const step of existing) {
-    if (step.status !== "waiting") continue
+    if (step.status !== "waiting" || preserve.has(step.task!.id)) continue
     const task = step.task!
     const refreshed = tasks.find((candidate) => candidate.id === task.id)
     if (
@@ -880,9 +889,18 @@ export function applyTaskPlan(workflow: Workflow, tasks: TaskSpec[]) {
     }
   }
 
+  const executableTasks = tasks.filter((task) => !preserve.has(task.id))
+  const allTaskSpecs = [
+    ...preserved.map((step) => step.task!),
+    ...executableTasks,
+  ]
+  const taskById = new Map(allTaskSpecs.map((task) => [task.id, task]))
+  if (taskById.size !== allTaskSpecs.length) {
+    throw new Error("Task graph contains duplicate Task identities after completion reuse.")
+  }
+
   const executionGateId = "review-plan"
-  const taskById = new Map(tasks.map((task) => [task.id, task]))
-  const taskSteps: Step[] = tasks.map((task) => {
+  const rebuilt: Step[] = executableTasks.map((task) => {
     if (!task.role || !task.responsibility) {
       throw new Error(`Task ${task.id} requires an accountable role and responsibility; amend and review the Plan before admission.`)
     }
@@ -919,12 +937,18 @@ export function applyTaskPlan(workflow: Workflow, tasks: TaskSpec[]) {
       attempt: (existing.find((step) => step.id === taskStepId(task.id))?.attempt ?? -1) + 1,
     }
   })
-  const handoffGates: Step[] = tasks
+
+  const preservedById = new Map(preserved.map((step) => [step.task!.id, step]))
+  const taskSteps = allTaskSpecs.map((task) =>
+    preservedById.get(task.id) ?? rebuilt.find((step) => step.task?.id === task.id)!,
+  )
+
+  const handoffGates: Step[] = allTaskSpecs
     .filter((source) => source.responsibility !== "review" && source.responsibility !== "obtain-user-decision" &&
-      tasks.some((target) => target.role !== source.role && target.responsibility !== "review" && target.dependsOn.includes(source.id)))
+      allTaskSpecs.some((target) => target.role !== source.role && target.responsibility !== "review" && target.dependsOn.includes(source.id)))
     .map((source) => ({
       id: `task-review:${source.id}`, agent: "reviewer", kind: "gate",
-      dependsOn: [taskStepId(source.id)], status: "pending",
+      dependsOn: [executionGateId, taskStepId(source.id)], status: "pending",
     }))
 
   const withoutTasks = workflow.steps.filter((step) => !step.task && !step.id.startsWith("task-review:"))

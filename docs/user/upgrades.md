@@ -17,6 +17,8 @@ When adopting a Loom release that introduces or changes runtime-version fencing,
 
 Loom records the canonical runtime-state version under the installation's durable state root and applies any required ordered upgrade steps before normal mutable execution. Completed deterministic upgrade steps have durable receipts and are not rerun.
 
+Older completed Plan Tasks may not carry the semantic dependency/evidence receipt required by the current selective-completion reuse path. Their original history remains intact. If such a workflow explicitly reopens planning, Loom cannot retrospectively certify the older result from today's Plan: the affected Task (and completed dependents) must run again after re-planning and independent review. A missing receipt does not by itself reopen an otherwise finished workflow.
+
 Some upgrades also introduce **semantic compatibility actions** that cannot be manufactured safely by a storage migration. Loom derives those actions from current authoritative state. They are scoped to the thing that actually needs adoption (for example an Objective), exposed through `loom_upgrade_status`, and disappear automatically once the new invariant is satisfied. There is no model acknowledgement flag to clear.
 
 ## Resuming an older OpenCode session

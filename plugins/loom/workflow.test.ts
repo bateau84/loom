@@ -232,7 +232,7 @@ describe("Loom routing DAG", () => {
     expect(w.steps.find((step) => step.id === "task:choice")?.task?.objective).toBe(decision.objective)
   })
 
-  test("refresh still rejects a completed Task and identifies the protected step", () => {
+  test("task-plan refresh explicitly preserves an unchanged completed Task and rejects changed reuse", () => {
     const w = workflow(buildSteps({
       humanFacing: false, behavioral: false, structural: false, externalUnknown: false,
       diagnostic: false, productOutcome: true, workLevel: "wave",
@@ -242,12 +242,28 @@ describe("Loom routing DAG", () => {
       id: "completed", title: "Completed", objective: "Already consumed work", dependsOn: [],
       write: ["src/**"], skills: [], verify: ["test"], role: "worker", responsibility: "execute" as const,
     }
-    applyTaskPlan(w, [completedTask])
-    w.steps.find((step) => step.id === "task:completed")!.status = "complete"
+    const remainingTask = {
+      id: "remaining", title: "Remaining", objective: "Finish the Wave", dependsOn: ["completed"],
+      write: ["src/**"], skills: [], verify: ["test"], role: "worker", responsibility: "execute" as const,
+    }
+    applyTaskPlan(w, [completedTask, remainingTask])
+    const completed = w.steps.find((step) => step.id === "task:completed")!
+    completed.status = "complete"
+    completed.summary = "already proven"
+    const attempt = completed.attempt
 
-    expect(() => applyTaskPlan(w, [{ ...completedTask, objective: "Changed contract" }]))
-      .toThrow("task:completed (work/complete)")
-    expect(w.steps.find((step) => step.id === "task:completed")?.task?.objective).toBe("Already consumed work")
+    expect(() => applyTaskPlan(w, [
+      { ...completedTask, objective: "Changed contract" },
+      remainingTask,
+    ], ["completed"])).toThrow("cannot reuse its result with a changed executable contract")
+
+    expect(() => applyTaskPlan(w, [completedTask, remainingTask], ["completed"])).not.toThrow()
+    expect(w.steps.find((step) => step.id === "task:completed")).toMatchObject({
+      status: "complete",
+      summary: "already proven",
+      attempt,
+    })
+    expect(w.steps.find((step) => step.id === "task:remaining")?.status).toBe("pending")
   })
 
   test("planned Worker dependencies become real workflow dependencies", () => {
@@ -458,6 +474,11 @@ describe("Loom routing DAG", () => {
       observationIds: ["obs-test"],
       provedAt: "later",
     })
+
+    const resetGate = reopenFrom(w, "review-implementation")
+    resetVerificationAfterReopen(w, resetGate)
+    expect(requirement.status).toBe("satisfied")
+    expect(requirement.proof?.observationIds).toEqual(["obs-test"])
 
     const resetWorker = reopenFrom(w, "worker")
     resetVerificationAfterReopen(w, resetWorker)
