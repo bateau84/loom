@@ -10472,11 +10472,11 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                     const receipt = eligible.get(id)!.receipt
                     return {
                       taskId: id, workflowId: receipt.workflowId,
-                      originalAttempt: receipt.completedAttempt,
-                      originalPlanRevision: receipt.planRevision,
-                      semanticClosureFingerprint: receipt.semanticClosureFingerprint,
+                      originalAttempt: receipt.completedAttempt!,
+                      originalPlanRevision: receipt.planRevision!,
+                      semanticClosureFingerprint: receipt.semanticClosureFingerprint!,
                       evidenceClaimIds: receipt.evidenceClaimIds,
-                      cleanRepositoryHead: receipt.cleanRepositoryHead,
+                      cleanRepositoryHead: receipt.cleanRepositoryHead!,
                     }
                   }),
                   refused,
