@@ -10376,6 +10376,13 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                     refuse(id, "Plan/authority/dependency closure changed or original semantic proof is missing.")
                     continue
                   }
+                  const executableFingerprint = createHash("sha256")
+                    .update(JSON.stringify(step.task)).digest("hex")
+                  if (!receipt.executableTaskFingerprint ||
+                      receipt.executableTaskFingerprint !== executableFingerprint) {
+                    refuse(id, "Original full executable Task contract (including write/skills) is missing or changed.")
+                    continue
+                  }
                   if (!head || !receipt.cleanRepositoryHead || head !== receipt.cleanRepositoryHead) {
                     refuse(id, "No matching clean repository HEAD at original completion and now; code continuity is uncertain.")
                     continue
