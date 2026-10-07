@@ -5919,10 +5919,15 @@ Verdict: FAIL
           `#!/bin/sh
 set -eu
 if [ "\$1" = "--json" ] && [ "\$2" = "status" ] && [ "\$3" = "-f" ]; then
+  status_path="docs/design/runtime.md"
+  if [ "${stale}" = "1" ] && [ -f "\$LOOM_FAKE_BUT_STATE" ]; then
+    count=\$(cat "\$LOOM_FAKE_BUT_STATE")
+    if [ "\$count" -ge 2 ]; then status_path="docs/design/other.md"; fi
+  fi
   if [ "${linked}" = "1" ]; then
-    printf '{"uncommittedChanges":[],"stacks":[],"worktrees":[{"uncommittedChanges":[{"cliId":"qs","filePath":"docs/design/runtime.md","changeType":"${changeType}"}]}]}\\n'
+    printf '{"uncommittedChanges":[],"stacks":[],"worktrees":[{"uncommittedChanges":[{"cliId":"qs","filePath":"%s","changeType":"${changeType}"}]}]}\\n' "\$status_path"
   else
-    printf '{"uncommittedChanges":[{"cliId":"qs","filePath":"docs/design/runtime.md","changeType":"${changeType}"}],"stacks":[],"worktrees":[]}\\n'
+    printf '{"uncommittedChanges":[{"cliId":"qs","filePath":"%s","changeType":"${changeType}"}],"stacks":[],"worktrees":[]}\\n' "\$status_path"
   fi
   exit 0
 fi
