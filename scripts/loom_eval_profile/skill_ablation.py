@@ -201,17 +201,43 @@ class LoomSkillAblationProfile:
         result = target.result
         if not isinstance(result, Mapping):
             return (CheckOutcome("skill.target", "non-evidence", "target result absent", {}),)
+        # Skill score comparisons require the same four complete target
+        # projections as legacy: assistant text, tools, actions and skill loads.
+        # Generic runtime_evidence readiness is checked independently above.
+        text = result.get("text")
+        if not isinstance(text, str) or not text.strip() or "***REDACTED***" in text:
+            return (CheckOutcome("skill.text", "non-evidence", "complete unsanitized target text unavailable", {}),)
+        if len(text) > self.legacy.JUDGE_TEXT_LIMIT:
+            return (CheckOutcome("skill.text", "non-evidence", "target text exceeds judge-input budget", {}),)
+        if not isinstance(result.get("tools"), list) or not isinstance(result.get("actions"), list):
+            return (CheckOutcome("skill.projections", "non-evidence", "complete target tool/action projections unavailable", {}),)
+        loaded = result.get("skills_loaded")
+        if not isinstance(loaded, list) or not all(isinstance(item, str) for item in loaded):
+            return (CheckOutcome("skill.discovery", "non-evidence", "skill loading evidence unavailable", {}),)
+        if any("***REDACTED***" in item for item in loaded):
+            return (CheckOutcome("skill.discovery", "non-evidence", "skill loading evidence redacted", {}),)
+        # Legacy supplied explicit per-field provenance. When the generic
+        # transport supplies it, only exact score inputs are admissible.
+        safety = result.get("evidence_safety")
+        if isinstance(safety, Mapping):
+            fields = safety.get("fields")
+            if not isinstance(fields, (list, dict)):
+                return (CheckOutcome("skill.exact-fields", "non-evidence", "field provenance unavailable", {}),)
+            for field in ("text", "tools", "actions", "skills_loaded"):
+                if isinstance(fields, dict):
+                    disposition = fields.get(field)
+                else:
+                    disposition = next((
+                        value for value in fields
+                        if isinstance(value, Mapping) and value.get("event") is None and value.get("field") == field
+                    ), None)
+                if not isinstance(disposition, Mapping) or disposition.get("state") != "exact":
+                    return (CheckOutcome("skill.exact-fields", "non-evidence", f"{field} is not exact", {}),)
         skill = str(raw_case(case)["skill"])
-        # Copilot has no native skill loading: the candidate receives the skill
-        # in its system prompt. The baseline system prompt intentionally does not.
+        # Copilot has no native skill loading; Loom supplies the candidate
+        # methodology in its system prompt and excludes it from the baseline.
         if self.args.target_transport == "github-copilot-cli":
             return (CheckOutcome("skill.inline-methodology", "pass", "Copilot methodology boundary supplied by Loom", {}),)
-        # The old baseline treated missing skills_loaded as an empty list.
-        # A malformed non-empty claim cannot be trusted. Candidate must prove
-        # its native skill was loaded, not merely have its files available.
-        loaded = result.get("skills_loaded", [])
-        if not isinstance(loaded, list) or not all(isinstance(item, str) for item in loaded):
-            return (CheckOutcome("skill.discovery", "non-evidence", "skill loading evidence malformed", {}),)
         if side.name == "baseline" and skill in loaded:
             return (CheckOutcome("skill.baseline", "non-evidence", "baseline contaminated by tested skill", {}),)
         if side.name == "candidate" and skill not in loaded:
@@ -246,6 +272,8 @@ class LoomSkillAblationProfile:
         result = judge.result
         if not isinstance(result, Mapping) or not isinstance(result.get("text"), str):
             raise ValueError("judge complete text unavailable")
+        if "***REDACTED***" in result["text"]:
+            raise ValueError("judge text was redacted; grade is non-evidence")
         # Preserve the legacy Markdown-fence tolerance but require the existing
         # full judge contract. Malformed grades never become numeric zeroes.
         grade = _validate_grade(case, self.legacy.parse_judge(result["text"]))
