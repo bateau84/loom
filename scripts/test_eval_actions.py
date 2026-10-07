@@ -100,7 +100,7 @@ class WorkflowCredentialTests(unittest.TestCase):
         ci = (
             RUN_EVALS.ROOT / ".github" / "workflows" / "loom-ci.yml"
         ).read_text(encoding="utf-8")
-        expected_action = "bateau84/opencode-eval-runner@16715800e494b9dbebe37f7f7f5dd0e333733447"
+        expected_action = "bateau84/opencode-eval-runner@a7efd0b96ec650f9a972b53830722e467b61eb36"
         expected_image = (
             "ghcr.io/bateau84/opencode-eval-runner@"
             "sha256:104a0895c83e4f36fb597e388656a4c6e445035c9a1fb5aaa2c9e922ad172a36"
@@ -120,9 +120,8 @@ class WorkflowCredentialTests(unittest.TestCase):
             'opencode "$OPENCODE_EVAL_RUNNER_OPENCODE_IMAGE" --version | grep -F "2.0.23"',
             ci,
         )
-        # Skill-owned ablation is still Task 8 and retains its legacy harness
-        # defaults; the action-provided immutable images override those defaults
-        # in the live workflow.
+        # Stage 1 skill ablation requires the generic paired runner API. CI
+        # and live workflows must use the same immutable action revision.
 
     def test_live_workflow_forwards_opencode_api_key_explicitly(self):
         workflow = (
