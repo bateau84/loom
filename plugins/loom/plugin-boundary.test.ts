@@ -11942,6 +11942,17 @@ test("Planner OQ may amend untouched future work without staling the active Wave
     expect(oldRevision.error).toBeUndefined()
     expect(oldRevision.plan.focus.task.subtasks).toEqual([])
 
+    const oldWholePlan = await h.call("work_status", {
+      workflowId: h.workflowId,
+      revision: 1,
+    }, "planner", planner)
+    expect(oldWholePlan.error).toBeUndefined()
+    expect(oldWholePlan.plan).toMatchObject({
+      generation: 1,
+      revision: 1,
+    })
+    expect(oldWholePlan.plan.planMap).toEqual(expect.any(Array))
+
     const currentRevision = await h.call("work_status", {
       workflowId: h.workflowId,
       taskId: "two",
@@ -12131,34 +12142,78 @@ test("production permission and attachment preserve an unchanged Wave after non-
   }
 })
 
-test("reopening Plan after Worker execution does not release the consumed Wave claim", async () => {
-  const h = await waveLifecycleFixture()
+test("reopening Plan preserves unchanged completed Tasks and requires only fresh Plan review", async () => {
+  const h = await waveLifecycleFixture("wave", false, "worker", true, "execute", "worker")
   try {
     const reviewed = await h.workflow()
     expect(reviewed.work.reviewedPlanRevision).toBe(1)
     expect(reviewed.work.reviewedPlanFingerprint).toBeDefined()
 
     expect((await h.finish("task:one", "worker")).error).toBeUndefined()
+    const completed = await h.workflow()
+    const completedOne = completed.steps.find((step: any) => step.id === "task:one")
+    expect(completedOne.status).toBe("complete")
 
-    expect((await h.call("reopen", {
+    const reopened = await h.call("reopen", {
       workflowId: h.workflowId,
       stepId: "plan",
-      reason: "New evidence requires reassessing the consumed Plan.",
+      reason: "Fresh Plan review is required without changing Task one.",
       newEvidence: true,
       changedHypothesis: false,
       changedStrategy: false,
       reducedUnresolved: false,
-    }, "general", "parent")).error).toBeUndefined()
+    }, "general", "parent")
+    expect(reopened.error).toBeUndefined()
+    expect(reopened.reset).not.toContain("task:one")
+    expect(reopened.reset).toContain("task:dependent")
 
     const reopenedWorkflow = await h.workflow()
     expect(reopenedWorkflow.work.reviewedPlanRevision).toBeUndefined()
     expect(reopenedWorkflow.work.reviewedPlanFingerprint).toBeUndefined()
+    expect(reopenedWorkflow.steps.find((step: any) => step.id === "task:one")).toMatchObject({
+      status: "complete",
+      attempt: completedOne.attempt,
+      summary: completedOne.summary,
+    })
+    expect(reopenedWorkflow.steps.find((step: any) => step.id === "task:dependent").status).toBe("pending")
 
     const work = await h.work()
+    expect(work.nodes.find((node: any) => node.type === "task" && node.logicalId === "one")).toMatchObject({
+      status: "complete",
+      result: {
+        workflowId: h.workflowId,
+        planRevision: 1,
+        semanticClosureFingerprint: expect.any(String),
+      },
+    })
     expect(
       work.nodes.find((node: any) => node.type === "wave" && node.logicalId === "first")
         .claimedByWorkflowId,
     ).toBe(h.workflowId)
+
+    const planner = await h.attach("plan", "planner", "reuse-plan-planner")
+    expect((await h.call("complete", {
+      workflowId: h.workflowId,
+      stepId: "plan",
+      summary: "Plan rechecked; completed Task one is unchanged.",
+    }, "planner", planner)).error).toBeUndefined()
+
+    const reviewer = await h.attach("review-plan", "reviewer", "reuse-plan-reviewer")
+    expect((await h.call("complete", {
+      workflowId: h.workflowId,
+      stepId: "review-plan",
+      outcome: "pass",
+      summary: "Fresh Plan review confirms the unchanged completion receipt.",
+    }, "reviewer", reviewer)).error).toBeUndefined()
+
+    expect((await h.call("dispatch_grant", {
+      workflowId: h.workflowId,
+      stepId: "task:one",
+    }, "general", "parent")).error).toContain("not currently runnable")
+    expect((await h.call("dispatch_grant", {
+      workflowId: h.workflowId,
+      stepId: "task:dependent",
+    }, "general", "parent")).error).toBeUndefined()
   } finally {
     h.restore()
   }

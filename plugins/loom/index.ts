@@ -185,6 +185,7 @@ import {
   workPlanContext,
   workPlanSemanticFingerprint,
   taskSemanticFingerprintAtRevision,
+  taskSemanticClosureFingerprintAtRevision,
   validateWorkflowWave,
   validatePlanRoleFeasibility,
   workflowTaskSemanticFingerprint,
@@ -3176,12 +3177,80 @@ async function assertWorkerWorkClaim(ctx: any, workflowId: string, stepId: strin
 
   const work = await readWork(ctx, workflow.work.objectiveId)
   if (!work) throw new Error("Persistent work hierarchy not found.")
+  assertStepDispatchAdmission(workflow, work, step)
   assertWaveClaimForTasks(
     work,
     workflow.id,
     workflow.work.generation,
     plannedTaskSteps(workflow).map((taskStep) => taskStep.task!.id),
   )
+}
+
+async function reusableCompletedTaskIds(
+  ctx: any,
+  work: WorkHierarchy,
+  workflow: Workflow,
+  taskSteps = plannedTaskSteps(workflow),
+) {
+  if (!workflow.work) return []
+  const reusable: string[] = []
+
+  for (const taskStep of taskSteps) {
+    if (!satisfied(taskStep)) continue
+    const workTask = work.nodes.find(
+      (node) =>
+        node.generation === workflow.work!.generation &&
+        node.type === "task" &&
+        node.logicalId === taskStep.task!.id &&
+        node.status !== "superseded",
+    )
+    if (workTask?.status !== "complete" || !workTask.result) continue
+
+    const currentClosure = taskSemanticClosureFingerprintAtRevision(
+      work,
+      taskStep.task!.id,
+      workflow.work.generation,
+    )
+    if (
+      !workTask.result.semanticClosureFingerprint ||
+      workTask.result.semanticClosureFingerprint !== currentClosure
+    ) {
+      throw new Error(
+        `Completed Task ${taskStep.task!.id} cannot be reused because its Plan/dependency/authority receipt is missing or stale.`,
+      )
+    }
+
+    const claims = await Promise.all(
+      workTask.result.evidenceClaimIds.map((id) =>
+        ctx.storage.get(claimIdKey(id)) as Promise<EvidenceClaim | undefined>,
+      ),
+    )
+    if (
+      claims.some((claim) => !claim) ||
+      claims.some((claim) =>
+        claim!.workflowId !== workTask.result!.workflowId ||
+        claim!.stepId !== taskStep.id
+      )
+    ) {
+      throw new Error(
+        `Completed Task ${taskStep.task!.id} cannot be reused because its evidence receipt is missing or no longer matches.`,
+      )
+    }
+
+    const observations = await Promise.all(
+      claims.flatMap((claim) => claim!.observationIds).map((id) =>
+        ctx.storage.get(evidenceKey(id)) as Promise<EvidenceObservation | undefined>,
+      ),
+    )
+    if (observations.some((observation) => !observation)) {
+      throw new Error(
+        `Completed Task ${taskStep.task!.id} cannot be reused because referenced evidence is missing.`,
+      )
+    }
+    reusable.push(taskStep.task!.id)
+  }
+
+  return reusable
 }
 
 async function readQuestions(ctx: any, workflowId: string): Promise<OpenQuestion[]> {
@@ -6587,6 +6656,12 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               throw new Error("Step has unresolved blocking questions.")
             }
 
+            if (currentStep && workflow.work && requiresReviewedPlannedDispatchBinding(workflow, currentStep)) {
+              const admissionWork = await readWork(ctx, workflow.work.objectiveId)
+              if (!admissionWork) throw new Error("Persistent work hierarchy not found.")
+              assertStepDispatchAdmission(workflow, admissionWork, currentStep)
+            }
+
             if (tool.agent === "diagnostic" && resolvedOutcome === "complete") {
               const cleanup = await cleanupDiagnosticSandboxesForWorkflow(workflowId)
               if (cleanup.errors.length > 0) {
@@ -6691,18 +6766,41 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 resolvedOutcome === "pass" &&
                 taskIds.length > 0
               ) {
-                // The executable DAG exists before review so Reviewer can inspect
-                // exact write/verification scopes, but execution authority begins
-                // only after independent Plan review passes.
-                claimWorkflowWave(
-                  work,
-                  workflow.id,
-                  workflow.work.generation,
-                  taskSteps.map((taskStep) => taskStep.task!),
-                  (workflow.effects?.workLevel ?? "objective") === "objective",
-                  now,
-                )
+                // Fresh Plan review is still mandatory. Unchanged completed
+                // Tasks may reuse their receipts; only pending/invalidated Tasks
+                // need execution authority again.
+                const reusableTaskIds = await reusableCompletedTaskIds(ctx, work, workflow, taskSteps)
+                try {
+                  assertWaveClaimForTasks(work, workflow.id, workflow.work.generation, taskIds)
+                } catch {
+                  const reusable = new Set(reusableTaskIds)
+                  claimWorkflowWave(
+                    work,
+                    workflow.id,
+                    workflow.work.generation,
+                    taskSteps
+                      .filter((taskStep) => !reusable.has(taskStep.task!.id))
+                      .map((taskStep) => taskStep.task!),
+                    (workflow.effects?.workLevel ?? "objective") === "objective",
+                    now,
+                    reusableTaskIds,
+                  )
+                }
               }
+
+              const completedTaskPlanRevision =
+                step.task && Number.isSafeInteger(workflow.work.reviewedPlanRevision)
+                  ? workflow.work.reviewedPlanRevision
+                  : undefined
+              const completedTaskSemanticClosure =
+                step.task && completedTaskPlanRevision
+                  ? taskSemanticClosureFingerprintAtRevision(
+                      work,
+                      step.task.id,
+                      workflow.work.generation,
+                      completedTaskPlanRevision,
+                    )
+                  : undefined
 
               if (taskIds.length > 0 && reviewedWave) {
                 // Wave review ended the execution lease. Later gates/documentation
@@ -6722,6 +6820,10 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                             ...(taskStep.summary ? { summary: taskStep.summary } : {}),
                             evidenceClaimIds: completedTaskClaims.map((claim) => claim.id),
                             completedAt: now,
+                            ...(completedTaskPlanRevision ? { planRevision: completedTaskPlanRevision } : {}),
+                            ...(completedTaskSemanticClosure
+                              ? { semanticClosureFingerprint: completedTaskSemanticClosure }
+                              : {}),
                           },
                         }
                       : {}),
@@ -6867,6 +6969,11 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             let hadPlanReviewClaim = false
             let hadTaskExecution = false
             let invalidatedPlanRecovery = false
+            const preservedTaskSteps = new Map<string, {
+              status: "complete" | "passed"
+              attempt: number
+              summary?: string
+            }>()
             const commitReopen = async () => {
               await validateWorkflowMutationLocked(ctx, runtime, workflow)
 
@@ -6889,7 +6996,41 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 }
                 const currentTaskSteps = plannedTaskSteps(workflow)
                 const taskIds = currentTaskSteps.map((taskStep) => taskStep.task!.id)
-                hadTaskExecution = currentTaskSteps.some((taskStep) => taskStep.status === "complete")
+                hadTaskExecution = currentTaskSteps.some((taskStep) => taskStep.status === "complete" || taskStep.status === "passed")
+                if (stepId === "plan") {
+                  const reviewedRevision = workflow.work.reviewedPlanRevision
+                  for (const taskStep of currentTaskSteps) {
+                    if (taskStep.status !== "complete" && taskStep.status !== "passed") continue
+                    preservedTaskSteps.set(taskStep.id, {
+                      status: taskStep.status,
+                      attempt: taskStep.attempt ?? 0,
+                      ...(taskStep.summary ? { summary: taskStep.summary } : {}),
+                    })
+                    const taskNode = work.nodes.find(
+                      (node) =>
+                        node.generation === workflow.work!.generation &&
+                        node.type === "task" &&
+                        node.logicalId === taskStep.task!.id &&
+                        node.status !== "superseded",
+                    )
+                    if (
+                      taskNode?.result &&
+                      Number.isSafeInteger(reviewedRevision) &&
+                      !taskNode.result.semanticClosureFingerprint
+                    ) {
+                      const fingerprint = taskSemanticClosureFingerprintAtRevision(
+                        work,
+                        taskStep.task!.id,
+                        workflow.work.generation,
+                        reviewedRevision,
+                      )
+                      if (fingerprint) {
+                        taskNode.result.planRevision = reviewedRevision
+                        taskNode.result.semanticClosureFingerprint = fingerprint
+                      }
+                    }
+                  }
+                }
                 if (taskIds.length > 0) {
                   const reviewed = workflow.steps.some((candidate) => candidate.id === "review-implementation" && candidate.status === "passed")
                   const hasPlanReview = workflow.steps.some((candidate) => candidate.id === "review-plan")
@@ -6905,7 +7046,30 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               }
 
               reset = reopenFrom(workflow, stepId)
-              resetVerificationAfterReopen(workflow, reset)
+              if (stepId === "plan" && preservedTaskSteps.size > 0) {
+                for (const [preservedStepId, preserved] of preservedTaskSteps) {
+                  const taskStep = workflow.steps.find((candidate) => candidate.id === preservedStepId)
+                  if (!taskStep?.task) continue
+                  taskStep.status = preserved.status
+                  taskStep.attempt = preserved.attempt
+                  if (preserved.summary) taskStep.summary = preserved.summary
+                  else delete taskStep.summary
+                }
+                reset = reset.filter((candidate) => !preservedTaskSteps.has(candidate))
+              }
+              if (stepId === "plan") {
+                for (const handoff of workflow.steps.filter((candidate) => candidate.id.startsWith("task-review:"))) {
+                  if (!handoff.dependsOn.includes("review-plan")) {
+                    handoff.dependsOn = ["review-plan", ...handoff.dependsOn]
+                  }
+                }
+              }
+              resetVerificationAfterReopen(
+                workflow,
+                stepId === "plan"
+                  ? reset.filter((candidate) => !preservedTaskSteps.has(candidate))
+                  : reset,
+              )
               if (workflow.work && reset.includes("review-plan")) {
                 delete workflow.work.reviewedPlanRevision
                 delete workflow.work.reviewedPlanFingerprint
@@ -6956,6 +7120,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                   releaseWorkflowWave(work, workflow.id, workflow.work.generation, taskIds, now)
                 } else if (
                   !invalidatedPlanRecovery &&
+                  stepId !== "plan" &&
                   reset.includes("review-implementation") &&
                   taskIds.length > 0
                 ) {
@@ -9205,20 +9370,43 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                   },
                   new Date().toISOString(),
                 )
-                const currentFingerprint =
-                  currentTaskIds.length > 0
-                    ? workflowTaskSemanticFingerprint(
-                        work,
-                        currentTaskIds,
-                        workflow.work!.generation,
-                      )
-                    : undefined
+                let currentFingerprint: string | undefined
+                if (currentTaskIds.length > 0) {
+                  try {
+                    currentFingerprint = workflowTaskSemanticFingerprint(
+                      work,
+                      currentTaskIds,
+                      workflow.work!.generation,
+                    )
+                  } catch {
+                    // Removing/replacing a currently compiled Task is a valid
+                    // Plan revision. The old executable DAG is simply stale.
+                    currentFingerprint = undefined
+                  }
+                }
                 const taskPlanRefreshRequired =
-                  Boolean(priorFingerprint && currentFingerprint && priorFingerprint !== currentFingerprint)
+                  Boolean(priorFingerprint && (!currentFingerprint || priorFingerprint !== currentFingerprint)) ||
+                  amended.affectedTaskIds.some((taskId) => currentTaskIds.includes(taskId))
                 if (workflow.work && currentTaskIds.length > 0 && !taskPlanRefreshRequired) {
                   workflow.work.taskPlanRevision = amended.plan.revision
                   workflow.work.taskPlanFingerprint = currentFingerprint
                 }
+
+                if (attachedPlanStep && amended.affectedTaskIds.length > 0) {
+                  const affected = new Set(amended.affectedTaskIds)
+                  const invalidatedStepIds: string[] = []
+                  for (const taskStep of plannedTaskSteps(workflow)) {
+                    if (!affected.has(taskStep.task!.id) || !satisfied(taskStep)) continue
+                    taskStep.attempt = (taskStep.attempt ?? 0) + 1
+                    taskStep.status = taskStep.kind === "wait" ? "waiting" : "pending"
+                    delete taskStep.summary
+                    invalidatedStepIds.push(taskStep.id)
+                  }
+                  if (invalidatedStepIds.length > 0) {
+                    resetVerificationAfterReopen(workflow, invalidatedStepIds)
+                  }
+                }
+
                 await ctx.storage.set(workKey(work.objectiveId), work)
                 await persistWorkflowMutationLocked(ctx, runtime, workflow)
                 return { ...amended, taskPlanRefreshRequired }
@@ -9234,6 +9422,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 revision: result.plan.revision,
                 amendment: result.amendment,
                 changedTaskIds: result.changedTaskIds,
+                affectedTaskIds: result.affectedTaskIds,
                 changedWaveKeys: result.changedWaveKeys,
                 taskPlanRefreshRequired: result.taskPlanRefreshRequired,
                 tree: workTree(result.hierarchy),
@@ -9378,13 +9567,6 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             taskId?: string
             revision?: number
           }
-          if (value.revision !== undefined && !value.taskId) {
-            return {
-              content: renderToolOutput({
-                error: "Plan revision selection requires taskId; whole-Plan status always uses the latest revision.",
-              }),
-            }
-          }
           let objectiveId = value.objectiveId
 
           if (!objectiveId) {
@@ -9440,7 +9622,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       addLoomTool({
         name: "work_status",
         description:
-          "Inspect persistent Objective progress and the bounded current holistic Plan. Pass taskId to retrieve one exact persistent Plan Task contract (including future Waves) without loading the whole rich Plan; revision optionally selects an immutable revision in the current generation.",
+          "Inspect persistent Objective progress and the effective current Plan. Pass taskId for one bounded Task contract; pass revision to explicitly inspect an immutable historical Plan revision without loading revision history into normal context.",
         input: {
           type: "object",
           properties: {
@@ -9497,7 +9679,14 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 work.generation,
                 value.revision,
               )
-            : workPlanContext(work, undefined, "full")
+            : workPlanContext(work, undefined, "full", work.generation, value.revision)
+          if (!plan && value.revision !== undefined) {
+            return {
+              content: renderToolOutput({
+                error: `Persistent Plan revision ${value.revision} not found in current generation.`,
+              }),
+            }
+          }
           if (value.taskId && !plan?.focus?.task) {
             return {
               content: renderToolOutput({
@@ -9765,20 +9954,55 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                   }
                 }
 
-                const steps = applyTaskPlan(workflow, tasks)
+                const preservedTaskIds = await reusableCompletedTaskIds(ctx, work, workflow)
+                const preserved = new Set(preservedTaskIds)
+                const executableTasks = tasks.filter((task) => !preserved.has(task.id))
+                const steps = applyTaskPlan(workflow, tasks, preservedTaskIds)
+                reconcileVerificationAfterRoute(workflow)
                 const currentPlan = workPlanContext(work, undefined, "full", workflow.work!.generation)
                 if (!currentPlan) throw new Error("Persistent semantic Plan snapshot not found.")
+                const compiledTaskIds = steps.map((step) => step.task!.id)
                 workflow.work!.taskPlanRevision = currentPlan.revision
                 workflow.work!.taskPlanFingerprint = workflowTaskSemanticFingerprint(
                   work,
-                  tasks.map((task) => task.id),
+                  compiledTaskIds,
                   workflow.work!.generation,
                 )
-                const wave = validateWorkflowWave(
-                  work,
-                  tasks,
-                  (workflow.effects?.workLevel ?? "objective") === "objective",
-                )
+                const wave = executableTasks.length > 0
+                  ? validateWorkflowWave(
+                      work,
+                      executableTasks,
+                      (workflow.effects?.workLevel ?? "objective") === "objective",
+                      { workflowId: workflow.id, satisfiedTaskIds: preservedTaskIds },
+                    )
+                  : (() => {
+                      const preservedTask = work.nodes.find(
+                        (node) =>
+                          node.generation === workflow.work!.generation &&
+                          node.type === "task" &&
+                          preserved.has(node.logicalId) &&
+                          node.status !== "superseded",
+                      )
+                      const completedWave = preservedTask
+                        ? work.nodes.find((node) => node.id === preservedTask.parentId && node.type === "wave")
+                        : undefined
+                      if (!completedWave) throw new Error("Task Plan has no executable or reusable Wave.")
+                      const omitted = work.nodes.filter(
+                        (node) =>
+                          node.generation === workflow.work!.generation &&
+                          node.type === "task" &&
+                          node.parentId === completedWave.id &&
+                          node.status !== "complete" &&
+                          node.status !== "superseded",
+                      )
+                      if (omitted.length > 0) {
+                        throw new Error(
+                          "Workflow task plan must contain every remaining Task in its selected Wave: " +
+                          omitted.map((node) => node.logicalId).join(", "),
+                        )
+                      }
+                      return completedWave
+                    })()
 
                 for (const step of steps) {
                   const scope: TaskScope = {
@@ -9794,15 +10018,19 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
                 const persisted = await readWork(ctx, work.objectiveId)
                 if (!persisted) throw new Error("Persistent work hierarchy disappeared after task-plan compilation.")
-                validateWorkflowWave(
-                  persisted,
-                  tasks,
-                  (workflow.effects?.workLevel ?? "objective") === "objective",
-                )
+                if (executableTasks.length > 0) {
+                  validateWorkflowWave(
+                    persisted,
+                    executableTasks,
+                    (workflow.effects?.workLevel ?? "objective") === "objective",
+                    { workflowId: workflow.id, satisfiedTaskIds: preservedTaskIds },
+                  )
+                }
                 return {
                   work: persisted,
                   wave,
                   steps,
+                  reusedTaskIds: preservedTaskIds,
                   planReviewRequired: true,
                   workLevel: workflow.effects?.workLevel ?? "objective",
                   workLevelAuto: Boolean(workflow.effects?.workLevelAuto),
@@ -9819,6 +10047,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 workLevel: claimed.workLevel,
                 workLevelAuto: claimed.workLevelAuto,
                 autoResolvedWorkLevel: claimed.autoResolvedWorkLevel,
+                reusedTaskIds: claimed.reusedTaskIds,
                 tasks: steps.map((step) => ({
                   stepId: step.id,
                   task: step.task,
