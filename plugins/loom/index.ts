@@ -398,6 +398,21 @@ async function repositoryHeadSha(projectDirectory: string) {
   }
 }
 
+/** A Git HEAD proves code continuity only when both sides have a clean tree. */
+async function cleanRepositoryHead(projectDirectory: string): Promise<string | undefined> {
+  const head = await repositoryHeadSha(projectDirectory)
+  if (head === "unavailable") return undefined
+  try {
+    const { stdout } = await execFileAsync(
+      "git", ["status", "--porcelain=v1", "--untracked-files=all"],
+      { cwd: projectDirectory, encoding: "utf8", maxBuffer: 1024 * 1024, timeout: 5_000 },
+    )
+    return stdout.trim() === "" ? head : undefined
+  } catch {
+    return undefined
+  }
+}
+
 const artifactWriteDefaults: Record<string, string[]> = {
   designer: ["docs/design/**", "ephemeral-reports/designer/**"],
   specifier: ["docs/requirements/**"],
@@ -3234,6 +3249,8 @@ async function reusableCompletedTaskIds(
 ) {
   if (!workflow.work) return []
   const reusable: string[] = []
+  let checkedCleanHead = false
+  let currentCleanHead: string | undefined
 
   for (const taskStep of taskSteps) {
     if (!satisfied(taskStep)) continue
@@ -3263,11 +3280,54 @@ async function reusableCompletedTaskIds(
       )
     }
 
+    // Modern receipts must stay valid across EVERY Plan reopen, not just the
+    // explicit reconciliation that first restored their workflow Step.
+    // Legacy receipts without modern provenance keep their historical path.
+    const receipt = workTask.result
+    if (receipt.completedAttempt !== undefined) {
+      if (!checkedCleanHead) {
+        currentCleanHead = await cleanRepositoryHead(ctx.location.directory)
+        checkedCleanHead = true
+      }
+      const contractDigest = createHash("sha256")
+        .update(JSON.stringify(taskStep.task)).digest("hex")
+      const changedDependency = taskStep.task!.dependsOn.some((dependencyId) => {
+        const dependency = work.nodes.find((node) =>
+          node.generation === workflow.work!.generation && node.type === "task" &&
+          node.logicalId === dependencyId && node.status !== "superseded")
+        return !dependency?.result || !receipt.dependencyResultDigests?.[dependencyId] ||
+          createHash("sha256").update(JSON.stringify(dependency.result)).digest("hex") !==
+            receipt.dependencyResultDigests[dependencyId]
+      })
+      if (!Number.isSafeInteger(receipt.completedAttempt) || !receipt.cleanRepositoryHead ||
+          receipt.cleanRepositoryHead !== currentCleanHead ||
+          !receipt.executableTaskFingerprint ||
+          receipt.executableTaskFingerprint !== contractDigest || changedDependency) {
+        if (invalidReceipt === "rerun") continue
+        throw new Error(
+          `Completed Task ${taskStep.task!.id} cannot be reused: original clean code, executable contract, or dependency result has changed.`,
+        )
+      }
+    }
+
+    // Reconciliation preserves the current (higher) workflow attempt to keep
+    // stale sessions fenced. The original producer evidence retains its old
+    // attempt in Work; future Plan revisions must verify THAT attempt.
+    const sourceAttempt = workTask.result.completedAttempt ?? (taskStep.attempt ?? 0)
+    if (workTask.result.producerAgent && workTask.result.producerAgent !== taskStep.agent) {
+      if (invalidReceipt === "rerun") continue
+      throw new Error(`Completed Task ${taskStep.task!.id} has inconsistent producer-role provenance.`)
+    }
+    const originalWorkflow: Workflow = sourceAttempt === (taskStep.attempt ?? 0)
+      ? workflow
+      : { ...workflow, steps: workflow.steps.map((step) => step.id === taskStep.id
+          ? { ...step, attempt: sourceAttempt } : step) }
+
     // The receipt must name the full set of claims made by this exact
     // execution attempt, not merely a valid subset of their identifiers.
     const attemptClaims = (await stepClaims(ctx, workflow.id, taskStep.id))
       .filter((claim) =>
-        (claim.attempt ?? 0) === (taskStep.attempt ?? 0) &&
+        (claim.attempt ?? 0) === sourceAttempt &&
         claim.byAgent === taskStep.agent,
       )
     const receiptIds = [...workTask.result.evidenceClaimIds].sort()
@@ -3290,7 +3350,7 @@ async function reusableCompletedTaskIds(
         claim!.workflowId !== workTask.result!.workflowId ||
         claim!.stepId !== taskStep.id ||
         claim!.byAgent !== taskStep.agent ||
-        (claim!.attempt ?? 0) !== (taskStep.attempt ?? 0)
+        (claim!.attempt ?? 0) !== sourceAttempt
       )
     ) {
       if (invalidReceipt === "rerun") continue
@@ -3307,7 +3367,7 @@ async function reusableCompletedTaskIds(
     if (
       observations.some((observation) => !observation) ||
       observations.some((observation) =>
-        !observation || !observationMatchesStep(observation, workflow, taskStep.id)
+        !observation || !observationMatchesStep(observation, originalWorkflow, taskStep.id)
       )
     ) {
       if (invalidReceipt === "rerun") continue
@@ -6887,6 +6947,10 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               workflow.work.reviewedPlanFingerprint = acceptedPlanReview.planFingerprint
             }
             evidenceBound = await bindSessionEvidence(ctx, tool.sessionID, workflowId, stepId)
+            const cleanTaskHead =
+              step.task && (step.status === "complete" || step.status === "passed")
+                ? await cleanRepositoryHead(ctx.location.directory)
+                : undefined
             const completedTaskClaims =
               step.task && (step.status === "complete" || step.status === "passed")
                 ? (await stepClaims(ctx, workflowId, stepId)).filter(
@@ -7003,6 +7067,23 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                             ...(taskStep.summary ? { summary: taskStep.summary } : {}),
                             evidenceClaimIds: completedTaskClaims.map((claim) => claim.id),
                             completedAt: now,
+                            completedAttempt: taskStep.attempt ?? 0,
+                            producerAgent: taskStep.agent,
+                            executableTaskFingerprint: createHash("sha256")
+                              .update(JSON.stringify(taskStep.task)).digest("hex"),
+                            dependencyResultDigests: Object.fromEntries(
+                              taskStep.task!.dependsOn.flatMap((dependencyId) => {
+                                const dependency = work.nodes.find((node) =>
+                                  node.generation === workflow.work!.generation &&
+                                  node.type === "task" && node.logicalId === dependencyId &&
+                                  node.status !== "superseded")
+                                return dependency?.result
+                                  ? [[dependencyId, createHash("sha256")
+                                      .update(JSON.stringify(dependency.result)).digest("hex")]]
+                                  : []
+                              }),
+                            ),
+                            ...(cleanTaskHead ? { cleanRepositoryHead: cleanTaskHead } : {}),
                             ...(completedTaskPlanRevision ? { planRevision: completedTaskPlanRevision } : {}),
                             ...(completedTaskSemanticClosure
                               ? { semanticClosureFingerprint: completedTaskSemanticClosure }
@@ -10239,6 +10320,327 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               actions,
             }),
           }
+        },
+      })
+
+
+      addLoomTool({
+        name: "work_reconcile",
+        description:
+          "Reconcile reset pending producer Tasks from ORIGINAL persisted completions after independent review-plan PASS. General can run this without Worker dispatch; Planner needs an exact Planner OQ attachment. Rejects missing or stale receipts and changed code, preserves gate independence, and returns per-Task reasons.",
+        input: {
+          type: "object",
+          properties: {
+            workflowId: { type: "string" },
+            questionId: { type: "string" },
+            taskIds: { type: "array", items: { type: "string" } },
+          },
+          required: ["workflowId"],
+          additionalProperties: false,
+        },
+        options: { namespace: "loom", codemode: false },
+        execute: async (input, tool) => {
+          if (tool.agent !== "general" && tool.agent !== "planner") {
+            return { content: renderToolOutput({ error: "Only General or an attached Planner can reconcile Task results." }) }
+          }
+          const value = input as { workflowId: string; questionId?: string; taskIds?: string[] }
+          const workflow = await readBoundWorkflow(ctx, tool.sessionID, value.workflowId, ensureLegacySession)
+          if (!workflow?.work) {
+            return { content: renderToolOutput({ error: "Bound workflow with persistent Work is required." }) }
+          }
+          if (tool.agent === "planner") {
+            const question = value.questionId
+              ? await ctx.storage.get(oqKey(workflow.id, value.questionId)) as OpenQuestion | undefined
+              : undefined
+            if (!question || question.requiredAuthority !== "planner" || question.status === "closed" ||
+                !(await exactOqBinding(ctx, tool.sessionID, workflow.id, question.id)) ||
+                (question.work && (
+                  question.work.objectiveId !== workflow.work.objectiveId ||
+                  question.work.generation !== workflow.work.generation
+                ))) {
+              return { content: renderToolOutput({ error: "Planner needs an exact current-generation Planner OQ attachment." }) }
+            }
+          }
+          try {
+            const outcome = await withWorkflowWorkLocks(
+              runtime, workflow.id, workflow.work.objectiveId, async () => {
+                await validateWorkflowMutationLocked(ctx, runtime, workflow)
+                const work = await readWork(ctx, workflow.work!.objectiveId)
+                if (!work) throw new Error("Persistent Work hierarchy is missing.")
+                assertWorkGeneration(work, workflow.work!.generation)
+                const plan = workPlanContext(work, undefined, "focused", work.generation)
+                const review = workflow.steps.find((step) => step.id === "review-plan")
+                if (!plan || plan.invalidated || review?.status !== "passed" ||
+                    workflow.work!.reviewedPlanRevision !== plan.revision ||
+                    workflow.work!.reviewedPlanFingerprint !== workPlanSemanticFingerprint(work, work.generation)) {
+                  throw new Error("Exact effective Plan revision has no independent review-plan PASS.")
+                }
+                const taskSteps = plannedTaskSteps(workflow)
+                const allIds = taskSteps.map((step) => step.task!.id)
+                if (workflow.work!.taskPlanRevision !== plan.revision ||
+                    workflow.work!.taskPlanFingerprint !== workflowTaskSemanticFingerprint(work, allIds, work.generation)) {
+                  throw new Error("Compiled Task DAG differs from the independently reviewed Plan.")
+                }
+                assertWaveClaimForTasks(work, workflow.id, work.generation, allIds)
+                if (workflow.steps.some((step) =>
+                  step.id === "review-implementation" && step.status === "passed")) {
+                  throw new Error("Implementation review already passed; do not re-attest pending Task state.")
+                }
+                const ids = value.taskIds ?? allIds
+                if (!Array.isArray(ids) || ids.length < 1 || ids.length > 24 ||
+                    new Set(ids).size !== ids.length || ids.some((id) => !allIds.includes(id))) {
+                  throw new Error("Choose 1-24 distinct Tasks in the current compiled Wave.")
+                }
+                const byId = new Map(taskSteps.map((step) => [step.task!.id, step]))
+                const questions = await readQuestions(ctx, workflow.id)
+                const head = await cleanRepositoryHead(ctx.location.directory)
+                const eligible = new Map<string, { step: Workflow["steps"][number]; receipt: NonNullable<WorkHierarchy["nodes"][number]["result"]> }>()
+                const refused: Array<{ taskId: string; reason: string }> = []
+                const refuse = (taskId: string, reason: string) => refused.push({ taskId, reason })
+                const alreadyComplete = ids.filter((id) => satisfied(byId.get(id)!))
+                for (const id of ids) {
+                  const step = byId.get(id)!
+                  if (satisfied(step)) continue
+                  if (step.status !== "pending" || step.kind !== "work" || !step.task ||
+                      step.task.responsibility === "obtain-user-decision") {
+                    refuse(id, "Only pending producer work is eligible; gate and user decisions retain their owners.")
+                    continue
+                  }
+                  const node = work.nodes.find((candidate) =>
+                    candidate.generation === work.generation && candidate.type === "task" &&
+                    candidate.logicalId === id && candidate.status !== "superseded")
+                  const receipt = node?.result
+                  if (!receipt || receipt.workflowId !== workflow.id) {
+                    refuse(id, "No current persisted Task result; archived results and commits cannot substitute.")
+                    continue
+                  }
+                  if (node!.claimedByWorkflowId !== workflow.id) {
+                    refuse(id, "Current workflow does not own the Task claim.")
+                    continue
+                  }
+                  const outstanding = questions.some((question) =>
+                    question.consumerStepIds.includes(step.id) &&
+                    question.status !== "closed" &&
+                    (!question.answer || !question.reconciliations[step.id]))
+                  if (blockingQuestionsForStep(questions, step.id).length || outstanding ||
+                      workflow.verification?.some((requirement) =>
+                        requirement.beforeStepId === step.id && requirement.status === "open")) {
+                    refuse(id, "Unresolved blocking question or required pre-Task verification.")
+                    continue
+                  }
+                  const staleDependency = step.task.dependsOn.some((dependencyId) => {
+                    const source = byId.get(dependencyId)
+                    if (!source) return false // Reviewed external-Wave edge
+                    const upstream = work.nodes.find((candidate) =>
+                      candidate.generation === work.generation && candidate.type === "task" &&
+                      candidate.logicalId === dependencyId && candidate.status !== "superseded")
+                    // A dependent's old result cannot survive a newer producer execution.
+                    return !upstream?.result || upstream.result.workflowId !== workflow.id ||
+                      !receipt.dependencyResultDigests?.[dependencyId] ||
+                      createHash("sha256").update(JSON.stringify(upstream.result)).digest("hex") !==
+                        receipt.dependencyResultDigests[dependencyId] ||
+                      !Number.isSafeInteger(upstream.result.completedAttempt) ||
+                      !upstream.result.completedAt || !receipt.completedAt ||
+                      upstream.result.completedAt > receipt.completedAt
+                  })
+                  if (staleDependency) {
+                    refuse(id, "Dependent producer result is missing or was replaced after this completion.")
+                    continue
+                  }
+                  if (!Number.isSafeInteger(receipt.completedAttempt) ||
+                      receipt.completedAttempt! < 0 || receipt.completedAttempt! >= (step.attempt ?? 0) ||
+                      receipt.producerAgent !== step.agent || !receipt.planRevision) {
+                    refuse(id, "Original producer attempt or role is missing or inconsistent.")
+                    continue
+                  }
+                  const nowClosure = taskSemanticClosureFingerprintAtRevision(work, id, work.generation)
+                  const oldClosure = taskSemanticClosureFingerprintAtRevision(
+                    work, id, work.generation, receipt.planRevision)
+                  if (!receipt.semanticClosureFingerprint ||
+                      receipt.semanticClosureFingerprint !== nowClosure ||
+                      receipt.semanticClosureFingerprint !== oldClosure) {
+                    refuse(id, "Plan/authority/dependency closure changed or original semantic proof is missing.")
+                    continue
+                  }
+                  const executableFingerprint = createHash("sha256")
+                    .update(JSON.stringify(step.task)).digest("hex")
+                  if (!receipt.executableTaskFingerprint ||
+                      receipt.executableTaskFingerprint !== executableFingerprint) {
+                    refuse(id, "Original full executable Task contract (including write/skills) is missing or changed.")
+                    continue
+                  }
+                  if (!head || !receipt.cleanRepositoryHead || head !== receipt.cleanRepositoryHead) {
+                    refuse(id, "No matching clean repository HEAD at original completion and now; code continuity is uncertain.")
+                    continue
+                  }
+                  const oldClaims = (await stepClaims(ctx, workflow.id, step.id)).filter(
+                    (claim) => claim.byAgent === step.agent && (claim.attempt ?? 0) === receipt.completedAttempt,
+                  )
+                  if (!Array.isArray(receipt.evidenceClaimIds)) {
+                    refuse(id, "Original evidence claim list is not a valid persisted receipt.")
+                    continue
+                  }
+                  const storedIds = [...receipt.evidenceClaimIds].sort()
+                  if (!storedIds.length ||
+                      JSON.stringify(storedIds) !== JSON.stringify(oldClaims.map((claim) => claim.id).sort())) {
+                    refuse(id, "Original exact-attempt evidence claim set is missing or incomplete.")
+                    continue
+                  }
+                  const canonical = await Promise.all(storedIds.map((claimId) =>
+                    ctx.storage.get(claimIdKey(claimId)) as Promise<EvidenceClaim | undefined>))
+                  if (canonical.some((claim) =>
+                    !claim || claim.workflowId !== workflow.id || claim.stepId !== step.id ||
+                    claim.byAgent !== step.agent || (claim.attempt ?? 0) !== receipt.completedAttempt)) {
+                    refuse(id, "Canonical producer evidence claim is missing or mismatched.")
+                    continue
+                  }
+                  const originalWorkflow: Workflow = {
+                    ...workflow,
+                    steps: workflow.steps.map((candidate) => candidate.id === step.id
+                      ? { ...candidate, attempt: receipt.completedAttempt } : candidate),
+                  }
+                  const observations = await Promise.all(oldClaims.flatMap((claim) =>
+                    claim.observationIds.map((observationId) =>
+                      ctx.storage.get(evidenceKey(observationId)) as Promise<EvidenceObservation | undefined>)))
+                  if (!observations.length || observations.some((observation) =>
+                    !observation || observation.status !== "completed" || !observation.admission ||
+                    !observationMatchesStep(observation, originalWorkflow, step.id)) ||
+                    oldClaims.some((claim) => {
+                      const claimObservations = observations.filter((observation) =>
+                        claim.observationIds.includes(observation?.id ?? ""))
+                        .filter((observation): observation is EvidenceObservation => Boolean(observation))
+                      return claimObservations.length !== claim.observationIds.length ||
+                        !observationsSupportKind(claim.kind, claimObservations)
+                    })) {
+                    refuse(id, "Original host observations are missing or belong to another producer attempt.")
+                    continue
+                  }
+                  eligible.set(id, { step, receipt })
+                }
+                let changed = true
+                while (changed) {
+                  changed = false
+                  for (const [id, candidate] of eligible) {
+                    const missing = candidate.step.task!.dependsOn.find((dependency) => {
+                      const source = byId.get(dependency)
+                      return source && !satisfied(source) && !eligible.has(dependency)
+                    })
+                    if (!missing) continue
+                    eligible.delete(id)
+                    refuse(id, "Producer dependency " + missing + " must run or be reconciled.")
+                    changed = true
+                  }
+                }
+                if (eligible.size > 0 &&
+                    (!head || (await cleanRepositoryHead(ctx.location.directory)) !== head)) {
+                  throw new Error("Repository changed during reconciliation; no Task completion was restored.")
+                }
+                const reconciled: string[] = []
+                for (const id of ids) {
+                  const candidate = eligible.get(id)
+                  if (!candidate) continue
+                  candidate.step.status = "complete"
+                  // Keep the current reset attempt as a monotonic authority fence.
+                  // The source attempt stays only in the original Work receipt/audit.
+                  if (candidate.receipt.summary) candidate.step.summary = candidate.receipt.summary
+                  else delete candidate.step.summary
+                  reconciled.push(id)
+                }
+                const auditId = crypto.randomUUID()
+                const auditKey = "work-reconciliation/" + workflow.id + "/" + auditId
+                const audit = {
+                  workflowId: workflow.id, generation: work.generation, revision: plan.revision,
+                  at: new Date().toISOString(), byAgent: tool.agent, bySessionId: tool.sessionID,
+                  cleanHead: head ?? null,
+                  recovered: reconciled.map((id) => {
+                    const receipt = eligible.get(id)!.receipt
+                    return {
+                      taskId: id, workflowId: receipt.workflowId,
+                      originalAttempt: receipt.completedAttempt!,
+                      originalPlanRevision: receipt.planRevision!,
+                      semanticClosureFingerprint: receipt.semanticClosureFingerprint!,
+                      evidenceClaimIds: receipt.evidenceClaimIds,
+                      cleanRepositoryHead: receipt.cleanRepositoryHead!,
+                    }
+                  }),
+                  refused,
+                }
+                // Crash between audit and workflow persistence must not present
+                // a prepared record as a successful carry-forward.
+                await ctx.storage.set(auditKey, { ...audit, state: "prepared" })
+                if (reconciled.length) await persistWorkflowMutationLocked(ctx, runtime, workflow)
+                await ctx.storage.set(auditKey, {
+                  ...audit, state: "committed", workflowRevision: workflow.revision,
+                })
+                return {
+                  auditId, reconciled, refused, alreadyComplete,
+                  planRevision: plan.revision, budgetUnchanged: true,
+                  freshImplementationReviewRequired: true,
+                }
+              },
+            )
+            return { content: renderToolOutput(outcome) }
+          } catch (error) {
+            return { content: renderToolOutput({ error: error instanceof Error ? error.message : String(error) }) }
+          }
+        },
+      })
+
+      addLoomTool({
+        name: "work_reconcile_status",
+        description:
+          "Read an exact durable Task carry-forward audit receipt. A prepared/uncommitted receipt is not a completed reconciliation.",
+        input: {
+          type: "object",
+          properties: {
+            workflowId: { type: "string" },
+            auditId: { type: "string" },
+          },
+          required: ["workflowId", "auditId"],
+          additionalProperties: false,
+        },
+        options: { namespace: "loom", codemode: false },
+        execute: async (input, tool) => {
+          const value = input as { workflowId: string; auditId: string }
+          const workflow = await readBoundWorkflow(ctx, tool.sessionID, value.workflowId, ensureLegacySession)
+          if (!workflow) return { content: renderToolOutput({ error: "Bound workflow not found." }) }
+          if (!/^[0-9a-f-]{36}$/i.test(value.auditId)) {
+            return { content: renderToolOutput({ error: "Exact reconciliation audit ID is required." }) }
+          }
+          const audit = await ctx.storage.get("work-reconciliation/" + workflow.id + "/" + value.auditId)
+          if (!audit || typeof audit !== "object") {
+            return { content: renderToolOutput({ error: "Reconciliation audit not found." }) }
+          }
+          const record = audit as {
+            state?: string
+            generation?: number
+            revision?: number
+            recovered?: Array<{ taskId: string; originalAttempt: number }>
+          }
+          const committed = record.state === "committed"
+          const work = workflow.work ? await readWork(ctx, workflow.work.objectiveId) : undefined
+          const plan = work && workflow.work
+            ? workPlanContext(work, undefined, "focused", workflow.work.generation) : undefined
+          const current = Boolean(
+            committed && record.recovered?.length && work && plan &&
+            workflow.work?.generation === record.generation &&
+            plan.revision === record.revision &&
+            workflow.work?.reviewedPlanRevision === record.revision &&
+            workflow.steps.some((step) => step.id === "review-plan" && step.status === "passed") &&
+            record.recovered?.every((source) =>
+              workflow.steps.some((step) => step.task?.id === source.taskId && satisfied(step)) &&
+              work.nodes.some((node) => node.type === "task" && node.logicalId === source.taskId &&
+                node.generation === record.generation &&
+                node.result?.workflowId === workflow.id &&
+                node.result?.completedAttempt === source.originalAttempt),
+            ),
+          )
+          return { content: renderToolOutput({
+            audit, committed, current,
+            ...(!committed
+              ? { warning: "Prepared or incomplete reconciliation is not a completion receipt." }
+              : !current ? { warning: "Historical reconciliation does not prove current Task satisfaction." } : {}),
+          }) }
         },
       })
 
