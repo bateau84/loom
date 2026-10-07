@@ -488,20 +488,9 @@ export function butlerCommitSourceIds(command: string) {
 
     if (
       word === "-b" ||
-      word === "--branch"
-    ) {
-      const value = parsed.args[index + 1]
-      if (!value || value.startsWith("-")) return undefined
-      index += 1
-      continue
-    }
-    if (
+      word === "--branch" ||
       word.startsWith("--branch=")
-    ) {
-      const value = word.split("=", 2)[1]
-      if (!value) return undefined
-      continue
-    }
+    ) return undefined
 
     if (
       word === "--no-message" ||

@@ -6018,7 +6018,7 @@ printf '{"changes":[{"id":"qs:1","path":"%s","status":"modified","diff":{"type":
         result: "updated",
       })
 
-      const command = "but commit -b feature -m 'docs(design): runtime' qs"
+      const command = "but commit -m 'docs(design): runtime' qs"
       const commitPermission: any = {
         agent: "designer",
         action: "shell",

@@ -123,32 +123,35 @@ describe("Loom Worker shell policy", () => {
   test("admits only explicit selected-ID Butler commits with messages", () => {
     expect(
       butlerCommitSourceIds(
-        "but commit -b feature -m 'fix(runtime): preserve ownership' qs uo",
+        "but commit -m 'fix(runtime): preserve ownership' qs uo",
       ),
     ).toEqual(["qs", "uo"])
     expect(
       butlerCommitSourceIds(
-        "but --json commit -b feature -m 'feat: one' -m 'Verification: pass' qs",
+        "but --json commit -m 'feat: one' -m 'Verification: pass' qs",
       ),
     ).toEqual(["qs"])
 
     expect(
-      isAllowedButlerCommit("but commit -b feature -m 'fix: scoped' qs"),
+      isAllowedButlerCommit("but commit -m 'fix: scoped' qs"),
     ).toBe(true)
     expect(isButlerCommitShellCommand("but commit -m 'fix: scoped' qs")).toBe(true)
 
     for (const command of [
-      "but commit -b feature -m 'fix: partial' qs:5",
-      "but commit -b feature -m 'fix: broad' zz",
+      "but commit -b feature -m 'fix: targeted' qs",
+      "but commit --branch feature -m 'fix: targeted' qs",
+      "but commit --branch=feature -m 'fix: targeted' qs",
+      "but commit -m 'fix: partial' qs:5",
+      "but commit -m 'fix: broad' zz",
       "but commit --above abc -m 'fix: positioned' qs",
       "but commit --below abc -m 'fix: positioned' qs",
-      "but commit -b feature -m 'fix: broad'",
-      "but commit -b feature qs:5",
-      "but commit --empty -b feature -m 'chore: marker'",
+      "but commit -m 'fix: broad'",
+      "but commit qs:5",
+      "but commit --empty -m 'chore: marker'",
       "but commit -i -m 'fix: interactive'",
       "but commit --no-message qs:5",
-      "but commit -b feature -m 'fix: scoped' qs:5 && but commit -b feature -m 'test: scoped' uo",
-      "but -C ../other commit -b feature -m 'fix: scoped' qs:5",
+      "but commit -m 'fix: scoped' qs:5 && but commit -m 'test: scoped' uo",
+      "but -C ../other commit -m 'fix: scoped' qs:5",
     ]) {
       expect(isAllowedButlerCommit(command)).toBe(false)
     }
