@@ -42,6 +42,7 @@ Compatibility details:
 - `--list` remains on the provider-free legacy listing surface until Task 8;
 - the previous default of two transport retries is forwarded explicitly;
 - common model, transport, reasoning, network, timeout, iteration, concurrency, env, image, auth/config/model-catalog/database controls are forwarded;
+- the isolated runtime-evidence runner image is pinned to stock OpenCode 2.0.23 independently of Loom's separate host/plugin 2.0.18 integration contract;
 - `--runner-evidence-safety` is rejected for migrated normal cases because canonical runtime evidence is the reviewed authority;
 - `--keep-temp` is rejected for migrated normal cases because the profile owns disposable per-job workspaces.
 
