@@ -16594,7 +16594,7 @@ test("Plan reconciliation restores only a proven original producer attempt, with
     const child = await h.attach("task:one", "worker", "carry-forward-original-worker")
     const event = {
       tool: "shell", id: "carry-forward-observed-check", messageID: "carry-forward-message",
-      sessionID: child, agent: "worker", input: { command: "bun test src/reconcile.test.ts" },
+      sessionID: child, agent: "worker", input: { command: "git rev-parse HEAD" },
     }
     await h.toolHooks.get("execute.before")!(event)
     await h.toolHooks.get("execute.after")!({
@@ -16605,8 +16605,8 @@ test("Plan reconciliation restores only a proven original producer attempt, with
       .find((entry: any) => entry.tool === "shell" && entry.sessionID === child)
     expect(evidence?.admission).toBeDefined()
     const claim = await h.call("evidence_claim", {
-      workflowId: h.workflowId, stepId: "task:one", kind: "test",
-      statement: "Observed original Task verification", observationIds: [evidence.id],
+      workflowId: h.workflowId, stepId: "task:one", kind: "other",
+      statement: "Fixture host observation, not an executed test result", observationIds: [evidence.id],
     }, "worker", child)
     expect(claim.error).toBeUndefined()
     expect((await h.call("complete", {
@@ -16649,10 +16649,15 @@ test("Plan reconciliation restores only a proven original producer attempt, with
     expect(await h.durableStorage.get("budget/" + h.workflowId)).toEqual(beforeBudget)
     const after = await h.workflow()
     expect(after.steps.find((step: any) => step.id === "task:one")).toMatchObject({
-      status: "complete", attempt: sourceAttempt,
+      status: "complete", attempt: sourceAttempt + 1,
       summary: "Original verified implementation",
     })
     expect(after.steps.find((step: any) => step.id === "review-implementation").status).toBe("pending")
+    // A reset must never make an old producer attachment current again.
+    const staleProducer = await h.call("complete", {
+      workflowId: h.workflowId, stepId: "task:one", summary: "Old session asserts again",
+    }, "worker", child)
+    expect(staleProducer.error).toBeDefined()
     expect((await h.work()).nodes.find((node: any) => node.logicalId === "one").result)
       .toEqual(source.result)
 
