@@ -427,6 +427,32 @@ class SkillAblationCutoverTests(unittest.TestCase):
         self.assertEqual(outcome.comparison.status, "non-evidence")
         self.assertEqual(bridge._pair_outcome(artifact), "non-evidence")
 
+    def test_redacted_target_session_does_not_become_behavioral_fail(self):
+        class RedactedSession(PairInvoker):
+            def __call__(self, spec):
+                status, result = super().__call__(spec)
+                if spec.agent == "skill-eval":
+                    result["session_id"] = "***REDACTED***"
+                return status, result
+
+        outcome, artifact = self.pair(RedactedSession())
+        self.assertEqual(outcome.candidate.classification, "non-evidence")
+        self.assertEqual(outcome.comparison.status, "non-evidence")
+        self.assertEqual(bridge._pair_outcome(artifact), "non-evidence")
+
+    def test_native_load_in_wrong_actor_does_not_satisfy_candidate(self):
+        class WrongActor(PairInvoker):
+            def __call__(self, spec):
+                status, result = super().__call__(spec)
+                if spec.agent == "skill-eval":
+                    result["runtime_evidence"]["observations"][0]["actor"]["value"] = "other-agent"
+                return status, result
+
+        outcome, artifact = self.pair(WrongActor())
+        self.assertEqual(outcome.candidate.classification, "fail")
+        self.assertEqual(outcome.comparison.decision.classification, "fail")
+        self.assertTrue(any(check.name == "skill.native-load" for check in outcome.candidate.deterministic_checks))
+
     def test_baseline_native_skill_contamination_blocks_comparison(self):
         from container.runtime_evidence import build_runtime_evidence, field_available
 
