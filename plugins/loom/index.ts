@@ -3204,6 +3204,7 @@ async function reusableCompletedTaskIds(
   work: WorkHierarchy,
   workflow: Workflow,
   taskSteps = plannedTaskSteps(workflow),
+  invalidReceipt: "reject" | "rerun" = "reject",
 ) {
   if (!workflow.work) return []
   const reusable: string[] = []
@@ -3230,6 +3231,7 @@ async function reusableCompletedTaskIds(
       !workTask.result.semanticClosureFingerprint ||
       workTask.result.semanticClosureFingerprint !== currentClosure
     ) {
+      if (invalidReceipt === "rerun") continue
       throw new Error(
         `Completed Task ${taskStep.task!.id} cannot be reused because its Plan/dependency/authority receipt is missing or stale.`,
       )
@@ -3249,6 +3251,7 @@ async function reusableCompletedTaskIds(
         (claim!.attempt ?? 0) !== (taskStep.attempt ?? 0)
       )
     ) {
+      if (invalidReceipt === "rerun") continue
       throw new Error(
         `Completed Task ${taskStep.task!.id} cannot be reused because its evidence receipt is missing or no longer matches the preserved attempt.`,
       )
@@ -3265,6 +3268,7 @@ async function reusableCompletedTaskIds(
         !observation || !observationMatchesStep(observation, workflow, taskStep.id)
       )
     ) {
+      if (invalidReceipt === "rerun") continue
       throw new Error(
         `Completed Task ${taskStep.task!.id} cannot be reused because referenced evidence is missing or belongs to another attempt.`,
       )
@@ -7038,32 +7042,15 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                   workflow.work.taskPlanRevision !== currentPlan?.revision
                 hadTaskExecution = currentTaskSteps.some((taskStep) => taskStep.status === "complete" || taskStep.status === "passed")
                 if (stepId === "plan") {
+                  // Check stored semantic receipts AND exact-attempt evidence.
+                  // Invalid historical receipts are rerun, not re-attested.
+                  const verifiedTaskIds = new Set(
+                    await reusableCompletedTaskIds(ctx, work, workflow, currentTaskSteps, "rerun"),
+                  )
                   for (const taskStep of currentTaskSteps) {
-                    if (taskStep.status !== "complete" && taskStep.status !== "passed") continue
-                    const taskNode = work.nodes.find(
-                      (node) =>
-                        node.generation === workflow.work!.generation &&
-                        node.type === "task" &&
-                        node.logicalId === taskStep.task!.id &&
-                        node.status !== "superseded",
-                    )
-                    // A workflow step alone is not enough to authorize reuse.
-                    // Work status may still be pending until review-implementation;
-                    // the persistent execution result is the reusable receipt.
-                    const closure = taskSemanticClosureFingerprintAtRevision(
-                      work, taskStep.task!.id, workflow.work.generation,
-                    )
-                    // An old completion without its own receipt cannot be
-                    // attested retroactively from the current Plan snapshot.
-                    // Re-execute it instead of manufacturing fresh authority.
-                    if (
-                      !taskNode?.result ||
-                      taskNode.result.workflowId !== workflow.id ||
-                      !closure ||
-                      taskNode.result.semanticClosureFingerprint !== closure
-                    ) continue
+                    if (!taskStep.task || !verifiedTaskIds.has(taskStep.task.id)) continue
                     preservedTaskSteps.set(taskStep.id, {
-                      status: taskStep.status,
+                      status: taskStep.status as "complete" | "passed",
                       attempt: taskStep.attempt ?? 0,
                       ...(taskStep.summary ? { summary: taskStep.summary } : {}),
                     })

@@ -12263,6 +12263,37 @@ test("Planner removal of a claimed Task can recover without redispatching comple
   }
 })
 
+test("Plan reopen redispatches a Task whose original evidence claim is missing", async () => {
+  const h = await waveLifecycleFixture("wave", false, "worker", true, "execute", "worker")
+  try {
+    expect((await h.finish("task:one", "worker")).error).toBeUndefined()
+    const work = await h.work()
+    const task = work.nodes.find((node: any) => node.type === "task" && node.logicalId === "one")
+    expect(task.result.semanticClosureFingerprint).toEqual(expect.any(String))
+    task.result.evidenceClaimIds = ["deleted-claim-id"]
+    await h.durableStorage.set(h.workKey, work)
+
+    const reopened = await h.call("reopen", {
+      workflowId: h.workflowId, stepId: "plan",
+      reason: "The original Task evidence is not available for reuse.",
+      newEvidence: true, changedHypothesis: false,
+      changedStrategy: false, reducedUnresolved: false,
+    }, "general", "parent")
+    expect(reopened.error).toBeUndefined()
+    expect(reopened.reset).toContain("task:one")
+    expect((await h.workflow()).steps.find((step: any) => step.id === "task:one").status).toBe("pending")
+    const after = await h.work()
+    const archived = after.nodes.find((node: any) => node.type === "task" && node.logicalId === "one")
+    expect(archived.result).toBeUndefined()
+    expect(archived.priorResults.at(-1)).toMatchObject({
+      evidenceClaimIds: ["deleted-claim-id"],
+      invalidatedReason: expect.stringContaining("receipt"),
+    })
+  } finally {
+    h.restore()
+  }
+})
+
 test("Plan reopen refuses to synthesize an absent Task closure receipt", async () => {
   const h = await waveLifecycleFixture("wave", false, "worker", true, "execute", "worker")
   try {
