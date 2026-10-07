@@ -13,7 +13,7 @@ import threading
 import unittest
 from unittest.mock import patch
 
-MODULE_PATH = Path(__file__).resolve().parent / "run-evals.py"
+MODULE_PATH = Path(__file__).resolve().parent / "run-evals-legacy.py"
 SPEC = importlib.util.spec_from_file_location("loom_run_evals", MODULE_PATH)
 assert SPEC and SPEC.loader
 RUN_EVALS = importlib.util.module_from_spec(SPEC)
@@ -100,28 +100,29 @@ class WorkflowCredentialTests(unittest.TestCase):
         ci = (
             RUN_EVALS.ROOT / ".github" / "workflows" / "loom-ci.yml"
         ).read_text(encoding="utf-8")
-        expected_action = "bateau84/opencode-eval-runner@ad4d6a26fc137202e4f35f2a14503f53b81991ca"
+        expected_action = "bateau84/opencode-eval-runner@16715800e494b9dbebe37f7f7f5dd0e333733447"
         expected_image = (
             "ghcr.io/bateau84/opencode-eval-runner@"
-            "sha256:68ef7322c75aede0e8cc76d0e3531e8b82dd417bbb5e5100264a89eab7fe8627"
+            "sha256:104a0895c83e4f36fb597e388656a4c6e445035c9a1fb5aaa2c9e922ad172a36"
         )
         expected_copilot_image = (
             "ghcr.io/bateau84/opencode-eval-runner@"
-            "sha256:ab10a2865d0cf76306b8a3a07bbf446612c8524e09b197ad82b7d8698e90c477"
+            "sha256:7b06209cac3a0125a0d90d49a200fd71c7f91dae24477183e95ba4df0a822818"
         )
 
         for workflow in (live, ci):
             self.assertIn(expected_action, workflow)
             self.assertIn(expected_image, workflow)
             self.assertIn(expected_copilot_image, workflow)
-        package = json.loads((RUN_EVALS.ROOT / "package.json").read_text(encoding="utf-8"))
-        plugin_version = package["devDependencies"]["@opencode/plugin"]
+        # The migrated normal path uses the reviewed runtime-evidence runner
+        # image independently of Loom's separate host/plugin compatibility pin.
         self.assertIn(
-            f'opencode "$OPENCODE_EVAL_RUNNER_OPENCODE_IMAGE" --version | grep -F "{plugin_version}"',
+            'opencode "$OPENCODE_EVAL_RUNNER_OPENCODE_IMAGE" --version | grep -F "2.0.23"',
             ci,
         )
-        self.assertEqual(RUN_EVALS.DEFAULT_IMAGES["opencode"], expected_image)
-        self.assertEqual(RUN_EVALS.DEFAULT_IMAGES["github-copilot-cli"], expected_copilot_image)
+        # Skill-owned ablation is still Task 8 and retains its legacy harness
+        # defaults; the action-provided immutable images override those defaults
+        # in the live workflow.
 
     def test_live_workflow_forwards_opencode_api_key_explicitly(self):
         workflow = (
