@@ -1441,15 +1441,6 @@ function assertAmendmentDoesNotRewriteCompletedWork(
   const protectedTasks = protectedTaskIds(hierarchy)
   if (protectedTasks.size === 0) return
 
-  const removedAuthorityRefs = before.authorityRefs.filter(
-    (authorityRef) => !after.authorityRefs.includes(authorityRef),
-  )
-  if (removedAuthorityRefs.length > 0) {
-    throw new Error(
-      `Plan authority references cannot be removed while Tasks are claimed or complete: ${removedAuthorityRefs.join(", ")}. Create a new Plan generation for that change.`,
-    )
-  }
-
   if (
     patch?.goal !== undefined ||
     patch?.assumptions !== undefined ||
