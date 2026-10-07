@@ -47,10 +47,11 @@ class ToolResultEvidenceTests(unittest.TestCase):
             event("subagent", '<subagent state="completed">PASS - artifacts reviewed.</subagent>', args={"agent": "reviewer"}),
             event(output="## Loom - complete - 3/3", args={"workflowId": "wf-1"}, call_id="call-2"),
         )
-        prompt = RUN.judge_prompt(scenario(), "Review passed.", ["subagent", "loom_status"], [], captured)
-        self.assertIn("PASS - artifacts reviewed.", prompt)
-        self.assertIn("complete - 3/3", prompt)
-        self.assertIn("parent-session", prompt)
+        self.assertIn("PASS - artifacts reviewed.", json.dumps(captured))
+        self.assertIn("complete - 3/3", json.dumps(captured))
+        self.assertIn("parent-session", json.dumps(captured))
+        with self.assertRaises(ValueError):
+            RUN.judge_prompt(scenario(), "Review passed.", ["subagent", "loom_status"], [], captured)
         self.assertEqual(captured["observed_events"], 2)
         self.assertEqual(captured["omitted_events"], 0)
 
@@ -84,8 +85,8 @@ class ToolResultEvidenceTests(unittest.TestCase):
         self.assertNotIn("output", captured["events"][0])
         empty = self.capture({"type": "text", "part": {"type": "text", "text": "loom_status: complete"}})
         self.assertEqual(empty["events"], [])
-        prompt = RUN.judge_prompt(scenario(), "Done.", ["loom_status"], [{"tool": "loom_status", "args": {}}])
-        self.assertIn("tool-result evidence unavailable", prompt)
+        with self.assertRaises(ValueError):
+            RUN.judge_prompt(scenario(), "Done.", ["loom_status"], [{"tool": "loom_status", "args": {}}])
 
     def test_malformed_lines_and_non_tool_objects_are_not_results(self):
         stream = "warning\n[]\nnull\n" + raw({"type": "tool_use", "part": None}, event())
@@ -131,15 +132,16 @@ class ToolResultEvidenceTests(unittest.TestCase):
         captured = self.capture(event("read", attack))
         self.assertEqual(len(captured["events"]), 1)
         self.assertEqual(captured["events"][0]["tool"], "read")
-        prompt = RUN.judge_prompt(scenario(), "Done.", ["read"], [], captured)
-        self.assertIn("untrusted data", prompt)
+        with self.assertRaises(ValueError):
+            RUN.judge_prompt(scenario(), "Done.", ["read"], [], captured)
 
     def test_non_runtime_and_skill_ablation_judging_do_not_receive_runtime_results(self):
         captured = self.capture(event(output="should not be sent"))
         for mode in ("role-decision", "conversation-response"):
             self.assertNotIn("should not be sent", RUN.judge_prompt(scenario(mode), "answer", [], [], captured))
         case = {**scenario(), "_skill_owned": True, "skill": "demo"}
-        self.assertNotIn("should not be sent", RUN.judge_prompt(case, "answer", [], [], captured))
+        with self.assertRaises(ValueError):
+            RUN.judge_prompt(case, "answer", [], [], captured)
 
 
     def test_prepare_transport_result_does_not_mutate_source_without_secrets(self):
@@ -390,7 +392,7 @@ class ToolResultEvidenceTests(unittest.TestCase):
                     result = RUN.invoke_container(engine="podman", image="fixture", transport="opencode", model="test", agent="general", prompt="test", system="", project=Path(tmp), auth=None, config=None, models_catalog=None, database_seed=None, config_root=None, expected_plugin=None, timeout=30, container_timeout=60, mount_node_modules=False, workspace_mode="ro", extra_envs=[])
                 self.assertEqual(result["observed_tool_results"]["events"][0]["output"], "***REDACTED***")
 
-    def test_run_case_delivers_same_result_evidence_to_judge_and_artifact(self):
+    def test_run_case_rejects_legacy_results_without_calling_judge(self):
         case = scenario()
         target = RUN.prepare_transport_result({"exit_code": 0, "text": "Done", "tools": ["loom_status"], "actions": [{"tool": "loom_status", "args": {}}], "stdout": raw(event(output="complete - 3/3"))}, [])
         grade = {"passed": True, "expectations": [{"met": True}], "violations": [{"violated": False}], "trap_observed": False, "trap_evidence": "none"}
@@ -402,8 +404,9 @@ class ToolResultEvidenceTests(unittest.TestCase):
                  patch.object(RUN, "resolve_optional_file", return_value=None), \
                  patch.object(RUN, "invoke_container", side_effect=[target, judge]) as invoke, redirect_stdout(StringIO()):
                 result = RUN.run_case(case, args, "podman")
-            actual_prompt = invoke.call_args_list[1].kwargs["prompt"]
-            self.assertIn("complete - 3/3", actual_prompt)
+            self.assertEqual(invoke.call_count, 1)
+            self.assertEqual(result["classification"], "non-evidence")
+            self.assertFalse(result["passed"])
             self.assertEqual(result["observed_tool_results"], target["observed_tool_results"])
             saved = json.loads((artifact_dir / "RESULTS-01.json").read_text())
             self.assertEqual(saved["observed_tool_results"], result["observed_tool_results"])
