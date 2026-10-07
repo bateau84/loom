@@ -36,6 +36,31 @@ jobs:
             docker run --rm --entrypoint opencode "$OPENCODE_EVAL_RUNNER_OPENCODE_IMAGE" run --help | grep -F -- 'provider/model#variant'
             docker image inspect "$OPENCODE_EVAL_RUNNER_COPILOT_IMAGE" >/dev/null
             docker run --rm --entrypoint copilot "$OPENCODE_EVAL_RUNNER_COPILOT_IMAGE" --help | grep -F -- '--effort'
+            # Regression for the original 4.71 MB OpenCode models.json failure.
+            # This is provider-free: verify the actual published image's
+            # complete bounded credential scan and model provenance without
+            # running the model or ingesting any real credentials.
+            catalog="$RUNNER_TEMP/loom-large-models.json"
+            python3 - "$catalog" <<'PY'
+            import json
+            import sys
+            from pathlib import Path
+            catalog = Path(sys.argv[1])
+            catalog.write_text(json.dumps({
+                "openai": {
+                    "models": {"gpt-6-luna": {"description": "x" * 4_710_000}},
+                    "apiKey": "SYNTHETIC-CI-CREDENTIAL-AT-TAIL",
+                },
+            }), encoding="utf-8")
+            assert 4_000_000 < catalog.stat().st_size < 64_000_000
+            PY
+            chmod 644 "$catalog"
+            docker run --rm --network none \
+              --volume "$catalog:/seed/models.json:ro" \
+              --env PYTHONPATH=/opt/opencode-eval-runner \
+              --entrypoint python3 \
+              "$OPENCODE_EVAL_RUNNER_OPENCODE_IMAGE" \
+              -c 'from container.invoke import runtime_sanitizer; s = runtime_sanitizer({}); assert s.inventory_complete; assert s.output_value("openai/gpt-6-luna") == "openai/gpt-6-luna"; assert s.output_value("SYNTHETIC-CI-CREDENTIAL-AT-TAIL") == "***REDACTED***"; print("PASS large model catalog image safety")'
       - name: Validate skill-owned generic paired adapter (provider-free)
         run: |
           python3 scripts/test_ci_skill_ablation_cutover.py
