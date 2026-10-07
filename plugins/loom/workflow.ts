@@ -732,7 +732,10 @@ export function recordReviewerVerdict(
     if (!headSha || headSha === "unavailable") {
       throw new Error("Reviewer PASS requires exact repository revision evidence.")
     }
-    if (!review.attachedHeadSha || review.attachedHeadSha !== headSha) {
+    if (
+      step.id === "review-implementation" &&
+      (!review.attachedHeadSha || review.attachedHeadSha !== headSha)
+    ) {
       throw new Error(
         "Reviewer PASS is stale because repository HEAD changed after this Reviewer attached. Re-attach and review the current revision.",
       )
