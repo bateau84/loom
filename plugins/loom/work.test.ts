@@ -447,19 +447,26 @@ describe("Loom persistent work hierarchy", () => {
       operations: [],
     }, "unsafe-replace")).toThrow("must be amended with add-authority-ref/remove-authority-ref")
 
-    expect(() => amendWorkPlan(work, {
+    const removedUnused = amendWorkPlan(work, {
       expectedVersion: work.version,
       by: "planner",
-      reason: "Removing Plan authority after completed work would rewrite historical context.",
+      reason: "Remove future authority that no current Task consumes.",
       operations: [{ action: "remove-authority-ref", authorityRef: "docs/authority/ref-01.md" }],
-    }, "unsafe-remove")).toThrow("cannot be removed while Tasks are claimed or complete")
+    }, "r3")
+    expect(removedUnused.plan.revision).toBe(3)
+    expect(removedUnused.plan.authorityRefs).not.toContain("docs/authority/ref-01.md")
+    expect(workflowTaskSemanticFingerprint(work, ["a", "b"])).toBe(protectedFingerprint)
+    expect(workPlanContext(work, undefined, "full", generation, 2)?.authorityRefs)
+      .toContain("docs/authority/ref-01.md")
+    expect(workPlanContext(work, undefined, "full")?.authorityRefs)
+      .not.toContain("docs/authority/ref-01.md")
 
     expect(() => amendWorkPlan(work, {
       expectedVersion: work.version,
       by: "planner",
       reason: "Removing authority consumed by existing Tasks is unsafe.",
       operations: [{ action: "remove-authority-ref", authorityRef: "docs/architecture/product.md" }],
-    }, "r3")).toThrow("not declared by the parent Plan")
+    }, "r4")).toThrow("not declared by the parent Plan")
   })
 
   test("retains immutable Plan revisions and stales only semantically affected Wave contracts", () => {
