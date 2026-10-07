@@ -386,7 +386,8 @@ export function isButlerInspectionShellCommand(command: string) {
         "--upstream",
         "--no-hint",
         "--short",
-      ].includes(word)
+      ].includes(word) ||
+      /^-[fvu]{2,3}$/.test(word)
     )
   }
 
