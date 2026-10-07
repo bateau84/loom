@@ -12270,6 +12270,43 @@ test("Planner removal of a claimed Task can recover without redispatching comple
   }
 })
 
+test("Plan reopen reruns a completion whose claim list omits original evidence", async () => {
+  const h = await waveLifecycleFixture("wave", false, "worker", true, "execute", "worker")
+  try {
+    const claim = {
+      id: "fixture-original-claim", workflowId: h.workflowId,
+      stepId: "task:one", byAgent: "worker", attempt: 0,
+      observationIds: [], kind: "other",
+      statement: "Observed by original Task attempt.", createdAt: "2026-10-07T00:00:00Z",
+    }
+    await h.durableStorage.set(`evidence-claim/${h.workflowId}/task:one/${claim.id}`, claim)
+    await h.durableStorage.set(`evidence-claim-id/${claim.id}`, claim)
+    expect((await h.finish("task:one", "worker")).error).toBeUndefined()
+    const work = await h.work()
+    const task = work.nodes.find((node: any) => node.type === "task" && node.logicalId === "one")
+    expect(task.result.evidenceClaimIds).toEqual([claim.id])
+    task.result.evidenceClaimIds = []
+    await h.durableStorage.set(h.workKey, work)
+
+    const reopened = await h.call("reopen", {
+      workflowId: h.workflowId, stepId: "plan",
+      reason: "The persisted completion omitted a recorded claim.",
+      newEvidence: true, changedHypothesis: false,
+      changedStrategy: false, reducedUnresolved: false,
+    }, "general", "parent")
+    expect(reopened.error).toBeUndefined()
+    expect(reopened.reset).toContain("task:one")
+    expect((await h.workflow()).steps.find((step: any) => step.id === "task:one").status).toBe("pending")
+    const archived = (await h.work()).nodes.find(
+      (node: any) => node.type === "task" && node.logicalId === "one",
+    )
+    expect(archived.result).toBeUndefined()
+    expect(archived.priorResults.at(-1).evidenceClaimIds).toEqual([])
+  } finally {
+    h.restore()
+  }
+})
+
 test("Plan reopen redispatches a Task whose original evidence claim is missing", async () => {
   const h = await waveLifecycleFixture("wave", false, "worker", true, "execute", "worker")
   try {

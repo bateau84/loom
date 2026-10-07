@@ -4,6 +4,7 @@ import {
   amendWorkPlan,
   assertCompletedWaveForTasks,
   invalidateWorkPlan,
+  invalidateWorkflowTaskResults,
   releaseCancelledWorkflowClaims,
   claimWorkflowWave,
   completeObjective,

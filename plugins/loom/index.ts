@@ -3237,6 +3237,22 @@ async function reusableCompletedTaskIds(
       )
     }
 
+    // The receipt must name the full set of claims made by this exact
+    // execution attempt, not merely a valid subset of their identifiers.
+    const attemptClaims = (await stepClaims(ctx, workflow.id, taskStep.id))
+      .filter((claim) =>
+        (claim.attempt ?? 0) === (taskStep.attempt ?? 0) &&
+        claim.byAgent === taskStep.agent,
+      )
+    const receiptIds = [...workTask.result.evidenceClaimIds].sort()
+    const persistedIds = attemptClaims.map((claim) => claim.id).sort()
+    if (JSON.stringify(receiptIds) !== JSON.stringify(persistedIds)) {
+      if (invalidReceipt === "rerun") continue
+      throw new Error(
+        `Completed Task ${taskStep.task!.id} cannot be reused because its exact-attempt evidence claim set is incomplete or inconsistent.`,
+      )
+    }
+
     const claims = await Promise.all(
       workTask.result.evidenceClaimIds.map((id) =>
         ctx.storage.get(claimIdKey(id)) as Promise<EvidenceClaim | undefined>,
@@ -6764,7 +6780,11 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             evidenceBound = await bindSessionEvidence(ctx, tool.sessionID, workflowId, stepId)
             const completedTaskClaims =
               step.task && (step.status === "complete" || step.status === "passed")
-                ? await stepClaims(ctx, workflowId, stepId)
+                ? (await stepClaims(ctx, workflowId, stepId)).filter(
+                    (claim) =>
+                      (claim.attempt ?? 0) === (step.attempt ?? 0) &&
+                      claim.byAgent === step.agent,
+                  )
                 : []
 
             if (workflow.work) {
