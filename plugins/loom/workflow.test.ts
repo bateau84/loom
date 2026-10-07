@@ -468,6 +468,11 @@ describe("Loom routing DAG", () => {
       provedAt: "later",
     })
 
+    const resetGate = reopenFrom(w, "review-implementation")
+    resetVerificationAfterReopen(w, resetGate)
+    expect(requirement.status).toBe("satisfied")
+    expect(requirement.proof?.observationIds).toEqual(["obs-test"])
+
     const resetWorker = reopenFrom(w, "worker")
     resetVerificationAfterReopen(w, resetWorker)
     expect(requirement.status).toBe("open")
