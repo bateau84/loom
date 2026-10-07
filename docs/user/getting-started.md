@@ -87,6 +87,8 @@ An Objective can include a holistic Plan, multiple implementation Waves, Product
 
 **When the Plan needs to change:** explain the new finding or correction in the conversation. Loom's Planner can amend the current Plan as a new numbered revision even if work has started. Loom keeps earlier revisions for inspection; you can ask it to show what changed between revisions. Unchanged completed Tasks are reused only when their original result and evidence remain valid. Changed Tasks and affected dependents run again after a fresh independent Plan review. No earlier acceptance or review is silently carried forward.
 
+**After a reset and fresh Plan review:** if an unchanged producer Task is still pending, General can run `loom_work_reconcile` for its exact Task ID; an attached Planner can do the same through its Planner OQ. Loom checks the original persisted result, original producer/attempt, Task and dependency contracts, required evidence, outstanding blocking questions and whether the clean repository HEAD still matches the completion. It then restores only proven work and records an audit. There is no new Worker dispatch and the dispatch budget does not change. **A missing current result, historical-only proof, older receipt lacking provenance, dirty checkout, or changed code is not enough:** Loom returns the precise refusal and the accountable Worker must revalidate through a separately user-approved `loom_budget_continue` if the dispatch budget is exhausted. Implementation review and Product Acceptance still run normally.
+
 You do not choose Task, Change, or Objective yourself.
 
 ## 4. Let Loom handle professional decisions
