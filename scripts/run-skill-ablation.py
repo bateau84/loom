@@ -110,6 +110,79 @@ def _pair_outcome(artifact: dict[str, Any]) -> str:
     return str(decision["classification"])
 
 
+def _failure_hint(value: Any) -> str | None:
+    """Summarize runner classifications, never raw prompts or model outputs."""
+    if not isinstance(value, dict):
+        return None
+    plane = value.get("plane")
+    code = value.get("code")
+    if not isinstance(code, str) or not code:
+        return None
+    prefix = f"{plane}/{code}" if isinstance(plane, str) and plane else code
+    # The runner sanitizes transport errors, but bound logs further: avoid
+    # dumping complete response bodies, prompts, or external diagnostics.
+    message = value.get("message")
+    if not isinstance(message, str) or not message.strip():
+        return prefix
+    return prefix + ": " + " ".join(message.split())[:240]
+
+
+def side_evidence_notes(artifact: dict[str, Any]) -> list[str]:
+    """Explain why either side cannot be judged, from the sealed pair artifact.
+
+    These notes are diagnostic only. They do not add evidence, change
+    classifications, or substitute missing judge or skill scores.
+    """
+    notes: list[str] = []
+    sides = artifact.get("sides")
+    if not isinstance(sides, dict):
+        return notes
+    for name in ("baseline", "candidate"):
+        side = sides.get(name)
+        if not isinstance(side, dict) or side.get("classification") != "non-evidence":
+            continue
+        prefix = f"  - {name}:"
+        reasons: list[str] = []
+        target = side.get("target")
+        if isinstance(target, dict):
+            attempts = target.get("attempts")
+            if isinstance(attempts, list) and attempts:
+                last = attempts[-1]
+                if isinstance(last, dict):
+                    failure = _failure_hint(last.get("failure"))
+                    if failure:
+                        reasons.append("target " + failure)
+            readiness = target.get("evidence_readiness")
+            if isinstance(readiness, dict) and readiness.get("status") not in (None, "ready"):
+                reasons.append(
+                    "readiness " + str(readiness.get("status"))
+                    + (" (" + ",".join(str(x) for x in readiness.get("reasons", [])[:3])[:180] + ")"
+                       if isinstance(readiness.get("reasons"), list) and readiness.get("reasons") else "")
+                )
+        checks = side.get("deterministic_checks")
+        if isinstance(checks, list):
+            for check in checks:
+                if isinstance(check, dict) and check.get("status") == "non-evidence":
+                    reasons.append(
+                        "check " + str(check.get("name") or "unnamed")
+                        + ": " + " ".join(str(check.get("reason") or "").split())[:180]
+                    )
+        judge = side.get("judge")
+        if isinstance(judge, dict):
+            contract = _failure_hint(judge.get("contract_failure"))
+            if contract:
+                reasons.append("judge contract " + contract)
+            attempts = judge.get("attempts")
+            if isinstance(attempts, list) and attempts:
+                last = attempts[-1]
+                if isinstance(last, dict):
+                    failure = _failure_hint(last.get("failure"))
+                    if failure:
+                        reasons.append("judge " + failure)
+        notes.append(prefix + ("; ".join(reasons) if reasons else "no detailed reason in artifact"))
+    return notes
+
+
 def _manifest(
     plan: Any, store: Any, created_at: str, selectors: Sequence[str],
     iterations: int, statuses: dict[tuple[str, int], str], summary: dict[str, Any],
@@ -218,6 +291,9 @@ def run(args: argparse.Namespace) -> int:
         comparison = verified.get("comparison") or {}
         details = comparison.get("decision") if isinstance(comparison, dict) else None
         print(f"{job.label} ... {outcome.upper()}", flush=True)
+        if outcome == "non-evidence":
+            for note in side_evidence_notes(verified):
+                print(note, flush=True)
         if isinstance(details, dict):
             print(f"  - {details.get('summary', '')}", flush=True)
         elif isinstance(comparison, dict) and isinstance(comparison.get("failure"), dict):
