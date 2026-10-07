@@ -18,7 +18,7 @@ from typing import Any
 
 from runner.eval_api import InvocationSpec, JsonValue, NormalizedCase
 
-from ._shared import PreparedLoomCase
+from ._shared import PreparedLoomCase, compatibility_env_names
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -415,7 +415,7 @@ class LoomCaseWorkspaceAdapter:
             models_catalog=None,
             config=None,
             config_root=self._root if execution == "runtime" else None,
-            env_names=(),
+            env_names=compatibility_env_names(),
             timeout_seconds=timeout,
             container_timeout=container_timeout,
         )
