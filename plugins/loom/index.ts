@@ -167,6 +167,7 @@ import { LOOM_AGENT_ROLES, taskStepId, validateTaskPlan, type TaskSpec } from ".
 import {
   amendWorkPlan,
   assertInvalidatedPlanReopenable,
+  assertCompletedWaveMayReopen,
   assertWaveClaimForTasks,
   assertWorkGeneration,
   attachWorkflowToWork,
@@ -7111,8 +7112,16 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                   const planReviewed =
                     !hasPlanReview ||
                     workflow.steps.some((candidate) => candidate.id === "review-plan" && candidate.status === "passed")
-                  if (reviewed) await ensureCompletedWaveHistory(ctx.storage as any, work, workflow)
-                  else if (planReviewed && !invalidatedPlanRecovery) {
+                  if (reviewed) {
+                    await ensureCompletedWaveHistory(ctx.storage as any, work, workflow)
+                    if (stepId === "plan") {
+                      // Plan recovery must not reset a reviewed Wave already
+                      // consumed by another running or completed Wave.
+                      assertCompletedWaveMayReopen(
+                        work, workflow.id, workflow.work.generation, taskIds,
+                      )
+                    }
+                  } else if (planReviewed && !invalidatedPlanRecovery) {
                     if (staleCompiledPlan) {
                       // Planner may have removed or moved an old claimed Task.
                       // The claim is then structurally obsolete, not evidence

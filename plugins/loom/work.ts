@@ -2246,6 +2246,40 @@ export function completeWaveForTasks(
   return hierarchy
 }
 
+/**
+ * A reviewed Wave cannot lose its completed status after another Wave has
+ * consumed it. Used by both explicit reopen and the all-reused claim path.
+ */
+export function assertCompletedWaveMayReopen(
+  hierarchy: WorkHierarchy,
+  workflowId: string,
+  generation: number,
+  taskIds: string[],
+  expectedBindingFingerprint?: string,
+) {
+  const wave = assertCompletedWaveForTasks(
+    hierarchy, workflowId, generation, taskIds, expectedBindingFingerprint,
+  )
+  const dependentIds = new Set(activeNodes(hierarchy)
+    .filter((node) => node.type === "task" && node.parentId === wave.id)
+    .map((node) => node.logicalId))
+  let changed = true
+  while (changed) {
+    changed = false
+    for (const task of activeNodes(hierarchy).filter((node) => node.type === "task")) {
+      if (!dependentIds.has(task.logicalId) && task.dependsOn?.some((id) => dependentIds.has(id))) {
+        dependentIds.add(task.logicalId)
+        changed = true
+      }
+    }
+  }
+  if (activeNodes(hierarchy).some((node) => node.type === "task" && node.parentId !== wave.id &&
+      dependentIds.has(node.logicalId) && (node.status === "complete" || node.claimedByWorkflowId))) {
+    throw new Error("Cannot reopen a Wave already consumed by downstream work; cancel/replan the affected work explicitly.")
+  }
+  return wave
+}
+
 export function reopenWaveForTasks(
   hierarchy: WorkHierarchy,
   workflowId: string,
@@ -2267,28 +2301,9 @@ export function reopenWaveForTasks(
   const waveId = [...parentIds][0]!
   const wave = activeNodes(hierarchy).find((node) => node.id === waveId && node.type === "wave")
   if (!wave || wave.status !== "complete") return hierarchy
-  assertCompletedWaveForTasks(hierarchy, workflowId, generation, taskIds, expectedBindingFingerprint)
-
-  // Reopening invalidates the whole assembled Wave receipt, not just the
-  // Tasks this (possibly partial-recovery) workflow executed. Admission of a
-  // downstream Task depended on that whole Wave having passed review.
-  const dependentIds = new Set(activeNodes(hierarchy)
-    .filter((node) => node.type === "task" && node.parentId === wave.id)
-    .map((node) => node.logicalId))
-  let changed = true
-  while (changed) {
-    changed = false
-    for (const task of activeNodes(hierarchy).filter((node) => node.type === "task")) {
-      if (!dependentIds.has(task.logicalId) && task.dependsOn?.some((id) => dependentIds.has(id))) {
-        dependentIds.add(task.logicalId)
-        changed = true
-      }
-    }
-  }
-  if (activeNodes(hierarchy).some((node) => node.type === "task" && node.parentId !== wave.id &&
-      dependentIds.has(node.logicalId) && (node.status === "complete" || node.claimedByWorkflowId))) {
-    throw new Error("Cannot reopen a Wave already consumed by downstream work; cancel/replan the affected work explicitly.")
-  }
+  assertCompletedWaveMayReopen(
+    hierarchy, workflowId, generation, taskIds, expectedBindingFingerprint,
+  )
 
   delete wave.completion
   wave.claimedByWorkflowId = workflowId
@@ -2457,6 +2472,13 @@ export function claimWorkflowWave(
     ...satisfied.map((taskId) => taskMap.get(taskId)!),
   ]
 
+  if (wave.status === "complete") {
+    // Re-review of completed work is permitted only while no downstream
+    // execution has consumed that Wave's independently reviewed output.
+    assertCompletedWaveMayReopen(
+      hierarchy, workflowId, generation, selected.map((task) => task.logicalId),
+    )
+  }
   if (wave.claimedByWorkflowId && wave.claimedByWorkflowId !== workflowId) {
     throw new Error(
       `Wave ${wave.logicalId} is already claimed by workflow ${wave.claimedByWorkflowId}.`,
