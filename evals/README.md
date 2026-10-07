@@ -9,6 +9,8 @@ tags: [evaluation, loom, behavioral, conformance, adversarial]
 
 These evals test whether Loom's model-driven roles follow the behavioral contract, not just whether the deterministic control-plane code is correct.
 
+The final engine/Loom ownership boundary, validation matrix, supported compatibility options and remaining cutover debt are tracked in [Task 9 cutover and validation](../docs/eval-engine-task-9-cutover.md). That guide supersedes the **historical** [Task 7 migration checkpoint](../docs/eval-engine-task-7-validation.md).
+
 ## Authoring methodology
 
 Use `skills/agent-eval` when designing or reviewing agent/role behavioral cases. Use `skills/skills-eval` when evaluating reusable skill value through ablation or native skill integration. The authoring skills (`agent-file-authoring` and `skill-authoring`) decide when evaluation is needed and hand off to these eval skills.
@@ -267,11 +269,11 @@ bun run eval:live -- \
 
 The harness chooses Podman first, then Docker. Override it explicitly with `--engine podman` or `--engine docker`. For rootless Podman on SELinux hosts, Loom disables container SELinux labeling for the eval container rather than relabeling your repository or credential files.
 
-The harness pins the runner images by digest so the Action source and container runtime cannot drift independently:
+The runner Action and transport images are pinned as a reviewed set, to prevent unreviewed runtime drift:
 
 ```text
-OpenCode: ghcr.io/bateau84/opencode-eval-runner@sha256:3e5f95ce54fee127230c5bf84a7f09124a2236dfca544269e6547c8f79e8ad5d
-Copilot:  ghcr.io/bateau84/opencode-eval-runner@sha256:8def0aa1885b0e60b36a1434c2725667b1b9555def31426f08dd7e2a87dc02c5
+OpenCode: ghcr.io/bateau84/opencode-eval-runner@sha256:a1a415e1f236c4d572ef7cd6190561b0b46ff8443761601d750eb88ce3c87442
+Copilot:  ghcr.io/bateau84/opencode-eval-runner@sha256:1c38e2d275206a9a0de057a01a43d8c4c00da4c44e56462ac17139c22f95a1f9
 ```
 
 Override them independently with `--opencode-image` / `--copilot-image`, or use `--image` to force one explicit image for both transports. Changing the pinned runner revision and image digests is one compatibility update.
@@ -386,7 +388,7 @@ bun run eval:live -- --all --model <provider/model>
 
 For each case, Loom creates separate target and judge projects. Runtime targets receive the checked-out Loom plugin/skills plus a read-only mount of the checked-out `node_modules`; judges receive only the judge agent. Container-local HOME/XDG/session state is discarded after every invocation.
 
-Each container emits one JSON result on stdout. The Loom host harness writes case JSON into the current run-owned artifact directory (by default `.loom-evals/<eval_run_id>/`), so target/judge containers do not require a writable host bind mount. Infrastructure/provider failures are classified as **non-evidence**, not behavioral FAIL.
+Target/judge invocations return captured results to the reusable engine, which owns the sealed job and run artifacts under `.loom-evals/<eval_run_id>/`. Loom supplies the semantic policy rather than directly writing flat per-case JSON. Infrastructure/provider failures are **non-evidence**, not behavioral FAIL.
 
 ## Cost control
 

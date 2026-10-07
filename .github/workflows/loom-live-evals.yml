@@ -71,6 +71,16 @@ on:
         required: true
         default: "1"
         type: string
+      parallel:
+        description: Max concurrent non-runtime jobs (0 means full selected matrix)
+        required: true
+        default: "1"
+        type: string
+      runtime_parallel:
+        description: Max concurrent runtime jobs; keep 1 for repeatability, raise only for stress
+        required: true
+        default: "1"
+        type: string
 
 permissions:
   contents: read
@@ -93,6 +103,8 @@ jobs:
       EVAL_CASES: ${{ inputs.cases }}
       EVAL_ALL: ${{ inputs.all }}
       EVAL_ITERATIONS: ${{ inputs.iterations }}
+      EVAL_PARALLEL: ${{ inputs.parallel }}
+      EVAL_RUNTIME_PARALLEL: ${{ inputs.runtime_parallel }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -156,6 +168,8 @@ jobs:
               --judge-transport "$JUDGE_TRANSPORT"
               --target-kind "$EVAL_TARGET_KIND"
               --iterations "$EVAL_ITERATIONS"
+              --parallel "$EVAL_PARALLEL"
+              --runtime-parallel "$EVAL_RUNTIME_PARALLEL"
             )
             if [[ -n "$EVAL_TARGET" ]]; then
               args+=(--target "$EVAL_TARGET")
