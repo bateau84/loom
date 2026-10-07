@@ -10448,6 +10448,10 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                     changed = true
                   }
                 }
+                if (eligible.size > 0 &&
+                    (!head || (await cleanRepositoryHead(ctx.location.directory)) !== head)) {
+                  throw new Error("Repository changed during reconciliation; no Task completion was restored.")
+                }
                 const reconciled: string[] = []
                 for (const id of ids) {
                   const candidate = eligible.get(id)
