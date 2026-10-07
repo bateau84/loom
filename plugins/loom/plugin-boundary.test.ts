@@ -4605,6 +4605,9 @@ Verdict: FAIL
         ["but status && but discard zz", "Butler mutation is not admitted"],
         ["but pull --check", "Butler mutation is not admitted"],
         ["but push feature --dry-run", "Butler mutation is not admitted"],
+        ["but status --refresh-prs", "Butler mutation is not admitted"],
+        ["but branch list --review", "Butler mutation is not admitted"],
+        ["but branch show feature --ai", "Butler mutation is not admitted"],
       ] as const) {
         const unsafeRepositoryCommand: any = {
           agent: "architect",

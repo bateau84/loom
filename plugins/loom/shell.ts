@@ -373,16 +373,86 @@ export function isButlerInspectionShellCommand(command: string) {
   const parsed = parsedButlerCommand(command)
   if (!parsed) return false
 
-  if (["help", "status", "diff", "show"].includes(parsed.subcommand)) return true
+  if (parsed.subcommand === "help" || parsed.subcommand === "diff") return true
+
+  if (parsed.subcommand === "status") {
+    return parsed.args.every((word) =>
+      [
+        "-f",
+        "--files",
+        "-v",
+        "--verbose",
+        "-u",
+        "--upstream",
+        "--no-hint",
+        "--short",
+      ].includes(word)
+    )
+  }
+
+  if (parsed.subcommand === "show") {
+    const positional = parsed.args.filter((word) => !word.startsWith("-"))
+    const flags = parsed.args.filter((word) => word.startsWith("-"))
+    return (
+      positional.length === 1 &&
+      flags.every((word) => word === "-v" || word === "--verbose")
+    )
+  }
 
   if (parsed.subcommand === "branch") {
-    const action = parsed.args.find((word) => !word.startsWith("-")) ?? "list"
-    return action === "list" || action === "show"
+    const actionIndex = parsed.args.findIndex((word) => !word.startsWith("-"))
+    const action = actionIndex >= 0 ? parsed.args[actionIndex] : "list"
+    const args = actionIndex >= 0
+      ? parsed.args.slice(actionIndex + 1)
+      : parsed.args
+
+    if (action === "list") {
+      return args.every((word) =>
+        word === "-l" ||
+        word === "--local" ||
+        word === "-r" ||
+        word === "--remote" ||
+        word === "-a" ||
+        word === "--all" ||
+        word === "--no-ahead" ||
+        word === "--no-check" ||
+        word === "--empty" ||
+        (!word.startsWith("-") && /^[A-Za-z0-9._/-]+$/.test(word))
+      )
+    }
+
+    if (action === "show") {
+      const positional = args.filter((word) => !word.startsWith("-"))
+      const flags = args.filter((word) => word.startsWith("-"))
+      return (
+        positional.length === 1 &&
+        flags.every((word) => word === "-f" || word === "--files")
+      )
+    }
+
+    return false
   }
 
   if (parsed.subcommand === "oplog") {
-    const action = parsed.args.find((word) => !word.startsWith("-")) ?? "list"
-    return action === "list"
+    const actionIndex = parsed.args.findIndex((word) => !word.startsWith("-"))
+    const action = actionIndex >= 0 ? parsed.args[actionIndex] : "list"
+    const args = actionIndex >= 0
+      ? parsed.args.slice(actionIndex + 1)
+      : parsed.args
+    if (action !== "list") return false
+
+    for (let index = 0; index < args.length; index += 1) {
+      const word = args[index]
+      if (word === "--snapshot") continue
+      if (word === "--since") {
+        if (!args[index + 1] || args[index + 1].startsWith("-")) return false
+        index += 1
+        continue
+      }
+      if (word.startsWith("--since=") && word.length > "--since=".length) continue
+      return false
+    }
+    return true
   }
 
   return false
