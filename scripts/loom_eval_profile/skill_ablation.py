@@ -9,6 +9,7 @@ Legacy skill discovery and prompt text remain as explicit cleanup-stage debt.
 from __future__ import annotations
 
 import importlib.util
+import os
 import shutil
 import sys
 import tempfile
@@ -35,7 +36,33 @@ PROVIDER_ENVS = (
     "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "OPENROUTER_API_KEY",
     "COPILOT_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN",
 )
+# Runner host and OCI images must come from the same reviewed release.
+# These are the immutable transport images exercised by Loom CI and live Actions;
+# local ablations must not silently fall back to an older cached *-edge tag.
+PAIRED_TRANSPORT_IMAGES = {
+    "opencode": "ghcr.io/bateau84/opencode-eval-runner@sha256:104a0895c83e4f36fb597e388656a4c6e445035c9a1fb5aaa2c9e922ad172a36",
+    "github-copilot-cli": "ghcr.io/bateau84/opencode-eval-runner@sha256:7b06209cac3a0125a0d90d49a200fd71c7f91dae24477183e95ba4df0a822818",
+}
 _LEGACY: Any = None
+
+
+def paired_transport_image(transport: str) -> str:
+    """Select explicit caller override first, else CI-tested immutable image.
+
+    Generic runner CLI supports a moving *-edge default, but a stale local tag
+    can return result/v1 without runtime_evidence/v1. Do not let a skill ablation
+    unknowingly compare results from an unreviewed transport image.
+    """
+    env_name = (
+        "OPENCODE_EVAL_RUNNER_OPENCODE_IMAGE"
+        if transport == "opencode"
+        else "OPENCODE_EVAL_RUNNER_COPILOT_IMAGE"
+    )
+    return (
+        os.environ.get(env_name)
+        or os.environ.get("OPENCODE_EVAL_RUNNER_IMAGE")
+        or PAIRED_TRANSPORT_IMAGES[transport]
+    )
 
 
 def _legacy() -> Any:
@@ -169,7 +196,7 @@ class LoomSkillAblationProfile:
             expected_plugin=None,
             engine=self.args.engine,
             network=self.args.network,
-            image=None,  # Generic runner resolves transport image overrides.
+            image=paired_transport_image(transport),
             auth=None,
             database=None,
             models_catalog=None,
