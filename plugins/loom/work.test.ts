@@ -391,6 +391,84 @@ describe("Loom persistent work hierarchy", () => {
     expect(() => validateWorkPlan(oversized)).toThrow("exceeds executable maximum of 24 Tasks")
   })
 
+  test("amends large Plan authority sets atomically without rewriting protected Task semantics", () => {
+    const work = createWorkHierarchy("docs/anchors/product/anchor.md", "wf-authority-amend", now)
+    const definition = plan()
+    definition.authorityRefs.push(
+      ...Array.from({ length: 40 }, (_, index) => `docs/authority/ref-${String(index + 1).padStart(2, "0")}.md`),
+    )
+    materializeWorkPlan(work, "wf-authority-amend", definition, now)
+
+    const generation = work.generation
+    const protectedFingerprint = workflowTaskSemanticFingerprint(work, ["a", "b"])
+    const focused = workPlanContext(work, "c", "focused")
+    const full = workPlanContext(work, undefined, "full")
+
+    expect(focused?.authorityRefs).toHaveLength(32)
+    expect(focused?.projection.authorityRefsOmitted).toBe(10)
+    expect(full?.authorityRefs).toHaveLength(42)
+    expect(full?.projection.authorityRefsOmitted).toBe(0)
+
+    claimWorkflowWave(
+      work,
+      "wf-authority-amend",
+      generation,
+      [task("a"), task("b", ["a"])],
+      false,
+      now,
+    )
+    syncWorkTaskStatuses(
+      work,
+      "wf-authority-amend",
+      generation,
+      [{ taskId: "a", complete: true }],
+      now,
+    )
+    releaseCancelledWorkflowClaims(work, "wf-authority-amend", "released")
+
+    const amended = amendWorkPlan(work, {
+      expectedVersion: work.version,
+      by: "planner",
+      reason: "New accepted authority applies to future work.",
+      operations: [{ action: "add-authority-ref", authorityRef: "ARS-025" }],
+    }, "r2")
+
+    expect(amended.plan.authorityRefs).toContain("ARS-025")
+    expect(amended.amendment.operations).toEqual(["add-authority-ref:ARS-025"])
+    expect(workflowTaskSemanticFingerprint(work, ["a", "b"])).toBe(protectedFingerprint)
+    expect(workPlanContext(work, undefined, "full", generation, 1)?.authorityRefs).not.toContain("ARS-025")
+    expect(workPlanContext(work, undefined, "full")?.authorityRefs).toHaveLength(43)
+
+    expect(() => amendWorkPlan(work, {
+      expectedVersion: work.version,
+      by: "planner",
+      reason: "Replace-all authority mutation must not be reachable from bounded context.",
+      planPatch: { authorityRefs: ["docs/anchors/product/anchor.md"] } as any,
+      operations: [],
+    }, "unsafe-replace")).toThrow("must be amended with add-authority-ref/remove-authority-ref")
+
+    const removedUnused = amendWorkPlan(work, {
+      expectedVersion: work.version,
+      by: "planner",
+      reason: "Remove future authority that no current Task consumes.",
+      operations: [{ action: "remove-authority-ref", authorityRef: "docs/authority/ref-01.md" }],
+    }, "r3")
+    expect(removedUnused.plan.revision).toBe(3)
+    expect(removedUnused.plan.authorityRefs).not.toContain("docs/authority/ref-01.md")
+    expect(workflowTaskSemanticFingerprint(work, ["a", "b"])).toBe(protectedFingerprint)
+    expect(workPlanContext(work, undefined, "full", generation, 2)?.authorityRefs)
+      .toContain("docs/authority/ref-01.md")
+    expect(workPlanContext(work, undefined, "full")?.authorityRefs)
+      .not.toContain("docs/authority/ref-01.md")
+
+    expect(() => amendWorkPlan(work, {
+      expectedVersion: work.version,
+      by: "planner",
+      reason: "Removing authority consumed by existing Tasks is unsafe.",
+      operations: [{ action: "remove-authority-ref", authorityRef: "docs/architecture/product.md" }],
+    }, "r4")).toThrow("not declared by the parent Plan")
+  })
+
   test("retains immutable Plan revisions and stales only semantically affected Wave contracts", () => {
     const work = createWorkHierarchy("docs/anchors/product/anchor.md", "wf-1", now)
     materializeWorkPlan(work, "wf-1", plan(), now)
