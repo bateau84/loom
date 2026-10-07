@@ -40,8 +40,8 @@ PROVIDER_ENVS = (
 # These are the immutable transport images exercised by Loom CI and live Actions;
 # local ablations must not silently fall back to an older cached *-edge tag.
 PAIRED_TRANSPORT_IMAGES = {
-    "opencode": "ghcr.io/bateau84/opencode-eval-runner@sha256:104a0895c83e4f36fb597e388656a4c6e445035c9a1fb5aaa2c9e922ad172a36",
-    "github-copilot-cli": "ghcr.io/bateau84/opencode-eval-runner@sha256:7b06209cac3a0125a0d90d49a200fd71c7f91dae24477183e95ba4df0a822818",
+    "opencode": "ghcr.io/bateau84/opencode-eval-runner@sha256:a1a415e1f236c4d572ef7cd6190561b0b46ff8443761601d750eb88ce3c87442",
+    "github-copilot-cli": "ghcr.io/bateau84/opencode-eval-runner@sha256:1c38e2d275206a9a0de057a01a43d8c4c00da4c44e56462ac17139c22f95a1f9",
 }
 _LEGACY: Any = None
 
