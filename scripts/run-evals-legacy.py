@@ -3550,3 +3550,8 @@ def target_scoring_evidence_error(result: dict[str, Any]) -> str | None:
             return error
     return judge_text_evidence_error(result)
 
+if __name__ == "__main__":
+    raise SystemExit(
+        "run-evals-legacy.py is not an executable eval engine. "
+        "Use scripts/run-evals.py (bun run eval:live) instead."
+    )
