@@ -11861,6 +11861,64 @@ test("Planner OQ may add new Plan authority while an unaffected reviewed Wave re
   }
 })
 
+test("live specialist mutation fails closed after Planner changes its active Task contract", async () => {
+  const h = await waveLifecycleFixture("wave", false, "architect")
+  try {
+    const architect = await h.attach("task:one", "architect", "stale-plan-architect")
+
+    const raised = await h.call("oq_raise", {
+      workflowId: h.workflowId,
+      taskId: "one",
+      question: "Adapt the active architecture Task after a newly discovered constraint.",
+      responder: "planner",
+      blocking: false,
+    }, "general", "parent")
+    expect(raised.error).toBeUndefined()
+    const plannerGrant = await h.call("dispatch_grant", {
+      workflowId: h.workflowId,
+      questionId: raised.question.id,
+    }, "general", "parent")
+    expect(plannerGrant.error).toBeUndefined()
+    const planner = "stale-plan-mutation-planner"
+    expect((await h.call("attach", {
+      workflowId: h.workflowId,
+      questionId: raised.question.id,
+      grantId: plannerGrant.grantId,
+    }, "planner", planner)).attached).toBe(true)
+
+    const before = await h.work()
+    const amended = await h.call("work_amend", {
+      workflowId: h.workflowId,
+      questionId: raised.question.id,
+      expectedVersion: before.version,
+      reason: "The active Task contract must account for the newly discovered constraint.",
+      operations: [{
+        action: "patch-task",
+        taskId: "one",
+        patch: {
+          constraints: ["Honor the newly discovered architecture constraint."],
+        },
+      }],
+    }, "planner", planner)
+    expect(amended.error).toBeUndefined()
+    expect(amended.taskPlanRefreshRequired).toBe(true)
+
+    const permission: any = {
+      agent: "architect",
+      action: "edit",
+      resources: ["docs/architecture/stale-plan.md"],
+      sessionID: architect,
+      effect: "allow",
+      message: "",
+    }
+    await h.permissionHooks.get("evaluate")!(permission)
+    expect(permission.effect).toBe("deny")
+    expect(permission.message).toContain("compiled Task DAG is stale against the current Plan generation")
+  } finally {
+    h.restore()
+  }
+})
+
 test("Planner OQ may amend untouched future work without staling the active Wave DAG", async () => {
   const h = await waveLifecycleFixture("wave", true)
   try {
@@ -11948,6 +12006,17 @@ test("Planner OQ may amend untouched future work without staling the active Wave
     }, "planner", planner)
     expect(oldRevision.error).toBeUndefined()
     expect(oldRevision.plan.focus.task.subtasks).toEqual([])
+
+    const oldWholePlan = await h.call("work_status", {
+      workflowId: h.workflowId,
+      revision: 1,
+    }, "planner", planner)
+    expect(oldWholePlan.error).toBeUndefined()
+    expect(oldWholePlan.plan).toMatchObject({
+      generation: 1,
+      revision: 1,
+    })
+    expect(oldWholePlan.plan.planMap).toEqual(expect.any(Array))
 
     const currentRevision = await h.call("work_status", {
       workflowId: h.workflowId,
@@ -12138,34 +12207,388 @@ test("production permission and attachment preserve an unchanged Wave after non-
   }
 })
 
-test("reopening Plan after Worker execution does not release the consumed Wave claim", async () => {
-  const h = await waveLifecycleFixture()
+test("reviewed Wave Plan reopen cannot invalidate a claimed downstream Wave", async () => {
+  const h = await waveLifecycleFixture("wave", true)
+  try {
+    expect((await h.finish("task:one", "worker")).error).toBeUndefined()
+    expect((await h.finish("review-implementation", "reviewer", "pass")).error).toBeUndefined()
+    const work = await h.work()
+    // A new Wave names only its intra-Wave execution dependencies; its
+    // reviewed external predecessor is enforced by persistent Work.
+    const next = { ...richPlanTask("two", "Two", "Build two", ["one"]), dependsOn: [], write: ["src/**"], skills: [] }
+    claimWorkflowWave(work, "downstream-workflow", work.generation, [next], false, "later")
+    await h.durableStorage.set(h.workKey, work)
+    const beforeWorkflow = await h.workflow()
+    const beforeWork = structuredClone(await h.work())
+
+    const attempted = await h.call("reopen", {
+      workflowId: h.workflowId,
+      stepId: "plan",
+      reason: "Change a reviewed Plan after its output was consumed.",
+      newEvidence: true, changedHypothesis: false,
+      changedStrategy: false, reducedUnresolved: false,
+    }, "general", "parent")
+    expect(attempted.error).toContain("downstream")
+    expect(await h.workflow()).toEqual(beforeWorkflow)
+    expect(await h.work()).toEqual(beforeWork)
+  } finally {
+    h.restore()
+  }
+})
+
+test("Planner removal of a claimed Task can recover without redispatching completed work", async () => {
+  const h = await waveLifecycleFixture("wave", false, "worker", true, "execute", "worker")
+  try {
+    expect((await h.finish("task:one", "worker")).error).toBeUndefined()
+    const original = (await h.workflow()).steps.find((step: any) => step.id === "task:one")
+    const raised = await h.call("oq_raise", {
+      workflowId: h.workflowId, taskId: "dependent",
+      question: "Remove the dependent Task after the accepted scope changed.",
+      responder: "planner", blocking: false,
+    }, "general", "parent")
+    expect(raised.error).toBeUndefined()
+    const grant = await h.call("dispatch_grant", {
+      workflowId: h.workflowId, questionId: raised.question.id,
+    }, "general", "parent")
+    expect(grant.error).toBeUndefined()
+    const questionSession = "remove-active-task-planner"
+    expect((await h.call("attach", {
+      workflowId: h.workflowId, questionId: raised.question.id, grantId: grant.grantId,
+    }, "planner", questionSession)).attached).toBe(true)
+    const prior = await h.work()
+    const amendment = await h.call("work_amend", {
+      workflowId: h.workflowId, questionId: raised.question.id,
+      expectedVersion: prior.version,
+      reason: "Drop unnecessary dependent work from the active Wave.",
+      operations: [{ action: "remove-task", taskId: "dependent" }],
+    }, "planner", questionSession)
+    expect(amendment.error).toBeUndefined()
+    expect(amendment.taskPlanRefreshRequired).toBe(true)
+
+    const reopened = await h.call("reopen", {
+      workflowId: h.workflowId, stepId: "plan",
+      reason: "Refresh the stale Task DAG after Planner removed a Task.",
+      newEvidence: true, changedHypothesis: false,
+      changedStrategy: false, reducedUnresolved: false,
+    }, "general", "parent")
+    expect(reopened.error).toBeUndefined()
+    expect(reopened.reset).not.toContain("task:one")
+    const releasedWork = await h.work()
+    expect(releasedWork.nodes.find(
+      (node: any) => node.type === "wave" && node.logicalId === "first",
+    ).claimedByWorkflowId).toBeUndefined()
+    expect(releasedWork.nodes.find(
+      (node: any) => node.type === "task" && node.logicalId === "one",
+    ).result.semanticClosureFingerprint).toEqual(expect.any(String))
+
+    const planner = await h.attach("plan", "planner", "recompile-removed-task")
+    const current = await h.work()
+    const waveTasks = current.plans.at(-1).phases[0].waves[0].tasks
+    expect(waveTasks.map((task: any) => task.id)).toEqual(["one"])
+    const compiled = await h.call("task_plan", {
+      workflowId: h.workflowId,
+      tasks: waveTasks.map((task: any) => ({ ...task, write: ["src/**"], skills: [] })),
+    }, "planner", planner)
+    expect(compiled.error).toBeUndefined()
+    expect(compiled.reusedTaskIds).toEqual(["one"])
+    expect((await h.workflow()).steps.find((step: any) => step.id === "task:one"))
+      .toMatchObject({ status: "complete", attempt: original.attempt })
+
+    expect((await h.call("complete", {
+      workflowId: h.workflowId, stepId: "plan", summary: "Recompiled surviving Task.",
+    }, "planner", planner)).error).toBeUndefined()
+    expect((await h.finish("review-plan", "reviewer", "pass")).error).toBeUndefined()
+    expect((await h.call("dispatch_grant", {
+      workflowId: h.workflowId, stepId: "task:one",
+    }, "general", "parent")).error).toContain("not currently runnable")
+  } finally {
+    h.restore()
+  }
+})
+
+test("Plan reopen reruns completed dependents when an upstream execution receipt is invalid", async () => {
+  const h = await waveLifecycleFixture("wave", false, "worker", true, "execute", "worker")
+  try {
+    expect((await h.finish("task:one", "worker")).error).toBeUndefined()
+    expect((await h.finish("task:dependent", "worker")).error).toBeUndefined()
+    const completed = await h.workflow()
+    const oldDependent = completed.steps.find((step: any) => step.id === "task:dependent")
+    expect(oldDependent.status).toBe("complete")
+
+    const work = await h.work()
+    const upstream = work.nodes.find((node: any) => node.type === "task" && node.logicalId === "one")
+    const dependent = work.nodes.find((node: any) => node.type === "task" && node.logicalId === "dependent")
+    expect(upstream.result.semanticClosureFingerprint).toEqual(expect.any(String))
+    expect(dependent.result.semanticClosureFingerprint).toEqual(expect.any(String))
+    // Force only the producer's old receipt to become untrusted. The dependent's
+    // own contract and evidence remain intact, but its consumed result cannot.
+    delete upstream.result.semanticClosureFingerprint
+    await h.durableStorage.set(h.workKey, work)
+
+    const reopened = await h.call("reopen", {
+      workflowId: h.workflowId, stepId: "plan",
+      reason: "Producer evidence is no longer trustworthy; rerun dependent work.",
+      newEvidence: true, changedHypothesis: false,
+      changedStrategy: false, reducedUnresolved: false,
+    }, "general", "parent")
+    expect(reopened.error).toBeUndefined()
+    expect(reopened.reset).toContain("task:one")
+    expect(reopened.reset).toContain("task:dependent")
+
+    const after = await h.workflow()
+    expect(after.steps.find((step: any) => step.id === "task:one").status).toBe("pending")
+    expect(after.steps.find((step: any) => step.id === "task:dependent")).toMatchObject({
+      status: "pending", attempt: oldDependent.attempt + 1,
+    })
+    const updated = await h.work()
+    for (const taskId of ["one", "dependent"]) {
+      const task = updated.nodes.find((node: any) => node.type === "task" && node.logicalId === taskId)
+      expect(task.result).toBeUndefined()
+      expect(task.priorResults?.at(-1).invalidatedReason).toContain("Plan reopened")
+    }
+
+    const planner = await h.attach("plan", "planner", "dependent-recovery-planner")
+    const currentTasks = updated.plans.at(-1).phases[0].waves[0].tasks
+    const compiled = await h.call("task_plan", {
+      workflowId: h.workflowId,
+      tasks: currentTasks.map((task: any) => ({ ...task, write: ["src/**"], skills: [] })),
+    }, "planner", planner)
+    expect(compiled.error).toBeUndefined()
+    expect(compiled.reusedTaskIds).toEqual([])
+  } finally {
+    h.restore()
+  }
+})
+
+test("Plan reopen reruns a completion whose claim list omits original evidence", async () => {
+  const h = await waveLifecycleFixture("wave", false, "worker", true, "execute", "worker")
+  try {
+    const claim = {
+      id: "fixture-original-claim", workflowId: h.workflowId,
+      stepId: "task:one", byAgent: "worker", attempt: 0,
+      observationIds: [], kind: "other",
+      statement: "Observed by original Task attempt.", createdAt: "2026-10-07T00:00:00Z",
+    }
+    await h.durableStorage.set(`evidence-claim/${h.workflowId}/task:one/${claim.id}`, claim)
+    await h.durableStorage.set(`evidence-claim-id/${claim.id}`, claim)
+    expect((await h.finish("task:one", "worker")).error).toBeUndefined()
+    const work = await h.work()
+    const task = work.nodes.find((node: any) => node.type === "task" && node.logicalId === "one")
+    expect(task.result.evidenceClaimIds).toEqual([claim.id])
+    task.result.evidenceClaimIds = []
+    await h.durableStorage.set(h.workKey, work)
+
+    const reopened = await h.call("reopen", {
+      workflowId: h.workflowId, stepId: "plan",
+      reason: "The persisted completion omitted a recorded claim.",
+      newEvidence: true, changedHypothesis: false,
+      changedStrategy: false, reducedUnresolved: false,
+    }, "general", "parent")
+    expect(reopened.error).toBeUndefined()
+    expect(reopened.reset).toContain("task:one")
+    expect((await h.workflow()).steps.find((step: any) => step.id === "task:one").status).toBe("pending")
+    const archived = (await h.work()).nodes.find(
+      (node: any) => node.type === "task" && node.logicalId === "one",
+    )
+    expect(archived.result).toBeUndefined()
+    expect(archived.priorResults.at(-1).evidenceClaimIds).toEqual([])
+  } finally {
+    h.restore()
+  }
+})
+
+test("Plan reopen redispatches a Task whose original evidence claim is missing", async () => {
+  const h = await waveLifecycleFixture("wave", false, "worker", true, "execute", "worker")
+  try {
+    expect((await h.finish("task:one", "worker")).error).toBeUndefined()
+    const work = await h.work()
+    const task = work.nodes.find((node: any) => node.type === "task" && node.logicalId === "one")
+    expect(task.result.semanticClosureFingerprint).toEqual(expect.any(String))
+    task.result.evidenceClaimIds = ["deleted-claim-id"]
+    await h.durableStorage.set(h.workKey, work)
+
+    const reopened = await h.call("reopen", {
+      workflowId: h.workflowId, stepId: "plan",
+      reason: "The original Task evidence is not available for reuse.",
+      newEvidence: true, changedHypothesis: false,
+      changedStrategy: false, reducedUnresolved: false,
+    }, "general", "parent")
+    expect(reopened.error).toBeUndefined()
+    expect(reopened.reset).toContain("task:one")
+    expect((await h.workflow()).steps.find((step: any) => step.id === "task:one").status).toBe("pending")
+    const after = await h.work()
+    const archived = after.nodes.find((node: any) => node.type === "task" && node.logicalId === "one")
+    expect(archived.result).toBeUndefined()
+    expect(archived.priorResults.at(-1)).toMatchObject({
+      evidenceClaimIds: ["deleted-claim-id"],
+      invalidatedReason: expect.stringContaining("receipt"),
+    })
+  } finally {
+    h.restore()
+  }
+})
+
+test("Plan reopen refuses to synthesize an absent Task closure receipt", async () => {
+  const h = await waveLifecycleFixture("wave", false, "worker", true, "execute", "worker")
+  try {
+    expect((await h.finish("task:one", "worker")).error).toBeUndefined()
+    const original = (await h.workflow()).steps.find((step: any) => step.id === "task:one")
+    const work = await h.work()
+    const task = work.nodes.find((node: any) => node.type === "task" && node.logicalId === "one")
+    expect(task.result.semanticClosureFingerprint).toEqual(expect.any(String))
+    // Model a persisted pre-receipt completion, not an execution under the
+    // new receipt contract. The old result must remain historical only.
+    delete task.result.semanticClosureFingerprint
+    delete task.result.planRevision
+    await h.durableStorage.set(h.workKey, work)
+
+    const reopened = await h.call("reopen", {
+      workflowId: h.workflowId, stepId: "plan",
+      reason: "Recover a legacy Task result without a semantic receipt.",
+      newEvidence: true, changedHypothesis: false,
+      changedStrategy: false, reducedUnresolved: false,
+    }, "general", "parent")
+    expect(reopened.error).toBeUndefined()
+    expect(reopened.reset).toContain("task:one")
+
+    const workflow = await h.workflow()
+    expect(workflow.steps.find((step: any) => step.id === "task:one")).toMatchObject({
+      status: "pending", attempt: original.attempt + 1,
+    })
+    const after = await h.work()
+    const result = after.nodes.find((node: any) => node.type === "task" && node.logicalId === "one")
+    expect(result.result).toBeUndefined()
+    expect(result.priorResults.at(-1)).toMatchObject({
+      workflowId: h.workflowId,
+      invalidatedReason: expect.stringContaining("reopened"),
+    })
+    expect(result.priorResults.at(-1).semanticClosureFingerprint).toBeUndefined()
+
+    const planner = await h.attach("plan", "planner", "replan-legacy-task")
+    const currentTasks = after.plans.at(-1).phases[0].waves[0].tasks
+    const compiled = await h.call("task_plan", {
+      workflowId: h.workflowId,
+      tasks: currentTasks.map((task: any) => ({ ...task, write: ["src/**"], skills: [] })),
+    }, "planner", planner)
+    expect(compiled.error).toBeUndefined()
+    expect(compiled.reusedTaskIds).toEqual([])
+  } finally {
+    h.restore()
+  }
+})
+
+test("reopening Plan preserves unchanged completed Tasks and requires only fresh Plan review", async () => {
+  const h = await waveLifecycleFixture("wave", false, "worker", true, "execute", "worker")
   try {
     const reviewed = await h.workflow()
     expect(reviewed.work.reviewedPlanRevision).toBe(1)
     expect(reviewed.work.reviewedPlanFingerprint).toBeDefined()
 
     expect((await h.finish("task:one", "worker")).error).toBeUndefined()
+    const completed = await h.workflow()
+    const completedOne = completed.steps.find((step: any) => step.id === "task:one")
+    expect(completedOne.status).toBe("complete")
 
-    expect((await h.call("reopen", {
+    const reopened = await h.call("reopen", {
       workflowId: h.workflowId,
       stepId: "plan",
-      reason: "New evidence requires reassessing the consumed Plan.",
+      reason: "Fresh Plan review is required without changing Task one.",
       newEvidence: true,
       changedHypothesis: false,
       changedStrategy: false,
       reducedUnresolved: false,
-    }, "general", "parent")).error).toBeUndefined()
+    }, "general", "parent")
+    expect(reopened.error).toBeUndefined()
+    expect(reopened.reset).not.toContain("task:one")
+    expect(reopened.reset).toContain("task:dependent")
 
     const reopenedWorkflow = await h.workflow()
     expect(reopenedWorkflow.work.reviewedPlanRevision).toBeUndefined()
     expect(reopenedWorkflow.work.reviewedPlanFingerprint).toBeUndefined()
+    expect(reopenedWorkflow.steps.find((step: any) => step.id === "task:one")).toMatchObject({
+      status: "complete",
+      attempt: completedOne.attempt,
+      summary: completedOne.summary,
+    })
+    expect(reopenedWorkflow.steps.find((step: any) => step.id === "task:dependent").status).toBe("pending")
 
     const work = await h.work()
+    expect(work.nodes.find((node: any) => node.type === "task" && node.logicalId === "one")).toMatchObject({
+      // Execution is reusable, but persistent Work does not become complete
+      // until the independent implementation review passes.
+      status: "pending",
+      result: {
+        workflowId: h.workflowId,
+        planRevision: 1,
+        semanticClosureFingerprint: expect.any(String),
+      },
+    })
     expect(
       work.nodes.find((node: any) => node.type === "wave" && node.logicalId === "first")
         .claimedByWorkflowId,
     ).toBe(h.workflowId)
+
+    const planner = await h.attach("plan", "planner", "reuse-plan-planner")
+    const beforeAmend = await h.work()
+    const amended = await h.call("work_amend", {
+      workflowId: h.workflowId,
+      expectedVersion: beforeAmend.version,
+      reason: "Execution exposed one extra check in the remaining dependent Task.",
+      operations: [{
+        action: "patch-task",
+        taskId: "dependent",
+        patch: {
+          subtasks: [
+            "Consume the completed Task one result.",
+            "Handle the newly discovered dependent edge.",
+          ],
+        },
+      }],
+    }, "planner", planner)
+    expect(amended.error).toBeUndefined()
+    expect(amended.affectedTaskIds).toContain("dependent")
+    expect(amended.affectedTaskIds).not.toContain("one")
+
+    const current = await h.work()
+    const currentWaveTasks = current.plans.at(-1).phases[0].waves[0].tasks
+    const compiled = await h.call("task_plan", {
+      workflowId: h.workflowId,
+      tasks: currentWaveTasks.map((task: any) => ({
+        ...task,
+        write: ["src/**"],
+        skills: [],
+      })),
+    }, "planner", planner)
+    expect(compiled.error).toBeUndefined()
+    expect(compiled.reusedTaskIds).toContain("one")
+    expect((await h.workflow()).steps.find((step: any) => step.id === "task:one")).toMatchObject({
+      status: "complete",
+      attempt: completedOne.attempt,
+      summary: completedOne.summary,
+    })
+
+    expect((await h.call("complete", {
+      workflowId: h.workflowId,
+      stepId: "plan",
+      summary: "Plan revision refreshed; completed Task one is unchanged.",
+    }, "planner", planner)).error).toBeUndefined()
+
+    const reviewer = await h.attach("review-plan", "reviewer", "reuse-plan-reviewer")
+    expect((await h.call("complete", {
+      workflowId: h.workflowId,
+      stepId: "review-plan",
+      outcome: "pass",
+      summary: "Fresh Plan review confirms the unchanged completion receipt.",
+    }, "reviewer", reviewer)).error).toBeUndefined()
+
+    expect((await h.call("dispatch_grant", {
+      workflowId: h.workflowId,
+      stepId: "task:one",
+    }, "general", "parent")).error).toContain("not currently runnable")
+    expect((await h.call("dispatch_grant", {
+      workflowId: h.workflowId,
+      stepId: "task:dependent",
+    }, "general", "parent")).error).toBeUndefined()
   } finally {
     h.restore()
   }
