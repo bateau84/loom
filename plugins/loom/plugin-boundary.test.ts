@@ -12200,6 +12200,69 @@ test("production permission and attachment preserve an unchanged Wave after non-
   }
 })
 
+test("Planner removal of a claimed Task can recover without redispatching completed work", async () => {
+  const h = await waveLifecycleFixture("wave", false, "worker", true, "execute", "worker")
+  try {
+    expect((await h.finish("task:one", "worker")).error).toBeUndefined()
+    const original = (await h.workflow()).steps.find((step: any) => step.id === "task:one")
+    const raised = await h.call("oq_raise", {
+      workflowId: h.workflowId, taskId: "dependent",
+      question: "Remove the dependent Task after the accepted scope changed.",
+      responder: "planner", blocking: false,
+    }, "general", "parent")
+    expect(raised.error).toBeUndefined()
+    const grant = await h.call("dispatch_grant", {
+      workflowId: h.workflowId, questionId: raised.question.id,
+    }, "general", "parent")
+    expect(grant.error).toBeUndefined()
+    const questionSession = "remove-active-task-planner"
+    expect((await h.call("attach", {
+      workflowId: h.workflowId, questionId: raised.question.id, grantId: grant.grantId,
+    }, "planner", questionSession)).attached).toBe(true)
+    const prior = await h.work()
+    const amendment = await h.call("work_amend", {
+      workflowId: h.workflowId, questionId: raised.question.id,
+      expectedVersion: prior.version,
+      reason: "Drop unnecessary dependent work from the active Wave.",
+      operations: [{ action: "remove-task", taskId: "dependent" }],
+    }, "planner", questionSession)
+    expect(amendment.error).toBeUndefined()
+    expect(amendment.taskPlanRefreshRequired).toBe(true)
+
+    const reopened = await h.call("reopen", {
+      workflowId: h.workflowId, stepId: "plan",
+      reason: "Refresh the stale Task DAG after Planner removed a Task.",
+      newEvidence: true, changedHypothesis: false,
+      changedStrategy: false, reducedUnresolved: false,
+    }, "general", "parent")
+    expect(reopened.error).toBeUndefined()
+    expect(reopened.reset).not.toContain("task:one")
+
+    const planner = await h.attach("plan", "planner", "recompile-removed-task")
+    const current = await h.work()
+    const waveTasks = current.plans.at(-1).phases[0].waves[0].tasks
+    expect(waveTasks.map((task: any) => task.id)).toEqual(["one"])
+    const compiled = await h.call("task_plan", {
+      workflowId: h.workflowId,
+      tasks: waveTasks.map((task: any) => ({ ...task, write: ["src/**"], skills: [] })),
+    }, "planner", planner)
+    expect(compiled.error).toBeUndefined()
+    expect(compiled.reusedTaskIds).toEqual(["one"])
+    expect((await h.workflow()).steps.find((step: any) => step.id === "task:one"))
+      .toMatchObject({ status: "complete", attempt: original.attempt })
+
+    expect((await h.call("complete", {
+      workflowId: h.workflowId, stepId: "plan", summary: "Recompiled surviving Task.",
+    }, "planner", planner)).error).toBeUndefined()
+    expect((await h.finish("review-plan", "reviewer", "pass")).error).toBeUndefined()
+    expect((await h.call("dispatch_grant", {
+      workflowId: h.workflowId, stepId: "task:one",
+    }, "general", "parent")).error).toContain("not currently runnable")
+  } finally {
+    h.restore()
+  }
+})
+
 test("reopening Plan preserves unchanged completed Tasks and requires only fresh Plan review", async () => {
   const h = await waveLifecycleFixture("wave", false, "worker", true, "execute", "worker")
   try {

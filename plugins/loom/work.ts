@@ -1486,6 +1486,11 @@ function syncCurrentPlanNodes(
     const existing = nodes.find((node) => node.id === id)
     if (existing) {
       if (existing.status === "superseded") existing.status = "pending"
+      if (type === "task" && existing.parentId !== parentId) {
+        // A Wave lease does not transfer when Planner moves a Task.
+        delete existing.claimedByWorkflowId
+        delete existing.claimedAt
+      }
       existing.title = title
       existing.parentId = parentId
       existing.objective = objective

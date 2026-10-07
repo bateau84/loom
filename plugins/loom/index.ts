@@ -180,6 +180,7 @@ import {
   objectiveWorkLevel,
   objectiveIdForAnchor,
   releaseWorkflowWave,
+  releaseCancelledWorkflowClaims,
   reopenWaveForTasks,
   syncWorkTaskStatuses,
   workPlanContext,
@@ -6998,6 +6999,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             let hadPlanReviewClaim = false
             let hadTaskExecution = false
             let invalidatedPlanRecovery = false
+            let staleCompiledPlan = false
             const preservedTaskSteps = new Map<string, {
               status: "complete" | "passed"
               attempt: number
@@ -7025,6 +7027,12 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 }
                 const currentTaskSteps = plannedTaskSteps(workflow)
                 const taskIds = currentTaskSteps.map((taskStep) => taskStep.task!.id)
+                // Planner OQs may remove or move a claimed Task. The old DAG
+                // cannot prove its claim after that amendment, but General must
+                // still be able to reopen Plan and compile the current Wave.
+                staleCompiledPlan =
+                  stepId === "plan" &&
+                  workflow.work.taskPlanRevision !== currentPlan?.revision
                 hadTaskExecution = currentTaskSteps.some((taskStep) => taskStep.status === "complete" || taskStep.status === "passed")
                 if (stepId === "plan") {
                   const reviewedRevision = workflow.work.reviewedPlanRevision
@@ -7071,7 +7079,9 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                     workflow.steps.some((candidate) => candidate.id === "review-plan" && candidate.status === "passed")
                   if (reviewed) await ensureCompletedWaveHistory(ctx.storage as any, work, workflow)
                   else if (planReviewed && !invalidatedPlanRecovery) {
-                    assertWaveClaimForTasks(work, workflow.id, workflow.work.generation, taskIds)
+                    if (!staleCompiledPlan) {
+                      assertWaveClaimForTasks(work, workflow.id, workflow.work.generation, taskIds)
+                    }
                     hadPlanReviewClaim = hasPlanReview
                   }
                 }
@@ -7149,7 +7159,13 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                   taskIds.length > 0 &&
                   !hadTaskExecution
                 ) {
-                  releaseWorkflowWave(work, workflow.id, workflow.work.generation, taskIds, now)
+                  if (staleCompiledPlan) {
+                    // Releasing an obsolete DAG cannot use Task IDs removed
+                    // by Planner; release only this workflow's surviving leases.
+                    releaseCancelledWorkflowClaims(work, workflow.id, now)
+                  } else {
+                    releaseWorkflowWave(work, workflow.id, workflow.work.generation, taskIds, now)
+                  }
                 } else if (
                   !invalidatedPlanRecovery &&
                   stepId !== "plan" &&
@@ -10019,7 +10035,8 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                           node.type === "task" &&
                           node.parentId === completedWave.id &&
                           node.status !== "complete" &&
-                          node.status !== "superseded",
+                          node.status !== "superseded" &&
+                          !preserved.has(node.logicalId),
                       )
                       if (omitted.length > 0) {
                         throw new Error(
