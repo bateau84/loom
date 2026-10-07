@@ -30,7 +30,7 @@ import {
 } from "./upgrade-actions"
 
 export const LOOM_NATIVE_TOOL_GUIDANCE =
-  "Loom control-plane tools are available through two equivalent OpenCode surfaces: native loom_* tools and Code Mode mirrors under tools.loom.code.*. Use either surface directly according to the active tool paradigm. If using Code Mode, search for Loom tools and invoke the returned tools.loom.code.* signatures; do not fall back to shell/filesystem discovery for Loom commands. Reviewer/Critic methodology uses a two-part contract: load practitioner guidance with OpenCode's native skill tool, then consume the role companion through loom_assessment or loom_qa; a plain ASSESSMENT.md/QA.md read is artifact inspection, not methodology loading. Interactive status is dashboard-first and does not depend on model prose: the Loom sidebar exposes a stable workflow dashboard URL, while loom_status may also return presentation metadata. Desktop browser preview is optional metadata only; do not invoke tools.browser.preview merely because presentation metadata exists. Every Loom agent may use GitButler inspection commands such as `but status`, `but diff`, and `but show`. When a role owns durable repository changes, load git-commit-discipline before committing so the commit remains coherent and reviewable; load the `but` skill when GitButler mechanics matter. Loom admits selected whole-file-ID Butler commits only: use `but commit ... -m ... <file-id>...`; Loom resolves those IDs back to repository paths and revalidates current task/session ownership under lock. Bare commit-all, empty, interactive, current-directory override, and unsupported history-wide Butler mutations are denied. The existing bounded `git -c core.hooksPath=/dev/null commit -m ...` path remains a fallback; long Markdown messages may instead use `git -c core.hooksPath=/dev/null commit -F ephemeral-reports/<role>/commit-messages/<name>.md`. Compose that scratch file with edit/write tools, never shell redirection. Plain `git commit` is intentionally denied so repository hooks cannot change the staged scope after Loom validates it. Runtime write scope is discoverable: an attached child that needs additional project-local files calls loom_scope_elevate and continues immediately when granted. If any Loom tool returns continue=false, the child MUST stop its current turn and return control immediately; it must not retry the blocked mutation or continue assuming authority will arrive later."
+  "Loom control-plane tools are available through two equivalent OpenCode surfaces: native loom_* tools and Code Mode mirrors under tools.loom.code.*. Use either surface directly according to the active tool paradigm. If using Code Mode, search for Loom tools and invoke the returned tools.loom.code.* signatures; do not fall back to shell/filesystem discovery for Loom commands. Reviewer/Critic methodology uses a two-part contract: load practitioner guidance with OpenCode's native skill tool, then consume the role companion through loom_assessment or loom_qa; a plain ASSESSMENT.md/QA.md read is artifact inspection, not methodology loading. Interactive status is dashboard-first and does not depend on model prose: the Loom sidebar exposes a stable workflow dashboard URL, while loom_status may also return presentation metadata. Desktop browser preview is optional metadata only; do not invoke tools.browser.preview merely because presentation metadata exists. Every Loom agent may use GitButler inspection commands such as `but status`, `but diff`, and `but show`. When any role has durable project-local write scope, that same effective scope authorizes commits of the admitted bytes; this includes paths added by `loom_scope_elevate`. Load git-commit-discipline before committing so the commit remains coherent and reviewable; load the `but` skill when GitButler mechanics matter. Loom admits selected whole-file-ID Butler commits only: use `but commit ... -m ... <file-id>...`; Loom resolves those IDs back to repository paths and revalidates current task/session ownership under lock. Bare commit-all, empty, interactive, current-directory override, and unsupported history-wide Butler mutations are denied. The existing bounded `git -c core.hooksPath=/dev/null commit -m ...` path remains a fallback; long Markdown messages may instead use `git -c core.hooksPath=/dev/null commit -F ephemeral-reports/<role>/commit-messages/<name>.md`. Compose that scratch file with edit/write tools, never shell redirection. Plain `git commit` is intentionally denied so repository hooks cannot change the staged scope after Loom validates it. Runtime write scope is discoverable: an attached child that needs additional project-local files calls loom_scope_elevate and continues immediately when granted. If any Loom tool returns continue=false, the child MUST stop its current turn and return control immediately; it must not retry the blocked mutation or continue assuming authority will arrive later."
 import {
   assertWorkflowNotCancelled,
   WorkflowCancelledError,
@@ -392,21 +392,11 @@ const productScopeElevatingAgents = new Set([
 
 const generalGitWriteScope = ["docs/anchors/**"]
 
-const repositoryCommitAgents = new Set([
-  "designer",
-  "specifier",
-  "architect",
-  "reviewer",
-  "documenter",
-  "worker",
-])
-
-function roleCanOwnRepositoryCommit(agent: string) {
-  return agent === "general" || repositoryCommitAgents.has(agent)
-}
-
+// Commit authority follows the current effective committable write scope, not
+// a role allowlist. This helper only establishes the role-owned scratch
+// namespace; permission to use it is checked against current write scope.
 function roleCommitMessagePath(agent: string, resource: string) {
-  if (!roleCanOwnRepositoryCommit(agent)) return false
+  if (agent !== "general" && !loomAgents.has(agent)) return false
   const normalized = commitMessageScratchPath(resource)
   return Boolean(
     normalized &&
@@ -10475,10 +10465,10 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 write: scope.write,
                 scopeSemantics: "starting-expectation-with-runtime-elevation",
                 scopeNote: taskOutcome
-                  ? "The attached write scope is the current mutation surface, not a prediction that every needed file is already known. taskOutcome is the bounded completion target and planContext preserves the parent goal, accepted authority, constraints, acceptance criteria, integration, dependencies, risks, and downstream acceptance context. Discover freely; call loom_scope_elevate before mutating additional project-local paths. Same-attempt admitted bytes are automatically commit-authorized across redispatch."
+                  ? "The attached write scope is the current mutation surface, not a prediction that every needed file is already known. taskOutcome is the bounded completion target and planContext preserves the parent goal, accepted authority, constraints, acceptance criteria, integration, dependencies, risks, and downstream acceptance context. Discover freely; call loom_scope_elevate before mutating additional project-local paths. Any durable project-local write scope, including scope granted by loom_scope_elevate, automatically carries commit authority for that step's admitted bytes across redispatch."
                   : acceptedOutcome
-                    ? "The attached write scope is the current mutation surface, not a prediction that every needed file is already known. acceptedOutcome is the bounded completion target and acceptedAuthority is its governing source. Discover freely; call loom_scope_elevate before mutating additional project-local paths. Same-attempt admitted bytes are automatically commit-authorized across redispatch."
-                    : "The attached write scope is the current mutation surface, not a prediction that every needed file is already known. acceptedAuthority identifies the governing source. Discover freely; call loom_scope_elevate before mutating additional project-local paths. Same-attempt admitted bytes are automatically commit-authorized across redispatch.",
+                    ? "The attached write scope is the current mutation surface, not a prediction that every needed file is already known. acceptedOutcome is the bounded completion target and acceptedAuthority is its governing source. Discover freely; call loom_scope_elevate before mutating additional project-local paths. Any durable project-local write scope, including scope granted by loom_scope_elevate, automatically carries commit authority for that step's admitted bytes across redispatch."
+                    : "The attached write scope is the current mutation surface, not a prediction that every needed file is already known. acceptedAuthority identifies the governing source. Discover freely; call loom_scope_elevate before mutating additional project-local paths. Any durable project-local write scope, including scope granted by loom_scope_elevate, automatically carries commit authority for that step's admitted bytes across redispatch.",
               } : {}),
               ...(task ? { task } : {}),
               ...(producerSkills ? { producerSkills } : {}),
@@ -10512,12 +10502,15 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           const scope = (await ctx.storage.get(scopeKey(workflowId, stepId))) as TaskScope | undefined
           const roleWriteDefault = artifactWriteDefaults[step.agent] ?? []
           const effectiveWrite = scope?.write.length ? scope.write : roleWriteDefault
+          const committableWrite = committableWriteScope(effectiveWrite)
           return {
             content: renderToolOutput({
               scope: scope ?? null,
               agent: step.agent,
               roleWriteDefault,
               effectiveWrite,
+              committableWrite,
+              commitAuthorized: committableWrite.length > 0,
               elevations: scope?.elevations ?? [],
               scopeSemantics: "starting-expectation-with-runtime-elevation",
             }),
@@ -10809,6 +10802,13 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                     ? {
                         grantedProjectPaths: projectPaths,
                         effectiveWrite: result.scope?.write ?? result.roleWriteDefault,
+                        committableWrite: committableWriteScope(
+                          result.scope?.write ?? result.roleWriteDefault,
+                        ),
+                        commitAuthorized:
+                          committableWriteScope(
+                            result.scope?.write ?? result.roleWriteDefault,
+                          ).length > 0,
                         elevation: result.elevation,
                       }
                     : {}),
@@ -11677,14 +11677,13 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             return
           }
           if (
-            !roleCanOwnRepositoryCommit(reportAgent) ||
             !commitMessageResources.every((resource: string) =>
               roleCommitMessagePath(reportAgent, resource),
             )
           ) {
             event.effect = "deny"
             event.message =
-              "Commit-message scratch is available only to a role that can own the repository commit, inside that role's own namespace."
+              "Commit-message scratch must stay inside the current Loom role's own ephemeral-reports/<role>/commit-messages/ namespace."
             return
           }
           if (reportAgent !== "general") {

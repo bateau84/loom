@@ -102,6 +102,31 @@ class AgentButlerPermissionTests(unittest.TestCase):
                     )
 
 
+class CommitScopeAuthorityTests(unittest.TestCase):
+    def test_commit_authority_is_scope_derived_not_role_allowlisted(self):
+        source = (ROOT / "plugins/loom/index.ts").read_text()
+        self.assertNotIn("repositoryCommitAgents", source)
+        self.assertNotIn("roleCanOwnRepositoryCommit", source)
+        self.assertIn(
+            'if (agent !== "general" && !loomAgents.has(agent)) return false',
+            source,
+        )
+        self.assertIn("committableWriteScope(effectiveWrite)", source)
+        self.assertIn("commitAuthorized: committableWrite.length > 0", source)
+
+    def test_scope_elevation_reports_commit_authority_from_effective_scope(self):
+        source = (ROOT / "plugins/loom/index.ts").read_text()
+        self.assertIn("grantedProjectPaths: projectPaths", source)
+        self.assertIn(
+            "committableWriteScope(\n                          result.scope?.write ?? result.roleWriteDefault",
+            source,
+        )
+        self.assertIn(
+            "Any durable project-local write scope, including scope granted by loom_scope_elevate",
+            source,
+        )
+
+
 class OpenCodeVersionContractTests(unittest.TestCase):
     def test_primary_host_matches_plugin_dependency(self):
         package = json.loads((ROOT / "package.json").read_text())
