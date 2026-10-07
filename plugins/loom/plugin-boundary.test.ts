@@ -5908,12 +5908,24 @@ Verdict: FAIL
       const fakeState = join(h.root, "fake-but-count")
       await mkdir(fakeBin, { recursive: true })
 
-      const writeFakeBut = async (mode: "stable" | "stale") => {
+      const writeFakeBut = async (
+        mode: "stable" | "stale" | "rename" | "linked-worktree",
+      ) => {
         const stale = mode === "stale" ? "1" : "0"
+        const changeType = mode === "rename" ? "renamed" : "modified"
+        const linked = mode === "linked-worktree" ? "1" : "0"
         await writeFile(
           fakeBut,
           `#!/bin/sh
 set -eu
+if [ "\$1" = "--json" ] && [ "\$2" = "status" ] && [ "\$3" = "-f" ]; then
+  if [ "${linked}" = "1" ]; then
+    printf '{"uncommittedChanges":[],"stacks":[],"worktrees":[{"uncommittedChanges":[{"cliId":"qs","filePath":"docs/design/runtime.md","changeType":"${changeType}"}]}]}\\n'
+  else
+    printf '{"uncommittedChanges":[{"cliId":"qs","filePath":"docs/design/runtime.md","changeType":"${changeType}"}],"stacks":[],"worktrees":[]}\\n'
+  fi
+  exit 0
+fi
 if [ "\$1" != "--json" ] || [ "\$2" != "diff" ] || [ "\$3" != "qs" ]; then
   echo "unexpected fake but invocation: \$*" >&2
   exit 2
@@ -6022,6 +6034,24 @@ printf '{"changes":[{"id":"qs:1","path":"%s","status":"modified","diff":{"type":
         status: "error",
         error: new Error("synthetic shell stop after admission"),
       })
+
+      await writeFakeBut("rename")
+      const renamePermission: any = {
+        ...commitPermission,
+        effect: "ask",
+      }
+      await evaluate(renamePermission)
+      expect(renamePermission.effect).toBe("deny")
+      expect(renamePermission.message).toContain("is a rename")
+
+      await writeFakeBut("linked-worktree")
+      const worktreePermission: any = {
+        ...commitPermission,
+        effect: "ask",
+      }
+      await evaluate(worktreePermission)
+      expect(worktreePermission.effect).toBe("deny")
+      expect(worktreePermission.message).toContain("belongs to a linked worktree")
 
       await rm(fakeState, { force: true })
       await writeFakeBut("stale")

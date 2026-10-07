@@ -691,6 +691,76 @@ type ButlerCommitSelection = {
   digest: string
 }
 
+
+type ButlerStatusFile = {
+  cliId: string
+  filePath: string
+  changeType: string
+  source: "workspace" | "linked-worktree"
+}
+
+function butlerStatusFiles(status: any): ButlerStatusFile[] {
+  const files: ButlerStatusFile[] = []
+  const append = (changes: unknown, source: ButlerStatusFile["source"]) => {
+    if (!Array.isArray(changes)) return
+    for (const change of changes) {
+      if (
+        !change ||
+        typeof change !== "object" ||
+        typeof (change as any).cliId !== "string" ||
+        typeof (change as any).filePath !== "string" ||
+        typeof (change as any).changeType !== "string"
+      ) continue
+      files.push({
+        cliId: String((change as any).cliId),
+        filePath: safeOwnedRepoPath(String((change as any).filePath)),
+        changeType: String((change as any).changeType),
+        source,
+      })
+    }
+  }
+
+  append(status?.uncommittedChanges, "workspace")
+  if (Array.isArray(status?.stacks)) {
+    for (const stack of status.stacks) {
+      append(stack?.assignedChanges, "workspace")
+    }
+  }
+  if (Array.isArray(status?.worktrees)) {
+    for (const worktree of status.worktrees) {
+      append(worktree?.uncommittedChanges, "linked-worktree")
+    }
+  }
+  return files
+}
+
+async function readButlerStatusFiles(projectDirectory: string) {
+  let stdout: string
+  try {
+    const result = await execFileAsync(
+      "but",
+      ["--json", "status", "-f"],
+      { cwd: projectDirectory, encoding: "utf8" },
+    )
+    stdout = String(result.stdout)
+  } catch (error: any) {
+    const detail = [error?.message, error?.stderr, error?.stdout]
+      .filter(Boolean)
+      .join("\n")
+    throw new Error(
+      `Butler commit denied: could not inspect current GitButler file identity: ${detail || "unknown GitButler error"}`,
+    )
+  }
+
+  try {
+    return butlerStatusFiles(JSON.parse(stdout))
+  } catch {
+    throw new Error(
+      "Butler commit denied: `but --json status -f` did not return valid JSON.",
+    )
+  }
+}
+
 async function resolveButlerCommitSelection(
   projectDirectory: string,
   command: string,
@@ -700,6 +770,7 @@ async function resolveButlerCommitSelection(
 
   const paths = new Set<string>()
   const hash = createHash("sha256")
+  const statusFiles = await readButlerStatusFiles(projectDirectory)
 
   for (const source of sources) {
     let stdout: string
@@ -750,9 +821,34 @@ async function resolveButlerCommitSelection(
       )
     }
 
+    const sourcePath = safeOwnedRepoPath([...sourcePaths][0])
+    const identityMatches = statusFiles.filter(
+      (file) =>
+        file.filePath === sourcePath &&
+        file.cliId.startsWith(source),
+    )
+    if (identityMatches.length !== 1) {
+      throw new Error(
+        `Butler commit denied: ${source} did not resolve to one unambiguous whole-file identity in current GitButler status.`,
+      )
+    }
+    const identity = identityMatches[0]
+    if (identity.source !== "workspace") {
+      throw new Error(
+        `Butler commit denied: ${source} belongs to a linked worktree; Loom commit authority applies only to the current project workspace.`,
+      )
+    }
+    if (identity.changeType.toLowerCase() === "renamed") {
+      throw new Error(
+        `Butler commit denied: ${source} is a rename; Loom cannot prove both rename endpoints from this CLI ID, so use the bounded Git fallback or split the change.`,
+      )
+    }
+
     hash.update(source)
     hash.update("\0")
     hash.update(JSON.stringify(parsed))
+    hash.update("\0")
+    hash.update(JSON.stringify(identity))
     hash.update("\0")
 
     for (const change of changes) {
