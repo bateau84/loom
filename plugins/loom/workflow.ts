@@ -29,7 +29,9 @@ export type ReviewReceipt = {
 export type ReviewControl = {
   mode: ReviewAssignmentMode
   lastReviewerSessionId?: string
+  attachedHeadSha?: string
   preferredSessionId?: string
+  freshSessionRequired?: boolean
   repairSessionId?: string
   repairFinding?: string
   repairReason?: string
@@ -545,9 +547,15 @@ export function reviewAssignmentMode(step: Step): ReviewAssignmentMode {
   return step.review?.mode ?? "review-only"
 }
 
-export function recordReviewerAttachment(step: Step, sessionId: string) {
+export function recordReviewerAttachment(step: Step, sessionId: string, headSha: string) {
   const review = reviewerControl(step)
+  const normalizedHeadSha = headSha.trim()
+  if (!normalizedHeadSha || normalizedHeadSha === "unavailable") {
+    throw new Error("Reviewer attachment requires exact repository revision evidence.")
+  }
   review.lastReviewerSessionId = sessionId
+  review.attachedHeadSha = normalizedHeadSha
+  review.freshSessionRequired = false
   return review
 }
 
@@ -579,6 +587,7 @@ export function authorizeReviewerRepair(
   review.repairFinding = finding
   review.repairReason = reason
   review.independentApprovalPending = true
+  review.freshSessionRequired = false
   review.ineligibleIndependentSessionIds = [
     ...new Set([...(review.ineligibleIndependentSessionIds ?? []), repairSessionId]),
   ]
@@ -642,6 +651,7 @@ export function completeReviewerRepair(
   review.lastReviewerSessionId = input.sessionId
   review.mode = "independent-re-review"
   review.independentApprovalPending = true
+  review.freshSessionRequired = !review.preferredSessionId
   delete review.repairSessionId
   delete review.repairFinding
   delete review.repairReason
@@ -665,6 +675,20 @@ export function prepareReviewerAfterProducerRepair(
     preferred && !(review.ineligibleIndependentSessionIds ?? []).includes(preferred)
       ? preferred
       : undefined
+  review.freshSessionRequired = false
+  delete review.repairSessionId
+  delete review.repairFinding
+  delete review.repairReason
+  return review
+}
+
+export function prepareReviewerAfterAuthorityChange(step: Step) {
+  const review = reviewerControl(step)
+  review.mode = review.independentApprovalPending
+    ? "independent-re-review"
+    : "review-only"
+  review.preferredSessionId = undefined
+  review.freshSessionRequired = true
   delete review.repairSessionId
   delete review.repairFinding
   delete review.repairReason
@@ -703,21 +727,23 @@ export function recordReviewerVerdict(
   ) {
     throw new Error("This Reviewer session authored repair and is ineligible for independent re-review.")
   }
-  if (
-    review.mode === "independent-re-review" &&
-    input.outcome === "pass" &&
-    input.headSha === "unavailable"
-  ) {
-    throw new Error(
-      "Independent re-review PASS requires exact repository revision evidence.",
-    )
+  const headSha = input.headSha.trim()
+  if (input.outcome === "pass") {
+    if (!headSha || headSha === "unavailable") {
+      throw new Error("Reviewer PASS requires exact repository revision evidence.")
+    }
+    if (!review.attachedHeadSha || review.attachedHeadSha !== headSha) {
+      throw new Error(
+        "Reviewer PASS is stale because repository HEAD changed after this Reviewer attached. Re-attach and review the current revision.",
+      )
+    }
   }
 
   review.receipts!.push({
     kind: "review",
     attempt: step.attempt ?? 0,
     sessionId: input.sessionId,
-    headSha: input.headSha,
+    headSha,
     assurance: "independent",
     outcome: input.outcome,
     summary: input.summary,

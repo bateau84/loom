@@ -10249,7 +10249,7 @@ describe("Reviewer repair authorization and re-review boundary", () => {
         "general",
         generalSession,
       )
-      expect((await h.call(
+      const independentAttachment = await h.call(
         "attach",
         {
           grantId: independentGrant2.grantId,
@@ -10258,7 +10258,18 @@ describe("Reviewer repair authorization and re-review boundary", () => {
         },
         "reviewer",
         reviewerB,
-      )).reviewAssignment.mode).toBe("independent-re-review")
+      )
+      expect(independentAttachment.reviewAssignment.mode).toBe("independent-re-review")
+      expect(independentAttachment.reviewAssignment.priorRepairEvidence).toContainEqual(
+        expect.objectContaining({
+          kind: "repair",
+          sessionId: reviewerA,
+          headSha: selfVerified.headSha,
+          finding: "value must be 2",
+          changeSummary: "Changed the bounded value from 1 to 2.",
+          verificationSummary: "Inspected the committed one-line correction.",
+        }),
+      )
 
       const passed = await h.call(
         "complete",
@@ -10383,6 +10394,7 @@ describe("Reviewer repair authorization and re-review boundary", () => {
         mode: "review-only",
         resumeSessionId: reviewerSession,
         independentApprovalPending: false,
+        freshSessionRequired: false,
       })
 
       const workerGrant2 = await h.call(

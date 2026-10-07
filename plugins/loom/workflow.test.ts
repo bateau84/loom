@@ -6,6 +6,7 @@ import {
   buildSteps,
   completeReviewerRepair,
   finishStep,
+  prepareReviewerAfterAuthorityChange,
   prepareReviewerAfterProducerRepair,
   recordReviewerAttachment,
   recordReviewerVerdict,
@@ -598,7 +599,7 @@ describe("Loom routing DAG", () => {
     }))
     finishStep(w, "worker", "worker", "complete", "implementation complete")
     const review = w.steps.find((step) => step.id === "review-implementation")!
-    recordReviewerAttachment(review, "reviewer-a")
+    recordReviewerAttachment(review, "reviewer-a", "review-head-a")
     finishStep(w, "review-implementation", "reviewer", "fail", "bounded defect")
 
     authorizeReviewerRepair(review, {
@@ -641,7 +642,7 @@ describe("Loom routing DAG", () => {
       }),
     ).toThrow("ineligible for independent re-review")
 
-    recordReviewerAttachment(review, "reviewer-b")
+    recordReviewerAttachment(review, "reviewer-b", "repair-head")
     recordReviewerVerdict(review, {
       sessionId: "reviewer-b",
       outcome: "pass",
@@ -674,7 +675,7 @@ describe("Loom routing DAG", () => {
     }))
     finishStep(w, "worker", "worker", "complete", "implementation complete")
     const review = w.steps.find((step) => step.id === "review-implementation")!
-    recordReviewerAttachment(review, "reviewer-b")
+    recordReviewerAttachment(review, "reviewer-b", "repair-head")
     finishStep(w, "review-implementation", "reviewer", "fail", "producer defect")
 
     reopenFrom(w, "worker")
@@ -699,7 +700,7 @@ describe("Loom routing DAG", () => {
     }))
     finishStep(w, "worker", "worker", "complete", "implementation complete")
     const review = w.steps.find((step) => step.id === "review-implementation")!
-    recordReviewerAttachment(review, "reviewer-a")
+    recordReviewerAttachment(review, "reviewer-a", "review-head-a")
     finishStep(w, "review-implementation", "reviewer", "fail", "first finding")
     authorizeReviewerRepair(review, {
       repairSessionId: "reviewer-a",
@@ -715,7 +716,7 @@ describe("Loom routing DAG", () => {
       recordedAt: "t1",
     })
 
-    recordReviewerAttachment(review, "reviewer-b")
+    recordReviewerAttachment(review, "reviewer-b", "repair-head")
     finishStep(w, "review-implementation", "reviewer", "fail", "second finding")
 
     authorizeReviewerRepair(review, {
@@ -737,6 +738,54 @@ describe("Loom routing DAG", () => {
     expect(review.review?.mode).toBe("independent-re-review")
     expect(review.review?.preferredSessionId).toBe("reviewer-b")
     expect(reviewerSessionEligibleForIndependentReview(review, "reviewer-b")).toBe(true)
+  })
+
+  test("Reviewer PASS fails closed when repository HEAD changed after attachment", () => {
+    const w = workflow(buildSteps({
+      humanFacing: false,
+      behavioral: false,
+      structural: false,
+      externalUnknown: false,
+      diagnostic: false,
+      productOutcome: false,
+      implementationRequested: true,
+      executionDepth: "task",
+    }))
+    finishStep(w, "worker", "worker", "complete", "implementation complete")
+    const review = w.steps.find((step) => step.id === "review-implementation")!
+    recordReviewerAttachment(review, "reviewer-a", "reviewed-head")
+
+    expect(() =>
+      recordReviewerVerdict(review, {
+        sessionId: "reviewer-a",
+        outcome: "pass",
+        summary: "looks good",
+        headSha: "changed-head",
+        evidenceBound: 1,
+        recordedAt: "later",
+      }),
+    ).toThrow("repository HEAD changed after this Reviewer attached")
+  })
+
+  test("upstream authority changes require a fresh Reviewer context", () => {
+    const w = workflow(buildSteps({
+      humanFacing: false,
+      behavioral: false,
+      structural: false,
+      externalUnknown: false,
+      diagnostic: false,
+      productOutcome: false,
+      implementationRequested: true,
+      executionDepth: "task",
+    }))
+    finishStep(w, "worker", "worker", "complete", "implementation complete")
+    const review = w.steps.find((step) => step.id === "review-implementation")!
+    recordReviewerAttachment(review, "reviewer-a", "reviewed-head")
+
+    prepareReviewerAfterAuthorityChange(review)
+
+    expect(review.review?.preferredSessionId).toBeUndefined()
+    expect(review.review?.freshSessionRequired).toBe(true)
   })
 
 

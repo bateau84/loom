@@ -50,6 +50,7 @@ import {
   resetVerificationAfterReopen,
   runnable,
   knownReviewerSessions,
+  prepareReviewerAfterAuthorityChange,
   prepareReviewerAfterProducerRepair,
   recordReviewerAttachment,
   recordReviewerVerdict,
@@ -5780,10 +5781,16 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                   (candidate) => candidate.id === "review-implementation" && candidate.agent === "reviewer",
                 )
                 if (reopenedReview) {
-                  prepareReviewerAfterProducerRepair(
-                    reopenedReview,
-                    priorReviewerSessionId,
-                  )
+                  const producerCorrection =
+                    stepId === "worker" || stepId.startsWith("task:")
+                  if (producerCorrection) {
+                    prepareReviewerAfterProducerRepair(
+                      reopenedReview,
+                      priorReviewerSessionId,
+                    )
+                  } else {
+                    prepareReviewerAfterAuthorityChange(reopenedReview)
+                  }
                   await ctx.storage.set(
                     scopeKey(workflowId, reopenedReview.id),
                     {
@@ -5888,6 +5895,8 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                       reviewContinuation: {
                         mode: reviewAssignmentMode(reopenedReview),
                         resumeSessionId: reopenedReview.review?.preferredSessionId,
+                        freshSessionRequired:
+                          reopenedReview.review?.freshSessionRequired ?? false,
                         independentApprovalPending:
                           reopenedReview.review?.independentApprovalPending ?? false,
                         ineligibleReviewerSessionIds:
@@ -8940,7 +8949,8 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                       reviewMode,
                       ...(resumeSessionId ? { resumeSessionId } : {}),
                       freshSessionRequired:
-                        reviewMode === "independent-re-review" && !resumeSessionId,
+                        reviewStep.review?.freshSessionRequired ??
+                        (reviewMode === "independent-re-review" && !resumeSessionId),
                       ineligibleReviewerSessionIds:
                         reviewStep.review?.ineligibleIndependentSessionIds ?? [],
                       independentApprovalPending:
@@ -9085,7 +9095,19 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                       "This Reviewer session authored repair and cannot attach as the independent re-reviewer.",
                     )
                   }
-                  recordReviewerAttachment(step, tool.sessionID)
+                  if (
+                    step.review?.freshSessionRequired &&
+                    knownReviewerSessions(step).includes(tool.sessionID)
+                  ) {
+                    throw new Error(
+                      "This review requires a genuinely fresh Reviewer session because upstream authority or reviewed scope changed.",
+                    )
+                  }
+                  recordReviewerAttachment(
+                    step,
+                    tool.sessionID,
+                    await repositoryHeadSha(ctx.location.directory),
+                  )
                 }
 
                 task = step.task
@@ -9367,6 +9389,12 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                         (await readWorkflow(ctx, value.workflowId))!.steps.find(
                           (candidate) => candidate.id === value.stepId,
                         )?.review?.ineligibleIndependentSessionIds ?? [],
+                      priorRepairEvidence:
+                        ((await readWorkflow(ctx, value.workflowId))!.steps.find(
+                          (candidate) => candidate.id === value.stepId,
+                        )?.review?.receipts ?? []).filter(
+                          (receipt) => receipt.kind === "repair",
+                        ),
                     },
                   }
                 : {}),
