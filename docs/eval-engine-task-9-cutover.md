@@ -5,10 +5,13 @@ Integration: `eval-engine/09-cutover`. Stage 1 merged through
 [PR #146](https://github.com/bateau84/loom/pull/146) at
 `4ef43568fbffd4be247cdabfed56ff3ab28d8dec`.
 
-This document defines the **final intended ownership boundary** and a
-repeatable validation matrix. Stage 2A cleanup and Stage 2B documentation are
-separate PRs. The docs PR alone does **not** establish that cleanup or
-same-head live validation is complete.
+This document records the **integrated** ownership boundary and a repeatable
+validation matrix. Stage 2B [PR #149](https://github.com/bateau84/loom/pull/149)
+merged at `26afe55097d96adfc3ff70392a8dc5e13e657c98`; Stage 2A
+[PR #147](https://github.com/bateau84/loom/pull/147) merged at
+`1074014632b24ab9734b1f7be7ef155fffe6c8f5`.
+This establishes the provider-free cutover, **not** same-head live behavioral
+evidence or final target-branch readiness.
 
 ## Ownership: one generic engine, Loom-specific policy
 
@@ -37,11 +40,14 @@ The runner does not expose a public paired CLI option. Loom makes the
 skill-value comparison decision; the runner owns both evaluation lifecycles.
 Mixed selections use separate `normal/` and `skill-ablation/` subdirectories.
 
-The Stage 1 baseline still has legacy helpers and a private
-`runner.eval_cli._run_lane` import in the pair bridge. Stage 2A must remove
-duplicated active orchestration without copying generic scheduling, retry,
-observer, artifact or classification logic back into Loom. Reconcile Stage 2A
-before claiming only one implementation remains.
+Stage 2A removed the duplicate executable legacy invoker, retry, scheduler,
+case-runner and artifact writer. The old script refuses direct execution.
+It remains importable for Loom case/fixture policy and **historical diagnostic
+projections only**; observer fields cannot authorize live verdicts and old
+observer-based judge helpers are not exposed by the supported wrapper.
+The paired bridge calls the generic runner's pinned, private
+`runner.eval_cli._run_lane` scheduler; it does **not** reimplement scheduling.
+A supported public multi-pair scheduling API is remaining compatibility debt.
 
 ## Runtime evidence is authoritative
 
@@ -189,18 +195,25 @@ No paid inference runs in ordinary PR CI.
 
 - **Stage 1:** PR #146 merged at `4ef43568`. Its prior-head real model
   observations and checks are not a Stage 2B same-head live validation.
-- **Stage 2B provider-free:** results must be recorded from this PR's
-  CI. A recording-runner CLI smoke establishes forwarding, **not**
-  actual container execution or model behavior.
-- **Live full matrix:** not established solely by this documentation
-  and provider-free test change. It requires live execution and artifact
-  inspection on the final reconciled head.
-- **Stage 2A integration:** reconcile cleanup PR, verify just one active
-  orchestration and no accidental diagnostic authority, then run the full
-  matrix again on the combined integration commit.
-- **Known Stage 1 wrapper debt until Stage 2A is reconciled:** legacy
-  helper/list compatibility, private paired `_run_lane` scheduling import,
-  and separate normal/paired subprocess/artifact roots. Update this ledger
-  against the *actual* merged Stage 2A diff; do not assume debt is fixed.
+- **Stage 2B provider-free:** PR #149 CI
+  [#37688167257](https://github.com/bateau84/loom/actions/runs/37688167257)
+  passed on its exact worker head. Its recording-runner CLI smoke establishes
+  forwarding, **not** actual container execution or model behavior.
+- **Stage 2A cleanup:** PR #147 CI
+  [#37693624442](https://github.com/bateau84/loom/actions/runs/37693624442)
+  passed on its exact worker head. Retired generic functions and the direct
+  legacy CLI are gone. `eval:harness-test` retains 30 Loom-owned policy checks
+  and runs modern profile, evidence, ablation, compatibility and Stage 2B tests.
+  Old observer/invoker tests remain historical diagnostics, not current
+  behavioral acceptance.
+- **Combined integration:** `1074014632b24ab9734b1f7be7ef155fffe6c8f5`
+  contains all three stages. The worker-head checks do **not** substitute for
+  an exact combined-head validation run.
+- **Live full matrix:** not established by provider-free CI. Requires target/
+  judge live execution and artifact inspection on the final trusted ref.
+- **Remaining wrapper debt:** private runner-owned paired `_run_lane` import
+  until a public multi-pair scheduling API exists; separate normal/paired
+  subprocess and artifact roots; retained historical diagnostic functions
+  in the compatibility module. None may become runtime evidence authority.
 - `docs/eval-engine-task-7-validation.md` describes a historical
   pre-ablation checkpoint, not the final Task 9 contract.
