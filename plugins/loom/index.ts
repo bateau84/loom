@@ -10418,14 +10418,20 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                     refuse(id, "Current workflow does not own the Task claim.")
                     continue
                   }
-                  const outstanding = questions.some((question) =>
-                    question.consumerStepIds.includes(step.id) &&
-                    question.status !== "closed" &&
-                    (!question.answer || !question.reconciliations[step.id]))
-                  if (blockingQuestionsForStep(questions, step.id).length || outstanding ||
-                      workflow.verification?.some((requirement) =>
-                        requirement.beforeStepId === step.id && requirement.status === "open")) {
-                    refuse(id, "Unresolved blocking question or required pre-Task verification.")
+                  // Carry-forward must honor the same blocking-question rule as
+                  // normal producer completion. An answered nonblocking advisory
+                  // need not be consumed by a reset producer attempt.
+                  const blockingQuestions = blockingQuestionsForStep(questions, step.id)
+                  if (blockingQuestions.length) {
+                    refuse(id, "Unresolved blocking question(s): " +
+                      blockingQuestions.map((question) => question.id).join(", ") + ".")
+                    continue
+                  }
+                  const openVerification = workflow.verification?.filter((requirement) =>
+                    requirement.beforeStepId === step.id && requirement.status === "open") ?? []
+                  if (openVerification.length) {
+                    refuse(id, "Required pre-Task verification remains open: " +
+                      openVerification.map((requirement) => requirement.id).join(", ") + ".")
                     continue
                   }
                   const staleDependency = step.task.dependsOn.some((dependencyId) => {
