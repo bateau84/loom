@@ -805,12 +805,12 @@ async function resolveButlerCommitSelection(
       )
     }
 
-    const sourcePaths = new Set(
+    const sourcePaths = new Set<string>(
       changes
         .map((change: any) => change?.path)
         .filter((path: unknown): path is string => typeof path === "string" && path.length > 0),
     )
-    const sourceOldPaths = new Set(
+    const sourceOldPaths = new Set<string>(
       changes
         .map((change: any) => change?.oldPath)
         .filter((path: unknown): path is string => typeof path === "string" && path.length > 0),
