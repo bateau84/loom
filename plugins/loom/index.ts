@@ -7001,11 +7001,6 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                   const reviewedRevision = workflow.work.reviewedPlanRevision
                   for (const taskStep of currentTaskSteps) {
                     if (taskStep.status !== "complete" && taskStep.status !== "passed") continue
-                    preservedTaskSteps.set(taskStep.id, {
-                      status: taskStep.status,
-                      attempt: taskStep.attempt ?? 0,
-                      ...(taskStep.summary ? { summary: taskStep.summary } : {}),
-                    })
                     const taskNode = work.nodes.find(
                       (node) =>
                         node.generation === workflow.work!.generation &&
@@ -7013,8 +7008,15 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                         node.logicalId === taskStep.task!.id &&
                         node.status !== "superseded",
                     )
+                    // A workflow step alone is not enough to authorize reuse.
+                    // Preserve only a completion backed by the persistent Work receipt.
+                    if (taskNode?.status !== "complete" || !taskNode.result) continue
+                    preservedTaskSteps.set(taskStep.id, {
+                      status: taskStep.status,
+                      attempt: taskStep.attempt ?? 0,
+                      ...(taskStep.summary ? { summary: taskStep.summary } : {}),
+                    })
                     if (
-                      taskNode?.result &&
                       Number.isSafeInteger(reviewedRevision) &&
                       !taskNode.result.semanticClosureFingerprint
                     ) {
@@ -7141,6 +7143,30 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                     taskSteps.map((taskStep) => ({ taskId: taskStep.task!.id, complete: plannedTaskSatisfied(workflow, taskStep) })),
                     now,
                   )
+                }
+
+                // Planning reopen must not mechanically invalidate persistent
+                // completion receipts that were explicitly preserved above.
+                // A later Plan amendment will invalidate only the affected
+                // semantic dependency closure.
+                if (stepId === "plan" && preservedTaskSteps.size > 0) {
+                  for (const taskStep of taskSteps) {
+                    if (!preservedTaskSteps.has(taskStep.id)) continue
+                    const taskNode = work.nodes.find(
+                      (node) =>
+                        node.generation === workflow.work!.generation &&
+                        node.type === "task" &&
+                        node.logicalId === taskStep.task!.id &&
+                        node.status !== "superseded",
+                    )
+                    if (!taskNode?.result) {
+                      throw new Error(
+                        `Completed Task ${taskStep.task!.id} lost its persistent result while reopening planning.`,
+                      )
+                    }
+                    taskNode.status = "complete"
+                    taskNode.updatedAt = now
+                  }
                 }
                 await ctx.storage.set(workKey(work.objectiveId), work)
               }
@@ -9640,13 +9666,6 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             objectiveId?: string
             taskId?: string
             revision?: number
-          }
-          if (value.revision !== undefined && !value.taskId) {
-            return {
-              content: renderToolOutput({
-                error: "Plan revision selection requires taskId; whole-Plan status always uses the latest revision.",
-              }),
-            }
           }
           let objectiveId = value.objectiveId
 
