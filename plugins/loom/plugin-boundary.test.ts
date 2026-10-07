@@ -61,7 +61,10 @@ type RegisteredTool = {
 
 async function harness(
   seed?: (storage: MemoryStorage, root: string, projectID: string) => void | Promise<void>,
-  sessionInfo?: (sessionID: string, projectID: string) => { id: string; projectID?: string },
+  sessionInfo?: (
+    sessionID: string,
+    projectID: string,
+  ) => { id: string; projectID?: string; parentID?: string; fork?: { sessionID?: string } },
   existing?: { root: string; storage: MemoryStorage },
   synthetic?: (input: Record<string, any>) => void | Promise<void>,
 ) {
@@ -9924,7 +9927,26 @@ describe("Skill methodology evidence lifecycle", () => {
 
 describe("Reviewer repair authorization and re-review boundary", () => {
   test("review-only cannot mutate, repair is self-verified, and the repairer cannot independently approve it", async () => {
-    const h = await harness()
+    const h = await harness(
+      undefined,
+      (sessionID, projectID) => {
+        if (sessionID === "review-repair-fork-root") {
+          return {
+            id: sessionID,
+            projectID,
+            fork: { sessionID: "review-repair-a" },
+          }
+        }
+        if (sessionID === "review-repair-fork-child") {
+          return {
+            id: sessionID,
+            projectID,
+            parentID: "review-repair-fork-root",
+          }
+        }
+        return { id: sessionID, projectID }
+      },
+    )
     try {
       await initializeGitFixture(h.root)
       const implementationPath = "src/reviewer-repair.ts"
@@ -10242,6 +10264,24 @@ describe("Reviewer repair authorization and re-review boundary", () => {
         reviewerA,
       )
       expect(sameAuthor.error).toContain("cannot attach as the independent re-reviewer")
+
+      const forkGrant = await h.call(
+        "dispatch_grant",
+        { workflowId, stepId: "review-implementation" },
+        "general",
+        generalSession,
+      )
+      const forkedAuthor = await h.call(
+        "attach",
+        {
+          grantId: forkGrant.grantId,
+          workflowId,
+          stepId: "review-implementation",
+        },
+        "reviewer",
+        "review-repair-fork-child",
+      )
+      expect(forkedAuthor.error).toContain("descends from a prior or ineligible Reviewer context")
 
       const independentGrant2 = await h.call(
         "dispatch_grant",
