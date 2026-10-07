@@ -7039,6 +7039,18 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                             producerAgent: taskStep.agent,
                             executableTaskFingerprint: createHash("sha256")
                               .update(JSON.stringify(taskStep.task)).digest("hex"),
+                            dependencyResultDigests: Object.fromEntries(
+                              taskStep.task.dependsOn.flatMap((dependencyId) => {
+                                const dependency = work.nodes.find((node) =>
+                                  node.generation === workflow.work!.generation &&
+                                  node.type === "task" && node.logicalId === dependencyId &&
+                                  node.status !== "superseded")
+                                return dependency?.result
+                                  ? [[dependencyId, createHash("sha256")
+                                      .update(JSON.stringify(dependency.result)).digest("hex")]]
+                                  : []
+                              }),
+                            ),
                             ...(cleanTaskHead ? { cleanRepositoryHead: cleanTaskHead } : {}),
                             ...(completedTaskPlanRevision ? { planRevision: completedTaskPlanRevision } : {}),
                             ...(completedTaskSemanticClosure
