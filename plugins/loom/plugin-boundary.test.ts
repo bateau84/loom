@@ -16894,3 +16894,34 @@ test("Planner cannot exempt its own unresolved Task question from reconciliation
     h.restore()
   }
 })
+
+test("ordinary Plan reopen invalidates modern completion after code drift", async () => {
+  const h = await waveLifecycleFixture("wave", false, "worker")
+  try {
+    expect((await h.finish("task:one", "worker")).error).toBeUndefined()
+    const original = await h.work()
+    const receipt = original.nodes.find((node: any) =>
+      node.type === "task" && node.logicalId === "one").result
+    expect(receipt.cleanRepositoryHead).toMatch(/^[0-9a-f]{40}$/)
+    await writeFile(join(h.root, "src", "changed-after-producer.ts"), "export const changed = true\\n")
+    await git(h.root, ["add", "src/changed-after-producer.ts"])
+    await git(h.root, ["commit", "-q", "-m", "test: change the code after Task completion"])
+    const reopened = await h.call("reopen", {
+      workflowId: h.workflowId, stepId: "plan",
+      reason: "Code changed since the last producer completion.",
+      newEvidence: true, changedHypothesis: false,
+      changedStrategy: false, reducedUnresolved: false,
+    }, "general", "parent")
+    expect(reopened.error).toBeUndefined()
+    expect(reopened.reset).toContain("task:one")
+    const after = await h.work()
+    const task = after.nodes.find((node: any) => node.type === "task" && node.logicalId === "one")
+    expect(task.result).toBeUndefined()
+    expect(task.priorResults?.at(-1)).toMatchObject({
+      cleanRepositoryHead: receipt.cleanRepositoryHead,
+      invalidatedReason: expect.stringContaining("Plan reopened"),
+    })
+  } finally {
+    h.restore()
+  }
+})
