@@ -16,6 +16,7 @@ from typing import Any, Sequence
 
 ROOT = Path(__file__).resolve().parents[1]
 LEGACY_RUNNER = ROOT / "scripts" / "run-evals-legacy.py"
+PAIRED_RUNNER = ROOT / "scripts" / "run-skill-ablation.py"
 PROFILE_REFERENCE = "loom_eval_profile:PROFILE"
 FORWARDED_ENV_NAMES = "LOOM_EVAL_FORWARD_ENV_NAMES"
 _LEGACY_MODULE: ModuleType | None = None
@@ -42,7 +43,7 @@ def parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         description=(
             "Loom eval compatibility entrypoint. Normal cases forward to the generic "
-            "opencode-eval-runner eval engine; skill-owned ablation remains Task 8."
+            "opencode-eval-runner eval engine; skill-owned ablation uses generic paired mode."
         )
     )
     p.add_argument("--all", action="store_true")
@@ -201,32 +202,24 @@ def generic_command(args: argparse.Namespace, case_ids: Sequence[str], artifact_
     return command
 
 
-def legacy_ablation_command(args: argparse.Namespace, case_ids: Sequence[str], artifact_dir: Path) -> list[str]:
+def paired_ablation_command(args: argparse.Namespace, case_ids: Sequence[str], artifact_dir: Path) -> list[str]:
+    """Route skill-owned cases to the generic paired Python API bridge."""
     command = [
-        sys.executable, str(LEGACY_RUNNER), "--cases", ",".join(case_ids), "--model", args.model,
-        "--target-transport", args.target_transport, "--judge-transport", args.judge_transport,
-        "--engine", args.engine, "--iterations", str(args.iterations),
-        "--runtime-parallel", str(args.runtime_parallel), "--transport-retries", str(args.transport_retries),
+        sys.executable, str(PAIRED_RUNNER), "--cases", ",".join(case_ids),
+        "--model", args.model,
+        "--target-transport", args.target_transport,
+        "--judge-transport", args.judge_transport,
+        "--engine", args.engine,
+        "--iterations", str(args.iterations),
+        "--runtime-parallel", str(args.runtime_parallel),
+        "--transport-retries", str(args.transport_retries),
         "--artifact-dir", str(artifact_dir),
     ]
     command += ["--parallel"] if args.parallel == 0 else ["--parallel", str(args.parallel)]
     _append_common(command, args)
-    for flag, value in (
-        ("--image", args.image), ("--opencode-image", args.opencode_image),
-        ("--copilot-image", args.copilot_image), ("--auth", args.auth),
-        ("--provider-config", args.provider_config), ("--models-catalog", args.models_catalog),
-        ("--database", args.database),
-    ):
-        if value:
-            command += [flag, str(value)]
-    for name in args.env:
-        command += ["--env", name]
-    if args.runner_evidence_safety:
-        command.append("--runner-evidence-safety")
     if args.keep_temp:
         command.append("--keep-temp")
     return command
-
 
 def _validate(args: argparse.Namespace) -> None:
     if not args.model:
@@ -257,8 +250,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         selected = resolve_selection(args)
         normal = [case for case in selected if not case.get("_skill_owned")]
         ablation = [case for case in selected if case.get("_skill_owned")]
-        if normal and args.runner_evidence_safety:
-            raise CompatibilityError("--runner-evidence-safety is retired for migrated normal evals; runtime_evidence/v1 is authoritative")
+        if args.runner_evidence_safety:
+            raise CompatibilityError("--runner-evidence-safety is retired for migrated evals; generic runtime_evidence/v1 is authoritative")
         if normal and args.keep_temp:
             raise CompatibilityError("--keep-temp is not supported by the generic normal-eval profile")
         if args.target_transport != "opencode":
@@ -276,8 +269,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         if ablation:
             target = run_root / "skill-ablation" if split else run_root
             if split:
-                print("Compatibility split: normal uses generic eval; skill-owned ablation remains Task 8.", file=sys.stderr)
-            status = max(status, _run(legacy_ablation_command(args, [str(case["id"]) for case in ablation], target)))
+                print("Compatibility split: normal eval and generic paired skill ablation use separate artifact roots.", file=sys.stderr)
+            status = max(status, _run(paired_ablation_command(args, [str(case["id"]) for case in ablation], target), env=_generic_env(args)))
         return status
     except CompatibilityError as exc:
         parser().error(str(exc))
