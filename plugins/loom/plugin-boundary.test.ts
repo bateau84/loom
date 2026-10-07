@@ -16626,12 +16626,39 @@ test("Plan reconciliation restores only a proven original producer attempt, with
       evidenceClaimIds: [claim.claim.id],
     })
 
+    // Exercise the production Plan reopen, recompilation and independent review
+    // before reproducing a partially reset executable step with its Work result.
+    const reopenedPlan = await h.call("reopen", {
+      workflowId: h.workflowId, stepId: "plan",
+      reason: "Review the Plan again after newly observed implementation context.",
+      newEvidence: true, changedHypothesis: false,
+      changedStrategy: false, reducedUnresolved: false,
+    }, "general", "parent")
+    expect(reopenedPlan.error).toBeUndefined()
+    const replanner = await h.attach("plan", "planner", "carry-forward-replanner")
+    const currentWork = await h.work()
+    const currentTasks = currentWork.plans.at(-1).phases[0].waves[0].tasks
+    const compiled = await h.call("task_plan", {
+      workflowId: h.workflowId,
+      tasks: currentTasks.map((task: any) => ({ ...task, write: ["src/**"], skills: [] })),
+    }, "planner", replanner)
+    expect(compiled.error).toBeUndefined()
+    expect(compiled.reusedTaskIds).toContain("one")
+    expect((await h.call("complete", {
+      workflowId: h.workflowId, stepId: "plan", summary: "Unchanged Task contract recompiled",
+    }, "planner", replanner)).error).toBeUndefined()
+    expect((await h.finish("review-plan", "reviewer", "pass")).error).toBeUndefined()
+    expect((await h.workflow()).steps.find((step: any) => step.id === "review-plan").status)
+      .toBe("passed")
+
     // Model the earlier control-plane reset: executable Step became pending,
     // while the ORIGINAL persisted Work result survived intact.
-    sourceStep.status = "pending"
-    sourceStep.attempt += 1
-    delete sourceStep.summary
-    await h.durableStorage.set("workflow/" + h.workflowId, original)
+    const reviewedWorkflow = await h.workflow()
+    const resetStep = reviewedWorkflow.steps.find((step: any) => step.id === "task:one")
+    resetStep.status = "pending"
+    resetStep.attempt += 1
+    delete resetStep.summary
+    await h.durableStorage.set("workflow/" + h.workflowId, reviewedWorkflow)
     const beforeBudget = await h.durableStorage.get("budget/" + h.workflowId)
 
     const unauthorized = await h.call("work_reconcile", {
