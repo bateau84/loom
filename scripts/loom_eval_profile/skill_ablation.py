@@ -201,13 +201,20 @@ class LoomSkillAblationProfile:
         result = target.result
         if not isinstance(result, Mapping):
             return (CheckOutcome("skill.target", "non-evidence", "target result absent", {}),)
-        loaded = result.get("skills_loaded")
-        if not isinstance(loaded, list) or not all(isinstance(s, str) for s in loaded):
-            return (CheckOutcome("skill.discovery", "non-evidence", "skill loading evidence unavailable", {}),)
         skill = str(raw_case(case)["skill"])
+        # Copilot has no native skill loading: the candidate receives the skill
+        # in its system prompt. The baseline system prompt intentionally does not.
+        if self.args.target_transport == "github-copilot-cli":
+            return (CheckOutcome("skill.inline-methodology", "pass", "Copilot methodology boundary supplied by Loom", {}),)
+        # The old baseline treated missing skills_loaded as an empty list.
+        # A malformed non-empty claim cannot be trusted. Candidate must prove
+        # its native skill was loaded, not merely have its files available.
+        loaded = result.get("skills_loaded", [])
+        if not isinstance(loaded, list) or not all(isinstance(item, str) for item in loaded):
+            return (CheckOutcome("skill.discovery", "non-evidence", "skill loading evidence malformed", {}),)
         if side.name == "baseline" and skill in loaded:
             return (CheckOutcome("skill.baseline", "non-evidence", "baseline contaminated by tested skill", {}),)
-        if side.name == "candidate" and self.args.target_transport == "opencode" and skill not in loaded:
+        if side.name == "candidate" and skill not in loaded:
             return (CheckOutcome("skill.native-load", "fail", f"skill under test not confirmed loaded: {skill}", {}),)
         return (CheckOutcome("skill.discovery", "pass", f"{side.name} skill scope verified", {}),)
 
