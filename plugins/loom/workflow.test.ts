@@ -2,9 +2,16 @@ import { describe, expect, test } from "bun:test"
 import {
   addVerificationRequirement,
   applyTaskPlan,
+  authorizeReviewerRepair,
   buildSteps,
+  completeReviewerRepair,
   executableTaskPlanFingerprint,
   finishStep,
+  prepareReviewerAfterAuthorityChange,
+  prepareReviewerAfterProducerRepair,
+  recordReviewerAttachment,
+  recordReviewerVerdict,
+  reviewerSessionEligibleForIndependentReview,
   openVerificationRequirements,
   preserveSatisfied,
   proveVerificationRequirement,
@@ -743,5 +750,208 @@ describe("Loom routing DAG", () => {
     expect(next.find((step) => step.id === "designer")?.status).toBe("complete")
     expect(next.find((step) => step.id === "review-think")?.status).toBe("pending")
   })
+
+  test("Reviewer repair is self-verified and requires a non-authoring independent re-review", () => {
+    const w = workflow(buildSteps({
+      humanFacing: false,
+      behavioral: false,
+      structural: false,
+      externalUnknown: false,
+      diagnostic: false,
+      productOutcome: false,
+      implementationRequested: true,
+      executionDepth: "task",
+    }))
+    finishStep(w, "worker", "worker", "complete", "implementation complete")
+    const review = w.steps.find((step) => step.id === "review-implementation")!
+    recordReviewerAttachment(review, "reviewer-a", "review-head-a")
+    finishStep(w, "review-implementation", "reviewer", "fail", "bounded defect")
+
+    authorizeReviewerRepair(review, {
+      repairSessionId: "reviewer-a",
+      finding: "incorrect null handling",
+      reason: "intended behavior is established and correction is bounded",
+    })
+    expect(review.status).toBe("pending")
+    expect(review.review?.mode).toBe("repair-authorized")
+
+    completeReviewerRepair(review, {
+      sessionId: "reviewer-a",
+      headSha: "repair-head",
+      changeSummary: "guarded null before dereference",
+      verificationSummary: "targeted regression test passed",
+      evidenceBound: 1,
+      evidenceClaimIds: ["claim-repair"],
+      recordedAt: "later",
+    })
+
+    expect(review.review?.mode).toBe("independent-re-review")
+    expect(review.review?.independentApprovalPending).toBe(true)
+    expect(review.review?.receipts?.at(-1)).toMatchObject({
+      kind: "repair",
+      assurance: "self-verified",
+      sessionId: "reviewer-a",
+      headSha: "repair-head",
+    })
+    expect(reviewerSessionEligibleForIndependentReview(review, "reviewer-a")).toBe(false)
+    expect(reviewerSessionEligibleForIndependentReview(review, "reviewer-b")).toBe(true)
+
+    expect(() =>
+      recordReviewerVerdict(review, {
+        sessionId: "reviewer-a",
+        outcome: "pass",
+        summary: "self approval",
+        headSha: "repair-head",
+        evidenceBound: 1,
+        recordedAt: "later",
+      }),
+    ).toThrow("ineligible for independent re-review")
+
+    recordReviewerAttachment(review, "reviewer-b", "repair-head")
+    recordReviewerVerdict(review, {
+      sessionId: "reviewer-b",
+      outcome: "pass",
+      summary: "repair and affected behavior independently checked",
+      headSha: "repair-head",
+      evidenceBound: 2,
+      evidenceClaimIds: ["claim-review"],
+      recordedAt: "later-still",
+    })
+    expect(review.review?.independentApprovalPending).toBe(false)
+    expect(review.review?.receipts?.at(-1)).toMatchObject({
+      kind: "review",
+      assurance: "independent",
+      outcome: "pass",
+      sessionId: "reviewer-b",
+      headSha: "repair-head",
+    })
+  })
+
+  test("producer repair preserves the healthy non-authoring Reviewer as a continuity preference", () => {
+    const w = workflow(buildSteps({
+      humanFacing: false,
+      behavioral: false,
+      structural: false,
+      externalUnknown: false,
+      diagnostic: false,
+      productOutcome: false,
+      implementationRequested: true,
+      executionDepth: "task",
+    }))
+    finishStep(w, "worker", "worker", "complete", "implementation complete")
+    const review = w.steps.find((step) => step.id === "review-implementation")!
+    recordReviewerAttachment(review, "reviewer-b", "repair-head")
+    finishStep(w, "review-implementation", "reviewer", "fail", "producer defect")
+
+    reopenFrom(w, "worker")
+    prepareReviewerAfterProducerRepair(review, "reviewer-b")
+
+    expect(review.status).toBe("pending")
+    expect(review.review?.mode).toBe("review-only")
+    expect(review.review?.preferredSessionId).toBe("reviewer-b")
+    expect(reviewerSessionEligibleForIndependentReview(review, "reviewer-b")).toBe(true)
+  })
+
+  test("a previous non-authoring Reviewer remains preferred when the original repairer fixes another finding", () => {
+    const w = workflow(buildSteps({
+      humanFacing: false,
+      behavioral: false,
+      structural: false,
+      externalUnknown: false,
+      diagnostic: false,
+      productOutcome: false,
+      implementationRequested: true,
+      executionDepth: "task",
+    }))
+    finishStep(w, "worker", "worker", "complete", "implementation complete")
+    const review = w.steps.find((step) => step.id === "review-implementation")!
+    recordReviewerAttachment(review, "reviewer-a", "review-head-a")
+    finishStep(w, "review-implementation", "reviewer", "fail", "first finding")
+    authorizeReviewerRepair(review, {
+      repairSessionId: "reviewer-a",
+      finding: "first finding",
+      reason: "bounded",
+    })
+    completeReviewerRepair(review, {
+      sessionId: "reviewer-a",
+      headSha: "head-a1",
+      changeSummary: "first repair",
+      verificationSummary: "verified",
+      evidenceBound: 1,
+      recordedAt: "t1",
+    })
+
+    recordReviewerAttachment(review, "reviewer-b", "repair-head")
+    finishStep(w, "review-implementation", "reviewer", "fail", "second finding")
+
+    authorizeReviewerRepair(review, {
+      repairSessionId: "reviewer-a",
+      finding: "second finding",
+      reason: "same bounded subject",
+      preferredIndependentSessionId: "reviewer-b",
+    })
+    expect(review.review?.preferredSessionId).toBe("reviewer-b")
+
+    completeReviewerRepair(review, {
+      sessionId: "reviewer-a",
+      headSha: "head-a2",
+      changeSummary: "second repair",
+      verificationSummary: "verified again",
+      evidenceBound: 1,
+      recordedAt: "t2",
+    })
+    expect(review.review?.mode).toBe("independent-re-review")
+    expect(review.review?.preferredSessionId).toBe("reviewer-b")
+    expect(reviewerSessionEligibleForIndependentReview(review, "reviewer-b")).toBe(true)
+  })
+
+  test("Reviewer PASS fails closed when repository HEAD changed after attachment", () => {
+    const w = workflow(buildSteps({
+      humanFacing: false,
+      behavioral: false,
+      structural: false,
+      externalUnknown: false,
+      diagnostic: false,
+      productOutcome: false,
+      implementationRequested: true,
+      executionDepth: "task",
+    }))
+    finishStep(w, "worker", "worker", "complete", "implementation complete")
+    const review = w.steps.find((step) => step.id === "review-implementation")!
+    recordReviewerAttachment(review, "reviewer-a", "reviewed-head")
+
+    expect(() =>
+      recordReviewerVerdict(review, {
+        sessionId: "reviewer-a",
+        outcome: "pass",
+        summary: "looks good",
+        headSha: "changed-head",
+        evidenceBound: 1,
+        recordedAt: "later",
+      }),
+    ).toThrow("repository HEAD changed after this Reviewer attached")
+  })
+
+  test("upstream authority changes require a fresh Reviewer context", () => {
+    const w = workflow(buildSteps({
+      humanFacing: false,
+      behavioral: false,
+      structural: false,
+      externalUnknown: false,
+      diagnostic: false,
+      productOutcome: false,
+      implementationRequested: true,
+      executionDepth: "task",
+    }))
+    finishStep(w, "worker", "worker", "complete", "implementation complete")
+    const review = w.steps.find((step) => step.id === "review-implementation")!
+    recordReviewerAttachment(review, "reviewer-a", "reviewed-head")
+
+    prepareReviewerAfterAuthorityChange(review)
+
+    expect(review.review?.preferredSessionId).toBeUndefined()
+    expect(review.review?.freshSessionRequired).toBe(true)
+  })
+
 
 })

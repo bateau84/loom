@@ -14,6 +14,7 @@
   - [Dashboard Projection Transport](decisions/dashboard-projection-transport.md)
   - [Dashboard Projection Specification](specs/dashboard-projection.md)
 - [Verification Model](verification.md)
+  - [Reviewer Repair and Re-review Runtime](specs/reviewer-repair-and-rereview.md)
   - [Eval Evidence Safety Projection](decisions/eval-evidence-safety-projection.md)
 - [Knowledge and Learning](knowledge-and-learning.md)
 
