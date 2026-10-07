@@ -5211,4 +5211,8 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(
+        "run-evals-legacy.py is not an executable eval engine. "
+        "Use scripts/run-evals.py (bun run eval:live) so the reusable runner "
+        "owns scheduling, invocation, retries, evidence, and artifacts."
+    )
