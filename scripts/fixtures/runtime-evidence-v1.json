@@ -1,0 +1,1264 @@
+{
+  "native": {
+    "schema": "opencode-eval-runner/runtime-evidence/v1",
+    "status": "complete",
+    "evidence_eligible": true,
+    "observations": [
+      {
+        "invocation_id": "n1",
+        "tool": {
+          "state": "available",
+          "value": "loom_status"
+        },
+        "mode": "native",
+        "actor": {
+          "state": "available",
+          "value": "general"
+        },
+        "session_id": {
+          "state": "available",
+          "value": "ses-1"
+        },
+        "message_id": {
+          "state": "available",
+          "value": "msg-1"
+        },
+        "call_id": {
+          "state": "available",
+          "value": "call-1"
+        },
+        "parent": {
+          "state": "available",
+          "value": null
+        },
+        "input": {
+          "state": "available",
+          "value": {
+            "value": "accepted"
+          }
+        },
+        "outcome": "success",
+        "result": {
+          "state": "available",
+          "value": {
+            "content": "complete - 3/3"
+          }
+        },
+        "error": {
+          "state": "omitted",
+          "reason": "not_applicable"
+        },
+        "start_sequence": 1,
+        "terminal_sequence": {
+          "state": "available",
+          "value": 2
+        }
+      }
+    ],
+    "coverage": {
+      "observation_closed": {
+        "state": "available",
+        "value": true
+      },
+      "process_state": "completed",
+      "starts": {
+        "state": "available",
+        "value": 1
+      },
+      "terminals": {
+        "state": "available",
+        "value": 1
+      },
+      "missing_terminals": {
+        "state": "available",
+        "value": 0
+      },
+      "observer_failures": {
+        "state": "available",
+        "value": 0
+      },
+      "callback_failures": {
+        "state": "available",
+        "value": 0
+      },
+      "losses": [],
+      "unsupported": [
+        "stock_codemode_final_boundary_not_exposed"
+      ],
+      "boundaries": {
+        "native": {
+          "status": "complete",
+          "evidence_eligible": true,
+          "starts": {
+            "state": "available",
+            "value": 1
+          },
+          "terminals": {
+            "state": "available",
+            "value": 1
+          },
+          "missing_terminals": {
+            "state": "available",
+            "value": 0
+          },
+          "issues": []
+        },
+        "code_mode_execution": {
+          "status": "complete",
+          "evidence_eligible": true,
+          "starts": {
+            "state": "available",
+            "value": 0
+          },
+          "terminals": {
+            "state": "available",
+            "value": 0
+          },
+          "missing_terminals": {
+            "state": "available",
+            "value": 0
+          },
+          "issues": []
+        },
+        "code_mode_finality": {
+          "status": "unsupported",
+          "evidence_eligible": false,
+          "starts": {
+            "state": "unsupported",
+            "reason": "stock_codemode_final_boundary_not_exposed"
+          },
+          "terminals": {
+            "state": "unsupported",
+            "reason": "stock_codemode_final_boundary_not_exposed"
+          },
+          "missing_terminals": {
+            "state": "unsupported",
+            "reason": "stock_codemode_final_boundary_not_exposed"
+          },
+          "issues": [
+            "stock_codemode_final_boundary_not_exposed"
+          ]
+        }
+      }
+    }
+  },
+  "native_error": {
+    "schema": "opencode-eval-runner/runtime-evidence/v1",
+    "status": "complete",
+    "evidence_eligible": true,
+    "observations": [
+      {
+        "invocation_id": "n1",
+        "tool": {
+          "state": "available",
+          "value": "loom_status"
+        },
+        "mode": "native",
+        "actor": {
+          "state": "available",
+          "value": "general"
+        },
+        "session_id": {
+          "state": "available",
+          "value": "ses-1"
+        },
+        "message_id": {
+          "state": "available",
+          "value": "msg-1"
+        },
+        "call_id": {
+          "state": "available",
+          "value": "call-1"
+        },
+        "parent": {
+          "state": "available",
+          "value": null
+        },
+        "input": {
+          "state": "available",
+          "value": {
+            "value": "accepted"
+          }
+        },
+        "outcome": "error",
+        "result": {
+          "state": "omitted",
+          "reason": "not_applicable"
+        },
+        "error": {
+          "state": "available",
+          "value": {
+            "message": "permission denied"
+          }
+        },
+        "start_sequence": 1,
+        "terminal_sequence": {
+          "state": "available",
+          "value": 2
+        }
+      }
+    ],
+    "coverage": {
+      "observation_closed": {
+        "state": "available",
+        "value": true
+      },
+      "process_state": "completed",
+      "starts": {
+        "state": "available",
+        "value": 1
+      },
+      "terminals": {
+        "state": "available",
+        "value": 1
+      },
+      "missing_terminals": {
+        "state": "available",
+        "value": 0
+      },
+      "observer_failures": {
+        "state": "available",
+        "value": 0
+      },
+      "callback_failures": {
+        "state": "available",
+        "value": 0
+      },
+      "losses": [],
+      "unsupported": [
+        "stock_codemode_final_boundary_not_exposed"
+      ],
+      "boundaries": {
+        "native": {
+          "status": "complete",
+          "evidence_eligible": true,
+          "starts": {
+            "state": "available",
+            "value": 1
+          },
+          "terminals": {
+            "state": "available",
+            "value": 1
+          },
+          "missing_terminals": {
+            "state": "available",
+            "value": 0
+          },
+          "issues": []
+        },
+        "code_mode_execution": {
+          "status": "complete",
+          "evidence_eligible": true,
+          "starts": {
+            "state": "available",
+            "value": 0
+          },
+          "terminals": {
+            "state": "available",
+            "value": 0
+          },
+          "missing_terminals": {
+            "state": "available",
+            "value": 0
+          },
+          "issues": []
+        },
+        "code_mode_finality": {
+          "status": "unsupported",
+          "evidence_eligible": false,
+          "starts": {
+            "state": "unsupported",
+            "reason": "stock_codemode_final_boundary_not_exposed"
+          },
+          "terminals": {
+            "state": "unsupported",
+            "reason": "stock_codemode_final_boundary_not_exposed"
+          },
+          "missing_terminals": {
+            "state": "unsupported",
+            "reason": "stock_codemode_final_boundary_not_exposed"
+          },
+          "issues": [
+            "stock_codemode_final_boundary_not_exposed"
+          ]
+        }
+      }
+    }
+  },
+  "empty": {
+    "schema": "opencode-eval-runner/runtime-evidence/v1",
+    "status": "complete",
+    "evidence_eligible": true,
+    "observations": [],
+    "coverage": {
+      "observation_closed": {
+        "state": "available",
+        "value": true
+      },
+      "process_state": "completed",
+      "starts": {
+        "state": "available",
+        "value": 0
+      },
+      "terminals": {
+        "state": "available",
+        "value": 0
+      },
+      "missing_terminals": {
+        "state": "available",
+        "value": 0
+      },
+      "observer_failures": {
+        "state": "available",
+        "value": 0
+      },
+      "callback_failures": {
+        "state": "available",
+        "value": 0
+      },
+      "losses": [],
+      "unsupported": [
+        "stock_codemode_final_boundary_not_exposed"
+      ],
+      "boundaries": {
+        "native": {
+          "status": "complete",
+          "evidence_eligible": true,
+          "starts": {
+            "state": "available",
+            "value": 0
+          },
+          "terminals": {
+            "state": "available",
+            "value": 0
+          },
+          "missing_terminals": {
+            "state": "available",
+            "value": 0
+          },
+          "issues": []
+        },
+        "code_mode_execution": {
+          "status": "complete",
+          "evidence_eligible": true,
+          "starts": {
+            "state": "available",
+            "value": 0
+          },
+          "terminals": {
+            "state": "available",
+            "value": 0
+          },
+          "missing_terminals": {
+            "state": "available",
+            "value": 0
+          },
+          "issues": []
+        },
+        "code_mode_finality": {
+          "status": "unsupported",
+          "evidence_eligible": false,
+          "starts": {
+            "state": "unsupported",
+            "reason": "stock_codemode_final_boundary_not_exposed"
+          },
+          "terminals": {
+            "state": "unsupported",
+            "reason": "stock_codemode_final_boundary_not_exposed"
+          },
+          "missing_terminals": {
+            "state": "unsupported",
+            "reason": "stock_codemode_final_boundary_not_exposed"
+          },
+          "issues": [
+            "stock_codemode_final_boundary_not_exposed"
+          ]
+        }
+      }
+    }
+  },
+  "missing_terminal": {
+    "schema": "opencode-eval-runner/runtime-evidence/v1",
+    "status": "incomplete",
+    "evidence_eligible": false,
+    "observations": [
+      {
+        "invocation_id": "n1",
+        "tool": {
+          "state": "available",
+          "value": "runtimeevidence_nativeSuccess"
+        },
+        "mode": "native",
+        "actor": {
+          "state": "available",
+          "value": "general"
+        },
+        "session_id": {
+          "state": "available",
+          "value": "ses-1"
+        },
+        "message_id": {
+          "state": "available",
+          "value": "msg-1"
+        },
+        "call_id": {
+          "state": "available",
+          "value": "call-1"
+        },
+        "parent": {
+          "state": "available",
+          "value": null
+        },
+        "input": {
+          "state": "available",
+          "value": {
+            "value": "accepted"
+          }
+        },
+        "outcome": "missing",
+        "result": {
+          "state": "omitted",
+          "reason": "terminal_missing"
+        },
+        "error": {
+          "state": "omitted",
+          "reason": "terminal_missing"
+        },
+        "start_sequence": 1,
+        "terminal_sequence": {
+          "state": "omitted",
+          "reason": "terminal_missing"
+        }
+      }
+    ],
+    "coverage": {
+      "observation_closed": {
+        "state": "available",
+        "value": true
+      },
+      "process_state": "completed",
+      "starts": {
+        "state": "available",
+        "value": 1
+      },
+      "terminals": {
+        "state": "available",
+        "value": 0
+      },
+      "missing_terminals": {
+        "state": "available",
+        "value": 1
+      },
+      "observer_failures": {
+        "state": "available",
+        "value": 0
+      },
+      "callback_failures": {
+        "state": "available",
+        "value": 0
+      },
+      "losses": [
+        "missing_terminal"
+      ],
+      "unsupported": [
+        "stock_codemode_final_boundary_not_exposed"
+      ],
+      "boundaries": {
+        "native": {
+          "status": "incomplete",
+          "evidence_eligible": false,
+          "starts": {
+            "state": "available",
+            "value": 1
+          },
+          "terminals": {
+            "state": "available",
+            "value": 0
+          },
+          "missing_terminals": {
+            "state": "available",
+            "value": 1
+          },
+          "issues": [
+            "missing_terminal"
+          ]
+        },
+        "code_mode_execution": {
+          "status": "complete",
+          "evidence_eligible": true,
+          "starts": {
+            "state": "available",
+            "value": 0
+          },
+          "terminals": {
+            "state": "available",
+            "value": 0
+          },
+          "missing_terminals": {
+            "state": "available",
+            "value": 0
+          },
+          "issues": []
+        },
+        "code_mode_finality": {
+          "status": "unsupported",
+          "evidence_eligible": false,
+          "starts": {
+            "state": "unsupported",
+            "reason": "stock_codemode_final_boundary_not_exposed"
+          },
+          "terminals": {
+            "state": "unsupported",
+            "reason": "stock_codemode_final_boundary_not_exposed"
+          },
+          "missing_terminals": {
+            "state": "unsupported",
+            "reason": "stock_codemode_final_boundary_not_exposed"
+          },
+          "issues": [
+            "stock_codemode_final_boundary_not_exposed"
+          ]
+        }
+      }
+    }
+  },
+  "unclosed": {
+    "schema": "opencode-eval-runner/runtime-evidence/v1",
+    "status": "incomplete",
+    "evidence_eligible": false,
+    "observations": [
+      {
+        "invocation_id": "n1",
+        "tool": {
+          "state": "available",
+          "value": "runtimeevidence_nativeSuccess"
+        },
+        "mode": "native",
+        "actor": {
+          "state": "available",
+          "value": "general"
+        },
+        "session_id": {
+          "state": "available",
+          "value": "ses-1"
+        },
+        "message_id": {
+          "state": "available",
+          "value": "msg-1"
+        },
+        "call_id": {
+          "state": "available",
+          "value": "call-1"
+        },
+        "parent": {
+          "state": "available",
+          "value": null
+        },
+        "input": {
+          "state": "available",
+          "value": {
+            "value": "accepted"
+          }
+        },
+        "outcome": "success",
+        "result": {
+          "state": "available",
+          "value": {
+            "content": "ok"
+          }
+        },
+        "error": {
+          "state": "omitted",
+          "reason": "not_applicable"
+        },
+        "start_sequence": 1,
+        "terminal_sequence": {
+          "state": "available",
+          "value": 2
+        }
+      }
+    ],
+    "coverage": {
+      "observation_closed": {
+        "state": "available",
+        "value": false
+      },
+      "process_state": "completed",
+      "starts": {
+        "state": "available",
+        "value": 1
+      },
+      "terminals": {
+        "state": "available",
+        "value": 1
+      },
+      "missing_terminals": {
+        "state": "available",
+        "value": 0
+      },
+      "observer_failures": {
+        "state": "omitted",
+        "reason": "observation_not_closed"
+      },
+      "callback_failures": {
+        "state": "omitted",
+        "reason": "observation_not_closed"
+      },
+      "losses": [
+        "missing_capture_end",
+        "observation_not_closed",
+        "observation_loss"
+      ],
+      "unsupported": [
+        "stock_codemode_final_boundary_not_exposed"
+      ],
+      "boundaries": {
+        "native": {
+          "status": "incomplete",
+          "evidence_eligible": false,
+          "starts": {
+            "state": "available",
+            "value": 1
+          },
+          "terminals": {
+            "state": "available",
+            "value": 1
+          },
+          "missing_terminals": {
+            "state": "available",
+            "value": 0
+          },
+          "issues": [
+            "global_incomplete_capture"
+          ]
+        },
+        "code_mode_execution": {
+          "status": "incomplete",
+          "evidence_eligible": false,
+          "starts": {
+            "state": "available",
+            "value": 0
+          },
+          "terminals": {
+            "state": "available",
+            "value": 0
+          },
+          "missing_terminals": {
+            "state": "available",
+            "value": 0
+          },
+          "issues": [
+            "global_incomplete_capture"
+          ]
+        },
+        "code_mode_finality": {
+          "status": "unsupported",
+          "evidence_eligible": false,
+          "starts": {
+            "state": "unsupported",
+            "reason": "stock_codemode_final_boundary_not_exposed"
+          },
+          "terminals": {
+            "state": "unsupported",
+            "reason": "stock_codemode_final_boundary_not_exposed"
+          },
+          "missing_terminals": {
+            "state": "unsupported",
+            "reason": "stock_codemode_final_boundary_not_exposed"
+          },
+          "issues": [
+            "stock_codemode_final_boundary_not_exposed"
+          ]
+        }
+      }
+    }
+  },
+  "observer_failure": {
+    "schema": "opencode-eval-runner/runtime-evidence/v1",
+    "status": "incomplete",
+    "evidence_eligible": false,
+    "observations": [
+      {
+        "invocation_id": "n1",
+        "tool": {
+          "state": "available",
+          "value": "runtimeevidence_nativeSuccess"
+        },
+        "mode": "native",
+        "actor": {
+          "state": "available",
+          "value": "general"
+        },
+        "session_id": {
+          "state": "available",
+          "value": "ses-1"
+        },
+        "message_id": {
+          "state": "available",
+          "value": "msg-1"
+        },
+        "call_id": {
+          "state": "available",
+          "value": "call-1"
+        },
+        "parent": {
+          "state": "available",
+          "value": null
+        },
+        "input": {
+          "state": "available",
+          "value": {
+            "value": "accepted"
+          }
+        },
+        "outcome": "success",
+        "result": {
+          "state": "available",
+          "value": {
+            "content": "ok"
+          }
+        },
+        "error": {
+          "state": "omitted",
+          "reason": "not_applicable"
+        },
+        "start_sequence": 1,
+        "terminal_sequence": {
+          "state": "available",
+          "value": 2
+        }
+      }
+    ],
+    "coverage": {
+      "observation_closed": {
+        "state": "available",
+        "value": true
+      },
+      "process_state": "completed",
+      "starts": {
+        "state": "available",
+        "value": 1
+      },
+      "terminals": {
+        "state": "available",
+        "value": 1
+      },
+      "missing_terminals": {
+        "state": "available",
+        "value": 0
+      },
+      "observer_failures": {
+        "state": "available",
+        "value": 1
+      },
+      "callback_failures": {
+        "state": "available",
+        "value": 0
+      },
+      "losses": [
+        "observer_failure"
+      ],
+      "unsupported": [
+        "stock_codemode_final_boundary_not_exposed"
+      ],
+      "boundaries": {
+        "native": {
+          "status": "incomplete",
+          "evidence_eligible": false,
+          "starts": {
+            "state": "available",
+            "value": 1
+          },
+          "terminals": {
+            "state": "available",
+            "value": 1
+          },
+          "missing_terminals": {
+            "state": "available",
+            "value": 0
+          },
+          "issues": [
+            "global_incomplete_capture"
+          ]
+        },
+        "code_mode_execution": {
+          "status": "incomplete",
+          "evidence_eligible": false,
+          "starts": {
+            "state": "available",
+            "value": 0
+          },
+          "terminals": {
+            "state": "available",
+            "value": 0
+          },
+          "missing_terminals": {
+            "state": "available",
+            "value": 0
+          },
+          "issues": [
+            "global_incomplete_capture"
+          ]
+        },
+        "code_mode_finality": {
+          "status": "unsupported",
+          "evidence_eligible": false,
+          "starts": {
+            "state": "unsupported",
+            "reason": "stock_codemode_final_boundary_not_exposed"
+          },
+          "terminals": {
+            "state": "unsupported",
+            "reason": "stock_codemode_final_boundary_not_exposed"
+          },
+          "missing_terminals": {
+            "state": "unsupported",
+            "reason": "stock_codemode_final_boundary_not_exposed"
+          },
+          "issues": [
+            "stock_codemode_final_boundary_not_exposed"
+          ]
+        }
+      }
+    }
+  },
+  "callback_failure": {
+    "schema": "opencode-eval-runner/runtime-evidence/v1",
+    "status": "incomplete",
+    "evidence_eligible": false,
+    "observations": [
+      {
+        "invocation_id": "n1",
+        "tool": {
+          "state": "available",
+          "value": "runtimeevidence_nativeSuccess"
+        },
+        "mode": "native",
+        "actor": {
+          "state": "available",
+          "value": "general"
+        },
+        "session_id": {
+          "state": "available",
+          "value": "ses-1"
+        },
+        "message_id": {
+          "state": "available",
+          "value": "msg-1"
+        },
+        "call_id": {
+          "state": "available",
+          "value": "call-1"
+        },
+        "parent": {
+          "state": "available",
+          "value": null
+        },
+        "input": {
+          "state": "available",
+          "value": {
+            "value": "accepted"
+          }
+        },
+        "outcome": "success",
+        "result": {
+          "state": "available",
+          "value": {
+            "content": "ok"
+          }
+        },
+        "error": {
+          "state": "omitted",
+          "reason": "not_applicable"
+        },
+        "start_sequence": 1,
+        "terminal_sequence": {
+          "state": "available",
+          "value": 2
+        }
+      }
+    ],
+    "coverage": {
+      "observation_closed": {
+        "state": "available",
+        "value": true
+      },
+      "process_state": "completed",
+      "starts": {
+        "state": "available",
+        "value": 1
+      },
+      "terminals": {
+        "state": "available",
+        "value": 1
+      },
+      "missing_terminals": {
+        "state": "available",
+        "value": 0
+      },
+      "observer_failures": {
+        "state": "available",
+        "value": 0
+      },
+      "callback_failures": {
+        "state": "available",
+        "value": 1
+      },
+      "losses": [
+        "callback_failure"
+      ],
+      "unsupported": [
+        "stock_codemode_final_boundary_not_exposed"
+      ],
+      "boundaries": {
+        "native": {
+          "status": "incomplete",
+          "evidence_eligible": false,
+          "starts": {
+            "state": "available",
+            "value": 1
+          },
+          "terminals": {
+            "state": "available",
+            "value": 1
+          },
+          "missing_terminals": {
+            "state": "available",
+            "value": 0
+          },
+          "issues": [
+            "global_incomplete_capture"
+          ]
+        },
+        "code_mode_execution": {
+          "status": "incomplete",
+          "evidence_eligible": false,
+          "starts": {
+            "state": "available",
+            "value": 0
+          },
+          "terminals": {
+            "state": "available",
+            "value": 0
+          },
+          "missing_terminals": {
+            "state": "available",
+            "value": 0
+          },
+          "issues": [
+            "global_incomplete_capture"
+          ]
+        },
+        "code_mode_finality": {
+          "status": "unsupported",
+          "evidence_eligible": false,
+          "starts": {
+            "state": "unsupported",
+            "reason": "stock_codemode_final_boundary_not_exposed"
+          },
+          "terminals": {
+            "state": "unsupported",
+            "reason": "stock_codemode_final_boundary_not_exposed"
+          },
+          "missing_terminals": {
+            "state": "unsupported",
+            "reason": "stock_codemode_final_boundary_not_exposed"
+          },
+          "issues": [
+            "stock_codemode_final_boundary_not_exposed"
+          ]
+        }
+      }
+    }
+  },
+  "code_mode": {
+    "schema": "opencode-eval-runner/runtime-evidence/v1",
+    "status": "complete",
+    "evidence_eligible": true,
+    "observations": [
+      {
+        "invocation_id": "n1",
+        "tool": {
+          "state": "available",
+          "value": "execute"
+        },
+        "mode": "native",
+        "actor": {
+          "state": "available",
+          "value": "general"
+        },
+        "session_id": {
+          "state": "available",
+          "value": "ses-1"
+        },
+        "message_id": {
+          "state": "available",
+          "value": "msg-1"
+        },
+        "call_id": {
+          "state": "available",
+          "value": "outer-call"
+        },
+        "parent": {
+          "state": "available",
+          "value": null
+        },
+        "input": {
+          "state": "available",
+          "value": {
+            "value": "accepted"
+          }
+        },
+        "outcome": "success",
+        "result": {
+          "state": "available",
+          "value": {
+            "content": "ok"
+          }
+        },
+        "error": {
+          "state": "omitted",
+          "reason": "not_applicable"
+        },
+        "start_sequence": 1,
+        "terminal_sequence": {
+          "state": "available",
+          "value": 4
+        }
+      },
+      {
+        "invocation_id": "c1",
+        "tool": {
+          "state": "available",
+          "value": "runtimeevidence_innerEcho"
+        },
+        "mode": "code_mode",
+        "actor": {
+          "state": "available",
+          "value": "general"
+        },
+        "session_id": {
+          "state": "available",
+          "value": "ses-1"
+        },
+        "message_id": {
+          "state": "available",
+          "value": "msg-1"
+        },
+        "call_id": {
+          "state": "available",
+          "value": "outer-call"
+        },
+        "parent": {
+          "state": "available",
+          "value": {
+            "kind": "invocation",
+            "id": "n1"
+          }
+        },
+        "input": {
+          "state": "available",
+          "value": {
+            "tag": "same"
+          }
+        },
+        "outcome": "success",
+        "result": {
+          "state": "unsupported",
+          "reason": "stock_codemode_final_boundary_not_exposed"
+        },
+        "error": {
+          "state": "omitted",
+          "reason": "not_applicable"
+        },
+        "start_sequence": 2,
+        "terminal_sequence": {
+          "state": "available",
+          "value": 3
+        }
+      }
+    ],
+    "coverage": {
+      "observation_closed": {
+        "state": "available",
+        "value": true
+      },
+      "process_state": "completed",
+      "starts": {
+        "state": "available",
+        "value": 2
+      },
+      "terminals": {
+        "state": "available",
+        "value": 2
+      },
+      "missing_terminals": {
+        "state": "available",
+        "value": 0
+      },
+      "observer_failures": {
+        "state": "available",
+        "value": 0
+      },
+      "callback_failures": {
+        "state": "available",
+        "value": 0
+      },
+      "losses": [],
+      "unsupported": [
+        "stock_codemode_final_boundary_not_exposed"
+      ],
+      "boundaries": {
+        "native": {
+          "status": "complete",
+          "evidence_eligible": true,
+          "starts": {
+            "state": "available",
+            "value": 1
+          },
+          "terminals": {
+            "state": "available",
+            "value": 1
+          },
+          "missing_terminals": {
+            "state": "available",
+            "value": 0
+          },
+          "issues": []
+        },
+        "code_mode_execution": {
+          "status": "complete",
+          "evidence_eligible": true,
+          "starts": {
+            "state": "available",
+            "value": 1
+          },
+          "terminals": {
+            "state": "available",
+            "value": 1
+          },
+          "missing_terminals": {
+            "state": "available",
+            "value": 0
+          },
+          "issues": []
+        },
+        "code_mode_finality": {
+          "status": "unsupported",
+          "evidence_eligible": false,
+          "starts": {
+            "state": "unsupported",
+            "reason": "stock_codemode_final_boundary_not_exposed"
+          },
+          "terminals": {
+            "state": "unsupported",
+            "reason": "stock_codemode_final_boundary_not_exposed"
+          },
+          "missing_terminals": {
+            "state": "unsupported",
+            "reason": "stock_codemode_final_boundary_not_exposed"
+          },
+          "issues": [
+            "stock_codemode_final_boundary_not_exposed"
+          ]
+        }
+      }
+    }
+  },
+  "unsupported": {
+    "schema": "opencode-eval-runner/runtime-evidence/v1",
+    "status": "unsupported",
+    "evidence_eligible": false,
+    "observations": [],
+    "coverage": {
+      "observation_closed": {
+        "state": "unsupported",
+        "reason": "transport_unsupported"
+      },
+      "process_state": "unsupported",
+      "starts": {
+        "state": "unsupported",
+        "reason": "transport_unsupported"
+      },
+      "terminals": {
+        "state": "unsupported",
+        "reason": "transport_unsupported"
+      },
+      "missing_terminals": {
+        "state": "unsupported",
+        "reason": "transport_unsupported"
+      },
+      "observer_failures": {
+        "state": "unsupported",
+        "reason": "transport_unsupported"
+      },
+      "callback_failures": {
+        "state": "unsupported",
+        "reason": "transport_unsupported"
+      },
+      "losses": [],
+      "unsupported": [
+        "transport_unsupported"
+      ],
+      "boundaries": {
+        "native": {
+          "status": "unsupported",
+          "evidence_eligible": false,
+          "starts": {
+            "state": "unsupported",
+            "reason": "transport_unsupported"
+          },
+          "terminals": {
+            "state": "unsupported",
+            "reason": "transport_unsupported"
+          },
+          "missing_terminals": {
+            "state": "unsupported",
+            "reason": "transport_unsupported"
+          },
+          "issues": [
+            "transport_unsupported"
+          ]
+        },
+        "code_mode_execution": {
+          "status": "unsupported",
+          "evidence_eligible": false,
+          "starts": {
+            "state": "unsupported",
+            "reason": "transport_unsupported"
+          },
+          "terminals": {
+            "state": "unsupported",
+            "reason": "transport_unsupported"
+          },
+          "missing_terminals": {
+            "state": "unsupported",
+            "reason": "transport_unsupported"
+          },
+          "issues": [
+            "transport_unsupported"
+          ]
+        },
+        "code_mode_finality": {
+          "status": "unsupported",
+          "evidence_eligible": false,
+          "starts": {
+            "state": "unsupported",
+            "reason": "transport_unsupported"
+          },
+          "terminals": {
+            "state": "unsupported",
+            "reason": "transport_unsupported"
+          },
+          "missing_terminals": {
+            "state": "unsupported",
+            "reason": "transport_unsupported"
+          },
+          "issues": [
+            "transport_unsupported"
+          ]
+        }
+      }
+    }
+  }
+}

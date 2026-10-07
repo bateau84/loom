@@ -176,6 +176,16 @@ An explicit `--artifact-dir` is a single-run evidence destination and must be em
 
 Runtime cases use isolated OpenCode target containers with Loom injected into the standalone runtime. Target and judge run separately.
 
+Runtime PASS now requires valid `opencode-eval-runner/runtime-evidence/v1`,
+from [runner PR #45](https://github.com/bateau84/opencode-eval-runner/pull/45).
+Missing, invalid, incomplete, or unsupported required evidence is reported as
+`non-evidence` and skips the judge. Diagnostic tool results cannot fill gaps.
+The current whole-trace judge requires exact inputs, identities, and terminal
+results/errors across its observed calls. Native-only traces can pass despite
+unsupported Code Mode finality; traces with inner Code Mode calls cannot yet
+pass this result-reading judge on stock 2.0.23. This does not mark their behavior
+as failed. See [consumer scope and verification](scripts/fixtures/runtime-evidence-v1.md).
+
 ## Repository maps
 
 - [User guides](docs/user/index.md)
