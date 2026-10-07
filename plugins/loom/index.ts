@@ -3204,7 +3204,9 @@ async function reusableCompletedTaskIds(
         node.logicalId === taskStep.task!.id &&
         node.status !== "superseded",
     )
-    if (workTask?.status !== "complete" || !workTask.result) continue
+    // Work status remains pending until independent implementation review.
+    // The execution result, not the roll-up status, is the reusable receipt.
+    if (!workTask?.result || workTask.result.workflowId !== workflow.id) continue
 
     const currentClosure = taskSemanticClosureFingerprintAtRevision(
       work,
@@ -7009,8 +7011,9 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                         node.status !== "superseded",
                     )
                     // A workflow step alone is not enough to authorize reuse.
-                    // Preserve only a completion backed by the persistent Work receipt.
-                    if (taskNode?.status !== "complete" || !taskNode.result) continue
+                    // Work status may still be pending until review-implementation;
+                    // the persistent execution result is the reusable receipt.
+                    if (!taskNode?.result || taskNode.result.workflowId !== workflow.id) continue
                     preservedTaskSteps.set(taskStep.id, {
                       status: taskStep.status,
                       attempt: taskStep.attempt ?? 0,
@@ -7145,29 +7148,6 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                   )
                 }
 
-                // Planning reopen must not mechanically invalidate persistent
-                // completion receipts that were explicitly preserved above.
-                // A later Plan amendment will invalidate only the affected
-                // semantic dependency closure.
-                if (stepId === "plan" && preservedTaskSteps.size > 0) {
-                  for (const taskStep of taskSteps) {
-                    if (!preservedTaskSteps.has(taskStep.id)) continue
-                    const taskNode = work.nodes.find(
-                      (node) =>
-                        node.generation === workflow.work!.generation &&
-                        node.type === "task" &&
-                        node.logicalId === taskStep.task!.id &&
-                        node.status !== "superseded",
-                    )
-                    if (!taskNode?.result) {
-                      throw new Error(
-                        `Completed Task ${taskStep.task!.id} lost its persistent result while reopening planning.`,
-                      )
-                    }
-                    taskNode.status = "complete"
-                    taskNode.updatedAt = now
-                  }
-                }
                 await ctx.storage.set(workKey(work.objectiveId), work)
               }
 
