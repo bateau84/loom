@@ -3278,11 +3278,24 @@ async function reusableCompletedTaskIds(
       )
     }
 
+    // Reconciliation preserves the current (higher) workflow attempt to keep
+    // stale sessions fenced. The original producer evidence retains its old
+    // attempt in Work; future Plan revisions must verify THAT attempt.
+    const sourceAttempt = workTask.result.completedAttempt ?? (taskStep.attempt ?? 0)
+    if (workTask.result.producerAgent && workTask.result.producerAgent !== taskStep.agent) {
+      if (invalidReceipt === "rerun") continue
+      throw new Error(`Completed Task ${taskStep.task!.id} has inconsistent producer-role provenance.`)
+    }
+    const originalWorkflow: Workflow = sourceAttempt === (taskStep.attempt ?? 0)
+      ? workflow
+      : { ...workflow, steps: workflow.steps.map((step) => step.id === taskStep.id
+          ? { ...step, attempt: sourceAttempt } : step) }
+
     // The receipt must name the full set of claims made by this exact
     // execution attempt, not merely a valid subset of their identifiers.
     const attemptClaims = (await stepClaims(ctx, workflow.id, taskStep.id))
       .filter((claim) =>
-        (claim.attempt ?? 0) === (taskStep.attempt ?? 0) &&
+        (claim.attempt ?? 0) === sourceAttempt &&
         claim.byAgent === taskStep.agent,
       )
     const receiptIds = [...workTask.result.evidenceClaimIds].sort()
@@ -3305,7 +3318,7 @@ async function reusableCompletedTaskIds(
         claim!.workflowId !== workTask.result!.workflowId ||
         claim!.stepId !== taskStep.id ||
         claim!.byAgent !== taskStep.agent ||
-        (claim!.attempt ?? 0) !== (taskStep.attempt ?? 0)
+        (claim!.attempt ?? 0) !== sourceAttempt
       )
     ) {
       if (invalidReceipt === "rerun") continue
@@ -3322,7 +3335,7 @@ async function reusableCompletedTaskIds(
     if (
       observations.some((observation) => !observation) ||
       observations.some((observation) =>
-        !observation || !observationMatchesStep(observation, workflow, taskStep.id)
+        !observation || !observationMatchesStep(observation, originalWorkflow, taskStep.id)
       )
     ) {
       if (invalidReceipt === "rerun") continue
