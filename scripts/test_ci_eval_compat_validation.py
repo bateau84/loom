@@ -119,13 +119,43 @@ class CompatValidationTests(unittest.TestCase):
         self.assertNotIn(str(w.LEGACY_RUNNER), command)
         self.assertIn("--transport-retries", command)
 
-    def test_listing_remains_provider_free_legacy_compatibility(self):
+    def test_listing_remains_provider_free_and_does_not_invoke_legacy_cli(self):
         w = self.w
-        with mock.patch.object(w, "_run", return_value=0) as run:
+        normal = {
+            "id": "ROLE-1", "agent": "reviewer", "execution": "role-decision",
+            "requirements": ["native-skill"],
+        }
+        skill = {
+            "id": "SKILL-demo-S1", "skill": "demo", "execution": "runtime",
+            "requirements": [],
+        }
+        legacy = mock.Mock()
+        legacy.load_cases.return_value = [normal]
+        legacy.load_skill_owned_cases.return_value = [skill]
+        legacy.case_target_kind.side_effect = lambda case: "skill" if case.get("skill") else "agent"
+        legacy.case_target_name.side_effect = lambda case: case.get("skill") or case["agent"]
+        with (
+            mock.patch.object(w, "_legacy", return_value=legacy),
+            mock.patch.object(w, "_run") as run,
+            mock.patch("builtins.print") as output,
+        ):
             self.assertEqual(w.main(["--list"]), 0)
-        command = run.call_args.args[0]
-        self.assertEqual(command[1], str(w.LEGACY_RUNNER))
-        self.assertIn("--list", command)
+        run.assert_not_called()
+        self.assertEqual(output.call_count, 2)
+        self.assertEqual(output.call_args_list[0].args[0], "ROLE-1\tagent\treviewer\trole-decision\tnative-skill")
+        self.assertEqual(output.call_args_list[1].args[0], "SKILL-demo-S1\tskill\tdemo\truntime\t")
+        self.assertEqual(legacy.load_cases.call_args.kwargs["include_opt_in"], False)
+
+    def test_listing_rejects_duplicate_ids_without_engine_or_inference(self):
+        w = self.w
+        case = {"id": "duplicate", "execution": "role-decision", "requirements": []}
+        legacy = mock.Mock()
+        legacy.load_cases.return_value = [case]
+        legacy.load_skill_owned_cases.return_value = [case]
+        with mock.patch.object(w, "_legacy", return_value=legacy), mock.patch.object(w, "_run") as run:
+            with self.assertRaisesRegex(w.CompatibilityError, "duplicate behavioral eval"):
+                w.list_cases(w.parser().parse_args(["--list"]))
+        run.assert_not_called()
 
 
 if __name__ == "__main__":
