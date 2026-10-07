@@ -3369,6 +3369,52 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       }
     }
 
+    const reviewerSessionLineageConflict = async (
+      sessionID: string,
+      forbiddenSessionIds: Set<string>,
+    ) => {
+      const pending = [sessionID]
+      const visited = new Set<string>()
+      while (pending.length > 0) {
+        const current = pending.pop()!
+        if (visited.has(current)) continue
+        visited.add(current)
+        if (visited.size > 64) {
+          throw new Error(
+            "Reviewer session lineage is too deep to establish independent-review eligibility.",
+          )
+        }
+        if (forbiddenSessionIds.has(current)) return current
+
+        let session: any
+        try {
+          session = await ctx.session.get({ sessionID: current })
+        } catch {
+          throw new Error(
+            "Reviewer session lineage could not be established; independent-review eligibility remains unresolved.",
+          )
+        }
+        if (!session || typeof session.id !== "string" || session.id !== current) {
+          throw new Error(
+            "Reviewer session lineage could not be established; independent-review eligibility remains unresolved.",
+          )
+        }
+
+        const ancestors = [
+          typeof session.parentID === "string" ? session.parentID : undefined,
+          session.fork && typeof session.fork.sessionID === "string"
+            ? session.fork.sessionID
+            : undefined,
+        ].filter((value): value is string => Boolean(value))
+
+        for (const ancestor of ancestors) {
+          if (forbiddenSessionIds.has(ancestor)) return ancestor
+          if (!visited.has(ancestor)) pending.push(ancestor)
+        }
+      }
+      return undefined
+    }
+
     const cleanupDiagnosticSandboxesForWorkflow = async (workflowId: string) => {
       const destroyed: string[] = []
       const errors: Array<{ sandboxId: string; error: string }> = []
@@ -9102,6 +9148,28 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                     throw new Error(
                       "This review requires a genuinely fresh Reviewer session because upstream authority or reviewed scope changed.",
                     )
+                  }
+                  const lineageForbidden = new Set<string>()
+                  if (mode === "independent-re-review") {
+                    for (const sessionId of step.review?.ineligibleIndependentSessionIds ?? []) {
+                      lineageForbidden.add(sessionId)
+                    }
+                  }
+                  if (step.review?.freshSessionRequired) {
+                    for (const sessionId of knownReviewerSessions(step)) {
+                      lineageForbidden.add(sessionId)
+                    }
+                  }
+                  if (lineageForbidden.size > 0) {
+                    const lineageConflict = await reviewerSessionLineageConflict(
+                      tool.sessionID,
+                      lineageForbidden,
+                    )
+                    if (lineageConflict) {
+                      throw new Error(
+                        "This Reviewer session descends from a prior or ineligible Reviewer context and cannot satisfy the required fresh independent review.",
+                      )
+                    }
                   }
                   recordReviewerAttachment(
                     step,
