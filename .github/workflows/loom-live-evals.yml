@@ -139,7 +139,7 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
-        uses: bateau84/opencode-eval-runner@16715800e494b9dbebe37f7f7f5dd0e333733447
+        uses: bateau84/opencode-eval-runner@a7efd0b96ec650f9a972b53830722e467b61eb36
         with:
           engine: docker
           opencode-image: ghcr.io/bateau84/opencode-eval-runner@sha256:104a0895c83e4f36fb597e388656a4c6e445035c9a1fb5aaa2c9e922ad172a36
