@@ -1,0 +1,108 @@
+from __future__ import annotations
+
+import importlib.util
+import json
+import os
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+from unittest import mock
+
+SCRIPT = Path(__file__).with_name("run-evals.py")
+
+
+def load_wrapper():
+    spec = importlib.util.spec_from_file_location("loom_eval_compat", SCRIPT)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+class CompatValidationTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.w = load_wrapper()
+
+    def test_common_cli_flags_forward_to_generic_runner(self):
+        w = self.w
+        with tempfile.TemporaryDirectory() as temp:
+            runner = Path(temp) / "opencode-eval-runner"
+            runner.write_text("#!/bin/sh\n", encoding="utf-8")
+            args = w.parser().parse_args([
+                "--cases", "ROLE-1,RUNTIME-1", "--model", "target/model",
+                "--judge-model", "judge/model", "--reasoning", "medium",
+                "--judge-reasoning", "high", "--engine", "docker", "--network", "host",
+                "--iterations", "2", "--parallel", "4", "--runtime-parallel", "2",
+                "--transport-retries", "1", "--env", "CUSTOM_TOKEN",
+                "--image", "example.invalid/eval@sha256:1234",
+            ])
+            with mock.patch.dict(os.environ, {"OPENCODE_EVAL_RUNNER_BIN": str(runner)}, clear=False):
+                command = w.generic_command(args, ["ROLE-1", "RUNTIME-1"], Path(temp) / "artifacts")
+                env = w._generic_env(args)
+        self.assertEqual(command[1:4], ["eval", "--profile", "loom_eval_profile:PROFILE"])
+        self.assertEqual(command[command.index("--cases") + 1], "ROLE-1,RUNTIME-1")
+        self.assertEqual(command[command.index("--target-model") + 1], "target/model")
+        self.assertEqual(command[command.index("--runtime-parallel") + 1], "2")
+        self.assertEqual(command[command.index("--parallel") + 1], "4")
+        self.assertEqual(json.loads(env[w.FORWARDED_ENV_NAMES]), ["CUSTOM_TOKEN"])
+        self.assertEqual(env["OPENCODE_EVAL_RUNNER_OPENCODE_IMAGE"], "example.invalid/eval@sha256:1234")
+        self.assertEqual(env["OPENCODE_EVAL_RUNNER_COPILOT_IMAGE"], "example.invalid/eval@sha256:1234")
+
+    def test_normal_live_execution_never_calls_legacy_scheduler(self):
+        w = self.w
+        normal = {"id": "ROLE-1", "agent": "general", "execution": "role-decision", "requirements": []}
+        with tempfile.TemporaryDirectory() as temp:
+            runner = Path(temp) / "opencode-eval-runner"
+            runner.write_text("#!/bin/sh\n", encoding="utf-8")
+            with (
+                mock.patch.object(w, "resolve_selection", return_value=[normal]),
+                mock.patch.object(w, "_run", return_value=0) as run,
+                mock.patch.dict(os.environ, {"OPENCODE_EVAL_RUNNER_BIN": str(runner)}, clear=False),
+            ):
+                status = w.main(["--cases", "ROLE-1", "--model", "fixture/model", "--artifact-dir", temp])
+        self.assertEqual(status, 0)
+        self.assertEqual(run.call_count, 1)
+        command = run.call_args.args[0]
+        self.assertEqual(command[1], "eval")
+        self.assertNotIn(str(w.LEGACY_RUNNER), command)
+
+    def test_mixed_selection_separates_skill_ablation(self):
+        w = self.w
+        normal = {"id": "RUNTIME-1", "agent": "worker", "execution": "runtime", "requirements": []}
+        skill = {
+            "id": "SKILL-demo-S1", "agent": "general", "execution": "runtime",
+            "requirements": [], "_skill_owned": True, "_skill_name": "demo",
+        }
+        with tempfile.TemporaryDirectory() as temp:
+            runner = Path(temp) / "opencode-eval-runner"
+            runner.write_text("#!/bin/sh\n", encoding="utf-8")
+            with (
+                mock.patch.object(w, "resolve_selection", return_value=[normal, skill]),
+                mock.patch.object(w, "_run", side_effect=[0, 0]) as run,
+                mock.patch.dict(os.environ, {"OPENCODE_EVAL_RUNNER_BIN": str(runner)}, clear=False),
+            ):
+                status = w.main(["--all", "--model", "fixture/model", "--artifact-dir", temp])
+        self.assertEqual(status, 0)
+        self.assertEqual(run.call_count, 2)
+        generic = run.call_args_list[0].args[0]
+        legacy = run.call_args_list[1].args[0]
+        self.assertEqual(generic[generic.index("--cases") + 1], "RUNTIME-1")
+        self.assertIn(str(Path(temp) / "normal"), generic)
+        self.assertIn(str(w.LEGACY_RUNNER), legacy)
+        self.assertEqual(legacy[legacy.index("--cases") + 1], "SKILL-demo-S1")
+        self.assertIn(str(Path(temp) / "skill-ablation"), legacy)
+
+    def test_listing_remains_provider_free_legacy_compatibility(self):
+        w = self.w
+        with mock.patch.object(w, "_run", return_value=0) as run:
+            self.assertEqual(w.main(["--list"]), 0)
+        command = run.call_args.args[0]
+        self.assertEqual(command[1], str(w.LEGACY_RUNNER))
+        self.assertIn("--list", command)
+
+
+if __name__ == "__main__":
+    unittest.main()
