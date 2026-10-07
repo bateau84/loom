@@ -5895,6 +5895,158 @@ Verdict: FAIL
     }
   })
 
+  test("Butler commit admission resolves file IDs and revalidates them under the repository lock", async () => {
+    const h = await harness()
+    const previousPath = process.env.PATH
+    const previousFakeState = process.env.LOOM_FAKE_BUT_STATE
+    try {
+      await initializeGitFixture(h.root)
+      await mkdir(join(h.root, "docs", "design"), { recursive: true })
+
+      const fakeBin = join(h.root, "fake-bin")
+      const fakeBut = join(fakeBin, "but")
+      const fakeState = join(h.root, "fake-but-count")
+      await mkdir(fakeBin, { recursive: true })
+
+      const writeFakeBut = async (mode: "stable" | "stale") => {
+        const stale = mode === "stale" ? "1" : "0"
+        await writeFile(
+          fakeBut,
+          `#!/bin/sh
+set -eu
+if [ "\$1" != "--json" ] || [ "\$2" != "diff" ] || [ "\$3" != "qs" ]; then
+  echo "unexpected fake but invocation: \$*" >&2
+  exit 2
+fi
+path="docs/design/runtime.md"
+if [ "${stale}" = "1" ]; then
+  count=0
+  if [ -f "\$LOOM_FAKE_BUT_STATE" ]; then count=\$(cat "\$LOOM_FAKE_BUT_STATE"); fi
+  count=\$((count + 1))
+  printf '%s' "\$count" > "\$LOOM_FAKE_BUT_STATE"
+  if [ "\$count" -ge 3 ]; then path="docs/design/other.md"; fi
+fi
+printf '{"changes":[{"id":"qs:1","path":"%s","status":"modified","diff":{"type":"patch","hunks":[]}}]}\\n' "\$path"
+`,
+        )
+        await chmod(fakeBut, 0o755)
+      }
+
+      process.env.PATH = `${fakeBin}:${previousPath ?? ""}`
+      process.env.LOOM_FAKE_BUT_STATE = fakeState
+      await writeFakeBut("stable")
+
+      const started = await h.call(
+        "start",
+        { request: "Define one bounded user-facing design change." },
+        "general",
+        "butler-admission-general",
+      )
+      const workflowId = String(started.workflowId)
+      expect((await h.call(
+        "route",
+        {
+          humanFacing: true,
+          behavioral: false,
+          structural: false,
+          externalUnknown: false,
+          diagnostic: false,
+          productOutcome: true,
+          implementationRequested: true,
+          executionDepth: "change",
+        },
+        "general",
+        "butler-admission-general",
+      )).error).toBeUndefined()
+
+      const grant = await h.call(
+        "dispatch_grant",
+        { workflowId, stepId: "designer" },
+        "general",
+        "butler-admission-general",
+      )
+      expect((await h.call(
+        "attach",
+        { grantId: grant.grantId, workflowId, stepId: "designer" },
+        "designer",
+        "butler-admission-designer",
+      )).attached).toBe(true)
+
+      const evaluate = h.permissionHooks.get("evaluate")!
+      const editPermission: any = {
+        agent: "designer",
+        action: "edit",
+        resources: ["docs/design/runtime.md"],
+        sessionID: "butler-admission-designer",
+        effect: "ask",
+      }
+      await evaluate(editPermission)
+      expect(editPermission.effect).not.toBe("deny")
+
+      const editEvent = {
+        tool: "edit",
+        callID: "butler-owned-edit",
+        sessionID: "butler-admission-designer",
+        agent: "designer",
+        input: { filePath: join(h.root, "docs", "design", "runtime.md") },
+      }
+      await h.toolHooks.get("execute.before")?.(editEvent)
+      await writeFile(join(h.root, "docs", "design", "runtime.md"), "owned design\n")
+      await h.toolHooks.get("execute.after")?.({
+        ...editEvent,
+        status: "completed",
+        result: "updated",
+      })
+
+      const command = "but commit -b feature -m 'docs(design): runtime' qs"
+      const commitPermission: any = {
+        agent: "designer",
+        action: "shell",
+        resources: [command],
+        sessionID: "butler-admission-designer",
+        effect: "ask",
+      }
+      await evaluate(commitPermission)
+      expect(commitPermission.effect).toBe("allow")
+
+      const commitEvent = {
+        tool: "shell",
+        callID: "butler-scoped-commit",
+        sessionID: "butler-admission-designer",
+        agent: "designer",
+        input: { command },
+      }
+      await h.toolHooks.get("execute.before")?.(commitEvent)
+      await h.toolHooks.get("execute.after")?.({
+        ...commitEvent,
+        status: "error",
+        error: new Error("synthetic shell stop after admission"),
+      })
+
+      await rm(fakeState, { force: true })
+      await writeFakeBut("stale")
+      const stalePermission: any = {
+        ...commitPermission,
+        effect: "ask",
+      }
+      await evaluate(stalePermission)
+      expect(stalePermission.effect).toBe("allow")
+
+      await expect(
+        h.toolHooks.get("execute.before")?.({
+          ...commitEvent,
+          callID: "butler-stale-commit",
+        }),
+      ).rejects.toThrow("selected whole-file CLI IDs changed before execution")
+    } finally {
+      if (previousPath === undefined) delete process.env.PATH
+      else process.env.PATH = previousPath
+      if (previousFakeState === undefined) delete process.env.LOOM_FAKE_BUT_STATE
+      else process.env.LOOM_FAKE_BUT_STATE = previousFakeState
+      h.restore()
+    }
+  })
+
   test("Specifier starts with General's best-known scope and can elevate without returning", async () => {
     const h = await harness()
     try {
