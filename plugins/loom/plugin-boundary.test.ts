@@ -16698,7 +16698,8 @@ test("Plan reconciliation restores only a proven original producer attempt, with
     const inspected = await h.call("work_reconcile_status", {
       workflowId: h.workflowId, auditId: restored.auditId,
     }, "general", "parent")
-    expect(inspected.authoritative).toBe(true)
+    expect(inspected.committed).toBe(true)
+    expect(inspected.current).toBe(true)
     expect(inspected.audit).toEqual(audit)
     expect(audit.recovered[0]).toMatchObject({
       taskId: "one", originalAttempt: sourceAttempt,
@@ -16744,6 +16745,11 @@ test("Plan reconciliation restores only a proven original producer attempt, with
     expect(secondReopen.reset).not.toContain("task:one")
     expect((await h.workflow()).steps.find((candidate: any) => candidate.id === "task:one"))
       .toMatchObject({ status: "complete", attempt: sourceAttempt + 1 })
+    const historicalAudit = await h.call("work_reconcile_status", {
+      workflowId: h.workflowId, auditId: restored.auditId,
+    }, "general", "parent")
+    expect(historicalAudit.committed).toBe(true)
+    expect(historicalAudit.current).toBe(false)
   } finally {
     h.restore()
   }
