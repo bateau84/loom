@@ -12206,7 +12206,9 @@ test("reviewed Wave Plan reopen cannot invalidate a claimed downstream Wave", as
     expect((await h.finish("task:one", "worker")).error).toBeUndefined()
     expect((await h.finish("review-implementation", "reviewer", "pass")).error).toBeUndefined()
     const work = await h.work()
-    const next = { ...richPlanTask("two", "Two", "Build two", ["one"]), write: ["src/**"], skills: [] }
+    // A new Wave names only its intra-Wave execution dependencies; its
+    // reviewed external predecessor is enforced by persistent Work.
+    const next = { ...richPlanTask("two", "Two", "Build two", ["one"]), dependsOn: [], write: ["src/**"], skills: [] }
     claimWorkflowWave(work, "downstream-workflow", work.generation, [next], false, "later")
     await h.durableStorage.set(h.workKey, work)
     const beforeWorkflow = await h.workflow()
