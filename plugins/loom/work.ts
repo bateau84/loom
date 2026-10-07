@@ -211,6 +211,8 @@ export type WorkTaskResult = {
   producerAgent?: string
   /** Exact executable TaskSpec including role, dependencies, write and verification scope. */
   executableTaskFingerprint?: string
+  /** Digests of original dependency execution results, not only their Plan semantics. */
+  dependencyResultDigests?: Record<string, string>
   /** Clean Git HEAD at completion. Missing values cannot prove code continuity. */
   cleanRepositoryHead?: string
 }
