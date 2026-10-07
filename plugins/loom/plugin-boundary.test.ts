@@ -16586,3 +16586,129 @@ describe("Reviewer repair authorization and re-review boundary", () => {
     }
   })
 })
+
+
+test("Plan reconciliation restores only a proven original producer attempt, without dispatch or gate bypass", async () => {
+  const h = await waveLifecycleFixture("wave", false, "worker")
+  try {
+    const child = await h.attach("task:one", "worker", "carry-forward-original-worker")
+    const event = {
+      tool: "shell", id: "carry-forward-observed-check", messageID: "carry-forward-message",
+      sessionID: child, agent: "worker", input: { command: "git rev-parse HEAD" },
+    }
+    await h.toolHooks.get("execute.before")!(event)
+    await h.toolHooks.get("execute.after")!({
+      ...event, status: "completed", result: "original host observation",
+    })
+    const evidence = (await h.durableStorage.scan({ prefix: "evidence/", limit: 100 }))
+      .entries.map((entry: any) => entry.value)
+      .find((entry: any) => entry.tool === "shell" && entry.sessionID === child)
+    expect(evidence?.admission).toBeDefined()
+    const claim = await h.call("evidence_claim", {
+      workflowId: h.workflowId, stepId: "task:one", kind: "test",
+      statement: "Observed original Task verification", observationIds: [evidence.id],
+    }, "worker", child)
+    expect(claim.error).toBeUndefined()
+    expect((await h.call("complete", {
+      workflowId: h.workflowId, stepId: "task:one", summary: "Original verified implementation",
+    }, "worker", child)).error).toBeUndefined()
+    const original = await h.workflow()
+    const sourceStep = original.steps.find((step: any) => step.id === "task:one")
+    const work = await h.work()
+    const source = work.nodes.find((node: any) => node.logicalId === "one" && node.type === "task")
+    expect(source.result).toMatchObject({
+      completedAttempt: sourceStep.attempt,
+      producerAgent: "worker",
+      cleanRepositoryHead: expect.stringMatching(/^[0-9a-f]{40}$/),
+      semanticClosureFingerprint: expect.any(String),
+      evidenceClaimIds: [claim.claim.id],
+    })
+
+    // Model the earlier control-plane reset: executable Step became pending,
+    // while the ORIGINAL persisted Work result survived intact.
+    sourceStep.status = "pending"
+    sourceStep.attempt += 1
+    delete sourceStep.summary
+    await h.durableStorage.set("workflow/" + h.workflowId, original)
+    const beforeBudget = await h.durableStorage.get("budget/" + h.workflowId)
+
+    const unauthorized = await h.call("work_reconcile", {
+      workflowId: h.workflowId, taskIds: ["one"],
+    }, "worker", child)
+    expect(unauthorized.error).toContain("Only General")
+
+    const restored = await h.call("work_reconcile", {
+      workflowId: h.workflowId, taskIds: ["one"],
+    }, "general", "parent")
+    expect(restored.error).toBeUndefined()
+    expect(restored.reconciled).toEqual(["one"])
+    expect(restored.refused).toEqual([])
+    expect(restored.budgetUnchanged).toBe(true)
+    expect(await h.durableStorage.get("budget/" + h.workflowId)).toEqual(beforeBudget)
+    const after = await h.workflow()
+    expect(after.steps.find((step: any) => step.id === "task:one")).toMatchObject({
+      status: "complete", attempt: sourceStep.attempt - 1,
+      summary: "Original verified implementation",
+    })
+    expect(after.steps.find((step: any) => step.id === "review-implementation").status).toBe("pending")
+    expect((await h.work()).nodes.find((node: any) => node.logicalId === "one").result)
+      .toEqual(source.result)
+
+    const replay = await h.call("work_reconcile", {
+      workflowId: h.workflowId, taskIds: ["one"],
+    }, "general", "parent")
+    expect(replay.reconciled).toEqual([])
+    expect(replay.alreadyComplete).toEqual(["one"])
+    const audit = await h.durableStorage.get("work-reconciliation/" + h.workflowId + "/" + restored.auditId)
+    expect(audit.recovered[0]).toMatchObject({
+      taskId: "one", originalAttempt: sourceStep.attempt - 1,
+      evidenceClaimIds: [claim.claim.id],
+    })
+  } finally {
+    h.restore()
+  }
+})
+
+test("Plan reconciliation fails closed for missing results, altered code and unreviewed Plans", async () => {
+  const h = await waveLifecycleFixture("wave", false, "worker")
+  try {
+    const workflow = await h.workflow()
+    const step = workflow.steps.find((candidate: any) => candidate.id === "task:one")
+    step.attempt = (step.attempt ?? 0) + 1
+    await h.durableStorage.set("workflow/" + h.workflowId, workflow)
+
+    const missing = await h.call("work_reconcile", {
+      workflowId: h.workflowId, taskIds: ["one"],
+    }, "general", "parent")
+    expect(missing.reconciled).toEqual([])
+    expect(missing.refused[0].reason).toContain("No current persisted Task result")
+    expect((await h.workflow()).steps.find((candidate: any) => candidate.id === "task:one").status)
+      .toBe("pending")
+
+    const work = await h.work()
+    const node = work.nodes.find((candidate: any) => candidate.type === "task" && candidate.logicalId === "one")
+    const head = (await git(h.root, ["rev-parse", "HEAD"])).stdout.trim()
+    node.result = {
+      workflowId: h.workflowId, evidenceClaimIds: ["unavailable-original-claim"],
+      completedAt: "2026-10-07T00:00:00Z", completedAttempt: 0,
+      producerAgent: "worker", cleanRepositoryHead: head,
+      planRevision: 1, semanticClosureFingerprint: "not-the-original-closure",
+    }
+    await h.durableStorage.set(h.workKey, work)
+    const forged = await h.call("work_reconcile", {
+      workflowId: h.workflowId, taskIds: ["one"],
+    }, "general", "parent")
+    expect(forged.reconciled).toEqual([])
+    expect(forged.refused[0].reason).toContain("semantic")
+
+    const newVersion = await h.workflow()
+    newVersion.steps.find((candidate: any) => candidate.id === "review-plan").status = "pending"
+    await h.durableStorage.set("workflow/" + h.workflowId, newVersion)
+    const unreviewed = await h.call("work_reconcile", {
+      workflowId: h.workflowId, taskIds: ["one"],
+    }, "general", "parent")
+    expect(unreviewed.error).toContain("independent review-plan PASS")
+  } finally {
+    h.restore()
+  }
+})
