@@ -7024,6 +7024,8 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                             completedAt: now,
                             completedAttempt: taskStep.attempt ?? 0,
                             producerAgent: taskStep.agent,
+                            executableTaskFingerprint: createHash("sha256")
+                              .update(JSON.stringify(taskStep.task)).digest("hex"),
                             ...(cleanTaskHead ? { cleanRepositoryHead: cleanTaskHead } : {}),
                             ...(completedTaskPlanRevision ? { planRevision: completedTaskPlanRevision } : {}),
                             ...(completedTaskSemanticClosure
