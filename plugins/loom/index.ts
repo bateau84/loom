@@ -10388,7 +10388,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                     continue
                   }
                   const outstanding = questions.some((question) =>
-                    question.id !== value.questionId && question.consumerStepIds.includes(step.id) &&
+                    question.consumerStepIds.includes(step.id) &&
                     question.status !== "closed" &&
                     (!question.answer || !question.reconciliations[step.id]))
                   if (blockingQuestionsForStep(questions, step.id).length || outstanding ||
@@ -10428,8 +10428,31 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                       ctx.storage.get(evidenceKey(observationId)) as Promise<EvidenceObservation | undefined>)))
                   if (!observations.length || observations.some((observation) =>
                     !observation || observation.status !== "completed" || !observation.admission ||
-                    !observationMatchesStep(observation, originalWorkflow, step.id))) {
+                    !observationMatchesStep(observation, originalWorkflow, step.id)) ||
+                    oldClaims.some((claim) => {
+                      const claimObservations = observations.filter((observation) =>
+                        claim.observationIds.includes(observation?.id ?? ""))
+                        .filter((observation): observation is EvidenceObservation => Boolean(observation))
+                      return claimObservations.length !== claim.observationIds.length ||
+                        !observationsSupportKind(claim.kind, claimObservations)
+                    })) {
                     refuse(id, "Original host observations are missing or belong to another producer attempt.")
+                    continue
+                  }
+                  const staleDependency = step.task.dependsOn.some((dependencyId) => {
+                    const source = byId.get(dependencyId)
+                    if (!source) return false // Reviewed external-Wave edge
+                    const upstream = work.nodes.find((candidate) =>
+                      candidate.generation === work.generation && candidate.type === "task" &&
+                      candidate.logicalId === dependencyId && candidate.status !== "superseded")
+                    // A dependent's old result cannot survive a newer producer execution.
+                    return !upstream?.result || upstream.result.workflowId !== workflow.id ||
+                      !upstream.result.completedAttempt && upstream.result.completedAttempt !== 0 ||
+                      !upstream.result.completedAt || !receipt.completedAt ||
+                      upstream.result.completedAt > receipt.completedAt
+                  })
+                  if (staleDependency) {
+                    refuse(id, "Dependent producer result is missing or was replaced after this completion.")
                     continue
                   }
                   eligible.set(id, { step, receipt })
@@ -10457,7 +10480,8 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                   const candidate = eligible.get(id)
                   if (!candidate) continue
                   candidate.step.status = "complete"
-                  candidate.step.attempt = candidate.receipt.completedAttempt
+                  // Keep the current reset attempt as a monotonic authority fence.
+                  // The source attempt stays only in the original Work receipt/audit.
                   if (candidate.receipt.summary) candidate.step.summary = candidate.receipt.summary
                   else delete candidate.step.summary
                   reconciled.push(id)
