@@ -26,7 +26,7 @@ from ._runtime_assertions import (
     runtime_assertion_families,
     target_text,
 )
-from ._shared import PreparedLoomCase
+from ._shared import PreparedLoomCase, compatibility_env_names
 
 
 JUDGE_TEXT_LIMIT = 30_000
@@ -263,7 +263,7 @@ class LoomEvidenceJudgeAdapter:
             models_catalog=None,
             config=None,
             config_root=None,
-            env_names=_PROVIDER_ENVS,
+            env_names=tuple(dict.fromkeys((*_PROVIDER_ENVS, *compatibility_env_names()))),
             timeout_seconds=120,
             container_timeout=135,
         )
