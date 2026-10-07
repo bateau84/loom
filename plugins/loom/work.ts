@@ -206,6 +206,11 @@ export type WorkTaskResult = {
   planRevision?: number
   /** Task + transitive dependency semantics consumed by this result, when known. */
   semanticClosureFingerprint?: string
+  /** Original completion attempt and producer, not a replacement Planner attestation. */
+  completedAttempt?: number
+  producerAgent?: string
+  /** Clean Git HEAD at completion. Missing values cannot prove code continuity. */
+  cleanRepositoryHead?: string
 }
 
 export type HistoricalWorkTaskResult = WorkTaskResult & {
