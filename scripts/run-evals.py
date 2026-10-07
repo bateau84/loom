@@ -308,7 +308,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 # Deliberate Loom-only compatibility surface. Never expose retired invocation,
 # observer authority, scheduling, or artifact-writing helpers implicitly.
-LOOM_COMPAT_EXPORTS = frozenset(["load_cases","load_skill_owned_cases","case_selectors","case_target_kind","case_target_name","safe_fixture_path","write_project_config","judge_prompt","parse_judge","semantic_pass","semantic_behavior_score","classify_skill_value","skill_baseline_agent","skill_eval_agent","skill_ablation_copilot_system","strip_frontmatter","deterministic_failures","target_prompt"])
+LOOM_COMPAT_EXPORTS = frozenset(["load_cases","load_skill_owned_cases","case_selectors","case_target_kind","case_target_name","safe_fixture_path","sanitize_database_seed","write_project_config","judge_prompt","parse_judge","semantic_pass","semantic_behavior_score","classify_skill_value","skill_baseline_agent","skill_eval_agent","skill_ablation_copilot_system","strip_frontmatter","deterministic_failures","target_prompt"])
 
 
 def __getattr__(name: str):
