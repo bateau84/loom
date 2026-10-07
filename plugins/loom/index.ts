@@ -10540,6 +10540,40 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       })
 
       addLoomTool({
+        name: "work_reconcile_status",
+        description:
+          "Read an exact durable Task carry-forward audit receipt. A prepared/uncommitted receipt is not a completed reconciliation.",
+        input: {
+          type: "object",
+          properties: {
+            workflowId: { type: "string" },
+            auditId: { type: "string" },
+          },
+          required: ["workflowId", "auditId"],
+          additionalProperties: false,
+        },
+        options: { namespace: "loom", codemode: false },
+        execute: async (input, tool) => {
+          const value = input as { workflowId: string; auditId: string }
+          const workflow = await readBoundWorkflow(ctx, tool.sessionID, value.workflowId, ensureLegacySession)
+          if (!workflow) return { content: renderToolOutput({ error: "Bound workflow not found." }) }
+          if (!/^[0-9a-f-]{36}$/i.test(value.auditId)) {
+            return { content: renderToolOutput({ error: "Exact reconciliation audit ID is required." }) }
+          }
+          const audit = await ctx.storage.get("work-reconciliation/" + workflow.id + "/" + value.auditId)
+          if (!audit || typeof audit !== "object") {
+            return { content: renderToolOutput({ error: "Reconciliation audit not found." }) }
+          }
+          return { content: renderToolOutput({
+            audit,
+            authoritative: (audit as { state?: string }).state === "committed",
+            ...( (audit as { state?: string }).state === "committed"
+              ? {} : { warning: "Prepared or incomplete reconciliation cannot authorize a completion claim." }),
+          }) }
+        },
+      })
+
+      addLoomTool({
         name: "work_status",
         description:
           "Inspect persistent Objective progress and the effective current Plan. Pass taskId for one bounded Task contract; pass revision to explicitly inspect an immutable historical Plan revision without loading revision history into normal context.",
