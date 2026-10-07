@@ -12200,6 +12200,33 @@ test("production permission and attachment preserve an unchanged Wave after non-
   }
 })
 
+test("reviewed Wave Plan reopen cannot invalidate a claimed downstream Wave", async () => {
+  const h = await waveLifecycleFixture("wave", true)
+  try {
+    expect((await h.finish("task:one", "worker")).error).toBeUndefined()
+    expect((await h.finish("review-implementation", "reviewer", "pass")).error).toBeUndefined()
+    const work = await h.work()
+    const next = { ...richPlanTask("two", "Two", "Build two", ["one"]), write: ["src/**"], skills: [] }
+    claimWorkflowWave(work, "downstream-workflow", work.generation, [next], false, "later")
+    await h.durableStorage.set(h.workKey, work)
+    const beforeWorkflow = await h.workflow()
+    const beforeWork = structuredClone(await h.work())
+
+    const attempted = await h.call("reopen", {
+      workflowId: h.workflowId,
+      stepId: "plan",
+      reason: "Change a reviewed Plan after its output was consumed.",
+      newEvidence: true, changedHypothesis: false,
+      changedStrategy: false, reducedUnresolved: false,
+    }, "general", "parent")
+    expect(attempted.error).toContain("downstream")
+    expect(await h.workflow()).toEqual(beforeWorkflow)
+    expect(await h.work()).toEqual(beforeWork)
+  } finally {
+    h.restore()
+  }
+})
+
 test("Planner removal of a claimed Task can recover without redispatching completed work", async () => {
   const h = await waveLifecycleFixture("wave", false, "worker", true, "execute", "worker")
   try {

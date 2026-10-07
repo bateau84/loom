@@ -1323,6 +1323,37 @@ describe("reviewed Wave history and cancellation claims", () => {
     return work
   }
 
+  test("all-reused Wave cannot be re-claimed after downstream work has started", () => {
+    const work = createWorkHierarchy("docs/anchors/product/anchor.md", "wf-1", now)
+    materializeWorkPlan(work, "wf-1", plan(), now)
+    claimWorkflowWave(work, "wf-1", work.generation, [task("a"), task("b", ["a"])], false, now)
+    const result = (id: string) => ({
+      workflowId: "wf-1",
+      summary: `Completed ${id}.`,
+      evidenceClaimIds: [],
+      completedAt: now,
+      semanticClosureFingerprint: taskSemanticClosureFingerprintAtRevision(work, id)!,
+    })
+    syncWorkTaskStatuses(work, "wf-1", work.generation, [
+      { taskId: "a", complete: true, result: result("a") },
+      { taskId: "b", complete: true, result: result("b") },
+    ], now)
+    completeWaveForTasks(work, "wf-1", work.generation, ["a", "b"], now, graphFingerprint)
+
+    // Re-review is allowed before the reviewed result is consumed.
+    const control = structuredClone(work)
+    expect(() => claimWorkflowWave(control, "wf-1", control.generation, [], false, "rereview", ["a", "b"])).not.toThrow()
+
+    // Once the next Wave owns dependent work, reopening the foundation
+    // must not steal its completed review or turn it back into an active Wave.
+    claimWorkflowWave(work, "wf-2", work.generation, [task("c")], false, "downstream")
+    const before = structuredClone(work)
+    expect(() =>
+      claimWorkflowWave(work, "wf-1", work.generation, [], false, "rereview", ["a", "b"]),
+    ).toThrow("downstream")
+    expect(work).toEqual(before)
+  })
+
   test("completion proof is exact to owner, generation and reviewed task set", () => {
     const work = completedFoundation()
     const before = structuredClone(work)
