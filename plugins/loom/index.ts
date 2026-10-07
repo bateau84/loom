@@ -10374,6 +10374,16 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                     refuse(id, "Current workflow does not own the Task claim.")
                     continue
                   }
+                  const outstanding = questions.some((question) =>
+                    question.consumerStepIds.includes(step.id) &&
+                    question.status !== "closed" &&
+                    (!question.answer || !question.reconciliations[step.id]))
+                  if (blockingQuestionsForStep(questions, step.id).length || outstanding ||
+                      workflow.verification?.some((requirement) =>
+                        requirement.beforeStepId === step.id && requirement.status === "open")) {
+                    refuse(id, "Unresolved blocking question or required pre-Task verification.")
+                    continue
+                  }
                   const staleDependency = step.task.dependsOn.some((dependencyId) => {
                     const source = byId.get(dependencyId)
                     if (!source) return false // Reviewed external-Wave edge
@@ -10414,16 +10424,6 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                   }
                   if (!head || !receipt.cleanRepositoryHead || head !== receipt.cleanRepositoryHead) {
                     refuse(id, "No matching clean repository HEAD at original completion and now; code continuity is uncertain.")
-                    continue
-                  }
-                  const outstanding = questions.some((question) =>
-                    question.consumerStepIds.includes(step.id) &&
-                    question.status !== "closed" &&
-                    (!question.answer || !question.reconciliations[step.id]))
-                  if (blockingQuestionsForStep(questions, step.id).length || outstanding ||
-                      workflow.verification?.some((requirement) =>
-                        requirement.beforeStepId === step.id && requirement.status === "open")) {
-                    refuse(id, "Unresolved blocking question or required pre-Task verification.")
                     continue
                   }
                   const oldClaims = (await stepClaims(ctx, workflow.id, step.id)).filter(
