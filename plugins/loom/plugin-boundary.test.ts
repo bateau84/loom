@@ -16659,7 +16659,11 @@ test("Plan reconciliation restores only a proven original producer attempt, with
     resetStep.attempt += 1
     delete resetStep.summary
     await h.durableStorage.set("workflow/" + h.workflowId, reviewedWorkflow)
-    const beforeBudget = await h.durableStorage.get("budget/" + h.workflowId)
+    const budgetKey = "budget/" + h.workflowId
+    const normalBudget = await h.durableStorage.get(budgetKey) as any
+    await h.durableStorage.set(budgetKey, { ...normalBudget, totalDispatches: 40 })
+    const beforeBudget = await h.durableStorage.get(budgetKey)
+    expect((beforeBudget as any).totalDispatches).toBe(40)
 
     const unauthorized = await h.call("work_reconcile", {
       workflowId: h.workflowId, taskIds: ["one"],
@@ -16681,7 +16685,9 @@ test("Plan reconciliation restores only a proven original producer attempt, with
     expect(restored.reconciled).toEqual(["one"])
     expect(restored.refused).toEqual([])
     expect(restored.budgetUnchanged).toBe(true)
-    expect(await h.durableStorage.get("budget/" + h.workflowId)).toEqual(beforeBudget)
+    expect(await h.durableStorage.get(budgetKey)).toEqual(beforeBudget)
+    // Later OQ dispatches in this test are distinct and require normal capacity.
+    await h.durableStorage.set(budgetKey, normalBudget)
     const after = await h.workflow()
     expect(after.steps.find((step: any) => step.id === "task:one")).toMatchObject({
       status: "complete", attempt: sourceAttempt + 1,
