@@ -16614,6 +16614,7 @@ test("Plan reconciliation restores only a proven original producer attempt, with
     }, "worker", child)).error).toBeUndefined()
     const original = await h.workflow()
     const sourceStep = original.steps.find((step: any) => step.id === "task:one")
+    const sourceAttempt = sourceStep.attempt ?? 0
     const work = await h.work()
     const source = work.nodes.find((node: any) => node.logicalId === "one" && node.type === "task")
     expect(source.result).toMatchObject({
@@ -16647,7 +16648,7 @@ test("Plan reconciliation restores only a proven original producer attempt, with
     expect(await h.durableStorage.get("budget/" + h.workflowId)).toEqual(beforeBudget)
     const after = await h.workflow()
     expect(after.steps.find((step: any) => step.id === "task:one")).toMatchObject({
-      status: "complete", attempt: sourceStep.attempt - 1,
+      status: "complete", attempt: sourceAttempt,
       summary: "Original verified implementation",
     })
     expect(after.steps.find((step: any) => step.id === "review-implementation").status).toBe("pending")
@@ -16661,7 +16662,7 @@ test("Plan reconciliation restores only a proven original producer attempt, with
     expect(replay.alreadyComplete).toEqual(["one"])
     const audit = await h.durableStorage.get("work-reconciliation/" + h.workflowId + "/" + restored.auditId)
     expect(audit.recovered[0]).toMatchObject({
-      taskId: "one", originalAttempt: sourceStep.attempt - 1,
+      taskId: "one", originalAttempt: sourceAttempt,
       evidenceClaimIds: [claim.claim.id],
     })
   } finally {
