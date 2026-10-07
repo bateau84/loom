@@ -215,9 +215,13 @@ export function resetVerificationAfterReopen(workflow: Workflow, resetStepIds: s
       continue
     }
 
+    // Reopening only the consumer gate does not invalidate an existing proof.
+    // Proof follows the producer/evidence path; the fresh gate may review the
+    // same proof again without redispatching unchanged work.
     if (
       requirement.status === "satisfied" &&
-      (reset.has(requirement.beforeStepId) || (requirement.proof?.stepId && reset.has(requirement.proof.stepId)))
+      requirement.proof?.stepId &&
+      reset.has(requirement.proof.stepId)
     ) {
       requirement.status = "open"
       delete requirement.proof
