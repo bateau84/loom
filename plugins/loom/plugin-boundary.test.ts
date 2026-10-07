@@ -71,6 +71,10 @@ async function harness(
   const root = existing?.root ?? await mkdtemp(join(tmpdir(), "loom-plugin-boundary-"))
   if (!existing) roots.push(root)
   await mkdir(join(root, "src"), { recursive: true })
+  if (!existing) {
+    await initializeGitFixture(root)
+    await git(root, ["commit", "--allow-empty", "-q", "-m", "test: harness repository baseline"])
+  }
 
   const previousState = process.env.XDG_STATE_HOME
   const previousRuntime = process.env.XDG_RUNTIME_DIR
