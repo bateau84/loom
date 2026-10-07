@@ -3292,7 +3292,34 @@ async function reusableCompletedTaskIds(
     reusable.push(taskStep.task!.id)
   }
 
-  return reusable
+  // An unchanged dependent contract is not enough when its consumed Task
+  // must be executed again. Prune the transitive set until every preserved
+  // Task's same-workflow dependencies also have reusable results.
+  const stepByTaskId = new Map(
+    taskSteps.filter((step) => step.task).map((step) => [step.task!.id, step]),
+  )
+  const eligible = new Set(reusable)
+  let removed = true
+  while (removed) {
+    removed = false
+    for (const taskId of reusable) {
+      if (!eligible.has(taskId)) continue
+      const task = stepByTaskId.get(taskId)
+      const unavailableDependency = task?.task?.dependsOn.find(
+        (dependencyId) => stepByTaskId.has(dependencyId) && !eligible.has(dependencyId),
+      )
+      if (!unavailableDependency) continue
+      if (invalidReceipt === "reject") {
+        throw new Error(
+          `Completed Task ${taskId} cannot be reused because dependency Task ${unavailableDependency} must be executed again.`,
+        )
+      }
+      eligible.delete(taskId)
+      removed = true
+    }
+  }
+
+  return reusable.filter((taskId) => eligible.has(taskId))
 }
 
 async function readQuestions(ctx: any, workflowId: string): Promise<OpenQuestion[]> {
