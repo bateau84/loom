@@ -12194,10 +12194,48 @@ test("reopening Plan preserves unchanged completed Tasks and requires only fresh
     ).toBe(h.workflowId)
 
     const planner = await h.attach("plan", "planner", "reuse-plan-planner")
+    const beforeAmend = await h.work()
+    const amended = await h.call("work_amend", {
+      workflowId: h.workflowId,
+      expectedVersion: beforeAmend.version,
+      reason: "Execution exposed one extra check in the remaining dependent Task.",
+      operations: [{
+        action: "patch-task",
+        taskId: "dependent",
+        patch: {
+          subtasks: [
+            "Consume the completed Task one result.",
+            "Handle the newly discovered dependent edge.",
+          ],
+        },
+      }],
+    }, "planner", planner)
+    expect(amended.error).toBeUndefined()
+    expect(amended.affectedTaskIds).toContain("dependent")
+    expect(amended.affectedTaskIds).not.toContain("one")
+
+    const current = await h.work()
+    const currentWaveTasks = current.plans.at(-1).phases[0].waves[0].tasks
+    const compiled = await h.call("task_plan", {
+      workflowId: h.workflowId,
+      tasks: currentWaveTasks.map((task: any) => ({
+        ...task,
+        write: ["src/**"],
+        skills: [],
+      })),
+    }, "planner", planner)
+    expect(compiled.error).toBeUndefined()
+    expect(compiled.reusedTaskIds).toContain("one")
+    expect((await h.workflow()).steps.find((step: any) => step.id === "task:one")).toMatchObject({
+      status: "complete",
+      attempt: completedOne.attempt,
+      summary: completedOne.summary,
+    })
+
     expect((await h.call("complete", {
       workflowId: h.workflowId,
       stepId: "plan",
-      summary: "Plan rechecked; completed Task one is unchanged.",
+      summary: "Plan revision refreshed; completed Task one is unchanged.",
     }, "planner", planner)).error).toBeUndefined()
 
     const reviewer = await h.attach("review-plan", "reviewer", "reuse-plan-reviewer")
