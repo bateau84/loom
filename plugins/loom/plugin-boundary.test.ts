@@ -16661,7 +16661,7 @@ test("Plan reconciliation restores only a proven original producer attempt, with
     }, "general", "parent")
     expect(replay.reconciled).toEqual([])
     expect(replay.alreadyComplete).toEqual(["one"])
-    const audit = await h.durableStorage.get("work-reconciliation/" + h.workflowId + "/" + restored.auditId)
+    const audit = await h.durableStorage.get("work-reconciliation/" + h.workflowId + "/" + restored.auditId) as any
     expect(audit.state).toBe("committed")
     expect(audit.recovered[0]).toMatchObject({
       taskId: "one", originalAttempt: sourceAttempt,
