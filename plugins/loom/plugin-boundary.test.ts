@@ -12179,7 +12179,9 @@ test("reopening Plan preserves unchanged completed Tasks and requires only fresh
 
     const work = await h.work()
     expect(work.nodes.find((node: any) => node.type === "task" && node.logicalId === "one")).toMatchObject({
-      status: "complete",
+      // Execution is reusable, but persistent Work does not become complete
+      // until the independent implementation review passes.
+      status: "pending",
       result: {
         workflowId: h.workflowId,
         planRevision: 1,
