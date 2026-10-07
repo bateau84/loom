@@ -7,6 +7,8 @@ author: GitButler Team
 
 # GitButler CLI Skill
 
+**Upstream provenance:** vendored from `gitbutlerapp/gitbutler` at ref `release/0.22.3`, source directory `crates/but/skill/` (`SKILL.md` plus the bundled `references/` files). Loom-specific composition guidance is layered on top of that upstream baseline.
+
 Use GitButler CLI (`but`) as the default version-control interface.
 
 ## Loom Composition
