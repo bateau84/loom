@@ -10836,9 +10836,16 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 stepId: value.stepId,
                 scopeAdded: projectPaths,
                 effectiveWrite: result.scope?.write ?? result.roleWriteDefault,
+                committableWrite: committableWriteScope(
+                  result.scope?.write ?? result.roleWriteDefault,
+                ),
+                commitAuthorized:
+                  committableWriteScope(
+                    result.scope?.write ?? result.roleWriteDefault,
+                  ).length > 0,
                 elevation: result.elevation,
                 note:
-                  "Project-local scope elevation is active immediately and recorded. Continue the current step; no General round-trip is required.",
+                  "Project-local scope elevation is active immediately and recorded. Any durable committable path in the effective write scope is commit-authorized for this step's admitted bytes. Continue the current step; no General round-trip is required.",
               }),
             }
           } catch (error) {

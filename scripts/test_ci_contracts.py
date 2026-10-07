@@ -125,6 +125,11 @@ class CommitScopeAuthorityTests(unittest.TestCase):
             "Any durable project-local write scope, including scope granted by loom_scope_elevate",
             source,
         )
+        granted = source.index('status: "granted"')
+        next_tool = source.index('name: "scope_authorize_once"', granted)
+        granted_block = source[granted:next_tool]
+        self.assertIn("commitAuthorized:", granted_block)
+        self.assertIn("committableWrite:", granted_block)
 
 
 class OpenCodeVersionContractTests(unittest.TestCase):
