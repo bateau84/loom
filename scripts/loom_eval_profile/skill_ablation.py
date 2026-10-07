@@ -110,8 +110,13 @@ def observed_native_skill_load(
         return ("non-evidence", "complete native runtime boundary unavailable")
     observations = evidence.get("observations")
     session = result.get("session_id")
-    if not isinstance(observations, list) or not isinstance(session, str) or not session:
-        return ("non-evidence", "native observations or target session identity unavailable")
+    if (
+        not isinstance(observations, list)
+        or not isinstance(session, str)
+        or not session
+        or "***REDACTED***" in session
+    ):
+        return ("non-evidence", "native observations or exact target session identity unavailable")
 
     matched = False
     for observation in observations:
