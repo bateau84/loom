@@ -36,6 +36,10 @@ jobs:
             docker run --rm --entrypoint opencode "$OPENCODE_EVAL_RUNNER_OPENCODE_IMAGE" run --help | grep -F -- 'provider/model#variant'
             docker image inspect "$OPENCODE_EVAL_RUNNER_COPILOT_IMAGE" >/dev/null
             docker run --rm --entrypoint copilot "$OPENCODE_EVAL_RUNNER_COPILOT_IMAGE" --help | grep -F -- '--effort'
+      - name: Validate skill-owned generic paired adapter (provider-free)
+        run: |
+          python3 scripts/test_ci_skill_ablation_cutover.py
+          python3 scripts/test_ci_eval_compat_validation.py
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
           bun-version: 1.4.2
