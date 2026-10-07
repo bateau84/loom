@@ -11562,6 +11562,90 @@ test("Brainstorm is eligible for an exact OQ dispatch without becoming a Task pr
   }
 })
 
+test("Planner OQ may add new Plan authority while an unaffected reviewed Wave remains claimed and dispatchable", async () => {
+  const h = await waveLifecycleFixture("wave", true)
+  try {
+    const workflowBefore = await h.workflow()
+    const workBefore = await h.work()
+    const currentWaveBefore = workBefore.nodes.find(
+      (node: any) => node.type === "wave" && node.logicalId === "first",
+    )
+    expect(workflowBefore.steps.find((step: any) => step.id === "review-plan").status).toBe("passed")
+    expect(currentWaveBefore.claimedByWorkflowId).toBe(h.workflowId)
+
+    const raised = await h.call("oq_raise", {
+      workflowId: h.workflowId,
+      taskId: "two",
+      question: "Add newly accepted authority for future work without disturbing the reviewed current Wave.",
+      responder: "planner",
+      blocking: false,
+    }, "general", "parent")
+    expect(raised.error).toBeUndefined()
+
+    const plannerGrant = await h.call("dispatch_grant", {
+      workflowId: h.workflowId,
+      questionId: raised.question.id,
+    }, "general", "parent")
+    expect(plannerGrant.error).toBeUndefined()
+
+    const planner = "planner-live-authority-amend"
+    expect((await h.call("attach", {
+      workflowId: h.workflowId,
+      questionId: raised.question.id,
+      grantId: plannerGrant.grantId,
+    }, "planner", planner)).attached).toBe(true)
+
+    const amended = await h.call("work_amend", {
+      workflowId: h.workflowId,
+      questionId: raised.question.id,
+      expectedVersion: workBefore.version,
+      reason: "New accepted authority applies to future work only.",
+      operations: [{ action: "add-authority-ref", authorityRef: "ARS-025" }],
+    }, "planner", planner)
+    expect(amended.error).toBeUndefined()
+    expect(amended.taskPlanRefreshRequired).toBe(false)
+    expect(amended.changedTaskIds).toEqual([])
+    expect(amended.revision).toBe(2)
+    expect(amended.plan.authorityRefs).toContain("ARS-025")
+
+    const workflowAfter = await h.workflow()
+    const workAfter = await h.work()
+    const currentWaveAfter = workAfter.nodes.find(
+      (node: any) => node.type === "wave" && node.logicalId === "first",
+    )
+    expect(currentWaveAfter).toMatchObject({
+      id: currentWaveBefore.id,
+      claimedByWorkflowId: h.workflowId,
+      claimedAt: currentWaveBefore.claimedAt,
+    })
+    expect(workflowAfter.work.taskPlanRevision).toBe(amended.revision)
+    expect(workflowAfter.work.reviewedPlanRevision).toBe(workflowBefore.work.reviewedPlanRevision)
+    expect(workflowAfter.work.reviewedPlanFingerprint).toBe(workflowBefore.work.reviewedPlanFingerprint)
+    expect(workflowAfter.work.taskPlanFingerprint).toBe(workflowBefore.work.taskPlanFingerprint)
+
+    const grant = await h.call("dispatch_grant", {
+      workflowId: h.workflowId,
+      stepId: "task:one",
+    }, "general", "parent")
+    expect(grant.error).toBeUndefined()
+
+    const attached = await h.call("attach", {
+      workflowId: h.workflowId,
+      stepId: "task:one",
+      grantId: grant.grantId,
+    }, "worker", "worker-after-live-authority-amend")
+    expect(attached.error).toBeUndefined()
+    expect(attached.attached).toBe(true)
+    expect(attached.planContext).toMatchObject({
+      generation: workAfter.generation,
+      revision: amended.revision,
+      focus: { task: { id: "one" } },
+    })
+  } finally {
+    h.restore()
+  }
+})
+
 test("Planner OQ may amend untouched future work without staling the active Wave DAG", async () => {
   const h = await waveLifecycleFixture("wave", true)
   try {
