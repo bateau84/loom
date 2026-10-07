@@ -2388,8 +2388,8 @@ export function claimWorkflowWave(
   } else {
     if (satisfied.length === 0) throw new Error("Wave claim requires executable or reusable Tasks.")
     const completed = satisfied.map((taskId) => taskMap.get(taskId))
-    if (completed.some((task) => !task || task!.status !== "complete")) {
-      throw new Error("Reusable Wave claim references a Task that is not complete.")
+    if (completed.some((task) => !task || !task!.result)) {
+      throw new Error("Reusable Wave claim references a Task without a preserved execution result.")
     }
     const parentIds = new Set(completed.map((task) => task!.parentId))
     if (parentIds.size !== 1) throw new Error("Reusable Tasks must belong to exactly one Wave.")
@@ -2538,13 +2538,18 @@ export function validateWorkflowWave(
 
   const waveId = [...parentIds][0]!
   const waveTasks = [...taskMap.values()].filter((task) => task.parentId === waveId)
-  const remainingWaveTasks = waveTasks.filter((task) => task.status !== "complete")
   for (const taskId of satisfiedTaskIds) {
     const satisfiedTask = taskMap.get(taskId)
-    if (!satisfiedTask || satisfiedTask.parentId !== waveId || satisfiedTask.status !== "complete") {
-      throw new Error(`Reusable Task ${taskId} is not an unchanged completed Task in the selected Wave.`)
+    if (!satisfiedTask || satisfiedTask.parentId !== waveId || !satisfiedTask.result) {
+      throw new Error(`Reusable Task ${taskId} has no preserved execution result in the selected Wave.`)
     }
   }
+  // A reused execution result remains pending in persistent Work until the
+  // independent implementation-review gate passes. It is nevertheless not
+  // executable work that must be repeated.
+  const remainingWaveTasks = waveTasks.filter(
+    (task) => task.status !== "complete" && !satisfiedTaskIds.has(task.logicalId),
+  )
 
   if (
     remainingWaveTasks.some((task) => !selected.has(task.logicalId)) ||
