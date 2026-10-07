@@ -8,6 +8,7 @@ Loom chooses the final comparison verdict; the runner owns both phase lifecycles
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import os
 import shutil
 import sys
@@ -20,14 +21,44 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def _bootstrap_runner() -> None:
-    """Import the exact Python library next to the configured runner binary."""
-    binary = os.environ.get("OPENCODE_EVAL_RUNNER_BIN") or shutil.which("opencode-eval-runner")
-    if not binary:
-        raise RuntimeError("opencode-eval-runner not found; install runner with paired mode from issue #64")
-    root = Path(binary).expanduser().resolve().parent.parent
-    if not (root / "runner" / "eval_paired.py").is_file():
-        raise RuntimeError(f"runner at {root} lacks generic paired mode; update to runner #64")
-    sys.path.insert(0, str(root))
+    """Resolve the generic paired API from an explicit runner or Python import.
+
+    GitHub Actions exposes the runner library on PYTHONPATH, while local
+    installs may expose only its binary. Requiring both rejects valid setups.
+    """
+    configured = os.environ.get("OPENCODE_EVAL_RUNNER_BIN")
+    if configured:
+        binary = Path(configured).expanduser().resolve()
+        if not binary.is_file():
+            raise RuntimeError(f"OPENCODE_EVAL_RUNNER_BIN not found: {binary}")
+        root = binary.parent.parent
+        if not (root / "runner" / "eval_paired.py").is_file():
+            raise RuntimeError(f"runner at {root} lacks generic paired mode; update to runner #64")
+        sys.path.insert(0, str(root))
+        return
+
+    # The generic paired API is a Python library; its CLI is not required when
+    # the module itself is already importable (e.g. through PYTHONPATH).
+    try:
+        paired_module = importlib.util.find_spec("runner.eval_paired")
+    except (ImportError, ValueError):
+        paired_module = None
+    if paired_module is not None and paired_module.origin is not None:
+        return
+
+    binary_path = shutil.which("opencode-eval-runner")
+    if binary_path:
+        root = Path(binary_path).resolve().parent.parent
+        if not (root / "runner" / "eval_paired.py").is_file():
+            raise RuntimeError(f"runner at {root} lacks generic paired mode; update to runner #64")
+        sys.path.insert(0, str(root))
+        return
+
+    raise RuntimeError(
+        "generic paired runner #64 is not importable or on PATH; "
+        "set OPENCODE_EVAL_RUNNER_BIN to its bin/opencode-eval-runner "
+        "or add the runner checkout root to PYTHONPATH"
+    )
 
 
 def parser() -> argparse.ArgumentParser:
