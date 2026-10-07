@@ -10564,11 +10564,35 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           if (!audit || typeof audit !== "object") {
             return { content: renderToolOutput({ error: "Reconciliation audit not found." }) }
           }
+          const record = audit as {
+            state?: string
+            generation?: number
+            revision?: number
+            recovered?: Array<{ taskId: string; originalAttempt: number }>
+          }
+          const committed = record.state === "committed"
+          const work = workflow.work ? await readWork(ctx, workflow.work.objectiveId) : undefined
+          const plan = work && workflow.work
+            ? workPlanContext(work, undefined, "focused", workflow.work.generation) : undefined
+          const current = Boolean(
+            committed && record.recovered?.length && work && plan &&
+            workflow.work?.generation === record.generation &&
+            plan.revision === record.revision &&
+            workflow.work?.reviewedPlanRevision === record.revision &&
+            workflow.steps.some((step) => step.id === "review-plan" && step.status === "passed") &&
+            record.recovered?.every((source) =>
+              workflow.steps.some((step) => step.task?.id === source.taskId && satisfied(step)) &&
+              work.nodes.some((node) => node.type === "task" && node.logicalId === source.taskId &&
+                node.generation === record.generation &&
+                node.result?.workflowId === workflow.id &&
+                node.result?.completedAttempt === source.originalAttempt),
+            ),
+          )
           return { content: renderToolOutput({
-            audit,
-            authoritative: (audit as { state?: string }).state === "committed",
-            ...( (audit as { state?: string }).state === "committed"
-              ? {} : { warning: "Prepared or incomplete reconciliation cannot authorize a completion claim." }),
+            audit, committed, current,
+            ...(!committed
+              ? { warning: "Prepared or incomplete reconciliation is not a completion receipt." }
+              : !current ? { warning: "Historical reconciliation does not prove current Task satisfaction." } : {}),
           }) }
         },
       })
