@@ -269,8 +269,7 @@ function parsedGitCommand(command: string): ParsedGitCommand | undefined {
 }
 
 export function isGitShellCommand(command: string) {
-  const words = parsedCommandWords(command)
-  return Boolean(words && words[0] === "git")
+  return /^git(?:\s|$)/.test(command.trimStart())
 }
 
 function gitInspectionHasUnsafeOption(args: readonly string[]) {
@@ -367,7 +366,7 @@ function parsedButlerCommand(command: string): ParsedButlerCommand | undefined {
 }
 
 export function isButlerShellCommand(command: string) {
-  return Boolean(parsedButlerCommand(command))
+  return /^but(?:\s|$)/.test(command.trimStart())
 }
 
 export function isButlerInspectionShellCommand(command: string) {
@@ -384,14 +383,6 @@ export function isButlerInspectionShellCommand(command: string) {
   if (parsed.subcommand === "oplog") {
     const action = parsed.args.find((word) => !word.startsWith("-")) ?? "list"
     return action === "list"
-  }
-
-  if (parsed.subcommand === "pull") {
-    return parsed.args.some((word) => word === "--check" || word === "-c")
-  }
-
-  if (parsed.subcommand === "push") {
-    return parsed.args.includes("--dry-run")
   }
 
   return false
@@ -426,11 +417,7 @@ export function butlerCommitSourceIds(command: string) {
 
     if (
       word === "-b" ||
-      word === "--branch" ||
-      word === "-A" ||
-      word === "--above" ||
-      word === "-B" ||
-      word === "--below"
+      word === "--branch"
     ) {
       const value = parsed.args[index + 1]
       if (!value || value.startsWith("-")) return undefined
@@ -438,9 +425,7 @@ export function butlerCommitSourceIds(command: string) {
       continue
     }
     if (
-      word.startsWith("--branch=") ||
-      word.startsWith("--above=") ||
-      word.startsWith("--below=")
+      word.startsWith("--branch=")
     ) {
       const value = word.split("=", 2)[1]
       if (!value) return undefined

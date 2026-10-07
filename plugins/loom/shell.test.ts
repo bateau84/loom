@@ -20,6 +20,14 @@ import {
 } from "./shell"
 
 describe("Loom Worker shell policy", () => {
+  test("classifies unsafe Git and Butler chains as repository commands so runtime can fail closed", () => {
+    expect(isGitShellCommand("git status && rm -f README.md")).toBe(true)
+    expect(isGitInspectionShellCommand("git status && rm -f README.md")).toBe(false)
+
+    expect(isButlerShellCommand("but status && but discard zz")).toBe(true)
+    expect(isButlerInspectionShellCommand("but status && but discard zz")).toBe(false)
+  })
+
 
   test("allows universal read-only Git inspection and rejects mutation-shaped or escaping forms", () => {
     for (const command of [
@@ -78,8 +86,6 @@ describe("Loom Worker shell policy", () => {
       "but branch show feature",
       "but oplog",
       "but oplog list --since abc",
-      "but pull --check",
-      "but push feature --dry-run",
       "but commit --help",
     ]) {
       expect(isButlerShellCommand(command)).toBe(true)
@@ -88,7 +94,9 @@ describe("Loom Worker shell policy", () => {
 
     for (const command of [
       "but pull",
+      "but pull --check",
       "but push feature",
+      "but push feature --dry-run",
       "but branch new feature",
       "but discard qs:5",
       "but squash a -t b -m 'combine'",
@@ -109,7 +117,7 @@ describe("Loom Worker shell policy", () => {
     ).toEqual(["qs", "uo"])
     expect(
       butlerCommitSourceIds(
-        "but --json commit --above abc -m 'feat: one' -m 'Verification: pass' qs",
+        "but --json commit -b feature -m 'feat: one' -m 'Verification: pass' qs",
       ),
     ).toEqual(["qs"])
 
@@ -121,6 +129,8 @@ describe("Loom Worker shell policy", () => {
     for (const command of [
       "but commit -b feature -m 'fix: partial' qs:5",
       "but commit -b feature -m 'fix: broad' zz",
+      "but commit --above abc -m 'fix: positioned' qs",
+      "but commit --below abc -m 'fix: positioned' qs",
       "but commit -b feature -m 'fix: broad'",
       "but commit -b feature qs:5",
       "but commit --empty -b feature -m 'chore: marker'",

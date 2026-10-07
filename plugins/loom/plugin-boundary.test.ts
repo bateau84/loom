@@ -4600,6 +4600,24 @@ Verdict: FAIL
       const evaluate = permissionHooks.get("evaluate")
       expect(evaluate).toBeDefined()
 
+      for (const [command, expectedFragment] of [
+        ["git status && rm -f README.md", "Git command is not admitted"],
+        ["but status && but discard zz", "Butler mutation is not admitted"],
+        ["but pull --check", "Butler mutation is not admitted"],
+        ["but push feature --dry-run", "Butler mutation is not admitted"],
+      ] as const) {
+        const unsafeRepositoryCommand: any = {
+          agent: "architect",
+          action: "shell",
+          resources: [command],
+          sessionID: "conversation-repository-command-boundary",
+          effect: "allow",
+        }
+        await evaluate!(unsafeRepositoryCommand)
+        expect(unsafeRepositoryCommand.effect).toBe("deny")
+        expect(unsafeRepositoryCommand.message).toContain(expectedFragment)
+      }
+
       const crossRoleEdit: any = {
         agent: "reviewer",
         action: "edit",
