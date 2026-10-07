@@ -16834,11 +16834,19 @@ test("Plan reconciliation rejects a dependent whose upstream producer was rerun 
       planRevision: 1, semanticClosureFingerprint: "historical-only",
       executableTaskFingerprint: "historical-only", evidenceClaimIds: ["original-claim"],
     }
+    const originalProducerResult = {
+      ...receipt, completedAt: "2026-10-07T22:00:00Z",
+      summary: "Original producer bytes",
+    }
     producer.result = {
-      ...receipt, completedAt: "2026-10-07T23:00:00Z",
+      ...originalProducerResult,
+      summary: "Rerun with a different result at the same timestamp",
     }
     dependent.result = {
       ...receipt, completedAt: "2026-10-07T22:00:00Z",
+      dependencyResultDigests: {
+        one: createHash("sha256").update(JSON.stringify(originalProducerResult)).digest("hex"),
+      },
     }
     await h.durableStorage.set(h.workKey, work)
     const result = await h.call("work_reconcile", {
