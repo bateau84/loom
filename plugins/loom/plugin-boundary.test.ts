@@ -10318,6 +10318,22 @@ test("Planner amendment schema accepts role corrections and role-owned Tasks in 
       id: "added", role: "worker", responsibility: "execute",
     })
 
+    const removed = await h.call("work_amend", {
+      workflowId,
+      expectedVersion: work.version,
+      reason: "Remove an unconsumed authority reference through the public delta operation.",
+      operations: [{ action: "remove-authority-ref", authorityRef: "ARS-025" }],
+    }, "planner", "role-amend-planner")
+    expect(removed.error).toBeUndefined()
+    const afterRemoval = await h.durableStorage.get(
+      `work/${encodeURIComponent(String(planned.objectiveId))}`,
+    ) as any
+    const afterRemovalPlan = afterRemoval.plans.find(
+      (candidate: any) => candidate.generation === afterRemoval.generation,
+    )
+    expect(afterRemovalPlan.authorityRefs).not.toContain("ARS-025")
+    expect(removed.revision).toBe(amended.revision + 1)
+
     const amendSchema = h.registered.get("loom_work_amend")?.input as any
     expect(amendSchema?.properties?.operations?.items?.properties?.action?.enum)
       .toEqual(expect.arrayContaining(["add-authority-ref", "remove-authority-ref"]))
@@ -10325,7 +10341,7 @@ test("Planner amendment schema accepts role corrections and role-owned Tasks in 
 
     const unsafeReplacement = await h.call("work_amend", {
       workflowId,
-      expectedVersion: work.version,
+      expectedVersion: afterRemoval.version,
       reason: "Replace-all authority mutation must be rejected at the public control-plane boundary.",
       operations: [],
       planPatch: { authorityRefs: ["docs/anchors/test/anchor.md"] },
