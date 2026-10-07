@@ -9921,6 +9921,7 @@ async function waveLifecycleFixture(
   taskResponsibility: "produce" | "execute" | "review" | "obtain-user-decision" = "execute",
   dependentRole = "worker",
   includeLastFutureWave = false,
+  planAuthorityRefs?: string[],
 ) {
   const h = await harness()
   try {
@@ -9966,7 +9967,7 @@ async function waveLifecycleFixture(
           ] : []),
         ],
       },
-    ]), "planner", planner)).error).toBeUndefined()
+    ], planAuthorityRefs ? { authorityRefs: planAuthorityRefs } : {}), "planner", planner)).error).toBeUndefined()
     expect((await h.call("task_plan", {
       workflowId, tasks: [
         { ...task, write: taskResponsibility === "obtain-user-decision" ? [] : taskRole === "worker" ? ["src/**"] : ["docs/architecture/**"], skills: [] },
@@ -10011,7 +10012,16 @@ async function waveLifecycleFixture(
 }
 
 test("legacy persisted Task fingerprints remain admissible after authority-delta fingerprint refinement", async () => {
-  const h = await waveLifecycleFixture()
+  const h = await waveLifecycleFixture(
+    "wave",
+    false,
+    "worker",
+    false,
+    "execute",
+    "worker",
+    false,
+    ["docs/anchors/test/anchor.md", "docs/authority/unused-plan-context.md"],
+  )
   try {
     const workflow = await h.workflow()
     const work = await h.work()
