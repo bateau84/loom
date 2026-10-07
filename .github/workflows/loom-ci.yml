@@ -17,7 +17,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Smoke test pinned eval-runner action/runtime pair
-        uses: bateau84/opencode-eval-runner@16715800e494b9dbebe37f7f7f5dd0e333733447
+        uses: bateau84/opencode-eval-runner@a7efd0b96ec650f9a972b53830722e467b61eb36
         with:
           opencode-image: ghcr.io/bateau84/opencode-eval-runner@sha256:104a0895c83e4f36fb597e388656a4c6e445035c9a1fb5aaa2c9e922ad172a36
           copilot-image: ghcr.io/bateau84/opencode-eval-runner@sha256:7b06209cac3a0125a0d90d49a200fd71c7f91dae24477183e95ba4df0a822818
