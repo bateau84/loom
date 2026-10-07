@@ -100,14 +100,14 @@ class WorkflowCredentialTests(unittest.TestCase):
         ci = (
             RUN_EVALS.ROOT / ".github" / "workflows" / "loom-ci.yml"
         ).read_text(encoding="utf-8")
-        expected_action = "bateau84/opencode-eval-runner@a7efd0b96ec650f9a972b53830722e467b61eb36"
+        expected_action = "bateau84/opencode-eval-runner@1262ac8c2eebbd10af572e3e3560318f6113233b"
         expected_image = (
             "ghcr.io/bateau84/opencode-eval-runner@"
-            "sha256:104a0895c83e4f36fb597e388656a4c6e445035c9a1fb5aaa2c9e922ad172a36"
+            "sha256:a1a415e1f236c4d572ef7cd6190561b0b46ff8443761601d750eb88ce3c87442"
         )
         expected_copilot_image = (
             "ghcr.io/bateau84/opencode-eval-runner@"
-            "sha256:7b06209cac3a0125a0d90d49a200fd71c7f91dae24477183e95ba4df0a822818"
+            "sha256:1c38e2d275206a9a0de057a01a43d8c4c00da4c44e56462ac17139c22f95a1f9"
         )
 
         for workflow in (live, ci):
