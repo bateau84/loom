@@ -11854,6 +11854,64 @@ test("Planner OQ may add new Plan authority while an unaffected reviewed Wave re
   }
 })
 
+test("live specialist mutation fails closed after Planner changes its active Task contract", async () => {
+  const h = await waveLifecycleFixture("wave", false, "architect")
+  try {
+    const architect = await h.attach("task:one", "architect", "stale-plan-architect")
+
+    const raised = await h.call("oq_raise", {
+      workflowId: h.workflowId,
+      taskId: "one",
+      question: "Adapt the active architecture Task after a newly discovered constraint.",
+      responder: "planner",
+      blocking: false,
+    }, "general", "parent")
+    expect(raised.error).toBeUndefined()
+    const plannerGrant = await h.call("dispatch_grant", {
+      workflowId: h.workflowId,
+      questionId: raised.question.id,
+    }, "general", "parent")
+    expect(plannerGrant.error).toBeUndefined()
+    const planner = "stale-plan-mutation-planner"
+    expect((await h.call("attach", {
+      workflowId: h.workflowId,
+      questionId: raised.question.id,
+      grantId: plannerGrant.grantId,
+    }, "planner", planner)).attached).toBe(true)
+
+    const before = await h.work()
+    const amended = await h.call("work_amend", {
+      workflowId: h.workflowId,
+      questionId: raised.question.id,
+      expectedVersion: before.version,
+      reason: "The active Task contract must account for the newly discovered constraint.",
+      operations: [{
+        action: "patch-task",
+        taskId: "one",
+        patch: {
+          constraints: ["Honor the newly discovered architecture constraint."],
+        },
+      }],
+    }, "planner", planner)
+    expect(amended.error).toBeUndefined()
+    expect(amended.taskPlanRefreshRequired).toBe(true)
+
+    const permission: any = {
+      agent: "architect",
+      action: "edit",
+      resources: ["docs/architecture/stale-plan.md"],
+      sessionID: architect,
+      effect: "allow",
+      message: "",
+    }
+    await h.permissionHooks.get("evaluate")!(permission)
+    expect(permission.effect).toBe("deny")
+    expect(permission.message).toContain("reviewed claimed-Wave contract or current Task DAG no longer matches")
+  } finally {
+    h.restore()
+  }
+})
+
 test("Planner OQ may amend untouched future work without staling the active Wave DAG", async () => {
   const h = await waveLifecycleFixture("wave", true)
   try {
