@@ -2162,19 +2162,9 @@ export function syncWorkTaskStatuses(
       )
     }
     const next: WorkNodeStatus = entry.complete ? "complete" : "pending"
-    if (!entry.complete && !entry.result && task.result) {
-      task.priorResults = [
-        ...(task.priorResults ?? []),
-        {
-          ...task.result,
-          invalidatedAt: now,
-          invalidatedByRevision: currentPlan(hierarchy)?.revision ?? 1,
-          invalidatedReason: "Workflow Task was reopened; previous execution receipt is no longer current.",
-        },
-      ]
-      delete task.result
-      changed = true
-    }
+    // A Task's execution result stays current while implementation review is
+    // pending. The Work roll-up is intentionally pending until that review
+    // passes; only explicit Task invalidation may archive its result.
     if (entry.result && JSON.stringify(task.result) !== JSON.stringify(entry.result)) {
       task.result = entry.result
       changed = true

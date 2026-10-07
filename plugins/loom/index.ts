@@ -7053,7 +7053,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             let invalidatedPlanRecovery = false
             let staleCompiledPlan = false
             let staleCompiledClaimBroken = false
-            let unverifiedCompletedTaskIds: string[] = []
+            let satisfiedBeforeReopen = new Set<string>()
             const preservedTaskSteps = new Map<string, {
               status: "complete" | "passed"
               attempt: number
@@ -7080,6 +7080,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                   assertWorkGeneration(work, workflow.work.generation)
                 }
                 const currentTaskSteps = plannedTaskSteps(workflow)
+                satisfiedBeforeReopen = new Set(currentTaskSteps.filter(satisfied).map((step) => step.id))
                 const taskIds = currentTaskSteps.map((taskStep) => taskStep.task!.id)
                 // Planner OQs may remove or move a claimed Task. The old DAG
                 // cannot prove its claim after that amendment, but General must
@@ -7103,9 +7104,6 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                       ...(taskStep.summary ? { summary: taskStep.summary } : {}),
                     })
                   }
-                  unverifiedCompletedTaskIds = currentTaskSteps
-                    .filter((candidate) => satisfied(candidate) && !preservedTaskSteps.has(candidate.id))
-                    .map((candidate) => candidate.task!.id)
                 }
                 if (taskIds.length > 0) {
                   const reviewed = workflow.steps.some((candidate) => candidate.id === "review-implementation" && candidate.status === "passed")
@@ -7179,11 +7177,19 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               }
 
               const now = new Date().toISOString()
-              if (work && workflow.work && unverifiedCompletedTaskIds.length > 0) {
+              // Workflow step transitions own invalidation. An ordinary Work
+              // status synchronization must never erase an execution receipt
+              // merely because independent implementation review is pending.
+              const restartedTaskIds = plannedTaskSteps(workflow)
+                .filter((step) => satisfiedBeforeReopen.has(step.id) && reset.includes(step.id))
+                .map((step) => step.task!.id)
+              if (work && workflow.work && restartedTaskIds.length > 0) {
                 invalidateWorkflowTaskResults(
                   work, workflow.id, workflow.work.generation,
-                  unverifiedCompletedTaskIds,
-                  "Plan reopened: original completion lacks a valid current semantic receipt.",
+                  restartedTaskIds,
+                  stepId === "plan"
+                    ? "Plan reopened: original completion lacks a valid current semantic receipt."
+                    : `Task reset by workflow reopen at ${stepId}.`,
                   now,
                 )
               }

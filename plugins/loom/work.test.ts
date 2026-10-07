@@ -876,15 +876,20 @@ describe("Loom persistent work hierarchy", () => {
       completedAt: now,
     }
     syncWorkTaskStatuses(work, "wf-1", work.generation, [{ taskId: "a", complete: true, result }], now)
-    syncWorkTaskStatuses(work, "wf-1", work.generation, [{ taskId: "a", complete: false }], "reopened")
+    syncWorkTaskStatuses(work, "wf-1", work.generation, [{ taskId: "a", complete: false }], "awaiting-review")
     const node = work.nodes.find((candidate) => candidate.type === "task" && candidate.logicalId === "a")
-    expect(node?.result).toBeUndefined()
+    // Status is pending until independent review, but the execution receipt
+    // remains valid until the workflow explicitly reopens its Task step.
     expect(node?.status).toBe("pending")
+    expect(node?.result).toEqual(result)
+    expect(node?.priorResults).toBeUndefined()
+    invalidateWorkflowTaskResults(work, "wf-1", work.generation, ["a"], "Task explicitly reopened", "reopened")
+    expect(node?.result).toBeUndefined()
     expect(node?.priorResults).toEqual([{
       ...result,
       invalidatedAt: "reopened",
       invalidatedByRevision: 1,
-      invalidatedReason: expect.stringContaining("reopened"),
+      invalidatedReason: "Task explicitly reopened",
     }])
   })
 
