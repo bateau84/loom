@@ -11906,7 +11906,7 @@ test("live specialist mutation fails closed after Planner changes its active Tas
     }
     await h.permissionHooks.get("evaluate")!(permission)
     expect(permission.effect).toBe("deny")
-    expect(permission.message).toContain("reviewed claimed-Wave contract or current Task DAG no longer matches")
+    expect(permission.message).toContain("compiled Task DAG is stale against the current Plan generation")
   } finally {
     h.restore()
   }
