@@ -142,6 +142,8 @@ class CompatValidationTests(unittest.TestCase):
             "prepare_transport_result",
             "extract_tool_result_evidence",
             "enforce_reasoning_contract",
+            "deterministic_failures",
+            "judge_prompt",
         ):
             with self.subTest(name=name):
                 self.assertFalse(hasattr(self.w, name))
