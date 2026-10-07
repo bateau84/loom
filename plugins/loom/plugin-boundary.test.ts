@@ -12,7 +12,7 @@ import { cancelWorkflow } from "./lifecycle"
 import { deleteWorkflowRecords } from "./workflow-cleanup"
 import { createWorkHierarchy, materializeWorkPlan, claimWorkflowWave, syncWorkTaskStatuses,
   completeWaveForTasks, releaseCancelledWorkflowClaims, reopenWaveForTasks,
-  legacyWorkflowTaskSemanticFingerprint, type WorkPlanTask } from "./work"
+  legacyWorkflowTaskSemanticFingerprint, taskSemanticClosureFingerprintAtRevision, type WorkPlanTask } from "./work"
 import { buildSidebarSnapshot } from "./sidebar"
 import { prepareReportPromotion, publishPreparedReport, type ReportPromotionRecord } from "./reports"
 import {
@@ -16701,6 +16701,20 @@ test("Plan reconciliation fails closed for missing results, altered code and unr
     }, "general", "parent")
     expect(forged.reconciled).toEqual([])
     expect(forged.refused[0].reason).toContain("semantic")
+
+    // Even a matching Plan closure cannot authorize reuse after code changed.
+    node.result.semanticClosureFingerprint = taskSemanticClosureFingerprintAtRevision(
+      work, "one", work.generation,
+    )
+    await h.durableStorage.set(h.workKey, work)
+    await writeFile(join(h.root, "src", "changed.ts"), "export const revision = 2\\n")
+    await git(h.root, ["add", "src/changed.ts"])
+    await git(h.root, ["commit", "-q", "-m", "test: change repository after old completion"])
+    const drifted = await h.call("work_reconcile", {
+      workflowId: h.workflowId, taskIds: ["one"],
+    }, "general", "parent")
+    expect(drifted.reconciled).toEqual([])
+    expect(drifted.refused[0].reason).toContain("clean repository HEAD")
 
     const newVersion = await h.workflow()
     newVersion.steps.find((candidate: any) => candidate.id === "review-plan").status = "pending"
