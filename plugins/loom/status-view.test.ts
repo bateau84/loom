@@ -32,6 +32,7 @@ function statusView(): StatusView {
     workflowId: "wf-status",
     state: "active",
     progress: { finished: 3, total: 7, failed: 0 },
+    now: [],
     readiness: [{
       step: "task:implement",
       agent: "worker",
