@@ -16666,9 +16666,17 @@ test("Plan reconciliation restores only a proven original producer attempt, with
     }, "worker", child)
     expect(unauthorized.error).toContain("Only General")
 
-    const restored = await h.call("work_reconcile", {
-      workflowId: h.workflowId, taskIds: ["one"],
-    }, "general", "parent")
+    // Reattach through a fresh plugin instance over the same durable store:
+    // this must work after a host restart, not only in the original process.
+    const restarted = await harness(undefined, undefined, { root: h.root, storage: h.storage })
+    let restored: any
+    try {
+      restored = await restarted.call("work_reconcile", {
+        workflowId: h.workflowId, taskIds: ["one"],
+      }, "general", "parent")
+    } finally {
+      restarted.restore()
+    }
     expect(restored.error).toBeUndefined()
     expect(restored.reconciled).toEqual(["one"])
     expect(restored.refused).toEqual([])
