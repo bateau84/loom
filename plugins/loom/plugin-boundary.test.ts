@@ -16620,6 +16620,7 @@ test("Plan reconciliation restores only a proven original producer attempt, with
     expect(source.result).toMatchObject({
       completedAttempt: sourceStep.attempt,
       producerAgent: "worker",
+      executableTaskFingerprint: createHash("sha256").update(JSON.stringify(sourceStep.task)).digest("hex"),
       cleanRepositoryHead: expect.stringMatching(/^[0-9a-f]{40}$/),
       semanticClosureFingerprint: expect.any(String),
       evidenceClaimIds: [claim.claim.id],
@@ -16734,6 +16735,8 @@ test("Plan reconciliation fails closed for missing results, altered code and unr
     node.result.semanticClosureFingerprint = taskSemanticClosureFingerprintAtRevision(
       work, "one", work.generation,
     )
+    node.result.executableTaskFingerprint = createHash("sha256")
+      .update(JSON.stringify(step.task)).digest("hex")
     await h.durableStorage.set(h.workKey, work)
     await writeFile(join(h.root, "src", "changed.ts"), "export const revision = 2\\n")
     await git(h.root, ["add", "src/changed.ts"])
