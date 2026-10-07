@@ -179,8 +179,10 @@ artifacts and comparison. Do not transform a real behavioral FAIL into
 NON-EVIDENCE to make the cutover look green.
 
 The manually dispatched `.github/workflows/loom-live-evals.yml` can run
-selected cases on a trusted ref with configured credentials. **Never
-run secret-bearing live evals on untrusted pull-request code.**
+selected cases on a trusted ref with configured credentials. Its `iterations`,
+`parallel` and `runtime_parallel` inputs let you repeat the normal serialized
+baseline or deliberately opt into runtime stress. All default to 1.
+**Never run secret-bearing live evals on untrusted pull-request code.**
 No paid inference runs in ordinary PR CI.
 
 ## Validation record and remaining debt
