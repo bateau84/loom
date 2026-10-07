@@ -7072,7 +7072,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                             executableTaskFingerprint: createHash("sha256")
                               .update(JSON.stringify(taskStep.task)).digest("hex"),
                             dependencyResultDigests: Object.fromEntries(
-                              taskStep.task.dependsOn.flatMap((dependencyId) => {
+                              taskStep.task!.dependsOn.flatMap((dependencyId) => {
                                 const dependency = work.nodes.find((node) =>
                                   node.generation === workflow.work!.generation &&
                                   node.type === "task" && node.logicalId === dependencyId &&
