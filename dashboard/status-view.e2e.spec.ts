@@ -6,6 +6,7 @@ function view(): StatusView {
     workflowId: "wf-browser",
     state: "active",
     progress: { finished: 2, total: 5, failed: 0 },
+    now: [],
     readiness: [{
       step: "task:api",
       agent: "worker",
