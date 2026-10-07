@@ -8454,7 +8454,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       addLoomTool({
         name: "work_amend",
         description:
-          "Atomically amend a bounded part of the current Plan generation without replacing the whole Plan. Planner only. Pending/unclaimed Tasks may be edited/added/removed; completed semantic contracts cannot be rewritten. Supports local Phase/Wave/Task/subtask changes plus matching Plan metadata updates.",
+          "Atomically amend a bounded part of the current Plan generation without replacing the whole Plan. Planner only. Pending/unclaimed Tasks may be edited/added/removed; completed semantic contracts cannot be rewritten. Supports local Phase/Wave/Task/subtask changes, atomic authority-reference add/remove operations, plus matching Plan metadata updates. Prefer authority-reference operations over reconstructing the bounded Plan projection.",
         input: {
           type: "object",
           properties: {
@@ -8553,6 +8553,8 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                   action: {
                     type: "string",
                     enum: [
+                      "add-authority-ref",
+                      "remove-authority-ref",
                       "patch-phase",
                       "patch-wave",
                       "patch-task",
@@ -8564,6 +8566,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                       "remove-task",
                     ],
                   },
+                  authorityRef: { type: "string" },
                   phaseId: { type: "string" },
                   waveId: { type: "string" },
                   taskId: { type: "string" },
