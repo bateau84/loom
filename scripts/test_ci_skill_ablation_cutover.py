@@ -122,6 +122,8 @@ class PairInvoker:
             "exit_code": 0,
             "stderr": "",
             "text": payload,
+            "tools": [],
+            "actions": [],
             "runtime_evidence": unsupported_runtime_evidence("loom_pair_provider_free"),
             "skills_loaded": ["demo"] if side == "candidate" and self.candidate_loaded and not is_judge else [],
         }
@@ -250,6 +252,30 @@ class SkillAblationCutoverTests(unittest.TestCase):
         self.assertEqual(outcome.candidate.classification, "fail")
         self.assertEqual(outcome.comparison.decision.classification, "fail")
         self.assertTrue(any(check.name == "skill.native-load" for check in outcome.candidate.deterministic_checks))
+
+    def test_missing_score_projection_is_non_evidence(self):
+        class MissingProjection(PairInvoker):
+            def __call__(self, spec):
+                status, result = super().__call__(spec)
+                if spec.agent == "skill-baseline":
+                    result.pop("skills_loaded", None)
+                return status, result
+
+        outcome, artifact = self.pair(MissingProjection())
+        self.assertEqual(outcome.baseline.classification, "non-evidence")
+        self.assertEqual(bridge._pair_outcome(artifact), "non-evidence")
+
+    def test_redacted_target_text_is_non_evidence(self):
+        class RedactedOutput(PairInvoker):
+            def __call__(self, spec):
+                status, result = super().__call__(spec)
+                if spec.agent == "skill-eval":
+                    result["text"] = "***REDACTED***"
+                return status, result
+
+        outcome, artifact = self.pair(RedactedOutput())
+        self.assertEqual(outcome.candidate.classification, "non-evidence")
+        self.assertEqual(bridge._pair_outcome(artifact), "non-evidence")
 
     def test_copilot_inline_methodology_and_native_skill_scopes(self):
         self.profile = self.Profile(args(target_transport="github-copilot-cli", judge_transport="github-copilot-cli"), root=self.root)
