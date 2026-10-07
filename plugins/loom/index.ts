@@ -3167,6 +3167,17 @@ async function exactOqBinding(ctx: any, sessionID: string, workflowId: string, q
   return sessionBoundToOq(ctx.storage as any, sessionID, workflowId, questionId)
 }
 
+async function assertCurrentStepPlanAdmission(ctx: any, workflowId: string, stepId: string) {
+  const workflow = await readWorkflow(ctx, workflowId)
+  if (!workflow) throw new Error("Workflow not found.")
+  assertWorkflowNotCancelled(workflow)
+  const step = workflow.steps.find((candidate) => candidate.id === stepId)
+  if (!step) throw new Error("Step not found.")
+  const work = workflow.work ? await readWork(ctx, workflow.work.objectiveId) : undefined
+  if (workflow.work && !work) throw new Error("Persistent work hierarchy not found.")
+  assertStepDispatchAdmission(workflow, work, step)
+}
+
 async function assertWorkerWorkClaim(ctx: any, workflowId: string, stepId: string) {
   const workflow = await readWorkflow(ctx, workflowId)
   if (!workflow) throw new Error("Workflow not found.")
@@ -4257,6 +4268,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             `${agent} mutation requires the exact attached current runnable Loom step attempt.`,
           )
         }
+        await assertCurrentStepPlanAdmission(ctx, workflowId, stepId)
         if (agent === "worker") {
           await assertWorkerWorkClaim(ctx, workflowId, stepId)
         }
@@ -11002,6 +11014,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                     "Scope elevation requires the exact currently runnable pending step.",
                   )
                 }
+                await assertCurrentStepPlanAdmission(ctx, value.workflowId, value.stepId)
 
                 const existing = (await ctx.storage.get(
                   scopeKey(value.workflowId, value.stepId),
@@ -12235,15 +12248,16 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 "Butler authoring requires the role's exact current runnable Loom step attempt."
               return
             }
-            if (agent === "worker") {
-              try {
+            try {
+              await assertCurrentStepPlanAdmission(ctx, workflowId, stepId)
+              if (agent === "worker") {
                 await assertWorkerWorkClaim(ctx, workflowId, stepId)
-              } catch (error) {
-                event.effect = "deny"
-                event.message =
-                  error instanceof Error ? error.message : String(error)
-                return
               }
+            } catch (error) {
+              event.effect = "deny"
+              event.message =
+                error instanceof Error ? error.message : String(error)
+              return
             }
             const declaredScope = (await ctx.storage.get(
               scopeKey(workflowId, stepId),
@@ -12349,15 +12363,16 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 "Git authoring requires the role's exact current runnable Loom step attempt."
               return
             }
-            if (agent === "worker") {
-              try {
+            try {
+              await assertCurrentStepPlanAdmission(ctx, workflowId, stepId)
+              if (agent === "worker") {
                 await assertWorkerWorkClaim(ctx, workflowId, stepId)
-              } catch (error) {
-                event.effect = "deny"
-                event.message =
-                  error instanceof Error ? error.message : String(error)
-                return
               }
+            } catch (error) {
+              event.effect = "deny"
+              event.message =
+                error instanceof Error ? error.message : String(error)
+              return
             }
             const declaredScope = (await ctx.storage.get(
               scopeKey(workflowId, stepId),
@@ -12550,6 +12565,14 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           event.effect = "deny"
           event.message =
             "Specialist mutation requires a fresh attachment to the exact current runnable Loom step attempt."
+          return
+        }
+
+        try {
+          await assertCurrentStepPlanAdmission(ctx, workflowId, stepId)
+        } catch (error) {
+          event.effect = "deny"
+          event.message = error instanceof Error ? error.message : String(error)
           return
         }
 
