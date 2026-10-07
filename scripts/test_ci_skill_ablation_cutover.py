@@ -373,6 +373,79 @@ class SkillAblationCutoverTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "PYTHONPATH"):
                 bridge._bootstrap_runner()
 
+    def test_non_evidence_cli_reports_per_side_causes_without_raw_output(self):
+        artifact = {
+            "sides": {
+                "baseline": {
+                    "classification": "non-evidence",
+                    "target": {
+                        "attempts": [
+                            {
+                                "failure": {
+                                    "plane": "product",
+                                    "code": "product_error",
+                                    "message": "provider rejected authentication",
+                                },
+                                "result": {"text": "secret private prompt"},
+                            }
+                        ],
+                        "evidence_readiness": {"status": "ready", "reasons": []},
+                    },
+                    "judge": {"attempts": []},
+                    "deterministic_checks": [],
+                },
+                "candidate": {
+                    "classification": "non-evidence",
+                    "target": {
+                        "attempts": [
+                            {
+                                "failure": None,
+                            }
+                        ],
+                        "evidence_readiness": {
+                            "status": "incomplete",
+                            "reasons": ["native_missing"],
+                        },
+                    },
+                    "judge": {
+                        "attempts": [],
+                        "contract_failure": {
+                            "plane": "infrastructure",
+                            "code": "judge_contract_invalid",
+                            "message": "wrong shape",
+                        },
+                    },
+                    "deterministic_checks": [
+                        {
+                            "status": "non-evidence",
+                            "name": "skill.discovery",
+                            "reason": "skill load evidence missing",
+                        }
+                    ],
+                },
+            }
+        }
+        notes = bridge.side_evidence_notes(artifact)
+        self.assertEqual(len(notes), 2)
+        self.assertIn("baseline:", notes[0])
+        self.assertIn("product/product_error", notes[0])
+        self.assertIn("candidate:", notes[1])
+        self.assertIn("readiness incomplete", notes[1])
+        self.assertIn("skill.discovery", notes[1])
+        self.assertIn("judge_contract_invalid", notes[1])
+        self.assertNotIn("secret private prompt", " ".join(notes))
+
+    def test_side_notes_do_not_manufacture_failures_for_valid_classifications(self):
+        self.assertEqual(
+            bridge.side_evidence_notes({
+                "sides": {
+                    "baseline": {"classification": "pass"},
+                    "candidate": {"classification": "fail"},
+                }
+            }),
+            [],
+        )
+
     def test_missing_paired_engine_refused_before_inference(self):
         with tempfile.TemporaryDirectory() as tmp:
             binary = Path(tmp) / "bin" / "opencode-eval-runner"
