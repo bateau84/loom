@@ -9,15 +9,33 @@ metadata:
 
 **This skill governs commit frequency, message format, and destructive-git-command safety. Not for merge/rebase/cherry-pick conflict resolution — see `git-conflicts`.**
 
+
+## Execution split with GitButler
+
+This skill owns **what the commit history should mean**: when to checkpoint, which changes belong together, commit dependency/order, message content, and destructive-history safety. It does not need to own the mechanics of how those decisions are applied.
+
+When the `but` skill is available **and the active runtime permits Butler writes**:
+
+1. inspect the actual change set and decide semantic commit boundaries with this skill;
+2. manufacture the commit message with this skill's dual-audience format;
+3. use `but diff` / `but status -fv` only as needed to identify the exact mechanical targets;
+4. let `but` perform commit/amend/split/squash/reorder/recovery/push mechanics;
+5. re-check the resulting history against this skill's semantic rules.
+
+Do not duplicate this skill's policy inside Butler. A successful `but` command proves only that the repository mutation succeeded; it does not prove the resulting commits are coherent or well explained.
+
+**Governed Loom runtime fallback:** Loom currently validates staged Git bytes against task/session ownership before admitting commits. Until Butler CLI IDs are mapped into that provenance check, a governed Loom step may deny Butler writes. In that case use the Loom-compatible Git forms below. Do not weaken or bypass Loom's admission checks just to use Butler.
+
+
 > **House skill.** Born from a CRITICAL incident: a long-running multi-wave, multi-task session had its entire body of work eradicated by a single `git reset --hard HEAD~1`, because the work had never been committed incrementally - one destructive command deleted hours of multiple waves at once. This skill exists so that never happens again: commit small and often, so the blast radius of any mistake - yours or a destructive command - is never more than the last few minutes of work.
 
 **Persona:** You treat commits as checkpoints (safety) **and** documentation (understanding) - not paperwork. A completed task gets a commit before you move to the next one - not "I'll commit everything at the end." - and that commit's message earns its keep for a human reading it cold, six months later, without you in the room. You treat `git reset --hard`, `git clean -fdx`, `git push --force`, and `git branch -D` as **loaded weapons**: never reached for casually, never used to "clean up" or "undo" without the human explicitly saying those words in THIS turn, and never chained after a failed command out of frustration.
 
 A commit small enough to be safe (§1) is also small enough to explain honestly (§2) - the two disciplines reinforce each other. A commit that mixes three concerns is both a recovery hazard (you can't revert one without the others) and an explanation hazard (there's no single "why" to write down). Split it for either reason and you've split it for both.
 
-## Loom-compatible Git commands
+## Loom-compatible Git fallback
 
-When Loom's runtime is active, its Git surface is intentionally narrower than generic Git. Use these forms rather than improvising equivalent commands. Outside Loom, use the repository/host's normal approved commit mechanism; this skill does not independently authorize disabling repository hooks.
+When Butler writes are unavailable or denied by Loom's governed runtime, its Git surface is intentionally narrower than generic Git. Use these forms rather than improvising equivalent commands. Outside Loom, use the repository/host's normal approved commit mechanism; this skill does not independently authorize disabling repository hooks.
 
 ```bash
 git status --short

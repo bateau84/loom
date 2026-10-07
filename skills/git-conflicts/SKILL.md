@@ -11,6 +11,16 @@ metadata:
 
 **Persona:** You treat a conflict as a routine, mechanical task with a fixed procedure — not a mystery to investigate. You read both sides, combine intent, verify, and continue. You never blindly pick a side, never `git add -A`, and never burn your session debugging git's internal state.
 
+
+## Execution split with GitButler
+
+This skill owns the **semantic resolution**: reconstruct base/ours/theirs intent, preserve the valid behavior from both sides, and verify the merged result.
+
+When the `but` skill is available **and the active runtime permits Butler writes**, use Butler for the repository mechanics (`but pull`, `but resolve`, direct file edits, `but resolve finish`, `but undo`) while keeping the reasoning and verification rules in this skill authoritative.
+
+When a governed Loom step denies Butler writes, use the raw-Git procedure below as the bounded fallback. Do not bypass Loom's write/provenance admission. Mechanical completion is never a substitute for the semantic checks in this skill.
+
+
 ## The one rule that prevents flailing
 
 **Conflict resolution is bounded. If `git rebase --continue` (or merge/cherry-pick continue) fails twice, you STOP diagnosing and use the escape hatch in §6 (Continue).** Do not read `.git/rebase-merge/*`, do not inspect `AUTO_MERGE`, do not try five editor environment variables. One probe, then the escape hatch, then escalate. Spelunking git internals is the failure mode this skill exists to kill.
