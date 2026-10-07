@@ -1,4 +1,15 @@
 #!/usr/bin/env python3
+"""Retained Loom-specific eval definitions and historical diagnostic helpers.
+
+Not an executable runner. All supported live target/judge work, concurrency,
+retries, authoritative runtime evidence and artifacts are owned by the reusable
+opencode-eval-runner and entered through scripts/run-evals.py.
+
+The observer/transport projection and runner-safety helpers below exist only to
+inspect historical fixtures. They are NOT evidence authority, are not exported
+by the live compatibility entrypoint, and must not be used to judge current
+runtime cases. The modern profile consumes runtime_evidence/v1 only.
+"""
 from __future__ import annotations
 
 import argparse
