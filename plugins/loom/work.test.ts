@@ -843,6 +843,27 @@ describe("Loom persistent work hierarchy", () => {
     )?.status).toBe("pending")
   })
 
+  test("reopening unverified execution archives a receipt even after its claim was released", () => {
+    const work = createWorkHierarchy("docs/anchors/product/anchor.md", "wf-1", now)
+    materializeWorkPlan(work, "wf-1", plan(), now)
+    claimWorkflowWave(work, "wf-1", work.generation, [task("a"), task("b", ["a"])], false, now)
+    const result = {
+      workflowId: "wf-1",
+      summary: "Completed under old receipt contract.",
+      evidenceClaimIds: ["claim-a"],
+      completedAt: now,
+    }
+    syncWorkTaskStatuses(work, "wf-1", work.generation, [{ taskId: "a", complete: true, result }], now)
+    releaseCancelledWorkflowClaims(work, "wf-1", "released")
+    invalidateWorkflowTaskResults(work, "wf-1", work.generation, ["a"], "Unverified receipt", "review")
+    const node = work.nodes.find((candidate) => candidate.type === "task" && candidate.logicalId === "a")
+    expect(node?.status).toBe("pending")
+    expect(node?.result).toBeUndefined()
+    expect(node?.priorResults?.at(-1)).toMatchObject({
+      ...result, invalidatedReason: "Unverified receipt", invalidatedByRevision: 1,
+    })
+  })
+
   test("retains a reopened Task result as historical evidence rather than silently discarding it", () => {
     const work = createWorkHierarchy("docs/anchors/product/anchor.md", "wf-1", now)
     materializeWorkPlan(work, "wf-1", plan(), now)

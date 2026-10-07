@@ -175,6 +175,7 @@ import {
   completeWaveForTasks,
   createWorkHierarchy,
   invalidateWorkPlan,
+  invalidateWorkflowTaskResults,
   materializeWorkPlan,
   nextRunnableWaves,
   objectiveWorkLevel,
@@ -7000,6 +7001,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             let hadTaskExecution = false
             let invalidatedPlanRecovery = false
             let staleCompiledPlan = false
+            let unverifiedCompletedTaskIds: string[] = []
             const preservedTaskSteps = new Map<string, {
               status: "complete" | "passed"
               attempt: number
@@ -7066,6 +7068,9 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                       ...(taskStep.summary ? { summary: taskStep.summary } : {}),
                     })
                   }
+                  unverifiedCompletedTaskIds = currentTaskSteps
+                    .filter((candidate) => satisfied(candidate) && !preservedTaskSteps.has(candidate.id))
+                    .map((candidate) => candidate.task!.id)
                 }
                 if (taskIds.length > 0) {
                   const reviewed = workflow.steps.some((candidate) => candidate.id === "review-implementation" && candidate.status === "passed")
@@ -7130,6 +7135,14 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               }
 
               const now = new Date().toISOString()
+              if (work && workflow.work && unverifiedCompletedTaskIds.length > 0) {
+                invalidateWorkflowTaskResults(
+                  work, workflow.id, workflow.work.generation,
+                  unverifiedCompletedTaskIds,
+                  "Plan reopened: original completion lacks a valid current semantic receipt.",
+                  now,
+                )
+              }
               await ctx.storage.set(
                 `progress/${workflowId}/${stepId}/${crypto.randomUUID()}`,
                 { reason: value.reason, ...progress, at: now },

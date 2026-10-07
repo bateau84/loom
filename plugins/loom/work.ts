@@ -2092,6 +2092,52 @@ function recomputeRollup(hierarchy: WorkHierarchy, now: string) {
   }
 }
 
+/**
+ * Reopening a Task is not permission to retroactively attest an old result.
+ * Archive only this workflow's superseded receipts, including when a Plan
+ * amendment already released the original claim.
+ */
+export function invalidateWorkflowTaskResults(
+  hierarchy: WorkHierarchy,
+  workflowId: string,
+  generation: number,
+  taskIds: string[],
+  reason: string,
+  now: string,
+) {
+  assertWorkGeneration(hierarchy, generation)
+  const selected = new Set(taskIds)
+  if (selected.size === 0) return hierarchy
+  const invalidatedWaveIds = new Set<string>()
+  let changed = false
+
+  for (const task of currentGenerationNodes(hierarchy)) {
+    if (
+      task.type !== "task" ||
+      task.status === "superseded" ||
+      !selected.has(task.logicalId) ||
+      task.result?.workflowId !== workflowId
+    ) continue
+    invalidateTaskResult(task, currentPlan(hierarchy)?.revision ?? 1, reason, now)
+    if (task.parentId) invalidatedWaveIds.add(task.parentId)
+    changed = true
+  }
+  if (!changed) return hierarchy
+
+  for (const wave of currentGenerationNodes(hierarchy)) {
+    if (wave.type !== "wave" || !invalidatedWaveIds.has(wave.id)) continue
+    delete wave.completion
+    if (wave.status === "complete") {
+      wave.status = wave.claimedByWorkflowId ? "active" : "pending"
+    }
+    wave.updatedAt = now
+  }
+  recomputeRollup(hierarchy, now)
+  hierarchy.version++
+  hierarchy.updatedAt = now
+  return hierarchy
+}
+
 export function syncWorkTaskStatuses(
   hierarchy: WorkHierarchy,
   workflowId: string,
