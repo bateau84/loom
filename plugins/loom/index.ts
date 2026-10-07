@@ -34,7 +34,9 @@ import {
   WorkflowCancelledError,
   addVerificationRequirement,
   applyTaskPlan,
+  authorizeReviewerRepair,
   buildSteps,
+  completeReviewerRepair,
   executableTaskPlanFingerprint,
   planningOnlyObjective,
   resolveExecutionDepth,
@@ -47,6 +49,13 @@ import {
   reopenFrom,
   resetVerificationAfterReopen,
   runnable,
+  knownReviewerSessions,
+  prepareReviewerAfterAuthorityChange,
+  prepareReviewerAfterProducerRepair,
+  recordReviewerAttachment,
+  recordReviewerVerdict,
+  reviewAssignmentMode,
+  reviewerSessionEligibleForIndependentReview,
   type Effects,
   type Workflow,
 } from "./workflow"
@@ -222,6 +231,22 @@ const reportProducerAgents = new Set([
 ])
 
 const execFileAsync = promisify(execFile)
+
+async function repositoryHeadSha(projectDirectory: string) {
+  try {
+    const { stdout } = await execFileAsync("git", ["rev-parse", "HEAD"], {
+      cwd: projectDirectory,
+      encoding: "utf8",
+    })
+    const headSha = String(stdout).trim()
+    return /^[0-9a-f]{40}$/i.test(headSha) ? headSha : "unavailable"
+  } catch {
+    // Some synthetic/legacy review surfaces are not Git-backed. Normal review
+    // can preserve that limitation in its receipt; Reviewer-repair paths below
+    // fail closed when exact revision evidence is required.
+    return "unavailable"
+  }
+}
 
 const artifactWriteDefaults: Record<string, string[]> = {
   designer: ["docs/design/**", "ephemeral-reports/designer/**"],
@@ -3344,6 +3369,52 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       }
     }
 
+    const reviewerSessionLineageConflict = async (
+      sessionID: string,
+      forbiddenSessionIds: Set<string>,
+    ) => {
+      const pending = [sessionID]
+      const visited = new Set<string>()
+      while (pending.length > 0) {
+        const current = pending.pop()!
+        if (visited.has(current)) continue
+        visited.add(current)
+        if (visited.size > 64) {
+          throw new Error(
+            "Reviewer session lineage is too deep to establish independent-review eligibility.",
+          )
+        }
+        if (forbiddenSessionIds.has(current)) return current
+
+        let session: any
+        try {
+          session = await ctx.session.get({ sessionID: current })
+        } catch {
+          throw new Error(
+            "Reviewer session lineage could not be established; independent-review eligibility remains unresolved.",
+          )
+        }
+        if (!session || typeof session.id !== "string" || session.id !== current) {
+          throw new Error(
+            "Reviewer session lineage could not be established; independent-review eligibility remains unresolved.",
+          )
+        }
+
+        const ancestors = [
+          typeof session.parentID === "string" ? session.parentID : undefined,
+          session.fork && typeof session.fork.sessionID === "string"
+            ? session.fork.sessionID
+            : undefined,
+        ].filter((value): value is string => Boolean(value))
+
+        for (const ancestor of ancestors) {
+          if (forbiddenSessionIds.has(ancestor)) return ancestor
+          if (!visited.has(ancestor)) pending.push(ancestor)
+        }
+      }
+      return undefined
+    }
+
     const cleanupDiagnosticSandboxesForWorkflow = async (workflowId: string) => {
       const destroyed: string[] = []
       const errors: Array<{ sandboxId: string; error: string }> = []
@@ -5067,6 +5138,16 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             const currentStep = workflow.steps.find(
               (candidate) => candidate.id === stepId,
             )
+            if (
+              tool.agent === "reviewer" &&
+              currentStep &&
+              (resolvedOutcome === "pass" || resolvedOutcome === "fail") &&
+              reviewAssignmentMode(currentStep) === "repair-authorized"
+            ) {
+              throw new Error(
+                "Repair-authorized Reviewer work is self-verification, not an independent verdict. Commit and verify the bounded correction, then call loom_review_repair_complete.",
+              )
+            }
             const reviewerAcceptanceVerdict =
               tool.agent === "reviewer" &&
               (resolvedOutcome === "pass" || resolvedOutcome === "fail") &&
@@ -5168,6 +5249,25 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               step.task && step.status === "complete"
                 ? await stepClaims(ctx, workflowId, stepId)
                 : []
+
+            if (
+              tool.agent === "reviewer" &&
+              (resolvedOutcome === "pass" || resolvedOutcome === "fail")
+            ) {
+              const headSha = await repositoryHeadSha(ctx.location.directory)
+              const currentAttempt = step.attempt ?? 0
+              const reviewClaims = (await stepClaims(ctx, workflowId, stepId))
+                .filter((claim) => (claim.attempt ?? 0) === currentAttempt)
+              recordReviewerVerdict(step, {
+                sessionId: tool.sessionID,
+                outcome: resolvedOutcome,
+                summary,
+                headSha,
+                evidenceBound,
+                evidenceClaimIds: reviewClaims.map((claim) => claim.id),
+                recordedAt: new Date().toISOString(),
+              })
+            }
 
             if (workflow.work) {
               const work = await readWork(ctx, workflow.work.objectiveId)
@@ -5274,10 +5374,343 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               finished: stepId,
               evidenceBound,
               outcome: resolvedOutcome,
+              ...(step.agent === "reviewer"
+                ? {
+                    review: {
+                      mode: reviewAssignmentMode(step),
+                      independentApprovalPending:
+                        step.review?.independentApprovalPending ?? false,
+                      receipt: step.review?.receipts?.at(-1) ?? null,
+                    },
+                  }
+                : {}),
               blocked: workflow.steps.filter((candidate) => candidate.status === "failed").map((candidate) => candidate.id),
               runnable: runnable(workflow).map((candidate) => ({ id: candidate.id, agent: candidate.agent })),
               questions: questionState(questions, workflow),
             }),
+          }
+        },
+      })
+
+      addLoomTool({
+        name: "review_repair_authorize",
+        description:
+          "Authorize one exact existing Reviewer session to repair a bounded finding from a failed implementation review. General only. This reopens the review gate in repair-authorized mode; it does not grant independent approval.",
+        input: {
+          type: "object",
+          properties: {
+            workflowId: { type: "string" },
+            stepId: { type: "string" },
+            finding: { type: "string" },
+            reason: { type: "string" },
+            repairSessionId: {
+              type: "string",
+              description:
+                "Optional exact prior Reviewer session to resume for repair. Defaults to the Reviewer session that produced the current failed verdict.",
+            },
+          },
+          required: ["workflowId", "stepId", "finding", "reason"],
+          additionalProperties: false,
+        },
+        options: { namespace: "loom", codemode: false },
+        execute: async (input, tool) => {
+          if (tool.agent !== "general") {
+            return { content: renderToolOutput({ error: "Only general may authorize Reviewer repair." }) }
+          }
+          const value = input as {
+            workflowId: string
+            stepId: string
+            finding: string
+            reason: string
+            repairSessionId?: string
+          }
+          const active = await readBoundWorkflow(ctx, tool.sessionID, value.workflowId, ensureLegacySession)
+          if (!active) {
+            return { content: renderToolOutput({ error: "Workflow not found or General is not bound to it." }) }
+          }
+
+          try {
+            const result = await withRuntimeLocks(
+              runtime,
+              [
+                { aggregate: "workflow", resourceIdentity: value.workflowId },
+                stepAuthorityResource(value.workflowId, value.stepId),
+              ],
+              async () => {
+                const workflow = await readWorkflow(ctx, value.workflowId)
+                if (!workflow) throw new Error("Workflow not found.")
+                await validateWorkflowMutationLocked(ctx, runtime, workflow)
+                const step = workflow.steps.find((candidate) => candidate.id === value.stepId)
+                if (
+                  !step ||
+                  step.id !== "review-implementation" ||
+                  step.agent !== "reviewer" ||
+                  step.kind !== "gate"
+                ) {
+                  throw new Error("Reviewer repair is available only for the implementation-review gate.")
+                }
+                if (step.status !== "failed") {
+                  throw new Error("Reviewer repair authorization requires a failed implementation review.")
+                }
+
+                const priorAttempt = step.attempt ?? 0
+                const priorBinding = (await ctx.storage.get(
+                  stepSessionBindingKey(value.workflowId, value.stepId, priorAttempt),
+                )) as StepSessionBinding | undefined
+                const known = new Set(knownReviewerSessions(step))
+                if (priorBinding?.agent === "reviewer") known.add(priorBinding.sessionID)
+                const requested = value.repairSessionId?.trim()
+                const repairSessionId =
+                  requested ||
+                  priorBinding?.sessionID ||
+                  step.review?.lastReviewerSessionId
+                if (!repairSessionId) {
+                  throw new Error(
+                    "Reviewer repair requires known authorship/session evidence from a prior Reviewer assignment.",
+                  )
+                }
+                if (!known.has(repairSessionId)) {
+                  throw new Error(
+                    "Requested repair session is not part of this gate's recorded Reviewer session history.",
+                  )
+                }
+
+                const preferredIndependentSessionId =
+                  priorBinding?.sessionID &&
+                  priorBinding.sessionID !== repairSessionId &&
+                  reviewerSessionEligibleForIndependentReview(step, priorBinding.sessionID)
+                    ? priorBinding.sessionID
+                    : undefined
+
+                authorizeReviewerRepair(step, {
+                  repairSessionId,
+                  finding: value.finding,
+                  reason: value.reason,
+                  ...(preferredIndependentSessionId
+                    ? { preferredIndependentSessionId }
+                    : {}),
+                })
+                await ctx.storage.set(scopeKey(value.workflowId, value.stepId), {
+                  workflowId: value.workflowId,
+                  stepId: value.stepId,
+                  write: [...(artifactWriteDefaults.reviewer ?? [])],
+                } satisfies TaskScope)
+                await persistWorkflowMutationLocked(ctx, runtime, workflow)
+                return {
+                  workflow,
+                  step,
+                  repairSessionId,
+                  preferredIndependentSessionId,
+                }
+              },
+            )
+
+            return {
+              content: renderToolOutput({
+                authorized: true,
+                workflowId: value.workflowId,
+                stepId: value.stepId,
+                attempt: result.step.attempt ?? 0,
+                reviewMode: reviewAssignmentMode(result.step),
+                resumeSessionId: result.repairSessionId,
+                finding: result.step.review?.repairFinding,
+                independentApprovalPending: true,
+                ...(result.preferredIndependentSessionId
+                  ? {
+                      preferredIndependentReviewerSessionId:
+                        result.preferredIndependentSessionId,
+                    }
+                  : {}),
+                requiredAction:
+                  "Issue a fresh loom_dispatch_grant for this review step, then resume exactly resumeSessionId as Reviewer. The repair remains self-verification until a later eligible independent Reviewer passes.",
+              }),
+            }
+          } catch (error) {
+            return {
+              content: renderToolOutput({
+                error: error instanceof Error ? error.message : String(error),
+              }),
+            }
+          }
+        },
+      })
+
+      addLoomTool({
+        name: "review_repair_complete",
+        description:
+          "Finish one bounded Reviewer-authored implementation repair as self-verified evidence. Reviewer only. This never PASSes the independent gate; it advances the same gate to independent re-review and makes the repairing session ineligible for that approval.",
+        input: {
+          type: "object",
+          properties: {
+            workflowId: { type: "string" },
+            stepId: { type: "string" },
+            changeSummary: { type: "string" },
+            verificationSummary: { type: "string" },
+          },
+          required: [
+            "workflowId",
+            "stepId",
+            "changeSummary",
+            "verificationSummary",
+          ],
+          additionalProperties: false,
+        },
+        options: { namespace: "loom", codemode: false },
+        execute: async (input, tool) => {
+          if (tool.agent !== "reviewer") {
+            return { content: renderToolOutput({ error: "Only reviewer may complete Reviewer repair." }) }
+          }
+          const value = input as {
+            workflowId: string
+            stepId: string
+            changeSummary: string
+            verificationSummary: string
+          }
+          const attached = await readBoundWorkflow(ctx, tool.sessionID, value.workflowId, ensureLegacySession)
+          if (!attached) {
+            return { content: renderToolOutput({ error: "Workflow not found or Reviewer is not bound to it." }) }
+          }
+          if (
+            !(await exactRunnableStepAttemptBinding(
+              ctx,
+              tool.sessionID,
+              value.workflowId,
+              value.stepId,
+            ))
+          ) {
+            return {
+              content: renderToolOutput({
+                error: "Reviewer repair completion requires the exact current runnable step attempt.",
+              }),
+            }
+          }
+
+          try {
+            const result = await withRuntimeLocks(
+              runtime,
+              [
+                { aggregate: "workflow", resourceIdentity: value.workflowId },
+                stepAuthorityResource(value.workflowId, value.stepId),
+              ],
+              async () => {
+                const workflow = await readWorkflow(ctx, value.workflowId)
+                if (!workflow) throw new Error("Workflow not found.")
+                await validateWorkflowMutationLocked(ctx, runtime, workflow)
+                const step = workflow.steps.find((candidate) => candidate.id === value.stepId)
+                if (!step || step.agent !== "reviewer") {
+                  throw new Error("Reviewer repair step not found.")
+                }
+                if (
+                  reviewAssignmentMode(step) !== "repair-authorized" ||
+                  step.review?.repairSessionId !== tool.sessionID
+                ) {
+                  throw new Error(
+                    "Current Reviewer session is not the exact repair-authorized session for this gate.",
+                  )
+                }
+
+                const questions = await readQuestions(ctx, value.workflowId)
+                if (blockingQuestionsForStep(questions, value.stepId).length > 0) {
+                  throw new Error("Reviewer repair has unresolved blocking questions.")
+                }
+
+                const declaredScope = (await ctx.storage.get(
+                  scopeKey(value.workflowId, value.stepId),
+                )) as TaskScope | undefined
+                const ownedWriteScope = committableWriteScope(
+                  declaredScope?.write.length
+                    ? declaredScope.write
+                    : (artifactWriteDefaults.reviewer ?? []),
+                )
+                const repairElevation = declaredScope?.elevations?.some(
+                  (elevation) =>
+                    elevation.attempt === (step.attempt ?? 0) &&
+                    elevation.byAgent === "reviewer" &&
+                    elevation.bySessionId === tool.sessionID &&
+                    elevation.crossesRoleDefault,
+                )
+                if (!repairElevation || ownedWriteScope.length === 0) {
+                  throw new Error(
+                    "Reviewer repair completion requires an explicit same-attempt product scope elevation.",
+                  )
+                }
+                const repositoryError = await uncommittedOwnedChangesError(
+                  ctx,
+                  tool.sessionID,
+                  ctx.location.directory,
+                  ownedWriteScope,
+                )
+                if (repositoryError) throw new Error(repositoryError)
+
+                const headSha = await repositoryHeadSha(ctx.location.directory)
+                const previousReview = [...(step.review?.receipts ?? [])]
+                  .reverse()
+                  .find((receipt) => receipt.kind === "review")
+                if (previousReview?.headSha === headSha) {
+                  throw new Error(
+                    "Reviewer repair completion requires a committed repository revision different from the reviewed failing state.",
+                  )
+                }
+
+                const evidenceBound = await bindSessionEvidence(
+                  ctx,
+                  tool.sessionID,
+                  value.workflowId,
+                  value.stepId,
+                )
+                const currentAttempt = step.attempt ?? 0
+                const evidenceClaimIds = (await stepClaims(
+                  ctx,
+                  value.workflowId,
+                  value.stepId,
+                ))
+                  .filter((claim) => (claim.attempt ?? 0) === currentAttempt)
+                  .map((claim) => claim.id)
+
+                completeReviewerRepair(step, {
+                  sessionId: tool.sessionID,
+                  headSha,
+                  changeSummary: value.changeSummary,
+                  verificationSummary: value.verificationSummary,
+                  evidenceBound,
+                  evidenceClaimIds,
+                  recordedAt: new Date().toISOString(),
+                })
+                await ctx.storage.set(scopeKey(value.workflowId, value.stepId), {
+                  workflowId: value.workflowId,
+                  stepId: value.stepId,
+                  write: [...(artifactWriteDefaults.reviewer ?? [])],
+                } satisfies TaskScope)
+                await persistWorkflowMutationLocked(ctx, runtime, workflow)
+                return { step, headSha, evidenceBound }
+              },
+            )
+
+            return {
+              content: renderToolOutput({
+                completed: true,
+                assurance: "self-verified",
+                workflowId: value.workflowId,
+                stepId: value.stepId,
+                headSha: result.headSha,
+                evidenceBound: result.evidenceBound,
+                reviewMode: reviewAssignmentMode(result.step),
+                independentApprovalPending:
+                  result.step.review?.independentApprovalPending ?? true,
+                preferredIndependentReviewerSessionId:
+                  result.step.review?.preferredSessionId,
+                ineligibleReviewerSessionIds:
+                  result.step.review?.ineligibleIndependentSessionIds ?? [],
+                requiredAction:
+                  "Independent approval remains pending. Issue a new dispatch grant and use an eligible non-authoring Reviewer. Do not resume an ineligible repair session as the independent reviewer.",
+              }),
+            }
+          } catch (error) {
+            return {
+              content: renderToolOutput({
+                error: error instanceof Error ? error.message : String(error),
+              }),
+            }
           }
         },
       })
@@ -5369,8 +5802,51 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 }
               }
 
+              const reviewBeforeReopen = workflow.steps.find(
+                (candidate) => candidate.id === "review-implementation" && candidate.agent === "reviewer",
+              )
+              const reviewAttemptBeforeReopen = reviewBeforeReopen?.attempt ?? 0
+              const reviewBindingBeforeReopen = reviewBeforeReopen
+                ? ((await ctx.storage.get(
+                    stepSessionBindingKey(
+                      workflowId,
+                      reviewBeforeReopen.id,
+                      reviewAttemptBeforeReopen,
+                    ),
+                  )) as StepSessionBinding | undefined)
+                : undefined
+              const priorReviewerSessionId =
+                reviewBindingBeforeReopen?.agent === "reviewer"
+                  ? reviewBindingBeforeReopen.sessionID
+                  : reviewBeforeReopen?.review?.lastReviewerSessionId
+
               reset = reopenFrom(workflow, stepId)
               resetVerificationAfterReopen(workflow, reset)
+              if (reset.includes("review-implementation")) {
+                const reopenedReview = workflow.steps.find(
+                  (candidate) => candidate.id === "review-implementation" && candidate.agent === "reviewer",
+                )
+                if (reopenedReview) {
+                  const producerCorrection =
+                    stepId === "worker" || stepId.startsWith("task:")
+                  if (producerCorrection) {
+                    prepareReviewerAfterProducerRepair(
+                      reopenedReview,
+                      priorReviewerSessionId,
+                    )
+                  } else {
+                    prepareReviewerAfterAuthorityChange(reopenedReview)
+                  }
+                  await ctx.storage.set(
+                    scopeKey(workflowId, reopenedReview.id),
+                    {
+                      workflowId,
+                      stepId: reopenedReview.id,
+                      write: [...(artifactWriteDefaults.reviewer ?? [])],
+                    } satisfies TaskScope,
+                  )
+                }
+              }
               if (workflow.work && reset.includes("review-plan")) {
                 delete workflow.work.reviewedPlanRevision
                 delete workflow.work.reviewedPlanFingerprint
@@ -5452,11 +5928,28 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               commitReopen,
             )
 
+            const reopenedReview = workflow.steps.find(
+              (candidate) => candidate.id === "review-implementation" && reset.includes(candidate.id),
+            )
             return {
               content: renderToolOutput({
                 reopened: stepId,
                 reset,
                 runnable: runnable(workflow).map((candidate) => ({ id: candidate.id, agent: candidate.agent })),
+                ...(reopenedReview
+                  ? {
+                      reviewContinuation: {
+                        mode: reviewAssignmentMode(reopenedReview),
+                        resumeSessionId: reopenedReview.review?.preferredSessionId,
+                        freshSessionRequired:
+                          reopenedReview.review?.freshSessionRequired ?? false,
+                        independentApprovalPending:
+                          reopenedReview.review?.independentApprovalPending ?? false,
+                        ineligibleReviewerSessionIds:
+                          reopenedReview.review?.ineligibleIndependentSessionIds ?? [],
+                      },
+                    }
+                  : {}),
               }),
             }
           } catch (error) {
@@ -8481,6 +8974,15 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               await bumpWorkflowRevisionLocked(ctx, runtime, value.workflowId)
               return created
             })
+            const reviewStep = value.stepId
+              ? active.steps.find((candidate) => candidate.id === value.stepId && candidate.agent === "reviewer")
+              : undefined
+            const reviewMode = reviewStep ? reviewAssignmentMode(reviewStep) : undefined
+            const resumeSessionId = reviewStep
+              ? reviewMode === "repair-authorized"
+                ? reviewStep.review?.repairSessionId
+                : reviewStep.review?.preferredSessionId
+              : undefined
             return {
               content: renderToolOutput({
                 grantId: grant.grantId,
@@ -8488,6 +8990,19 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 ...(grant.stepId ? { stepId: grant.stepId } : { questionId: grant.oqId }),
                 expectedAgent: grant.expectedAgent,
                 expiresAt: grant.expiresAt,
+                ...(reviewStep
+                  ? {
+                      reviewMode,
+                      ...(resumeSessionId ? { resumeSessionId } : {}),
+                      freshSessionRequired:
+                        reviewStep.review?.freshSessionRequired ??
+                        (reviewMode === "independent-re-review" && !resumeSessionId),
+                      ineligibleReviewerSessionIds:
+                        reviewStep.review?.ineligibleIndependentSessionIds ?? [],
+                      independentApprovalPending:
+                        reviewStep.review?.independentApprovalPending ?? false,
+                    }
+                  : {}),
               }),
             }
           } catch (error) {
@@ -8608,6 +9123,61 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                   throw new Error("Step is not currently runnable; dependencies or prior gates are incomplete.")
                 }
 
+                if (tool.agent === "reviewer") {
+                  const mode = reviewAssignmentMode(step)
+                  if (
+                    mode === "repair-authorized" &&
+                    step.review?.repairSessionId !== tool.sessionID
+                  ) {
+                    throw new Error(
+                      "Reviewer repair must resume the exact Reviewer session explicitly authorized to author this repair.",
+                    )
+                  }
+                  if (
+                    mode === "independent-re-review" &&
+                    !reviewerSessionEligibleForIndependentReview(step, tool.sessionID)
+                  ) {
+                    throw new Error(
+                      "This Reviewer session authored repair and cannot attach as the independent re-reviewer.",
+                    )
+                  }
+                  if (
+                    step.review?.freshSessionRequired &&
+                    knownReviewerSessions(step).includes(tool.sessionID)
+                  ) {
+                    throw new Error(
+                      "This review requires a genuinely fresh Reviewer session because upstream authority or reviewed scope changed.",
+                    )
+                  }
+                  const lineageForbidden = new Set<string>()
+                  if (mode === "independent-re-review") {
+                    for (const sessionId of step.review?.ineligibleIndependentSessionIds ?? []) {
+                      lineageForbidden.add(sessionId)
+                    }
+                  }
+                  if (step.review?.freshSessionRequired) {
+                    for (const sessionId of knownReviewerSessions(step)) {
+                      lineageForbidden.add(sessionId)
+                    }
+                  }
+                  if (lineageForbidden.size > 0) {
+                    const lineageConflict = await reviewerSessionLineageConflict(
+                      tool.sessionID,
+                      lineageForbidden,
+                    )
+                    if (lineageConflict) {
+                      throw new Error(
+                        "This Reviewer session descends from a prior or ineligible Reviewer context and cannot satisfy the required fresh independent review.",
+                      )
+                    }
+                  }
+                  recordReviewerAttachment(
+                    step,
+                    tool.sessionID,
+                    await repositoryHeadSha(ctx.location.directory),
+                  )
+                }
+
                 task = step.task
                 taskOutcome = step.task?.objective
                 stepAttempt = step.attempt ?? 0
@@ -8641,15 +9211,28 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                   scopeKey(value.workflowId, value.stepId),
                 )) as TaskScope | undefined
                 if (tool.agent === "reviewer") {
-                  // Reviewer mutation authority is derived from the exact
-                  // current gate shape, not inherited from a prior attempt.
-                  // Recompute it on every fresh attachment so reopen/reroute
-                  // cannot retain stale acceptance-write authority.
-                  scope = {
-                    workflowId: value.workflowId,
-                    stepId: value.stepId,
-                    write: reviewerAcceptanceWriteScope(step),
-                  }
+                  const currentScope = (await ctx.storage.get(
+                    scopeKey(value.workflowId, value.stepId),
+                  )) as TaskScope | undefined
+                  const repairMode = reviewAssignmentMode(step) === "repair-authorized"
+                  const currentAttempt = step.attempt ?? 0
+                  const sameAttemptRepairScope =
+                    repairMode &&
+                    currentScope?.elevations?.some(
+                      (elevation) =>
+                        elevation.attempt === currentAttempt &&
+                        elevation.bySessionId === tool.sessionID,
+                    )
+                  // Review-only/independent gates always recompute their narrow
+                  // role-owned surface. A repair-authorized session may retain
+                  // elevations from this exact attempt across safe resume.
+                  scope = sameAttemptRepairScope && currentScope
+                    ? currentScope
+                    : {
+                        workflowId: value.workflowId,
+                        stepId: value.stepId,
+                        write: reviewerAcceptanceWriteScope(step),
+                      }
                   await ctx.storage.set(
                     scopeKey(value.workflowId, value.stepId),
                     scope,
@@ -8806,7 +9389,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               } else {
                 await ctx.storage.set(sessionPlanReviewKey(tool.sessionID), null)
               }
-              await bumpWorkflowRevisionLocked(ctx, runtime, value.workflowId)
+              await persistWorkflowMutationLocked(ctx, runtime, workflow)
               if (previousBinding && previousBinding !== value.workflowId) {
                 await bumpWorkflowRevisionLocked(ctx, runtime, previousBinding, true)
               }
@@ -8854,6 +9437,35 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               } : {}),
               ...(task ? { task } : {}),
               ...(producerSkills ? { producerSkills } : {}),
+              ...(value.stepId && tool.agent === "reviewer"
+                ? {
+                    reviewAssignment: {
+                      mode: reviewAssignmentMode(
+                        (await readWorkflow(ctx, value.workflowId))!.steps.find(
+                          (candidate) => candidate.id === value.stepId,
+                        )!,
+                      ),
+                      independentApprovalPending:
+                        (await readWorkflow(ctx, value.workflowId))!.steps.find(
+                          (candidate) => candidate.id === value.stepId,
+                        )?.review?.independentApprovalPending ?? false,
+                      preferredSessionId:
+                        (await readWorkflow(ctx, value.workflowId))!.steps.find(
+                          (candidate) => candidate.id === value.stepId,
+                        )?.review?.preferredSessionId,
+                      ineligibleIndependentSessionIds:
+                        (await readWorkflow(ctx, value.workflowId))!.steps.find(
+                          (candidate) => candidate.id === value.stepId,
+                        )?.review?.ineligibleIndependentSessionIds ?? [],
+                      priorRepairEvidence:
+                        ((await readWorkflow(ctx, value.workflowId))!.steps.find(
+                          (candidate) => candidate.id === value.stepId,
+                        )?.review?.receipts ?? []).filter(
+                          (receipt) => receipt.kind === "repair",
+                        ),
+                    },
+                  }
+                : {}),
             }),
           }
         },
@@ -8983,7 +9595,16 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             )
 
           const roleWriteDefault = artifactWriteDefaults[tool.agent] ?? []
-          if (!productScopeElevatingAgents.has(tool.agent)) {
+          let reviewerRepairCandidate = false
+          if (tool.agent === "reviewer") {
+            const workflow = await readWorkflow(ctx, value.workflowId)
+            const step = workflow?.steps.find((candidate) => candidate.id === value.stepId)
+            reviewerRepairCandidate =
+              Boolean(step) &&
+              reviewAssignmentMode(step!) === "repair-authorized" &&
+              step!.review?.repairSessionId === tool.sessionID
+          }
+          if (!productScopeElevatingAgents.has(tool.agent) && !reviewerRepairCandidate) {
             const outsideRoleOutput =
               hardBoundaryPaths.length > 0 ||
               projectPaths.some(
@@ -8994,7 +9615,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               return {
                 content: renderToolOutput({
                   error:
-                    `${tool.agent} is an independent/advisory role and cannot self-elevate into product or hard-boundary mutation authority. Keep writes inside its role-owned output surface or return the implementation work to a producing role.`,
+                    `${tool.agent} is an independent/advisory role and cannot self-elevate into product or hard-boundary mutation authority. Reviewer product repair requires an explicit repair-authorized implementation-review assignment. Keep writes inside the role-owned output surface or return implementation work to a producing role.`,
                   roleWriteDefault,
                 }),
               }
@@ -9047,6 +9668,23 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                   throw new Error(
                     "Scope elevation requires the exact currently runnable pending step.",
                   )
+                }
+
+                const reviewerRepair =
+                  tool.agent === "reviewer" &&
+                  reviewAssignmentMode(step) === "repair-authorized" &&
+                  step.review?.repairSessionId === tool.sessionID
+                if (!productScopeElevatingAgents.has(tool.agent) && !reviewerRepair) {
+                  const outsideRoleOutput =
+                    hardBoundaryPaths.length > 0 ||
+                    projectPaths.some(
+                      (path) => !resourcesWithinScope([path], roleWriteDefault),
+                    )
+                  if (outsideRoleOutput) {
+                    throw new Error(
+                      `${tool.agent} cannot elevate outside its role-owned output surface without explicit repair authority.`,
+                    )
+                  }
                 }
 
                 const existing = (await ctx.storage.get(
