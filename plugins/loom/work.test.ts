@@ -843,6 +843,29 @@ describe("Loom persistent work hierarchy", () => {
     )?.status).toBe("pending")
   })
 
+  test("retains a reopened Task result as historical evidence rather than silently discarding it", () => {
+    const work = createWorkHierarchy("docs/anchors/product/anchor.md", "wf-1", now)
+    materializeWorkPlan(work, "wf-1", plan(), now)
+    claimWorkflowWave(work, "wf-1", work.generation, [task("a"), task("b", ["a"])], false, now)
+    const result = {
+      workflowId: "wf-1",
+      summary: "Legacy result awaiting re-attestation",
+      evidenceClaimIds: ["claim-a"],
+      completedAt: now,
+    }
+    syncWorkTaskStatuses(work, "wf-1", work.generation, [{ taskId: "a", complete: true, result }], now)
+    syncWorkTaskStatuses(work, "wf-1", work.generation, [{ taskId: "a", complete: false }], "reopened")
+    const node = work.nodes.find((candidate) => candidate.type === "task" && candidate.logicalId === "a")
+    expect(node?.result).toBeUndefined()
+    expect(node?.status).toBe("pending")
+    expect(node?.priorResults).toEqual([{
+      ...result,
+      invalidatedAt: "reopened",
+      invalidatedByRevision: 1,
+      invalidatedReason: expect.stringContaining("reopened"),
+    }])
+  })
+
   test("records a new Plan revision and invalidates only completion receipts affected by the semantic delta", () => {
     const work = createWorkHierarchy("docs/anchors/product/anchor.md", "wf-1", now)
     materializeWorkPlan(work, "wf-1", plan(), now)

@@ -12263,6 +12263,55 @@ test("Planner removal of a claimed Task can recover without redispatching comple
   }
 })
 
+test("Plan reopen refuses to synthesize an absent Task closure receipt", async () => {
+  const h = await waveLifecycleFixture("wave", false, "worker", true, "execute", "worker")
+  try {
+    expect((await h.finish("task:one", "worker")).error).toBeUndefined()
+    const original = (await h.workflow()).steps.find((step: any) => step.id === "task:one")
+    const work = await h.work()
+    const task = work.nodes.find((node: any) => node.type === "task" && node.logicalId === "one")
+    expect(task.result.semanticClosureFingerprint).toEqual(expect.any(String))
+    // Model a persisted pre-receipt completion, not an execution under the
+    // new receipt contract. The old result must remain historical only.
+    delete task.result.semanticClosureFingerprint
+    delete task.result.planRevision
+    await h.durableStorage.set(h.workKey, work)
+
+    const reopened = await h.call("reopen", {
+      workflowId: h.workflowId, stepId: "plan",
+      reason: "Recover a legacy Task result without a semantic receipt.",
+      newEvidence: true, changedHypothesis: false,
+      changedStrategy: false, reducedUnresolved: false,
+    }, "general", "parent")
+    expect(reopened.error).toBeUndefined()
+    expect(reopened.reset).toContain("task:one")
+
+    const workflow = await h.workflow()
+    expect(workflow.steps.find((step: any) => step.id === "task:one")).toMatchObject({
+      status: "pending", attempt: original.attempt + 1,
+    })
+    const after = await h.work()
+    const result = after.nodes.find((node: any) => node.type === "task" && node.logicalId === "one")
+    expect(result.result).toBeUndefined()
+    expect(result.priorResults.at(-1)).toMatchObject({
+      workflowId: h.workflowId,
+      invalidatedReason: expect.stringContaining("reopened"),
+    })
+    expect(result.priorResults.at(-1).semanticClosureFingerprint).toBeUndefined()
+
+    const planner = await h.attach("plan", "planner", "replan-legacy-task")
+    const currentTasks = after.plans.at(-1).phases[0].waves[0].tasks
+    const compiled = await h.call("task_plan", {
+      workflowId: h.workflowId,
+      tasks: currentTasks.map((task: any) => ({ ...task, write: ["src/**"], skills: [] })),
+    }, "planner", planner)
+    expect(compiled.error).toBeUndefined()
+    expect(compiled.reusedTaskIds).toEqual([])
+  } finally {
+    h.restore()
+  }
+})
+
 test("reopening Plan preserves unchanged completed Tasks and requires only fresh Plan review", async () => {
   const h = await waveLifecycleFixture("wave", false, "worker", true, "execute", "worker")
   try {

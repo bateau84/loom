@@ -7032,10 +7032,10 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 // still be able to reopen Plan and compile the current Wave.
                 staleCompiledPlan =
                   stepId === "plan" &&
+                  Number.isSafeInteger(workflow.work.taskPlanRevision) &&
                   workflow.work.taskPlanRevision !== currentPlan?.revision
                 hadTaskExecution = currentTaskSteps.some((taskStep) => taskStep.status === "complete" || taskStep.status === "passed")
                 if (stepId === "plan") {
-                  const reviewedRevision = workflow.work.reviewedPlanRevision
                   for (const taskStep of currentTaskSteps) {
                     if (taskStep.status !== "complete" && taskStep.status !== "passed") continue
                     const taskNode = work.nodes.find(
@@ -7048,27 +7048,23 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                     // A workflow step alone is not enough to authorize reuse.
                     // Work status may still be pending until review-implementation;
                     // the persistent execution result is the reusable receipt.
-                    if (!taskNode?.result || taskNode.result.workflowId !== workflow.id) continue
+                    const closure = taskSemanticClosureFingerprintAtRevision(
+                      work, taskStep.task!.id, workflow.work.generation,
+                    )
+                    // An old completion without its own receipt cannot be
+                    // attested retroactively from the current Plan snapshot.
+                    // Re-execute it instead of manufacturing fresh authority.
+                    if (
+                      !taskNode?.result ||
+                      taskNode.result.workflowId !== workflow.id ||
+                      !closure ||
+                      taskNode.result.semanticClosureFingerprint !== closure
+                    ) continue
                     preservedTaskSteps.set(taskStep.id, {
                       status: taskStep.status,
                       attempt: taskStep.attempt ?? 0,
                       ...(taskStep.summary ? { summary: taskStep.summary } : {}),
                     })
-                    if (
-                      Number.isSafeInteger(reviewedRevision) &&
-                      !taskNode.result.semanticClosureFingerprint
-                    ) {
-                      const fingerprint = taskSemanticClosureFingerprintAtRevision(
-                        work,
-                        taskStep.task!.id,
-                        workflow.work.generation,
-                        reviewedRevision,
-                      )
-                      if (fingerprint) {
-                        taskNode.result.planRevision = reviewedRevision
-                        taskNode.result.semanticClosureFingerprint = fingerprint
-                      }
-                    }
                   }
                 }
                 if (taskIds.length > 0) {

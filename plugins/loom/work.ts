@@ -2117,6 +2117,15 @@ export function syncWorkTaskStatuses(
     }
     const next: WorkNodeStatus = entry.complete ? "complete" : "pending"
     if (!entry.complete && !entry.result && task.result) {
+      task.priorResults = [
+        ...(task.priorResults ?? []),
+        {
+          ...task.result,
+          invalidatedAt: now,
+          invalidatedByRevision: currentPlan(hierarchy)?.revision ?? 1,
+          invalidatedReason: "Workflow Task was reopened; previous execution receipt is no longer current.",
+        },
+      ]
       delete task.result
       changed = true
     }
