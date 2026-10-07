@@ -272,6 +272,59 @@ class SkillAblationCutoverTests(unittest.TestCase):
             self.assertEqual(artifact["iteration"], iteration)
             self.assertEqual(outcome.comparison.decision.classification, "pass")
 
+    def test_bridge_end_to_end_provider_free_and_persisted_manifest(self):
+        from runner import eval_paired
+        from runner.eval_artifacts import ArtifactIdentity, RunArtifactStore
+        import loom_eval_profile.skill_ablation as skill_module
+
+        fake = PairInvoker()
+        actual = eval_paired.run_paired_evaluation
+
+        def no_provider_inference(**kwargs):
+            return actual(
+                **kwargs, target_invoker=fake, judge_invoker=fake,
+                sleep=lambda _: None,
+            )
+
+        options = args()
+        options.cases = self.case.id
+        options.artifact_dir = str(self.root / "bridge-run")
+        with (
+            mock.patch.object(
+                skill_module, "LoomSkillAblationProfile",
+                side_effect=lambda received: self.Profile(received, root=self.root),
+            ),
+            mock.patch.object(
+                eval_paired, "run_paired_evaluation",
+                side_effect=no_provider_inference,
+            ),
+        ):
+            status = bridge.run(options)
+        self.assertEqual(status, 0)
+        manifest = json.loads((Path(options.artifact_dir) / "run.json").read_text())
+        self.assertEqual(manifest["summary"]["pass"], 1)
+        self.assertEqual(manifest["summary"]["errors"], 0)
+        self.assertEqual(manifest["jobs"][0]["status"], "pass")
+        self.assertTrue(manifest["jobs"][0]["artifact"].startswith("pairs/"))
+        store = RunArtifactStore(root=Path(options.artifact_dir).resolve(), run_id=manifest["run_id"])
+        paired = store.read_paired_job_artifact(ArtifactIdentity(manifest["run_id"], self.case.id, 1))
+        self.assertEqual(bridge._pair_outcome(paired), "pass")
+        self.assertIn(("baseline", "judge"), fake.calls)
+        self.assertIn(("candidate", "judge"), fake.calls)
+
+    def test_real_loom_skill_owned_profiles_can_prepare_without_inference(self):
+        real = self.Profile(self.a)
+        cases = [case for case in real.discover_cases() if case.id.startswith("SKILL-skills-eval-")]
+        self.assertTrue(cases, "expected Loom skills-eval cases in repository")
+        with real.prepare_pair(cases[0], 1) as (baseline, candidate):
+            self.assertNotIn("skills-eval", [
+                entry.name for entry in (baseline.target_workspace / ".opencode" / "skills").iterdir()
+            ])
+            self.assertTrue(
+                (candidate.target_workspace / ".opencode" / "skills" / "skills-eval" / "SKILL.md").is_file()
+            )
+            self.assertEqual(real.target_spec(cases[0], candidate).skill, "skills-eval")
+
     def test_missing_paired_engine_refused_before_inference(self):
         with tempfile.TemporaryDirectory() as tmp:
             binary = Path(tmp) / "bin" / "opencode-eval-runner"
