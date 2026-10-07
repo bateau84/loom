@@ -119,6 +119,19 @@ class CompatValidationTests(unittest.TestCase):
         self.assertNotIn(str(w.LEGACY_RUNNER), command)
         self.assertIn("--transport-retries", command)
 
+    def test_retired_legacy_engine_cannot_be_invoked_directly(self):
+        # The legacy module is still imported for Loom policy helpers, but it
+        # must not remain a second executable scheduler or container runner.
+        import subprocess
+
+        result = subprocess.run(
+            [sys.executable, str(SCRIPT.with_name("run-evals-legacy.py")), "--list"],
+            capture_output=True, text=True, check=False,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("not an executable eval engine", result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+
     def test_listing_remains_provider_free_and_does_not_invoke_legacy_cli(self):
         w = self.w
         normal = {
