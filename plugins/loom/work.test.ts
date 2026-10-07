@@ -395,7 +395,7 @@ describe("Loom persistent work hierarchy", () => {
     const work = createWorkHierarchy("docs/anchors/product/anchor.md", "wf-authority-amend", now)
     const definition = plan()
     definition.authorityRefs.push(
-      ...Array.from({ length: 70 }, (_, index) => `docs/authority/ref-${String(index + 1).padStart(2, "0")}.md`),
+      ...Array.from({ length: 40 }, (_, index) => `docs/authority/ref-${String(index + 1).padStart(2, "0")}.md`),
     )
     materializeWorkPlan(work, "wf-authority-amend", definition, now)
 
@@ -405,8 +405,8 @@ describe("Loom persistent work hierarchy", () => {
     const full = workPlanContext(work, undefined, "full")
 
     expect(focused?.authorityRefs).toHaveLength(32)
-    expect(focused?.projection.authorityRefsOmitted).toBe(40)
-    expect(full?.authorityRefs).toHaveLength(72)
+    expect(focused?.projection.authorityRefsOmitted).toBe(10)
+    expect(full?.authorityRefs).toHaveLength(42)
     expect(full?.projection.authorityRefsOmitted).toBe(0)
 
     claimWorkflowWave(
@@ -437,7 +437,22 @@ describe("Loom persistent work hierarchy", () => {
     expect(amended.amendment.operations).toEqual(["add-authority-ref:ARS-025"])
     expect(workflowTaskSemanticFingerprint(work, ["a", "b"])).toBe(protectedFingerprint)
     expect(workPlanContext(work, undefined, "full", generation, 1)?.authorityRefs).not.toContain("ARS-025")
-    expect(workPlanContext(work, undefined, "full")?.authorityRefs).toHaveLength(73)
+    expect(workPlanContext(work, undefined, "full")?.authorityRefs).toHaveLength(43)
+
+    expect(() => amendWorkPlan(work, {
+      expectedVersion: work.version,
+      by: "planner",
+      reason: "Replace-all authority mutation must not be reachable from bounded context.",
+      planPatch: { authorityRefs: ["docs/anchors/product/anchor.md"] } as any,
+      operations: [],
+    }, "unsafe-replace")).toThrow("must be amended with add-authority-ref/remove-authority-ref")
+
+    expect(() => amendWorkPlan(work, {
+      expectedVersion: work.version,
+      by: "planner",
+      reason: "Removing Plan authority after completed work would rewrite historical context.",
+      operations: [{ action: "remove-authority-ref", authorityRef: "docs/authority/ref-01.md" }],
+    }, "unsafe-remove")).toThrow("cannot be removed while Tasks are claimed or complete")
 
     expect(() => amendWorkPlan(work, {
       expectedVersion: work.version,
