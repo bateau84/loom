@@ -17,6 +17,14 @@ export type EvidenceObservation = {
   resultDigest?: string
   error?: string
   command?: string
+  commandTrace?: {
+    family: "package" | "python" | "go" | "shell" | "custom"
+    runner: string
+    access: "routine" | "elevated"
+    startedAt: string
+    durationMs: number
+    grantId?: string
+  }
   path?: string
   destination?: string
   reason?: string

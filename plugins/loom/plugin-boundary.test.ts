@@ -10228,7 +10228,7 @@ async function waveLifecycleFixture(
 
 test("package scripts are admitted for governed Reviewer, Critic, and Acceptance steps", async () => {
   const roleScript = async (
-    evaluate: (event: any) => Promise<unknown>,
+    evaluate: (event: any) => void | Promise<void>,
     agent: string,
     sessionID: string,
     command: string,
@@ -10262,6 +10262,9 @@ test("package scripts are admitted for governed Reviewer, Critic, and Acceptance
     }, "critic", criticSession)).attached).toBe(true)
     const evaluate = crit.permissionHooks.get("evaluate")!
     await roleScript(evaluate, "critic", criticSession, "npm run test:unit", "allow")
+    await roleScript(evaluate, "critic", criticSession, "python3 -m unittest discover", "allow")
+    await roleScript(evaluate, "critic", criticSession, "go test ./...", "allow")
+    await roleScript(evaluate, "critic", criticSession, "bash scripts/test.sh", "allow")
     await roleScript(evaluate, "critic", "unattached-critic", "npm run test:unit", "deny")
   } finally {
     crit.restore()
@@ -10273,6 +10276,9 @@ test("package scripts are admitted for governed Reviewer, Critic, and Acceptance
     await h.finish("task:one", "worker")
     const reviewer = await h.attach("review-implementation", "reviewer")
     await roleScript(evaluate, "reviewer", reviewer, "bun run test:unit", "allow")
+    await roleScript(evaluate, "reviewer", reviewer, "pytest -q", "allow")
+    await roleScript(evaluate, "reviewer", reviewer, "go vet ./...", "allow")
+    await roleScript(evaluate, "reviewer", reviewer, "bats tests/unit.bats", "allow")
     await roleScript(evaluate, "reviewer", "unattached-reviewer", "bun run test:unit", "deny")
     expect((await h.call("complete", {
       workflowId: h.workflowId, stepId: "review-implementation",
@@ -10281,6 +10287,9 @@ test("package scripts are admitted for governed Reviewer, Critic, and Acceptance
     expect((await h.finishKnowledge()).error).toBeUndefined()
     const acceptance = await h.attach("product-acceptance", "acceptance")
     await roleScript(evaluate, "acceptance", acceptance, "pnpm run test:e2e", "allow")
+    await roleScript(evaluate, "acceptance", acceptance, "python -m pytest", "allow")
+    await roleScript(evaluate, "acceptance", acceptance, "go test -race ./...", "allow")
+    await roleScript(evaluate, "acceptance", acceptance, "sh tests/integration.sh", "allow")
     await roleScript(evaluate, "acceptance", "unattached-acceptance", "pnpm run test:e2e", "deny")
   } finally {
     h.restore()
