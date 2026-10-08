@@ -5368,7 +5368,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           if (!target) {
             return {
               content: renderToolOutput({
-                error: "Diagnostic sandbox requires an exact runnable Diagnostic step or unanswered Diagnostic OQ attachment for the current attempt.",
+                error: "Diagnostic sandbox tools require attachment to an exact runnable Diagnostic step or unanswered Diagnostic OQ for the current attempt.",
               }),
             }
           }
