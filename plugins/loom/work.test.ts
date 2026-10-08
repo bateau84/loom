@@ -23,6 +23,7 @@ import {
   workPlanSemanticFingerprint,
   taskSemanticFingerprintAtRevision,
   taskSemanticClosureFingerprintAtRevision,
+  inspectTaskSemanticClosure,
   workflowTaskSemanticFingerprint,
   validatePlanRoleFeasibility,
   type WorkPlanDefinition,
@@ -614,6 +615,109 @@ describe("Loom persistent work hierarchy", () => {
 
     expect(taskSemanticClosureFingerprintAtRevision(work, "a", generation, 2)).not.toBe(beforeA)
     expect(taskSemanticClosureFingerprintAtRevision(work, "b", generation, 2)).not.toBe(beforeB)
+  })
+
+  test("reconciles a split Wave's descriptive objective only after validating the original closure", () => {
+    const work = createWorkHierarchy("docs/anchors/product/anchor.md", "wf-closure", now)
+    materializeWorkPlan(work, "wf-closure", plan(), now)
+    const receiptA = taskSemanticClosureFingerprintAtRevision(work, "a")!
+    const receiptB = taskSemanticClosureFingerprintAtRevision(work, "b")!
+    amendWorkPlan(work, {
+      expectedVersion: work.version, by: "planner", reason: "Split remaining work",
+      operations: [{ action: "patch-wave", phaseId: "core", waveId: "foundation", patch: {
+        objective: "Deliver completed foundations and hand the remaining work to the next Wave.",
+      } }],
+    }, "r2")
+    expect(inspectTaskSemanticClosure(work, "a", 1, receiptA)).toMatchObject({
+      status: "unchanged", changedFields: ["a.wave.objective"],
+    })
+    expect(inspectTaskSemanticClosure(work, "b", 1, receiptB)).toMatchObject({ status: "unchanged" })
+    expect(inspectTaskSemanticClosure(work, "a", 1, undefined).status).toBe("missing-receipt")
+    expect(inspectTaskSemanticClosure(work, "a", 1, "bad").status).toBe("invalid-original")
+    amendWorkPlan(work, {
+      expectedVersion: work.version, by: "planner", reason: "New scope",
+      operations: [{ action: "patch-wave", phaseId: "core", waveId: "foundation", patch: {
+        constraints: ["New mandatory scope"],
+      } }],
+    }, "r3")
+    expect(inspectTaskSemanticClosure(work, "a", 1, receiptA)).toMatchObject({
+      status: "changed-current", changedFields: expect.arrayContaining(["a.wave.constraints"]),
+    })
+  })
+
+  test("rev31 to rev32 split preserves completed c01/c02 receipts but not altered scope or prerequisites", () => {
+    const definition = plan()
+    const foundation = definition.phases[0].waves[0]
+    const remaining = definition.phases[0].waves[1]
+    foundation.objective = "c01, c02, c03"
+    const renamed = (id: string) => ({ ...structuredClone(foundation.tasks[0]),
+      id, title: id, objective: `Build ${id}`, dependsOn: [],
+      acceptanceCriteria: [`${id} is complete and integrated.`] })
+    foundation.tasks = [renamed("c01"), renamed("c02"), renamed("c03")]
+    remaining.tasks = [renamed("c11")]
+    definition.obligations[0].taskIds = ["c01", "c02", "c03", "c11"]
+    definition.acceptanceCoverage[0].taskIds = ["c01", "c02", "c03", "c11"]
+    definition.relationships[0].taskIds = ["c01", "c02", "c03", "c11"]
+    const work = createWorkHierarchy("docs/anchors/product/anchor.md", "wf-split", now)
+    materializeWorkPlan(work, "wf-split", definition, now)
+    // The immutable prior revision is reconstructed by the real amendment path.
+    // The two receipt hashes are the original full semantic closures, not new stamps.
+    const c01 = taskSemanticClosureFingerprintAtRevision(work, "c01")!
+    const c02 = taskSemanticClosureFingerprintAtRevision(work, "c02")!
+    const executable = foundation.tasks.map((item) =>
+      ({ ...item, write: [`internal/${item.id}/**`], skills: ["golang"] }))
+    claimWorkflowWave(work, "wf-split", work.generation, executable, false, now)
+    syncWorkTaskStatuses(work, "wf-split", work.generation, [
+      { taskId: "c01", complete: true, result: { workflowId: "wf-split", evidenceClaimIds: ["claim-c01"],
+        completedAt: now, planRevision: 1, semanticClosureFingerprint: c01 } },
+      { taskId: "c02", complete: true, result: { workflowId: "wf-split", evidenceClaimIds: ["claim-c02"],
+        completedAt: now, planRevision: 1, semanticClosureFingerprint: c02 } },
+    ], now)
+    releaseWorkflowWave(work, "wf-split", work.generation, ["c01", "c02", "c03"], "split")
+    const amendment = amendWorkPlan(work, {
+      expectedVersion: work.version, by: "planner", reason: "Split c03 and introduce c10 delivery",
+      operations: [{ action: "patch-wave", phaseId: "core", waveId: "foundation", patch: {
+        objective: "Completed c01/c02 foundations; c03 delivery is separately tracked with c10.",
+      } }, { action: "patch-task", taskId: "c03", patch: {
+        subtasks: ["Split remaining work with c10"],
+      } }, { action: "add-task", phaseId: "core", waveId: "runtime", task: renamed("c10") }],
+    }, "r32")
+    expect(amendment.plan.revision).toBe(2)
+    expect(amendment.affectedTaskIds).not.toContain("c01")
+    expect(amendment.affectedTaskIds).not.toContain("c02")
+    for (const [id, receipt] of [["c01", c01], ["c02", c02]] as const) {
+      expect(workPlanContext(work, id)?.focus?.task).toEqual(definition.phases[0].waves[0].tasks.find((task) => task.id === id))
+      expect(executable.find((task) => task.id === id)?.write).toEqual([`internal/${id}/**`])
+      expect(inspectTaskSemanticClosure(work, id, 1, receipt).status).toBe("unchanged")
+      expect(work.nodes.find((node) => node.type === "task" && node.logicalId === id)?.result?.semanticClosureFingerprint)
+        .toBe(receipt)
+    }
+    expect(inspectTaskSemanticClosure(work, "c03", 1,
+      taskSemanticClosureFingerprintAtRevision(work, "c03", work.generation, 1)).status).toBe("changed-current")
+    const before = structuredClone(work)
+    expect(inspectTaskSemanticClosure(work, "c01", 1, "invalid").status).toBe("invalid-original")
+    expect(work).toEqual(before)
+    amendWorkPlan(work, { expectedVersion: work.version, by: "planner", reason: "Change authority and dependencies",
+      operations: [{ action: "patch-task", taskId: "c02", patch: { dependsOn: ["c03"] } }],
+    }, "r33")
+    expect(inspectTaskSemanticClosure(work, "c02", 1, c02)).toMatchObject({
+      status: "changed-current", changedFields: expect.arrayContaining(["c02.task"]),
+    })
+    amendWorkPlan(work, { expectedVersion: work.version, by: "planner", reason: "Material Wave scope change",
+      operations: [{ action: "patch-wave", phaseId: "core", waveId: "foundation",
+        patch: { title: "A different foundation boundary" } }],
+    }, "r34")
+    expect(inspectTaskSemanticClosure(work, "c01", 1, c01)).toMatchObject({
+      status: "changed-current", changedFields: expect.arrayContaining(["c01.wave.title"]),
+    })
+    amendWorkPlan(work, { expectedVersion: work.version, by: "planner", reason: "Authority reassignment",
+      operations: [{ action: "patch-task", taskId: "c01", patch: {
+        authorityRefs: ["docs/anchors/product/anchor.md"],
+      } }],
+    }, "r35")
+    expect(inspectTaskSemanticClosure(work, "c01", 1, c01)).toMatchObject({
+      status: "changed-current", changedFields: expect.arrayContaining(["c01.task"]),
+    })
   })
 
   test("preserves early full-snapshot revision history when converting to delta-backed amendments", () => {
