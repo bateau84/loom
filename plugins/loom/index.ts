@@ -178,9 +178,11 @@ import {
   type AcceptancePlan,
 } from "./acceptance"
 import { loadSkillCompanion, type SkillCompanionKind } from "./methodology"
-import { LOOM_AGENT_ROLES, taskStepId, validateTaskPlan, type TaskSpec } from "./tasks"
+import { LOOM_AGENT_ROLES, MAX_TASK_TEXT_LENGTH, MAX_TASK_CONTEXT_ITEMS, nativeTaskPath, taskStepId, validateTaskPlan, type TaskSpec } from "./tasks"
 import {
   amendWorkPlan,
+  advisoryResultDigest,
+  assertCompletedWaveForTasks,
   assertInvalidatedPlanReopenable,
   assertCompletedWaveMayReopen,
   assertWaveClaimForTasks,
@@ -211,6 +213,8 @@ import {
   legacyWorkflowTaskSemanticFingerprint,
   workTree,
   type WorkHierarchy,
+  type WorkTaskResult,
+  type AdviceResolution,
   type WorkPlanAmendOperation,
   type WorkPlanAmendTopLevelPatch,
   type WorkPlanDefinition,
@@ -232,9 +236,58 @@ import {
   type IntentSession,
 } from "./intent"
 
-// Brainstorm is an available OQ responder, but deliberately remains outside
-// LOOM_AGENT_ROLES so this does not make Brainstorm a planned Task recipient.
-const loomAgents = new Set<string>([...LOOM_AGENT_ROLES, "brainstorm"])
+const loomAgents = new Set<string>(LOOM_AGENT_ROLES)
+
+async function assertAdviceHostPaths(ctx: any, work: WorkHierarchy | undefined, generation?: number, reviewerOnly = false) {
+  const plan = work?.plans?.find((candidate) => candidate.generation === generation)
+  if (!plan || !plan.phases.some((phase) => phase.waves.some((wave) => wave.tasks.some((task) => task.role === "brainstorm")))) return
+  if (!reviewerOnly) validatePlanRoleFeasibility(plan)
+  const roster = await ctx.agent.list({ location: { directory: ctx.location.directory } })
+  if (roster?.location?.directory !== ctx.location.directory || !Array.isArray(roster.data)) throw new Error("Current host availability cannot be established for advisory Plan paths.")
+  const names = new Set(roster.data.map((agent: { name: string }) => agent.name))
+  if (reviewerOnly) {
+    if (!names.has("reviewer")) throw new Error("Host role reviewer is unavailable for independent Plan review.")
+    return
+  }
+  for (const phase of plan.phases) for (const wave of phase.waves) for (const task of wave.tasks) {
+    const path = nativeTaskPath(task)
+    for (const role of [path?.agent, "reviewer"]) {
+      if (role && role !== "user" && !names.has(role)) throw new Error(`Host role ${role} is unavailable for Task ${task.id} in ${phase.id}/${wave.id} (${path?.nativeKind ?? "unsupported"} path).`)
+    }
+  }
+}
+
+async function assertStepHostAvailability(ctx: any, workflow: Workflow, work: WorkHierarchy | undefined, step: Workflow["steps"][number]) {
+  if (requiresReviewedPlannedDispatchBinding(workflow, step)) await assertAdviceHostPaths(ctx, work, workflow.work?.generation)
+  else if (step.id === "review-plan") await assertAdviceHostPaths(ctx, work, workflow.work?.generation, true)
+  if (step.task && work && nativeTaskPath(step.task)?.nativeKind === "producer") await assertAdviceInputEvidence(ctx, workflow, work, step.task.id)
+}
+
+async function assertAdviceInputEvidence(ctx: any, workflow: Workflow, work: WorkHierarchy, taskId: string) {
+  for (const input of reviewedAdviceInputs(workflow, work, taskId)) {
+    const original = await readWorkflow(ctx, input.sourceWorkflowId)
+    const sourceStep = original?.steps.find((step) => step.id === taskStepId(input.taskId))
+    if (!original || !sourceStep || sourceStep.agent !== "brainstorm" || sourceStep.status !== "complete" ||
+        sourceStep.task?.adviceForTaskId !== taskId || input.sourceAttempt > (sourceStep.attempt ?? 0)) {
+      throw new Error(`Advisory Task ${input.taskId} original execution provenance is missing.`)
+    }
+    const result = work.nodes.find((node) => node.type === "task" && node.generation === workflow.work!.generation && node.logicalId === input.taskId && node.status !== "superseded")!.result!
+    const claims = (await stepClaims(ctx, original.id, sourceStep.id)).filter((claim) =>
+      claim.byAgent === "brainstorm" && (claim.attempt ?? 0) === input.sourceAttempt)
+    if (JSON.stringify(claims.map((claim) => claim.id).sort()) !== JSON.stringify([...result.evidenceClaimIds].sort())) {
+      throw new Error(`Advisory Task ${input.taskId} original exact evidence claim set is missing.`)
+    }
+    const scope = { ...original, steps: original.steps.map((step) => step.id === sourceStep.id ? { ...step, attempt: input.sourceAttempt } : step) }
+    for (const claim of claims) {
+      const canonical = await ctx.storage.get(claimIdKey(claim.id)) as EvidenceClaim | undefined
+      if (!canonical || JSON.stringify(canonical) !== JSON.stringify(claim)) throw new Error(`Advisory Task ${input.taskId} original evidence claim is missing or stale.`)
+      for (const id of claim.observationIds) {
+        const observation = await ctx.storage.get(evidenceKey(id)) as EvidenceObservation | undefined
+        if (!observation || !observationMatchesStep(observation, scope, sourceStep.id)) throw new Error(`Advisory Task ${input.taskId} original evidence observation is missing or stale.`)
+      }
+    }
+  }
+}
 
 function plannedTaskSatisfied(workflow: Workflow, step: Workflow["steps"][number]) {
   const task = step.task
@@ -246,6 +299,143 @@ function plannedTaskSatisfied(workflow: Workflow, step: Workflow["steps"][number
   const handoffGate = workflow.steps.find((candidate) => candidate.id === `task-review:${task.id}`)
   if (handoffGate) return handoffGate.status === "passed"
   return workflow.steps.some((candidate) => candidate.id === "review-implementation" && candidate.status === "passed")
+}
+
+function reviewedAdviceInputs(workflow: Workflow, work: WorkHierarchy, taskId: string) {
+  const generation = workflow.work?.generation
+  const plan = work.plans?.find((candidate) => candidate.generation === generation)
+  if (!plan || plan.invalidated || generation !== work.generation) throw new Error("Advice requires the current valid Plan generation.")
+  const tasks = plan.phases.flatMap((phase) => phase.waves.flatMap((wave) => wave.tasks))
+  const receiver = tasks.find((task) => task.id === taskId)
+  if (!receiver) throw new Error("Advice receiver is missing from the current Plan.")
+  return receiver.dependsOn.flatMap((id) => {
+    const source = tasks.find((task) => task.id === id)
+    if (nativeTaskPath(source ?? {})?.nativeKind !== "advisory") return []
+    if (source!.adviceForTaskId !== taskId) throw new Error(`Advisory Task ${id} names a different receiver.`)
+    const node = work.nodes.find((candidate) => candidate.type === "task" && candidate.generation === generation && candidate.logicalId === id && candidate.status !== "superseded")
+    const result = node?.result
+    if (!result || result.nativeKind !== "advisory" || result.taskId !== id || result.stepId !== taskStepId(id) || result.generation !== generation ||
+        result.adviceForTaskId !== taskId || !result.resultDigest || result.resultDigest !== advisoryResultDigest(result) ||
+        result.semanticClosureFingerprint !== taskSemanticClosureFingerprintAtRevision(work, id, generation)) {
+      throw new Error(`Advisory Task ${id} lacks its exact current original result/digest.`)
+    }
+    const local = workflow.steps.find((step) => step.task?.id === id)
+    let reviewSource: string
+    if (local) {
+      const gate = workflow.steps.find((step) => step.id === `task-review:${id}`)
+      if (!gate || gate.status !== "passed" || local.status !== "complete" ||
+          result.workflowId !== workflow.id || result.completedAttempt! > (local.attempt ?? 0) || local.summary !== result.summary ||
+          result.executableTaskFingerprint !== createHash("sha256").update(JSON.stringify(local.task)).digest("hex")) {
+        throw new Error(`Advisory Task ${id} requires its independent advice gate.`)
+      }
+      reviewSource = gate.id
+    } else {
+      const wave = work.nodes.find((candidate) => candidate.id === node!.parentId)
+      const receipt = wave?.completion
+      if (!receipt?.bindingFingerprint || node!.status !== "complete") throw new Error(`Advisory Task ${id} lacks a reviewed predecessor Wave receipt.`)
+      assertCompletedWaveForTasks(work, result.workflowId, generation!, receipt.taskIds, receipt.bindingFingerprint)
+      reviewSource = `wave:${wave!.logicalId}`
+    }
+    return [{ taskId: id, nativeKind: "advisory" as const, adviceForTaskId: taskId, resultDigest: result.resultDigest,
+      summary: result.summary!, sourceAttempt: result.completedAttempt!, sourceRole: result.producerAgent!,
+      sourceWorkflowId: result.workflowId, reviewSource }]
+  })
+}
+
+function resultDependencyIds(work: WorkHierarchy, generation: number, task: TaskSpec) {
+  const plan = work.plans?.find((candidate) => candidate.generation === generation)
+  const tasks = plan?.phases.flatMap((phase) => phase.waves.flatMap((wave) => wave.tasks))
+  // Preserve old supported receipts. Advisory contracts require cross-Wave
+  // original-result causality, not only the local executable DAG edges.
+  if (!tasks?.some((task) => task.role === "brainstorm")) return task.dependsOn
+  const semantic = tasks.find((candidate) => candidate.id === task.id)
+  if (!semantic) throw new Error("Result has no current semantic Task contract.")
+  return semantic.dependsOn
+}
+
+function assertOriginalAdviceContract(work: WorkHierarchy, generation: number, task: TaskSpec, result: WorkTaskResult, reused = new Map<string, WorkTaskResult>()) {
+  const tasks = work.plans?.find((plan) => plan.generation === generation)?.phases.flatMap((phase) => phase.waves.flatMap((wave) => wave.tasks)) ?? []
+  const semantic = tasks.find((candidate) => candidate.id === task.id)
+  const inputs = semantic?.dependsOn.flatMap((id) => {
+    const source = tasks.find((candidate) => candidate.id === id)
+    return nativeTaskPath(source ?? {})?.nativeKind === "advisory" ? [source!] : []
+  }) ?? []
+  const advisory = nativeTaskPath(task)?.nativeKind === "advisory"
+  if (!advisory && inputs.length === 0) return
+  if (result.nativeKind !== (advisory ? "advisory" : "producer") || result.generation !== generation ||
+      result.taskId !== task.id || result.stepId !== taskStepId(task.id) || result.producerAgent !== task.role || !result.producerSessionId) {
+    throw new Error(`Task ${task.id} lacks its original native advice/receiver provenance.`)
+  }
+  if (advisory) {
+    if (result.adviceForTaskId !== task.adviceForTaskId || !result.resultDigest || result.resultDigest !== advisoryResultDigest(result) || result.adviceResolutions !== undefined) {
+      throw new Error(`Task ${task.id} original advisory result/digest is invalid.`)
+    }
+    return
+  }
+  const resolutions = result.adviceResolutions
+  if (!resolutions || resolutions.length !== inputs.length || new Set(resolutions.map((entry) => entry.taskId)).size !== resolutions.length) {
+    throw new Error(`Task ${task.id} lacks its original complete advice resolutions.`)
+  }
+  for (const source of inputs) {
+    const original = work.nodes.find((node) => node.type === "task" && node.generation === generation && node.logicalId === source.id && node.status !== "superseded")?.result ?? reused.get(source.id)
+    const entry = resolutions.find((entry) => entry.taskId === source.id)
+    if (!original?.resultDigest || original.resultDigest !== advisoryResultDigest(original) || source.adviceForTaskId !== task.id ||
+        entry?.resultDigest !== original.resultDigest || !["adopted", "rejected", "deferred"].includes(entry.disposition) ||
+        !entry.rationale?.trim() || !entry.resolutionRef?.trim()) throw new Error(`Task ${task.id} original advice resolution is missing or stale.`)
+  }
+}
+
+async function validateAdviceResolutions(
+  ctx: any, workflow: Workflow, work: WorkHierarchy | undefined, step: Workflow["steps"][number],
+  summary: string, resolutions: AdviceResolution[] | undefined,
+) {
+  const path = step.task ? nativeTaskPath(step.task) : undefined
+  if (resolutions !== undefined && path?.nativeKind !== "producer") throw new Error("adviceResolutions are allowed only on the receiving producer Task completion.")
+  if (path?.nativeKind === "advisory" && (!summary.trim() || summary.length > MAX_TASK_TEXT_LENGTH)) throw new Error("Advisory findings require a nonempty bounded summary.")
+  if (path?.nativeKind !== "producer" || !work) return
+  const inputs = reviewedAdviceInputs(workflow, work, step.task!.id)
+  if (resolutions === undefined && inputs.length === 0) return
+  if (!Array.isArray(resolutions) || resolutions.length > MAX_TASK_CONTEXT_ITEMS || resolutions.length !== inputs.length ||
+      new Set(resolutions.map((entry) => entry?.taskId)).size !== resolutions.length) {
+    throw new Error("Receiving Task requires exactly one adviceResolution for each direct advisory input.")
+  }
+  for (const entry of resolutions) {
+    if (!entry || Object.keys(entry).some((key) => !["taskId", "resultDigest", "disposition", "rationale", "resolutionRef"].includes(key)) ||
+        !["adopted", "rejected", "deferred"].includes(entry.disposition) ||
+        typeof entry.rationale !== "string" || !entry.rationale.trim() || entry.rationale.length > MAX_TASK_TEXT_LENGTH ||
+        typeof entry.resolutionRef !== "string" || !entry.resolutionRef.trim() || entry.resolutionRef.length > MAX_TASK_TEXT_LENGTH ||
+        !/^[0-9a-f]{64}$/.test(entry.resultDigest) ||
+        !inputs.some((input) => input.taskId === entry.taskId && input.resultDigest === entry.resultDigest)) {
+      throw new Error("Invalid, unrelated or stale digest-bound adviceResolution.")
+    }
+    // Disposition records the receiver's treatment, not semantic adequacy or
+    // authorized Plan deferral. Independent review/OQs preserve that boundary.
+    if (entry.resolutionRef === `task:${step.task!.id}#result`) {
+      if (!summary.trim()) throw new Error("Self-result resolution requires the receiver's own decision summary.")
+    } else if (entry.resolutionRef.startsWith("evidence:")) {
+      const id = entry.resolutionRef.slice("evidence:".length)
+      const claims = await stepClaims(ctx, workflow.id, step.id)
+      const observedIds = new Set((await stepObservations(ctx, workflow.id, step.id))
+        .filter((observation) => observationMatchesStep(observation, workflow, step.id)).map((observation) => observation.id))
+      if (!claims.some((claim) => claim.id === id && claim.byAgent === step.agent &&
+          claim.observationIds.length > 0 && claim.observationIds.every((id) => observedIds.has(id)) &&
+          (claim.attempt ?? 0) === (step.attempt ?? 0))) {
+        throw new Error("Resolution evidence must belong to this receiving Task attempt/session.")
+      }
+    } else if (entry.resolutionRef.startsWith("artifact:")) {
+      const path = safeOwnedRepoPath(entry.resolutionRef.slice("artifact:".length))
+      const scope = await ctx.storage.get(scopeKey(workflow.id, step.id)) as TaskScope | undefined
+      const write = scope?.write.length ? scope.write : artifactWriteDefaults[step.agent] ?? []
+      const owned = await ctx.storage.get(gitStepAttemptOwnedPathKey(workflow.id, step.id, step.attempt ?? 0, path)) as GitStepAttemptOwnedPath | undefined
+      const file = await lstat(resolve(ctx.location.directory, path)).catch(() => undefined)
+      const boundary = await classifyScopeTarget(ctx.location.directory, path)
+      if (!resourcesWithinScope([path], write) || !file?.isFile() || boundary.kind === "hard-boundary" ||
+          !owned || owned.workflowId !== workflow.id || owned.stepId !== step.id || owned.attempt !== (step.attempt ?? 0) ||
+          owned.fingerprint !== await worktreeFingerprint(ctx.location.directory, path)) {
+        throw new Error("Resolution artifact requires current receiving-attempt authorship inside admitted scope.")
+      }
+    } else throw new Error("Unsupported advice resolutionRef; use artifact:, evidence: or the receiver's task:#result.")
+  }
 }
 
 function assertPlannedTaskAdmission(
@@ -374,6 +564,11 @@ function assertStepDispatchAdmission(
     throw new Error(
       "Dispatch admission denied: the reviewed claimed-Wave contract or current Task DAG no longer matches.",
     )
+  }
+  if (step.task) {
+    const path = nativeTaskPath(step.task)
+    if (!path || path.agent !== step.agent || path.stepKind !== step.kind) throw new Error("Task native path does not match its exact role/slot binding.")
+    if (path.nativeKind === "producer") reviewedAdviceInputs(workflow, work!, step.task.id)
   }
 }
 
@@ -3072,6 +3267,7 @@ async function assertCurrentStepPlanAdmission(ctx: any, workflowId: string, step
   const work = workflow.work ? await readWork(ctx, workflow.work.objectiveId) : undefined
   if (workflow.work && !work) throw new Error("Persistent work hierarchy not found.")
   assertStepDispatchAdmission(workflow, work, step)
+  await assertStepHostAvailability(ctx, workflow, work, step)
 }
 
 async function assertWorkerWorkClaim(ctx: any, workflowId: string, stepId: string) {
@@ -3085,6 +3281,7 @@ async function assertWorkerWorkClaim(ctx: any, workflowId: string, stepId: strin
   const work = await readWork(ctx, workflow.work.objectiveId)
   if (!work) throw new Error("Persistent work hierarchy not found.")
   assertStepDispatchAdmission(workflow, work, step)
+  await assertStepHostAvailability(ctx, workflow, work, step)
   assertWaveClaimForTasks(
     work,
     workflow.id,
@@ -3152,6 +3349,10 @@ async function reusableCompletedTaskIds(
     // explicit reconciliation that first restored their workflow Step.
     // Legacy receipts without modern provenance keep their historical path.
     const receipt = workTask.result
+    try { assertOriginalAdviceContract(work, workflow.work!.generation, taskStep.task!, receipt) } catch (error) {
+      if (invalidReceipt === "rerun") continue
+      throw error
+    }
     if (receipt.completedAttempt !== undefined) {
       if (!checkedCleanHead) {
         currentCleanHead = await cleanRepositoryHead(ctx.location.directory)
@@ -3159,7 +3360,7 @@ async function reusableCompletedTaskIds(
       }
       const contractDigest = createHash("sha256")
         .update(JSON.stringify(taskStep.task)).digest("hex")
-      const changedDependency = taskStep.task!.dependsOn.some((dependencyId) => {
+      const changedDependency = resultDependencyIds(work, workflow.work!.generation, taskStep.task!).some((dependencyId) => {
         const dependency = work.nodes.find((node) =>
           node.generation === workflow.work!.generation && node.type === "task" &&
           node.logicalId === dependencyId && node.status !== "superseded")
@@ -3319,6 +3520,7 @@ async function statusStepReadiness(
 
     try {
       assertStepDispatchAdmission(workflow, work, step)
+      await assertStepHostAvailability(ctx, workflow, work, step)
     } catch (error) {
       dispatch = {
         state: "blocked",
@@ -4347,6 +4549,9 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
       if (!raw.agent) return
       const agent = String(raw.agent)
+      if (agent === "brainstorm" && directMutationPaths.length > 0) {
+        throw new Error("Brainstorm advisory work cannot mutate, generate, commit or execute commands.")
+      }
 
       const commitMessagePaths = directMutationPaths.filter((path) =>
         roleCommitMessagePath(agent, path),
@@ -6570,17 +6775,28 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             stepId: { type: "string" },
             summary: { type: "string" },
             outcome: { type: "string", enum: ["complete", "pass", "fail"] },
+            adviceResolutions: {
+              type: "array", maxItems: MAX_TASK_CONTEXT_ITEMS,
+              items: { type: "object", properties: {
+                taskId: { type: "string", pattern: "^[a-z0-9][a-z0-9-]*$", maxLength: 96 },
+                resultDigest: { type: "string", pattern: "^[0-9a-f]{64}$" },
+                disposition: { type: "string", enum: ["adopted", "rejected", "deferred"] },
+                rationale: { type: "string", minLength: 1, maxLength: MAX_TASK_TEXT_LENGTH },
+                resolutionRef: { type: "string", minLength: 1, maxLength: MAX_TASK_TEXT_LENGTH },
+              }, required: ["taskId", "resultDigest", "disposition", "rationale", "resolutionRef"], additionalProperties: false },
+            },
           },
           required: ["workflowId", "stepId", "summary"],
           additionalProperties: false,
         },
         options: { namespace: "loom", codemode: false },
         execute: async (input, tool) => {
-          const { workflowId, stepId, summary, outcome } = input as {
+          const { workflowId, stepId, summary, outcome, adviceResolutions } = input as {
             workflowId: string
             stepId: string
             summary: string
             outcome?: "complete" | "pass" | "fail"
+            adviceResolutions?: AdviceResolution[]
           }
 
           const workflow = await readBoundWorkflow(ctx, tool.sessionID, workflowId, ensureLegacySession)
@@ -6774,6 +6990,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               const admissionWork = await readWork(ctx, workflow.work.objectiveId)
               if (!admissionWork) throw new Error("Persistent work hierarchy not found.")
               assertStepDispatchAdmission(workflow, admissionWork, currentStep)
+              await assertStepHostAvailability(ctx, workflow, admissionWork, currentStep)
             }
 
             if (tool.agent === "diagnostic" && resolvedOutcome === "complete") {
@@ -6827,9 +7044,13 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 const snapshot = currentWork?.plans?.find((candidate) => candidate.generation === workflow.work!.generation)
                 if (!snapshot) throw new Error("Plan role feasibility cannot be checked without the current semantic Plan.")
                 validatePlanRoleFeasibility(snapshot)
+                await assertAdviceHostPaths(ctx, currentWork, workflow.work.generation)
               }
             }
 
+            const adviceWork = workflow.work ? await readWork(ctx, workflow.work.objectiveId) : undefined
+            if (!currentStep) throw new Error("Step not found.")
+            await validateAdviceResolutions(ctx, workflow, adviceWork, currentStep, summary, adviceResolutions)
             finishStep(workflow, stepId, tool.agent, resolvedOutcome, summary)
             if (
               stepId === "review-plan" &&
@@ -6956,17 +7177,28 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                     complete: plannedTaskSatisfied(workflow, taskStep),
                     ...(taskStep.id === stepId && (taskStep.status === "complete" || taskStep.status === "passed")
                       ? {
-                          result: {
+                          result: (() => {
+                            const nativePath = nativeTaskPath(taskStep.task!)
+                            const result: WorkTaskResult = {
                             workflowId,
                             ...(taskStep.summary ? { summary: taskStep.summary } : {}),
                             evidenceClaimIds: completedTaskClaims.map((claim) => claim.id),
                             completedAt: now,
                             completedAttempt: taskStep.attempt ?? 0,
                             producerAgent: taskStep.agent,
+                            ...(nativePath?.stepKind === "work" ? {
+                              nativeKind: nativePath.nativeKind,
+                              generation: workflow.work!.generation,
+                              taskId: taskStep.task!.id,
+                              stepId: taskStep.id,
+                              producerSessionId: tool.sessionID,
+                            } : {}),
+                            ...(taskStep.task!.adviceForTaskId ? { adviceForTaskId: taskStep.task!.adviceForTaskId } : {}),
+                            ...(adviceResolutions !== undefined ? { adviceResolutions } : {}),
                             executableTaskFingerprint: createHash("sha256")
                               .update(JSON.stringify(taskStep.task)).digest("hex"),
                             dependencyResultDigests: Object.fromEntries(
-                              taskStep.task!.dependsOn.flatMap((dependencyId) => {
+                              resultDependencyIds(work, workflow.work!.generation, taskStep.task!).flatMap((dependencyId) => {
                                 const dependency = work.nodes.find((node) =>
                                   node.generation === workflow.work!.generation &&
                                   node.type === "task" && node.logicalId === dependencyId &&
@@ -6982,7 +7214,10 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                             ...(completedTaskSemanticClosure
                               ? { semanticClosureFingerprint: completedTaskSemanticClosure }
                               : {}),
-                          },
+                            }
+                            if (result.nativeKind === "advisory") result.resultDigest = advisoryResultDigest(result)
+                            return result
+                          })(),
                         }
                       : {}),
                   })),
@@ -9476,6 +9711,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                               integration: { type: "array", items: { type: "string" } },
                               verify: { type: "array", items: { type: "string" } },
                               role: { type: "string" },
+                              adviceForTaskId: { type: "string" },
                               responsibility: { type: "string", enum: ["produce", "execute", "review", "obtain-user-decision"] },
                             },
                             required: [
@@ -9740,6 +9976,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                       integration: { type: "array", items: { type: "string" } },
                       verify: { type: "array", items: { type: "string" } },
                       role: { type: "string" },
+                      adviceForTaskId: { type: "string" },
                       responsibility: { type: "string", enum: ["produce", "execute", "review", "obtain-user-decision"] },
                     },
                     additionalProperties: false,
@@ -9759,6 +9996,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                   integration: { type: "array", items: { type: "string" } },
                   verify: { type: "array", items: { type: "string" } },
                   role: { type: "string" },
+                  adviceForTaskId: { type: "string" },
                   responsibility: { type: "string", enum: ["produce", "execute", "review", "obtain-user-decision"] },
                 },
                     required: [
@@ -9793,6 +10031,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                   verify: { type: "array", items: { type: "string" } },
                   role: { type: "string" },
                   responsibility: { type: "string", enum: ["produce", "execute", "review", "obtain-user-decision"] },
+                  adviceForTaskId: { type: "string" },
                 },
                           required: [
                             "id", "title", "objective", "rationale", "dependsOn", "authorityRefs",
@@ -9838,6 +10077,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                                   integration: { type: "array", items: { type: "string" } },
                                   verify: { type: "array", items: { type: "string" } },
                                   role: { type: "string" },
+                                  adviceForTaskId: { type: "string" },
                                   responsibility: { type: "string", enum: ["produce", "execute", "review", "obtain-user-decision"] },
                                 },
                                 required: [
@@ -10275,6 +10515,12 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 const work = await readWork(ctx, workflow.work!.objectiveId)
                 if (!work) throw new Error("Persistent Work hierarchy is missing.")
                 assertWorkGeneration(work, workflow.work!.generation)
+
+                const semanticPlan = work.plans?.find((candidate) => candidate.generation === workflow.work!.generation)
+                if (semanticPlan?.phases.some((phase) => phase.waves.some((wave) => wave.tasks.some((task) => task.role === "brainstorm")))) {
+                  validatePlanRoleFeasibility(semanticPlan)
+                  await assertAdviceHostPaths(ctx, work, workflow.work!.generation)
+                }
                 const plan = workPlanContext(work, undefined, "focused", work.generation)
                 const review = workflow.steps.find((step) => step.id === "review-plan")
                 if (!plan || plan.invalidated || review?.status !== "passed" ||
@@ -10358,12 +10604,17 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                       openVerification.map((requirement) => requirement.id).join(", ") + ".")
                     continue
                   }
-                  const staleDependency = step.task.dependsOn.some((dependencyId) => {
+                  const staleDependency = resultDependencyIds(work, workflow.work!.generation, step.task).some((dependencyId) => {
                     const source = byId.get(dependencyId)
-                    if (!source) return false // Reviewed external-Wave edge
                     const upstream = work.nodes.find((candidate) =>
                       candidate.generation === work.generation && candidate.type === "task" &&
                       candidate.logicalId === dependencyId && candidate.status !== "superseded")
+                    if (!source) {
+                      const wave = work.nodes.find((candidate) => candidate.id === upstream?.parentId)
+                      const completion = wave?.completion
+                      if (upstream?.status !== "complete" || !upstream.result || !completion?.bindingFingerprint) return true
+                      try { assertCompletedWaveForTasks(work, upstream.result.workflowId, work.generation, completion.taskIds, completion.bindingFingerprint) } catch { return true }
+                    }
                     // A dependent's old result cannot survive a newer producer
                     // execution or an archived dependency not yet verified here.
                     const upstreamStep = byId.get(dependencyId)
@@ -10373,7 +10624,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                     if (upstreamStep && !satisfied(upstreamStep) &&
                         !eligible.has(dependencyId)) return true
                     const upstreamReceipt = upstream?.result ?? eligible.get(dependencyId)?.receipt
-                    return !upstreamReceipt || upstreamReceipt.workflowId !== workflow.id ||
+                    return !upstreamReceipt || (source && upstreamReceipt.workflowId !== workflow.id) ||
                       !receipt.dependencyResultDigests?.[dependencyId] ||
                       createHash("sha256").update(JSON.stringify(upstreamReceipt)).digest("hex") !==
                         receipt.dependencyResultDigests[dependencyId] ||
@@ -10383,6 +10634,13 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                   })
                   if (staleDependency) {
                     refuse(id, "Dependent producer result is missing or was replaced after this completion.")
+                    continue
+                  }
+                  try {
+                    assertOriginalAdviceContract(work, workflow.work!.generation, step.task, receipt,
+                      new Map([...eligible].map(([id, candidate]) => [id, candidate.receipt])))
+                  } catch (error) {
+                    refuse(id, error instanceof Error ? error.message : String(error))
                     continue
                   }
                   if (!Number.isSafeInteger(receipt.completedAttempt) ||
@@ -10830,6 +11088,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                   verify: { type: "array", items: { type: "string" } },
                   role: { type: "string" },
                   responsibility: { type: "string", enum: ["produce", "execute", "review", "obtain-user-decision"] },
+                  adviceForTaskId: { type: "string" },
                 },
                 required: [
                   "id",
@@ -10938,6 +11197,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                   }
                 }
 
+                await assertAdviceHostPaths(ctx, work, workflow.work!.generation)
                 const preservedTaskIds = await reusableCompletedTaskIds(ctx, work, workflow)
                 const preserved = new Set(preservedTaskIds)
                 // Never silently discard a previously completed Step on compilation.
@@ -11143,11 +11403,15 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             return { content: renderToolOutput({ error: `Planned Task ${taskId} not found.` }) }
           }
           const runnableIDs = new Set(runnable(workflow).map((step) => step.id))
+          const statusWork = workflow.work ? await readWork(ctx, workflow.work.objectiveId) : undefined
           return {
             content: renderToolOutput({
               tasks: tasks.map((step) => ({
                 stepId: step.id,
                 status: step.status,
+                nativePath: nativeTaskPath(step.task!),
+                result: statusWork?.nodes.find((node) => node.type === "task" && node.generation === workflow.work?.generation &&
+                  node.logicalId === step.task!.id && node.status !== "superseded")?.result,
                 runnable: runnableIDs.has(step.id),
                 ...(step.kind === "wait" && step.task?.responsibility === "obtain-user-decision"
                   ? {
@@ -11365,6 +11629,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                   ? await readWork(ctx, current.work.objectiveId)
                   : undefined
                 assertStepDispatchAdmission(current, work, step)
+                await assertStepHostAvailability(ctx, current, work, step)
               } else {
                 const question = (await ctx.storage.get(
                   oqKey(value.workflowId, value.questionId!),
@@ -11531,6 +11796,8 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
           let scope: TaskScope | undefined
           let task: TaskSpec | undefined
+          let adviceInputs: ReturnType<typeof reviewedAdviceInputs> | undefined
+          let taskResult: WorkTaskResult | undefined
           let taskOutcome: string | undefined
           let stepAttempt: number | undefined
           let questionAttempt: number | undefined
@@ -11657,6 +11924,16 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                   }
                   work = await readWork(ctx, workflow.work.objectiveId)
                   if (!work) throw new Error("Persistent work hierarchy not found.")
+                  if (step.task && nativeTaskPath(step.task)?.nativeKind === "producer") {
+                    adviceInputs = reviewedAdviceInputs(workflow, work, step.task.id)
+                  }
+                  const advisoryTaskId = step.task?.adviceForTaskId ? step.task.id
+                    : step.id.startsWith("task-review:") ? step.id.slice("task-review:".length) : undefined
+                  if (advisoryTaskId) {
+                    const original = work.nodes.find((node) => node.generation === workflow.work!.generation &&
+                      node.type === "task" && node.logicalId === advisoryTaskId && node.status !== "superseded")?.result
+                    if (original) taskResult = original
+                  }
                   planContext =
                     workPlanContext(
                       work,
@@ -11706,6 +11983,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 }
 
                 assertStepDispatchAdmission(workflow, work, step)
+                await assertStepHostAvailability(ctx, workflow, work, step)
               } else {
                 const question = (await ctx.storage.get(
                   oqKey(value.workflowId, value.questionId!),
@@ -11913,6 +12191,12 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                     : "The attached write scope is the current mutation surface, not a prediction that every needed file is already known. acceptedAuthority identifies the governing source. Discover freely; call loom_scope_elevate before mutating additional project-local paths. Any durable project-local write scope, including scope granted by loom_scope_elevate, automatically carries commit authority for that step's admitted bytes across redispatch.",
               } : {}),
               ...(task ? { task } : {}),
+              ...(task ? { nativePath: nativeTaskPath(task) } : {}),
+              ...(adviceInputs?.length ? { adviceInputs } : {}),
+              ...(taskResult ? { taskResult } : {}),
+              ...(tool.agent === "reviewer" && taskResult?.adviceResolutions?.length ? {
+                adviceReviewBoundary: "Validate the receiver's actual referenced decision/output. Deferred must identify exclusion, rationale, remaining work/authority (or no required meaning remaining) and the decision established. Any unresolved required meaning prevents PASS; typed disposition does not authorize Plan deferral or acceptance.",
+              } : {}),
               ...(producerSkills ? { producerSkills } : {}),
               ...(value.stepId && tool.agent === "reviewer"
                 ? {
@@ -13264,6 +13548,12 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
     const evaluatePermissionAdmitted = async (event: any) => {
       const delegationAction = event.action === "subagent"
+      if (event.agent === "brainstorm" && (event.action === "edit" || delegationAction ||
+          (event.action === "shell" && !event.resources.every((resource: string) => isGitInspectionShellCommand(resource))))) {
+        event.effect = "deny"
+        event.message = "Brainstorm advisory work has no mutation, command execution or nested dispatch authority."
+        return
+      }
       if (event.action === "edit" || event.action === "shell" || delegationAction) {
         await ensureLegacyCancellationBoundary(event.sessionID)
       }
@@ -14083,6 +14373,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           }
           try {
             assertStepDispatchAdmission(currentWorkflow, currentWork, currentStep)
+            await assertStepHostAvailability(ctx, currentWorkflow, currentWork, currentStep)
           } catch (error) {
             return stale(error instanceof Error ? error.message : String(error))
           }

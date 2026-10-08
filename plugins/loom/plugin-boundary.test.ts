@@ -12,7 +12,7 @@ import { cancelWorkflow } from "./lifecycle"
 import { deleteWorkflowRecords } from "./workflow-cleanup"
 import { createWorkHierarchy, materializeWorkPlan, claimWorkflowWave, syncWorkTaskStatuses,
   completeWaveForTasks, releaseCancelledWorkflowClaims, reopenWaveForTasks,
-  legacyWorkflowTaskSemanticFingerprint, taskSemanticClosureFingerprintAtRevision, type WorkPlanTask } from "./work"
+  legacyWorkflowTaskSemanticFingerprint, taskSemanticClosureFingerprintAtRevision, type WorkPlanTask, type WorkPlanDefinition } from "./work"
 import { buildSidebarSnapshot } from "./sidebar"
 import { prepareReportPromotion, publishPreparedReport, type ReportPromotionRecord } from "./reports"
 import {
@@ -527,7 +527,7 @@ describe("Loom registered plugin boundary", () => {
       ]);
       expect(refreshed.planningInsights.hints).toHaveLength(1);
       expect(refreshed.planningInsights.hints[0].name).toBe("brainstorm");
-      expect(refreshed.planningInsights.hints[0].caution).toContain("planned Brainstorm Tasks are not supported");
+      expect(refreshed.planningInsights.hints[0].caution).toContain("explicit adviceForTaskId receiver");
 
       roster = Array.from({ length: 205 }, (_, index) => ({
         name: `${index}-${"n".repeat(200)}`,
@@ -10141,7 +10141,7 @@ function richPlanTask(id: string, title: string, objective: string, dependsOn: s
   }
 }
 
-function richPlanDefinition(phases: any[]) {
+function richPlanDefinition(phases: any[]): WorkPlanDefinition {
   return {
     goal: "Deliver the accepted test Objective.",
     assumptions: [],
@@ -10167,6 +10167,581 @@ function richPlanDefinition(phases: any[]) {
 function richWorkPlanInput(workflowId: string, phases: any[], extra: Record<string, unknown> = {}) {
   return { workflowId, ...richPlanDefinition(phases), ...extra }
 }
+
+async function advisoryFixture(mode: "same-wave" | "cross-wave" | "cross-phase" = "same-wave", mandatory = false) {
+  let roster = ["brainstorm", "architect", "worker", "reviewer", "planner", "critic", "documenter"]
+  const h = await harness(undefined, undefined, undefined, undefined, (input) => ({
+    location: { directory: input?.location?.directory ?? "" }, data: roster.map((name) => ({ name })),
+  }))
+  const advice: WorkPlanTask = { ...richPlanTask("advice", "Advice", "Compare bounded implementation alternatives"),
+    role: "brainstorm", responsibility: "produce", adviceForTaskId: "receiver" }
+  const receiver: WorkPlanTask = { ...richPlanTask("receiver", "Receiver", "Resolve advice inside accepted architecture", ["advice"]),
+    role: "architect", responsibility: "produce" }
+  const consumer = richPlanTask("consumer", "Consumer", "Implement the receiving authority decision", ["receiver"])
+  const first = { id: "advice-wave", title: "Advice Wave", tasks: mode === "same-wave" ? [advice, receiver, consumer] : [advice] }
+  const second = { id: "receiver-wave", title: "Receiver Wave", tasks: [receiver, consumer] }
+  const phases = mode === "cross-phase" ? [
+    { id: "exploration", title: "Exploration", waves: [first] }, { id: "delivery", title: "Delivery", waves: [second] },
+  ] : [{ id: "core", title: "Core", waves: [first, ...(mode === "cross-wave" ? [second] : [])] }]
+  const definition = richPlanDefinition(phases)
+  if (mandatory) definition.obligations = [{ id: "required-decision", sourceRef: "docs/anchors/test/anchor.md", statement: "Receiving authority must decide the settled implementation realization before consumption.",
+    disposition: "implement", taskIds: ["receiver"], verification: ["Independent receiver review checks the decision."] }]
+  let workflowId = ""
+  const workflow = () => h.durableStorage.get(`workflow/${workflowId}`) as Promise<any>
+  const work = async () => h.durableStorage.get(`work/${encodeURIComponent((await workflow()).work.objectiveId)}`) as Promise<any>
+  let serial = 0
+  const attach = async (stepId: string, agent: string) => {
+    const grant = await h.call("dispatch_grant", { workflowId, stepId }, "general", "parent")
+    expect(grant.error).toBeUndefined()
+    const launch = { agent: "general", sessionID: "parent", action: "subagent", resources: [agent], effect: "deny", message: "",
+      source: { id: `advisory-launch-${++serial}`, messageID: `advisory-launch-${serial}` } }
+    await h.permissionHooks.get("evaluate")!(launch)
+    expect(launch.effect).toBe("allow")
+    const sessionId = `advisory-${agent}-${serial}`
+    const attached = await h.call("attach", { workflowId, stepId, grantId: grant.grantId }, agent, sessionId)
+    expect(attached.error).toBeUndefined()
+    expect(attached.attached).toBe(true)
+    return { sessionId, attached, grant }
+  }
+  const complete = async (stepId: string, agent: string, extra: Record<string, unknown> = {}) => {
+    const { sessionId } = await attach(stepId, agent)
+    const completed = await h.call("complete", { workflowId, stepId, summary: "Independent bounded contribution", ...extra }, agent, sessionId)
+    expect(completed.error).toBeUndefined()
+    return completed
+  }
+  const beginWave = async (tasks: WorkPlanTask[], createPlan = false) => {
+    workflowId = (await h.call("start", { anchor: "docs/anchors/advisory/anchor.md" }, "general", "parent")).workflowId
+    expect(workflowId).toBeTruthy()
+    expect((await h.call("route", { humanFacing: false, behavioral: false, structural: false, externalUnknown: false,
+      diagnostic: false, productOutcome: true, implementationRequested: true, executionDepth: "objective", workLevel: "wave" }, "general", "parent")).error).toBeUndefined()
+    await complete("critic-solution", "critic", { outcome: "pass" })
+    const planner = await attach("plan", "planner")
+    if (createPlan) expect((await h.call("work_plan", { workflowId, ...definition }, "planner", planner.sessionId)).error).toBeUndefined()
+    const selected = new Set(tasks.map((task) => task.id))
+    expect((await h.call("task_plan", { workflowId, tasks: tasks.map((task) => ({ ...task,
+      dependsOn: task.dependsOn.filter((id) => selected.has(id)), write: [], skills: [] })) }, "planner", planner.sessionId)).error).toBeUndefined()
+    expect((await h.call("complete", { workflowId, stepId: "plan", summary: "Plan compiled" }, "planner", planner.sessionId)).error).toBeUndefined()
+    expect((await work()).nodes.some((node: any) => node.claimedByWorkflowId === workflowId)).toBe(false)
+    await complete("review-plan", "reviewer", { outcome: "pass" })
+    expect((await work()).nodes.some((node: any) => node.claimedByWorkflowId === workflowId)).toBe(true)
+  }
+  const finishWave = async () => {
+    await complete("review-implementation", "reviewer", { outcome: "pass" })
+    const documenter = await attach("knowledge-sync", "documenter")
+    const discovery = { tool: "okf-mcp_list_docs", callID: crypto.randomUUID(), sessionID: documenter.sessionId, agent: "documenter", input: {} }
+    await h.toolHooks.get("execute.before")!(discovery)
+    await h.toolHooks.get("execute.after")!({ ...discovery, status: "completed", result: [] })
+    const observations = await h.call("evidence_observations", { detail: true }, "documenter", documenter.sessionId)
+    expect((await h.call("knowledge_record", { workflowId, changedDocs: [], unchangedReason: "No repository artifacts in this control-plane fixture.",
+      okfObservationIds: observations.observations.map((item: any) => item.id) }, "documenter", documenter.sessionId)).error).toBeUndefined()
+    expect((await h.call("complete", { workflowId, stepId: "knowledge-sync", summary: "Knowledge verified" }, "documenter", documenter.sessionId)).error).toBeUndefined()
+  }
+  try { await beginWave(first.tasks, true) } catch (error) { h.restore(); throw error }
+  return { ...h, advice, receiver, consumer, definition, workflow, work, attach, complete, beginWave, finishWave,
+    id: () => workflowId, setRoster: (names: string[]) => { roster = names } }
+}
+
+test("planned Brainstorm actual registered tools compose advice, authority resolution, gates and causal receipts", async () => {
+  const h = await advisoryFixture()
+  try {
+    const source = await h.attach("task:advice", "brainstorm")
+    expect(source.attached.nativePath.nativeKind).toBe("advisory")
+    expect(source.attached.write).toEqual([])
+    const summary = "Option A preserves the existing boundary; option B splits state and increases recovery cost. Assumption: settled architecture remains current. Receiver must choose; this is advice, not a decision."
+    expect((await h.call("complete", { workflowId: h.id(), stepId: "task:advice", summary }, "brainstorm", source.sessionId)).error).toBeUndefined()
+    const original = (await h.work()).nodes.find((node: any) => node.logicalId === "advice").result
+    expect(original).toMatchObject({ nativeKind: "advisory", producerAgent: "brainstorm", producerSessionId: source.sessionId, adviceForTaskId: "receiver", summary })
+    expect(original.resultDigest).toMatch(/^[0-9a-f]{64}$/)
+    expect((await h.call("dispatch_grant", { workflowId: h.id(), stepId: "task:receiver" }, "general", "parent")).error).toContain("not currently runnable")
+    await h.complete("task-review:advice", "reviewer", { outcome: "pass" })
+    const receiver = await h.attach("task:receiver", "architect")
+    expect(receiver.attached.adviceInputs).toEqual([expect.objectContaining({ summary, resultDigest: original.resultDigest, sourceRole: "brainstorm", reviewSource: "task-review:advice" })])
+    const adviceResolutions = [{ taskId: "advice", resultDigest: original.resultDigest, disposition: "adopted", rationale: "Choose A for the accepted boundary.", resolutionRef: "task:receiver#result" }]
+    expect((await h.call("complete", { workflowId: h.id(), stepId: "task:receiver", summary: "Decision: use A within accepted architecture.", adviceResolutions }, "architect", receiver.sessionId)).error).toBeUndefined()
+    expect((await h.work()).nodes.find((node: any) => node.logicalId === "receiver").result.adviceResolutions).toEqual(adviceResolutions)
+    expect((await h.call("dispatch_grant", { workflowId: h.id(), stepId: "task:consumer" }, "general", "parent")).error).toContain("not currently runnable")
+    await h.complete("task-review:receiver", "reviewer", { outcome: "pass" })
+    await h.complete("task:consumer", "worker")
+    await h.finishWave()
+    const work = await h.work()
+    expect(work.objectiveStatus).not.toBe("complete")
+    expect(work.nodes.filter((node: any) => node.type === "task").every((node: any) => node.status === "complete" && node.result)).toBe(true)
+    expect(work.nodes.find((node: any) => node.type === "wave").completion.bindingFingerprint).toMatch(/^[0-9a-f]{64}$/)
+    const results = new Map(work.nodes.filter((node: any) => node.type === "task").map((node: any) => [node.logicalId, node.result])) as Map<string, any>
+    expect(results.get("receiver").dependencyResultDigests.advice).toBe(createHash("sha256").update(JSON.stringify(results.get("advice"))).digest("hex"))
+    expect(results.get("consumer").dependencyResultDigests.receiver).toBe(createHash("sha256").update(JSON.stringify(results.get("receiver"))).digest("hex"))
+  } finally { h.restore() }
+})
+
+test("planned Brainstorm planning-only feasibility checks every Phase and later Wave without Task claims", async () => {
+  const cases = ["valid", "missing-association", "missing-receiver", "wrong-receiver", "missing-edge", "bypass", "advice-as-authority", "cycle", "wave-cycle", "brainstorm-execute", "native-kind-input", "planner", "critic", "acceptance", "unlisted", "absent-brainstorm", "absent-receiver", "absent-reviewer"]
+  for (const name of cases) {
+    const allNames = ["brainstorm", "architect", "worker", "reviewer", "planner", "critic", "acceptance", "ordinary-helper"]
+    const absent = name.startsWith("absent-") ? name.slice("absent-".length).replace("receiver", "architect") : ""
+    const h = await harness(undefined, undefined, undefined, undefined, (input) => ({ location: { directory: input?.location?.directory ?? "" },
+      data: allNames.filter((role) => role !== absent).map((role) => ({ name: role, description: "Host description grants no native capability" })) }))
+    try {
+      const { workflowId } = await h.call("start", { anchor: "docs/anchors/planned-advice/anchor.md" }, "general", "parent")
+      await h.call("route", { humanFacing: false, behavioral: false, structural: false, externalUnknown: false, diagnostic: false,
+        productOutcome: true, implementationRequested: false, executionDepth: "objective" }, "general", "parent")
+      const attach = async (stepId: string, role: string) => {
+        const grant = await h.call("dispatch_grant", { workflowId, stepId }, "general", "parent")
+        expect(grant.error).toBeUndefined()
+        const sessionId = `${name}-${role}-${stepId}`
+        expect((await h.call("attach", { workflowId, stepId, grantId: grant.grantId }, role, sessionId)).attached).toBe(true)
+        return sessionId
+      }
+      const critic = await attach("critic-solution", "critic")
+      expect((await h.call("complete", { workflowId, stepId: "critic-solution", outcome: "pass", summary: "Scope checked" }, "critic", critic)).error).toBeUndefined()
+      const planner = await attach("plan", "planner")
+      const advice: WorkPlanTask = { ...richPlanTask("advice", "Advice", "Explore alternatives"), role: "brainstorm", responsibility: "produce", adviceForTaskId: "receiver" }
+      const receiver: WorkPlanTask = { ...richPlanTask("receiver", "Receiver", "Own the authority decision", ["advice"]), role: "architect", responsibility: "produce" }
+      const consumer = richPlanTask("consumer", "Consumer", "Implement receiver decision", ["receiver"])
+      if (name === "missing-receiver") advice.adviceForTaskId = "missing"
+      if (name === "missing-association") delete advice.adviceForTaskId
+      if (name === "native-kind-input") Object.assign(advice, { nativeKind: "advisory" })
+      if (name === "wrong-receiver") { receiver.role = "reviewer"; receiver.responsibility = "review" }
+      if (name === "missing-edge") receiver.dependsOn = []
+      if (name === "bypass") consumer.dependsOn = ["advice"]
+      if (name === "cycle") advice.dependsOn = ["receiver"]
+      if (name === "wave-cycle") { advice.dependsOn = ["consumer"]; consumer.dependsOn = [] }
+      if (name === "brainstorm-execute") advice.responsibility = "execute"
+      if (["planner", "critic", "acceptance", "unlisted"].includes(name)) receiver.role = name === "unlisted" ? "ordinary-helper" : name
+      const plan = await h.call("work_plan", richWorkPlanInput(workflowId, [
+        { id: "exploration", title: "Exploration", waves: [{ id: "first", title: "First", tasks: [advice] }] },
+        { id: "delivery", title: "Delivery", waves: [{ id: "later", title: "Later", tasks: [receiver, consumer] }] },
+      ], name === "advice-as-authority" ? { authorityRefs: ["docs/anchors/test/anchor.md", "task:advice#result"] } : {}), "planner", planner)
+      if (["cycle", "brainstorm-execute", "missing-association", "native-kind-input"].includes(name)) {
+        expect(plan.error).toBeTruthy()
+      } else {
+        expect(plan.error).toBeUndefined()
+        expect((await h.call("complete", { workflowId, stepId: "plan", summary: "Whole Plan drafted" }, "planner", planner)).error).toBeUndefined()
+        if (name === "absent-reviewer") {
+          expect((await h.call("dispatch_grant", { workflowId, stepId: "review-plan" }, "general", "parent")).error).toContain("reviewer is unavailable")
+        } else {
+          const reviewer = await attach("review-plan", "reviewer")
+          const verdict = await h.call("complete", { workflowId, stepId: "review-plan", summary: "Whole Plan feasibility checked", outcome: "pass" }, "reviewer", reviewer)
+          if (name === "valid") expect(verdict.error).toBeUndefined()
+          else expect(verdict.error).toBeTruthy()
+        }
+      }
+      const workflow = await h.durableStorage.get(`workflow/${workflowId}`) as any
+      expect(workflow.steps.some((step: any) => step.task)).toBe(false)
+      const work = await h.durableStorage.get(`work/${encodeURIComponent(workflow.work.objectiveId)}`) as any
+      expect(work.objectiveStatus).not.toBe("complete")
+      expect(work.nodes.some((node: any) => node.claimedByWorkflowId || node.result || node.completion)).toBe(false)
+    } finally { h.restore() }
+  }
+})
+
+test("planned Brainstorm permission, grant and typed completion boundaries fail closed", async () => {
+  const h = await advisoryFixture()
+  try {
+    const source = await h.attach("task:advice", "brainstorm")
+    for (const [action, resource] of [["edit", "src/forbidden.ts"], ["edit", "docs/architecture/forbidden.md"], ["shell", "bun test"], ["shell", "git add -- src/forbidden.ts"], ["subagent", "worker"]]) {
+      const event = { action, resources: [resource], agent: "brainstorm", sessionID: source.sessionId, effect: "allow", message: "" }
+      await h.permissionHooks.get("evaluate")!(event)
+      expect(event.effect).toBe("deny")
+      expect(event.message).toContain("Brainstorm")
+    }
+    expect((await h.call("step_scope", { workflowId: h.id(), stepId: "task:advice", write: ["src/**"] }, "general", "parent")).error).toContain("independent/advisory")
+    expect((await h.call("scope_elevate", { workflowId: h.id(), stepId: "task:advice", paths: ["src/forbidden.ts"], reason: "Advice cannot write" }, "brainstorm", source.sessionId)).error).toContain("independent/advisory")
+    expect((await h.call("command_elevate", { workflowId: h.id(), stepId: "task:advice", command: "make test", reason: "Advice cannot execute" }, "brainstorm", source.sessionId)).error).toContain("restricted")
+    const before = JSON.stringify(await h.work())
+    expect((await h.call("complete", { workflowId: h.id(), stepId: "task:advice", summary: " " }, "brainstorm", source.sessionId)).error).toContain("bounded summary")
+    expect((await h.call("complete", { workflowId: h.id(), stepId: "task:advice", summary: "advice", adviceResolutions: [] }, "brainstorm", source.sessionId)).error).toContain("receiving producer")
+    expect(JSON.stringify(await h.work())).toBe(before)
+    expect((await h.call("attach", { workflowId: h.id(), stepId: "task:advice", grantId: source.grant.grantId }, "brainstorm", "replayed-advice-child")).error).toBeTruthy()
+    const summary = "A uses the settled boundary. B is more complex. Assumption: accepted semantics unchanged. Receiving authority must decide."
+    expect((await h.call("complete", { workflowId: h.id(), stepId: "task:advice", summary }, "brainstorm", source.sessionId)).error).toBeUndefined()
+    const original = (await h.work()).nodes.find((node: any) => node.logicalId === "advice").result
+    await h.complete("task-review:advice", "reviewer", { outcome: "pass" })
+    const receiver = await h.attach("task:receiver", "architect")
+    const valid = { taskId: "advice", resultDigest: original.resultDigest, disposition: "adopted", rationale: "A fits settled authority", resolutionRef: "task:receiver#result" }
+    const receiverBefore = JSON.stringify(await h.work())
+    for (const adviceResolutions of [undefined, [], [valid, valid], [{ ...valid, taskId: "unrelated" }], [{ ...valid, resultDigest: "f".repeat(64) }],
+      [{ ...valid, disposition: "invented" }], [{ ...valid, rationale: " " }], [{ ...valid, resolutionRef: "docs/anchors/test/anchor.md" }],
+      [{ ...valid, resolutionRef: "task:advice#result" }], [{ ...valid, resolutionRef: "evidence:unowned" }], [{ ...valid, resolutionRef: "artifact:docs/architecture/untouched.md" }]]) {
+      const denied = await h.call("complete", { workflowId: h.id(), stepId: "task:receiver", summary: "Candidate authority decision", ...(adviceResolutions !== undefined ? { adviceResolutions } : {}) }, "architect", receiver.sessionId)
+      expect(denied.error).toBeTruthy()
+      expect(JSON.stringify(await h.work())).toBe(receiverBefore)
+      expect((await h.workflow()).steps.find((step: any) => step.id === "task:receiver").status).toBe("pending")
+    }
+    expect((await h.call("dispatch_grant", { workflowId: h.id(), stepId: "task:consumer" }, "general", "parent")).error).toContain("not currently runnable")
+    expect((await h.call("complete", { workflowId: h.id(), stepId: "task:receiver", summary: "Actual receiving authority decision", adviceResolutions: [valid] }, "architect", receiver.sessionId)).error).toBeUndefined()
+    const stored = JSON.stringify(await h.work())
+    expect((await h.call("complete", { workflowId: h.id(), stepId: "task:receiver", summary: "Replay different decision", adviceResolutions: [{ ...valid, disposition: "rejected" }] }, "architect", receiver.sessionId)).error).toBeTruthy()
+    expect(JSON.stringify(await h.work())).toBe(stored)
+  } finally { h.restore() }
+})
+
+test("planned Brainstorm receiver artifact/evidence references require actual admitted authorship", async () => {
+  for (const reference of ["artifact", "evidence"]) {
+    const h = await advisoryFixture()
+    try {
+      await h.complete("task:advice", "brainstorm", { summary: "A preserves the existing boundary; B creates migration risk. Architect must choose within accepted meaning." })
+      await h.complete("task-review:advice", "reviewer", { outcome: "pass" })
+      const digest = (await h.work()).nodes.find((node: any) => node.logicalId === "advice").result.resultDigest
+      const receiver = await h.attach("task:receiver", "architect")
+      const path = "docs/architecture/choice.md"
+      expect((await h.call("scope_elevate", { workflowId: h.id(), stepId: "task:receiver", paths: [path], reason: "Record this receiving authority's bounded decision" }, "architect", receiver.sessionId)).continue).toBe(true)
+      const decision = "Decision: use A inside accepted architecture. B is rejected because its migration cost does not serve the bounded accepted outcome. No product meaning is changed."
+      const permission = { agent: "architect", sessionID: receiver.sessionId, action: "edit", resources: [path], effect: "allow", message: "" }
+      await h.permissionHooks.get("evaluate")!(permission)
+      expect(permission.effect).toBe("allow")
+      await mkdir(join(h.root, "docs/architecture"), { recursive: true })
+      const edit = { tool: "edit", callID: crypto.randomUUID(), sessionID: receiver.sessionId, agent: "architect", input: { filePath: path, oldString: "", newString: decision } }
+      await h.toolHooks.get("execute.before")!(edit)
+      await writeFile(join(h.root, path), decision)
+      await h.toolHooks.get("execute.after")!({ ...edit, status: "completed", result: decision })
+      const observed = await h.call("evidence_observations", { detail: true }, "architect", receiver.sessionId)
+      const claim = await h.call("evidence_claim", { workflowId: h.id(), stepId: "task:receiver", kind: "other", statement: "Receiving Architect authored the exact A decision artifact inside accepted scope.",
+        observationIds: observed.observations.filter((item: any) => item.path === path).map((item: any) => item.id) }, "architect", receiver.sessionId)
+      expect(claim.error).toBeUndefined()
+      for (const [command, args] of [
+        ["git add -- docs/architecture/choice.md", ["add", "--", path]],
+        ["git -c core.hooksPath=/dev/null commit -m 'test: receiver bounded decision'", ["-c", "core.hooksPath=/dev/null", "commit", "-m", "test: receiver bounded decision"]],
+      ] as const) {
+        const shellPermission = { agent: "architect", sessionID: receiver.sessionId, action: "shell", resources: [command], effect: "deny", message: "" }
+        await h.permissionHooks.get("evaluate")!(shellPermission)
+        expect(shellPermission.effect).toBe("allow")
+        const shell = { tool: "shell", callID: crypto.randomUUID(), sessionID: receiver.sessionId, agent: "architect", input: { command } }
+        await h.toolHooks.get("execute.before")!(shell)
+        const result = await git(h.root, [...args])
+        await h.toolHooks.get("execute.after")!({ ...shell, status: "completed", result: result.stdout })
+      }
+      const resolutionRef = reference === "artifact" ? `artifact:${path}` : `evidence:${claim.claim.id}`
+      expect((await h.call("complete", { workflowId: h.id(), stepId: "task:receiver", summary: decision,
+        adviceResolutions: [{ taskId: "advice", resultDigest: digest, disposition: "adopted", rationale: "A realizes accepted structure without migration risk", resolutionRef }] }, "architect", receiver.sessionId)).error).toBeUndefined()
+      expect(await readFile(join(h.root, path), "utf8")).toBe(decision)
+      await h.complete("task-review:receiver", "reviewer", { outcome: "pass" })
+      await h.complete("task:consumer", "worker")
+      await h.finishWave()
+    } finally { h.restore() }
+  }
+})
+
+test("planned Brainstorm unchanged original evidence can reconcile without recomputing advice or resolutions", async () => {
+  const h = await advisoryFixture()
+  const inspect = async (stepId: string, agent: string, sessionId: string) => {
+    const before = new Set((await h.call("evidence_observations", { detail: true }, agent, sessionId)).observations.map((item: any) => item.id))
+    const read = { tool: "read", callID: crypto.randomUUID(), sessionID: sessionId, agent, input: { path: "src" } }
+    await h.toolHooks.get("execute.before")!(read)
+    const result = await readdir(join(h.root, "src"))
+    await h.toolHooks.get("execute.after")!({ ...read, status: "completed", result })
+    const observed = (await h.call("evidence_observations", { detail: true }, agent, sessionId)).observations.filter((item: any) => !before.has(item.id))
+    const claim = await h.call("evidence_claim", { workflowId: h.id(), stepId, kind: "other", statement: "Observed bounded fixture repository context before producing this contribution.", observationIds: observed.map((item: any) => item.id) }, agent, sessionId)
+    expect(claim.error).toBeUndefined()
+    expect(claim.claim.observationIds.length).toBeGreaterThan(0)
+    return String(observed[0].id)
+  }
+  try {
+    const source = await h.attach("task:advice", "brainstorm")
+    const observationId = await inspect("task:advice", "brainstorm", source.sessionId)
+    expect((await h.call("complete", { workflowId: h.id(), stepId: "task:advice", summary: "A preserves current structure; B adds complexity. Receiver owns the bounded choice." }, "brainstorm", source.sessionId)).error).toBeUndefined()
+    await h.complete("task-review:advice", "reviewer", { outcome: "pass" })
+    const original = (await h.work()).nodes.find((node: any) => node.logicalId === "advice").result
+    const receiver = await h.attach("task:receiver", "architect")
+    await inspect("task:receiver", "architect", receiver.sessionId)
+    const resolutions = [{ taskId: "advice", resultDigest: original.resultDigest, disposition: "adopted", rationale: "A fits the settled architecture", resolutionRef: "task:receiver#result" }]
+    expect((await h.call("complete", { workflowId: h.id(), stepId: "task:receiver", summary: "Decision A inside accepted architecture", adviceResolutions: resolutions }, "architect", receiver.sessionId)).error).toBeUndefined()
+    const originalReceiver = (await h.work()).nodes.find((node: any) => node.logicalId === "receiver").result
+    expect((await h.call("reopen", { workflowId: h.id(), stepId: "task:advice", reason: "Reverify exact original advice receipts against unchanged contracts",
+      newEvidence: true, changedHypothesis: false, changedStrategy: false, reducedUnresolved: false }, "general", "parent")).error).toBeUndefined()
+    expect((await h.call("reopen", { workflowId: h.id(), stepId: "plan", reason: "Fresh review of unchanged bounded Plan",
+      newEvidence: true, changedHypothesis: false, changedStrategy: false, reducedUnresolved: false }, "general", "parent")).error).toBeUndefined()
+    const planner = await h.attach("plan", "planner")
+    expect((await h.call("task_plan", { workflowId: h.id(), tasks: [h.advice, h.receiver, h.consumer].map((task) => ({ ...task, write: [], skills: [] })) }, "planner", planner.sessionId)).error).toBeUndefined()
+    expect((await h.call("complete", { workflowId: h.id(), stepId: "plan", summary: "Unchanged Plan recompiled" }, "planner", planner.sessionId)).error).toBeUndefined()
+    await h.complete("review-plan", "reviewer", { outcome: "pass" })
+    const observation = await h.durableStorage.get(`evidence/${observationId}`)
+    await h.durableStorage.set(`evidence/${observationId}`, null)
+    const missingBefore = JSON.stringify(await h.work())
+    const missing = await h.call("work_reconcile", { workflowId: h.id(), taskIds: ["advice", "receiver"] }, "general", "parent")
+    expect(missing.reconciled).toEqual([])
+    expect(missing.refused.some((entry: any) => entry.taskId === "advice")).toBe(true)
+    expect(JSON.stringify(await h.work())).toBe(missingBefore)
+    await h.durableStorage.set(`evidence/${observationId}`, observation)
+    const reconcile = await h.call("work_reconcile", { workflowId: h.id(), taskIds: ["advice", "receiver"] }, "general", "parent")
+    expect(reconcile.error).toBeUndefined()
+    expect(reconcile.refused).toEqual([])
+    expect(reconcile.reconciled).toEqual(["advice", "receiver"])
+    expect((await h.call("work_reconcile_status", { workflowId: h.id(), auditId: reconcile.auditId }, "general", "parent")).committed).toBe(true)
+    expect((await h.work()).nodes.find((node: any) => node.logicalId === "advice").result).toEqual(original)
+    expect((await h.work()).nodes.find((node: any) => node.logicalId === "receiver").result).toEqual(originalReceiver)
+    expect((await h.call("dispatch_grant", { workflowId: h.id(), stepId: "task:consumer" }, "general", "parent")).error).toContain("not currently runnable")
+    await h.complete("task-review:advice", "reviewer", { outcome: "pass" })
+    await h.complete("task-review:receiver", "reviewer", { outcome: "pass" })
+    await h.complete("task:consumer", "worker")
+    await h.finishWave()
+  } finally { h.restore() }
+})
+
+test("planned Brainstorm reload preserves original advice and denies missing causal provenance", async () => {
+  const h = await advisoryFixture("cross-phase")
+  let reloaded: Awaited<ReturnType<typeof harness>> | undefined
+  try {
+    await h.complete("task:advice", "brainstorm", { summary: "A preserves the contract; B adds complexity. Receiver owns the decision; assumption is unchanged accepted authority." })
+    await h.finishWave()
+    const source = (await h.work()).nodes.find((node: any) => node.logicalId === "advice").result
+    await h.beginWave([h.receiver, h.consumer])
+    reloaded = await harness(undefined, undefined, { root: h.root, storage: h.storage }, undefined, (input) => ({
+      location: { directory: input?.location?.directory ?? "" }, data: ["brainstorm", "architect", "worker", "reviewer", "planner", "critic", "documenter"].map((name) => ({ name })),
+    }))
+    const workflow = await h.workflow()
+    const key = `work/${encodeURIComponent(workflow.work.objectiveId)}`
+    const intact = JSON.stringify(await reloaded.durableStorage.get(key))
+    for (const corruption of ["summary", "digest", "session", "receipt"]) {
+      const broken = JSON.parse(intact)
+      const node = broken.nodes.find((node: any) => node.logicalId === "advice")
+      if (corruption === "summary") node.result.summary = "Paraphrased historical advice is not original evidence"
+      if (corruption === "digest") delete node.result.resultDigest
+      if (corruption === "session") delete node.result.producerSessionId
+      if (corruption === "receipt") delete broken.nodes.find((node: any) => node.type === "wave" && node.logicalId === "advice-wave").completion
+      await reloaded.durableStorage.set(key, broken)
+      const before = JSON.stringify(await reloaded.durableStorage.get(key))
+      expect((await reloaded.call("dispatch_grant", { workflowId: h.id(), stepId: "task:receiver" }, "general", "parent")).error).toBeTruthy()
+      expect(JSON.stringify(await reloaded.durableStorage.get(key))).toBe(before)
+      expect((await h.workflow()).steps.find((step: any) => step.id === "task:receiver").status).toBe("pending")
+    }
+    await reloaded.durableStorage.set(key, JSON.parse(intact))
+    const grant = await reloaded.call("dispatch_grant", { workflowId: h.id(), stepId: "task:receiver" }, "general", "parent")
+    expect(grant.error).toBeUndefined()
+    const launch = { agent: "general", sessionID: "parent", action: "subagent", resources: ["architect"], effect: "deny", message: "" }
+    await reloaded.permissionHooks.get("evaluate")!(launch)
+    expect(launch.effect).toBe("allow")
+    const receiver = await reloaded.call("attach", { workflowId: h.id(), stepId: "task:receiver", grantId: grant.grantId }, "architect", "receiver-after-reload")
+    expect(receiver.attached).toBe(true)
+    expect(receiver.adviceInputs[0].resultDigest).toBe(source.resultDigest)
+    expect((await reloaded.call("complete", { workflowId: h.id(), stepId: "task:receiver", summary: "Decision A on original reviewed source.",
+      adviceResolutions: [{ taskId: "advice", resultDigest: source.resultDigest, disposition: "adopted", rationale: "A fits the accepted boundary", resolutionRef: "task:receiver#result" }] }, "architect", "receiver-after-reload")).error).toBeUndefined()
+    expect((await h.work()).nodes.find((node: any) => node.logicalId === "advice").result).toEqual(source)
+    await h.complete("task-review:receiver", "reviewer", { outcome: "pass" })
+    await h.complete("task:consumer", "worker")
+    await h.finishWave()
+  } finally { reloaded?.restore(); h.restore() }
+})
+
+test("planned Brainstorm cancellation revokes new advice/resolution operations and preserves delivered history", async () => {
+  const h = await advisoryFixture()
+  try {
+    const source = await h.attach("task:advice", "brainstorm")
+    expect((await h.call("complete", { workflowId: h.id(), stepId: "task:advice", summary: "A keeps the boundary; B adds complexity. Receiver owns the choice." }, "brainstorm", source.sessionId)).error).toBeUndefined()
+    const original = (await h.work()).nodes.find((node: any) => node.logicalId === "advice").result
+    const pending = await h.call("dispatch_grant", { workflowId: h.id(), stepId: "task-review:advice" }, "general", "parent")
+    expect(pending.error).toBeUndefined()
+    expect((await h.call("cancel", { workflowId: h.id(), reason: "Bounded cancellation fixture", confirmation: "Cancel this fixture workflow." }, "general", "parent")).cancelled).toBe(true)
+    expect((await h.call("attach", { workflowId: h.id(), stepId: "task-review:advice", grantId: pending.grantId }, "reviewer", "cancelled-advice-reviewer")).error).toBeTruthy()
+    expect((await h.call("complete", { workflowId: h.id(), stepId: "task:advice", summary: "Cancelled replacement advice" }, "brainstorm", source.sessionId)).error).toBeTruthy()
+    expect((await h.call("dispatch_grant", { workflowId: h.id(), stepId: "task:receiver" }, "general", "parent")).error).toBeTruthy()
+    const work = await h.work()
+    expect(work.nodes.find((node: any) => node.logicalId === "advice").result).toEqual(original)
+    expect(work.nodes.find((node: any) => node.logicalId === "receiver").result).toBeUndefined()
+    expect(work.nodes.some((node: any) => node.claimedByWorkflowId === h.id())).toBe(false)
+    expect(work.nodes.find((node: any) => node.type === "wave").completion).toBeUndefined()
+    expect((await h.durableStorage.get(`dispatch-grant/${pending.grantId}`) as any).revokedAt).toBeDefined()
+  } finally { h.restore() }
+})
+
+test("planned Brainstorm semantic amendment fences stale receiver/attempt grants and requires fresh Plan review", async () => {
+  const h = await advisoryFixture()
+  try {
+    const old = await h.call("dispatch_grant", { workflowId: h.id(), stepId: "task:advice" }, "general", "parent")
+    expect(old.error).toBeUndefined()
+    expect((await h.call("work_release", { workflowId: h.id(), reason: "Replan this still-unexecuted Wave with explicit implementation-owned reception" }, "general", "parent")).error).toBeUndefined()
+    const oq = await h.call("oq_raise", { workflowId: h.id(), responder: "planner", blocking: false, consumerStepIds: ["plan"],
+      question: "Amend the unclaimed Wave so Worker owns resolution of the settled implementation alternatives; Architect separately confirms existing architecture. Preserve explicit advisory reception and independent gates." }, "general", "parent")
+    expect(oq.error).toBeUndefined()
+    const oqGrant = await h.call("dispatch_grant", { workflowId: h.id(), questionId: oq.question.id }, "general", "parent")
+    expect((await h.call("attach", { workflowId: h.id(), questionId: oq.question.id, grantId: oqGrant.grantId }, "planner", "advice-amendment-planner")).attached).toBe(true)
+    const expectedVersion = (await h.work()).version
+    const unauthorized = await h.call("work_amend", { workflowId: h.id(), questionId: oq.question.id, expectedVersion, reason: "Attempt unsupported advice-as-authorized-deferral",
+      planPatch: { obligations: [{ id: "required-decision", sourceRef: "docs/anchors/test/anchor.md", statement: "Required decision", disposition: "authorized-defer", taskIds: ["receiver"], verification: [] }] }, operations: [] }, "planner", "advice-amendment-planner")
+    expect(unauthorized.error).toContain("dispositionAuthorityRef")
+    expect((await h.work()).version).toBe(expectedVersion)
+    expect((await h.call("work_amend", { workflowId: h.id(), questionId: oq.question.id, expectedVersion, reason: "Receiver is implementation-owned inside settled authority",
+      operations: [
+        { action: "patch-task", taskId: "advice", patch: { adviceForTaskId: "consumer" } },
+        { action: "patch-task", taskId: "receiver", patch: { dependsOn: [], objective: "Confirm existing accepted architecture independently of advisory options" } },
+        { action: "patch-task", taskId: "consumer", patch: { dependsOn: ["receiver", "advice"], objective: "Resolve implementation alternatives inside confirmed architecture and implement the bounded result" } },
+      ] }, "planner", "advice-amendment-planner")).error).toBeUndefined()
+    expect((await h.call("oq_answer", { workflowId: h.id(), questionId: oq.question.id, source: "agent", answer: "Plan receiver association and dependencies amended without changing accepted meaning." }, "planner", "advice-amendment-planner")).error).toBeUndefined()
+    expect((await h.call("attach", { workflowId: h.id(), stepId: "task:advice", grantId: old.grantId }, "brainstorm", "stale-before-recompile")).error).toBeTruthy()
+    expect((await h.call("reopen", { workflowId: h.id(), stepId: "plan", reason: "Compile changed receiver association and obtain independent review",
+      newEvidence: true, changedHypothesis: false, changedStrategy: false, reducedUnresolved: false }, "general", "parent")).error).toBeUndefined()
+    const planner = await h.attach("plan", "planner")
+    const tasks = (await h.work()).plans[0].phases[0].waves[0].tasks
+    expect((await h.call("task_plan", { workflowId: h.id(), tasks: tasks.map((task: WorkPlanTask) => ({ ...task, write: [], skills: [] })) }, "planner", planner.sessionId)).error).toBeUndefined()
+    expect((await h.call("complete", { workflowId: h.id(), stepId: "plan", summary: "Changed association compiled" }, "planner", planner.sessionId)).error).toBeUndefined()
+    expect((await h.call("dispatch_grant", { workflowId: h.id(), stepId: "task:advice" }, "general", "parent")).error).toContain("not currently runnable")
+    await h.complete("review-plan", "reviewer", { outcome: "pass" })
+    const before = JSON.stringify(await h.work())
+    expect((await h.call("attach", { workflowId: h.id(), stepId: "task:advice", grantId: old.grantId }, "brainstorm", "stale-after-fresh-review")).error).toContain("Stale advisory Task/Plan grant")
+    expect(JSON.stringify(await h.work())).toBe(before)
+    expect((await h.durableStorage.get(`dispatch-grant/${old.grantId}`) as any).consumedAt).toBeUndefined()
+    await h.complete("task:advice", "brainstorm", { summary: "A uses the confirmed architecture with less complexity than B. Worker owns bounded implementation resolution; no missing product meaning is decided here." })
+    await h.complete("task-review:advice", "reviewer", { outcome: "pass" })
+    await h.complete("task:receiver", "architect", { summary: "Confirmed existing architecture remains applicable." })
+    await h.complete("task-review:receiver", "reviewer", { outcome: "pass" })
+    const consumer = await h.attach("task:consumer", "worker")
+    const digest = (await h.work()).nodes.find((node: any) => node.logicalId === "advice").result.resultDigest
+    expect(consumer.attached.adviceInputs[0].adviceForTaskId).toBe("consumer")
+    expect((await h.call("complete", { workflowId: h.id(), stepId: "task:consumer", summary: "Implementation decision A, bounded by confirmed architecture; no new product meaning.",
+      adviceResolutions: [{ taskId: "advice", resultDigest: digest, disposition: "adopted", rationale: "A is the simplest settled implementation", resolutionRef: "task:consumer#result" }] }, "worker", consumer.sessionId)).error).toBeUndefined()
+    await h.finishWave()
+  } finally { h.restore() }
+})
+
+test("planned Brainstorm source and receiver reopen invalidate only affected advice causality", async () => {
+  const h = await advisoryFixture()
+  const reopen = async (stepId: string) => h.call("reopen", { workflowId: h.id(), stepId, reason: "New evidence requires this exact contribution to be reconsidered.",
+    newEvidence: true, changedHypothesis: false, changedStrategy: false, reducedUnresolved: false }, "general", "parent")
+  try {
+    const source = await h.attach("task:advice", "brainstorm")
+    expect((await h.call("complete", { workflowId: h.id(), stepId: "task:advice", summary: "A preserves the boundary; B increases complexity. Architect must decide." }, "brainstorm", source.sessionId)).error).toBeUndefined()
+    await h.complete("task-review:advice", "reviewer", { outcome: "pass" })
+    const original = (await h.work()).nodes.find((node: any) => node.logicalId === "advice").result
+    const resolution = { taskId: "advice", resultDigest: original.resultDigest, disposition: "adopted", rationale: "A meets accepted scope", resolutionRef: "task:receiver#result" }
+    const receiver = await h.attach("task:receiver", "architect")
+    expect((await h.call("complete", { workflowId: h.id(), stepId: "task:receiver", summary: "Decision A", adviceResolutions: [resolution] }, "architect", receiver.sessionId)).error).toBeUndefined()
+    await h.complete("task-review:receiver", "reviewer", { outcome: "pass" })
+    await h.complete("task:consumer", "worker")
+    expect((await reopen("task:receiver")).error).toBeUndefined()
+    let work = await h.work()
+    expect(work.nodes.find((node: any) => node.logicalId === "advice").result).toEqual(original)
+    for (const id of ["receiver", "consumer"]) expect(work.nodes.find((node: any) => node.logicalId === id).result).toBeUndefined()
+    expect((await h.call("complete", { workflowId: h.id(), stepId: "task:receiver", summary: "Stale decision", adviceResolutions: [resolution] }, "architect", receiver.sessionId)).error).toContain("fresh attachment")
+    expect((await reopen("task:advice")).error).toBeUndefined()
+    work = await h.work()
+    expect(work.nodes.find((node: any) => node.logicalId === "advice").result).toBeUndefined()
+    expect((await h.workflow()).steps.find((step: any) => step.id === "task-review:advice").status).toBe("pending")
+    expect((await h.call("complete", { workflowId: h.id(), stepId: "task:advice", summary: "Stale advice" }, "brainstorm", source.sessionId)).error).toContain("fresh attachment")
+    await h.complete("task:advice", "brainstorm", { summary: "New evidence: B now better preserves the settled boundary; A adds recovery cost. Architect chooses, advice remains non-authoritative." })
+    await h.complete("task-review:advice", "reviewer", { outcome: "pass" })
+    const fresh = await h.attach("task:receiver", "architect")
+    const digest = (await h.work()).nodes.find((node: any) => node.logicalId === "advice").result.resultDigest
+    expect(digest).not.toBe(original.resultDigest)
+    const before = JSON.stringify(await h.work())
+    expect((await h.call("complete", { workflowId: h.id(), stepId: "task:receiver", summary: "Replay A decision", adviceResolutions: [resolution] }, "architect", fresh.sessionId)).error).toContain("stale digest")
+    expect(JSON.stringify(await h.work())).toBe(before)
+    expect((await h.call("complete", { workflowId: h.id(), stepId: "task:receiver", summary: "Decision B on current evidence", adviceResolutions: [{ ...resolution, resultDigest: digest }] }, "architect", fresh.sessionId)).error).toBeUndefined()
+    await h.complete("task-review:receiver", "reviewer", { outcome: "pass" })
+    await h.complete("task:consumer", "worker")
+    await h.finishWave()
+    expect((await h.work()).nodes.find((node: any) => node.logicalId === "advice").priorResults[0].resultDigest).toBe(original.resultDigest)
+  } finally { h.restore() }
+})
+
+test("planned Brainstorm host drift, wrong-role and OQ grants cannot supply Task authority", async () => {
+  const h = await advisoryFixture()
+  try {
+    const oq = await h.call("oq_raise", { workflowId: h.id(), question: "Compare narrow optional alternatives without deciding authority.", responder: "brainstorm", blocking: false, consumerStepIds: ["task:advice"] }, "general", "parent")
+    expect(oq.error).toBeUndefined()
+    const oqGrant = await h.call("dispatch_grant", { workflowId: h.id(), questionId: oq.question.id }, "general", "parent")
+    expect(oqGrant.error).toBeUndefined()
+    expect((await h.call("attach", { workflowId: h.id(), stepId: "task:advice", grantId: oqGrant.grantId }, "brainstorm", "oq-as-task")).error).toBeTruthy()
+    expect((await h.call("attach", { workflowId: h.id(), questionId: oq.question.id, grantId: oqGrant.grantId }, "brainstorm", "real-advisory-oq")).attached).toBe(true)
+    expect((await h.call("oq_answer", { workflowId: h.id(), questionId: oq.question.id, answer: "A minimizes complexity; receiver must choose.", source: "agent" }, "brainstorm", "real-advisory-oq")).error).toBeUndefined()
+    expect((await h.work()).nodes.find((node: any) => node.logicalId === "advice").result).toBeUndefined()
+    const grant = await h.call("dispatch_grant", { workflowId: h.id(), stepId: "task:advice" }, "general", "parent")
+    expect(grant.error).toBeUndefined()
+    for (const role of ["worker", "general", "architect"]) expect((await h.call("attach", { workflowId: h.id(), stepId: "task:advice", grantId: grant.grantId }, role, `impostor-${role}`)).error).toBeTruthy()
+    h.setRoster(["architect", "worker", "reviewer", "planner", "critic", "documenter"])
+    const permission = { agent: "general", sessionID: "parent", action: "subagent", resources: ["brainstorm"], effect: "allow", message: "" }
+    await h.permissionHooks.get("evaluate")!(permission)
+    expect(permission.effect).toBe("deny")
+    expect(permission.message).toContain("unavailable")
+    expect((await h.call("attach", { workflowId: h.id(), stepId: "task:advice", grantId: grant.grantId }, "brainstorm", "absent-host-child")).error).toContain("unavailable")
+    expect((await h.work()).nodes.find((node: any) => node.logicalId === "advice").result).toBeUndefined()
+    expect((await h.durableStorage.get(`dispatch-grant/${grant.grantId}`) as any).consumingSessionId).toBeUndefined()
+    expect((await h.durableStorage.get(`dispatch-grant/${grant.grantId}`) as any).admittedAt).toBeUndefined()
+  } finally { h.restore() }
+})
+
+test("planned Brainstorm deferred advice preserves mandatory contracts, blocking OQs and independent semantic review", async () => {
+  for (const scenario of ["optional", "unresolved-oq", "semantic-fail"]) {
+    const h = await advisoryFixture("same-wave", true)
+    try {
+      await h.complete("task:advice", "brainstorm", { summary: "Optional B may simplify maintenance but adds migration risk; A preserves the established structure. Architect owns the required decision." })
+      const digest = (await h.work()).nodes.find((node: any) => node.logicalId === "advice").result.resultDigest
+      await h.complete("task-review:advice", "reviewer", { outcome: "pass" })
+      const receiver = await h.attach("task:receiver", "architect")
+      const resolutions = [{ taskId: "advice", resultDigest: digest, disposition: "deferred", rationale: "Exclude optional B from this output; it is not necessary to the current accepted obligation.", resolutionRef: "task:receiver#result" }]
+      if (scenario === "unresolved-oq") {
+        const oq = await h.call("oq_raise", { workflowId: h.id(), stepId: "task:receiver", responder: "architect", blocking: true,
+          consumerStepIds: ["task:receiver"], question: "The required architecture realization remains unresolved: A or B has not been decided. Receiving output cannot proceed until the accountable Architect supplies the bounded decision inside accepted authority." }, "architect", receiver.sessionId)
+        expect(oq.error).toBeUndefined()
+        const before = JSON.stringify(await h.work())
+        expect((await h.call("complete", { workflowId: h.id(), stepId: "task:receiver", summary: "Attempt to defer required meaning", adviceResolutions: resolutions }, "architect", receiver.sessionId)).error).toContain("unresolved blocking questions")
+        expect(JSON.stringify(await h.work())).toBe(before)
+      } else {
+        const summary = scenario === "optional" ? "Decision: use A within accepted architecture. Optional B is excluded because migration is outside this bounded work. No required meaning remains unresolved; no additional authority is needed for this decision."
+          : "Claim complete, but no required realization decision is supplied; the required meaning is deferred without authority."
+        expect((await h.call("complete", { workflowId: h.id(), stepId: "task:receiver", summary, adviceResolutions: resolutions }, "architect", receiver.sessionId)).error).toBeUndefined()
+        expect((await h.work()).plans[0].obligations[0].disposition).toBe("implement")
+        expect((await h.work()).nodes.find((node: any) => node.type === "wave").completion).toBeUndefined()
+        expect((await h.call("dispatch_grant", { workflowId: h.id(), stepId: "task:consumer" }, "general", "parent")).error).toContain("not currently runnable")
+        const review = await h.attach("task-review:receiver", "reviewer")
+        expect(review.attached.taskResult.summary).toBe(summary)
+        expect(review.attached.taskResult.adviceResolutions).toEqual(resolutions)
+        expect(review.attached.adviceReviewBoundary).toContain("unresolved required meaning")
+        expect((await h.call("complete", { workflowId: h.id(), stepId: "task-review:receiver", outcome: scenario === "optional" ? "pass" : "fail",
+          summary: scenario === "optional" ? "Receiver supplies A decision; optional B excluded honestly." : "FAIL: required architecture decision is absent; typed deferred disposition supplies neither accepted deferral authority nor required meaning." }, "reviewer", review.sessionId)).error).toBeUndefined()
+        if (scenario === "optional") {
+          await h.complete("task:consumer", "worker")
+          await h.finishWave()
+          expect((await h.work()).nodes.find((node: any) => node.type === "wave").completion).toBeDefined()
+        }
+      }
+      if (scenario !== "optional") {
+        expect((await h.call("dispatch_grant", { workflowId: h.id(), stepId: "task:consumer" }, "general", "parent")).error).toBeTruthy()
+        expect((await h.call("dispatch_grant", { workflowId: h.id(), stepId: "review-implementation" }, "general", "parent")).error).toBeTruthy()
+        const work = await h.work()
+        expect(work.nodes.find((node: any) => node.logicalId === "consumer").result).toBeUndefined()
+        expect(work.nodes.find((node: any) => node.type === "wave").completion).toBeUndefined()
+        expect(work.plans[0].obligations[0].disposition).toBe("implement")
+        expect(work.objectiveStatus).not.toBe("complete")
+      }
+    } finally { h.restore() }
+  }
+})
+
+for (const mode of ["cross-wave", "cross-phase"] as const) test(`planned Brainstorm advisory-only Wave composes original receipts through ${mode}`, async () => {
+  const h = await advisoryFixture(mode)
+  try {
+    await h.complete("task:advice", "brainstorm", { summary: "Alternatives A and B: A preserves current structure; B adds recovery complexity. Assumption: accepted meaning is settled. Receiving authority decides." })
+    const sourceResult = (await h.work()).nodes.find((node: any) => node.logicalId === "advice").result
+    await h.finishWave()
+    const delivered = await h.work()
+    expect(delivered.nodes.find((node: any) => node.logicalId === "advice").status).toBe("complete")
+    expect(delivered.nodes.find((node: any) => node.logicalId === "receiver").result).toBeUndefined()
+    expect(delivered.objectiveStatus).not.toBe("complete")
+    const sourceReceipt = delivered.nodes.find((node: any) => node.type === "wave" && node.logicalId === "advice-wave").completion
+    expect(sourceReceipt.reviewedTaskIds).toEqual(["advice"])
+    expect(sourceReceipt.bindingFingerprint).toMatch(/^[0-9a-f]{64}$/)
+    await h.beginWave([h.receiver, h.consumer])
+    const receiver = await h.attach("task:receiver", "architect")
+    expect(receiver.attached.adviceInputs[0]).toMatchObject({ resultDigest: sourceResult.resultDigest, sourceWorkflowId: sourceResult.workflowId, sourceAttempt: sourceResult.completedAttempt })
+    expect(receiver.attached.adviceInputs[0].reviewSource).toContain("wave:")
+    const adviceResolutions = [{ taskId: "advice", resultDigest: sourceResult.resultDigest, disposition: "rejected", rationale: "Neither alternative improves the settled boundary; preserve current approach.", resolutionRef: "task:receiver#result" }]
+    expect((await h.call("complete", { workflowId: h.id(), stepId: "task:receiver", summary: "Decision: reject A/B and preserve the established implementation boundary.", adviceResolutions }, "architect", receiver.sessionId)).error).toBeUndefined()
+    await h.complete("task-review:receiver", "reviewer", { outcome: "pass" })
+    await h.complete("task:consumer", "worker")
+    await h.finishWave()
+    const work = await h.work()
+    const result = work.nodes.find((node: any) => node.logicalId === "receiver").result
+    expect(result.dependencyResultDigests.advice).toBe(createHash("sha256").update(JSON.stringify(sourceResult)).digest("hex"))
+    expect(work.nodes.find((node: any) => node.logicalId === "advice").result).toEqual(sourceResult)
+    expect(work.nodes.find((node: any) => node.type === "wave" && node.logicalId === "advice-wave").completion).toEqual(sourceReceipt)
+    expect(work.objectiveStatus).not.toBe("complete")
+    const receivingWorkflowId = h.id()
+    expect((await h.call("resume", { workflowId: sourceResult.workflowId, fromWorkflowId: receivingWorkflowId }, "general", "parent")).error).toBeUndefined()
+    const reopenConsumed = await h.call("reopen", { workflowId: sourceResult.workflowId, stepId: "task:advice", reason: "Attempt to reopen consumed reviewed advice.",
+      newEvidence: true, changedHypothesis: false, changedStrategy: false, reducedUnresolved: false }, "general", "parent")
+    expect(reopenConsumed.error).toContain("downstream")
+    expect((await h.work()).nodes.find((node: any) => node.type === "wave" && node.logicalId === "advice-wave").completion).toEqual(sourceReceipt)
+  } finally { h.restore() }
+})
 
 async function waveLifecycleFixture(
   workLevel: "wave" | "objective" = "wave",

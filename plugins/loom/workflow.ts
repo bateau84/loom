@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto"
-import { LOOM_AGENT_ROLES, PLAN_PRODUCER_ROLES, taskStepId, type TaskSpec } from "./tasks"
+import { LOOM_AGENT_ROLES, nativeTaskPath, validateAdviceAssociation, taskStepId, type TaskSpec } from "./tasks"
 import type { EvidenceKind } from "./evidence"
 
 export type StepKind = "work" | "gate" | "wait"
@@ -845,6 +845,7 @@ function userDecisionContract(task: TaskSpec) {
     task.verify,
     task.role,
     task.responsibility,
+    task.adviceForTaskId,
   ])
 }
 
@@ -906,6 +907,8 @@ export function applyTaskPlan(
     }
     const role = task.role
     const responsibility = task.responsibility
+    const path = nativeTaskPath(task)
+    validateAdviceAssociation(task)
     const reviewerTask = responsibility === "review"
     const decisionTask = responsibility === "obtain-user-decision"
     if (decisionTask) {
@@ -916,7 +919,7 @@ export function applyTaskPlan(
     }
     if (reviewerTask && role !== "reviewer") throw new Error(`Task ${task.id} review responsibility requires reviewer ownership.`)
     if (!reviewerTask && role === "reviewer") throw new Error(`Task ${task.id} reviewer ownership requires review responsibility.`)
-    if (!reviewerTask && !decisionTask && !PLAN_PRODUCER_ROLES.includes(role as (typeof PLAN_PRODUCER_ROLES)[number])) {
+    if (!path) {
       throw new Error(`Task ${task.id} role ${role} has no supported Task execution slot.`)
     }
     if (reviewerTask && task.dependsOn.length === 0) throw new Error(`Task ${task.id} review Task must name reviewed work as dependencies.`)

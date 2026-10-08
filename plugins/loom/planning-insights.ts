@@ -38,7 +38,7 @@ const LOOM_PLANNING_INSIGHTS = {
   },
   brainstorm: {
     nativeWork: "Explore bounded alternatives, assumptions, and trade-offs for a named receiving authority.",
-    caution: "Advisory OQs are supported; planned Brainstorm Tasks are not supported. Advice is not acceptance or a specialist decision; the receiving authority must resolve meaning.",
+    caution: "Advisory OQs and planned produce Tasks with an explicit adviceForTaskId receiver are supported. No writes or accepted authority; independent advice review and the receiving Task's exact digest-bound resolution/output are required before dependent meaning is established.",
   },
   reviewer: {
     nativeWork: "Independently judge named work against authority and observed evidence.",
