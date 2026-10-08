@@ -14691,10 +14691,16 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       }
       pendingObservations.set(key, pending)
       if (pendingObservations.size > 1024) pendingObservations.delete(pendingObservations.keys().next().value!)
-      pending.admission = await captureEvidenceAdmission(ctx.storage as any, runtime, String(raw.sessionID), String(raw.agent ?? ""))
-      pending.inputDigest = raw.input === undefined ? undefined : await digest(raw.input)
-      pending.summary = safeInputSummary(tool, raw.input)
-      pending.ready = true
+      try {
+        pending.admission = await captureEvidenceAdmission(ctx.storage as any, runtime, String(raw.sessionID), String(raw.agent ?? ""))
+        pending.inputDigest = raw.input === undefined ? undefined : await digest(raw.input)
+        pending.summary = safeInputSummary(tool, raw.input)
+        pending.ready = true
+      } catch (error) {
+        // A failed preflight did not run a tool and must not poison retries.
+        pendingObservations.delete(key)
+        throw error
+      }
 
       if (mutationNeedsLock) {
         try {
