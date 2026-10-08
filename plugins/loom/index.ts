@@ -110,6 +110,7 @@ import {
 } from "./scope"
 import {
   allocateDiagnosticSandbox,
+  diagnosticSandboxMatchesTarget,
   destroyDiagnosticSandbox,
   diffDiagnosticSandbox,
   executeDiagnosticSandbox,
@@ -117,6 +118,7 @@ import {
   resolveDiagnosticSandboxRuntime,
   type DiagnosticSandboxNetwork,
   type DiagnosticSandboxRecord,
+  type DiagnosticSandboxTarget,
 } from "./diagnostic-sandbox"
 import {
   authorGitShellResourcesAllowed,
@@ -2776,6 +2778,10 @@ function sessionOqKey(sessionID: string) {
   return `session-oq/${sessionID}`
 }
 
+function sessionOqAttemptKey(sessionID: string) {
+  return `session-oq-attempt/${sessionID}`
+}
+
 function sessionPlanReviewKey(sessionID: string) {
   return `session-plan-review/${encodeURIComponent(sessionID)}`
 }
@@ -3246,6 +3252,43 @@ async function exactRunnableStepAttemptBinding(
 
 async function exactOqBinding(ctx: any, sessionID: string, workflowId: string, questionId: string) {
   return sessionBoundToOq(ctx.storage as any, sessionID, workflowId, questionId)
+}
+
+/**
+ * A late root-cause investigation may attach through a Diagnostic OQ without
+ * rewriting completed Plan Tasks. The disposable sandbox still requires a
+ * current exact attempt: neither an answered/reopened OQ nor a stale step
+ * attachment can authorize new experiments.
+ */
+async function currentDiagnosticSandboxAttachment(
+  ctx: any,
+  sessionID: string,
+): Promise<DiagnosticSandboxTarget | undefined> {
+  const workflowId = (await ctx.storage.get(sessionKey(sessionID))) as string | undefined
+  if (!workflowId) return undefined
+  const workflow = await readWorkflow(ctx, workflowId)
+  if (!workflow || workflow.cancellation) return undefined
+
+  const stepId = (await ctx.storage.get(sessionStepKey(sessionID))) as string | undefined
+  if (stepId) {
+    const step = workflow.steps.find((candidate) => candidate.id === stepId)
+    if (step?.agent !== "diagnostic" ||
+        !(await exactRunnableStepAttemptBinding(ctx, sessionID, workflowId, stepId))) return undefined
+    return { workflowId, stepId, attempt: step.attempt ?? 0 }
+  }
+
+  const questionId = (await ctx.storage.get(sessionOqKey(sessionID))) as string | undefined
+  if (!questionId || !(await exactOqBinding(ctx, sessionID, workflowId, questionId))) return undefined
+  const question = (await ctx.storage.get(oqKey(workflowId, questionId))) as OpenQuestion | undefined
+  const attachedAttempt = await ctx.storage.get(sessionOqAttemptKey(sessionID))
+  if (!question || question.workflowId !== workflowId ||
+      question.requiredAuthority !== "diagnostic" || question.status !== "open" || question.answer ||
+      !Number.isSafeInteger(attachedAttempt) ||
+      attachedAttempt !== (question.attempt ?? 0) ||
+      (question.work &&
+        (!workflow.work || workflow.work.objectiveId !== question.work.objectiveId ||
+         workflow.work.generation !== question.work.generation))) return undefined
+  return { workflowId, stepId: "", questionId, attempt: question.attempt ?? 0 }
 }
 
 async function assertCurrentStepPlanAdmission(ctx: any, workflowId: string, stepId: string) {
@@ -5321,26 +5364,15 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             return { content: renderToolOutput({ error: "Only Diagnostic may create a diagnostic experiment sandbox." }) }
           }
 
-          const workflowId = (await ctx.storage.get(sessionKey(tool.sessionID))) as string | undefined
-          const stepId = (await ctx.storage.get(sessionStepKey(tool.sessionID))) as string | undefined
-          if (
-            !workflowId ||
-            !stepId ||
-            !(await exactRunnableStepAttemptBinding(ctx, tool.sessionID, workflowId, stepId))
-          ) {
+          const target = await currentDiagnosticSandboxAttachment(ctx, tool.sessionID)
+          if (!target) {
             return {
               content: renderToolOutput({
-                error:
-                  "Diagnostic sandbox experiments require attachment to the exact current runnable Diagnostic step attempt.",
+                error: "Diagnostic sandbox requires an exact runnable Diagnostic step or unanswered Diagnostic OQ attachment for the current attempt.",
               }),
             }
           }
-
-          const workflow = await readWorkflow(ctx, workflowId)
-          const step = workflow?.steps.find((candidate) => candidate.id === stepId)
-          if (!step || step.agent !== "diagnostic") {
-            return { content: renderToolOutput({ error: "Current attached step is not owned by Diagnostic." }) }
-          }
+          const { workflowId } = target
 
           return withRuntimeAdvisoryLock(
             runtime,
@@ -5369,8 +5401,9 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                   projectId: runtime.projectId,
                   sessionId: tool.sessionID,
                   workflowId,
-                  stepId,
-                  attempt: step.attempt ?? 0,
+                  stepId: target.stepId,
+                  ...(target.questionId ? { questionId: target.questionId } : {}),
+                  attempt: target.attempt,
                   image: resolvedRuntime.reference,
                   imageId: resolvedRuntime.id,
                   network: value.network,
@@ -5382,12 +5415,9 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                   "workflow",
                   workflowId,
                   async () => {
-                    if (!(await exactRunnableStepAttemptBinding(
-                      ctx,
-                      tool.sessionID,
-                      workflowId,
-                      stepId,
-                    ))) return false
+                    if (!diagnosticSandboxMatchesTarget(
+                      sandbox!, await currentDiagnosticSandboxAttachment(ctx, tool.sessionID),
+                    )) return false
                     await ctx.storage.set(key, sandbox!)
                     return true
                   },
@@ -5396,7 +5426,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                   return {
                     content: renderToolOutput({
                       error:
-                        "Diagnostic step changed before sandbox creation began. Attach to the current attempt before creating a new sandbox.",
+                        "Diagnostic step/OQ changed before sandbox creation began. Attach to the current attempt before creating a new sandbox.",
                     }),
                   }
                 }
@@ -5426,24 +5456,21 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                       throw error
                     }
 
-                    if (!(await exactRunnableStepAttemptBinding(
-                      ctx,
-                      tool.sessionID,
-                      workflowId,
-                      stepId,
-                    ))) {
+                    if (!diagnosticSandboxMatchesTarget(
+                      current, await currentDiagnosticSandboxAttachment(ctx, tool.sessionID),
+                    )) {
                       try {
                         await destroyDiagnosticSandbox(current)
                         await ctx.storage.set(key, current)
                       } catch (cleanupError) {
                         await ctx.storage.set(key, current).catch(() => undefined)
                         throw new Error(
-                          "Diagnostic step changed while the sandbox snapshot was being created, and sandbox cleanup failed: " +
+                          "Diagnostic step/OQ changed while the sandbox snapshot was being created, and sandbox cleanup failed: " +
                           (cleanupError instanceof Error ? cleanupError.message : String(cleanupError)),
                         )
                       }
                       throw new Error(
-                        "Diagnostic step changed while the sandbox snapshot was being created. Attach to the current attempt before creating a new sandbox.",
+                        "Diagnostic step/OQ changed while the sandbox snapshot was being created. Attach to the current attempt before creating a new sandbox.",
                       )
                     }
 
@@ -5514,22 +5541,13 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 return { content: renderToolOutput({ error: "Active Diagnostic sandbox not found for this session." }) }
               }
 
-              const workflowId = (await ctx.storage.get(sessionKey(tool.sessionID))) as string | undefined
-              const stepId = (await ctx.storage.get(sessionStepKey(tool.sessionID))) as string | undefined
-              const workflow = workflowId ? await readWorkflow(ctx, workflowId) : undefined
-              const step = workflow?.steps.find((candidate) => candidate.id === stepId)
-              if (
-                !workflowId ||
-                !stepId ||
-                workflowId !== currentSandbox.workflowId ||
-                stepId !== currentSandbox.stepId ||
-                (step?.attempt ?? -1) !== currentSandbox.attempt ||
-                !(await exactRunnableStepAttemptBinding(ctx, tool.sessionID, workflowId, stepId))
-              ) {
+              if (!diagnosticSandboxMatchesTarget(
+                currentSandbox, await currentDiagnosticSandboxAttachment(ctx, tool.sessionID),
+              )) {
                 return {
                   content: renderToolOutput({
                     error:
-                      "Diagnostic sandbox belongs to an older or different step attempt. Destroy it and attach to current diagnosis before further experiments.",
+                      "Diagnostic sandbox belongs to an older/different Diagnostic step or OQ attempt. Destroy it and attach to current diagnosis before further experiments.",
                   }),
                 }
               }
@@ -5582,22 +5600,13 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 return { content: renderToolOutput({ error: "Active Diagnostic sandbox not found for this session." }) }
               }
 
-              const workflowId = (await ctx.storage.get(sessionKey(tool.sessionID))) as string | undefined
-              const stepId = (await ctx.storage.get(sessionStepKey(tool.sessionID))) as string | undefined
-              const workflow = workflowId ? await readWorkflow(ctx, workflowId) : undefined
-              const step = workflow?.steps.find((candidate) => candidate.id === stepId)
-              if (
-                !workflowId ||
-                !stepId ||
-                workflowId !== currentSandbox.workflowId ||
-                stepId !== currentSandbox.stepId ||
-                (step?.attempt ?? -1) !== currentSandbox.attempt ||
-                !(await exactRunnableStepAttemptBinding(ctx, tool.sessionID, workflowId, stepId))
-              ) {
+              if (!diagnosticSandboxMatchesTarget(
+                currentSandbox, await currentDiagnosticSandboxAttachment(ctx, tool.sessionID),
+              )) {
                 return {
                   content: renderToolOutput({
                     error:
-                      "Diagnostic sandbox belongs to an older or different step attempt. Historical sandbox evidence cannot be rebound into the current diagnosis.",
+                      "Diagnostic sandbox belongs to an older/different Diagnostic step or OQ attempt. Historical sandbox evidence cannot be rebound into the current diagnosis.",
                   }),
                 }
               }
@@ -6294,6 +6303,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               await ctx.storage.set(sessionStepKey(tool.sessionID), "")
               await ctx.storage.set(sessionStepAttemptKey(tool.sessionID), null)
               await ctx.storage.set(sessionOqKey(tool.sessionID), "")
+              await ctx.storage.set(sessionOqAttemptKey(tool.sessionID), null)
               await ctx.storage.set(sessionPlanReviewKey(tool.sessionID), null)
               await ctx.storage.set(`session-resumption/${encodeURIComponent(tool.sessionID)}`, {
                 schemaVersion: 1,
@@ -6421,6 +6431,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               await ctx.storage.set(sessionStepKey(tool.sessionID), "")
               await ctx.storage.set(sessionStepAttemptKey(tool.sessionID), null)
               await ctx.storage.set(sessionOqKey(tool.sessionID), "")
+              await ctx.storage.set(sessionOqAttemptKey(tool.sessionID), null)
               if (intent?.acceptedAnchor?.path === anchor) {
                 await ctx.storage.set(sessionIntentKey(tool.sessionID), "")
               }
@@ -8350,6 +8361,19 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               const currentWorkflow = await readWorkflow(ctx, value.workflowId)
               const currentQuestion = (await ctx.storage.get(oqKey(value.workflowId, value.questionId))) as OpenQuestion | undefined
               if (!currentWorkflow || !currentQuestion) throw new Error("Workflow or question not found.")
+              if (tool.agent === "diagnostic" && value.source === "agent" &&
+                  currentQuestion.requiredAuthority === "diagnostic") {
+                const target = await currentDiagnosticSandboxAttachment(ctx, tool.sessionID)
+                if (target?.questionId !== value.questionId || target.workflowId !== value.workflowId) {
+                  throw new Error("Diagnostic OQ answer requires its exact current unanswered attachment attempt.")
+                }
+                const sandbox = (await ctx.storage.get(
+                  diagnosticSandboxSessionKey(tool.sessionID),
+                )) as DiagnosticSandboxRecord | undefined
+                if (sandbox?.active) {
+                  throw new Error("Destroy the Diagnostic experiment sandbox before answering this OQ.")
+                }
+              }
               const now = new Date().toISOString()
               const taskId = currentQuestion.work?.taskId
               let decisionStep: Workflow["steps"][number] | undefined
@@ -11816,6 +11840,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           let task: TaskSpec | undefined
           let taskOutcome: string | undefined
           let stepAttempt: number | undefined
+          let questionAttempt: number | undefined
           let acceptedOutcome: string | undefined
           let acceptedAuthority: string | undefined
           let planContext: ReturnType<typeof workPlanContext> | undefined
@@ -11998,6 +12023,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 if (question.requiredAuthority !== tool.agent) {
                   throw new Error(`Question requires ${question.requiredAuthority}, not ${tool.agent}.`)
                 }
+                questionAttempt = question.attempt ?? 0
 
                 acceptedOutcome = workflow.request
                 acceptedAuthority = workflow.anchor
@@ -12123,6 +12149,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 )
               }
               await ctx.storage.set(sessionOqKey(tool.sessionID), value.questionId ?? "")
+              await ctx.storage.set(sessionOqAttemptKey(tool.sessionID), value.questionId ? questionAttempt : null)
               if (value.stepId === "review-plan" && planContext) {
                 const planningOnly = planningOnlyObjective(workflow.effects)
                 const executableFingerprint = executableTaskPlanFingerprint(workflow)
