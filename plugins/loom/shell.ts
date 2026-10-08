@@ -335,6 +335,11 @@ export function isElevatableVerificationShell(command: string) {
   const words = parsedCommandWords(command)
   if (!words?.length || classifyVerificationShell(command)) return false
   const [runner, action, target] = words
+  // A self-elevation is for testing, not obviously destructive lifecycle work.
+  // This does not inspect the contents/effects of the requested scripts.
+  if (words.some((word) =>
+    /(?:^|[\/._-])(?:deploy|install|publish|release|migrate|delete|remove|wipe|reset|clean|destroy|push|prune)(?:[\/._-]|$)/i.test(word)
+  )) return false
   if (["make", "just"].includes(runner)) {
     return Boolean(action && /^(?:test|check|verify|validate|lint|qa|unit|integration|e2e)(?:[._:-]|$)/.test(action))
   }

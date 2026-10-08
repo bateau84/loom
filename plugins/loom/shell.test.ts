@@ -287,6 +287,11 @@ describe("Loom Worker shell policy", () => {
       expect(isElevatableVerificationShell(command)).toBe(true)
     }
     for (const command of [
+      "bash scripts/deploy.sh",
+      "python scripts/migrate-db.py",
+      "go run ./cmd/deploy",
+      "python3 -m pip._internal",
+      "make test-clean",
       "make deploy",
       "just clean",
       "bash -c 'echo hello'",
