@@ -18,7 +18,8 @@ from typing import Any
 
 from runner.eval_api import InvocationSpec, JsonValue, NormalizedCase
 
-from ._shared import PreparedLoomCase, compatibility_env_names
+from ._shared import PreparedLoomCase, compatibility_env_names, compatibility_suite_paths
+from .judge_instructions import JUDGE_AGENT_DOCUMENT, JUDGE_AGENT_NAME
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -160,13 +161,19 @@ class LoomCaseWorkspaceAdapter:
         return self._root
 
     def discover_cases(self) -> Sequence[NormalizedCase]:
-        eval_root = self._root / EVALS_DIR
-        if not eval_root.is_dir():
-            raise RuntimeError(f"Loom eval directory not found: {eval_root}")
+        # The CLI may supply explicit --suite files, including paths outside
+        # the checkout. That selection must reach this generic-engine profile;
+        # otherwise the wrapper accepts cases the engine cannot discover.
+        sources = compatibility_suite_paths()
+        if sources is None:
+            eval_root = self._root / EVALS_DIR
+            if not eval_root.is_dir():
+                raise RuntimeError(f"Loom eval directory not found: {eval_root}")
+            sources = tuple(sorted(eval_root.glob("*.json")))
 
         normalized: list[NormalizedCase] = []
         seen_ids: dict[str, str] = {}
-        for source in sorted(eval_root.glob("*.json")):
+        for source in sources:
             raw_suite = json.loads(source.read_text(encoding="utf-8"))
             if not isinstance(raw_suite, dict):
                 raise ValueError(f"{source.name}: suite must be a JSON object")
@@ -233,7 +240,8 @@ class LoomCaseWorkspaceAdapter:
                 f"{case_id}: target_timeout_seconds must be an integer from 30 to 600"
             )
 
-        source_path = source.relative_to(self._root).as_posix()
+        source_path = (source.relative_to(self._root).as_posix()
+                       if source.is_relative_to(self._root) else source.as_posix())
         target_kind = _target_kind(raw_case)
         target_name = _target_name(raw_case)
         selectors = list(
@@ -336,9 +344,14 @@ class LoomCaseWorkspaceAdapter:
                 path.write_text(content, encoding="utf-8")
 
             _write_project_config(target, agent)
-            # Worker B owns the eval-judge instructions. Worker A only creates
-            # the fresh judge project and selects the stable judge agent name.
-            _write_project_config(judge, "eval-judge")
+            # The pinned runner drops InvocationSpec.system on the OpenCode
+            # transport. Install the judge charter as a native primary agent
+            # in the isolated judge workspace, exactly as paired evals do.
+            # Judge instructions are never obtained from target/scenario text.
+            (judge_agents / f"{JUDGE_AGENT_NAME}.md").write_text(
+                JUDGE_AGENT_DOCUMENT, encoding="utf-8"
+            )
+            _write_project_config(judge, JUDGE_AGENT_NAME)
 
             yield PreparedLoomCase(
                 iteration=iteration,

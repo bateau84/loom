@@ -17,10 +17,10 @@ jobs:
         with:
           persist-credentials: false
       - name: Smoke test pinned eval-runner action/runtime pair
-        uses: bateau84/opencode-eval-runner@16715800e494b9dbebe37f7f7f5dd0e333733447
+        uses: bateau84/opencode-eval-runner@1262ac8c2eebbd10af572e3e3560318f6113233b
         with:
-          opencode-image: ghcr.io/bateau84/opencode-eval-runner@sha256:104a0895c83e4f36fb597e388656a4c6e445035c9a1fb5aaa2c9e922ad172a36
-          copilot-image: ghcr.io/bateau84/opencode-eval-runner@sha256:7b06209cac3a0125a0d90d49a200fd71c7f91dae24477183e95ba4df0a822818
+          opencode-image: ghcr.io/bateau84/opencode-eval-runner@sha256:a1a415e1f236c4d572ef7cd6190561b0b46ff8443761601d750eb88ce3c87442
+          copilot-image: ghcr.io/bateau84/opencode-eval-runner@sha256:1c38e2d275206a9a0de057a01a43d8c4c00da4c44e56462ac17139c22f95a1f9
           prepare-opencode: true
           prepare-copilot: true
           command: |
@@ -36,6 +36,35 @@ jobs:
             docker run --rm --entrypoint opencode "$OPENCODE_EVAL_RUNNER_OPENCODE_IMAGE" run --help | grep -F -- 'provider/model#variant'
             docker image inspect "$OPENCODE_EVAL_RUNNER_COPILOT_IMAGE" >/dev/null
             docker run --rm --entrypoint copilot "$OPENCODE_EVAL_RUNNER_COPILOT_IMAGE" --help | grep -F -- '--effort'
+            # Regression for the original 4.71 MB OpenCode models.json failure.
+            # This is provider-free: verify the actual published image's
+            # complete bounded credential scan and model provenance without
+            # running the model or ingesting any real credentials.
+            catalog="$RUNNER_TEMP/loom-large-models.json"
+            python3 - "$catalog" <<'PY'
+            import json
+            import sys
+            from pathlib import Path
+            catalog = Path(sys.argv[1])
+            catalog.write_text(json.dumps({
+                "openai": {
+                    "models": {"gpt-6-luna": {"description": "x" * 4_710_000}},
+                    "apiKey": "SYNTHETIC-CI-CREDENTIAL-AT-TAIL",
+                },
+            }), encoding="utf-8")
+            assert 4_000_000 < catalog.stat().st_size < 64_000_000
+            PY
+            chmod 644 "$catalog"
+            docker run --rm --network none \
+              --volume "$catalog:/seed/models.json:ro" \
+              --env PYTHONPATH=/opt/opencode-eval-runner \
+              --entrypoint python3 \
+              "$OPENCODE_EVAL_RUNNER_OPENCODE_IMAGE" \
+              -c 'from container.invoke import runtime_sanitizer; s = runtime_sanitizer({}); assert s.inventory_complete; assert s.output_value("openai/gpt-6-luna") == "openai/gpt-6-luna"; assert s.output_value("SYNTHETIC-CI-CREDENTIAL-AT-TAIL") == "***REDACTED***"; print("PASS large model catalog image safety")'
+      - name: Validate skill-owned generic paired adapter (provider-free)
+        run: |
+          python3 scripts/test_ci_skill_ablation_cutover.py
+          python3 scripts/test_ci_eval_compat_validation.py
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
           bun-version: 1.4.2
@@ -49,7 +78,7 @@ jobs:
       - name: Verify real Loom plugin activation and rejection in pinned eval runner
         run: |
           set -euo pipefail
-          image="ghcr.io/bateau84/opencode-eval-runner@sha256:104a0895c83e4f36fb597e388656a4c6e445035c9a1fb5aaa2c9e922ad172a36"
+          image="ghcr.io/bateau84/opencode-eval-runner@sha256:a1a415e1f236c4d572ef7cd6190561b0b46ff8443761601d750eb88ce3c87442"
           workspace="$RUNNER_TEMP/loom-runtime-workspace"
           runtime="$RUNNER_TEMP/loom-preflight-runtime"
           rm -rf "$workspace" "$runtime"

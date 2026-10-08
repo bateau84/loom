@@ -1,5 +1,9 @@
 # Eval engine Task 7 migration validation
 
+> Historical checkpoint for Task 7, before skill-owned paired ablation moved to the
+> reusable engine in Task 9 Stage 1. See [Task 9 cutover and validation](eval-engine-task-9-cutover.md)
+> for current ownership, compatibility, evidence authority, and remaining debt.
+
 This records the compatibility and validation boundary for issue #126 Task 7.
 
 ## Execution boundary

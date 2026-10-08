@@ -344,6 +344,8 @@ class LoomJudgeContractTests(unittest.TestCase):
         self.assertIsNotNone(spec)
         assert spec is not None
         self.assertEqual(spec.workspace, self.prepared.judge_workspace)
+        self.assertEqual(spec.agent, "eval-judge")
+        self.assertIn("Return exactly one JSON object", spec.system or "")
         self.assertIn("POSITIVE EXPECTATIONS", spec.prompt)
         self.assertIn("Do not invent completion.", spec.prompt)
         self.assertIn("AUTHORITATIVE RUNTIME EVIDENCE", spec.prompt)
@@ -355,6 +357,20 @@ class LoomJudgeContractTests(unittest.TestCase):
     def test_judge_is_skipped_after_non_passing_deterministic_check(self):
         failed = CheckOutcome("deterministic", "fail", "already failed", {})
         self.assertIsNone(EVIDENCE_JUDGE_ADAPTER.judge_spec(self.runtime_case, self.prepared, self.target, (failed,)))
+
+    def test_shorthand_model_verdict_is_non_evidence_not_silently_rewritten(self):
+        # Actual live OpenCode output without the judge agent used these
+        # incompatible summary schemas. Do not launder them into PASS.
+        for raw in (
+            '{"pass":true,"reason":"looks fine"}',
+            '{"case_id":"HUMAN-01","verdict":"PASS","reason":"looks fine"}',
+            '{"verdict":"PASS","positive_expectations":{"1":"pass"},"rationale":"fine"}',
+        ):
+            with self.subTest(raw=raw):
+                with self.assertRaisesRegex(ValueError, "missing or unexpected fields"):
+                    EVIDENCE_JUDGE_ADAPTER.parse_judge(
+                        self.runtime_case, self.prepared, self._judge(raw)
+                    )
 
     def test_strict_judge_contract_maps_semantic_decision(self):
         decision = EVIDENCE_JUDGE_ADAPTER.parse_judge(
