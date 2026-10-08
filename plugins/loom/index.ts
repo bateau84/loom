@@ -10575,6 +10575,12 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                       candidate.logicalId === dependencyId && candidate.status !== "superseded")
                     // A dependent's old result cannot survive a newer producer
                     // execution or an archived dependency not yet verified here.
+                    const upstreamStep = byId.get(dependencyId)
+                    // An in-Wave pending producer is not trusted merely
+                    // because Work still contains its old result. It must
+                    // satisfy this reconciliation or already be complete.
+                    if (upstreamStep && !satisfied(upstreamStep) &&
+                        !eligible.has(dependencyId)) return true
                     const upstreamReceipt = upstream?.result ?? eligible.get(dependencyId)?.receipt
                     return !upstreamReceipt || upstreamReceipt.workflowId !== workflow.id ||
                       !receipt.dependencyResultDigests?.[dependencyId] ||
