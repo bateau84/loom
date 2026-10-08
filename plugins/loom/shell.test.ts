@@ -279,7 +279,7 @@ describe("Loom Worker shell policy", () => {
       "make test",
       "just test:unit",
       "bash scripts/ci.sh",
-      "sh ./scripts/validate-all.sh",
+      "sh ./scripts/ci.sh",
       "python scripts/reproduce.py",
       "python3 -m custom_test_runner",
       "go run ./cmd/test-runner",
