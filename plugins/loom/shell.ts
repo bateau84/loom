@@ -248,6 +248,23 @@ function parsedCommandWords(command: string) {
   return splitShellWords(parsed.command)
 }
 
+/** Explicit user-owned local shell rule. This grants command admission, not
+ * syscall containment: project scripts or CLIs may still write files.
+ * Git/Butler mutations retain Loom's ownership-aware delivery admission.
+ */
+export function localPolicyShellAllowed(
+  command: string,
+  rules: { exact: readonly string[]; prefixes: readonly string[] },
+) {
+  const normalized = command.trim()
+  if (!parsedCommandWords(normalized)) return false
+  if (isGitShellCommand(normalized) || isButlerShellCommand(normalized)) return false
+  if (rules.exact.includes(normalized)) return true
+  return rules.prefixes.some((prefix) =>
+    normalized === prefix || normalized.startsWith(prefix + " "),
+  )
+}
+
 // Named package scripts execute project code. The command and environment
 // remain bounded, but script effects are not restricted by this allowlist.
 export function isAllowedPackageScriptShell(command: string) {
