@@ -10514,7 +10514,10 @@ test("Worker generation elevation checks outputs, locks invocation and owns only
     await mkdir(outputDir, { recursive: true })
     await writeFile(join(outputDir, "docs.go"), "package swagger\\n")
     await writeFile(join(outputDir, "swagger.json"), "{}\\n")
-    await h.toolHooks.get("execute.after")!({ ...executed, status: "completed", result: "Swagger updated" })
+    await h.toolHooks.get("execute.after")!({
+      ...executed, status: "completed",
+      result: { output: "Swagger updated", metadata: { exit: 0 } },
+    })
 
     const ownership = await h.durableStorage.get(
       "git-session-ownership/" + encodeURIComponent(worker),
@@ -10576,6 +10579,47 @@ test("generator result containing an error cannot confer Git provenance", async 
     expect(observations.find((item: any) => item.id === receipt.observationId)?.status).toBe("error")
   } finally {
     h.restore()
+  }
+})
+
+test("generator with failed or missing shell exit cannot claim generated files", async () => {
+  for (const [label, exit] of [["nonzero", 3], ["unknown", null]] as const) {
+    const h = await waveLifecycleFixture("wave")
+    try {
+      const worker = await h.attach("task:one", "worker", "generator-exit-" + label)
+      const command = "swag init --output ./internal/swagger/v2"
+      expect((await h.call("scope_elevate", {
+        workflowId: h.workflowId, stepId: "task:one",
+        paths: ["internal/swagger/v2/**"], reason: "Regenerate Swagger files.",
+      }, "worker", worker)).error).toBeUndefined()
+      const grant = await h.call("command_elevate", {
+        workflowId: h.workflowId, stepId: "task:one",
+        command, reason: "Regenerate Swagger and check the subprocess exit.",
+      }, "worker", worker)
+      expect(grant.granted).toBe(true)
+      const run = { tool: "shell", callID: "generator-shell-exit-" + label,
+        sessionID: worker, agent: "worker", input: { command } }
+      await h.toolHooks.get("execute.before")!(run)
+      const dir = join(h.root, "internal", "swagger", "v2")
+      await mkdir(dir, { recursive: true })
+      await writeFile(join(dir, "docs.go"), "package swagger\n")
+      await h.toolHooks.get("execute.after")!({
+        ...run, status: "completed", result: { output: "generator failed", metadata: { exit } },
+      })
+      const ownership = await h.durableStorage.get(
+        "git-session-ownership/" + encodeURIComponent(worker),
+      ) as any
+      expect(ownership?.paths ?? []).not.toContain("internal/swagger/v2/docs.go")
+      const receipt = await h.durableStorage.get("command-elevation/" + grant.grantId) as any
+      expect(receipt.outcome).toBe("error")
+      const observations = (await h.call("evidence_observations",
+        { detail: true }, "worker", worker)).observations
+      const observed = observations.find((entry: any) => entry.id === receipt.observationId)
+      expect(observed.status).toBe("error")
+      expect(observed.error).toContain("did not exit successfully")
+    } finally {
+      h.restore()
+    }
   }
 })
 
