@@ -30,7 +30,11 @@ setDefaultTimeout(30_000)
 const execFileAsync = promisify(execFile)
 
 async function git(root: string, args: string[]) {
-  return execFileAsync("git", args, { cwd: root, encoding: "utf8" })
+  // Fixture repositories are disposable: do not inherit host signing or hooks.
+  const fixtureArgs = args.includes("commit")
+    ? ["-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", ...args]
+    : args
+  return execFileAsync("git", fixtureArgs, { cwd: root, encoding: "utf8", timeout: 10_000 })
 }
 
 async function initializeGitFixture(root: string) {
@@ -17160,7 +17164,21 @@ test("Plan reconciliation restores only a proven original producer attempt, with
     }, "general", "parent")
     expect(reopenedPlan.error).toBeUndefined()
     const replanner = await h.attach("plan", "planner", "carry-forward-replanner")
+    const beforeAmend = await h.work()
+    const originalClosure = taskSemanticClosureFingerprintAtRevision(beforeAmend, "one", beforeAmend.generation)!
+    const revised = await h.call("work_amend", {
+      workflowId: h.workflowId, expectedVersion: beforeAmend.version,
+      reason: "Describe the split of remaining Wave work without altering the producer contract.",
+      operations: [{ action: "patch-wave", phaseId: "core", waveId: "first", patch: {
+        objective: "Keep the verified producer outcome while independently reviewing remaining work.",
+      } }],
+    }, "planner", replanner)
+    expect(revised.error).toBeUndefined()
     const currentWork = await h.work()
+    expect(currentWork.nodes.find((node: any) => node.logicalId === "one" && node.type === "task")
+      .result.semanticClosureFingerprint).toBe(originalClosure)
+    expect(taskSemanticClosureFingerprintAtRevision(currentWork, "one", currentWork.generation))
+      .not.toBe(originalClosure)
     const currentTasks = currentWork.plans.at(-1).phases[0].waves[0].tasks
     const compiled = await h.call("task_plan", {
       workflowId: h.workflowId,

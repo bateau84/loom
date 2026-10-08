@@ -206,6 +206,7 @@ import {
   workPlanSemanticFingerprint,
   taskSemanticFingerprintAtRevision,
   taskSemanticClosureFingerprintAtRevision,
+  inspectTaskSemanticClosure,
   validateWorkflowWave,
   validatePlanRoleFeasibility,
   workflowTaskSemanticFingerprint,
@@ -3319,15 +3320,13 @@ async function reusableCompletedTaskIds(
     // The execution result, not the roll-up status, is the reusable receipt.
     if (!workTask?.result || workTask.result.workflowId !== workflow.id) continue
 
-    const currentClosure = taskSemanticClosureFingerprintAtRevision(
-      work,
-      taskStep.task!.id,
-      workflow.work.generation,
-    )
-    if (
-      !workTask.result.semanticClosureFingerprint ||
-      workTask.result.semanticClosureFingerprint !== currentClosure
-    ) {
+    const closure = workTask.result.planRevision
+      ? inspectTaskSemanticClosure(work, taskStep.task!.id,
+          workTask.result.planRevision, workTask.result.semanticClosureFingerprint)
+      : { status: workTask.result.semanticClosureFingerprint &&
+          workTask.result.semanticClosureFingerprint === taskSemanticClosureFingerprintAtRevision(
+          work, taskStep.task!.id, workflow.work.generation) ? "unchanged" : "missing-receipt" }
+    if (closure.status !== "unchanged") {
       if (invalidReceipt === "rerun") continue
       throw new Error(
         `Completed Task ${taskStep.task!.id} cannot be reused because its Plan/dependency/authority receipt is missing or stale.`,
@@ -10675,13 +10674,16 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                     refuse(id, "Original producer attempt or role is missing or inconsistent.")
                     continue
                   }
-                  const nowClosure = taskSemanticClosureFingerprintAtRevision(work, id, work.generation)
-                  const oldClosure = taskSemanticClosureFingerprintAtRevision(
-                    work, id, work.generation, receipt.planRevision)
-                  if (!receipt.semanticClosureFingerprint ||
-                      receipt.semanticClosureFingerprint !== nowClosure ||
-                      receipt.semanticClosureFingerprint !== oldClosure) {
-                    refuse(id, "Plan/authority/dependency closure changed or original semantic proof is missing.")
+                  const closure = inspectTaskSemanticClosure(
+                    work, id, receipt.planRevision, receipt.semanticClosureFingerprint)
+                  if (closure.status !== "unchanged") {
+                    const explanation = {
+                      "missing-receipt": "Original semantic closure receipt is missing.",
+                      "invalid-original": "Original semantic closure receipt does not match its historical Plan revision.",
+                      "changed-current": "Current Plan/authority/dependency closure changed",
+                    }[closure.status]
+                    refuse(id, explanation + (closure.changedFields.length
+                      ? ": " + closure.changedFields.join(", ") + "." : ""))
                     continue
                   }
                   const executableFingerprint = createHash("sha256")
