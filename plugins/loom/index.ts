@@ -14417,7 +14417,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         ) {
           event.effect = "deny"
           event.message =
-            "Specialist edit is outside the current Loom write scope. Call loom_scope_elevate for the additional project-local path(s) before retrying. If that tool returns continue=false, return control immediately."
+            "Specialist edit is outside the current Loom write scope. Add the exact path under this project's writes.<role> in ~/.config/opencode/.loom.yaml, or call loom_scope_elevate for this step. A path rule cannot authorize an OQ-only mutation."
           return
         }
         event.effect = "allow"
@@ -14452,8 +14452,18 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         )
         if (!workerShellResourcesAllowed(event.resources, effectiveWrite)) {
           event.effect = "deny"
-          event.message =
-            "Worker shell is limited to inspection, build/test/run, safe delivery operations, and writes already inside the current Loom scope. Call loom_scope_elevate before retrying a newly discovered project-local write target."
+          const boundedWrite = event.resources.some((resource: string) =>
+            Boolean(scopedGofmtWriteTargets(resource)?.length ||
+              scopedGitAddTargets(resource)?.length),
+          )
+          const onlyWriteScopeMissing = boundedWrite && event.resources.every((resource: string) =>
+            workerShellResourcesAllowed([resource]) ||
+            Boolean(scopedGofmtWriteTargets(resource)?.length ||
+              scopedGitAddTargets(resource)?.length),
+          )
+          event.message = onlyWriteScopeMissing
+            ? "Worker shell write target is outside the current Loom write scope. Add the path under this project's writes.worker in ~/.config/opencode/.loom.yaml, or use loom_scope_elevate for this step."
+            : "Worker shell command is not admitted by Loom. Add the trusted exact command or bounded subcommand prefix under shell in ~/.config/opencode/.loom.yaml; no Loom code change is needed. Inspect loom_policy_status for file errors. Adding write scope cannot authorize an unsupported command."
           return
         }
 
@@ -14567,7 +14577,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         ) {
           event.effect = "deny"
           event.message =
-            "Worker edit is outside the current Loom write scope. Call loom_scope_elevate for the additional project-local path(s) before retrying. If that tool returns continue=false, return control immediately."
+            "Worker edit is outside the current Loom write scope. Add the exact path under this project's writes.worker in ~/.config/opencode/.loom.yaml, or call loom_scope_elevate for this step."
           return
         }
         event.effect = "allow"
