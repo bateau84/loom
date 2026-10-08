@@ -130,6 +130,8 @@ import {
   isAllowedPackageScriptShell,
   classifyVerificationShell,
   isElevatableVerificationShell,
+  elevatedGenerationOutput,
+  elevatedGenerationPaths,
   elevatedVerificationEntrypoint,
   isButlerCommitShellCommand,
   isGitInspectionShellCommand,
@@ -454,6 +456,8 @@ type CommandElevation = {
   sessionID: string
   commandDigest: string
   commandSummary: string
+  kind?: "verification" | "generation"
+  outputPath?: string
   reason: string
   grantedAt: string
   expiresAt: string
@@ -4308,6 +4312,30 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         throw new Error(
           "Project-local command elevation denied: " +
           (error instanceof Error ? error.message : String(error)),
+        )
+      }
+    }
+
+
+    const assertProjectGenerationWrite = async (
+      workflowId: string, stepId: string, command: string,
+    ) => {
+      const outputPaths = elevatedGenerationPaths(command)
+      if (outputPaths.length === 0) return
+      for (const path of outputPaths) {
+        const target = await classifyScopeTarget(ctx.location.directory, path)
+        if (target.kind !== "project") {
+          throw new Error(
+            "Generated output is outside this project or targets protected state: " + path,
+          )
+        }
+      }
+      const scope = (await ctx.storage.get(scopeKey(workflowId, stepId))) as TaskScope | undefined
+      if (!scope?.write.length || !resourcesWithinScope(outputPaths, scope.write)) {
+        throw new Error(
+          "Generated output is outside the current Loom write scope (" +
+          elevatedGenerationOutput(command) +
+          "). Call loom_scope_elevate for the generated files before retrying.",
         )
       }
     }
@@ -12091,7 +12119,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       addLoomTool({
         name: "command_elevate",
         description:
-          "Grant exactly one near-term execution of a project-local verification command outside the routine test-runner allowlist. Available only to an attached Worker, Diagnostic, Reviewer, Critic, or Acceptance step. Records who requested it, why, and the resulting shell evidence. This does not expand Loom's direct file-edit or Git authority or allow arbitrary shell eval. The command runs with host permissions, and nested script effects are not sandboxed.",
+          "Grant one near-term execution of a non-routine project-local test or bounded generator command. Verification supports make/just tests, local scripts, selected Python modules and go run. Generation currently supports Worker-only swag init with an explicit --output inside its current write scope (use loom_scope_elevate first). Exact command, session, attempt and audit evidence are bound; Git, installs, shell eval and arbitrary executables remain denied. The tool runs with host permissions and does not sandbox nested script effects.",
         input: {
           type: "object",
           properties: {
@@ -12115,14 +12143,26 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               error: "Command elevation is restricted to implementation/verification roles.",
             }) }
           }
-          if (!reason || reason.length > 4000 || !command || command.length > 4000 ||
-              !isElevatableVerificationShell(command)) {
+          const outputPath = elevatedGenerationOutput(command)
+          const verification = isElevatableVerificationShell(command)
+          if (!reason || reason.length > 4000 || !command || command.length > 4000) {
             return { content: renderToolOutput({
-              error: "Provide a reason and one project-local verification command. Shell eval, unsafe syntax, package installs, Git, and arbitrary commands cannot be self-elevated.",
+              error: "Command elevation requires one exact command (max 4000 characters) and a non-empty reason (max 4000 characters).",
+            }) }
+          }
+          if (!verification && !outputPath) {
+            return { content: renderToolOutput({
+              error: "Unsupported command form. Verification supports bounded make/just, shell/Python and go run tests. Generation supports swag init with an explicit project-relative --output directory. Arbitrary executables, installs, Git and shell eval cannot be self-elevated.",
+            }) }
+          }
+          if (outputPath && tool.agent !== "worker") {
+            return { content: renderToolOutput({
+              error: "Project generation requires an attached Worker step; independent verification roles cannot elevate product writes.",
             }) }
           }
           try {
             await assertProjectVerificationEntrypoint(command)
+            if (outputPath) await assertProjectGenerationWrite(value.workflowId, value.stepId, command)
             const receipt = await withRuntimeLocks(runtime, [
               { aggregate: "workflow", resourceIdentity: value.workflowId },
               stepAuthorityResource(value.workflowId, value.stepId),
@@ -12139,6 +12179,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               if (tool.agent === "worker") {
                 await assertWorkerWorkClaim(ctx, value.workflowId, value.stepId)
               }
+              if (outputPath) await assertProjectGenerationWrite(value.workflowId, value.stepId, command)
               const attempt = await ctx.storage.get(sessionStepAttemptKey(tool.sessionID))
               if (!Number.isSafeInteger(attempt)) {
                 throw new Error("Missing step-attempt binding.")
@@ -12161,6 +12202,8 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 attempt: attempt as number,
                 commandDigest: verificationCommandDigest(command),
                 commandSummary: redactCommand(command).slice(0, 1000),
+                kind: outputPath ? "generation" : "verification",
+                ...(outputPath ? { outputPath } : {}),
                 reason,
                 grantedAt: new Date(now).toISOString(),
                 expiresAt: new Date(now + 15 * 60_000).toISOString(),
@@ -12172,9 +12215,10 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             return { content: renderToolOutput({
               granted: true, grantId: receipt.id,
               workflowId: receipt.workflowId, stepId: receipt.stepId,
-              command: receipt.commandSummary, expiresAt: receipt.expiresAt,
-              singleUse: true,
-              limitation: "Permission and execution are recorded, but Loom does not inspect subprocesses or enforce script-internal writes.",
+              command: receipt.commandSummary, kind: receipt.kind,
+              ...(receipt.outputPath ? { outputPath: receipt.outputPath } : {}),
+              expiresAt: receipt.expiresAt, singleUse: true,
+              limitation: "Exact output paths are scope-checked and recognized files are tracked, but the host command is not sandboxed: Loom cannot prevent other process-internal writes.",
             }) }
           } catch (error) {
             return { content: renderToolOutput({
@@ -13842,7 +13886,8 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         )
         const governedVerification = ["reviewer", "critic", "acceptance"].includes(agent)
         const needsElevation = event.resources.length === 1 &&
-          isElevatableVerificationShell(event.resources[0]) &&
+          (isElevatableVerificationShell(event.resources[0]) ||
+            (agent === "worker" && Boolean(elevatedGenerationOutput(event.resources[0])))) &&
           !(agent === "worker" && workerShellResourcesAllowed(event.resources)) &&
           !(agent === "diagnostic" &&
             diagnosticExecutionShellResourcesAllowed(event.resources))
@@ -13877,8 +13922,17 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           ))) {
             event.effect = "deny"
             event.message =
-              "This project verification command needs a one-use loom_command_elevate grant with a reason before execution."
+              "This non-routine project command needs a one-use loom_command_elevate grant with a reason before execution."
             return
+          }
+          if (needsElevation && elevatedGenerationOutput(event.resources[0])) {
+            try {
+              await assertProjectGenerationWrite(workflowId, stepId, event.resources[0])
+            } catch (error) {
+              event.effect = "deny"
+              event.message = error instanceof Error ? error.message : String(error)
+              return
+            }
           }
           event.effect = "allow"
           return
