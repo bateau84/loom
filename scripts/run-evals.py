@@ -16,8 +16,10 @@ from typing import Any, Sequence
 
 ROOT = Path(__file__).resolve().parents[1]
 LEGACY_RUNNER = ROOT / "scripts" / "run-evals-legacy.py"
+PAIRED_RUNNER = ROOT / "scripts" / "run-skill-ablation.py"
 PROFILE_REFERENCE = "loom_eval_profile:PROFILE"
 FORWARDED_ENV_NAMES = "LOOM_EVAL_FORWARD_ENV_NAMES"
+SUITE_PATHS_ENV = "LOOM_EVAL_SUITE_PATHS"
 _LEGACY_MODULE: ModuleType | None = None
 
 
@@ -42,7 +44,7 @@ def parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         description=(
             "Loom eval compatibility entrypoint. Normal cases forward to the generic "
-            "opencode-eval-runner eval engine; skill-owned ablation remains Task 8."
+            "opencode-eval-runner eval engine; skill-owned ablation uses generic paired mode."
         )
     )
     p.add_argument("--all", action="store_true")
@@ -127,6 +129,35 @@ def resolve_selection(args: argparse.Namespace) -> list[dict[str, Any]]:
     return selected
 
 
+def list_cases(args: argparse.Namespace) -> int:
+    """List Loom-owned cases without launching the retired legacy CLI.
+
+    The list is provider-free, does not need the generic runner binary, and
+    intentionally retains the historical five-column developer format.
+    Generic job planning and execution remain solely in the reusable runner.
+    """
+    legacy = _legacy()
+    selected_ids = _csv(args.cases)
+    suite_paths = [Path(value).resolve() for value in args.suite] if args.suite else None
+    cases = legacy.load_cases(suite_paths, include_opt_in=bool(selected_ids))
+    cases.extend(legacy.load_skill_owned_cases(ROOT / "skills"))
+
+    ids = [str(case["id"]) for case in cases]
+    duplicates = sorted({case_id for case_id in ids if ids.count(case_id) > 1})
+    if duplicates:
+        raise CompatibilityError("duplicate behavioral eval case id(s): " + ", ".join(duplicates))
+
+    for case in cases:
+        print("\t".join((
+            str(case["id"]),
+            legacy.case_target_kind(case),
+            legacy.case_target_name(case),
+            str(case["execution"]),
+            ",".join(case["requirements"]),
+        )))
+    return 0
+
+
 def _runner_binary() -> str:
     configured = os.environ.get("OPENCODE_EVAL_RUNNER_BIN")
     if configured:
@@ -168,6 +199,15 @@ def _generic_env(args: argparse.Namespace) -> dict[str, str]:
         env[FORWARDED_ENV_NAMES] = json.dumps(env_names, separators=(",", ":"))
     else:
         env.pop(FORWARDED_ENV_NAMES, None)
+    # Only the explicitly selected suite files may replace default discovery.
+    # Drop a stale parent-process override when no --suite option was provided.
+    if args.suite:
+        env[SUITE_PATHS_ENV] = json.dumps(
+            [str(Path(value).expanduser().resolve()) for value in args.suite],
+            separators=(",", ":"),
+        )
+    else:
+        env.pop(SUITE_PATHS_ENV, None)
     return env
 
 
@@ -201,32 +241,24 @@ def generic_command(args: argparse.Namespace, case_ids: Sequence[str], artifact_
     return command
 
 
-def legacy_ablation_command(args: argparse.Namespace, case_ids: Sequence[str], artifact_dir: Path) -> list[str]:
+def paired_ablation_command(args: argparse.Namespace, case_ids: Sequence[str], artifact_dir: Path) -> list[str]:
+    """Route skill-owned cases to the generic paired Python API bridge."""
     command = [
-        sys.executable, str(LEGACY_RUNNER), "--cases", ",".join(case_ids), "--model", args.model,
-        "--target-transport", args.target_transport, "--judge-transport", args.judge_transport,
-        "--engine", args.engine, "--iterations", str(args.iterations),
-        "--runtime-parallel", str(args.runtime_parallel), "--transport-retries", str(args.transport_retries),
+        sys.executable, str(PAIRED_RUNNER), "--cases", ",".join(case_ids),
+        "--model", args.model,
+        "--target-transport", args.target_transport,
+        "--judge-transport", args.judge_transport,
+        "--engine", args.engine,
+        "--iterations", str(args.iterations),
+        "--runtime-parallel", str(args.runtime_parallel),
+        "--transport-retries", str(args.transport_retries),
         "--artifact-dir", str(artifact_dir),
     ]
     command += ["--parallel"] if args.parallel == 0 else ["--parallel", str(args.parallel)]
     _append_common(command, args)
-    for flag, value in (
-        ("--image", args.image), ("--opencode-image", args.opencode_image),
-        ("--copilot-image", args.copilot_image), ("--auth", args.auth),
-        ("--provider-config", args.provider_config), ("--models-catalog", args.models_catalog),
-        ("--database", args.database),
-    ):
-        if value:
-            command += [flag, str(value)]
-    for name in args.env:
-        command += ["--env", name]
-    if args.runner_evidence_safety:
-        command.append("--runner-evidence-safety")
     if args.keep_temp:
         command.append("--keep-temp")
     return command
-
 
 def _validate(args: argparse.Namespace) -> None:
     if not args.model:
@@ -250,22 +282,28 @@ def _run(command: Sequence[str], *, env: dict[str, str] | None = None) -> int:
 def main(argv: Sequence[str] | None = None) -> int:
     raw = list(sys.argv[1:] if argv is None else argv)
     args = parser().parse_args(raw)
-    if args.list:
-        return _run([sys.executable, str(LEGACY_RUNNER), *raw])
     try:
+        if args.list:
+            return list_cases(args)
         _validate(args)
         selected = resolve_selection(args)
         normal = [case for case in selected if not case.get("_skill_owned")]
         ablation = [case for case in selected if case.get("_skill_owned")]
-        if normal and args.runner_evidence_safety:
-            raise CompatibilityError("--runner-evidence-safety is retired for migrated normal evals; runtime_evidence/v1 is authoritative")
+        if args.runner_evidence_safety:
+            raise CompatibilityError("--runner-evidence-safety is retired for migrated evals; generic runtime_evidence/v1 is authoritative")
         if normal and args.keep_temp:
             raise CompatibilityError("--keep-temp is not supported by the generic normal-eval profile")
         if args.target_transport != "opencode":
             incompatible = [str(case["id"]) for case in normal if case.get("skill")]
             if incompatible:
                 raise CompatibilityError("native skill-routing eval cases require --target-transport opencode: " + ", ".join(incompatible))
+            runtime_cases = [str(case["id"]) for case in normal if case["execution"] == "runtime"]
+            if runtime_cases:
+                raise CompatibilityError("Loom runtime eval cases require --target-transport opencode: " + ", ".join(runtime_cases))
         run_root = Path(args.artifact_dir).expanduser().resolve() if args.artifact_dir else ROOT / ".loom-evals" / uuid.uuid4().hex
+        if args.artifact_dir and run_root.exists():
+            if not run_root.is_dir() or any(run_root.iterdir()):
+                raise CompatibilityError("--artifact-dir must name a new or empty directory")
         split = bool(normal and ablation)
         status = 0
         if normal:
@@ -276,16 +314,43 @@ def main(argv: Sequence[str] | None = None) -> int:
         if ablation:
             target = run_root / "skill-ablation" if split else run_root
             if split:
-                print("Compatibility split: normal uses generic eval; skill-owned ablation remains Task 8.", file=sys.stderr)
-            status = max(status, _run(legacy_ablation_command(args, [str(case["id"]) for case in ablation], target)))
+                print("Compatibility split: normal eval and generic paired skill ablation use separate artifact roots.", file=sys.stderr)
+            status = max(status, _run(paired_ablation_command(args, [str(case["id"]) for case in ablation], target), env=_generic_env(args)))
         return status
     except CompatibilityError as exc:
         parser().error(str(exc))
         return 2
 
 
+# Deliberate Loom-only compatibility surface. Never expose retired invocation,
+# observer authority, scheduling, or artifact-writing helpers implicitly.
+LOOM_COMPAT_EXPORTS = frozenset({
+    "load_cases",
+    "load_skill_owned_cases",
+    "case_selectors",
+    "case_workspace_mode",
+    "case_target_kind",
+    "case_target_name",
+    "safe_fixture_path",
+    "sanitize_database_seed",
+    "setup_projects",
+    "write_project_config",
+    "parse_judge",
+    "semantic_pass",
+    "semantic_behavior_score",
+    "classify_skill_value",
+    "skill_baseline_agent",
+    "skill_eval_agent",
+    "skill_ablation_copilot_system",
+    "strip_frontmatter",
+    "target_prompt",
+})
+# The legacy judge_prompt / deterministic_failures read observer-derived fields.
+# Runtime authority belongs only to the modern runtime_evidence/v1 adapter.
+
+
 def __getattr__(name: str):
-    if name.startswith("__"):
+    if name not in LOOM_COMPAT_EXPORTS:
         raise AttributeError(name)
     try:
         return getattr(_legacy(), name)

@@ -9,6 +9,8 @@ tags: [evaluation, loom, behavioral, conformance, adversarial]
 
 These evals test whether Loom's model-driven roles follow the behavioral contract, not just whether the deterministic control-plane code is correct.
 
+The final engine/Loom ownership boundary, validation matrix, supported compatibility options and remaining cutover debt are tracked in [Task 9 cutover and validation](../docs/eval-engine-task-9-cutover.md). That guide supersedes the **historical** [Task 7 migration checkpoint](../docs/eval-engine-task-7-validation.md).
+
 ## Authoring methodology
 
 Use `skills/agent-eval` when designing or reviewing agent/role behavioral cases. Use `skills/skills-eval` when evaluating reusable skill value through ablation or native skill integration. The authoring skills (`agent-file-authoring` and `skill-authoring`) decide when evaluation is needed and hand off to these eval skills.
@@ -243,15 +245,17 @@ Skill ablation is deliberately **reasoning-only**. Baseline and candidate projec
 
 Central native skill-routing cases still require `--target-transport opencode` because they assert real production-role `skill` loading and companion-file behavior. Skill-owned ablation suites are provider-neutral and may use OpenCode or GitHub Copilot CLI for target and judge.
 
-Each skill-owned case therefore makes four model calls per iteration: baseline target, baseline judge, candidate target, and candidate judge.
+A complete skill-owned pair makes four model calls per iteration: baseline target, baseline judge, candidate target, and candidate judge. If a side lacks usable evidence, the generic engine does not invent a missing judge result or score.
 
 Reasoning effort is part of benchmark provenance. Use `--reasoning LEVEL` to pin the same explicit level for target and judge, or `--target-reasoning` / `--judge-reasoning` to override either side. Loom forwards the requested level to the eval runner, which maps it to the transport-native control (OpenCode model variant or Copilot reasoning effort). If no reasoning flag is supplied, Loom sends no override. For OpenCode, an explicit `#variant` already present in the model reference is recorded with source `model-variant`; otherwise the artifact records `provider-default` rather than inferring the provider's current default. Artifacts also record target/judge reasoning source. Skill-ablation baseline and candidate always share the same resolved target reasoning level.
 
-By default, each live invocation writes into `.loom-evals/<eval_run_id>/`; an explicit `--artifact-dir` opts into a caller-chosen single-run destination that must be empty.
+Skill-owned cases now use the generic paired Python API from `opencode-eval-runner` (runner #64). Loom's `eval:live` wrapper starts `scripts/run-skill-ablation.py` for these cases; there is no runner paired CLI flag. The generic engine executes both sides, checks required runtime evidence, manages safe retries and judges, and writes/validates the paired artifacts. Loom alone owns skill-specific prompts, loading, traps, score/delta thresholds, absolute PASS/FAIL, and the comparison decision. For an OpenCode skill-owned ablation, the **native boundary must be complete**, the candidate must have a completed native `skill` observation for the intended skill/agent/session, and the baseline must lack a load of that skill. Convenience `skills_loaded` projections or answer text cannot replace that runtime observation; unavailable identities/capture remain non-evidence. GitHub Copilot CLI instead uses explicit inline methodology and does not claim native-load proof.
 
-Each live eval invocation also receives a unique `eval_run_id`. Every case artifact records that run ID plus a SHA-256 `artifact_evidence_id` over the complete artifact content (excluding the evidence-ID field itself). Before printing PASS/FAIL/ERROR, the harness re-reads the durable artifact and verifies the run ID, evidence ID, and reporting fields against the in-memory result. The console header prints the run ID and each case verdict backed by a durable artifact prints the evidence-ID prefix, so copied persisted-result output can be correlated with the exact durable artifact. Pre-artifact harness exceptions may report ERROR without an evidence ID because no durable case result exists to correlate. The harness generates a fresh run ID for every live invocation and atomically claims the artifact directory with a persistent `.loom-eval-run-id` owner file before execution. A second invocation cannot add, replace, or mix case artifacts in a directory owned by another run. First ownership also requires the destination to contain no pre-existing entries, so unowned artifacts from older harness versions cannot be absorbed into a new run; stale or overlapping destinations fail closed and require a clean/distinct directory instead of silently replacing or combining evidence.
+For **local skill-owned runs**, the paired runner library from [opencode-eval-runner Task 8](https://github.com/bateau84/opencode-eval-runner/issues/64) must be installed or importable. From a Loom checkout with the runner cloned alongside it, run `export PYTHONPATH="$PWD/../opencode-eval-runner${PYTHONPATH:+:$PYTHONPATH}"` before `bun run eval:live -- ...`; or set `OPENCODE_EVAL_RUNNER_BIN` to that checkout's `bin/opencode-eval-runner`. The adapter no longer requires the CLI binary if the paired Python module is importable. CI/live workflows provide the runner library automatically. Skill-owned paired runs now default to the same **immutable, reviewed transport image digests** as Loom CI, rather than relying on the runner's moving `opencode-edge`/`copilot-edge` defaults. This prevents stale local images from silently returning pre-`runtime_evidence/v1` result envelopes. Explicit `--image`, `--opencode-image`, `--copilot-image`, or `OPENCODE_EVAL_RUNNER_*_IMAGE` overrides still take priority; custom images must implement the complete runtime-evidence contract. If a live pair reports `NON-EVIDENCE`, inspect `pairs/<case>/iteration-N.json` for each side's target failure and raw diagnostics; for example, a provider authentication rejection is not a skill regression.
 
-The evidence ID is a **content fingerprint for correlation**, not a signature or post-run authenticity proof. The ownership file is likewise harness coordination against accidental/stale overlap, not a security lock against another process with filesystem write access. Preserve the artifact directory through an appropriately trusted storage boundary if later tamper-authentication matters.
+By default, each live invocation writes into `.loom-evals/<generated-run-id>/`. An explicit `--artifact-dir` must be empty. Normal cases use generic single-case artifacts. Skill-owned cases use `opencode-eval-runner/eval-paired-artifact/v1` at `pairs/<case>/iteration-N.json`, with independently validated baseline/candidate side artifacts, a comparison envelope, and a pair integrity ID. The generic artifact store claims directories and verifies durable writes before a case verdict is reported. Comparison remains **non-evidence** when either side is unusable; the harness does not substitute a zero score.
+
+The artifact evidence IDs are **content fingerprints**, not signatures or proof against a process with write access. Keep the artifact directory inside an appropriate trusted storage boundary if tamper authentication matters. Normal and skill-owned cases selected together use separate `normal/` and `skill-ablation/` subdirectories beneath the chosen run root.
 
 Example:
 
@@ -265,11 +269,11 @@ bun run eval:live -- \
 
 The harness chooses Podman first, then Docker. Override it explicitly with `--engine podman` or `--engine docker`. For rootless Podman on SELinux hosts, Loom disables container SELinux labeling for the eval container rather than relabeling your repository or credential files.
 
-The harness pins the runner images by digest so the Action source and container runtime cannot drift independently:
+The runner Action and transport images are pinned as a reviewed set, to prevent unreviewed runtime drift:
 
 ```text
-OpenCode: ghcr.io/bateau84/opencode-eval-runner@sha256:3e5f95ce54fee127230c5bf84a7f09124a2236dfca544269e6547c8f79e8ad5d
-Copilot:  ghcr.io/bateau84/opencode-eval-runner@sha256:8def0aa1885b0e60b36a1434c2725667b1b9555def31426f08dd7e2a87dc02c5
+OpenCode: ghcr.io/bateau84/opencode-eval-runner@sha256:a1a415e1f236c4d572ef7cd6190561b0b46ff8443761601d750eb88ce3c87442
+Copilot:  ghcr.io/bateau84/opencode-eval-runner@sha256:1c38e2d275206a9a0de057a01a43d8c4c00da4c44e56462ac17139c22f95a1f9
 ```
 
 Override them independently with `--opencode-image` / `--copilot-image`, or use `--image` to force one explicit image for both transports. Changing the pinned runner revision and image digests is one compatibility update.
@@ -384,7 +388,7 @@ bun run eval:live -- --all --model <provider/model>
 
 For each case, Loom creates separate target and judge projects. Runtime targets receive the checked-out Loom plugin/skills plus a read-only mount of the checked-out `node_modules`; judges receive only the judge agent. Container-local HOME/XDG/session state is discarded after every invocation.
 
-Each container emits one JSON result on stdout. The Loom host harness writes case JSON into the current run-owned artifact directory (by default `.loom-evals/<eval_run_id>/`), so target/judge containers do not require a writable host bind mount. Infrastructure/provider failures are classified as **non-evidence**, not behavioral FAIL.
+Target/judge invocations return captured results to the reusable engine, which owns the sealed job and run artifacts under `.loom-evals/<eval_run_id>/`. Loom supplies the semantic policy rather than directly writing flat per-case JSON. Infrastructure/provider failures are **non-evidence**, not behavioral FAIL.
 
 ## Cost control
 

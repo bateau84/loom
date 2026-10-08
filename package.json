@@ -11,7 +11,7 @@
     "eval:system": "python3 scripts/run-evals.py --all",
     "eval:stress": "python3 scripts/run-evals.py --all --iterations 3 --parallel 4",
     "skills:validate": "python3 scripts/validate-skills.py",
-    "eval:harness-test": "python3 scripts/test_eval_actions.py && python3 scripts/test_eval_fixtures.py && python3 scripts/test_eval_tool_results.py && python3 scripts/test_ci_eval_compat_validation.py",
+    "eval:harness-test": "python3 scripts/test_eval_retained_policy.py && python3 scripts/test_eval_fixtures.py && python3 scripts/test_ci_loom_eval_case_adapter.py && python3 scripts/test_ci_eval_evidence_judge_adapter.py && python3 scripts/test_ci_skill_ablation_cutover.py && python3 scripts/test_ci_eval_compat_validation.py && python3 scripts/test_ci_eval_stage2b_validation.py",
     "dashboard": "bun dashboard/server.ts",
     "integration:opencode": "bun scripts/opencode-host-integration.ts && python3 scripts/verify_conversation_profile.py"
   },
