@@ -5,7 +5,7 @@ description: Agent roles, worker contexts, routing, and skill use inside OpenCod
 tags: [architecture, loom, agents, routing, skills]
 ---
 
-**Status:** architecture direction; supported role-safe Plan execution is implemented and independently reviewed on this branch. Universal all-subagent Task routing and agent-roster/planning-insight discovery are not implemented. This branch state does not establish merge, CI, or release.
+**Status:** architecture direction; supported role-safe Plan execution is implemented and independently reviewed on this branch. Bounded `loom_roster` discovery for General and Planner exposes current host names/descriptions with separate plugin-owned advisory planning insights; Brainstorm advisory OQs are supported. Provider-free mock-host checks cover these paths, not actual installed-host behavior or full Objective acceptance. Universal all-subagent Task routing remains incomplete. This branch state does not establish merge, CI, or release.
 
 ## Agent Set
 
@@ -15,7 +15,7 @@ Loom's repository is the global OpenCode config directory. Agent files therefore
 
 - **Loom** — the single user-facing conversational engineering partner. The current OpenCode compatibility identifier is `general`.
 - Loom owns exploration, sparring, ordinary problem-solving and synthesis, investigation, the execution transition, autonomous routing, and continuity with the user.
-- **brainstorm** is an available fresh subagent used for advisory ideation; it is not a second primary user mode. For appropriately typed planned work, its bounded output is alternatives, assumptions and trade-offs for the accountable authority to assess, never an accepted decision or generic producer result. A planned Brainstorm Task or Brainstorm-responder OQ path is not yet supported by the current runtime.
+- **brainstorm** is an available fresh subagent used for advisory ideation; it is not a second primary user mode. For appropriately typed planned work, its bounded output is alternatives, assumptions and trade-offs for the accountable authority to assess, never an accepted decision or generic producer result. Brainstorm advisory OQs have an exact grant/attachment/answer path; planned Brainstorm Tasks remain unsupported. An advisory answer does not complete a Task or resolve the receiving role's authority.
 - **research** and **diagnostic** may be used during conversation for bounded fresh-context investigation without implying product mutation. They extend Loom's reasoning; they are not separate user-facing modes.
 
 ### Authority subagents
@@ -114,7 +114,7 @@ Typical mapping:
 | normal independent check                       | Reviewer            |
 | whole-solution challenge                       | Critic              |
 
-The coordinator may propose classification. The control plane prevents dependent stages from proceeding when recorded prerequisites are incomplete. The mapping above names expertise, **not** a claim that every role has a currently implemented planned Task route. The supported role-safe subset is present on this branch; universal routing and live roster discovery remain separate implementation work.
+The coordinator may propose classification. The control plane prevents dependent stages from proceeding when recorded prerequisites are incomplete. The mapping above names expertise, **not** a claim that every role has a currently implemented planned Task route. The supported role-safe subset and bounded live roster/advisory discovery are present on this branch; planned Brainstorm, Planner, Critic and Acceptance Tasks remain unsupported. Discovery does not grant a missing path or establish actual installed-host or full Objective proof.
 
 ## Skills
 
