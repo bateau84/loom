@@ -10471,7 +10471,7 @@ test("Worker generation elevation checks outputs, locks invocation and owns only
     const unsupported = await h.call("command_elevate", {
       ...input, command: "swag init --output ./internal/swagger/v2 --mysteryFlag yes",
     }, "worker", worker)
-    expect(unsupported.error).toContain("Unsupported swag init option: --mysteryFlag")
+    expect(unsupported.error).toContain("Unsupported swag init option or argument: --mysteryFlag")
     const unsafeOutput = await h.call("command_elevate", {
       ...input, command: "swag init --output ../outside",
     }, "worker", worker)
