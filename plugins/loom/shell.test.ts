@@ -62,6 +62,12 @@ describe("Loom Worker shell policy", () => {
       "node --version other.js",
       "bun --help ./script.ts",
       "npm install --version",
+      "bash -v", // Verbose execution, not a version query
+      "bash -h",
+      "python -v", // Verbose interpreter, not a version query
+      "go -v",
+      "constructor -v",
+      "__proto__ -v",
       "./node --version",
       "unknown-tool --version",
       "node --version && touch /tmp/out",
