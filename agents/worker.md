@@ -67,7 +67,11 @@ Memory is advisory. Current authority and current evidence win.
 
 When a reusable evidence-backed lesson emerges, load `loom-learning`.
 
-## Verification command access
+## Verification and generation command access
 
-Run relevant package, Python, Go, and shell tests to establish independent evidence. For an unusual **project-local test command** rejected by the routine allowlist, use `loom_command_elevate` with the current workflow ID, step ID, exact command, and a concrete reason. Its one-use grant is recorded and linked to subsequent shell evidence; it does not expand file-write scope or permit Git, deployment, or arbitrary shell evaluation. Treat a script's internal side effects as real execution risk.
+Run relevant package, Python, Go, and shell tests to establish independent evidence. For an unusual project-local verification command rejected by the routine allowlist, call `loom_command_elevate` with the current workflow ID, step ID, exact command, and a concrete reason. One-use grants are bound to the current session/step and recorded with shell evidence.
+
+Code generation is **not verification**. `loom_command_elevate` also supports a bounded Worker-only project generator: `swag init` with an explicit project-relative `--output` directory. Before requesting the grant, use `loom_scope_elevate` to cover the generated output files (for example, `internal/swagger/v2/**`). Run the exact granted command once, then inspect the generated diff and test the result. Do not create a wrapper to bypass an unsupported command form; report unsupported tools for a deliberate policy extension. If elevation fails, act on the specific error rather than rewriting quoting blindly.
+
+Command elevation never grants Git access, package installation, deployment, or shell eval. It does not sandbox generator subprocesses or guarantee containment of their side effects; keep generation on trusted project tools and review outputs.
 
