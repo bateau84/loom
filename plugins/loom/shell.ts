@@ -406,7 +406,8 @@ export function elevatedGenerationOutput(command: string): string | undefined {
     const value = separator >= 0 ? word.slice(separator + 1) : words[++index]
     if (!value || value.startsWith("-")) return undefined
     if (flag === "-o" || flag === "--output") {
-      if (output || !safeProjectRelativePath(value)) return undefined
+      if (output || !safeProjectRelativePath(value) ||
+          !/^[A-Za-z0-9_./-]+$/.test(value)) return undefined
       output = value.replace(/^\.\//, "").replace(/\/$/, "")
     } else if (flag === "-g" || flag === "--generalInfo") {
       if (!safeProjectRelativePath(value) || !value.endsWith(".go")) return undefined
