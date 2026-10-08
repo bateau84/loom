@@ -233,7 +233,7 @@ For a clear implementation Task after any required diagnosis/factual resolution,
 
 ## Git worktrees
 
-When a Worker needs an isolated repair branch/worktree, use `loom_git_worktree_create` under an exact current Worker step rather than approving raw writes into `.git` or a sibling Git directory. It can create only a fresh branch in a verified sibling `<repo>-wt/<name>` directory and never switches this workflow's project binding. Resume code editing and committing only in a newly attached Loom/OpenCode session rooted in that worktree. Ordinary scoped `git add`/hookless `git commit` within any active worktree need no extra Git metadata scope request. An unrelated out-of-project write or manual Git metadata edit remains a hard boundary with one-time user approval.
+A Worker already running inside a linked worktree can commit there using normal scoped `git add` and hookless `git commit`. The `.git` entry is a file pointing outside the checkout, but Git itself is allowed to follow that pointer to its associated metadata. Do not approve or request raw `.git`, shared `objects`/`refs` or linked-worktree gitdir write scope for such commits. If a Worker raises exactly those paths via `loom_scope_elevate`, Loom returns `status=not-required` and gives the allowed Git commands instead of opening a user-approval loop. Other external changes or direct Git metadata editing remain hard boundaries.
 
 ## Questions, evidence, and verification
 
