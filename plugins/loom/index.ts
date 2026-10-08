@@ -148,6 +148,7 @@ import {
   workerShellResourcesAllowed,
 } from "./shell"
 import { prepareReportPromotion, publishPreparedReport, reconcilePendingReportPromotion, type ReportPromotionInput, type ReportPromotionRecord } from "./reports"
+import { createIsolatedGitWorktree } from "./git-worktree"
 import {
   findPaths,
   grepText,
@@ -12405,6 +12406,108 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             return { content: renderToolOutput({
               error: error instanceof Error ? error.message : String(error),
             }) }
+          }
+        },
+      })
+
+      addLoomTool({
+        name: "git_worktree_create",
+        description:
+          "Create an isolated fresh Git branch and sibling worktree using Git-owned metadata operations. Worker only, with an exact runnable current step, reviewed Plan/claim if applicable, and committable product write scope. This DOES NOT grant .git edits, overwrite existing branches, switch this session's project root, or authorize product edits in the new worktree. Start a separately attached Loom/OpenCode session there for further edits and commits.",
+        input: {
+          type: "object",
+          properties: {
+            workflowId: { type: "string" },
+            stepId: { type: "string" },
+            name: {
+              type: "string",
+              description: "Single flat worktree directory name under the verified primary checkout's sibling <repo>-wt/ directory.",
+            },
+            branch: {
+              type: "string",
+              description: "Fresh branch name, never an existing branch, ref reset or force operation.",
+            },
+            startCommit: {
+              type: "string",
+              description: "Optional exact 40-character commit SHA; omitted means current HEAD at operation time.",
+            },
+          },
+          required: ["workflowId", "stepId", "name", "branch"],
+          additionalProperties: false,
+        },
+        options: { namespace: "loom", codemode: false },
+        execute: async (input, tool) => {
+          if (tool.agent !== "worker") {
+            return { content: renderToolOutput({ error: "Only Worker may create an isolated Git worktree." }) }
+          }
+          const value = input as {
+            workflowId: string
+            stepId: string
+            name: string
+            branch: string
+            startCommit?: string
+          }
+          try {
+            const result = await withRuntimeLocks(runtime, [
+              { aggregate: "workflow", resourceIdentity: value.workflowId },
+              stepAuthorityResource(value.workflowId, value.stepId),
+              { aggregate: "git-worktree", resourceIdentity: ctx.location.directory },
+            ], async () => {
+              if (!(await exactRunnableStepAttemptBinding(
+                ctx, tool.sessionID, value.workflowId, value.stepId,
+              ))) {
+                throw new Error("Worktree creation requires the exact current runnable Worker step attachment.")
+              }
+              const workflow = await readWorkflow(ctx, value.workflowId)
+              const step = workflow?.steps.find((candidate) => candidate.id === value.stepId)
+              if (!step || step.agent !== "worker") {
+                throw new Error("Worktree creation requires Worker ownership of the attached step.")
+              }
+              await assertCurrentStepPlanAdmission(ctx, value.workflowId, value.stepId)
+              await assertWorkerWorkClaim(ctx, value.workflowId, value.stepId)
+              const scope = (await ctx.storage.get(
+                scopeKey(value.workflowId, value.stepId),
+              )) as TaskScope | undefined
+              if (!scope || committableWriteScope(scope.write).length === 0) {
+                throw new Error("Worktree creation requires a current committable Worker product write scope.")
+              }
+              const attempt = step.attempt ?? 0
+              const created = await createIsolatedGitWorktree(ctx.location.directory, {
+                name: value.name,
+                branch: value.branch,
+                ...(value.startCommit !== undefined ? { startCommit: value.startCommit } : {}),
+              })
+              await ctx.storage.set(
+                ["git-worktree-created", encodeURIComponent(value.workflowId),
+                  encodeURIComponent(value.stepId), String(attempt),
+                  encodeURIComponent(value.name)].join("/"),
+                {
+                  workflowId: value.workflowId,
+                  stepId: value.stepId,
+                  attempt,
+                  bySessionId: tool.sessionID,
+                  branch: created.branch,
+                  worktreePath: created.worktreePath,
+                  startCommit: created.startCommit,
+                  at: new Date().toISOString(),
+                },
+              )
+              return created
+            })
+            return {
+              content: renderToolOutput({
+                created: true,
+                ...result,
+                nextAction:
+                  "Use a separate Loom/OpenCode session rooted at worktreePath for edits and normal scoped git add/commit. This operation does not rebind the current workflow or grant writes to .git/refs, objects or external worktree gitdirs.",
+              }),
+            }
+          } catch (error) {
+            return {
+              content: renderToolOutput({
+                error: error instanceof Error ? error.message : String(error),
+              }),
+            }
           }
         },
       })
