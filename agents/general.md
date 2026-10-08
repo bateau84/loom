@@ -137,6 +137,8 @@ A clear implementation Task whose cause and authority are already understood sho
 
 If the causal mechanism is genuinely unknown, Diagnostic owns diagnosis before Worker. If current external facts are load-bearing, Research may establish them first. These are professional expertise, not ceremony.
 
+If an intermittent fault appears **after Worker/Plan execution**, do not reclassify the already-executed workflow just to insert an earlier Diagnostic step: that would rewrite dependencies or completion provenance. Instead, for a concrete unresolved causal question, raise a blocking `loom_oq_raise` to `responder="diagnostic"` with the exact affected failed/pending review consumer step (normally `review-implementation`); issue a `loom_dispatch_grant` for its `questionId` and dispatch Diagnostic to attach to that OQ. A current Diagnostic OQ permits temporary instrumentation only inside the disposable diagnostic sandbox. When the answer returns, reconcile it into the affected owner and use normal reopening/correction plus fresh independent review as needed. The answer is evidence, **not** a PASS, a new Plan Task, or permission to change production files.
+
 Read-only Tasks use the relevant Research/Diagnostic/Reviewer path without inventing Worker mutation.
 
 ### Change
