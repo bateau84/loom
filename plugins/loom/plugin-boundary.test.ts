@@ -10360,11 +10360,22 @@ test("one-use command elevation is step-bound, audited and linked to shell evide
     expect((await permission("make verify")).effect).toBe("deny")
     expect((await permission(command, "another-worker-session")).effect).toBe("deny")
     expect((await permission(command)).effect).toBe("allow")
+    const noIdentity = {
+      tool: "shell", sessionID: worker, agent: "worker", input: { command },
+    }
+    await expect(h.toolHooks.get("execute.before")!(noIdentity)).rejects.toThrow(
+      "stable tool-call identity",
+    )
+    expect((await h.durableStorage.get("command-elevation/" + grantId) as any).consumedAt).toBeUndefined()
+
     const run = {
       tool: "shell", callID: "command-elevation-verified-shell",
       sessionID: worker, agent: "worker", input: { command },
     }
     await h.toolHooks.get("execute.before")!(run)
+    await expect(h.toolHooks.get("execute.before")!(run)).rejects.toThrow(
+      "in-flight execution",
+    )
     await h.toolHooks.get("execute.after")!({
       ...run, status: "completed", result: "tests passed",
     })
@@ -10412,6 +10423,42 @@ test("one-use command elevation is step-bound, audited and linked to shell evide
     expect((await permission("make test")).effect).toBe("allow")
     expect(secondPending.granted).toBe(true)
   } finally {
+    h.restore()
+  }
+})
+
+test("command elevation rejects symlink escapes at grant and execution", async () => {
+  const h = await waveLifecycleFixture("wave")
+  const external = join(tmpdir(), `loom-external-verification-${crypto.randomUUID()}.sh`)
+  try {
+    const worker = await h.attach("task:one", "worker", "entrypoint-bound-worker")
+    const entry = join(h.root, "scripts", "ci.sh")
+    await mkdir(join(h.root, "scripts"), { recursive: true })
+    await writeFile(external, "#!/bin/sh\necho outside\n")
+    await symlink(external, entry)
+
+    const input = {
+      workflowId: h.workflowId, stepId: "task:one", command: "bash scripts/ci.sh",
+      reason: "Run the local project integration script.",
+    }
+    const denied = await h.call("command_elevate", input, "worker", worker)
+    expect(denied.error).toContain("Project-local command elevation denied")
+
+    await rm(entry)
+    await writeFile(entry, "#!/bin/sh\necho inside\n")
+    const granted = await h.call("command_elevate", input, "worker", worker)
+    expect(granted.granted).toBe(true)
+    await rm(entry)
+    await symlink(external, entry)
+
+    await expect(h.toolHooks.get("execute.before")!({
+      tool: "shell", callID: "symlink-swapped-command", sessionID: worker,
+      agent: "worker", input: { command: input.command },
+    })).rejects.toThrow("Project-local command elevation denied")
+    const receipt = await h.durableStorage.get("command-elevation/" + granted.grantId) as any
+    expect(receipt.consumedAt).toBeUndefined()
+  } finally {
+    await rm(external, { force: true })
     h.restore()
   }
 })
