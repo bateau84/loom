@@ -1,5 +1,6 @@
 import { YAML } from "bun"
-import { lstat, readFile } from "node:fs/promises"
+import { open } from "node:fs/promises"
+import { constants } from "node:fs"
 import { homedir } from "node:os"
 import { isAbsolute, join, resolve } from "node:path"
 import { validateScopeElevation } from "./scope"
@@ -137,23 +138,28 @@ export async function readLocalPermissionPolicy(
   path = localPolicyPath(),
 ): Promise<LocalPolicyReadResult> {
   try {
-    const info = await lstat(path)
-    if (!info.isFile() || info.isSymbolicLink()) {
-      throw new Error("Policy must be a regular file, not a symlink.")
+    // Open without following a swapped symlink, then check/read the same
+    // descriptor. This file confers real user authority, not just formatting.
+    const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW)
+    try {
+      const info = await handle.stat()
+      if (!info.isFile()) throw new Error("Policy must be a regular file.")
+      const uid = typeof process.getuid === "function" ? process.getuid() : undefined
+      if (uid !== undefined && info.uid !== uid) {
+        throw new Error("Policy must be owned by the current user.")
+      }
+      if ((info.mode & 0o022) !== 0) {
+        throw new Error("Policy must not be writable by group or other users.")
+      }
+      if (info.size > maxPolicyBytes) throw new Error("Policy exceeds 64 KiB.")
+      const content = await handle.readFile("utf8")
+      if (Buffer.byteLength(content, "utf8") > maxPolicyBytes) {
+        throw new Error("Policy exceeds 64 KiB.")
+      }
+      return { path, status: "loaded", policy: parseLocalPermissionPolicy(content) }
+    } finally {
+      await handle.close()
     }
-    const uid = typeof process.getuid === "function" ? process.getuid() : undefined
-    if (uid !== undefined && info.uid !== uid) {
-      throw new Error("Policy must be owned by the current user.")
-    }
-    if ((info.mode & 0o022) !== 0) {
-      throw new Error("Policy must not be writable by group or other users.")
-    }
-    if (info.size > maxPolicyBytes) throw new Error("Policy exceeds 64 KiB.")
-    const content = await readFile(path, "utf8")
-    if (Buffer.byteLength(content, "utf8") > maxPolicyBytes) {
-      throw new Error("Policy exceeds 64 KiB.")
-    }
-    return { path, status: "loaded", policy: parseLocalPermissionPolicy(content) }
   } catch (error) {
     if ((error as NodeJS.ErrnoException)?.code === "ENOENT") return { path, status: "absent" }
     return {
