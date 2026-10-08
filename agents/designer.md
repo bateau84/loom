@@ -2,9 +2,10 @@
 description: Senior human-centered design authority for user stories, scenarios, journeys, interaction behavior, visible state, recovery experience, accessibility, product character, and experience validation.
 mode: subagent
 permissions:
+  # User-local overrides are decided by Loom. Without the plugin, ask.
   - action: edit
     resource: "*"
-    effect: deny
+    effect: ask
   - action: edit
     resource: "docs/design/**"
     effect: allow
