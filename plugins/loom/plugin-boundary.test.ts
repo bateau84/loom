@@ -10226,6 +10226,270 @@ async function waveLifecycleFixture(
   }
 }
 
+test("package scripts are admitted for governed Reviewer, Critic, and Acceptance steps", async () => {
+  const roleScript = async (
+    evaluate: (event: any) => void | Promise<void>,
+    agent: string,
+    sessionID: string,
+    command: string,
+    expected: "allow" | "deny",
+  ) => {
+    const event: any = {
+      agent, action: "shell", resources: [command], sessionID, effect: "ask",
+    }
+    await evaluate(event)
+    expect(event.effect).toBe(expected)
+  }
+
+  const crit = await harness()
+  try {
+    const generalSession = "script-critic-parent"
+    const criticSession = "script-critic-child"
+    const { workflowId } = await crit.call("start", {
+      anchor: "docs/anchors/lifecycle/anchor.md",
+    }, "general", generalSession)
+    expect((await crit.call("route", {
+      humanFacing: false, behavioral: false, structural: false,
+      externalUnknown: false, diagnostic: false, productOutcome: true,
+      implementationRequested: true, executionDepth: "objective",
+      workLevel: "wave",
+    }, "general", generalSession)).error).toBeUndefined()
+    const grant = await crit.call("dispatch_grant", {
+      workflowId, stepId: "critic-solution",
+    }, "general", generalSession)
+    expect((await crit.call("attach", {
+      workflowId, stepId: "critic-solution", grantId: grant.grantId,
+    }, "critic", criticSession)).attached).toBe(true)
+    const evaluate = crit.permissionHooks.get("evaluate")!
+    await roleScript(evaluate, "critic", criticSession, "npm run test:unit", "allow")
+    await roleScript(evaluate, "critic", criticSession, "bun test", "allow")
+    await roleScript(evaluate, "critic", criticSession, "python3 -m unittest discover", "allow")
+    await roleScript(evaluate, "critic", criticSession, "go test ./...", "allow")
+    await roleScript(evaluate, "critic", criticSession, "bash scripts/test.sh", "allow")
+    const criticGrant = await crit.call("command_elevate", {
+      workflowId, stepId: "critic-solution",
+      command: "make test", reason: "Run a repository CI test target.",
+    }, "critic", criticSession)
+    expect(criticGrant.granted).toBe(true)
+    await roleScript(evaluate, "critic", criticSession, "make test", "allow")
+    await roleScript(evaluate, "critic", "unattached-critic", "npm run test:unit", "deny")
+  } finally {
+    crit.restore()
+  }
+
+  const h = await waveLifecycleFixture("objective")
+  try {
+    const evaluate = h.permissionHooks.get("evaluate")!
+    await h.finish("task:one", "worker")
+    const reviewer = await h.attach("review-implementation", "reviewer")
+    await roleScript(evaluate, "reviewer", reviewer, "bun run test:unit", "allow")
+    await roleScript(evaluate, "reviewer", reviewer, "npm test", "allow")
+    await roleScript(evaluate, "reviewer", reviewer, "pytest -q", "allow")
+    await roleScript(evaluate, "reviewer", reviewer, "go vet ./...", "allow")
+    await roleScript(evaluate, "reviewer", reviewer, "bats tests/unit.bats", "allow")
+    const reviewerGrant = await h.call("command_elevate", {
+      workflowId: h.workflowId, stepId: "review-implementation",
+      command: "just test:unit", reason: "Independently verify unit coverage.",
+    }, "reviewer", reviewer)
+    expect(reviewerGrant.granted).toBe(true)
+    await roleScript(evaluate, "reviewer", reviewer, "just test:unit", "allow")
+    await roleScript(evaluate, "reviewer", "unattached-reviewer", "bun run test:unit", "deny")
+    expect((await h.call("complete", {
+      workflowId: h.workflowId, stepId: "review-implementation",
+      outcome: "pass", summary: "Package-script permission fixture review",
+    }, "reviewer", reviewer)).error).toBeUndefined()
+    expect((await h.finishKnowledge()).error).toBeUndefined()
+    const acceptance = await h.attach("product-acceptance", "acceptance")
+    await roleScript(evaluate, "acceptance", acceptance, "pnpm run test:e2e", "allow")
+    await roleScript(evaluate, "acceptance", acceptance, "yarn test", "allow")
+    await roleScript(evaluate, "acceptance", acceptance, "python -m pytest", "allow")
+    await roleScript(evaluate, "acceptance", acceptance, "go test -race ./...", "allow")
+    await roleScript(evaluate, "acceptance", acceptance, "sh tests/integration.sh", "allow")
+    const acceptanceGrant = await h.call("command_elevate", {
+      workflowId: h.workflowId, stepId: "product-acceptance",
+      command: "make test", reason: "Verify assembled product behavior.",
+    }, "acceptance", acceptance)
+    expect(acceptanceGrant.granted).toBe(true)
+    await roleScript(evaluate, "acceptance", acceptance, "make test", "allow")
+    await roleScript(evaluate, "acceptance", "unattached-acceptance", "pnpm run test:e2e", "deny")
+  } finally {
+    h.restore()
+  }
+})
+
+test("one-use command elevation is step-bound, audited and linked to shell evidence", async () => {
+  const h = await waveLifecycleFixture("wave")
+  try {
+    const worker = await h.attach("task:one", "worker", "command-elevation-worker")
+    const command = "make test"
+    const evaluate = h.permissionHooks.get("evaluate")!
+    const permission = async (cmd: string, sessionID = worker) => {
+      const event: any = {
+        agent: "worker", action: "shell", resources: [cmd],
+        sessionID, effect: "ask",
+      }
+      await evaluate(event)
+      return event
+    }
+
+    const first = await permission(command)
+    expect(first.effect).toBe("deny")
+    expect(first.message).toContain("loom_command_elevate")
+
+    const forbidden = await h.call("command_elevate", {
+      workflowId: h.workflowId, stepId: "task:one",
+      command: "bash -c 'rm -rf src'",
+      reason: "Not a project test command.",
+    }, "worker", worker)
+    expect(forbidden.error).toContain("project-local verification")
+
+    const deniedGeneral = await h.call("command_elevate", {
+      workflowId: h.workflowId, stepId: "task:one",
+      command, reason: "General must not issue child grants.",
+    }, "general", "parent")
+    expect(deniedGeneral.error).toContain("restricted")
+
+    const issued = await h.call("command_elevate", {
+      workflowId: h.workflowId, stepId: "task:one",
+      command, reason: "Execute the repository's named unit test target.",
+    }, "worker", worker)
+    expect(issued).toMatchObject({ granted: true, singleUse: true })
+    const grantId = issued.grantId
+    expect(typeof grantId).toBe("string")
+
+    expect((await permission("make verify")).effect).toBe("deny")
+    expect((await permission(command, "another-worker-session")).effect).toBe("deny")
+    expect((await permission(command)).effect).toBe("allow")
+    const noIdentity = {
+      tool: "shell", sessionID: worker, agent: "worker", input: { command },
+    }
+    await expect(h.toolHooks.get("execute.before")!(noIdentity)).rejects.toThrow(
+      "stable tool-call identity",
+    )
+    expect((await h.durableStorage.get("command-elevation/" + grantId) as any).consumedAt).toBeUndefined()
+
+    const run = {
+      tool: "shell", callID: "command-elevation-verified-shell",
+      sessionID: worker, agent: "worker", input: { command },
+    }
+    await h.toolHooks.get("execute.before")!(run)
+    await expect(h.toolHooks.get("execute.before")!(run)).rejects.toThrow(
+      "in-flight execution",
+    )
+    await h.toolHooks.get("execute.after")!({
+      ...run, status: "completed", result: "tests passed",
+    })
+
+    const receipt = await h.durableStorage.get("command-elevation/" + grantId) as any
+    expect(receipt).toMatchObject({
+      id: grantId, agent: "worker", sessionID: worker,
+      workflowId: h.workflowId, stepId: "task:one",
+      reason: "Execute the repository's named unit test target.",
+      outcome: "completed",
+    })
+    expect(receipt.consumedAt).toBeDefined()
+    expect(receipt.observationId).toBeDefined()
+    expect(receipt.commandSummary).toBe(command)
+
+    const observations = (await h.call("evidence_observations",
+      { detail: true }, "worker", worker)).observations
+    const observed = observations.find((item: any) => item.id === receipt.observationId)
+    expect(observed).toMatchObject({
+      command, status: "completed", agent: "worker",
+      workflowId: h.workflowId, stepId: "task:one",
+      commandTrace: {
+        family: "custom", access: "elevated", grantId,
+        runner: "make",
+      },
+    })
+    expect(observed.commandTrace.durationMs).toBeGreaterThanOrEqual(0)
+
+    expect((await permission(command)).effect).toBe("deny")
+    await expect(h.toolHooks.get("execute.before")!(run)).rejects.toThrow(
+      "no unconsumed exact loom_command_elevate",
+    )
+
+    // A new grant replaces the prior pending grant without erasing its audit record.
+    const firstPending = await h.call("command_elevate", {
+      workflowId: h.workflowId, stepId: "task:one",
+      command: "just test", reason: "Try Just test target.",
+    }, "worker", worker)
+    const secondPending = await h.call("command_elevate", {
+      workflowId: h.workflowId, stepId: "task:one",
+      command: "make test", reason: "Use Make instead.",
+    }, "worker", worker)
+    expect((await h.durableStorage.get("command-elevation/" + firstPending.grantId) as any).supersededAt).toBeDefined()
+    expect((await permission("just test")).effect).toBe("deny")
+    expect((await permission("make test")).effect).toBe("allow")
+    expect(secondPending.granted).toBe(true)
+
+    const privateReason = await h.call("command_elevate", {
+      workflowId: h.workflowId, stepId: "task:one",
+      command: "make test", reason: "token=do-not-store Retry the unit tests.",
+    }, "worker", worker)
+    expect(privateReason.granted).toBe(true)
+    const redacted = await h.durableStorage.get(
+      "command-elevation/" + privateReason.grantId,
+    ) as any
+    expect(redacted.reason).toContain("[REDACTED]")
+    expect(redacted.reason).not.toContain("do-not-store")
+
+    const unclassified = {
+      tool: "shell", callID: "verification-command-redaction",
+      sessionID: worker, agent: "worker",
+      input: { command: "TOKEN=do-not-store go test ./..." },
+    }
+    await h.toolHooks.get("execute.before")!(unclassified)
+    await h.toolHooks.get("execute.after")!({
+      ...unclassified, status: "completed", result: "tests passed",
+    })
+    const traced = (await h.call("evidence_observations",
+      { detail: true }, "worker", worker)).observations
+      .find((observation: any) => observation.commandTrace?.runner === "go" &&
+        observation.commandTrace?.access === "unclassified")
+    expect(traced).toBeDefined()
+    expect(JSON.stringify(traced.commandTrace)).not.toContain("do-not-store")
+  } finally {
+    h.restore()
+  }
+})
+
+test("command elevation rejects symlink escapes at grant and execution", async () => {
+  const h = await waveLifecycleFixture("wave")
+  const external = join(tmpdir(), `loom-external-verification-${crypto.randomUUID()}.sh`)
+  try {
+    const worker = await h.attach("task:one", "worker", "entrypoint-bound-worker")
+    const entry = join(h.root, "scripts", "ci.sh")
+    await mkdir(join(h.root, "scripts"), { recursive: true })
+    await writeFile(external, "#!/bin/sh\necho outside\n")
+    await symlink(external, entry)
+
+    const input = {
+      workflowId: h.workflowId, stepId: "task:one", command: "bash scripts/ci.sh",
+      reason: "Run the local project integration script.",
+    }
+    const denied = await h.call("command_elevate", input, "worker", worker)
+    expect(denied.error).toContain("Project-local command elevation denied")
+
+    await rm(entry)
+    await writeFile(entry, "#!/bin/sh\necho inside\n")
+    const granted = await h.call("command_elevate", input, "worker", worker)
+    expect(granted.granted).toBe(true)
+    await rm(entry)
+    await symlink(external, entry)
+
+    await expect(h.toolHooks.get("execute.before")!({
+      tool: "shell", callID: "symlink-swapped-command", sessionID: worker,
+      agent: "worker", input: { command: input.command },
+    })).rejects.toThrow("Project-local command elevation denied")
+    const receipt = await h.durableStorage.get("command-elevation/" + granted.grantId) as any
+    expect(receipt.consumedAt).toBeUndefined()
+  } finally {
+    await rm(external, { force: true })
+    h.restore()
+  }
+})
+
 test("legacy persisted Task fingerprints remain admissible after authority-delta fingerprint refinement", async () => {
   const h = await waveLifecycleFixture(
     "wave",
