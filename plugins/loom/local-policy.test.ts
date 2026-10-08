@@ -62,6 +62,16 @@ describe("local personal Loom permission policy", () => {
     ]) {
       expect(localPolicyShellAllowed(command, rules)).toBe(true)
     }
+    for (const cmd of [
+      "env git push origin HEAD",
+      "command git push origin HEAD",
+      "sudo git push origin HEAD",
+      "bash -c 'git push origin HEAD'",
+      "sh -lc 'git push origin HEAD'",
+      "GOENV=off env git push origin HEAD",
+    ]) {
+      expect(localPolicyShellAllowed(cmd, { exact: [cmd], prefixes: [] })).toBe(false)
+    }
     expect(localPolicyShellAllowed(
       "GOENV=off git push origin HEAD",
       { exact: ["GOENV=off git push origin HEAD"], prefixes: ["GOENV=off git push"] },
