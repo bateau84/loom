@@ -132,6 +132,7 @@ import {
   isElevatableVerificationShell,
   elevatedGenerationOutput,
   elevatedGenerationPaths,
+  generationElevationError,
   elevatedVerificationEntrypoint,
   isButlerCommitShellCommand,
   isGitInspectionShellCommand,
@@ -12163,7 +12164,8 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           }
           if (!verification && !outputPath) {
             return { content: renderToolOutput({
-              error: "Unsupported command form. Verification supports bounded make/just, shell/Python and go run tests. Generation supports swag init with an explicit project-relative --output directory. Arbitrary executables, installs, Git and shell eval cannot be self-elevated.",
+              error: generationElevationError(command) ??
+                "Unsupported command form. Verification supports bounded make/just, shell/Python and go run tests. Generation supports swag init with an explicit project-relative --output directory. Arbitrary executables, installs, Git and shell eval cannot be self-elevated.",
             }) }
           }
           if (outputPath && tool.agent !== "worker") {
@@ -14561,8 +14563,10 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         )
         const root = await realpath(ctx.location.directory)
         for (const directory of directories) {
-          if (typeof directory !== "string" ||
-              await realpath(directory).catch(() => "") !== root) {
+          const target = typeof directory === "string"
+            ? (isAbsolute(directory) ? directory : resolve(root, directory))
+            : ""
+          if (!target || await realpath(target).catch(() => "") !== root) {
             throw new Error(
               "Generator elevation requires execution from the current project root; remove the alternate workdir.",
             )
