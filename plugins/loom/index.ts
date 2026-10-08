@@ -14543,6 +14543,23 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           : undefined
       const generationPaths = raw.agent === "worker" && shellCommand
         ? elevatedGenerationPaths(shellCommand) : []
+      // Generator output flags are relative to the shell cwd. A different
+      // workdir would make the granted output paths refer to different files.
+      if (generationPaths.length > 0) {
+        const input = raw.input as Record<string, unknown>
+        const directories = [input.workdir, input.cwd].filter(
+          (value) => value !== undefined,
+        )
+        const root = await realpath(ctx.location.directory)
+        for (const directory of directories) {
+          if (typeof directory !== "string" ||
+              await realpath(directory).catch(() => "") !== root) {
+            throw new Error(
+              "Generator elevation requires execution from the current project root; remove the alternate workdir.",
+            )
+          }
+        }
+      }
       let elevationRequired = false
       if (shellCommand && raw.sessionID &&
           verificationTestAgents.has(String(raw.agent ?? "")) &&
