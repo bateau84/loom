@@ -37,6 +37,8 @@ describe("Loom Worker shell policy", () => {
       "python3.12 -V",
       "go version", // Existing safe Go inspection
       "git --version",
+      "git version",
+      "but --version",
       "but --help", // Existing Butler inspection
       "kubectl --help",
       "GOENV=off node --version",
@@ -88,6 +90,8 @@ describe("Loom Worker shell policy", () => {
   test("allows universal read-only Git inspection and rejects mutation-shaped or escaping forms", () => {
     for (const command of [
       "git status --short",
+      "git --version",
+      "git version",
       "git diff --stat",
       "git --no-pager log --oneline -20",
       "git show HEAD",
@@ -133,6 +137,7 @@ describe("Loom Worker shell policy", () => {
   test("allows Butler inspection commands but keeps mutations classified", () => {
     for (const command of [
       "but status",
+      "but --version",
       "but --json status -fv",
       "but status --upstream --no-hint",
       "but diff",
