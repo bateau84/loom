@@ -6,6 +6,8 @@ import {
   diagnosticShellResourcesAllowed,
   classifyVerificationShell,
   isElevatableVerificationShell,
+  elevatedGenerationOutput,
+  elevatedGenerationPaths,
   elevatedVerificationEntrypoint,
   isAllowedButlerCommit,
   isAllowedGitCommit,
@@ -281,6 +283,41 @@ describe("Loom Worker shell policy", () => {
       "shfmt -d -w scripts/test.sh",
     ]) {
       expect(classifyVerificationShell(command)).toBeUndefined()
+    }
+  })
+
+  test("project generation elevation admits scoped Swagger output without shell escape", () => {
+    const command = "swag init -g doc.go -d ./internal/apiv2,./internal/app --parseDependency --parseInternal --output ./internal/swagger/v2 --tags 'internal-app-v1' --requiredByDefault"
+    expect(elevatedGenerationOutput(command)).toBe("internal/swagger/v2")
+    expect(elevatedGenerationPaths(command)).toEqual([
+      "internal/swagger/v2/docs.go",
+      "internal/swagger/v2/swagger.json",
+      "internal/swagger/v2/swagger.yaml",
+    ])
+    expect(isElevatableVerificationShell(command)).toBe(false)
+    expect(elevatedGenerationOutput("swag init --output=internal/swagger/v2 --outputTypes=json,yaml")).toBe("internal/swagger/v2")
+    expect(elevatedGenerationOutput("swag init -o internal/swagger/v2 -t 'internal-app-v1'")).toBe("internal/swagger/v2")
+
+    for (const invalid of [
+      "swag init",
+      "swag init --output .",
+      "swag init --output ../outside",
+      "swag init --output /tmp/out",
+      "swag init --output .git/hooks",
+      "swag init --output .loom/private",
+      "swag init --output internal/swagger/v2 --output /tmp/also",
+      "swag init --output internal/swagger/v2 --dir ../outside",
+      "swag init --output internal/swagger/v2 -g ../outside/doc.go",
+      "swag init --output internal/swagger/v2 --outputTypes xml",
+      "swag init --output internal/swagger/v2 --templateDelims unsafe",
+      "swag init --output internal/swagger/v2 && git push origin main",
+      "swag init --output 'internal/swagger/v2;rm'",
+      "swag fmt --output internal/swagger/v2",
+      "go generate ./...",
+      "git push origin main",
+      "npm install",
+    ]) {
+      expect(elevatedGenerationOutput(invalid)).toBeUndefined()
     }
   })
 
