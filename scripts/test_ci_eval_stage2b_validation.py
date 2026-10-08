@@ -24,13 +24,18 @@ class EvalCutoverCliSmokeTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         folder = Path(self.temp.name)
         self.capture = folder / "forwarded.json"
+        self.suite_capture = folder / "suite-selection.json"
         self.engine = folder / "opencode-eval-runner"
         self.engine.write_text(
             "#!/usr/bin/env python3\n"
             "import json, os, sys\n"
             "from pathlib import Path\n"
             "Path(os.environ['LOOM_EVAL_COMMAND_CAPTURE']).write_text("
-            "json.dumps(sys.argv[1:]), encoding='utf-8')\n",
+            "json.dumps(sys.argv[1:]), encoding='utf-8')\n"
+            "Path(os.environ['LOOM_EVAL_SUITE_CAPTURE']).write_text("
+            "json.dumps(json.loads(os.environ['LOOM_EVAL_SUITE_PATHS']) "
+            "if 'LOOM_EVAL_SUITE_PATHS' in os.environ else None), "
+            "encoding='utf-8')\n",
             encoding="utf-8",
         )
         self.engine.chmod(0o700)
@@ -40,6 +45,7 @@ class EvalCutoverCliSmokeTests(unittest.TestCase):
         env = dict(os.environ)
         env["OPENCODE_EVAL_RUNNER_BIN"] = str(self.engine)
         env["LOOM_EVAL_COMMAND_CAPTURE"] = str(self.capture)
+        env["LOOM_EVAL_SUITE_CAPTURE"] = str(self.suite_capture)
         return subprocess.run(
             [sys.executable, str(ENTRYPOINT), *args],
             cwd=ROOT,
@@ -101,6 +107,45 @@ class EvalCutoverCliSmokeTests(unittest.TestCase):
             self.assertIn(case_id, result.stdout)
         self.assertFalse(self.capture.exists(), "listing must not invoke the engine")
 
+    def test_custom_suite_is_forwarded_as_exact_file_set(self) -> None:
+        path = Path(self.temp.name) / "custom.json"
+        path.write_text(json.dumps({
+            "version": 1, "name": "external-suite",
+            "cases": [{
+                "id": "REVIEW-CUSTOM-01", "agent": "general",
+                "execution": "role-decision", "prompt": "Give a decision.",
+                "requirements": [], "expectations": ["Answer."], "must_not": [],
+            }],
+        }), encoding="utf-8")
+        result = self.invoke(
+            "--suite", str(path), "--cases", "REVIEW-CUSTOM-01",
+            "--model", "fixture/model",
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("REVIEW-CUSTOM-01", self.flag(self.forwarded(), "--cases"))
+        self.assertEqual(
+            json.loads(self.suite_capture.read_text(encoding="utf-8")), [str(path.resolve())]
+        )
+
+    def test_normal_eval_does_not_inherit_stale_suite_selection(self) -> None:
+        with unittest.mock.patch.dict(os.environ, {
+            "LOOM_EVAL_SUITE_PATHS": '["/bogus/stale.json"]',
+        }):
+            result = self.invoke("--cases", "INTENT-02", "--model", "fixture/model")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIsNone(json.loads(self.suite_capture.read_text(encoding="utf-8")))
+
+    def test_existing_nonempty_artifact_parent_rejected_before_mixed_execution(self) -> None:
+        self.artifacts.mkdir()
+        (self.artifacts / "old-result.json").write_text("{}", encoding="utf-8")
+        result = self.invoke(
+            "--cases", "INTENT-02,Skills-Eval-02",
+            "--model", "fixture/model", "--artifact-dir", str(self.artifacts),
+        )
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("--artifact-dir must name a new or empty directory", result.stderr)
+        self.assertFalse(self.capture.exists())
+
     def test_missing_selection_refuses_inference_before_engine(self) -> None:
         result = self.invoke("--model", "fixture/model")
         self.assertEqual(result.returncode, 2)
@@ -115,6 +160,16 @@ class EvalCutoverCliSmokeTests(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 2)
         self.assertIn("native skill-routing", result.stderr)
+        self.assertFalse(self.capture.exists())
+
+    def test_plain_runtime_case_requires_opencode_before_inference(self) -> None:
+        result = self.invoke(
+            "--cases", "INTENT-01", "--model", "fixture/model",
+            "--target-transport", "github-copilot-cli",
+            "--judge-transport", "github-copilot-cli",
+        )
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("runtime eval cases require --target-transport opencode", result.stderr)
         self.assertFalse(self.capture.exists())
 
     def test_retired_diagnostic_authority_flag_fails_closed(self) -> None:
