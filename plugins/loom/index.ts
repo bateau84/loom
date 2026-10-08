@@ -4359,13 +4359,13 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       return grant
     }
 
-    const consumeCommandElevation = async (sessionID: string, agent: string, command: string) => {
+    const consumeCommandElevation = async (
+      sessionID: string, agent: string, command: string,
+      stepAuthorityAlreadyLocked = false,
+    ) => {
       const observed = await currentCommandElevation(sessionID, agent, command)
       if (!observed) return undefined
-      return withRuntimeLocks(runtime, [
-        { aggregate: "workflow", resourceIdentity: observed.workflowId },
-        stepAuthorityResource(observed.workflowId, observed.stepId),
-      ], async () => {
+      const consume = async () => {
         const grant = await currentCommandElevation(sessionID, agent, command)
         if (!grant || grant.id !== observed.id) return undefined
         await assertCurrentStepPlanAdmission(ctx, grant.workflowId, grant.stepId)
@@ -4373,7 +4373,16 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         const consumed = { ...grant, consumedAt: new Date().toISOString() }
         await ctx.storage.set(commandElevationKey(grant.id), consumed)
         return consumed
-      })
+      }
+      // A generated-file tool call already holds the step-authority lock
+      // through acquireGitWriteLocks. Re-acquiring it here would deadlock.
+      // The same held lock serializes grant consumption with grant issuance.
+      return stepAuthorityAlreadyLocked
+        ? consume()
+        : withRuntimeLocks(runtime, [
+            { aggregate: "workflow", resourceIdentity: observed.workflowId },
+            stepAuthorityResource(observed.workflowId, observed.stepId),
+          ], consume)
     }
 
     const activeGitWriteCalls = new Map<
@@ -14840,6 +14849,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         try {
           const consumed = await consumeCommandElevation(
             String(raw.sessionID), String(raw.agent), shellCommand,
+            generationPaths.length > 0,
           )
           if (!consumed) {
             throw new Error(
