@@ -4320,6 +4320,41 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
     }
 
 
+    // A host shell can finish its tool call while the subprocess exits non-zero.
+    // Do not infer generation success from tool status alone when the shell
+    // supplies its exit/timeout metadata.
+    const generatorResultError = (result: unknown): string | undefined => {
+      let decoded = result
+      if (typeof result === "string" && result.length < 32_768 &&
+          result.trimStart().startsWith("{")) {
+        try {
+          decoded = JSON.parse(result)
+        } catch {
+          // Unstructured shell output is handled by the normal result parser.
+        }
+      }
+      const value = decoded && typeof decoded === "object" && !Array.isArray(decoded)
+        ? decoded as Record<string, unknown>
+        : undefined
+      const metadata = value?.metadata && typeof value.metadata === "object" &&
+        !Array.isArray(value.metadata)
+        ? value.metadata as Record<string, unknown>
+        : undefined
+      if (metadata?.timeout === true || value?.timeout === true) {
+        return "Generator shell execution timed out."
+      }
+      const exit = metadata?.exit ?? value?.exit ?? metadata?.exitCode ?? value?.exitCode
+      // A null exit is not an observed success (for example after a signal).
+      const hasExit = metadata && Object.prototype.hasOwnProperty.call(metadata, "exit") ||
+        value && Object.prototype.hasOwnProperty.call(value, "exit") ||
+        metadata && Object.prototype.hasOwnProperty.call(metadata, "exitCode") ||
+        value && Object.prototype.hasOwnProperty.call(value, "exitCode")
+      if (hasExit && exit !== 0 && exit !== "0") {
+        return "Generator shell execution did not exit successfully (exit: " + String(exit) + ")."
+      }
+      return safeResultError(result)
+    }
+
     const assertProjectGenerationWrite = async (
       workflowId: string, stepId: string, command: string,
     ) => {
@@ -15056,6 +15091,9 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       const input = raw.input
       const inputDigest = input === undefined ? undefined : await digest(input)
       const eventMatches = Boolean(pending) && inputDigest === pending!.inputDigest
+      const generatorToolError = pending?.generationPaths?.length
+        ? generatorResultError(raw.result ?? raw.output)
+        : undefined
       let generatorOutputError: string | undefined
 
       if (
@@ -15198,7 +15236,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             // its content reports an error. Do not confer Git provenance on
             // a failed or unverified generation.
             if (raw.status === "completed" &&
-                !safeResultError(raw.result ?? raw.output) &&
+                !generatorToolError &&
                 pending.generationBefore && pending.generationPaths) {
               const command = (input as { command?: unknown } | undefined)?.command
               if (typeof command !== "string") {
@@ -15313,7 +15351,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       const returnedResult = raw.result ?? raw.output
       const reportedError =
         raw.status === "completed"
-          ? generatorOutputError ?? safeResultError(returnedResult)
+          ? generatorOutputError ?? generatorToolError ?? safeResultError(returnedResult)
           : undefined
       const resultSummary =
         raw.status === "completed" && !reportedError ? safeResultSummary(tool, returnedResult) : {}
