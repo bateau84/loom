@@ -10296,6 +10296,105 @@ test("package scripts are admitted for governed Reviewer, Critic, and Acceptance
   }
 })
 
+test("one-use command elevation is step-bound, audited and linked to shell evidence", async () => {
+  const h = await waveLifecycleFixture("wave")
+  try {
+    const worker = await h.attach("task:one", "worker", "command-elevation-worker")
+    const command = "make test"
+    const evaluate = h.permissionHooks.get("evaluate")!
+    const permission = async (cmd: string, sessionID = worker) => {
+      const event: any = {
+        agent: "worker", action: "shell", resources: [cmd],
+        sessionID, effect: "ask",
+      }
+      await evaluate(event)
+      return event
+    }
+
+    const first = await permission(command)
+    expect(first.effect).toBe("deny")
+    expect(first.message).toContain("loom_command_elevate")
+
+    const forbidden = await h.call("command_elevate", {
+      workflowId: h.workflowId, stepId: "task:one",
+      command: "bash -c 'rm -rf src'",
+      reason: "Not a project test command.",
+    }, "worker", worker)
+    expect(forbidden.error).toContain("project-local verification")
+
+    const deniedGeneral = await h.call("command_elevate", {
+      workflowId: h.workflowId, stepId: "task:one",
+      command, reason: "General must not issue child grants.",
+    }, "general", "parent")
+    expect(deniedGeneral.error).toContain("restricted")
+
+    const issued = await h.call("command_elevate", {
+      workflowId: h.workflowId, stepId: "task:one",
+      command, reason: "Execute the repository's named unit test target.",
+    }, "worker", worker)
+    expect(issued).toMatchObject({ granted: true, singleUse: true })
+    const grantId = issued.grantId
+    expect(typeof grantId).toBe("string")
+
+    expect((await permission("make verify")).effect).toBe("deny")
+    expect((await permission(command, "another-worker-session")).effect).toBe("deny")
+    expect((await permission(command)).effect).toBe("allow")
+    const run = {
+      tool: "shell", callID: "command-elevation-verified-shell",
+      sessionID: worker, agent: "worker", input: { command },
+    }
+    await h.toolHooks.get("execute.before")!(run)
+    await h.toolHooks.get("execute.after")!({
+      ...run, status: "completed", result: "tests passed",
+    })
+
+    const receipt = await h.durableStorage.get("command-elevation/" + grantId) as any
+    expect(receipt).toMatchObject({
+      id: grantId, agent: "worker", sessionID: worker,
+      workflowId: h.workflowId, stepId: "task:one",
+      reason: "Execute the repository's named unit test target.",
+      outcome: "completed",
+    })
+    expect(receipt.consumedAt).toBeDefined()
+    expect(receipt.observationId).toBeDefined()
+    expect(receipt.commandSummary).toBe(command)
+
+    const observations = (await h.call("evidence_observations",
+      { detail: true }, "worker", worker)).observations
+    const observed = observations.find((item: any) => item.id === receipt.observationId)
+    expect(observed).toMatchObject({
+      command, status: "completed", agent: "worker",
+      workflowId: h.workflowId, stepId: "task:one",
+      commandTrace: {
+        family: "custom", access: "elevated", grantId,
+        runner: "make",
+      },
+    })
+    expect(observed.commandTrace.durationMs).toBeGreaterThanOrEqual(0)
+
+    expect((await permission(command)).effect).toBe("deny")
+    await expect(h.toolHooks.get("execute.before")!(run)).rejects.toThrow(
+      "no unconsumed exact loom_command_elevate",
+    )
+
+    // A new grant replaces the prior pending grant without erasing its audit record.
+    const firstPending = await h.call("command_elevate", {
+      workflowId: h.workflowId, stepId: "task:one",
+      command: "just test", reason: "Try Just test target.",
+    }, "worker", worker)
+    const secondPending = await h.call("command_elevate", {
+      workflowId: h.workflowId, stepId: "task:one",
+      command: "make test", reason: "Use Make instead.",
+    }, "worker", worker)
+    expect((await h.durableStorage.get("command-elevation/" + firstPending.grantId) as any).supersededAt).toBeDefined()
+    expect((await permission("just test")).effect).toBe("deny")
+    expect((await permission("make test")).effect).toBe("allow")
+    expect(secondPending.granted).toBe(true)
+  } finally {
+    h.restore()
+  }
+})
+
 test("legacy persisted Task fingerprints remain admissible after authority-delta fingerprint refinement", async () => {
   const h = await waveLifecycleFixture(
     "wave",
