@@ -1,10 +1,10 @@
 # Local Loom permission overrides
 
-Loom supports an optional **user-owned policy file** outside the repository:
+Loom supports an optional **user-owned policy file** in the OpenCode configuration directory. The checkout ignores `/.loom.yaml` even when Loom itself is that directory:
 
 - Standard location: `~/.config/opencode/.loom.yaml`
 - When `XDG_CONFIG_HOME` is absolute: `$XDG_CONFIG_HOME/opencode/.loom.yaml`
-- Create it yourself; Loom does not commit, create, or modify this file.
+- Create it yourself; Loom does not commit, create, or modify this file. It stays untracked in Git.
 - The YAML is re-read for permission checks. **No Git commit, build, or OpenCode restart** is needed after editing it.
 - Run `loom_policy_status` to see the loaded file, parse errors, and the rules effective for the current project.
 
@@ -55,9 +55,10 @@ Create the parent directory and file using your editor; restrict it to your acco
 ```sh
 mkdir -p "${XDG_CONFIG_HOME:-$HOME/.config}/opencode"
 chmod 700 "${XDG_CONFIG_HOME:-$HOME/.config}/opencode"
+touch "${XDG_CONFIG_HOME:-$HOME/.config}/opencode/.loom.yaml"
 chmod 600 "${XDG_CONFIG_HOME:-$HOME/.config}/opencode/.loom.yaml"
 ```
 
-`chmod` needs the file to exist first. This policy file is not part of the Loom repo.
+Keep the local policy file out of commits. Loom's root `.gitignore` ignores `/.loom.yaml` when the configuration directory is a checkout of Loom.
 
 **Important:** A Documenter attached only to an advisory OQ still cannot author or commit files. The message “requires the exact attached current runnable Loom step attempt” means there is no executable step for that mutation. Adding a `writes` path alone does not grant lifecycle authority. That is a separate routing/execution concern; do not send the same write to an unrelated Designer step simply because it is runnable.
