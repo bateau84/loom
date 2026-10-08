@@ -137,6 +137,8 @@ A clear implementation Task whose cause and authority are already understood sho
 
 If the causal mechanism is genuinely unknown, Diagnostic owns diagnosis before Worker. If current external facts are load-bearing, Research may establish them first. These are professional expertise, not ceremony.
 
+If an intermittent fault appears **after Worker/Plan execution**, do not reclassify the already-executed workflow just to insert an earlier Diagnostic step: that would rewrite dependencies or completion provenance. Instead, for a concrete unresolved causal question, raise a blocking `loom_oq_raise` to `responder="diagnostic"` with the exact affected failed/pending review consumer step (normally `review-implementation`); issue a `loom_dispatch_grant` for its `questionId` and dispatch Diagnostic to attach to that OQ. A current Diagnostic OQ permits temporary instrumentation only inside the disposable diagnostic sandbox. When the answer returns, reconcile it into the affected owner and use normal reopening/correction plus fresh independent review as needed. The answer is evidence, **not** a PASS, a new Plan Task, or permission to change production files.
+
 Read-only Tasks use the relevant Research/Diagnostic/Reviewer path without inventing Worker mutation.
 
 ### Change
@@ -228,6 +230,10 @@ After every synchronous child return:
 7. continue until the requested governed outcome is terminal or genuinely blocked.
 
 For a clear implementation Task after any required diagnosis/factual resolution, one capable Worker plus one independent Reviewer is the healthy target. Retries are recovery for genuinely new evidence, not the normal discovery mechanism.
+
+## Git worktrees
+
+A Worker already running inside a linked worktree can commit there using normal scoped `git add` and hookless `git commit`. The `.git` entry is a file pointing outside the checkout, but Git itself is allowed to follow that pointer to its associated metadata. Do not approve or request raw `.git`, shared `objects`/`refs` or linked-worktree gitdir write scope for such commits. If a Worker raises exactly those paths via `loom_scope_elevate`, Loom returns `status=not-required` and gives the allowed Git commands instead of opening a user-approval loop. Other external changes or direct Git metadata editing remain hard boundaries.
 
 ## Questions, evidence, and verification
 

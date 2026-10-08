@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto"
 import { AsyncLocalStorage } from "node:async_hooks"
 import { lstat, mkdir, readFile, readlink, realpath, unlink } from "node:fs/promises"
-import { dirname, isAbsolute, join, relative, resolve } from "node:path"
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path"
 import { execFile } from "node:child_process"
 import { promisify } from "node:util"
 import { captureEvidenceAdmission, observationCallKey, persistEvidenceObservation, sessionAttachmentKey, type EvidenceAdmission } from "./evidence-admission"
@@ -30,7 +30,7 @@ import {
 } from "./upgrade-actions"
 
 export const LOOM_NATIVE_TOOL_GUIDANCE =
-  "Loom control-plane tools are available through two equivalent OpenCode surfaces: native loom_* tools and Code Mode mirrors under tools.loom.code.*. Use either surface directly according to the active tool paradigm. If using Code Mode, search for Loom tools and invoke the returned tools.loom.code.* signatures; do not fall back to shell/filesystem discovery for Loom commands. Reviewer/Critic methodology uses a two-part contract: load practitioner guidance with OpenCode's native skill tool, then consume the role companion through loom_assessment or loom_qa; a plain ASSESSMENT.md/QA.md read is artifact inspection, not methodology loading. Interactive status is dashboard-first and does not depend on model prose: the Loom sidebar exposes a stable workflow dashboard URL, while loom_status may also return presentation metadata. Desktop browser preview is optional metadata only; do not invoke tools.browser.preview merely because presentation metadata exists. Every Loom agent may use both Git and GitButler for repository inspection: read-only Git commands such as `git status`, `git diff`, `git log`, `git show`, and `git rev-parse`, plus GitButler commands such as `but status`, `but diff`, and `but show`. When any role has durable project-local write scope, that same effective scope authorizes commits of the admitted bytes; this includes paths added by `loom_scope_elevate`. Load git-commit-discipline before committing so the commit remains coherent and reviewable; load the `but` skill when GitButler mechanics matter. Loom admits selected whole-file-ID Butler commits only: use untargeted `but commit -m ... <file-id>...`; Loom resolves those IDs back to repository paths and revalidates current task/session ownership under lock. Bare commit-all, empty, interactive, current-directory override, and unsupported history-wide Butler mutations are denied. The existing bounded `git -c core.hooksPath=/dev/null commit -m ...` path remains a fallback; long Markdown messages may instead use `git -c core.hooksPath=/dev/null commit -F ephemeral-reports/<role>/commit-messages/<name>.md`. Compose that scratch file with edit/write tools, never shell redirection. Plain `git commit` is intentionally denied so repository hooks cannot change the staged scope after Loom validates it. Runtime write scope is discoverable: an attached child that needs additional project-local files calls loom_scope_elevate and continues immediately when granted. If any Loom tool returns continue=false, the child MUST stop its current turn and return control immediately; it must not retry the blocked mutation or continue assuming authority will arrive later."
+  "Loom control-plane tools are available through two equivalent OpenCode surfaces: native loom_* tools and Code Mode mirrors under tools.loom.code.*. Use either surface directly according to the active tool paradigm. If using Code Mode, search for Loom tools and invoke the returned tools.loom.code.* signatures; do not fall back to shell/filesystem discovery for Loom commands. Reviewer/Critic methodology uses a two-part contract: load practitioner guidance with OpenCode's native skill tool, then consume the role companion through loom_assessment or loom_qa; a plain ASSESSMENT.md/QA.md read is artifact inspection, not methodology loading. Interactive status is dashboard-first and does not depend on model prose: the Loom sidebar exposes a stable workflow dashboard URL, while loom_status may also return presentation metadata. Desktop browser preview is optional metadata only; do not invoke tools.browser.preview merely because presentation metadata exists. Every Loom agent may use both Git and GitButler for repository inspection: read-only Git commands such as `git status`, `git diff`, `git log`, `git show`, and `git rev-parse`, plus GitButler commands such as `but status`, `but diff`, and `but show`. When any role has durable project-local write scope, that same effective scope authorizes commits of the admitted bytes; this includes paths added by `loom_scope_elevate`. Load git-commit-discipline before committing so the commit remains coherent and reviewable; load the `but` skill when GitButler mechanics matter. Loom admits selected whole-file-ID Butler commits only: use untargeted `but commit -m ... <file-id>...`; Loom resolves those IDs back to repository paths and revalidates current task/session ownership under lock. Bare commit-all, empty, interactive, current-directory override, and unsupported history-wide Butler mutations are denied. The existing bounded `git -c core.hooksPath=/dev/null commit -m ...` path remains a fallback; long Markdown messages may instead use `git -c core.hooksPath=/dev/null commit -F ephemeral-reports/<role>/commit-messages/<name>.md`. Compose that scratch file with edit/write tools, never shell redirection. Plain `git commit` is intentionally denied so repository hooks cannot change the staged scope after Loom validates it. Git itself owns .git objects, refs and worktree metadata during scoped add/commit, including the external Git directory of a linked worktree. Do not request raw .git write scope for routine commits; use the admitted git add/commit commands with the current project root. Runtime write scope is discoverable: an attached child that needs additional project-local files calls loom_scope_elevate and continues immediately when granted. If any Loom tool returns continue=false, the child MUST stop its current turn and return control immediately; it must not retry the blocked mutation or continue assuming authority will arrive later."
 import {
   assertWorkflowNotCancelled,
   WorkflowCancelledError,
@@ -110,6 +110,7 @@ import {
 } from "./scope"
 import {
   allocateDiagnosticSandbox,
+  diagnosticSandboxMatchesTarget,
   destroyDiagnosticSandbox,
   diffDiagnosticSandbox,
   executeDiagnosticSandbox,
@@ -117,6 +118,7 @@ import {
   resolveDiagnosticSandboxRuntime,
   type DiagnosticSandboxNetwork,
   type DiagnosticSandboxRecord,
+  type DiagnosticSandboxTarget,
 } from "./diagnostic-sandbox"
 import {
   authorGitShellResourcesAllowed,
@@ -2194,6 +2196,46 @@ function pathBeforeGlob(path: string) {
   return prefix.slice(0, boundary) || "/"
 }
 
+/**
+ * Git already owns the metadata writes of a scoped git add/commit. In a linked
+ * worktree, .git is a pointer FILE and the actual gitdir/common objects/refs
+ * are outside this checkout. Those exact paths are not product write scopes.
+ *
+ * Recognizing them lets scope_elevate explain the normal Git path without
+ * manufacturing an unnecessary hard-boundary user-approval request.
+ * Recognition NEVER grants permission to edit/write those paths directly.
+ */
+async function linkedWorktreeCommitMetadataPaths(projectDirectory: string): Promise<Set<string> | undefined> {
+  try {
+    const root = await realpath(projectDirectory)
+    const gitFile = join(root, ".git")
+    const info = await lstat(gitFile)
+    if (!info.isFile() || info.isSymbolicLink()) return undefined
+    const pointer = (await readFile(gitFile, "utf8")).match(/^gitdir: ([^\r\n]+)\r?\n?$/)
+    if (!pointer) return undefined
+    const gitdir = await realpath(resolve(root, pointer[1]))
+    const env = Object.fromEntries(
+      Object.entries(process.env).filter(([key]) => !key.startsWith("GIT_")),
+    ) as NodeJS.ProcessEnv
+    const readGit = async (flag: string) =>
+      String((await execFileAsync("git", ["rev-parse", flag], {
+        cwd: root, encoding: "utf8", timeout: 10_000, env,
+      })).stdout).trim()
+    const topLevel = await realpath(await readGit("--show-toplevel"))
+    const observedGitdir = await realpath(await readGit("--absolute-git-dir"))
+    const commonDir = await realpath(resolve(root, await readGit("--git-common-dir")))
+    if (topLevel !== root || observedGitdir !== gitdir) return undefined
+    // Require the normal linked-worktree entry under a verified common .git.
+    if (dirname(dirname(gitdir)) !== join(commonDir, "worktrees") &&
+        dirname(gitdir) !== join(commonDir, "worktrees")) return undefined
+    if (basename(commonDir) !== ".git" || !(await lstat(commonDir)).isDirectory()) return undefined
+    return new Set([gitFile, gitdir, join(commonDir, "objects"), join(commonDir, "refs")])
+  } catch {
+    // If identity cannot be proven, retain the existing hard-boundary behavior.
+    return undefined
+  }
+}
+
 async function classifyScopeTarget(projectDirectory: string, raw: string) {
   const requested = raw.trim()
   if (!requested) throw new Error("Scope elevation paths must not be empty.")
@@ -2776,6 +2818,10 @@ function sessionOqKey(sessionID: string) {
   return `session-oq/${sessionID}`
 }
 
+function sessionOqAttemptKey(sessionID: string) {
+  return `session-oq-attempt/${sessionID}`
+}
+
 function sessionPlanReviewKey(sessionID: string) {
   return `session-plan-review/${encodeURIComponent(sessionID)}`
 }
@@ -3246,6 +3292,43 @@ async function exactRunnableStepAttemptBinding(
 
 async function exactOqBinding(ctx: any, sessionID: string, workflowId: string, questionId: string) {
   return sessionBoundToOq(ctx.storage as any, sessionID, workflowId, questionId)
+}
+
+/**
+ * A late root-cause investigation may attach through a Diagnostic OQ without
+ * rewriting completed Plan Tasks. The disposable sandbox still requires a
+ * current exact attempt: neither an answered/reopened OQ nor a stale step
+ * attachment can authorize new experiments.
+ */
+async function currentDiagnosticSandboxAttachment(
+  ctx: any,
+  sessionID: string,
+): Promise<DiagnosticSandboxTarget | undefined> {
+  const workflowId = (await ctx.storage.get(sessionKey(sessionID))) as string | undefined
+  if (!workflowId) return undefined
+  const workflow = await readWorkflow(ctx, workflowId)
+  if (!workflow || workflow.cancellation) return undefined
+
+  const stepId = (await ctx.storage.get(sessionStepKey(sessionID))) as string | undefined
+  if (stepId) {
+    const step = workflow.steps.find((candidate) => candidate.id === stepId)
+    if (step?.agent !== "diagnostic" ||
+        !(await exactRunnableStepAttemptBinding(ctx, sessionID, workflowId, stepId))) return undefined
+    return { workflowId, stepId, attempt: step.attempt ?? 0 }
+  }
+
+  const questionId = (await ctx.storage.get(sessionOqKey(sessionID))) as string | undefined
+  if (!questionId || !(await exactOqBinding(ctx, sessionID, workflowId, questionId))) return undefined
+  const question = (await ctx.storage.get(oqKey(workflowId, questionId))) as OpenQuestion | undefined
+  const attachedAttempt = await ctx.storage.get(sessionOqAttemptKey(sessionID))
+  if (!question || question.workflowId !== workflowId ||
+      question.requiredAuthority !== "diagnostic" || question.status !== "open" || question.answer ||
+      !Number.isSafeInteger(attachedAttempt) ||
+      attachedAttempt !== (question.attempt ?? 0) ||
+      (question.work &&
+        (!workflow.work || workflow.work.objectiveId !== question.work.objectiveId ||
+         workflow.work.generation !== question.work.generation))) return undefined
+  return { workflowId, stepId: "", questionId, attempt: question.attempt ?? 0 }
 }
 
 async function assertCurrentStepPlanAdmission(ctx: any, workflowId: string, stepId: string) {
@@ -5321,26 +5404,15 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             return { content: renderToolOutput({ error: "Only Diagnostic may create a diagnostic experiment sandbox." }) }
           }
 
-          const workflowId = (await ctx.storage.get(sessionKey(tool.sessionID))) as string | undefined
-          const stepId = (await ctx.storage.get(sessionStepKey(tool.sessionID))) as string | undefined
-          if (
-            !workflowId ||
-            !stepId ||
-            !(await exactRunnableStepAttemptBinding(ctx, tool.sessionID, workflowId, stepId))
-          ) {
+          const target = await currentDiagnosticSandboxAttachment(ctx, tool.sessionID)
+          if (!target) {
             return {
               content: renderToolOutput({
-                error:
-                  "Diagnostic sandbox experiments require attachment to the exact current runnable Diagnostic step attempt.",
+                error: "Diagnostic sandbox tools require attachment to an exact runnable Diagnostic step or unanswered Diagnostic OQ for the current attempt.",
               }),
             }
           }
-
-          const workflow = await readWorkflow(ctx, workflowId)
-          const step = workflow?.steps.find((candidate) => candidate.id === stepId)
-          if (!step || step.agent !== "diagnostic") {
-            return { content: renderToolOutput({ error: "Current attached step is not owned by Diagnostic." }) }
-          }
+          const { workflowId } = target
 
           return withRuntimeAdvisoryLock(
             runtime,
@@ -5369,8 +5441,9 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                   projectId: runtime.projectId,
                   sessionId: tool.sessionID,
                   workflowId,
-                  stepId,
-                  attempt: step.attempt ?? 0,
+                  stepId: target.stepId,
+                  ...(target.questionId ? { questionId: target.questionId } : {}),
+                  attempt: target.attempt,
                   image: resolvedRuntime.reference,
                   imageId: resolvedRuntime.id,
                   network: value.network,
@@ -5382,12 +5455,9 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                   "workflow",
                   workflowId,
                   async () => {
-                    if (!(await exactRunnableStepAttemptBinding(
-                      ctx,
-                      tool.sessionID,
-                      workflowId,
-                      stepId,
-                    ))) return false
+                    if (!diagnosticSandboxMatchesTarget(
+                      sandbox!, await currentDiagnosticSandboxAttachment(ctx, tool.sessionID),
+                    )) return false
                     await ctx.storage.set(key, sandbox!)
                     return true
                   },
@@ -5396,7 +5466,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                   return {
                     content: renderToolOutput({
                       error:
-                        "Diagnostic step changed before sandbox creation began. Attach to the current attempt before creating a new sandbox.",
+                        "Diagnostic step/OQ changed before sandbox creation began. Attach to the current attempt before creating a new sandbox.",
                     }),
                   }
                 }
@@ -5426,24 +5496,21 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                       throw error
                     }
 
-                    if (!(await exactRunnableStepAttemptBinding(
-                      ctx,
-                      tool.sessionID,
-                      workflowId,
-                      stepId,
-                    ))) {
+                    if (!diagnosticSandboxMatchesTarget(
+                      current, await currentDiagnosticSandboxAttachment(ctx, tool.sessionID),
+                    )) {
                       try {
                         await destroyDiagnosticSandbox(current)
                         await ctx.storage.set(key, current)
                       } catch (cleanupError) {
                         await ctx.storage.set(key, current).catch(() => undefined)
                         throw new Error(
-                          "Diagnostic step changed while the sandbox snapshot was being created, and sandbox cleanup failed: " +
+                          "Diagnostic step/OQ changed while the sandbox snapshot was being created, and sandbox cleanup failed: " +
                           (cleanupError instanceof Error ? cleanupError.message : String(cleanupError)),
                         )
                       }
                       throw new Error(
-                        "Diagnostic step changed while the sandbox snapshot was being created. Attach to the current attempt before creating a new sandbox.",
+                        "Diagnostic step/OQ changed while the sandbox snapshot was being created. Attach to the current attempt before creating a new sandbox.",
                       )
                     }
 
@@ -5514,22 +5581,13 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 return { content: renderToolOutput({ error: "Active Diagnostic sandbox not found for this session." }) }
               }
 
-              const workflowId = (await ctx.storage.get(sessionKey(tool.sessionID))) as string | undefined
-              const stepId = (await ctx.storage.get(sessionStepKey(tool.sessionID))) as string | undefined
-              const workflow = workflowId ? await readWorkflow(ctx, workflowId) : undefined
-              const step = workflow?.steps.find((candidate) => candidate.id === stepId)
-              if (
-                !workflowId ||
-                !stepId ||
-                workflowId !== currentSandbox.workflowId ||
-                stepId !== currentSandbox.stepId ||
-                (step?.attempt ?? -1) !== currentSandbox.attempt ||
-                !(await exactRunnableStepAttemptBinding(ctx, tool.sessionID, workflowId, stepId))
-              ) {
+              if (!diagnosticSandboxMatchesTarget(
+                currentSandbox, await currentDiagnosticSandboxAttachment(ctx, tool.sessionID),
+              )) {
                 return {
                   content: renderToolOutput({
                     error:
-                      "Diagnostic sandbox belongs to an older or different step attempt. Destroy it and attach to current diagnosis before further experiments.",
+                      "Diagnostic sandbox belongs to an older or different step attempt (or Diagnostic OQ attempt). Destroy it and attach to current diagnosis before further experiments.",
                   }),
                 }
               }
@@ -5582,22 +5640,13 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 return { content: renderToolOutput({ error: "Active Diagnostic sandbox not found for this session." }) }
               }
 
-              const workflowId = (await ctx.storage.get(sessionKey(tool.sessionID))) as string | undefined
-              const stepId = (await ctx.storage.get(sessionStepKey(tool.sessionID))) as string | undefined
-              const workflow = workflowId ? await readWorkflow(ctx, workflowId) : undefined
-              const step = workflow?.steps.find((candidate) => candidate.id === stepId)
-              if (
-                !workflowId ||
-                !stepId ||
-                workflowId !== currentSandbox.workflowId ||
-                stepId !== currentSandbox.stepId ||
-                (step?.attempt ?? -1) !== currentSandbox.attempt ||
-                !(await exactRunnableStepAttemptBinding(ctx, tool.sessionID, workflowId, stepId))
-              ) {
+              if (!diagnosticSandboxMatchesTarget(
+                currentSandbox, await currentDiagnosticSandboxAttachment(ctx, tool.sessionID),
+              )) {
                 return {
                   content: renderToolOutput({
                     error:
-                      "Diagnostic sandbox belongs to an older or different step attempt. Historical sandbox evidence cannot be rebound into the current diagnosis.",
+                      "Diagnostic sandbox belongs to an older or different step attempt (or Diagnostic OQ attempt). Historical sandbox evidence cannot be rebound into the current diagnosis.",
                   }),
                 }
               }
@@ -6294,6 +6343,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               await ctx.storage.set(sessionStepKey(tool.sessionID), "")
               await ctx.storage.set(sessionStepAttemptKey(tool.sessionID), null)
               await ctx.storage.set(sessionOqKey(tool.sessionID), "")
+              await ctx.storage.set(sessionOqAttemptKey(tool.sessionID), null)
               await ctx.storage.set(sessionPlanReviewKey(tool.sessionID), null)
               await ctx.storage.set(`session-resumption/${encodeURIComponent(tool.sessionID)}`, {
                 schemaVersion: 1,
@@ -6421,6 +6471,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               await ctx.storage.set(sessionStepKey(tool.sessionID), "")
               await ctx.storage.set(sessionStepAttemptKey(tool.sessionID), null)
               await ctx.storage.set(sessionOqKey(tool.sessionID), "")
+              await ctx.storage.set(sessionOqAttemptKey(tool.sessionID), null)
               if (intent?.acceptedAnchor?.path === anchor) {
                 await ctx.storage.set(sessionIntentKey(tool.sessionID), "")
               }
@@ -8350,6 +8401,19 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               const currentWorkflow = await readWorkflow(ctx, value.workflowId)
               const currentQuestion = (await ctx.storage.get(oqKey(value.workflowId, value.questionId))) as OpenQuestion | undefined
               if (!currentWorkflow || !currentQuestion) throw new Error("Workflow or question not found.")
+              if (tool.agent === "diagnostic" && value.source === "agent" &&
+                  currentQuestion.requiredAuthority === "diagnostic") {
+                const target = await currentDiagnosticSandboxAttachment(ctx, tool.sessionID)
+                if (target?.questionId !== value.questionId || target.workflowId !== value.workflowId) {
+                  throw new Error("Diagnostic OQ answer requires its exact current unanswered attachment attempt.")
+                }
+                const sandbox = (await ctx.storage.get(
+                  diagnosticSandboxSessionKey(tool.sessionID),
+                )) as DiagnosticSandboxRecord | undefined
+                if (sandbox?.active) {
+                  throw new Error("Destroy the Diagnostic experiment sandbox before answering this OQ.")
+                }
+              }
               const now = new Date().toISOString()
               const taskId = currentQuestion.work?.taskId
               let decisionStep: Workflow["steps"][number] | undefined
@@ -11816,6 +11880,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           let task: TaskSpec | undefined
           let taskOutcome: string | undefined
           let stepAttempt: number | undefined
+          let questionAttempt: number | undefined
           let acceptedOutcome: string | undefined
           let acceptedAuthority: string | undefined
           let planContext: ReturnType<typeof workPlanContext> | undefined
@@ -11998,6 +12063,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 if (question.requiredAuthority !== tool.agent) {
                   throw new Error(`Question requires ${question.requiredAuthority}, not ${tool.agent}.`)
                 }
+                questionAttempt = question.attempt ?? 0
 
                 acceptedOutcome = workflow.request
                 acceptedAuthority = workflow.anchor
@@ -12123,6 +12189,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 )
               }
               await ctx.storage.set(sessionOqKey(tool.sessionID), value.questionId ?? "")
+              await ctx.storage.set(sessionOqAttemptKey(tool.sessionID), value.questionId ? (questionAttempt ?? null) : null)
               if (value.stepId === "review-plan" && planContext) {
                 const planningOnly = planningOnlyObjective(workflow.effects)
                 const executableFingerprint = executableTaskPlanFingerprint(workflow)
@@ -12385,7 +12452,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       addLoomTool({
         name: "scope_elevate",
         description:
-          "Expand the current attached child step's write scope when discovery reveals additional files or folders. Project-local elevation is immediate, durable, and traceable; the child continues in the same session. Hard-boundary paths (outside the current project or repository-internal .git state) cannot self-authorize: this tool returns continue=false plus an exact user question payload. When continue=false, STOP the current child turn immediately and return control to General; do not retry the write or continue assuming access will arrive later.",
+          "Expand the current attached child step's write scope when discovery reveals additional files or folders. Project-local elevation is immediate, durable, and traceable; the child continues in the same session. Hard-boundary paths (outside the current project or repository-internal .git state) cannot self-authorize: this tool returns continue=false plus an exact user question payload. Do not request raw Git metadata paths for normal commits; use admitted scoped Git add/commit commands in the current worktree. When continue=false, STOP the current child turn immediately and return control to General; do not retry the write or continue assuming access will arrive later.",
         input: {
           type: "object",
           properties: {
@@ -12466,6 +12533,43 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                   : {}),
               }),
             )
+
+          // A linked worktree's .git *file*, private gitdir and common
+          // objects/refs are updated by the Git CLI. They must not be added to
+          // Loom's product write scope, and do not require user approval for
+          // normal scoped git add/commit.
+          if (tool.agent === "worker" && projectPaths.length === 0 && hardBoundaryPaths.length > 0) {
+            const recognized = await linkedWorktreeCommitMetadataPaths(ctx.location.directory)
+            if (recognized && hardBoundaryPaths.every((path) => recognized.has(resolve(path)))) {
+              try {
+                if (!(await exactRunnableStepAttemptBinding(
+                  ctx, tool.sessionID, value.workflowId, value.stepId,
+                ))) throw new Error("Linked-worktree Git use requires the exact current Worker step attempt.")
+                await assertCurrentStepPlanAdmission(ctx, value.workflowId, value.stepId)
+                await assertWorkerWorkClaim(ctx, value.workflowId, value.stepId)
+                const scope = (await ctx.storage.get(
+                  scopeKey(value.workflowId, value.stepId),
+                )) as TaskScope | undefined
+                if (!scope || committableWriteScope(scope.write).length === 0) {
+                  throw new Error("Commit needs an admitted committable project write scope.")
+                }
+                return {
+                  content: renderToolOutput({
+                    status: "not-required",
+                    continue: true,
+                    newPermissionGranted: false,
+                    reason: "These exact paths are Git-owned metadata for the current linked worktree.",
+                    nextAction: "Do not edit .git, the linked worktree gitdir, objects or refs directly. Commit the already-admitted files using scoped git add -- <file> and git -c core.hooksPath=/dev/null commit -m <message> in the current worktree. Git resolves the .git pointer file and updates its external metadata automatically.",
+                    metadataPaths: hardBoundaryPaths,
+                  }),
+                }
+              } catch (error) {
+                return { content: renderToolOutput({
+                  error: error instanceof Error ? error.message : String(error),
+                }) }
+              }
+            }
+          }
 
           const roleWriteDefault = artifactWriteDefaults[tool.agent] ?? []
           let reviewerRepairCandidate = false

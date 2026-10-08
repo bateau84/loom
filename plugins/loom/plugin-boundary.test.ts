@@ -5561,6 +5561,210 @@ Verdict: FAIL
   })
 
 
+  test("linked worktree allows scoped git add/commit with external Git metadata and no hard-boundary grant", async () => {
+    // The current Loom project is a linked worktree, not its primary checkout.
+    const primary = await mkdtemp(join(tmpdir(), "loom-linked-commit-primary-"))
+    const linked = primary + "-linked"
+    roots.push(linked, primary)
+    await initializeGitFixture(primary)
+    await git(primary, ["commit", "--allow-empty", "-q", "-m", "base"])
+    const primaryHead = (await git(primary, ["rev-parse", "HEAD"])).stdout.trim()
+    const primaryBranch = (await git(primary, ["branch", "--show-current"])).stdout.trim()
+    await git(primary, ["worktree", "add", "-b", "test/linked-commit", linked])
+    const dotGit = (await readFile(join(linked, ".git"), "utf8")).trim()
+    expect(dotGit.startsWith("gitdir: ")).toBe(true)
+    const gitdir = (await git(linked, ["rev-parse", "--absolute-git-dir"])).stdout.trim()
+    const common = (await git(linked, ["rev-parse", "--git-common-dir"])).stdout.trim()
+    expect(gitdir.startsWith(join(primary, ".git", "worktrees"))).toBe(true)
+    expect(common).toBe(join(primary, ".git"))
+
+    const h = await harness(undefined, undefined, {
+      root: linked, storage: new MemoryStorage(),
+    })
+    try {
+      const general = "linked-commit-general"
+      const worker = "linked-commit-worker"
+      const file = "src/linked-commit.txt"
+      const started = await h.call("start", {
+        request: "Write and commit one file in the current linked worktree.",
+      }, "general", general)
+      const workflowId = String(started.workflowId)
+      expect((await h.call("route", {
+        humanFacing: false, behavioral: false, structural: false,
+        externalUnknown: false, diagnostic: false, productOutcome: false,
+        implementationRequested: true, executionDepth: "task",
+      }, "general", general)).error).toBeUndefined()
+      expect((await h.call("step_scope", {
+        workflowId, stepId: "worker", write: [file],
+      }, "general", general)).error).toBeUndefined()
+      const grant = await h.call("dispatch_grant", {
+        workflowId, stepId: "worker",
+      }, "general", general)
+      expect((await h.call("attach", {
+        grantId: grant.grantId, workflowId, stepId: "worker",
+      }, "worker", worker)).attached).toBe(true)
+
+      const evaluate = h.permissionHooks.get("evaluate")!
+      const edit: any = {
+        action: "edit", resources: [file],
+        agent: "worker", sessionID: worker, effect: "ask",
+      }
+      await evaluate(edit)
+      expect(edit.effect).not.toBe("deny")
+      const editCall = {
+        tool: "write", callID: "linked-edit", messageID: "linked-edit-message",
+        sessionID: worker, agent: "worker",
+        input: { filePath: join(linked, file), content: "linked worktree evidence\\n" },
+      }
+      await h.toolHooks.get("execute.before")!(editCall)
+      await writeFile(join(linked, file), "linked worktree evidence\\n")
+      await h.toolHooks.get("execute.after")!({
+        ...editCall, status: "completed", result: "written",
+      })
+
+      // Git's own metadata lives OUTSIDE this project's worktree root.
+      // The tool should not ask the user to approve those raw paths.
+      const legacyMetadataRequest = await h.call("scope_elevate", {
+        workflowId, stepId: "worker",
+        paths: [join(linked, ".git"), gitdir, join(common, "objects"), join(common, "refs")],
+        reason: "Commit the admitted file from the linked worktree with Git.",
+      }, "worker", worker)
+      expect(legacyMetadataRequest.error).toBeUndefined()
+      expect(legacyMetadataRequest.status).toBe("not-required")
+      expect(legacyMetadataRequest.continue).toBe(true)
+      expect(legacyMetadataRequest.newPermissionGranted).toBe(false)
+      expect((await h.durableStorage.scan({ prefix: "scope-boundary-request/" })).entries).toEqual([])
+
+      const stageCommand = `git add -- ${file}`
+      const stagePermission: any = {
+        agent: "worker", action: "shell", resources: [stageCommand],
+        sessionID: worker, effect: "ask",
+      }
+      await evaluate(stagePermission)
+      expect(stagePermission.effect).toBe("allow")
+      const stageCall = {
+        tool: "shell", callID: "linked-stage", messageID: "linked-stage-message",
+        sessionID: worker, agent: "worker", input: { command: stageCommand },
+      }
+      await h.toolHooks.get("execute.before")!(stageCall)
+      await git(linked, ["add", "--", file])
+      await h.toolHooks.get("execute.after")!({
+        ...stageCall, status: "completed", result: "staged",
+      })
+
+      const commitCommand = "git -c core.hooksPath=/dev/null commit -m 'test: worktree commit'"
+      const commitPermission: any = {
+        agent: "worker", action: "shell", resources: [commitCommand],
+        sessionID: worker, effect: "ask",
+      }
+      await evaluate(commitPermission)
+      expect(commitPermission.effect).toBe("allow")
+      const commitCall = {
+        tool: "shell", callID: "linked-commit", messageID: "linked-commit-message",
+        sessionID: worker, agent: "worker", input: { command: commitCommand },
+      }
+      await h.toolHooks.get("execute.before")!(commitCall)
+      await git(linked, ["-c", "core.hooksPath=/dev/null", "commit", "-m", "test: worktree commit", "-q"])
+      await h.toolHooks.get("execute.after")!({
+        ...commitCall, status: "completed", result: "committed",
+      })
+
+      const newHead = (await git(linked, ["rev-parse", "HEAD"])).stdout.trim()
+      expect(newHead).not.toBe(primaryHead)
+      expect((await git(primary, ["rev-parse", "HEAD"])).stdout.trim()).toBe(primaryHead)
+      expect((await git(primary, ["branch", "--show-current"])).stdout.trim()).toBe(primaryBranch)
+      expect((await git(linked, ["status", "--porcelain"])).stdout.trim()).toBe("")
+      expect((await git(linked, ["show", "--format=%s", "-s", "HEAD"])).stdout.trim()).toBe("test: worktree commit")
+      expect((await h.durableStorage.scan({ prefix: "scope-boundary-authorization/" })).entries).toEqual([])
+
+      // Recognition does not authorize direct metadata edits or other
+      // external-path writes.
+      const directEdit: any = {
+        action: "edit", resources: [join(common, "refs", "heads", "unauthorized")],
+        agent: "worker", sessionID: worker, effect: "ask",
+      }
+      await evaluate(directEdit)
+      expect(directEdit.effect).toBe("deny")
+      const unrelated = await h.call("scope_elevate", {
+        workflowId, stepId: "worker",
+        paths: [join(primary, "not-git-metadata.txt")],
+        reason: "Test unrelated external file stays protected.",
+      }, "worker", worker)
+      expect(unrelated.continue).toBe(false)
+    } finally {
+      h.restore()
+    }
+  })
+
+  test("late Diagnostic OQ can investigate a failed executed workflow without rewriting its steps", async () => {
+    const h = await harness()
+    const general = "late-diagnostic-general"
+    const child = "late-diagnostic-child"
+    try {
+      const started = await h.call("start", {
+        request: "Investigate an intermittent request abort after implementation.",
+      }, "general", general)
+      const workflowId = String(started.workflowId)
+      const effects = {
+        humanFacing: false, behavioral: false, structural: false,
+        externalUnknown: false, diagnostic: false, productOutcome: false,
+        implementationRequested: true, executionDepth: "task",
+      }
+      expect((await h.call("route", effects, "general", general)).error).toBeUndefined()
+      const current = await h.durableStorage.get(`workflow/${workflowId}`) as any
+      current.steps.find((step: any) => step.id === "worker").status = "complete"
+      current.steps.find((step: any) => step.id === "worker").summary = "Browser guards implemented"
+      current.steps.find((step: any) => step.id === "review-implementation").status = "failed"
+      current.steps.find((step: any) => step.id === "review-implementation").summary = "Flaky keyboard test"
+      await h.durableStorage.set(`workflow/${workflowId}`, current)
+      const stepsBefore = structuredClone(current.steps)
+
+      const refused = await h.call("route", { ...effects, diagnostic: true }, "general", general)
+      expect(refused.error).toContain("Route reclassification after completed execution")
+
+      const raised = await h.call("oq_raise", {
+        workflowId,
+        question: "Which request lifecycle event cancels the intermittent keyboard data request?",
+        responder: "diagnostic",
+        blocking: true,
+        consumerStepIds: ["review-implementation"],
+        evidence: ["2 failures in 40 runs; merge remains blocked"],
+      }, "general", general)
+      expect(raised.error).toBeUndefined()
+      const questionId = String(raised.question.id)
+
+      const grant = await h.call("dispatch_grant", { workflowId, questionId }, "general", general)
+      expect(grant.error).toBeUndefined()
+      const attached = await h.call("attach", {
+        grantId: grant.grantId, workflowId, questionId,
+      }, "diagnostic", child)
+      expect(attached.attached).toBe(true)
+      expect(await h.durableStorage.get(`session-oq-attempt/${child}`)).toBe(0)
+
+      const experiment = await h.call("diagnostic_sandbox_start", {
+        image: "--invalid-image", network: "none",
+      }, "diagnostic", child)
+      expect(experiment.error).toContain("Diagnostic sandbox image")
+      expect(experiment.error).not.toContain("requires an exact runnable Diagnostic step")
+      const stranger = await h.call("diagnostic_sandbox_start", {
+        image: "--invalid-image", network: "none",
+      }, "diagnostic", "unattached-diagnostic")
+      expect(stranger.error).toContain("exact runnable Diagnostic step or unanswered Diagnostic OQ")
+
+      const reopened = await h.call("oq_reopen", {
+        workflowId, questionId, preserveAnswer: false, reason: "New cancellation evidence",
+      }, "general", general)
+      expect(reopened.error).toBeUndefined()
+      const stale = await h.call("diagnostic_sandbox_start", {
+        image: "--invalid-image", network: "none",
+      }, "diagnostic", child)
+      expect(stale.error).toContain("exact runnable Diagnostic step or unanswered Diagnostic OQ")
+      expect((await h.durableStorage.get(`workflow/${workflowId}`) as any).steps).toEqual(stepsBefore)
+    } finally {
+      h.restore()
+    }
+  })
+
   test("conversational Research and Diagnostic are technically non-mutating", async () => {
     const { permissionHooks, restore } = await harness()
     try {
