@@ -4798,6 +4798,44 @@ Verdict: FAIL
       )
       expect(attached.attached).toBe(true)
 
+      // Read-only tool metadata needs no write scope or elevation grant.
+      for (const command of ["node --version", "bun --version", "git --version", "command -v node"]) {
+        const probe: any = {
+          agent: "worker",
+          action: "shell",
+          resources: [command],
+          sessionID: workerSession,
+          effect: "ask",
+        }
+        await evaluate(probe)
+        expect(probe.effect).toBe("allow")
+      }
+
+      // Unsupported command shapes must not tell the Worker to widen file scope.
+      const unsupported: any = {
+        agent: "worker",
+        action: "shell",
+        resources: ["node -e 'console.log(1)'"],
+        sessionID: workerSession,
+        effect: "ask",
+      }
+      await evaluate(unsupported)
+      expect(unsupported.effect).toBe("deny")
+      expect(unsupported.message).toContain("not admitted")
+      expect(unsupported.message).not.toContain("loom_scope_elevate")
+
+      // An actual scoped write still gives the precise elevation instruction.
+      const scopedWrite: any = {
+        agent: "worker",
+        action: "shell",
+        resources: ["gofmt -w src/discovered.go"],
+        sessionID: workerSession,
+        effect: "ask",
+      }
+      await evaluate(scopedWrite)
+      expect(scopedWrite.effect).toBe("deny")
+      expect(scopedWrite.message).toContain("loom_scope_elevate")
+
       const beforeElevation: any = {
         agent: "worker",
         action: "edit",
