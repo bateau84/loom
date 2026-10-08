@@ -15184,7 +15184,10 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         }
       }
       const key = observationCallKey(raw)
-      const mutationNeedsLock = mutationLockPaths.length > 0 || lockGitIndex
+      // Explicit trusted commands may have side effects even when their
+      // command shape does not declare file targets. Hold the exact step
+      // authority through execution so a concurrent reopen cannot race them.
+      const mutationNeedsLock = mutationLockPaths.length > 0 || lockGitIndex || locallyAdmittedShell
       if (mutationNeedsLock && !key) {
         throw new Error(
           "Write blocked: Loom could not establish a stable tool-call identity for write locking.",
