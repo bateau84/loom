@@ -10468,6 +10468,14 @@ test("Worker generation elevation checks outputs, locks invocation and owns only
     expect(missingScope.error).toContain("outside the current Loom write scope")
     const rejectedRole = await h.call("command_elevate", input, "reviewer", worker)
     expect(rejectedRole.error).toContain("attached Worker")
+    const unsupported = await h.call("command_elevate", {
+      ...input, command: "swag init --output ./internal/swagger/v2 --mysteryFlag yes",
+    }, "worker", worker)
+    expect(unsupported.error).toContain("Unsupported swag init option: --mysteryFlag")
+    const unsafeOutput = await h.call("command_elevate", {
+      ...input, command: "swag init --output ../outside",
+    }, "worker", worker)
+    expect(unsafeOutput.error).toContain("safe project-relative directory")
 
     const scope = await h.call("scope_elevate", {
       workflowId: h.workflowId, stepId: "task:one",
@@ -10498,12 +10506,15 @@ test("Worker generation elevation checks outputs, locks invocation and owns only
       input: { command, workdir: tmpdir() },
     })).rejects.toThrow("current project root")
     expect((await h.durableStorage.get("command-elevation/" + grant.grantId) as any).consumedAt).toBeUndefined()
-    await h.toolHooks.get("execute.before")!(run)
+    // Root-relative workdir must not depend on the plugin host's cwd.
+    const rootRelative = { ...run, input: { command, workdir: "." } }
+    await h.toolHooks.get("execute.before")!(rootRelative)
+    const executed = rootRelative
     const outputDir = join(h.root, "internal", "swagger", "v2")
     await mkdir(outputDir, { recursive: true })
     await writeFile(join(outputDir, "docs.go"), "package swagger\\n")
     await writeFile(join(outputDir, "swagger.json"), "{}\\n")
-    await h.toolHooks.get("execute.after")!({ ...run, status: "completed", result: "Swagger updated" })
+    await h.toolHooks.get("execute.after")!({ ...executed, status: "completed", result: "Swagger updated" })
 
     const ownership = await h.durableStorage.get(
       "git-session-ownership/" + encodeURIComponent(worker),
@@ -10511,6 +10522,9 @@ test("Worker generation elevation checks outputs, locks invocation and owns only
     expect(ownership.paths).toContain("internal/swagger/v2/docs.go")
     expect(ownership.paths).toContain("internal/swagger/v2/swagger.json")
     expect(ownership.paths).not.toContain("internal/swagger/v2/swagger.yaml")
+    // Grant ownership is useful only if the normal Git gate recognizes it.
+    expect((await permission("git add -- internal/swagger/v2/docs.go")).effect).toBe("allow")
+    expect((await permission("git add -- internal/swagger/v2/unowned.go")).effect).toBe("deny")
 
     const receipt = await h.durableStorage.get("command-elevation/" + grant.grantId) as any
     expect(receipt).toMatchObject({ kind: "generation", outcome: "completed",
