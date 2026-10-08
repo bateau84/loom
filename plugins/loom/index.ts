@@ -10451,7 +10451,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       addLoomTool({
         name: "work_reconcile",
         description:
-          "Reconcile pending producer Tasks from original current or last archived completion receipts after independent review-plan PASS. Archive recovery requires exact original evidence, unchanged code, executable contracts and dependencies. General can run this without Worker dispatch; Planner needs an exact Planner OQ attachment. Rejects missing or stale proof and returns per-Task reasons.",
+          "Reconcile pending producer Tasks from original current or last archived completion receipts after independent review-plan PASS. Archive recovery requires exact original evidence, unchanged code, executable contracts and dependencies. General can run this without Worker dispatch; Planner needs an exact Planner OQ attachment. On refusal, call loom_work_reconcile_diagnose to inspect the exact proof and contract checks before attempting any Worker rerun.",
         input: {
           type: "object",
           properties: {
@@ -10754,6 +10754,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 await commitReconciliation()
                 return {
                   auditId, reconciled, restoredArchived, refused, alreadyComplete,
+                  ...(refused.length ? { diagnosticTool: "loom_work_reconcile_diagnose" } : {}),
                   planRevision: plan.revision, budgetUnchanged: true,
                   freshImplementationReviewRequired: true,
                 }
@@ -10841,7 +10842,9 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             const provenance = !receipt ? "missing-receipt"
               : !Number.isSafeInteger(receipt.completedAttempt) ||
                   (receipt.completedAttempt ?? -1) < 0 ||
-                  (receipt.completedAttempt ?? -1) >= (step.attempt ?? 0) ||
+                  (satisfied(step)
+                    ? (receipt.completedAttempt ?? -1) > (step.attempt ?? 0)
+                    : (receipt.completedAttempt ?? -1) >= (step.attempt ?? 0)) ||
                   receipt.producerAgent !== step.agent ||
                   receipt.workflowId !== workflow.id
                 ? "missing-or-inconsistent-original-attempt"
