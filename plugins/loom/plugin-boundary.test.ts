@@ -12525,6 +12525,83 @@ describe("workflow lifecycle recovery", () => {
     } finally { h.restore() }
   })
 
+  test("Documenter can write and commit an exact local-policy file in its own runnable step", async () => {
+    const h = await waveLifecycleFixture()
+    try {
+      expect((await h.finish("task:one", "worker")).error).toBeUndefined()
+      expect((await h.finish("review-implementation", "reviewer", "pass")).error).toBeUndefined()
+      const child = await h.attach("knowledge-sync", "documenter", "local-documenter")
+      const evaluate = h.permissionHooks.get("evaluate")!
+      const edit = {
+        agent: "documenter", action: "edit",
+        resources: ["docs/index.md"], sessionID: child, effect: "ask",
+      }
+      await evaluate(edit)
+      expect(edit.effect).toBe("deny")
+
+      const configDir = join(h.root, "opencode-config-home", "opencode")
+      await mkdir(configDir, { recursive: true })
+      const config = join(configDir, ".loom.yaml")
+      await writeFile(config, [
+        "version: 1",
+        "projects:",
+        "  " + JSON.stringify(h.root) + ":",
+        "    writes:",
+        "      documenter: [docs/index.md]",
+        "",
+      ].join("\n"), { mode: 0o600 })
+
+      const permitted = { ...edit, effect: "ask" }
+      await evaluate(permitted)
+      expect(permitted.effect).toBe("allow")
+      await mkdir(join(h.root, "docs"), { recursive: true })
+      const write = {
+        tool: "write", callID: "local-documenter-write",
+        messageID: "local-documenter-write-message",
+        sessionID: child, agent: "documenter",
+        input: { filePath: join(h.root, "docs/index.md"), content: "# Index\n" },
+      }
+      await h.toolHooks.get("execute.before")!(write)
+      await writeFile(join(h.root, "docs/index.md"), "# Index\n")
+      await h.toolHooks.get("execute.after")!({ ...write, status: "completed", result: "written" })
+
+      const stageCommand = "git add -- docs/index.md"
+      const stagePermission: any = {
+        agent: "documenter", action: "shell",
+        resources: [stageCommand], sessionID: child, effect: "ask",
+      }
+      await evaluate(stagePermission)
+      expect(stagePermission.effect).toBe("allow")
+      const stage = {
+        tool: "shell", callID: "local-documenter-stage",
+        messageID: "local-documenter-stage-message",
+        sessionID: child, agent: "documenter",
+        input: { command: stageCommand },
+      }
+      await h.toolHooks.get("execute.before")!(stage)
+      await git(h.root, ["add", "--", "docs/index.md"])
+      await h.toolHooks.get("execute.after")!({ ...stage, status: "completed", result: "staged" })
+
+      const commitCommand = "git -c core.hooksPath=/dev/null commit -m 'docs: local knowledge'"
+      const commitPermission: any = {
+        agent: "documenter", action: "shell",
+        resources: [commitCommand], sessionID: child, effect: "ask",
+      }
+      await evaluate(commitPermission)
+      expect(commitPermission.effect).toBe("allow")
+      const commit = {
+        tool: "shell", callID: "local-documenter-commit",
+        messageID: "local-documenter-commit-message",
+        sessionID: child, agent: "documenter",
+        input: { command: commitCommand },
+      }
+      await h.toolHooks.get("execute.before")!(commit)
+      await git(h.root, ["-c", "core.hooksPath=/dev/null", "commit", "-m", "docs: local knowledge"])
+      await h.toolHooks.get("execute.after")!({ ...commit, status: "completed", result: "committed" })
+      expect((await readFile(join(h.root, "docs/index.md"), "utf8"))).toBe("# Index\n")
+    } finally { h.restore() }
+  })
+
   test("explicit cancellation after Wave completion preserves history and permits replacement", async () => {
     const h = await waveLifecycleFixture()
     try {
