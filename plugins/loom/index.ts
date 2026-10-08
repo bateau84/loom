@@ -10723,18 +10723,20 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                     steps: workflow.steps.map((candidate) => candidate.id === step.id
                       ? { ...candidate, attempt: receipt.completedAttempt } : candidate),
                   }
-                  const observations = await Promise.all(oldClaims.flatMap((claim) =>
-                    claim.observationIds.map((observationId) =>
-                      ctx.storage.get(evidenceKey(observationId)) as Promise<EvidenceObservation | undefined>)))
+                  const claimObservations = await Promise.all(oldClaims.map((claim) =>
+                    Promise.all(claim.observationIds.map((observationId) =>
+                      ctx.storage.get(evidenceKey(observationId)) as Promise<EvidenceObservation | undefined>))))
+                  const observations = claimObservations.flat()
                   if (!observations.length || observations.some((observation) =>
                     !observation || observation.status !== "completed" || !observation.admission ||
                     !observationMatchesStep(observation, originalWorkflow, step.id)) ||
-                    oldClaims.some((claim) => {
-                      const claimObservations = observations.filter((observation) =>
-                        claim.observationIds.includes(observation?.id ?? ""))
-                        .filter((observation): observation is EvidenceObservation => Boolean(observation))
-                      return claimObservations.length !== claim.observationIds.length ||
-                        !observationsSupportKind(claim.kind, claimObservations)
+                    oldClaims.some((claim, index) => {
+                      const matched = claimObservations[index].filter(
+                        (observation): observation is EvidenceObservation => Boolean(observation))
+                      return matched.length !== claim.observationIds.length ||
+                        matched.some((observation, observationIndex) =>
+                          observation.id !== claim.observationIds[observationIndex]) ||
+                        !observationsSupportKind(claim.kind, matched)
                     })) {
                     refuse(id, "Original host observations are missing or belong to another producer attempt.")
                     continue
