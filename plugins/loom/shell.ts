@@ -310,6 +310,16 @@ export function localPolicyShellAllowed(
   // Reject Git/Butler regardless of allowed environment prefixes. Repository
   // mutation has its own provenance/ownership-aware authorization route.
   if (words[0] === "git" || words[0] === "but") return false
+  // Known launchers can hide a Git operation from the normal repository
+  // authoring classifier. They cannot be local-policy shell exceptions.
+  if (new Set([
+    "env", "command", "exec", "sudo", "doas", "su", "runuser",
+    "nice", "nohup", "time", "setsid", "busybox", "xargs", "parallel",
+  ]).has(words[0])) return false
+  // Do not allow shell evaluation wrappers; a bounded script entrypoint
+  // (e.g. bash scripts/test.sh) is still eligible for explicit user trust.
+  if (new Set(["sh", "bash", "dash", "zsh", "fish"]).has(words[0]) &&
+      words.slice(1).some((word) => /^-[a-z]*c[a-z]*$/.test(word))) return false
   if (rules.exact.includes(normalized)) return true
   return rules.prefixes.some((prefix) =>
     normalized === prefix || normalized.startsWith(prefix + " "),
