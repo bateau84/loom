@@ -19,6 +19,7 @@ from typing import Any
 from runner.eval_api import InvocationSpec, JsonValue, NormalizedCase
 
 from ._shared import PreparedLoomCase, compatibility_env_names, compatibility_suite_paths
+from .evidence_judge_adapter import JUDGE_AGENT_DOCUMENT, JUDGE_AGENT_NAME
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -343,9 +344,14 @@ class LoomCaseWorkspaceAdapter:
                 path.write_text(content, encoding="utf-8")
 
             _write_project_config(target, agent)
-            # Worker B owns the eval-judge instructions. Worker A only creates
-            # the fresh judge project and selects the stable judge agent name.
-            _write_project_config(judge, "eval-judge")
+            # The pinned runner drops InvocationSpec.system on the OpenCode
+            # transport. Install the judge charter as a native primary agent
+            # in the isolated judge workspace, exactly as paired evals do.
+            # Judge instructions are never obtained from target/scenario text.
+            (judge_agents / f"{JUDGE_AGENT_NAME}.md").write_text(
+                JUDGE_AGENT_DOCUMENT, encoding="utf-8"
+            )
+            _write_project_config(judge, JUDGE_AGENT_NAME)
 
             yield PreparedLoomCase(
                 iteration=iteration,
