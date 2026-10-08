@@ -13803,37 +13803,56 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
       if (
         event.action === "shell" &&
-        ["reviewer", "critic", "acceptance"].includes(String(event.agent ?? "")) &&
-        event.resources.length > 0 &&
-        event.resources.every((command: string) => isAllowedPackageScriptShell(command))
+        verificationTestAgents.has(String(event.agent ?? "")) &&
+        event.resources.length > 0
       ) {
-        const workflowId = (await ctx.storage.get(
-          sessionKey(event.sessionID),
-        )) as string | undefined
-        const stepId = (await ctx.storage.get(
-          sessionStepKey(event.sessionID),
-        )) as string | undefined
-        if (
-          !workflowId ||
-          !stepId ||
-          !(await exactRunnableStepAttemptBinding(
-            ctx, event.sessionID, workflowId, stepId,
-          ))
-        ) {
-          event.effect = "deny"
-          event.message =
-            "Package script execution requires this role's current runnable Loom step attempt."
+        const agent = String(event.agent)
+        const routine = event.resources.every(
+          (command: string) => Boolean(classifyVerificationShell(command)),
+        )
+        const governedVerification = ["reviewer", "critic", "acceptance"].includes(agent)
+        const needsElevation = event.resources.length === 1 &&
+          isElevatableVerificationShell(event.resources[0]) &&
+          !(agent === "worker" && workerShellResourcesAllowed(event.resources)) &&
+          !(agent === "diagnostic" &&
+            diagnosticExecutionShellResourcesAllowed(event.resources))
+        if ((governedVerification && routine) || needsElevation) {
+          const workflowId = (await ctx.storage.get(
+            sessionKey(event.sessionID),
+          )) as string | undefined
+          const stepId = (await ctx.storage.get(
+            sessionStepKey(event.sessionID),
+          )) as string | undefined
+          if (
+            !workflowId ||
+            !stepId ||
+            !(await exactRunnableStepAttemptBinding(
+              ctx, event.sessionID, workflowId, stepId,
+            ))
+          ) {
+            event.effect = "deny"
+            event.message = "Test execution requires this role's exact runnable Loom step."
+            return
+          }
+          try {
+            await assertCurrentStepPlanAdmission(ctx, workflowId, stepId)
+            if (agent === "worker") await assertWorkerWorkClaim(ctx, workflowId, stepId)
+          } catch (error) {
+            event.effect = "deny"
+            event.message = error instanceof Error ? error.message : String(error)
+            return
+          }
+          if (needsElevation && !(await currentCommandElevation(
+            event.sessionID, agent, event.resources[0],
+          ))) {
+            event.effect = "deny"
+            event.message =
+              "This project verification command needs a one-use loom_command_elevate grant with a reason before execution."
+            return
+          }
+          event.effect = "allow"
           return
         }
-        try {
-          await assertCurrentStepPlanAdmission(ctx, workflowId, stepId)
-        } catch (error) {
-          event.effect = "deny"
-          event.message = error instanceof Error ? error.message : String(error)
-          return
-        }
-        event.effect = "allow"
-        return
       }
 
       if (
