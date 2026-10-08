@@ -298,18 +298,24 @@ export function classifyVerificationShell(command: string): VerificationShellCom
     if (action === "-m" && [
       "pytest", "unittest", "tox", "nox", "coverage", "behave",
       "compileall", "py_compile", "mypy", "ruff",
-    ].includes(target)) return { family: "python", runner }
+    ].includes(target) &&
+      !(target === "ruff" && words.some((word) => ["--fix", "--fix-only", "--unsafe-fixes"].includes(word)))) {
+      return { family: "python", runner }
+    }
     if (action && namedTestScript(action) && action.endsWith(".py")) {
       return { family: "python", runner }
     }
   }
   if (["pytest", "tox", "nox", "mypy", "pyright", "coverage", "behave"].includes(runner) ||
-      (runner === "ruff" && action === "check")) {
+      (runner === "ruff" && action === "check" &&
+        !words.some((word) => ["--fix", "--fix-only", "--unsafe-fixes"].includes(word)))) {
     return { family: "python", runner }
   }
 
   if (["shellcheck", "bats"].includes(runner) ||
-      (runner === "shfmt" && words.some((word) => ["-d", "-l"].includes(word)))) {
+      (runner === "shfmt" &&
+        words.some((word) => ["-d", "-l"].includes(word)) &&
+        !words.some((word) => ["-w", "--write"].includes(word)))) {
     return { family: "shell", runner }
   }
   if (["bash", "sh"].includes(runner)) {
@@ -348,7 +354,7 @@ export function isElevatableVerificationShell(command: string) {
   }
   if (/^python(?:3(?:\.[0-9]+)?)?$/.test(runner)) {
     if (action === "-m" && target) {
-      return !["pip", "ensurepip", "venv"].includes(target) &&
+      return !/^(?:pip|ensurepip|venv)(?:$|\.)/.test(target) &&
         /^[A-Za-z0-9_.-]+$/.test(target)
     }
     return Boolean(action && projectScriptPath(action, /\.py$/))

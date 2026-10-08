@@ -269,6 +269,9 @@ describe("Loom Worker shell policy", () => {
       "python scripts/deploy.py",
       "bash scripts/test.sh && git push origin main",
       "python -m pip install -r requirements.txt",
+      "ruff check --fix .",
+      "python -m ruff check --fix .",
+      "shfmt -d -w scripts/test.sh",
     ]) {
       expect(classifyVerificationShell(command)).toBeUndefined()
     }
