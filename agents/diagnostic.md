@@ -119,7 +119,7 @@ Do not classify a defect as implementation-only merely because the visible fault
 
 Diagnosis needs experiments, not just code reading.
 
-For an attached governed Diagnostic step, you may use Loom's diagnostic sandbox when testing a theory requires temporary source/configuration changes, failure injection, alternate dependencies, instrumentation, or other destructive-to-the-copy experiments.
+For an attached governed Diagnostic step **or an exact unanswered Diagnostic OQ attachment**, you may use Loom's diagnostic sandbox when testing a theory requires temporary source/configuration changes, failure injection, alternate dependencies, instrumentation, or other destructive-to-the-copy experiments. A late OQ investigation never rewrites prior executed Tasks or grants repository mutation. Destroy the sandbox before answering an OQ; an answered/reopened OQ or replaced attachment cannot reuse an older experiment attempt.
 
 The sandbox is an **experimental laboratory**, not a delivery path:
 

@@ -61,13 +61,19 @@ Evidence-backed checks outrank prose claims. Record evidence for results relied 
 
 Call `loom_complete` only when the assigned outcome is actually complete. A known load-bearing blocker, unmet end-to-end outcome, or unresolved dependent authority prevents completion even when all currently scoped edits are finished.
 
+**Linked worktree commits:** In a linked Git worktree, `.git` is a pointer file whose target, shared objects and refs usually live outside the current checkout. Git itself handles those metadata writes when you run an admitted scoped `git add -- <file>` and `git -c core.hooksPath=/dev/null commit -m ...` **from the current worktree**. You do not need raw file access to any `.git` path. Do not request `loom_scope_elevate` for `.git`, its external gitdir, `objects` or `refs` to commit. If asked by mistake, Loom reports `status=not-required` for exactly recognized linked-worktree metadata. Never edit these locations directly; other out-of-project writes still require explicit approval.
+
 When you produce durable repository changes, own their delivery: stage only exact bytes Loom admitted inside the current effective write scope and ensure that product work is committed before completing the step. An admitted product write is already commit-authorized; a fresh session on the same step attempt does not need a separate scope-adoption ceremony. Ephemeral reports are intentionally non-committable. Existing uncommitted content inside a granted file is valid input when the Task intentionally repairs or extends that file; after your admitted mutation, verify the resulting file before staging it. Never stage untouched or unrelated dirty/staged changes. If another agent currently holds the file's write lock, retry later and re-read the file before retrying; scope overlap alone is not a reason to widen or abandon the Task. If a later authorized overlapping mutation leaves the file clean/committed, re-read and revalidate the Task outcome rather than manufacturing a no-op edit or duplicate commit solely to preserve per-session authorship. Rebase, push, create the PR, and inspect CI when the assigned delivery outcome calls for it; do not merge a PR unless that action is explicitly assigned.
 
 Memory is advisory. Current authority and current evidence win.
 
 When a reusable evidence-backed lesson emerges, load `loom-learning`.
 
-## Verification command access
+## Verification and generation command access
 
-Run relevant package, Python, Go, and shell tests to establish independent evidence. For an unusual **project-local test command** rejected by the routine allowlist, use `loom_command_elevate` with the current workflow ID, step ID, exact command, and a concrete reason. Its one-use grant is recorded and linked to subsequent shell evidence; it does not expand file-write scope or permit Git, deployment, or arbitrary shell evaluation. Treat a script's internal side effects as real execution risk.
+Run relevant package, Python, Go, and shell tests to establish independent evidence. For an unusual project-local verification command rejected by the routine allowlist, call `loom_command_elevate` with the current workflow ID, step ID, exact command, and a concrete reason. One-use grants are bound to the current session/step and recorded with shell evidence.
+
+Code generation is **not verification**. `loom_command_elevate` also supports a bounded Worker-only project generator: `swag init` with an explicit project-relative `--output` directory. Before requesting the grant, use `loom_scope_elevate` to cover the generated output files (for example, `internal/swagger/v2/**`). Run the exact granted command once, then inspect the generated diff and test the result. Do not create a wrapper to bypass an unsupported command form; report unsupported tools for a deliberate policy extension. If elevation fails, act on the specific error rather than rewriting quoting blindly.
+
+Command elevation never grants Git access, package installation, deployment, or shell eval. It does not sandbox generator subprocesses or guarantee containment of their side effects; keep generation on trusted project tools and review outputs.
 

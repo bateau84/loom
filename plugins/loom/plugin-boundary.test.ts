@@ -5561,6 +5561,210 @@ Verdict: FAIL
   })
 
 
+  test("linked worktree allows scoped git add/commit with external Git metadata and no hard-boundary grant", async () => {
+    // The current Loom project is a linked worktree, not its primary checkout.
+    const primary = await mkdtemp(join(tmpdir(), "loom-linked-commit-primary-"))
+    const linked = primary + "-linked"
+    roots.push(linked, primary)
+    await initializeGitFixture(primary)
+    await git(primary, ["commit", "--allow-empty", "-q", "-m", "base"])
+    const primaryHead = (await git(primary, ["rev-parse", "HEAD"])).stdout.trim()
+    const primaryBranch = (await git(primary, ["branch", "--show-current"])).stdout.trim()
+    await git(primary, ["worktree", "add", "-b", "test/linked-commit", linked])
+    const dotGit = (await readFile(join(linked, ".git"), "utf8")).trim()
+    expect(dotGit.startsWith("gitdir: ")).toBe(true)
+    const gitdir = (await git(linked, ["rev-parse", "--absolute-git-dir"])).stdout.trim()
+    const common = (await git(linked, ["rev-parse", "--git-common-dir"])).stdout.trim()
+    expect(gitdir.startsWith(join(primary, ".git", "worktrees"))).toBe(true)
+    expect(common).toBe(join(primary, ".git"))
+
+    const h = await harness(undefined, undefined, {
+      root: linked, storage: new MemoryStorage(),
+    })
+    try {
+      const general = "linked-commit-general"
+      const worker = "linked-commit-worker"
+      const file = "src/linked-commit.txt"
+      const started = await h.call("start", {
+        request: "Write and commit one file in the current linked worktree.",
+      }, "general", general)
+      const workflowId = String(started.workflowId)
+      expect((await h.call("route", {
+        humanFacing: false, behavioral: false, structural: false,
+        externalUnknown: false, diagnostic: false, productOutcome: false,
+        implementationRequested: true, executionDepth: "task",
+      }, "general", general)).error).toBeUndefined()
+      expect((await h.call("step_scope", {
+        workflowId, stepId: "worker", write: [file],
+      }, "general", general)).error).toBeUndefined()
+      const grant = await h.call("dispatch_grant", {
+        workflowId, stepId: "worker",
+      }, "general", general)
+      expect((await h.call("attach", {
+        grantId: grant.grantId, workflowId, stepId: "worker",
+      }, "worker", worker)).attached).toBe(true)
+
+      const evaluate = h.permissionHooks.get("evaluate")!
+      const edit: any = {
+        action: "edit", resources: [file],
+        agent: "worker", sessionID: worker, effect: "ask",
+      }
+      await evaluate(edit)
+      expect(edit.effect).not.toBe("deny")
+      const editCall = {
+        tool: "write", callID: "linked-edit", messageID: "linked-edit-message",
+        sessionID: worker, agent: "worker",
+        input: { filePath: join(linked, file), content: "linked worktree evidence\\n" },
+      }
+      await h.toolHooks.get("execute.before")!(editCall)
+      await writeFile(join(linked, file), "linked worktree evidence\\n")
+      await h.toolHooks.get("execute.after")!({
+        ...editCall, status: "completed", result: "written",
+      })
+
+      // Git's own metadata lives OUTSIDE this project's worktree root.
+      // The tool should not ask the user to approve those raw paths.
+      const legacyMetadataRequest = await h.call("scope_elevate", {
+        workflowId, stepId: "worker",
+        paths: [join(linked, ".git"), gitdir, join(common, "objects"), join(common, "refs")],
+        reason: "Commit the admitted file from the linked worktree with Git.",
+      }, "worker", worker)
+      expect(legacyMetadataRequest.error).toBeUndefined()
+      expect(legacyMetadataRequest.status).toBe("not-required")
+      expect(legacyMetadataRequest.continue).toBe(true)
+      expect(legacyMetadataRequest.newPermissionGranted).toBe(false)
+      expect((await h.durableStorage.scan({ prefix: "scope-boundary-request/" })).entries).toEqual([])
+
+      const stageCommand = `git add -- ${file}`
+      const stagePermission: any = {
+        agent: "worker", action: "shell", resources: [stageCommand],
+        sessionID: worker, effect: "ask",
+      }
+      await evaluate(stagePermission)
+      expect(stagePermission.effect).toBe("allow")
+      const stageCall = {
+        tool: "shell", callID: "linked-stage", messageID: "linked-stage-message",
+        sessionID: worker, agent: "worker", input: { command: stageCommand },
+      }
+      await h.toolHooks.get("execute.before")!(stageCall)
+      await git(linked, ["add", "--", file])
+      await h.toolHooks.get("execute.after")!({
+        ...stageCall, status: "completed", result: "staged",
+      })
+
+      const commitCommand = "git -c core.hooksPath=/dev/null commit -m 'test: worktree commit'"
+      const commitPermission: any = {
+        agent: "worker", action: "shell", resources: [commitCommand],
+        sessionID: worker, effect: "ask",
+      }
+      await evaluate(commitPermission)
+      expect(commitPermission.effect).toBe("allow")
+      const commitCall = {
+        tool: "shell", callID: "linked-commit", messageID: "linked-commit-message",
+        sessionID: worker, agent: "worker", input: { command: commitCommand },
+      }
+      await h.toolHooks.get("execute.before")!(commitCall)
+      await git(linked, ["-c", "core.hooksPath=/dev/null", "commit", "-m", "test: worktree commit", "-q"])
+      await h.toolHooks.get("execute.after")!({
+        ...commitCall, status: "completed", result: "committed",
+      })
+
+      const newHead = (await git(linked, ["rev-parse", "HEAD"])).stdout.trim()
+      expect(newHead).not.toBe(primaryHead)
+      expect((await git(primary, ["rev-parse", "HEAD"])).stdout.trim()).toBe(primaryHead)
+      expect((await git(primary, ["branch", "--show-current"])).stdout.trim()).toBe(primaryBranch)
+      expect((await git(linked, ["status", "--porcelain"])).stdout.trim()).toBe("")
+      expect((await git(linked, ["show", "--format=%s", "-s", "HEAD"])).stdout.trim()).toBe("test: worktree commit")
+      expect((await h.durableStorage.scan({ prefix: "scope-boundary-authorization/" })).entries).toEqual([])
+
+      // Recognition does not authorize direct metadata edits or other
+      // external-path writes.
+      const directEdit: any = {
+        action: "edit", resources: [join(common, "refs", "heads", "unauthorized")],
+        agent: "worker", sessionID: worker, effect: "ask",
+      }
+      await evaluate(directEdit)
+      expect(directEdit.effect).toBe("deny")
+      const unrelated = await h.call("scope_elevate", {
+        workflowId, stepId: "worker",
+        paths: [join(primary, "not-git-metadata.txt")],
+        reason: "Test unrelated external file stays protected.",
+      }, "worker", worker)
+      expect(unrelated.continue).toBe(false)
+    } finally {
+      h.restore()
+    }
+  })
+
+  test("late Diagnostic OQ can investigate a failed executed workflow without rewriting its steps", async () => {
+    const h = await harness()
+    const general = "late-diagnostic-general"
+    const child = "late-diagnostic-child"
+    try {
+      const started = await h.call("start", {
+        request: "Investigate an intermittent request abort after implementation.",
+      }, "general", general)
+      const workflowId = String(started.workflowId)
+      const effects = {
+        humanFacing: false, behavioral: false, structural: false,
+        externalUnknown: false, diagnostic: false, productOutcome: false,
+        implementationRequested: true, executionDepth: "task",
+      }
+      expect((await h.call("route", effects, "general", general)).error).toBeUndefined()
+      const current = await h.durableStorage.get(`workflow/${workflowId}`) as any
+      current.steps.find((step: any) => step.id === "worker").status = "complete"
+      current.steps.find((step: any) => step.id === "worker").summary = "Browser guards implemented"
+      current.steps.find((step: any) => step.id === "review-implementation").status = "failed"
+      current.steps.find((step: any) => step.id === "review-implementation").summary = "Flaky keyboard test"
+      await h.durableStorage.set(`workflow/${workflowId}`, current)
+      const stepsBefore = structuredClone(current.steps)
+
+      const refused = await h.call("route", { ...effects, diagnostic: true }, "general", general)
+      expect(refused.error).toContain("Route reclassification after completed execution")
+
+      const raised = await h.call("oq_raise", {
+        workflowId,
+        question: "Which request lifecycle event cancels the intermittent keyboard data request?",
+        responder: "diagnostic",
+        blocking: true,
+        consumerStepIds: ["review-implementation"],
+        evidence: ["2 failures in 40 runs; merge remains blocked"],
+      }, "general", general)
+      expect(raised.error).toBeUndefined()
+      const questionId = String(raised.question.id)
+
+      const grant = await h.call("dispatch_grant", { workflowId, questionId }, "general", general)
+      expect(grant.error).toBeUndefined()
+      const attached = await h.call("attach", {
+        grantId: grant.grantId, workflowId, questionId,
+      }, "diagnostic", child)
+      expect(attached.attached).toBe(true)
+      expect(await h.durableStorage.get(`session-oq-attempt/${child}`)).toBe(0)
+
+      const experiment = await h.call("diagnostic_sandbox_start", {
+        image: "--invalid-image", network: "none",
+      }, "diagnostic", child)
+      expect(experiment.error).toContain("Diagnostic sandbox image")
+      expect(experiment.error).not.toContain("requires an exact runnable Diagnostic step")
+      const stranger = await h.call("diagnostic_sandbox_start", {
+        image: "--invalid-image", network: "none",
+      }, "diagnostic", "unattached-diagnostic")
+      expect(stranger.error).toContain("exact runnable Diagnostic step or unanswered Diagnostic OQ")
+
+      const reopened = await h.call("oq_reopen", {
+        workflowId, questionId, preserveAnswer: false, reason: "New cancellation evidence",
+      }, "general", general)
+      expect(reopened.error).toBeUndefined()
+      const stale = await h.call("diagnostic_sandbox_start", {
+        image: "--invalid-image", network: "none",
+      }, "diagnostic", child)
+      expect(stale.error).toContain("exact runnable Diagnostic step or unanswered Diagnostic OQ")
+      expect((await h.durableStorage.get(`workflow/${workflowId}`) as any).steps).toEqual(stepsBefore)
+    } finally {
+      h.restore()
+    }
+  })
+
   test("conversational Research and Diagnostic are technically non-mutating", async () => {
     const { permissionHooks, restore } = await harness()
     try {
@@ -10354,7 +10558,7 @@ test("one-use command elevation is step-bound, audited and linked to shell evide
       command: "bash -c 'rm -rf src'",
       reason: "Not a project test command.",
     }, "worker", worker)
-    expect(forbidden.error).toContain("project-local verification")
+    expect(forbidden.error).toContain("Unsupported command form")
 
     const deniedGeneral = await h.call("command_elevate", {
       workflowId: h.workflowId, stepId: "task:one",
@@ -10463,6 +10667,257 @@ test("one-use command elevation is step-bound, audited and linked to shell evide
     expect(traced).toBeDefined()
     expect(JSON.stringify(traced.commandTrace)).not.toContain("do-not-store")
   } finally {
+    h.restore()
+  }
+})
+
+test("Worker generation elevation checks outputs, locks invocation and owns only changed files", async () => {
+  const h = await waveLifecycleFixture("wave")
+  try {
+    const worker = await h.attach("task:one", "worker", "generator-worker")
+    const command = "swag init -g doc.go -d ./internal/apiv2,./internal/app --parseDependency --parseInternal --output ./internal/swagger/v2 --tags 'internal-app-v1' --requiredByDefault"
+    const input = {
+      workflowId: h.workflowId, stepId: "task:one", command,
+      reason: "Regenerate Swagger after the API annotation change.",
+    }
+
+    const missingScope = await h.call("command_elevate", input, "worker", worker)
+    expect(missingScope.error).toContain("outside the current Loom write scope")
+    const rejectedRole = await h.call("command_elevate", input, "reviewer", worker)
+    expect(rejectedRole.error).toContain("attached Worker")
+    const unsupported = await h.call("command_elevate", {
+      ...input, command: "swag init --output ./internal/swagger/v2 --mysteryFlag yes",
+    }, "worker", worker)
+    expect(unsupported.error).toContain("Unsupported swag init option or argument: --mysteryFlag")
+    const unsafeOutput = await h.call("command_elevate", {
+      ...input, command: "swag init --output ../outside",
+    }, "worker", worker)
+    expect(unsafeOutput.error).toContain("safe project-relative directory")
+
+    const scope = await h.call("scope_elevate", {
+      workflowId: h.workflowId, stepId: "task:one",
+      paths: ["internal/swagger/v2/**"],
+      reason: "Swagger output for this Worker task.",
+    }, "worker", worker)
+    expect(scope.error).toBeUndefined()
+
+    const permission = async (commandToCheck = command) => {
+      const event: any = { agent: "worker", action: "shell", resources: [commandToCheck],
+        sessionID: worker, effect: "ask" }
+      await h.permissionHooks.get("evaluate")!(event)
+      return event
+    }
+    expect((await permission()).effect).toBe("deny")
+    const grant = await h.call("command_elevate", input, "worker", worker)
+    expect(grant).toMatchObject({
+      granted: true, kind: "generation",
+      outputPath: "internal/swagger/v2", singleUse: true,
+    })
+    expect((await permission()).effect).toBe("allow")
+    expect((await permission("swag init --output ./internal/swagger/v3")).effect).toBe("deny")
+
+    const run = { tool: "shell", callID: "generated-swagger-output",
+      sessionID: worker, agent: "worker", input: { command } }
+    await expect(h.toolHooks.get("execute.before")!({
+      ...run, callID: "wrong-generator-cwd",
+      input: { command, workdir: tmpdir() },
+    })).rejects.toThrow("current project root")
+    expect((await h.durableStorage.get("command-elevation/" + grant.grantId) as any).consumedAt).toBeUndefined()
+    // Root-relative workdir must not depend on the plugin host's cwd.
+    const rootRelative = { ...run, input: { command, workdir: "." } }
+    await h.toolHooks.get("execute.before")!(rootRelative)
+    const executed = rootRelative
+    const outputDir = join(h.root, "internal", "swagger", "v2")
+    await mkdir(outputDir, { recursive: true })
+    await writeFile(join(outputDir, "docs.go"), "package swagger\\n")
+    await writeFile(join(outputDir, "swagger.json"), "{}\\n")
+    await h.toolHooks.get("execute.after")!({
+      ...executed, status: "completed",
+      result: { output: "Swagger updated", metadata: { exit: 0 } },
+    })
+
+    const ownership = await h.durableStorage.get(
+      "git-session-ownership/" + encodeURIComponent(worker),
+    ) as any
+    expect(ownership.paths).toContain("internal/swagger/v2/docs.go")
+    expect(ownership.paths).toContain("internal/swagger/v2/swagger.json")
+    expect(ownership.paths).not.toContain("internal/swagger/v2/swagger.yaml")
+    // Grant ownership is useful only if the normal Git gate recognizes it.
+    expect((await permission("git add -- internal/swagger/v2/docs.go")).effect).toBe("allow")
+    expect((await permission("git add -- internal/swagger/v2/unowned.go")).effect).toBe("deny")
+
+    const receipt = await h.durableStorage.get("command-elevation/" + grant.grantId) as any
+    expect(receipt).toMatchObject({ kind: "generation", outcome: "completed",
+      outputPath: "internal/swagger/v2", sessionID: worker })
+    expect(receipt.consumedAt).toBeDefined()
+    expect(receipt.observationId).toBeDefined()
+    expect((await permission()).effect).toBe("deny")
+    await expect(h.toolHooks.get("execute.before")!({
+      ...run, callID: "generator-replay",
+    })).rejects.toThrow("no unconsumed exact loom_command_elevate")
+  } finally {
+    h.restore()
+  }
+})
+
+test("generator result containing an error cannot confer Git provenance", async () => {
+  const h = await waveLifecycleFixture("wave")
+  try {
+    const worker = await h.attach("task:one", "worker", "failed-generator-worker")
+    const command = "swag init --output ./internal/swagger/v2"
+    expect((await h.call("scope_elevate", {
+      workflowId: h.workflowId, stepId: "task:one",
+      paths: ["internal/swagger/v2/**"], reason: "Regenerate Swagger files.",
+    }, "worker", worker)).error).toBeUndefined()
+    const grant = await h.call("command_elevate", {
+      workflowId: h.workflowId, stepId: "task:one",
+      command, reason: "Regenerate Swagger from changed annotations.",
+    }, "worker", worker)
+    expect(grant.granted).toBe(true)
+
+    const run = { tool: "shell", callID: "generator-embedded-error",
+      sessionID: worker, agent: "worker", input: { command } }
+    await h.toolHooks.get("execute.before")!(run)
+    const out = join(h.root, "internal", "swagger", "v2")
+    await mkdir(out, { recursive: true })
+    await writeFile(join(out, "docs.go"), "package swagger\n")
+    await h.toolHooks.get("execute.after")!({
+      ...run, status: "completed", result: { error: "swag exited non-zero after partial output" },
+    })
+
+    const ownership = await h.durableStorage.get(
+      "git-session-ownership/" + encodeURIComponent(worker),
+    ) as any
+    expect(ownership?.paths ?? []).not.toContain("internal/swagger/v2/docs.go")
+    const receipt = await h.durableStorage.get("command-elevation/" + grant.grantId) as any
+    expect(receipt.outcome).toBe("error")
+    const observations = (await h.call("evidence_observations",
+      { detail: true }, "worker", worker)).observations
+    expect(observations.find((item: any) => item.id === receipt.observationId)?.status).toBe("error")
+  } finally {
+    h.restore()
+  }
+})
+
+test("generator with failed or missing shell exit cannot claim generated files", async () => {
+  for (const [label, exit] of [["nonzero", 3], ["unknown", null]] as const) {
+    const h = await waveLifecycleFixture("wave")
+    try {
+      const worker = await h.attach("task:one", "worker", "generator-exit-" + label)
+      const command = "swag init --output ./internal/swagger/v2"
+      expect((await h.call("scope_elevate", {
+        workflowId: h.workflowId, stepId: "task:one",
+        paths: ["internal/swagger/v2/**"], reason: "Regenerate Swagger files.",
+      }, "worker", worker)).error).toBeUndefined()
+      const grant = await h.call("command_elevate", {
+        workflowId: h.workflowId, stepId: "task:one",
+        command, reason: "Regenerate Swagger and check the subprocess exit.",
+      }, "worker", worker)
+      expect(grant.granted).toBe(true)
+      const run = { tool: "shell", callID: "generator-shell-exit-" + label,
+        sessionID: worker, agent: "worker", input: { command } }
+      await h.toolHooks.get("execute.before")!(run)
+      const dir = join(h.root, "internal", "swagger", "v2")
+      await mkdir(dir, { recursive: true })
+      await writeFile(join(dir, "docs.go"), "package swagger\n")
+      await h.toolHooks.get("execute.after")!({
+        ...run, status: "completed", result: { output: "generator failed", metadata: { exit } },
+      })
+      const ownership = await h.durableStorage.get(
+        "git-session-ownership/" + encodeURIComponent(worker),
+      ) as any
+      expect(ownership?.paths ?? []).not.toContain("internal/swagger/v2/docs.go")
+      const receipt = await h.durableStorage.get("command-elevation/" + grant.grantId) as any
+      expect(receipt.outcome).toBe("error")
+      const observations = (await h.call("evidence_observations",
+        { detail: true }, "worker", worker)).observations
+      const observed = observations.find((entry: any) => entry.id === receipt.observationId)
+      expect(observed.status).toBe("error")
+      expect(observed.error).toContain("did not exit successfully")
+    } finally {
+      h.restore()
+    }
+  }
+})
+
+test("generator output symlink swapped during execution cannot acquire Git ownership", async () => {
+  const h = await waveLifecycleFixture("wave")
+  const external = await mkdtemp(join(tmpdir(), "loom-generator-post-escape-"))
+  try {
+    const worker = await h.attach("task:one", "worker", "post-generation-escape-worker")
+    const command = "swag init --output ./internal/swagger/v2"
+    expect((await h.call("scope_elevate", {
+      workflowId: h.workflowId, stepId: "task:one",
+      paths: ["internal/swagger/v2/**"], reason: "Regenerate Swagger files.",
+    }, "worker", worker)).error).toBeUndefined()
+    const granted = await h.call("command_elevate", {
+      workflowId: h.workflowId, stepId: "task:one",
+      command, reason: "Regenerate Swagger from changed annotations.",
+    }, "worker", worker)
+    expect(granted.granted).toBe(true)
+
+    const outputDir = join(h.root, "internal", "swagger", "v2")
+    await mkdir(outputDir, { recursive: true })
+    const run = { tool: "shell", callID: "generator-output-post-execution-swap",
+      sessionID: worker, agent: "worker", input: { command } }
+    await h.toolHooks.get("execute.before")!(run)
+    await rm(outputDir, { recursive: true })
+    await symlink(external, outputDir)
+    await h.toolHooks.get("execute.after")!({
+      ...run, status: "completed", result: "success",
+    })
+    const ownership = await h.durableStorage.get(
+      "git-session-ownership/" + encodeURIComponent(worker),
+    ) as any
+    expect(ownership?.paths ?? []).not.toContain("internal/swagger/v2/docs.go")
+    const receipt = await h.durableStorage.get("command-elevation/" + granted.grantId) as any
+    expect(receipt.outcome).toBe("error")
+    expect(receipt.observationId).toBeDefined()
+    const observations = (await h.call("evidence_observations",
+      { detail: true }, "worker", worker)).observations
+    const observed = observations.find((item: any) => item.id === receipt.observationId)
+    expect(observed.status).toBe("error")
+    expect(observed.error).toContain("outside this project")
+  } finally {
+    await rm(external, { recursive: true, force: true })
+    h.restore()
+  }
+})
+
+test("generator output symlink escape is denied before spending an exact grant", async () => {
+  const h = await waveLifecycleFixture("wave")
+  const external = await mkdtemp(join(tmpdir(), "loom-generator-escape-"))
+  try {
+    const worker = await h.attach("task:one", "worker", "generator-symlink-worker")
+    const command = "swag init --output ./internal/swagger/v2"
+    const input = {
+      workflowId: h.workflowId, stepId: "task:one", command,
+      reason: "Generate only inside the authorized project output directory.",
+    }
+    expect((await h.call("scope_elevate", {
+      workflowId: h.workflowId, stepId: "task:one",
+      paths: ["internal/swagger/v2/**"],
+      reason: "Swagger output files.",
+    }, "worker", worker)).error).toBeUndefined()
+
+    const output = join(h.root, "internal", "swagger", "v2")
+    await mkdir(join(h.root, "internal", "swagger"), { recursive: true })
+    await symlink(external, output)
+    const forbidden = await h.call("command_elevate", input, "worker", worker)
+    expect(forbidden.error).toContain("outside this project")
+    await rm(output)
+    await mkdir(output)
+    const issued = await h.call("command_elevate", input, "worker", worker)
+    expect(issued.granted).toBe(true)
+    await rm(output, { recursive: true })
+    await symlink(external, output)
+    await expect(h.toolHooks.get("execute.before")!({
+      tool: "shell", callID: "generator-symlink-swap",
+      sessionID: worker, agent: "worker", input: { command },
+    })).rejects.toThrow("outside this project")
+    expect((await h.durableStorage.get("command-elevation/" + issued.grantId) as any).consumedAt).toBeUndefined()
+  } finally {
+    await rm(external, { recursive: true, force: true })
     h.restore()
   }
 })
@@ -17353,7 +17808,9 @@ test("archived original producer receipts reconcile after Wave recompilation wit
       const child = await h.attach("task:" + id, "worker", "archived-receipt-" + id)
       const event = {
         tool: "shell", id: "receipt-evidence-" + id, messageID: "receipt-message-" + id,
-        sessionID: child, agent: "worker", input: { command: "git rev-parse HEAD" },
+        sessionID: child, agent: "worker", input: {
+          command: id === "one" ? "go test ./... && go build ./... && go vet ./..." : "git rev-parse HEAD",
+        },
       }
       await h.toolHooks.get("execute.before")!(event)
       await h.toolHooks.get("execute.after")!({
@@ -17368,6 +17825,16 @@ test("archived original producer receipts reconcile after Wave recompilation wit
         statement: "Original observed implementation", observationIds: [evidence.id],
       }, "worker", child)
       expect(claim.error).toBeUndefined()
+      if (id === "one") {
+        for (const kind of ["test", "build", "lint"]) {
+          const shared = await h.call("evidence_claim", {
+            workflowId: h.workflowId, stepId: "task:one", kind,
+            statement: "Original " + kind + " check from the same completed shell invocation",
+            observationIds: [evidence.id],
+          }, "worker", child)
+          expect(shared.error).toBeUndefined()
+        }
+      }
       expect((await h.call("complete", {
         workflowId: h.workflowId, stepId: "task:" + id, summary: "Completed " + id,
       }, "worker", child)).error).toBeUndefined()
@@ -17377,6 +17844,7 @@ test("archived original producer receipts reconcile after Wave recompilation wit
     const original = await h.work()
     const originalReceipts = ["one", "dependent"].map((id) =>
       structuredClone(original.nodes.find((node: any) => node.type === "task" && node.logicalId === id).result))
+    expect(originalReceipts[0].evidenceClaimIds).toHaveLength(4)
 
     const reopened = await h.call("reopen", {
       workflowId: h.workflowId, stepId: "plan",
@@ -17432,6 +17900,34 @@ test("archived original producer receipts reconcile after Wave recompilation wit
       workflowId: h.workflowId, stepId: "plan", summary: "Recompiled Plan",
     }, "planner", planner)).error).toBeUndefined()
     expect((await h.finish("review-plan", "reviewer", "pass")).error).toBeUndefined()
+
+    const originalObservation = (await h.durableStorage.scan({ prefix: "evidence/", limit: 100 }))
+      .entries.map((entry: any) => entry.value)
+      .find((entry: any) => entry.tool === "shell" && entry.command?.includes("go test ./..."))
+    expect(originalObservation).toBeDefined()
+    const observationKey = "evidence/" + originalObservation.id
+    for (const alteration of [
+      null,
+      { admission: {
+        ...originalObservation.admission, attempt: originalObservation.admission.attempt + 1,
+      } },
+      { status: "failed" },
+      { command: "git rev-parse HEAD" },
+    ] as const) {
+      if (alteration === null) expect(await h.durableStorage.delete?.(observationKey)).toBe(true)
+      else await h.durableStorage.set(observationKey, { ...originalObservation, ...alteration })
+      expect(await h.durableStorage.get(observationKey)).toEqual(
+        alteration === null ? undefined : { ...originalObservation, ...alteration })
+      const denied = await h.call("work_reconcile", {
+        workflowId: h.workflowId, taskIds: ["one"],
+      }, "general", "parent")
+      expect(denied.error).toBeUndefined()
+      expect(denied.reconciled).toEqual([])
+      expect(denied.refused[0].reason).toContain("Original host observations")
+      expect((await h.workflow()).steps.find((step: any) => step.id === "task:one").status)
+        .toBe("pending")
+      await h.durableStorage.set(observationKey, originalObservation)
+    }
 
     const budgetKey = "budget/" + h.workflowId
     const budget = await h.durableStorage.get(budgetKey)
