@@ -52,11 +52,7 @@ git show :3:path/to/file    # theirs
 git log --merge -p -- path/to/file   # the competing commits' diffs
 ```
 
-The default merge style shows only ours/theirs. Turn on **diff3** to see the base too — it makes "what changed on each side" obvious and resolution far less error-prone:
-
-```bash
-git config merge.conflictStyle znew diff3      # (zdiff3 in modern git; diff3 otherwise)
-```
+The default conflict markers usually show only ours/theirs. Inspect the base without changing repository settings using `git show :1:path/to/file` above. When the runtime permits repository Git configuration changes, `git config merge.conflictStyle zdiff3` is an optional preference for future conflicts (use `diff3` on older Git). Do not alter Git configuration merely to resolve a single conflict.
 
 With base visible, each hunk becomes a clear three-way question: *what did each side change relative to the base, and what is the union of those intents?*
 
