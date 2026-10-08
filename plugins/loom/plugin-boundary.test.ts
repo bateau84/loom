@@ -4785,6 +4785,7 @@ Verdict: FAIL
         "shell:",
         "  exact:",
         "    - node --version",
+        "    - make test",
         "  prefixes:",
         "    - kubectl get",
         "projects:",
@@ -4805,7 +4806,7 @@ Verdict: FAIL
         workflowId, stepId: "worker",
       }, "worker", child)).effectiveWrite).toContain("src/local.ts")
 
-      for (const command of ["node --version", "kubectl get pods -n test"]) {
+      for (const command of ["node --version", "kubectl get pods -n test", "make test"]) {
         const permission: any = {
           agent: "worker", action: "shell", resources: [command],
           sessionID: child, effect: "ask",
@@ -4813,6 +4814,23 @@ Verdict: FAIL
         await evaluate(permission)
         expect(permission.effect).toBe("allow")
       }
+      // An otherwise one-use-elevatable test command is authorized by the
+      // user-owned local rule at the *execution* boundary as well.
+      const testExecution = {
+        tool: "shell",
+        callID: "local-policy-make-test",
+        messageID: "local-policy-make-test-message",
+        sessionID: child,
+        agent: "worker",
+        input: { command: "make test" },
+      }
+      await h.toolHooks.get("execute.before")!(testExecution)
+      await h.toolHooks.get("execute.after")!({
+        ...testExecution,
+        status: "completed",
+        result: "synthetic test completed",
+      })
+
       const unsafe: any = {
         agent: "worker", action: "shell",
         resources: ["node --version && touch /tmp/escape"],
@@ -4850,6 +4868,18 @@ Verdict: FAIL
       await evaluate(revoked)
       expect(revoked.effect).toBe("deny")
       expect((await h.call("policy_status", {}, "worker", child)).writes).toEqual({})
+
+      const revokedCommand: any = {
+        agent: "worker", action: "shell", resources: ["make test"],
+        sessionID: child, effect: "ask",
+      }
+      await evaluate(revokedCommand)
+      expect(revokedCommand.effect).toBe("deny")
+      await expect(h.toolHooks.get("execute.before")!({
+        ...testExecution,
+        callID: "revoked-make-test",
+        messageID: "revoked-make-test-message",
+      })).rejects.toThrow()
 
       const deniedStage: any = { ...stage, effect: "ask" }
       await evaluate(deniedStage)
