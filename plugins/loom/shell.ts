@@ -43,9 +43,10 @@ const safePatterns = [
   /^govulncheck(?:\s|$)/,
 
   /^bun test(?:\s|$)/,
-  /^npm test(?:\s|$)/,
-  /^pnpm test(?:\s|$)/,
-  /^yarn test(?:\s|$)/,
+  /^bun run (?:test|typecheck|build|lint)(?:\s|$)/,
+  /^npm (?:test|run (?:test|typecheck|build|lint))(?:\s|$)/,
+  /^pnpm (?:test|run (?:test|typecheck|build|lint))(?:\s|$)/,
+  /^yarn (?:test|run (?:test|typecheck|build|lint))(?:\s|$)/,
 
   /^pytest(?:\s|$)/,
   /^python3? -m pytest(?:\s|$)/,
@@ -175,7 +176,6 @@ export function isAllowedWorkerShell(command: string) {
 
   if (!normalized) return false
   if (hasForbiddenShellSyntax(normalized)) return false
-  if (isAllowedPackageScriptShell(normalized)) return true
   if (isButlerInspectionShellCommand(normalized)) return true
 
   const parsed = parseEnvironmentPrefix(normalized)
@@ -947,6 +947,7 @@ export function diagnosticShellResourcesAllowed(resources: readonly string[]) {
   return resources.every(
     (command) =>
       isAllowedWorkerShell(command) ||
+      isAllowedPackageScriptShell(command) ||
       githubInspectionAllowed(command),
   )
 }

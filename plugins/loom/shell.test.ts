@@ -191,9 +191,10 @@ describe("Loom Worker shell policy", () => {
       "XDG_CACHE_HOME=/tmp/loom-cache bun run test:unit -- --filter unit",
     ]) {
       expect(isAllowedPackageScriptShell(command)).toBe(true)
-      expect(isAllowedWorkerShell(command)).toBe(true)
-      expect(shellResourcesAllowed([command])).toBe(true)
+      expect(isAllowedWorkerShell(command)).toBe(false)
+      expect(shellResourcesAllowed([command])).toBe(false)
       expect(diagnosticShellResourcesAllowed([command])).toBe(true)
+      expect(diagnosticExecutionShellResourcesAllowed([command])).toBe(true)
       expect(workerShellResourcesAllowed([command])).toBe(true)
     }
 
