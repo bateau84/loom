@@ -253,7 +253,18 @@ class LoomCaseWorkspaceAdapterTests(unittest.TestCase):
             self.assertFalse((target / ".opencode" / "plugins").exists())
             self.assertEqual(json.loads((target / "opencode.json").read_text())["default_agent"], "general")
             self.assertEqual(json.loads((judge / "opencode.json").read_text())["default_agent"], "eval-judge")
-            self.assertFalse((judge / ".opencode" / "agents" / "eval-judge.md").exists())
+            # Stock OpenCode ignores InvocationSpec.system. The judge must
+            # have its strict schema in the actual native agent file.
+            judge_file = judge / ".opencode" / "agents" / "eval-judge.md"
+            self.assertTrue(judge_file.is_file())
+            judge_charter = judge_file.read_text(encoding="utf-8")
+            self.assertIn("mode: primary", judge_charter)
+            self.assertIn("effect: deny", judge_charter)
+            self.assertIn("Return exactly one JSON object", judge_charter)
+            self.assertIn('"trap_observed": false', judge_charter)
+            self.assertIn('"expectations":', judge_charter)
+            self.assertIn('"violations":', judge_charter)
+            self.assertFalse((target / ".opencode" / "agents" / "eval-judge.md").exists())
 
             spec = self.adapter.target_spec(case, prepared)
             self.assertEqual(spec.model, TARGET_MODEL_OVERRIDE_REQUIRED)
