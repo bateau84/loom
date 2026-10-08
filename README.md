@@ -91,6 +91,10 @@ ocw --profile openai --explain
 
 Profiles are local OpenCode configuration. The helper expects the selected profile and matching CLI profile to exist under the OpenCode config root.
 
+### Local permissions
+
+To allow an additional command, subcommand, or bounded project write path without changing Loom code, edit `~/.config/opencode/.loom.yaml`. The file is Git-ignored when Loom is your OpenCode config checkout; policy changes take effect immediately. Use `loom_policy_status` to verify loaded rules. See [Local permission overrides](docs/system/local-permissions.md).
+
 ## Dashboard
 
 The local control panel starts automatically with the Loom plugin.

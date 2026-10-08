@@ -95,9 +95,11 @@ async function harness(
 
   const previousState = process.env.XDG_STATE_HOME
   const previousRuntime = process.env.XDG_RUNTIME_DIR
+  const previousConfig = process.env.XDG_CONFIG_HOME
   const previousOutput = process.env.LOOM_TOOL_OUTPUT
   process.env.XDG_STATE_HOME = join(root, "state")
   process.env.XDG_RUNTIME_DIR = join(root, "runtime")
+  process.env.XDG_CONFIG_HOME = join(root, "opencode-config-home")
   process.env.LOOM_TOOL_OUTPUT = "json"
 
   const registered = new Map<string, RegisteredTool>()
@@ -237,6 +239,8 @@ async function harness(
     else process.env.XDG_STATE_HOME = previousState
     if (previousRuntime === undefined) delete process.env.XDG_RUNTIME_DIR
     else process.env.XDG_RUNTIME_DIR = previousRuntime
+    if (previousConfig === undefined) delete process.env.XDG_CONFIG_HOME
+    else process.env.XDG_CONFIG_HOME = previousConfig
     if (previousOutput === undefined) delete process.env.LOOM_TOOL_OUTPUT
     else process.env.LOOM_TOOL_OUTPUT = previousOutput
   }
@@ -4736,6 +4740,168 @@ Verdict: FAIL
     }
   })
 
+
+  test("user-local YAML extends commands and bounded Worker writes without source edits", async () => {
+    const h = await harness()
+    try {
+      const parent = "local-policy-general"
+      const child = "local-policy-worker"
+      const started = await h.call("start", {
+        request: "Create one small source file.",
+      }, "general", parent)
+      const workflowId = started.workflowId
+      expect(workflowId).toBeDefined()
+      expect((await h.call("route", {
+        humanFacing: false,
+        behavioral: false,
+        structural: false,
+        externalUnknown: false,
+        diagnostic: false,
+        productOutcome: false,
+        implementationRequested: true,
+        executionDepth: "task",
+      }, "general", parent)).error).toBeUndefined()
+      const grant = await h.call("dispatch_grant", {
+        workflowId, stepId: "worker",
+      }, "general", parent)
+      expect((await h.call("attach", {
+        workflowId, stepId: "worker", grantId: grant.grantId,
+      }, "worker", child)).attached).toBe(true)
+
+      const evaluate = h.permissionHooks.get("evaluate")!
+      const edit = {
+        agent: "worker", action: "edit", resources: ["src/local.ts"],
+        sessionID: child, effect: "ask", message: "",
+      }
+      await evaluate(edit)
+      expect(edit.effect).toBe("deny")
+      expect((await h.call("policy_status", {}, "worker", child)).status).toBe("absent")
+
+      const configHome = join(h.root, "opencode-config-home", "opencode")
+      await mkdir(configHome, { recursive: true })
+      const policyPath = join(configHome, ".loom.yaml")
+      const policyText = [
+        "version: 1",
+        "shell:",
+        "  exact:",
+        "    - node --version",
+        "    - make test",
+        "  prefixes:",
+        "    - kubectl get",
+        "projects:",
+        "  " + JSON.stringify(h.root) + ":",
+        "    writes:",
+        "      worker:",
+        "        - src/local.ts",
+        "        - opencode-config-home/**",
+        "      documenter:",
+        "        - docs/index.md",
+        "",
+      ].join("\n")
+      await writeFile(policyPath, policyText, { mode: 0o600 })
+
+      const status = await h.call("policy_status", {}, "worker", child)
+      expect(status.status).toBe("loaded")
+      expect(status.writes.worker).toEqual(["src/local.ts", "opencode-config-home/**"])
+      expect((await h.call("scope_status", {
+        workflowId, stepId: "worker",
+      }, "worker", child)).effectiveWrite).toContain("src/local.ts")
+
+      for (const command of ["node --version", "kubectl get pods -n test", "make test"]) {
+        const permission: any = {
+          agent: "worker", action: "shell", resources: [command],
+          sessionID: child, effect: "ask",
+        }
+        await evaluate(permission)
+        expect(permission.effect).toBe("allow")
+      }
+      // An otherwise one-use-elevatable test command is authorized by the
+      // user-owned local rule at the *execution* boundary as well.
+      const testExecution = {
+        tool: "shell",
+        callID: "local-policy-make-test",
+        messageID: "local-policy-make-test-message",
+        sessionID: child,
+        agent: "worker",
+        input: { command: "make test" },
+      }
+      await h.toolHooks.get("execute.before")!(testExecution)
+      await h.toolHooks.get("execute.after")!({
+        ...testExecution,
+        status: "completed",
+        result: "synthetic test completed",
+      })
+
+      const unsafe: any = {
+        agent: "worker", action: "shell",
+        resources: ["node --version && touch /tmp/escape"],
+        sessionID: child, effect: "ask",
+      }
+      await evaluate(unsafe)
+      expect(unsafe.effect).toBe("deny")
+
+      const policyEdit: any = {
+        agent: "worker", action: "edit",
+        resources: ["opencode-config-home/opencode/.loom.yaml"],
+        sessionID: child, effect: "ask",
+      }
+      await evaluate(policyEdit)
+      expect(policyEdit.effect).toBe("deny")
+      expect(policyEdit.message).toContain("user-owned")
+      await expect(h.toolHooks.get("execute.before")!({
+        tool: "write", callID: "local-policy-forbidden-self-edit",
+        messageID: "local-policy-forbidden-self-edit-message",
+        sessionID: child, agent: "worker",
+        input: { filePath: policyPath, content: "version: 1\\n" },
+      })).rejects.toThrow("user-owned")
+
+      const inScope = { ...edit, effect: "ask" }
+      await evaluate(inScope)
+      expect(inScope.effect).toBe("allow")
+      const outside: any = { ...edit, resources: ["src/not-approved.ts"], effect: "ask" }
+      await evaluate(outside)
+      expect(outside.effect).toBe("deny")
+
+      const mutation = {
+        tool: "write", callID: "local-policy-write", messageID: "local-policy-write-message",
+        sessionID: child, agent: "worker",
+        input: { filePath: join(h.root, "src", "local.ts"), content: "export const value = 1\n" },
+      }
+      await h.toolHooks.get("execute.before")!(mutation)
+      await writeFile(join(h.root, "src", "local.ts"), "export const value = 1\n")
+      await h.toolHooks.get("execute.after")!({ ...mutation, status: "completed", result: "written" })
+
+      const stage: any = {
+        agent: "worker", action: "shell", resources: ["git add -- src/local.ts"],
+        sessionID: child, effect: "ask",
+      }
+      await evaluate(stage)
+      expect(stage.effect).toBe("allow")
+
+      // Revocation is immediate and does not preserve a hidden durable scope.
+      await writeFile(policyPath, "version: 1\n")
+      const revoked: any = { ...edit, effect: "ask" }
+      await evaluate(revoked)
+      expect(revoked.effect).toBe("deny")
+      expect((await h.call("policy_status", {}, "worker", child)).writes).toEqual({})
+
+      const revokedCommand: any = {
+        agent: "worker", action: "shell", resources: ["make test"],
+        sessionID: child, effect: "ask",
+      }
+      await evaluate(revokedCommand)
+      expect(revokedCommand.effect).toBe("deny")
+      await expect(h.toolHooks.get("execute.before")!({
+        ...testExecution,
+        callID: "revoked-make-test",
+        messageID: "revoked-make-test-message",
+      })).rejects.toThrow()
+
+      const deniedStage: any = { ...stage, effect: "ask" }
+      await evaluate(deniedStage)
+      expect(deniedStage.effect).toBe("deny")
+    } finally { h.restore() }
+  })
 
   test("Worker can dispatch without guessed scope and self-elevate discovered files", async () => {
     const h = await harness()
@@ -12402,6 +12568,83 @@ describe("workflow lifecycle recovery", () => {
       const next = await h.call("start", { request: "Continue with the next bounded task." }, "general", "parent")
       expect(next.error).toBeUndefined()
       expect(next.workflowId).not.toBe(h.workflowId)
+    } finally { h.restore() }
+  })
+
+  test("Documenter can write and commit an exact local-policy file in its own runnable step", async () => {
+    const h = await waveLifecycleFixture()
+    try {
+      expect((await h.finish("task:one", "worker")).error).toBeUndefined()
+      expect((await h.finish("review-implementation", "reviewer", "pass")).error).toBeUndefined()
+      const child = await h.attach("knowledge-sync", "documenter", "local-documenter")
+      const evaluate = h.permissionHooks.get("evaluate")!
+      const edit = {
+        agent: "documenter", action: "edit",
+        resources: ["docs/index.md"], sessionID: child, effect: "ask",
+      }
+      await evaluate(edit)
+      expect(edit.effect).toBe("deny")
+
+      const configDir = join(h.root, "opencode-config-home", "opencode")
+      await mkdir(configDir, { recursive: true })
+      const config = join(configDir, ".loom.yaml")
+      await writeFile(config, [
+        "version: 1",
+        "projects:",
+        "  " + JSON.stringify(h.root) + ":",
+        "    writes:",
+        "      documenter: [docs/index.md]",
+        "",
+      ].join("\n"), { mode: 0o600 })
+
+      const permitted = { ...edit, effect: "ask" }
+      await evaluate(permitted)
+      expect(permitted.effect).toBe("allow")
+      await mkdir(join(h.root, "docs"), { recursive: true })
+      const write = {
+        tool: "write", callID: "local-documenter-write",
+        messageID: "local-documenter-write-message",
+        sessionID: child, agent: "documenter",
+        input: { filePath: join(h.root, "docs/index.md"), content: "# Index\n" },
+      }
+      await h.toolHooks.get("execute.before")!(write)
+      await writeFile(join(h.root, "docs/index.md"), "# Index\n")
+      await h.toolHooks.get("execute.after")!({ ...write, status: "completed", result: "written" })
+
+      const stageCommand = "git add -- docs/index.md"
+      const stagePermission: any = {
+        agent: "documenter", action: "shell",
+        resources: [stageCommand], sessionID: child, effect: "ask",
+      }
+      await evaluate(stagePermission)
+      expect(stagePermission.effect).toBe("allow")
+      const stage = {
+        tool: "shell", callID: "local-documenter-stage",
+        messageID: "local-documenter-stage-message",
+        sessionID: child, agent: "documenter",
+        input: { command: stageCommand },
+      }
+      await h.toolHooks.get("execute.before")!(stage)
+      await git(h.root, ["add", "--", "docs/index.md"])
+      await h.toolHooks.get("execute.after")!({ ...stage, status: "completed", result: "staged" })
+
+      const commitCommand = "git -c core.hooksPath=/dev/null commit -m 'docs: local knowledge'"
+      const commitPermission: any = {
+        agent: "documenter", action: "shell",
+        resources: [commitCommand], sessionID: child, effect: "ask",
+      }
+      await evaluate(commitPermission)
+      expect(commitPermission.effect).toBe("allow")
+      const commit = {
+        tool: "shell", callID: "local-documenter-commit",
+        messageID: "local-documenter-commit-message",
+        sessionID: child, agent: "documenter",
+        input: { command: commitCommand },
+      }
+      await h.toolHooks.get("execute.before")!(commit)
+      await git(h.root, ["-c", "core.hooksPath=/dev/null", "commit", "-m", "docs: local knowledge"])
+      await h.toolHooks.get("execute.after")!({ ...commit, status: "completed", result: "committed" })
+      expect((await readFile(join(h.root, "docs/index.md"), "utf8"))).toBe("# Index\n")
     } finally { h.restore() }
   })
 

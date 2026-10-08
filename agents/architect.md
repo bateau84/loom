@@ -2,9 +2,10 @@
 description: Senior systems architect and technical-realization authority for components, interfaces, persistence, lifecycle, protocols, security boundaries, and operations.
 mode: subagent
 permissions:
+  # User-local overrides are decided by Loom. Without the plugin, ask.
   - action: edit
     resource: "*"
-    effect: deny
+    effect: ask
   - action: edit
     resource: "docs/architecture/**"
     effect: allow

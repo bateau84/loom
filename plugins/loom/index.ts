@@ -130,6 +130,7 @@ import {
   isAllowedButlerCommit,
   isAllowedGitCommit,
   isAllowedPackageScriptShell,
+  localPolicyShellAllowed,
   classifyVerificationShell,
   isElevatableVerificationShell,
   elevatedGenerationOutput,
@@ -147,6 +148,7 @@ import {
   shellResourcesAllowed,
   workerShellResourcesAllowed,
 } from "./shell"
+import { readLocalPermissionPolicy, projectShellOverrides, projectWriteOverrides, targetsLocalPermissionPolicy } from "./local-policy"
 import { prepareReportPromotion, publishPreparedReport, reconcilePendingReportPromotion, type ReportPromotionInput, type ReportPromotionRecord } from "./reports"
 import {
   findPaths,
@@ -4468,11 +4470,19 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         }
       }
       const scope = (await ctx.storage.get(scopeKey(workflowId, stepId))) as TaskScope | undefined
-      if (!scope?.write.length || !resourcesWithinScope(outputPaths, scope.write)) {
+      const effectiveWrite = mergeWriteScope(
+        scope?.write ?? [],
+        projectWriteOverrides(
+          (await readLocalPermissionPolicy()).policy,
+          ctx.location.directory,
+          "worker",
+        ),
+      )
+      if (effectiveWrite.length === 0 || !resourcesWithinScope(outputPaths, effectiveWrite)) {
         throw new Error(
           "Generated output is outside the current Loom write scope (" +
           elevatedGenerationOutput(command) +
-          "). Call loom_scope_elevate for the generated files before retrying.",
+          "). Grant the bounded generated paths through local .loom.yaml writes.worker or loom_scope_elevate before retrying.",
         )
       }
     }
@@ -4604,6 +4614,11 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       directMutationPaths: string[],
     ) => {
       if (directMutationPaths.length === 0 || !raw.sessionID) return
+      if ((await Promise.all(directMutationPaths.map((path) =>
+        targetsLocalPermissionPolicy(ctx.location.directory, path),
+      ))).some(Boolean)) {
+        throw new Error("Local Loom permission YAML is user-owned and cannot be edited by agents.")
+      }
 
       const sessionID = String(raw.sessionID)
       const workflowId = (await ctx.storage.get(
@@ -4697,9 +4712,16 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       const effectiveWriteScope =
         agent === "general"
           ? generalGitWriteScope
-          : declaredScope?.write.length
-            ? declaredScope.write
-            : (artifactWriteDefaults[agent] ?? [])
+          : mergeWriteScope(
+              declaredScope?.write.length
+                ? declaredScope.write
+                : (artifactWriteDefaults[agent] ?? []),
+              projectWriteOverrides(
+                (await readLocalPermissionPolicy()).policy,
+                ctx.location.directory,
+                agent,
+              ),
+            )
 
       if (commitMessagePaths.length > 0) {
         if (committableWriteScope(effectiveWriteScope).length === 0) {
@@ -4812,6 +4834,16 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           scopeKey(workflowId, stepId),
         )) as TaskScope | undefined
         if (scope?.write.length) writeScope = scope.write
+      }
+      if (raw.agent !== "general") {
+        writeScope = mergeWriteScope(
+          writeScope,
+          projectWriteOverrides(
+            (await readLocalPermissionPolicy()).policy,
+            ctx.location.directory,
+            String(raw.agent ?? ""),
+          ),
+        )
       }
       writeScope = committableWriteScope(writeScope)
 
@@ -12319,13 +12351,25 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           if (!step) return { content: renderToolOutput({ error: "Step not found." }) }
           const scope = (await ctx.storage.get(scopeKey(workflowId, stepId))) as TaskScope | undefined
           const roleWriteDefault = artifactWriteDefaults[step.agent] ?? []
-          const effectiveWrite = scope?.write.length ? scope.write : roleWriteDefault
+          const policyState = await readLocalPermissionPolicy()
+          const localWrite = projectWriteOverrides(
+            policyState.policy,
+            ctx.location.directory,
+            step.agent,
+          )
+          const effectiveWrite = mergeWriteScope(
+            scope?.write.length ? scope.write : roleWriteDefault,
+            localWrite,
+          )
           const committableWrite = committableWriteScope(effectiveWrite)
           return {
             content: renderToolOutput({
               scope: scope ?? null,
               agent: step.agent,
               roleWriteDefault,
+              localWrite,
+              localPolicyStatus: policyState.status,
+              ...(policyState.error ? { localPolicyError: policyState.error } : {}),
               effectiveWrite,
               committableWrite,
               commitAuthorized: committableWrite.length > 0,
@@ -12333,6 +12377,31 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               scopeSemantics: "starting-expectation-with-runtime-elevation",
             }),
           }
+        },
+      })
+
+      addLoomTool({
+        name: "policy_status",
+        description:
+          "Inspect the optional user-owned ~/.config/opencode/.loom.yaml policy, its validity, and the shell/write exceptions effective for this project. Re-read on each check; no build or restart is needed.",
+        input: {
+          type: "object",
+          properties: {},
+          additionalProperties: false,
+        },
+        options: { namespace: "loom", codemode: false },
+        execute: async () => {
+          const local = await readLocalPermissionPolicy()
+          const project = local.policy?.projects[resolve(ctx.location.directory)]
+          return { content: renderToolOutput({
+            path: local.path,
+            status: local.status,
+            ...(local.error ? { error: local.error } : {}),
+            project: ctx.location.directory,
+            shell: projectShellOverrides(local.policy, ctx.location.directory),
+            writes: project?.writes ?? {},
+            note: "Only commands explicitly listed in this trusted file are locally admitted. Local write paths still require a current runnable workflow step, and hard boundaries remain guarded. An OQ answer is not a runnable mutation step.",
+          }) }
         },
       })
 
@@ -12483,6 +12552,13 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             stepId: string
             paths: string[]
             reason: string
+          }
+          if ((await Promise.all(value.paths.map((path) =>
+            targetsLocalPermissionPolicy(ctx.location.directory, path),
+          ))).some(Boolean)) {
+            return { content: renderToolOutput({
+              error: "Local Loom permission YAML is user-owned; do not use scope elevation to edit it.",
+            }) }
           }
           const reason = value.reason.trim()
           if (!reason) {
@@ -13623,6 +13699,15 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         }
       }
       if (event.action === "edit") {
+        if ((await Promise.all(
+          event.resources.map((resource: string) =>
+            targetsLocalPermissionPolicy(ctx.location.directory, resource),
+          ),
+        )).some(Boolean)) {
+          event.effect = "deny"
+          event.message = "Local Loom permission YAML is user-owned and cannot be edited by agents."
+          return
+        }
         const classified = await Promise.all(
           event.resources.map((resource: string) =>
             classifyScopeTarget(ctx.location.directory, resource),
@@ -13911,9 +13996,16 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             const declaredScope = (await ctx.storage.get(
               scopeKey(workflowId, stepId),
             )) as TaskScope | undefined
-            authorScope = declaredScope?.write.length
-              ? declaredScope.write
-              : (artifactWriteDefaults[agent] ?? [])
+            authorScope = mergeWriteScope(
+              declaredScope?.write.length
+                ? declaredScope.write
+                : (artifactWriteDefaults[agent] ?? []),
+              projectWriteOverrides(
+                (await readLocalPermissionPolicy()).policy,
+                ctx.location.directory,
+                agent,
+              ),
+            )
           } else {
             event.effect = "deny"
             event.message = "Butler authoring is available only to Loom roles."
@@ -14026,9 +14118,16 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             const declaredScope = (await ctx.storage.get(
               scopeKey(workflowId, stepId),
             )) as TaskScope | undefined
-            authorScope = declaredScope?.write.length
-              ? declaredScope.write
-              : (artifactWriteDefaults[agent] ?? [])
+            authorScope = mergeWriteScope(
+              declaredScope?.write.length
+                ? declaredScope.write
+                : (artifactWriteDefaults[agent] ?? []),
+              projectWriteOverrides(
+                (await readLocalPermissionPolicy()).policy,
+                ctx.location.directory,
+                agent,
+              ),
+            )
           }
 
           authorScope = committableWriteScope(authorScope)
@@ -14101,6 +14200,45 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           event.effect = "allow"
           return
         }
+      }
+
+      // A user-owned local rule is a deliberate command exception. Keep the
+      // exact runnable-step gate for governed actors; an OQ answer is not a
+      // substitute for execution authority.
+      if (event.action === "shell" && event.resources.length > 0 &&
+          loomAgents.has(String(event.agent ?? ""))) {
+        const local = await readLocalPermissionPolicy()
+        const shell = projectShellOverrides(local.policy, ctx.location.directory)
+        if (event.resources.every((command: string) => localPolicyShellAllowed(command, shell))) {
+          const workflowId = (await ctx.storage.get(
+            sessionKey(event.sessionID),
+          )) as string | undefined
+          const stepId = (await ctx.storage.get(
+            sessionStepKey(event.sessionID),
+          )) as string | undefined
+          if (!workflowId || !stepId ||
+              !(await exactRunnableStepAttemptBinding(ctx, event.sessionID, workflowId, stepId))) {
+            event.effect = "deny"
+            event.message = "Local shell exceptions require this role's exact current runnable Loom step. An OQ attachment does not authorize executable work."
+            return
+          }
+          try {
+            await assertCurrentStepPlanAdmission(ctx, workflowId, stepId)
+            if (event.agent === "worker") await assertWorkerWorkClaim(ctx, workflowId, stepId)
+          } catch (error) {
+            event.effect = "deny"
+            event.message = error instanceof Error ? error.message : String(error)
+            return
+          }
+          event.effect = "allow"
+          return
+        }
+      }
+
+      if (event.agent === "documenter" && event.action === "shell") {
+        event.effect = "deny"
+        event.message = "Documenter shell command is not admitted. Add a trusted exact command or bounded prefix to the user-owned OpenCode .loom.yaml file; the local shell exception still requires a current runnable step."
+        return
       }
 
       if (event.agent === "diagnostic" && event.action === "shell") {
@@ -14292,18 +14430,26 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         const declaredScope = (await ctx.storage.get(
           scopeKey(workflowId, stepId),
         )) as TaskScope | undefined
-        const effectiveWrite = declaredScope?.write.length
-          ? declaredScope.write
-          : (artifactWriteDefaults[agent] ?? [])
+        const effectiveWrite = mergeWriteScope(
+          declaredScope?.write.length
+            ? declaredScope.write
+            : (artifactWriteDefaults[agent] ?? []),
+          projectWriteOverrides(
+            (await readLocalPermissionPolicy()).policy,
+            ctx.location.directory,
+            agent,
+          ),
+        )
         if (
           effectiveWrite.length === 0 ||
           !resourcesWithinScope(event.resources, effectiveWrite)
         ) {
           event.effect = "deny"
           event.message =
-            "Specialist edit is outside the current Loom write scope. Call loom_scope_elevate for the additional project-local path(s) before retrying. If that tool returns continue=false, return control immediately."
+            "Specialist edit is outside the current Loom write scope. Add the exact path under this project's writes.<role> in ~/.config/opencode/.loom.yaml, or call loom_scope_elevate for this step. A path rule cannot authorize an OQ-only mutation."
           return
         }
+        event.effect = "allow"
         return
       }
 
@@ -14325,10 +14471,28 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         }
 
         const scope = (await ctx.storage.get(scopeKey(workflowId, stepId))) as TaskScope | undefined
-        if (!workerShellResourcesAllowed(event.resources, scope?.write ?? [])) {
+        const effectiveWrite = mergeWriteScope(
+          scope?.write ?? [],
+          projectWriteOverrides(
+            (await readLocalPermissionPolicy()).policy,
+            ctx.location.directory,
+            "worker",
+          ),
+        )
+        if (!workerShellResourcesAllowed(event.resources, effectiveWrite)) {
           event.effect = "deny"
-          event.message =
-            "Worker shell is limited to inspection, build/test/run, safe delivery operations, and writes already inside the current Loom scope. Call loom_scope_elevate before retrying a newly discovered project-local write target."
+          const boundedWrite = event.resources.some((resource: string) =>
+            Boolean(scopedGofmtWriteTargets(resource)?.length ||
+              scopedGitAddTargets(resource)?.length),
+          )
+          const onlyWriteScopeMissing = boundedWrite && event.resources.every((resource: string) =>
+            workerShellResourcesAllowed([resource]) ||
+            Boolean(scopedGofmtWriteTargets(resource)?.length ||
+              scopedGitAddTargets(resource)?.length),
+          )
+          event.message = onlyWriteScopeMissing
+            ? "Worker shell write target is outside the current Loom write scope. Add the path under this project's writes.worker in ~/.config/opencode/.loom.yaml, or use loom_scope_elevate for this step."
+            : "Worker shell command is not admitted by Loom. Add the trusted exact command or bounded subcommand prefix under shell in ~/.config/opencode/.loom.yaml; no Loom code change is needed. Inspect loom_policy_status for file errors. Adding write scope cannot authorize an unsupported command."
           return
         }
 
@@ -14428,15 +14592,24 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         const scope = (await ctx.storage.get(
           scopeKey(workflowId, stepId),
         )) as TaskScope | undefined
+        const effectiveWrite = mergeWriteScope(
+          scope?.write ?? [],
+          projectWriteOverrides(
+            (await readLocalPermissionPolicy()).policy,
+            ctx.location.directory,
+            "worker",
+          ),
+        )
         if (
-          !scope?.write.length ||
-          !resourcesWithinScope(event.resources, scope.write)
+          effectiveWrite.length === 0 ||
+          !resourcesWithinScope(event.resources, effectiveWrite)
         ) {
           event.effect = "deny"
           event.message =
-            "Worker edit is outside the current Loom write scope. Call loom_scope_elevate for the additional project-local path(s) before retrying. If that tool returns continue=false, return control immediately."
+            "Worker edit is outside the current Loom write scope. Add the exact path under this project's writes.worker in ~/.config/opencode/.loom.yaml, or call loom_scope_elevate for this step."
           return
         }
+        event.effect = "allow"
         return
       }
 
@@ -14819,6 +14992,30 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         }
       }
       let elevationRequired = false
+      // A personal command grant is live user authority, not a source-code
+      // allowlist. Bind it to the SAME current executable step at the host
+      // execution boundary; OQ-only and stale attachments cannot use it.
+      let locallyAdmittedShell = false
+      if (shellCommand && raw.sessionID && loomAgents.has(String(raw.agent ?? ""))) {
+        const localPolicy = await readLocalPermissionPolicy()
+        const localRules = projectShellOverrides(localPolicy.policy, ctx.location.directory)
+        if (localPolicyShellAllowed(shellCommand, localRules)) {
+          const sessionID = String(raw.sessionID)
+          const workflowId = await ctx.storage.get(sessionKey(sessionID))
+          const stepId = await ctx.storage.get(sessionStepKey(sessionID))
+          if (typeof workflowId !== "string" || typeof stepId !== "string" ||
+              !(await exactRunnableStepAttemptBinding(ctx, sessionID, workflowId, stepId))) {
+            throw new Error("Local command authorization requires this agent's exact current runnable Loom step.")
+          }
+          await assertCurrentStepPlanAdmission(ctx, workflowId, stepId)
+          if (raw.agent === "worker") await assertWorkerWorkClaim(ctx, workflowId, stepId)
+          // A generator still has declared outputs even with a local command grant.
+          if (generationPaths.length > 0) {
+            await assertProjectGenerationWrite(workflowId, stepId, shellCommand)
+          }
+          locallyAdmittedShell = true
+        }
+      }
       if (shellCommand && raw.sessionID &&
           verificationTestAgents.has(String(raw.agent ?? "")) &&
           (isElevatableVerificationShell(shellCommand) || generationPaths.length > 0)) {
@@ -14828,7 +15025,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           : agent === "diagnostic"
             ? diagnosticExecutionShellResourcesAllowed([shellCommand])
             : Boolean(classifyVerificationShell(shellCommand))
-        if (!allowedWithoutElevation) {
+        if (!allowedWithoutElevation && !locallyAdmittedShell) {
           elevationRequired = true
           if (!observationCallKey(raw)) {
             throw new Error(
@@ -14987,7 +15184,10 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         }
       }
       const key = observationCallKey(raw)
-      const mutationNeedsLock = mutationLockPaths.length > 0 || lockGitIndex
+      // Explicit trusted commands may have side effects even when their
+      // command shape does not declare file targets. Hold the exact step
+      // authority through execution so a concurrent reopen cannot race them.
+      const mutationNeedsLock = mutationLockPaths.length > 0 || lockGitIndex || locallyAdmittedShell
       if (mutationNeedsLock && !key) {
         throw new Error(
           "Write blocked: Loom could not establish a stable tool-call identity for write locking.",
@@ -15417,9 +15617,16 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           const defaultScope =
             artifactWriteDefaults[String(raw.agent)] ?? []
           const writeScope = committableWriteScope(
-            declaredScope?.write.length
-              ? declaredScope.write
-              : defaultScope,
+            mergeWriteScope(
+              declaredScope?.write.length
+                ? declaredScope.write
+                : defaultScope,
+              projectWriteOverrides(
+                (await readLocalPermissionPolicy()).policy,
+                ctx.location.directory,
+                String(raw.agent),
+              ),
+            ),
           )
 
           if (raw.status === "completed") {

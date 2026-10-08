@@ -20,3 +20,6 @@ tui/**
 
 ## ignore AGENTS.md
 AGENTS.md
+
+# User-owned Loom permission overrides (OpenCode configuration root)
+/.loom.yaml

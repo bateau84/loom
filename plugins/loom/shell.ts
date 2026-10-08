@@ -9,6 +9,53 @@ const writeFlags = [
   /(?:^|\s)--delete(?:\s|=|$)/,
 ]
 
+// Exact metadata probes do not mutate project files. Keep this separate
+// from build/test execution: flags such as node -e and bun run are not
+// inspection, even when their arguments look informational.
+const metadataTools = new Set([
+  "bash", "bun", "but", "cargo", "clang", "cmake", "corepack", "deno",
+  "docker", "eslint", "gcc", "gh", "git", "go", "gofmt", "gopls",
+  "helm", "java", "javac", "jq", "just", "kubectl", "make",
+  "node", "nodejs", "npm", "npx", "pip", "pip3", "pnpm", "podman",
+  "prettier", "python", "python3", "rg", "ruff", "rustc", "rustup",
+  "sqlite3", "swag", "tsc", "tsx", "uv", "yarn",
+])
+// Short options are tool-specific: e.g. `bash -v` and `python -v` are
+// execution/verbose modes, not harmless version checks.
+const shortMetadataFlags = new Map<string, readonly string[]>([
+  ["bun", ["-v", "-h"]],
+  ["node", ["-v", "-h"]],
+  ["nodejs", ["-v", "-h"]],
+  ["npm", ["-v"]],
+  ["pnpm", ["-v"]],
+  ["yarn", ["-v"]],
+  ["python", ["-V", "-h"]],
+  ["python3", ["-V", "-h"]],
+  ["cargo", ["-V"]],
+  ["rustc", ["-V"]],
+])
+
+function isReadOnlyMetadataShell(command: string) {
+  const words = parsedCommandWords(command)
+  if (!words) return false
+  if (words.length === 2) {
+    const [tool, flag] = words
+    const versionedPython = /^python3\.[0-9]+$/.test(tool)
+    if (flag === "--version" || flag === "--help") {
+      return metadataTools.has(tool) || versionedPython
+    }
+    if (versionedPython && (flag === "-V" || flag === "-h")) return true
+    if (shortMetadataFlags.get(tool)?.includes(flag)) return true
+    if (tool === "go" && flag === "version") return true
+  }
+  // Shell command lookup is not command execution. Refuse paths and flags,
+  // including the executable's own potentially unsafe options.
+  return words.length === 3 &&
+    words[0] === "command" &&
+    words[1] === "-v" &&
+    /^[A-Za-z][A-Za-z0-9._+-]*$/.test(words[2])
+}
+
 const safePatterns = [
   /^pwd$/,
   /^ls(?:\s|$)/,
@@ -181,6 +228,7 @@ export function isAllowedWorkerShell(command: string) {
   const parsed = parseEnvironmentPrefix(normalized)
   if (!parsed || !parsed.command) return false
   if (!environmentAllowed(parsed.assignments)) return false
+  if (isReadOnlyMetadataShell(parsed.command)) return true
   if (isGitShellCommand(parsed.command)) {
     return isGitInspectionShellCommand(parsed.command)
   }
@@ -246,6 +294,36 @@ function parsedCommandWords(command: string) {
   const parsed = parseEnvironmentPrefix(normalized)
   if (!parsed || !parsed.command || !environmentAllowed(parsed.assignments)) return undefined
   return splitShellWords(parsed.command)
+}
+
+/** Explicit user-owned local shell rule. This grants command admission, not
+ * syscall containment: project scripts or CLIs may still write files.
+ * Git/Butler mutations retain Loom's ownership-aware delivery admission.
+ */
+export function localPolicyShellAllowed(
+  command: string,
+  rules: { exact: readonly string[]; prefixes: readonly string[] },
+) {
+  const normalized = command.trim()
+  const words = parsedCommandWords(normalized)
+  if (!words) return false
+  // Reject Git/Butler regardless of allowed environment prefixes. Repository
+  // mutation has its own provenance/ownership-aware authorization route.
+  if (words[0] === "git" || words[0] === "but") return false
+  // Known launchers can hide a Git operation from the normal repository
+  // authoring classifier. They cannot be local-policy shell exceptions.
+  if (new Set([
+    "env", "command", "exec", "sudo", "doas", "su", "runuser",
+    "nice", "nohup", "time", "setsid", "busybox", "xargs", "parallel",
+  ]).has(words[0])) return false
+  // Do not allow shell evaluation wrappers; a bounded script entrypoint
+  // (e.g. bash scripts/test.sh) is still eligible for explicit user trust.
+  if (new Set(["sh", "bash", "dash", "zsh", "fish"]).has(words[0]) &&
+      words.slice(1).some((word) => /^-[a-z]*c[a-z]*$/.test(word))) return false
+  if (rules.exact.includes(normalized)) return true
+  return rules.prefixes.some((prefix) =>
+    normalized === prefix || normalized.startsWith(prefix + " "),
+  )
 }
 
 // Named package scripts execute project code. The command and environment
@@ -546,6 +624,10 @@ function gitInspectionHasUnsafeOption(args: readonly string[]) {
 }
 
 export function isGitInspectionShellCommand(command: string) {
+  const words = parsedCommandWords(command)
+  if (words?.length === 2 && words[0] === "git" &&
+      ["--version", "version"].includes(words[1])) return true
+
   const parsed = parsedGitCommand(command)
   if (!parsed || gitInspectionHasUnsafeOption(parsed.args)) return false
 
@@ -631,6 +713,8 @@ export function isButlerInspectionShellCommand(command: string) {
   if (!parsed) return false
 
   if (parsed.subcommand === "help" || parsed.subcommand === "diff") return true
+  if (["--version", "-V", "-v"].includes(parsed.subcommand) &&
+      parsed.args.length === 0) return true
 
   if (parsed.subcommand === "status") {
     return parsed.args.every((word) =>
