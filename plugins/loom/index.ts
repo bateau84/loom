@@ -15056,6 +15056,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       const input = raw.input
       const inputDigest = input === undefined ? undefined : await digest(input)
       const eventMatches = Boolean(pending) && inputDigest === pending!.inputDigest
+      let generatorOutputError: string | undefined
 
       if (
         raw.agent === "general" &&
@@ -15201,21 +15202,29 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 pending.generationBefore && pending.generationPaths) {
               const command = (input as { command?: unknown } | undefined)?.command
               if (typeof command !== "string") {
-                throw new Error("Generated-file provenance requires the exact observed command.")
+                generatorOutputError = "Generated-file provenance requires the exact observed command."
+              } else {
+                try {
+                  // Detect output symlink/authority changes during host execution.
+                  // This does not sandbox the host process; it prevents false
+                  // claims of owned outputs and preserves an error receipt.
+                  await assertProjectGenerationWrite(admission.workflowId, admission.stepId, command)
+                } catch (error) {
+                  generatorOutputError = error instanceof Error ? error.message : String(error)
+                }
               }
-              // Detect output symlink/authority changes during host execution.
-              // Host subprocess effects cannot be sandboxed by this check.
-              await assertProjectGenerationWrite(admission.workflowId, admission.stepId, command)
-              const changed: string[] = []
-              for (const path of pending.generationPaths) {
-                const after = await worktreeFingerprint(ctx.location.directory, path)
-                if (after !== pending.generationBefore[path] &&
-                    resourcesWithinScope([path], writeScope)) changed.push(path)
-              }
-              if (changed.length > 0) {
-                await recordGitSessionOwnership(
-                  ctx, sessionID, ctx.location.directory, changed,
-                )
+              if (!generatorOutputError) {
+                const changed: string[] = []
+                for (const path of pending.generationPaths) {
+                  const after = await worktreeFingerprint(ctx.location.directory, path)
+                  if (after !== pending.generationBefore[path] &&
+                      resourcesWithinScope([path], writeScope)) changed.push(path)
+                }
+                if (changed.length > 0) {
+                  await recordGitSessionOwnership(
+                    ctx, sessionID, ctx.location.directory, changed,
+                  )
+                }
               }
             }
             if (raw.status === "completed") {
@@ -15303,7 +15312,9 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       const summary = pending?.summary ?? safeInputSummary(tool, input)
       const returnedResult = raw.result ?? raw.output
       const reportedError =
-        raw.status === "completed" ? safeResultError(returnedResult) : undefined
+        raw.status === "completed"
+          ? generatorOutputError ?? safeResultError(returnedResult)
+          : undefined
       const resultSummary =
         raw.status === "completed" && !reportedError ? safeResultSummary(tool, returnedResult) : {}
       let reportPromotion: EvidenceObservation["reportPromotion"]
