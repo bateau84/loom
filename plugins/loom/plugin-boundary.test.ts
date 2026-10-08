@@ -468,6 +468,7 @@ describe("Loom registered plugin boundary", () => {
     let roster: Array<{ name: string; description?: string; mode?: string; model?: string }> = [
       { name: "general", description: "Primary coordinator", mode: "primary", model: "secret-model" },
       { name: "planner", description: "Plans bounded work", mode: "subagent" },
+      { name: "ordinary-helper", description: "Host agent without Loom advice", mode: "subagent" },
     ];
     let calls = 0;
     let responseDirectoryOverride: string | undefined;
@@ -485,6 +486,7 @@ describe("Loom registered plugin boundary", () => {
         agents: [
           { name: "general", description: "Primary coordinator" },
           { name: "planner", description: "Plans bounded work" },
+          { name: "ordinary-helper", description: "Host agent without Loom advice" },
         ],
         provenance: {
           plugin: "loom",
@@ -496,8 +498,17 @@ describe("Loom registered plugin boundary", () => {
       expect(first.agents).toEqual([
         { name: "general", description: "Primary coordinator" },
         { name: "planner", description: "Plans bounded work" },
+        { name: "ordinary-helper", description: "Host agent without Loom advice" },
       ]);
-      expect(Object.keys(first).sort()).toEqual(["agents", "provenance", "truncated"]);
+      expect(first.planningInsights).toMatchObject({
+        advisoryOnly: true,
+        source: "loom-plugin",
+        hints: [
+          { name: "general", nativeWork: expect.any(String), caution: expect.any(String) },
+          { name: "planner", nativeWork: expect.any(String), caution: expect.stringContaining("not supported") },
+        ],
+      });
+      expect(Object.keys(first).sort()).toEqual(["agents", "planningInsights", "provenance", "truncated"]);
       expect(JSON.stringify(first)).not.toContain("secret-model");
       expect(calls).toBe(1);
       expect(requestedLocations).toEqual([h.runtime.canonicalLocation]);
@@ -505,7 +516,18 @@ describe("Loom registered plugin boundary", () => {
       roster = [{ name: "general", description: "Updated live description" }];
       const second = await h.call("roster", {}, "planner", "roster-planner");
       expect(second.agents).toEqual([{ name: "general", description: "Updated live description" }]);
+      expect(second.planningInsights.hints.map((hint: { name: string }) => hint.name)).toEqual(["general"]);
       expect(calls).toBe(2);
+
+      roster = [{ name: "brainstorm", description: "New live advisory agent" }, { name: "ordinary-helper" }];
+      const refreshed = await h.call("roster", {}, "planner", "roster-refreshed");
+      expect(refreshed.agents).toEqual([
+        { name: "brainstorm", description: "New live advisory agent" },
+        { name: "ordinary-helper", description: "" },
+      ]);
+      expect(refreshed.planningInsights.hints).toHaveLength(1);
+      expect(refreshed.planningInsights.hints[0].name).toBe("brainstorm");
+      expect(refreshed.planningInsights.hints[0].caution).toContain("planned Brainstorm Tasks are not supported");
 
       roster = Array.from({ length: 205 }, (_, index) => ({
         name: `${index}-${"n".repeat(200)}`,
@@ -516,12 +538,15 @@ describe("Loom registered plugin boundary", () => {
       expect(bounded.truncated).toBe(true);
       expect(bounded.agents[0].name).toHaveLength(128);
       expect(bounded.agents[0].description).toHaveLength(2_000);
+      expect(bounded.planningInsights.hints).toEqual([]);
 
       responseDirectoryOverride = "/different-worktree";
       await expect(h.call("roster", {}, "planner", "roster-wrong-worktree")).rejects.toThrow(/different worktree/);
-      expect(calls).toBe(4);
-      await expect(h.call("roster", {}, "worker", "roster-worker")).rejects.toThrow(/General and Planner/);
-      expect(calls).toBe(4);
+      expect(calls).toBe(5);
+      for (const role of ["worker", "brainstorm", "designer", "specifier", "architect", "reviewer", "critic", "acceptance", "documenter", "research", "diagnostic", "ordinary-helper"]) {
+        await expect(h.call("roster", {}, role, `roster-${role}`)).rejects.toThrow(/General and Planner/);
+      }
+      expect(calls).toBe(5);
     } finally {
       h.restore();
     }

@@ -100,6 +100,8 @@ For conversational work, answer the user's actual question. Do not manufacture w
 
 ## Professional routing
 
+Use `loom_roster` when selecting recipients: inspect current host names/descriptions and the separate Loom planning advice. Unlisted agents remain visible; advice is neither authority nor permission nor proof of a supported Task/OQ path. Validate the exact path through Loom rather than inferring it from a description.
+
 Route unresolved work to the professional who owns it:
 
 - **Designer** — human-facing journeys, interaction, visible state, recovery experience, accessibility.
