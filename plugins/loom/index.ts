@@ -14455,6 +14455,27 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         typeof (raw.input as any).command === "string"
           ? String((raw.input as any).command)
           : undefined
+      let commandElevation: CommandElevation | undefined
+      if (shellCommand && raw.sessionID &&
+          verificationTestAgents.has(String(raw.agent ?? "")) &&
+          isElevatableVerificationShell(shellCommand)) {
+        const agent = String(raw.agent)
+        const allowedWithoutElevation = agent === "worker"
+          ? workerShellResourcesAllowed([shellCommand])
+          : agent === "diagnostic"
+            ? diagnosticExecutionShellResourcesAllowed([shellCommand])
+            : Boolean(classifyVerificationShell(shellCommand))
+        if (!allowedWithoutElevation) {
+          commandElevation = await consumeCommandElevation(
+            String(raw.sessionID), agent, shellCommand,
+          )
+          if (!commandElevation) {
+            throw new Error(
+              "Test execution blocked: this command has no unconsumed exact loom_command_elevate grant.",
+            )
+          }
+        }
+      }
       const butlerSelection =
         shellCommand && isAllowedButlerCommit(shellCommand)
           ? await resolveButlerCommitSelection(
@@ -14621,7 +14642,18 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         ambiguous: boolean; ready: boolean; inputDigest?: string
         summary?: ReturnType<typeof safeInputSummary>; admission?: EvidenceAdmission
         gitStageBefore?: GitStageSnapshot
-      } = { ambiguous: false, ready: false }
+        startedAtMs?: number; startedAt?: string
+        commandElevationId?: string
+        verification?: ReturnType<typeof classifyVerificationShell>
+      } = {
+        ambiguous: false, ready: false,
+        ...(shellCommand ? {
+          startedAtMs: Date.now(),
+          startedAt: new Date().toISOString(),
+          verification: classifyVerificationShell(shellCommand),
+          ...(commandElevation ? { commandElevationId: commandElevation.id } : {}),
+        } : {}),
+      }
       pendingObservations.set(key, pending)
       if (pendingObservations.size > 1024) pendingObservations.delete(pendingObservations.keys().next().value!)
       pending.admission = await captureEvidenceAdmission(ctx.storage as any, runtime, String(raw.sessionID), String(raw.agent ?? ""))
