@@ -10422,6 +10422,33 @@ test("one-use command elevation is step-bound, audited and linked to shell evide
     expect((await permission("just test")).effect).toBe("deny")
     expect((await permission("make test")).effect).toBe("allow")
     expect(secondPending.granted).toBe(true)
+
+    const privateReason = await h.call("command_elevate", {
+      workflowId: h.workflowId, stepId: "task:one",
+      command: "make test", reason: "token=do-not-store Retry the unit tests.",
+    }, "worker", worker)
+    expect(privateReason.granted).toBe(true)
+    const redacted = await h.durableStorage.get(
+      "command-elevation/" + privateReason.grantId,
+    ) as any
+    expect(redacted.reason).toContain("[REDACTED]")
+    expect(redacted.reason).not.toContain("do-not-store")
+
+    const unclassified = {
+      tool: "shell", callID: "verification-command-redaction",
+      sessionID: worker, agent: "worker",
+      input: { command: "TOKEN=do-not-store go test ./..." },
+    }
+    await h.toolHooks.get("execute.before")!(unclassified)
+    await h.toolHooks.get("execute.after")!({
+      ...unclassified, status: "completed", result: "tests passed",
+    })
+    const traced = (await h.call("evidence_observations",
+      { detail: true }, "worker", worker)).observations
+      .find((observation: any) => observation.commandTrace?.runner === "go" &&
+        observation.commandTrace?.access === "unclassified")
+    expect(traced).toBeDefined()
+    expect(JSON.stringify(traced.commandTrace)).not.toContain("do-not-store")
   } finally {
     h.restore()
   }
