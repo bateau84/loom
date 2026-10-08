@@ -49,6 +49,18 @@ The paired bridge calls the generic runner's pinned, private
 `runner.eval_cli._run_lane` scheduler; it does **not** reimplement scheduling.
 A supported public multi-pair scheduling API is remaining compatibility debt.
 
+**Normal-eval judge delivery:** On pinned runner `1262ac8`, the OpenCode
+transport reads but does not forward `InvocationSpec.system`; see
+[runner #88](https://github.com/bateau84/opencode-eval-runner/issues/88).
+To make the judge contract effective without changing the stock OpenCode
+runtime, Loom installs `.opencode/agents/eval-judge.md` in each fresh
+**isolated judge workspace** and selects `agent=eval-judge` explicitly.
+That native agent carries the six-field strict JSON schema and denies tools,
+like the already validated paired-ablation judge. Copilot still receives
+`system=JUDGE_SYSTEM` through its supported transport. The verdict parser
+**remains fail closed**: shorthand model responses are NON-EVIDENCE.
+Do not relax the judge's schema to make an unsuccessful run appear green.
+
 ## Runtime evidence is authoritative
 
 For runtime facts, the only authority is
