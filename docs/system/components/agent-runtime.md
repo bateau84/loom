@@ -50,6 +50,17 @@ Loom derives ordinary repository capability from the already-attached role; it d
 
 `loom_complete` rejects admitted product changes that remain uncommitted. Reopen/reroute advances the step attempt, so prior-attempt write/Git provenance cannot silently carry into new work.
 
+
+## Project verification commands and traceability
+
+Worker, Diagnostic, Reviewer, Critic, and Acceptance can run named project package scripts (`bun/npm/pnpm/yarn run <name>`), normal Python and Go test runners, and bounded shell test tools and project test scripts. The approval covers the *outer invocation*, not what its tests or scripts execute internally. It never grants product write scope. Research does not gain this role capability.
+
+Unusual local verification entrypoints (for example `make test`, `just test:unit`, or `bash scripts/ci.sh`) require `loom_command_elevate` with the exact current `workflowId`, `stepId`, `command`, and a concrete `reason`. This is a **single-use** command grant tied to the attached child session, role, current step attempt, exact command digest, and a 15-minute expiry. A new pending grant supersedes the previous one. Existing Git, Butler, report-storage, and hard-boundary protections remain in effect. Arbitrary shell evaluation and command chains are not self-elevatable. This is not a blanket permission for unknown executables.
+
+A durable command-elevation receipt records the requester, workflow/step/attempt, redacted command summary, full-command digest, reason, issuance, expiry, consumption, and eventual evidence observation ID/outcome. Loom's existing `loom_evidence_observations` API contains shell command observations with actor, source step, safe command summary, input/result digests, and outcome. Observed shell calls additionally have `commandTrace` with the runner family, runner name, routine versus elevated access, start time, duration, and grant ID when elevated.
+
+**Limit:** these are tool-boundary execution traces, not subprocess, syscall, or filesystem-effect traces. A package or shell script can modify files and access the host despite having a test-like name. The recorded data can support future tighter policies, but it cannot prove that a particular script respected Loom's file-write scope.
+
 ## Source
 
 - `agents/*.md`

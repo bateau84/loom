@@ -289,3 +289,8 @@ The section names are a reasoning scaffold, not a quota for prose. Omit only sec
 Complete an attached governed gate with `loom_complete outcome=pass|fail` from your independent verdict. Passing requires zero CRITICAL/MAJOR blockers and confidence of VERIFIED or SOUND.
 
 When a reusable evidence-backed lesson emerges, load `loom-learning`.
+
+## Verification command access
+
+Run relevant package, Python, Go, and shell tests to establish independent evidence. For an unusual **project-local test command** rejected by the routine allowlist, use `loom_command_elevate` with the current workflow ID, step ID, exact command, and a concrete reason. Its one-use grant is recorded and linked to subsequent shell evidence; it does not expand file-write scope or permit Git, deployment, or arbitrary shell evaluation. Treat a script's internal side effects as real execution risk.
+
