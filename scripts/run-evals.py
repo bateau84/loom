@@ -19,6 +19,7 @@ LEGACY_RUNNER = ROOT / "scripts" / "run-evals-legacy.py"
 PAIRED_RUNNER = ROOT / "scripts" / "run-skill-ablation.py"
 PROFILE_REFERENCE = "loom_eval_profile:PROFILE"
 FORWARDED_ENV_NAMES = "LOOM_EVAL_FORWARD_ENV_NAMES"
+SUITE_PATHS_ENV = "LOOM_EVAL_SUITE_PATHS"
 _LEGACY_MODULE: ModuleType | None = None
 
 
@@ -198,6 +199,15 @@ def _generic_env(args: argparse.Namespace) -> dict[str, str]:
         env[FORWARDED_ENV_NAMES] = json.dumps(env_names, separators=(",", ":"))
     else:
         env.pop(FORWARDED_ENV_NAMES, None)
+    # Only the explicitly selected suite files may replace default discovery.
+    # Drop a stale parent-process override when no --suite option was provided.
+    if args.suite:
+        env[SUITE_PATHS_ENV] = json.dumps(
+            [str(Path(value).expanduser().resolve()) for value in args.suite],
+            separators=(",", ":"),
+        )
+    else:
+        env.pop(SUITE_PATHS_ENV, None)
     return env
 
 
@@ -287,7 +297,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             incompatible = [str(case["id"]) for case in normal if case.get("skill")]
             if incompatible:
                 raise CompatibilityError("native skill-routing eval cases require --target-transport opencode: " + ", ".join(incompatible))
+            runtime_cases = [str(case["id"]) for case in normal if case["execution"] == "runtime"]
+            if runtime_cases:
+                raise CompatibilityError("Loom runtime eval cases require --target-transport opencode: " + ", ".join(runtime_cases))
         run_root = Path(args.artifact_dir).expanduser().resolve() if args.artifact_dir else ROOT / ".loom-evals" / uuid.uuid4().hex
+        if args.artifact_dir and run_root.exists():
+            if not run_root.is_dir() or any(run_root.iterdir()):
+                raise CompatibilityError("--artifact-dir must name a new or empty directory")
         split = bool(normal and ablation)
         status = 0
         if normal:
