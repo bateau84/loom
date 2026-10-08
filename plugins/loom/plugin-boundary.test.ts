@@ -10262,6 +10262,7 @@ test("package scripts are admitted for governed Reviewer, Critic, and Acceptance
     }, "critic", criticSession)).attached).toBe(true)
     const evaluate = crit.permissionHooks.get("evaluate")!
     await roleScript(evaluate, "critic", criticSession, "npm run test:unit", "allow")
+    await roleScript(evaluate, "critic", criticSession, "bun test", "allow")
     await roleScript(evaluate, "critic", criticSession, "python3 -m unittest discover", "allow")
     await roleScript(evaluate, "critic", criticSession, "go test ./...", "allow")
     await roleScript(evaluate, "critic", criticSession, "bash scripts/test.sh", "allow")
@@ -10282,6 +10283,7 @@ test("package scripts are admitted for governed Reviewer, Critic, and Acceptance
     await h.finish("task:one", "worker")
     const reviewer = await h.attach("review-implementation", "reviewer")
     await roleScript(evaluate, "reviewer", reviewer, "bun run test:unit", "allow")
+    await roleScript(evaluate, "reviewer", reviewer, "npm test", "allow")
     await roleScript(evaluate, "reviewer", reviewer, "pytest -q", "allow")
     await roleScript(evaluate, "reviewer", reviewer, "go vet ./...", "allow")
     await roleScript(evaluate, "reviewer", reviewer, "bats tests/unit.bats", "allow")
@@ -10299,6 +10301,7 @@ test("package scripts are admitted for governed Reviewer, Critic, and Acceptance
     expect((await h.finishKnowledge()).error).toBeUndefined()
     const acceptance = await h.attach("product-acceptance", "acceptance")
     await roleScript(evaluate, "acceptance", acceptance, "pnpm run test:e2e", "allow")
+    await roleScript(evaluate, "acceptance", acceptance, "yarn test", "allow")
     await roleScript(evaluate, "acceptance", acceptance, "python -m pytest", "allow")
     await roleScript(evaluate, "acceptance", acceptance, "go test -race ./...", "allow")
     await roleScript(evaluate, "acceptance", acceptance, "sh tests/integration.sh", "allow")

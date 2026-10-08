@@ -285,7 +285,10 @@ export function classifyVerificationShell(command: string): VerificationShellCom
   const words = parsedCommandWords(command)
   if (!words?.length) return undefined
   const [runner, action, target] = words
-  if (isAllowedPackageScriptShell(command)) return { family: "package", runner }
+  if (isAllowedPackageScriptShell(command) ||
+      (["bun", "npm", "pnpm", "yarn"].includes(runner) && action === "test")) {
+    return { family: "package", runner }
+  }
 
   if (runner === "go") {
     if (["test", "vet"].includes(action) ||

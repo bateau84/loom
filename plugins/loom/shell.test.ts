@@ -218,6 +218,12 @@ describe("Loom Worker shell policy", () => {
 
   test("admits Python, Go, and shell testing for the verification roles", () => {
     const groups = [
+      ["package", [
+        "bun test ./plugins/loom/shell.test.ts",
+        "npm test",
+        "pnpm test",
+        "yarn test",
+      ]],
       ["python", [
         "python -m unittest discover -s tests",
         "python3 -m pytest tests -q",
