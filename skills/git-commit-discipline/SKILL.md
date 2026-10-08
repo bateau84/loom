@@ -24,6 +24,8 @@ When the `but` skill is available **and the active runtime permits Butler writes
 
 Do not duplicate this skill's policy inside Butler. A successful `but` command proves only that the repository mutation succeeded; it does not prove the resulting commits are coherent or well explained.
 
+**Worktree boundary:** When Loom is already rooted in a linked worktree, scoped `git add` and hookless `git commit` are normal Git operations; never request direct scope to external `.git` gitdirs, `objects` or `refs` to perform them. Creating an isolated sibling worktree is different: an attached Worker with committable write scope uses `loom_git_worktree_create` for a **fresh** branch under `<repo>-wt/<name>`; start a distinct Loom/OpenCode session rooted in the new worktree for file changes and commits. Neither the create tool nor the commit command gives permission to edit raw Git internals or unrelated external directories.
+
 **Governed Loom runtime:** commit authority follows the current effective durable project write scope, including paths added through `loom_scope_elevate`; it is not restricted to a fixed set of roles. Prefer an explicit untargeted whole-file-ID `but commit -m "..." <file-id>...` when GitButler is installed. Loom maps each file ID back to exactly one repository file and revalidates the same task/session ownership before the commit executes. Hunk IDs remain unsupported inside governed Loom execution because Loom's provenance model admits whole-file bytes. The bounded raw-Git forms below remain the fallback when GitButler is unavailable. Explicit Butler branch/history targeting and broader history mutations remain denied until Loom has authority/provenance rules for that history surface.
 
 
