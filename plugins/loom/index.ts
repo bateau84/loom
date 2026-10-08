@@ -5547,7 +5547,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 return {
                   content: renderToolOutput({
                     error:
-                      "Diagnostic sandbox belongs to an older/different Diagnostic step or OQ attempt. Destroy it and attach to current diagnosis before further experiments.",
+                      "Diagnostic sandbox belongs to an older or different step attempt (or Diagnostic OQ attempt). Destroy it and attach to current diagnosis before further experiments.",
                   }),
                 }
               }
@@ -5606,7 +5606,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 return {
                   content: renderToolOutput({
                     error:
-                      "Diagnostic sandbox belongs to an older/different Diagnostic step or OQ attempt. Historical sandbox evidence cannot be rebound into the current diagnosis.",
+                      "Diagnostic sandbox belongs to an older or different step attempt (or Diagnostic OQ attempt). Historical sandbox evidence cannot be rebound into the current diagnosis.",
                   }),
                 }
               }
