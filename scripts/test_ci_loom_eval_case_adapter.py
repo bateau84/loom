@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import sys
 import tempfile
 import types
 import unittest
+from unittest import mock
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -193,6 +195,35 @@ class LoomCaseWorkspaceAdapterTests(unittest.TestCase):
         self.assertFalse(runtime.metadata["default_enabled"])
         self.assertFalse(cases[2].metadata["default_enabled"])
         self.assertEqual(runtime.project_data["skill"], "sample")
+
+    def test_explicit_suite_paths_override_default_corpus_including_external_file(self):
+        write_suite(self.root, "default", [base_case("DEFAULT-01", "role-decision")])
+        with tempfile.TemporaryDirectory(prefix="loom-external-eval-suite-") as outside:
+            suite = Path(outside) / "custom.json"
+            suite.write_text(json.dumps({
+                "version": 1, "name": "external", "default": False,
+                "cases": [base_case("CUSTOM-01", "conversation-response")],
+            }), encoding="utf-8")
+            with mock.patch.dict(os.environ, {
+                "LOOM_EVAL_SUITE_PATHS": json.dumps([str(suite)]),
+            }):
+                cases = self.adapter.discover_cases()
+        self.assertEqual([case.id for case in cases], ["CUSTOM-01"])
+        self.assertEqual(cases[0].metadata["source_suite"], "external")
+        self.assertEqual(cases[0].metadata["source_path"], str(suite))
+        # No --suite means the default corpus is restored.
+        with mock.patch.dict(os.environ, {"LOOM_EVAL_SUITE_PATHS": ""}):
+            with self.assertRaisesRegex(ValueError, "nonempty JSON path array"):
+                self.adapter.discover_cases()
+
+    def test_invalid_suite_bridge_fails_closed_without_fallback(self):
+        write_suite(self.root, "default", [base_case("DEFAULT-01", "role-decision")])
+        for invalid in ("not JSON", "[]", '{"unexpected": true}', '["/missing/suite.json"]'):
+            with self.subTest(value=invalid), mock.patch.dict(
+                os.environ, {"LOOM_EVAL_SUITE_PATHS": invalid}
+            ):
+                with self.assertRaises(ValueError):
+                    self.adapter.discover_cases()
 
     def test_role_decision_prepare_builds_isolated_read_only_target_and_cleans_up(self):
         write_suite(
