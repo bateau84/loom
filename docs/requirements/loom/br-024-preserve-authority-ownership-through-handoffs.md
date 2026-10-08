@@ -44,4 +44,4 @@ Inspect roster-discovery and routing observations plus representative plans and 
 
 ## Current implementation context
 
-Current supported role-safe Plan execution exists and has been reviewed. Universal Task routing across Loom subagents and roster/planning-insight discovery are not implemented. This requirement specifies the behavior; it does not claim those gaps are already closed.
+Current supported role-safe Plan execution exists and has been reviewed. General and Planner can use bounded `loom_roster` discovery of current host names/descriptions and separate plugin-owned advisory planning insights; provider-free mock-host tests cover that increment. Brainstorm advisory OQs are supported. Universal Task routing remains incomplete: planned Brainstorm, Planner, Critic and Acceptance Tasks are unsupported. Actual installed-host behavior and full Objective acceptance remain unproven; this requirement does not claim its complete acceptance criteria are satisfied.
