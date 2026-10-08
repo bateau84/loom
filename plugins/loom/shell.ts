@@ -9,6 +9,33 @@ const writeFlags = [
   /(?:^|\s)--delete(?:\s|=|$)/,
 ]
 
+// Exact metadata probes do not mutate project files. Keep this separate
+// from build/test execution: flags such as node -e and bun run are not
+// inspection, even when their arguments look informational.
+const metadataTools = new Set([
+  "bash", "bun", "cargo", "clang", "cmake", "corepack", "deno",
+  "docker", "eslint", "gcc", "gh", "git", "go", "gofmt", "gopls",
+  "helm", "java", "javac", "jq", "just", "kubectl", "make",
+  "node", "nodejs", "npm", "npx", "pip", "pip3", "pnpm", "podman",
+  "prettier", "python", "python3", "rg", "ruff", "rustc", "rustup",
+  "sqlite3", "swag", "tsc", "tsx", "uv", "yarn",
+])
+const metadataFlags = new Set(["--version", "-v", "-V", "--help", "-h"])
+
+function isReadOnlyMetadataShell(command: string) {
+  const words = parsedCommandWords(command)
+  if (!words) return false
+  if (words.length === 2 && metadataFlags.has(words[1])) {
+    return metadataTools.has(words[0]) || /^python3\\.[0-9]+$/.test(words[0])
+  }
+  // Shell command lookup is not command execution. Refuse paths and flags,
+  // including the executable's own potentially unsafe options.
+  return words.length === 3 &&
+    words[0] === "command" &&
+    words[1] === "-v" &&
+    /^[A-Za-z][A-Za-z0-9._+-]*$/.test(words[2])
+}
+
 const safePatterns = [
   /^pwd$/,
   /^ls(?:\s|$)/,
@@ -181,6 +208,7 @@ export function isAllowedWorkerShell(command: string) {
   const parsed = parseEnvironmentPrefix(normalized)
   if (!parsed || !parsed.command) return false
   if (!environmentAllowed(parsed.assignments)) return false
+  if (isReadOnlyMetadataShell(parsed.command)) return true
   if (isGitShellCommand(parsed.command)) {
     return isGitInspectionShellCommand(parsed.command)
   }
