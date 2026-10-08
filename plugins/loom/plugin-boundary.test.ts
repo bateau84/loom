@@ -4793,6 +4793,7 @@ Verdict: FAIL
         "    writes:",
         "      worker:",
         "        - src/local.ts",
+        "        - opencode-config-home/**",
         "      documenter:",
         "        - docs/index.md",
         "",
@@ -4801,7 +4802,7 @@ Verdict: FAIL
 
       const status = await h.call("policy_status", {}, "worker", child)
       expect(status.status).toBe("loaded")
-      expect(status.writes.worker).toEqual(["src/local.ts"])
+      expect(status.writes.worker).toEqual(["src/local.ts", "opencode-config-home/**"])
       expect((await h.call("scope_status", {
         workflowId, stepId: "worker",
       }, "worker", child)).effectiveWrite).toContain("src/local.ts")
@@ -4838,6 +4839,21 @@ Verdict: FAIL
       }
       await evaluate(unsafe)
       expect(unsafe.effect).toBe("deny")
+
+      const policyEdit: any = {
+        agent: "worker", action: "edit",
+        resources: ["opencode-config-home/opencode/.loom.yaml"],
+        sessionID: child, effect: "ask",
+      }
+      await evaluate(policyEdit)
+      expect(policyEdit.effect).toBe("deny")
+      expect(policyEdit.message).toContain("user-owned")
+      await expect(h.toolHooks.get("execute.before")!({
+        tool: "write", callID: "local-policy-forbidden-self-edit",
+        messageID: "local-policy-forbidden-self-edit-message",
+        sessionID: child, agent: "worker",
+        input: { filePath: policyPath, content: "version: 1\\n" },
+      })).rejects.toThrow("user-owned")
 
       const inScope = { ...edit, effect: "ask" }
       await evaluate(inScope)
