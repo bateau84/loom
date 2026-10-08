@@ -95,9 +95,11 @@ async function harness(
 
   const previousState = process.env.XDG_STATE_HOME
   const previousRuntime = process.env.XDG_RUNTIME_DIR
+  const previousConfig = process.env.XDG_CONFIG_HOME
   const previousOutput = process.env.LOOM_TOOL_OUTPUT
   process.env.XDG_STATE_HOME = join(root, "state")
   process.env.XDG_RUNTIME_DIR = join(root, "runtime")
+  process.env.XDG_CONFIG_HOME = join(root, "opencode-config-home")
   process.env.LOOM_TOOL_OUTPUT = "json"
 
   const registered = new Map<string, RegisteredTool>()
@@ -237,6 +239,8 @@ async function harness(
     else process.env.XDG_STATE_HOME = previousState
     if (previousRuntime === undefined) delete process.env.XDG_RUNTIME_DIR
     else process.env.XDG_RUNTIME_DIR = previousRuntime
+    if (previousConfig === undefined) delete process.env.XDG_CONFIG_HOME
+    else process.env.XDG_CONFIG_HOME = previousConfig
     if (previousOutput === undefined) delete process.env.LOOM_TOOL_OUTPUT
     else process.env.LOOM_TOOL_OUTPUT = previousOutput
   }
