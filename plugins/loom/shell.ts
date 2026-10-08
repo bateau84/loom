@@ -379,19 +379,31 @@ export function isElevatableVerificationShell(command: string) {
  * can use a one-shot elevation. Future generators need their own shape parser,
  * rather than an arbitrary-executable fallback.
  */
-export function elevatedGenerationOutput(command: string): string | undefined {
+type GenerationCommand = { output?: string; error?: string }
+
+/**
+ * An exact CLI shape, not a sandbox. Keep the admission decision and its
+ * rejection reason in one parser so the agent can correct a real typo
+ * without trying shell-quoting variations.
+ */
+function parseGenerationCommand(command: string): GenerationCommand | undefined {
   const words = parsedCommandWords(command)
-  if (!words || words[0] !== "swag" || words[1] !== "init") return undefined
+  if (!words) {
+    return /^\s*swag\s+init(?:\s|$)/.test(command)
+      ? { error: "swag init contains unsafe shell syntax or an unsupported environment prefix." }
+      : undefined
+  }
+  if (words[0] !== "swag" || words[1] !== "init") return undefined
 
   const booleanFlags = new Set([
     "--parseDependency", "--parseInternal", "--requiredByDefault",
     "--parseVendor", "--parseGoList", "--parseFuncBody", "--generatedTime",
-    "--quiet",
+    "--quiet", "-q", "--pd",
   ])
   const valueFlags = new Set([
     "-g", "--generalInfo", "-d", "--dir", "-o", "--output",
-    "-t", "--tags", "--outputTypes", "-ot", "--instanceName",
-    "--parseDepth", "--parseDependencyLevel", "--codeExampleFiles",
+    "-t", "--tags", "--outputTypes", "--ot", "-ot", "--instanceName",
+    "--parseDepth", "--parseDependencyLevel", "--pdl", "--codeExampleFiles",
   ])
   let output: string | undefined
   for (let index = 2; index < words.length; index += 1) {
@@ -399,36 +411,71 @@ export function elevatedGenerationOutput(command: string): string | undefined {
     const separator = word.indexOf("=")
     const flag = separator < 0 ? word : word.slice(0, separator)
     if (booleanFlags.has(flag)) {
-      if (separator >= 0) return undefined
+      if (separator >= 0) {
+        return { error: "Boolean swag init option " + flag + " must be a standalone flag." }
+      }
       continue
     }
-    if (!valueFlags.has(flag)) return undefined
+    if (!valueFlags.has(flag)) {
+      return { error: "Unsupported swag init option or argument: " + flag + "." }
+    }
     const value = separator >= 0 ? word.slice(separator + 1) : words[++index]
-    if (!value || value.startsWith("-")) return undefined
+    if (!value || value.startsWith("-")) {
+      return { error: "Missing or invalid value for swag init option " + flag + "." }
+    }
     if (flag === "-o" || flag === "--output") {
-      if (output || !safeProjectRelativePath(value) ||
-          !/^[A-Za-z0-9_./-]+$/.test(value)) return undefined
+      if (output) return { error: "swag init accepts only one explicit output directory." }
+      if (!safeProjectRelativePath(value) || !/^[A-Za-z0-9_./-]+$/.test(value)) {
+        return { error: "swag init output must be a safe project-relative directory without '..' or shell-special characters." }
+      }
       output = value.replace(/^\.\//, "").replace(/\/$/, "")
     } else if (flag === "-g" || flag === "--generalInfo") {
-      if (!safeProjectRelativePath(value) || !value.endsWith(".go")) return undefined
+      if (!safeProjectRelativePath(value) || !value.endsWith(".go")) {
+        return { error: "swag init general-info input must be a project-relative .go path." }
+      }
     } else if (flag === "-d" || flag === "--dir") {
-      if (!value.split(",").every((part) => safeProjectRelativePath(part))) return undefined
+      if (!value.split(",").every((part) => safeProjectRelativePath(part))) {
+        return { error: "swag init source directories must be project-relative." }
+      }
     } else if (flag === "--codeExampleFiles") {
-      if (!safeProjectRelativePath(value)) return undefined
-    } else if (flag === "--outputTypes" || flag === "-ot") {
-      if (!value.split(",").every((type) => ["go", "json", "yaml"].includes(type))) return undefined
+      if (!safeProjectRelativePath(value)) {
+        return { error: "swag init code example files must be project-relative." }
+      }
+    } else if (["--outputTypes", "--ot", "-ot"].includes(flag)) {
+      if (!value.split(",").every((type) => ["go", "json", "yaml"].includes(type))) {
+        return { error: "swag init output types must be go, json or yaml." }
+      }
     } else if (flag === "--parseDepth") {
-      if (!/^[1-9][0-9]?$/.test(value)) return undefined
-    } else if (flag === "--parseDependencyLevel") {
-      if (!/^[0-3]$/.test(value)) return undefined
+      // Swag's documented default is 100; bound explicit values to 1000.
+      if (!/^[1-9][0-9]{0,3}$/.test(value) || Number(value) > 1000) {
+        return { error: "swag init parse depth must be an integer from 1 through 1000." }
+      }
+    } else if (flag === "--parseDependencyLevel" || flag === "--pdl") {
+      if (!/^[0-3]$/.test(value)) {
+        return { error: "swag init parse dependency level must be 0, 1, 2 or 3." }
+      }
     } else if (!/^[A-Za-z0-9_.,/-]+$/.test(value)) {
-      return undefined
+      return { error: "Unsafe or unsupported value for swag init option " + flag + "." }
     }
   }
-  if (!output || output === "." ||
+  if (!output) {
+    return { error: "swag init requires an explicit -o or --output directory for scope binding." }
+  }
+  if (output === "." ||
     output === ".git" || output.startsWith(".git/") ||
-    output === ".loom" || output.startsWith(".loom/")) return undefined
-  return output
+    output === ".loom" || output.startsWith(".loom/")) {
+    return { error: "swag init output must not target the repository root or protected .git/.loom state." }
+  }
+  return { output }
+}
+
+export function elevatedGenerationOutput(command: string): string | undefined {
+  return parseGenerationCommand(command)?.output
+}
+
+/** Specific validation feedback for recognized generator commands. */
+export function generationElevationError(command: string): string | undefined {
+  return parseGenerationCommand(command)?.error
 }
 
 /** Exact known outputs for the supported Swagger generator. */
