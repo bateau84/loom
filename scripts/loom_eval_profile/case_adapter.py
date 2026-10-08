@@ -18,7 +18,7 @@ from typing import Any
 
 from runner.eval_api import InvocationSpec, JsonValue, NormalizedCase
 
-from ._shared import PreparedLoomCase, compatibility_env_names
+from ._shared import PreparedLoomCase, compatibility_env_names, compatibility_suite_paths
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -160,13 +160,19 @@ class LoomCaseWorkspaceAdapter:
         return self._root
 
     def discover_cases(self) -> Sequence[NormalizedCase]:
-        eval_root = self._root / EVALS_DIR
-        if not eval_root.is_dir():
-            raise RuntimeError(f"Loom eval directory not found: {eval_root}")
+        # The CLI may supply explicit --suite files, including paths outside
+        # the checkout. That selection must reach this generic-engine profile;
+        # otherwise the wrapper accepts cases the engine cannot discover.
+        sources = compatibility_suite_paths()
+        if sources is None:
+            eval_root = self._root / EVALS_DIR
+            if not eval_root.is_dir():
+                raise RuntimeError(f"Loom eval directory not found: {eval_root}")
+            sources = tuple(sorted(eval_root.glob("*.json")))
 
         normalized: list[NormalizedCase] = []
         seen_ids: dict[str, str] = {}
-        for source in sorted(eval_root.glob("*.json")):
+        for source in sources:
             raw_suite = json.loads(source.read_text(encoding="utf-8"))
             if not isinstance(raw_suite, dict):
                 raise ValueError(f"{source.name}: suite must be a JSON object")
@@ -233,7 +239,8 @@ class LoomCaseWorkspaceAdapter:
                 f"{case_id}: target_timeout_seconds must be an integer from 30 to 600"
             )
 
-        source_path = source.relative_to(self._root).as_posix()
+        source_path = (source.relative_to(self._root).as_posix()
+                       if source.is_relative_to(self._root) else source.as_posix())
         target_kind = _target_kind(raw_case)
         target_name = _target_name(raw_case)
         selectors = list(
