@@ -15138,6 +15138,20 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         }
       }
 
+      const shellTrace: EvidenceObservation["commandTrace"] | undefined =
+        (tool === "shell" || tool === "bash") &&
+        pending?.startedAtMs !== undefined && pending.startedAt
+          ? {
+            family: pending.verification?.family ?? "custom",
+            runner: pending.verification?.runner ??
+              String((input as any)?.command ?? "").trim().split(/\s+/)[0].slice(0, 64),
+            access: pending.commandElevationId ? "elevated" : "routine",
+            startedAt: pending.startedAt,
+            durationMs: Math.max(0, Date.now() - pending.startedAtMs),
+            ...(pending.commandElevationId ? { grantId: pending.commandElevationId } : {}),
+          }
+          : undefined
+
       const observation: EvidenceObservation = {
         id: crypto.randomUUID(),
         sessionID: String(raw.sessionID),
@@ -15154,11 +15168,22 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             : {}),
         ...summary,
         ...resultSummary,
+        ...(shellTrace ? { commandTrace: shellTrace } : {}),
         ...(reportPromotion ? { reportPromotion } : {}),
         ...(!eventMatches && pending ? { unscopedReason: "input-changed" } : {}),
       }
 
       await persistEvidenceObservation(ctx.storage as any, runtime, observation, pending?.admission)
+      if (pending?.commandElevationId) {
+        const key = commandElevationKey(pending.commandElevationId)
+        const grant = await ctx.storage.get(key) as CommandElevation | undefined
+        if (grant && grant.consumedAt && !grant.observationId) {
+          await ctx.storage.set(key, {
+            ...grant, observationId: observation.id,
+            outcome: observation.status, observedAt: observation.observedAt,
+          } satisfies CommandElevation)
+        }
+      }
       } finally {
         await releaseGitWriteLocks(raw)
       }
