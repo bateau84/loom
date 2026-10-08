@@ -10602,13 +10602,21 @@ test("generator output symlink swapped during execution cannot acquire Git owner
     await h.toolHooks.get("execute.before")!(run)
     await rm(outputDir, { recursive: true })
     await symlink(external, outputDir)
-    await expect(h.toolHooks.get("execute.after")!({
+    await h.toolHooks.get("execute.after")!({
       ...run, status: "completed", result: "success",
-    })).rejects.toThrow("outside this project")
+    })
     const ownership = await h.durableStorage.get(
       "git-session-ownership/" + encodeURIComponent(worker),
     ) as any
     expect(ownership?.paths ?? []).not.toContain("internal/swagger/v2/docs.go")
+    const receipt = await h.durableStorage.get("command-elevation/" + granted.grantId) as any
+    expect(receipt.outcome).toBe("error")
+    expect(receipt.observationId).toBeDefined()
+    const observations = (await h.call("evidence_observations",
+      { detail: true }, "worker", worker)).observations
+    const observed = observations.find((item: any) => item.id === receipt.observationId)
+    expect(observed.status).toBe("error")
+    expect(observed.error).toContain("outside this project")
   } finally {
     await rm(external, { recursive: true, force: true })
     h.restore()
