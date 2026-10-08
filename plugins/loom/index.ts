@@ -11147,8 +11147,18 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                     return Boolean(lastArchivedCompletionReceipt(node, workflow.id))
                   })
                   .map((step) => step.task!.id)
-                const unprovenCompleted = completedWithoutCurrentReceipt
-                  .filter((step) => !archivedReceiptTaskIds.includes(step.task!.id))
+                // A changed Plan closure is work to rerun, not a proof
+                // failure. Refuse only unexplained loss of a completion
+                // where the semantic contract still matches.
+                const unprovenCompleted = completedWithoutCurrentReceipt.filter((step) => {
+                  if (archivedReceiptTaskIds.includes(step.task!.id)) return false
+                  const currentClosure = taskSemanticClosureFingerprintAtRevision(
+                    work, step.task!.id, workflow.work!.generation)
+                  const previousClosure = taskSemanticClosureFingerprintAtRevision(
+                    work, step.task!.id, workflow.work!.generation,
+                    workflow.work!.taskPlanRevision)
+                  return Boolean(currentClosure && previousClosure && currentClosure === previousClosure)
+                })
                 if (unprovenCompleted.length > 0) {
                   throw new Error(
                     "Refusing to recompile completed Tasks without a current completion receipt " +
