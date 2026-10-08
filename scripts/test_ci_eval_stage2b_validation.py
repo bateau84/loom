@@ -12,6 +12,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -128,7 +129,7 @@ class EvalCutoverCliSmokeTests(unittest.TestCase):
         )
 
     def test_normal_eval_does_not_inherit_stale_suite_selection(self) -> None:
-        with unittest.mock.patch.dict(os.environ, {
+        with mock.patch.dict(os.environ, {
             "LOOM_EVAL_SUITE_PATHS": '["/bogus/stale.json"]',
         }):
             result = self.invoke("--cases", "INTENT-02", "--model", "fixture/model")
