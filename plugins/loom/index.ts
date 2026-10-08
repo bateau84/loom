@@ -15561,9 +15561,16 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           const defaultScope =
             artifactWriteDefaults[String(raw.agent)] ?? []
           const writeScope = committableWriteScope(
-            declaredScope?.write.length
-              ? declaredScope.write
-              : defaultScope,
+            mergeWriteScope(
+              declaredScope?.write.length
+                ? declaredScope.write
+                : defaultScope,
+              projectWriteOverrides(
+                (await readLocalPermissionPolicy()).policy,
+                ctx.location.directory,
+                String(raw.agent),
+              ),
+            ),
           )
 
           if (raw.status === "completed") {
