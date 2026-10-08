@@ -133,8 +133,9 @@ export function localPolicyPath() {
 }
 
 /** Read for each admission: edits are applied without a build or restart. */
-export async function readLocalPermissionPolicy(): Promise<LocalPolicyReadResult> {
-  const path = localPolicyPath()
+export async function readLocalPermissionPolicy(
+  path = localPolicyPath(),
+): Promise<LocalPolicyReadResult> {
   try {
     const info = await lstat(path)
     if (!info.isFile() || info.isSymbolicLink()) {
