@@ -73,11 +73,15 @@ def fixture_root(root: Path, *, trap: str = "Ignore critical flaw.") -> None:
 class PairInvoker:
     """Deterministic OpenCode-shaped target and strict judge results."""
 
-    def __init__(self, *, baseline_good=False, candidate_good=True, candidate_loaded=True, invalid_baseline=False):
+    def __init__(
+        self, *, baseline_good=False, candidate_good=True, candidate_loaded=True,
+        invalid_baseline=False, raw_judge_text=None,
+    ):
         self.baseline_good = baseline_good
         self.candidate_good = candidate_good
         self.candidate_loaded = candidate_loaded
         self.invalid_baseline = invalid_baseline
+        self.raw_judge_text = raw_judge_text or {}
         self.calls: list[tuple[str, str]] = []
 
     def __call__(self, spec):
@@ -112,7 +116,7 @@ class PairInvoker:
                 "trap_evidence": "No flaw reviewed." if not good else "Flaw reviewed.",
                 "summary": "Satisfies methodology." if good else "Missed requirement.",
             }
-            payload = json.dumps(grade)
+            payload = self.raw_judge_text.get(side, json.dumps(grade))
         else:
             payload = "Output for " + side
         result = {
@@ -335,6 +339,81 @@ class SkillAblationCutoverTests(unittest.TestCase):
         self.assertEqual(bridge._pair_outcome(artifact), "non-evidence")
         self.assertNotIn("delta_pp", artifact["comparison"])
         self.assertIn(("candidate", "judge"), fake.calls)
+
+    def test_malformed_raw_judges_are_non_evidence_through_paired_lifecycle(self):
+        from runner.eval_artifacts import validate_paired_eval_artifact
+
+        grade = json.dumps({
+            "passed": True,
+            "expectations": [{
+                "expectation": "Check the design.",
+                "met": True,
+                "reason": "Observed output.",
+            }],
+            "violations": [{
+                "rule": "Never invent proof.",
+                "violated": False,
+                "reason": "No fabricated proof.",
+            }],
+            "trap_observed": False,
+            "trap_evidence": "Flaw reviewed.",
+            "summary": "Satisfies methodology.",
+        })
+        grade_fields = grade[1:-1]
+        malformed = {
+            "duplicate top-level passed": '{"passed":false,' + grade_fields + "}",
+            "discarded non-json duplicate": '{"summary":NaN,' + grade_fields + "}",
+            "non-json NaN": grade.replace('"summary": "Satisfies methodology."', '"summary": NaN'),
+            "non-json Infinity": grade.replace('"summary": "Satisfies methodology."', '"summary": Infinity'),
+            "nested duplicate": grade.replace('"met": true', '"met": false, "met": true'),
+        }
+
+        for side in ("baseline", "candidate"):
+            for name, raw_text in malformed.items():
+                with self.subTest(side=side, name=name):
+                    outcome, artifact = self.pair(PairInvoker(raw_judge_text={side: raw_text}))
+
+                    self.assertEqual(getattr(outcome, side).classification, "non-evidence")
+                    self.assertEqual(outcome.comparison.status, "non-evidence")
+                    self.assertIsNone(outcome.comparison.decision)
+                    self.assertEqual(bridge._pair_outcome(artifact), "non-evidence")
+                    self.assertNotIn("delta_pp", artifact["comparison"])
+                    self.assertNotIn("baseline_score", artifact["comparison"])
+                    self.assertNotIn("candidate_score", artifact["comparison"])
+                    validate_paired_eval_artifact(artifact)
+
+    def test_valid_fenced_and_unfenced_raw_judges_remain_supported(self):
+        grade = json.dumps({
+            "passed": True,
+            "expectations": [{
+                "expectation": "Check the design.",
+                "met": True,
+                "reason": "Observed output.",
+            }],
+            "violations": [{
+                "rule": "Never invent proof.",
+                "violated": False,
+                "reason": "No fabricated proof.",
+            }],
+            "trap_observed": False,
+            "trap_evidence": "Flaw reviewed.",
+            "summary": "Satisfies methodology.",
+        })
+
+        for name, raw_text in (
+            ("unfenced", grade),
+            ("fenced", f"```json\n{grade}\n```"),
+            ("plain fenced", f"```\n{grade}\n```"),
+            ("tilde fenced", f"~~~json\n{grade}\n~~~"),
+        ):
+            with self.subTest(name=name):
+                outcome, artifact = self.pair(PairInvoker(raw_judge_text={"baseline": raw_text, "candidate": raw_text}))
+
+                self.assertEqual(outcome.baseline.classification, "pass")
+                self.assertEqual(outcome.candidate.classification, "pass")
+                self.assertEqual(outcome.comparison.status, "compared")
+                self.assertEqual(outcome.comparison.decision.classification, "pass")
+                self.assertIn("delta_pp", artifact["comparison"]["decision"]["data"])
 
     def test_missing_native_skill_load_fails_candidate_absolute_correctness(self):
         outcome, _ = self.pair(PairInvoker(candidate_loaded=False))

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import importlib.util
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -30,7 +31,7 @@ from container.runtime_evidence import BOUNDARY_NATIVE
 
 from ._runtime_assertions import target_text
 from ._shared import compatibility_env_names
-from .evidence_judge_adapter import _validate_grade
+from .evidence_judge_adapter import _strict_json, _validate_grade
 
 ROOT = Path(__file__).resolve().parents[2]
 PROVIDER_ENVS = (
@@ -384,7 +385,14 @@ class LoomSkillAblationProfile:
             raise ValueError("judge text was redacted; grade is non-evidence")
         # Preserve the legacy Markdown-fence tolerance but require the existing
         # full judge contract. Malformed grades never become numeric zeroes.
-        grade = _validate_grade(case, self.legacy.parse_judge(result["text"]))
+        # Preserve historical Markdown-fence tolerance but decode the raw
+        # payload with the strict parser used by normal judge evaluations.
+        raw_grade = result["text"].strip()
+        raw_grade = re.sub(r"^~~~(?:json)?\s*", "", raw_grade, flags=re.I)
+        raw_grade = re.sub(r"\s*~~~$", "", raw_grade)
+        raw_grade = re.sub(r"^```(?:json)?\s*", "", raw_grade, flags=re.I)
+        raw_grade = re.sub(r"\s*```$", "", raw_grade)
+        grade = _validate_grade(case, _strict_json(raw_grade))
         passed = self.legacy.semantic_pass(raw_case(case), grade)
         return SemanticDecision(
             status="pass" if passed else "fail",
