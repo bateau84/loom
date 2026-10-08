@@ -5,7 +5,7 @@ description: Bounded native advisory Task binding and explicit receiving-authori
 tags: [architecture, loom, planning, brainstorm, authority, handoff]
 ---
 
-**Status:** proposed implementation-facing decision and contract; independent architecture review required before implementation. No runtime support or acceptance is claimed.
+**Status:** accepted implementation-facing decision and contract after independent architecture review on 2026-10-08 (workflow `4e22715d-c930-4a7e-a721-c3f2247ece3c`, gate `review-architecture`). Runtime support, downstream verification and original Objective acceptance remain unproven.
 
 ## Derived from
 
