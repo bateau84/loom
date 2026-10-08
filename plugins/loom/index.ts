@@ -3277,6 +3277,23 @@ async function assertWorkerWorkClaim(ctx: any, workflowId: string, stepId: strin
   )
 }
 
+/** Historical receipts remain audit records until their ORIGINAL proof is verified. */
+function lastArchivedCompletionReceipt(
+  node: WorkHierarchy["nodes"][number] | undefined,
+  workflowId: string,
+): NonNullable<WorkHierarchy["nodes"][number]["result"]> | undefined {
+  if (!node || node.result) return undefined
+  const latest = node.priorResults?.at(-1)
+  if (!latest || latest.workflowId !== workflowId) return undefined
+  const {
+    invalidatedAt: _at,
+    invalidatedByRevision: _revision,
+    invalidatedReason: _reason,
+    ...receipt
+  } = latest
+  return receipt
+}
+
 async function reusableCompletedTaskIds(
   ctx: any,
   work: WorkHierarchy,
@@ -10501,7 +10518,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       addLoomTool({
         name: "work_reconcile",
         description:
-          "Reconcile reset pending producer Tasks from ORIGINAL persisted completions after independent review-plan PASS. General can run this without Worker dispatch; Planner needs an exact Planner OQ attachment. Rejects missing or stale receipts and changed code, preserves gate independence, and returns per-Task reasons.",
+          "Reconcile pending producer Tasks from original current or last archived completion receipts after independent review-plan PASS. Archive recovery requires exact original evidence, unchanged code, executable contracts and dependencies. General can run this without Worker dispatch; Planner needs an exact Planner OQ attachment. Rejects missing or stale proof and returns per-Task reasons.",
         input: {
           type: "object",
           properties: {
@@ -10568,11 +10585,27 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 const byId = new Map(taskSteps.map((step) => [step.task!.id, step]))
                 const questions = await readQuestions(ctx, workflow.id)
                 const head = await cleanRepositoryHead(ctx.location.directory)
-                const eligible = new Map<string, { step: Workflow["steps"][number]; receipt: NonNullable<WorkHierarchy["nodes"][number]["result"]> }>()
+                const eligible = new Map<string, {
+                  step: Workflow["steps"][number]
+                  node: WorkHierarchy["nodes"][number]
+                  receipt: NonNullable<WorkHierarchy["nodes"][number]["result"]>
+                  fromArchive: boolean
+                }>()
                 const refused: Array<{ taskId: string; reason: string }> = []
                 const refuse = (taskId: string, reason: string) => refused.push({ taskId, reason })
                 const alreadyComplete = ids.filter((id) => satisfied(byId.get(id)!))
-                for (const id of ids) {
+                // Resolve dependencies first, regardless of caller order. An
+                // archived dependent may use only a newly VERIFIED source.
+                const remaining = new Set(ids)
+                const orderedIds: string[] = []
+                while (remaining.size > 0) {
+                  const next = [...remaining].find((id) =>
+                    (byId.get(id)?.task?.dependsOn ?? []).every((dep) => !remaining.has(dep)))
+                  if (!next) throw new Error("Compiled Task graph contains a dependency cycle.")
+                  orderedIds.push(next)
+                  remaining.delete(next)
+                }
+                for (const id of orderedIds) {
                   const step = byId.get(id)!
                   if (satisfied(step)) continue
                   if (step.status !== "pending" || step.kind !== "work" || !step.task ||
@@ -10583,9 +10616,10 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                   const node = work.nodes.find((candidate) =>
                     candidate.generation === work.generation && candidate.type === "task" &&
                     candidate.logicalId === id && candidate.status !== "superseded")
-                  const receipt = node?.result
+                  const archivedReceipt = lastArchivedCompletionReceipt(node, workflow.id)
+                  const receipt = node?.result ?? archivedReceipt
                   if (!receipt || receipt.workflowId !== workflow.id) {
-                    refuse(id, "No current persisted Task result; archived results and commits cannot substitute.")
+                    refuse(id, "No current persisted Task result or verifiable last archived receipt; commits cannot substitute.")
                     continue
                   }
                   if (node!.claimedByWorkflowId !== workflow.id) {
@@ -10614,14 +10648,22 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                     const upstream = work.nodes.find((candidate) =>
                       candidate.generation === work.generation && candidate.type === "task" &&
                       candidate.logicalId === dependencyId && candidate.status !== "superseded")
-                    // A dependent's old result cannot survive a newer producer execution.
-                    return !upstream?.result || upstream.result.workflowId !== workflow.id ||
+                    // A dependent's old result cannot survive a newer producer
+                    // execution or an archived dependency not yet verified here.
+                    const upstreamStep = byId.get(dependencyId)
+                    // An in-Wave pending producer is not trusted merely
+                    // because Work still contains its old result. It must
+                    // satisfy this reconciliation or already be complete.
+                    if (upstreamStep && !satisfied(upstreamStep) &&
+                        !eligible.has(dependencyId)) return true
+                    const upstreamReceipt = upstream?.result ?? eligible.get(dependencyId)?.receipt
+                    return !upstreamReceipt || upstreamReceipt.workflowId !== workflow.id ||
                       !receipt.dependencyResultDigests?.[dependencyId] ||
-                      createHash("sha256").update(JSON.stringify(upstream.result)).digest("hex") !==
+                      createHash("sha256").update(JSON.stringify(upstreamReceipt)).digest("hex") !==
                         receipt.dependencyResultDigests[dependencyId] ||
-                      !Number.isSafeInteger(upstream.result.completedAttempt) ||
-                      !upstream.result.completedAt || !receipt.completedAt ||
-                      upstream.result.completedAt > receipt.completedAt
+                      !Number.isSafeInteger(upstreamReceipt.completedAttempt) ||
+                      !upstreamReceipt.completedAt || !receipt.completedAt ||
+                      upstreamReceipt.completedAt > receipt.completedAt
                   })
                   if (staleDependency) {
                     refuse(id, "Dependent producer result is missing or was replaced after this completion.")
@@ -10695,7 +10737,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                     refuse(id, "Original host observations are missing or belong to another producer attempt.")
                     continue
                   }
-                  eligible.set(id, { step, receipt })
+                  eligible.set(id, { step, node: node!, receipt, fromArchive: Boolean(archivedReceipt) })
                 }
                 let changed = true
                 while (changed) {
@@ -10716,9 +10758,18 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                   throw new Error("Repository changed during reconciliation; no Task completion was restored.")
                 }
                 const reconciled: string[] = []
+                const restoredArchived: string[] = []
+                const restoredAt = new Date().toISOString()
                 for (const id of ids) {
                   const candidate = eligible.get(id)
                   if (!candidate) continue
+                  if (candidate.fromArchive) {
+                    // Only verified, canonical ORIGINAL proof may become current
+                    // again. Do not invent completion from Step state or commits.
+                    candidate.node.result = structuredClone(candidate.receipt)
+                    candidate.node.updatedAt = restoredAt
+                    restoredArchived.push(id)
+                  }
                   candidate.step.status = "complete"
                   // Keep the current reset attempt as a monotonic authority fence.
                   // The source attempt stays only in the original Work receipt/audit.
@@ -10733,9 +10784,11 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                   at: new Date().toISOString(), byAgent: tool.agent, bySessionId: tool.sessionID,
                   cleanHead: head ?? null,
                   recovered: reconciled.map((id) => {
-                    const receipt = eligible.get(id)!.receipt
+                    const candidate = eligible.get(id)!
+                    const receipt = candidate.receipt
                     return {
                       taskId: id, workflowId: receipt.workflowId,
+                      receiptSource: candidate.fromArchive ? "last-archived" : "current",
                       originalAttempt: receipt.completedAttempt!,
                       originalPlanRevision: receipt.planRevision!,
                       semanticClosureFingerprint: receipt.semanticClosureFingerprint!,
@@ -10748,12 +10801,24 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 // Crash between audit and workflow persistence must not present
                 // a prepared record as a successful carry-forward.
                 await ctx.storage.set(auditKey, { ...audit, state: "prepared" })
-                if (reconciled.length) await persistWorkflowMutationLocked(ctx, runtime, workflow)
-                await ctx.storage.set(auditKey, {
-                  ...audit, state: "committed", workflowRevision: workflow.revision,
-                })
+                const commitReconciliation = async () => {
+                  if (restoredArchived.length) {
+                    work.version++
+                    work.updatedAt = restoredAt
+                    await ctx.storage.set(workKey(work.objectiveId), work)
+                  }
+                  if (reconciled.length) await persistWorkflowMutationLocked(ctx, runtime, workflow)
+                  await ctx.storage.set(auditKey, {
+                    ...audit, state: "committed", workflowRevision: workflow.revision,
+                  })
+                }
+                // withWorkflowWorkLocks already runs this entire callback in
+                // Loom's durable runtime transaction, covering the Work result,
+                // Workflow Step, and committed reconciliation audit together.
+                // OpenCode's StorageDomain has no transaction method.
+                await commitReconciliation()
                 return {
-                  auditId, reconciled, refused, alreadyComplete,
+                  auditId, reconciled, restoredArchived, refused, alreadyComplete,
                   planRevision: plan.revision, budgetUnchanged: true,
                   freshImplementationReviewRequired: true,
                 }
@@ -11154,6 +11219,39 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
                 const preservedTaskIds = await reusableCompletedTaskIds(ctx, work, workflow)
                 const preserved = new Set(preservedTaskIds)
+                // Never silently discard a previously completed Step on compilation.
+                // An archived receipt requires an independently reviewed Plan and
+                // exact original-evidence reconciliation; it is NOT reusable yet.
+                const completedWithoutCurrentReceipt = plannedTaskSteps(workflow)
+                  .filter((step) => satisfied(step) && !preserved.has(step.task!.id))
+                const archivedReceiptTaskIds = completedWithoutCurrentReceipt
+                  .filter((step) => {
+                    const node = work.nodes.find((candidate) =>
+                      candidate.generation === workflow.work!.generation &&
+                      candidate.type === "task" && candidate.logicalId === step.task!.id &&
+                      candidate.status !== "superseded")
+                    return Boolean(lastArchivedCompletionReceipt(node, workflow.id))
+                  })
+                  .map((step) => step.task!.id)
+                // A changed Plan closure is work to rerun, not a proof
+                // failure. Refuse only unexplained loss of a completion
+                // where the semantic contract still matches.
+                const unprovenCompleted = completedWithoutCurrentReceipt.filter((step) => {
+                  if (archivedReceiptTaskIds.includes(step.task!.id)) return false
+                  const currentClosure = taskSemanticClosureFingerprintAtRevision(
+                    work, step.task!.id, workflow.work!.generation)
+                  const previousClosure = taskSemanticClosureFingerprintAtRevision(
+                    work, step.task!.id, workflow.work!.generation,
+                    workflow.work!.taskPlanRevision)
+                  return Boolean(currentClosure && previousClosure && currentClosure === previousClosure)
+                })
+                if (unprovenCompleted.length > 0) {
+                  throw new Error(
+                    "Refusing to recompile completed Tasks without a current completion receipt " +
+                    "or a same-workflow archived receipt: " +
+                    unprovenCompleted.map((step) => step.task!.id).join(", ") + ".",
+                  )
+                }
                 const executableTasks = tasks.filter((task) => !preserved.has(task.id))
                 const steps = applyTaskPlan(workflow, tasks, preservedTaskIds)
                 reconcileVerificationAfterRoute(workflow)
@@ -11230,6 +11328,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                   wave,
                   steps,
                   reusedTaskIds: preservedTaskIds,
+                  archivedReceiptTaskIds,
                   planReviewRequired: true,
                   workLevel: workflow.effects?.workLevel ?? "objective",
                   workLevelAuto: Boolean(workflow.effects?.workLevelAuto),
@@ -11247,6 +11346,9 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 workLevelAuto: claimed.workLevelAuto,
                 autoResolvedWorkLevel: claimed.autoResolvedWorkLevel,
                 reusedTaskIds: claimed.reusedTaskIds,
+                // These Steps require a fresh review-plan PASS followed by
+                // loom_work_reconcile; the compiler does not attest old work.
+                archivedReceiptTaskIds: claimed.archivedReceiptTaskIds,
                 tasks: steps.map((step) => ({
                   stepId: step.id,
                   task: step.task,

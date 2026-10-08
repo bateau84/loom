@@ -238,7 +238,7 @@ export type WorkNode = {
   claimedAt?: string
   completion?: WaveCompletion
   result?: WorkTaskResult
-  /** Invalidated completion receipts remain auditable but never authorize execution. */
+  /** Historical receipts are audit-only unless exact original evidence is reverified by work_reconcile. */
   priorResults?: HistoricalWorkTaskResult[]
   createdAt: string
   updatedAt: string
