@@ -4,6 +4,7 @@
 - [Execution Model](execution-model.md)
   - [Conversation Is Primary; Loom Is the Single Primary Agent](decisions/conversation-primary-agent.md)
 - [Hierarchical Work Model](work-hierarchy.md)
+  - [Brainstorm Planned Advisory Tasks](specs/brainstorm-planned-advice.md)
 - [Control Plane](control-plane.md)
 - [Runtime Isolation](runtime-isolation.md)
   - [Project Epoch Identity](decisions/project-epoch-identity.md)
