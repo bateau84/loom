@@ -11,6 +11,7 @@ import {
   destroyDiagnosticSandbox,
   diagnosticSandboxContainerArgs,
   diagnosticSandboxContainerName,
+  diagnosticSandboxMatchesTarget,
   diffDiagnosticSandbox,
   materializeDiagnosticSandbox,
   normalizeDiagnosticSandboxTimeout,
@@ -629,6 +630,39 @@ describe("Diagnostic sandbox", () => {
 
     expect(sandbox.active).toBe(false)
     await expect(stat(sandboxRoot)).rejects.toThrow()
+  })
+
+  test("OQ sandbox stays bound to the exact question and reopen attempt", () => {
+    const base = {
+      runtimeRoot: "/tmp/loom-test",
+      projectId: "project",
+      sessionId: "child",
+      workflowId: "workflow",
+      image: "toolchain:test",
+      imageId: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      engine: "podman" as const,
+      network: "none" as const,
+    }
+    const sandbox = allocateDiagnosticSandbox({
+      ...base, stepId: "", questionId: "flaky-request", attempt: 2,
+    })
+    expect(sandbox.questionId).toBe("flaky-request")
+    expect(diagnosticSandboxMatchesTarget(sandbox, {
+      workflowId: "workflow", stepId: "", questionId: "flaky-request", attempt: 2,
+    })).toBe(true)
+    for (const changed of [
+      { workflowId: "other", stepId: "", questionId: "flaky-request", attempt: 2 },
+      { workflowId: "workflow", stepId: "", questionId: "other", attempt: 2 },
+      { workflowId: "workflow", stepId: "", questionId: "flaky-request", attempt: 3 },
+      { workflowId: "workflow", stepId: "diagnostic", attempt: 2 },
+    ]) expect(diagnosticSandboxMatchesTarget(sandbox, changed)).toBe(false)
+    expect(diagnosticSandboxMatchesTarget(sandbox, undefined)).toBe(false)
+    expect(() => allocateDiagnosticSandbox({
+      ...base, stepId: "diagnostic", questionId: "flaky-request", attempt: 0,
+    })).toThrow("exactly one")
+    expect(() => allocateDiagnosticSandbox({
+      ...base, stepId: "", attempt: 0,
+    })).toThrow("exactly one")
   })
 
   test("validates bounded image, command, and timeout inputs", () => {
