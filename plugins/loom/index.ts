@@ -14485,7 +14485,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         typeof (raw.input as any).command === "string"
           ? String((raw.input as any).command)
           : undefined
-      let commandElevation: CommandElevation | undefined
+      let elevationRequired = false
       if (shellCommand && raw.sessionID &&
           verificationTestAgents.has(String(raw.agent ?? "")) &&
           isElevatableVerificationShell(shellCommand)) {
@@ -14496,14 +14496,13 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             ? diagnosticExecutionShellResourcesAllowed([shellCommand])
             : Boolean(classifyVerificationShell(shellCommand))
         if (!allowedWithoutElevation) {
-          commandElevation = await consumeCommandElevation(
-            String(raw.sessionID), agent, shellCommand,
-          )
-          if (!commandElevation) {
+          elevationRequired = true
+          if (!observationCallKey(raw)) {
             throw new Error(
-              "Test execution blocked: this command has no unconsumed exact loom_command_elevate grant.",
+              "Test execution blocked: a stable tool-call identity is required before consuming command elevation.",
             )
           }
+          await assertProjectVerificationEntrypoint(shellCommand)
         }
       }
       const butlerSelection =
@@ -14659,7 +14658,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       // sharing the first call's lock identity.
       if (pendingObservations.has(key)) {
         pendingObservations.get(key)!.ambiguous = true
-        if (mutationNeedsLock) {
+        if (mutationNeedsLock || elevationRequired) {
           throw new Error(
             "Write blocked: this tool-call identity is already performing a mutation. Try again later.",
           )
@@ -14681,7 +14680,6 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           startedAtMs: Date.now(),
           startedAt: new Date().toISOString(),
           verification: classifyVerificationShell(shellCommand),
-          ...(commandElevation ? { commandElevationId: commandElevation.id } : {}),
         } : {}),
       }
       pendingObservations.set(key, pending)
@@ -14715,6 +14713,27 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               )
             }
           }
+        } catch (error) {
+          await releaseGitWriteLocks(raw)
+          pendingObservations.delete(key)
+          throw error
+        }
+      }
+
+      // Consume only after a stable observation identity and all admission
+      // preflights have succeeded. A malformed/duplicate rejected invocation
+      // must not spend the single-use grant without a tool execution.
+      if (elevationRequired && shellCommand) {
+        try {
+          const consumed = await consumeCommandElevation(
+            String(raw.sessionID), String(raw.agent), shellCommand,
+          )
+          if (!consumed) {
+            throw new Error(
+              "Test execution blocked: this command has no unconsumed exact loom_command_elevate grant.",
+            )
+          }
+          pending.commandElevationId = consumed.id
         } catch (error) {
           await releaseGitWriteLocks(raw)
           pendingObservations.delete(key)
