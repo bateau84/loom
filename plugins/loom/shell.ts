@@ -20,15 +20,34 @@ const metadataTools = new Set([
   "prettier", "python", "python3", "rg", "ruff", "rustc", "rustup",
   "sqlite3", "swag", "tsc", "tsx", "uv", "yarn",
 ])
-const metadataFlags = new Set(["--version", "-v", "-V", "--help", "-h"])
+// Short options are tool-specific: e.g. `bash -v` and `python -v` are
+// execution/verbose modes, not harmless version checks.
+const shortMetadataFlags: Record<string, readonly string[]> = {
+  bun: ["-v", "-h"],
+  node: ["-v", "-h"],
+  nodejs: ["-v", "-h"],
+  npm: ["-v"],
+  pnpm: ["-v"],
+  yarn: ["-v"],
+  python: ["-V", "-h"],
+  python3: ["-V", "-h"],
+  cargo: ["-V"],
+  rustc: ["-V"],
+}
 
 function isReadOnlyMetadataShell(command: string) {
   const words = parsedCommandWords(command)
   if (!words) return false
-  if (words.length === 2 && metadataFlags.has(words[1])) {
-    return metadataTools.has(words[0]) || /^python3\.[0-9]+$/.test(words[0])
+  if (words.length === 2) {
+    const [tool, flag] = words
+    const versionedPython = /^python3\.[0-9]+$/.test(tool)
+    if (flag === "--version" || flag === "--help") {
+      return metadataTools.has(tool) || versionedPython
+    }
+    if (versionedPython && (flag === "-V" || flag === "-h")) return true
+    if (shortMetadataFlags[tool]?.includes(flag)) return true
+    if (tool === "go" && flag === "version") return true
   }
-  if (words.length === 2 && words[0] === "go" && words[1] === "version") return true
   // Shell command lookup is not command execution. Refuse paths and flags,
   // including the executable's own potentially unsafe options.
   return words.length === 3 &&
