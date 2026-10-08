@@ -15193,7 +15193,19 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           }
 
           if (writeScope.length) {
-            if (raw.status === "completed" && pending.generationBefore && pending.generationPaths) {
+            // A completed tool call is not a successful generator result when
+            // its content reports an error. Do not confer Git provenance on
+            // a failed or unverified generation.
+            if (raw.status === "completed" &&
+                !safeResultError(raw.result ?? raw.output) &&
+                pending.generationBefore && pending.generationPaths) {
+              const command = (input as { command?: unknown } | undefined)?.command
+              if (typeof command !== "string") {
+                throw new Error("Generated-file provenance requires the exact observed command.")
+              }
+              // Detect output symlink/authority changes during host execution.
+              // Host subprocess effects cannot be sandboxed by this check.
+              await assertProjectGenerationWrite(admission.workflowId, admission.stepId, command)
               const changed: string[] = []
               for (const path of pending.generationPaths) {
                 const after = await worktreeFingerprint(ctx.location.directory, path)
