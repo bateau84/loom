@@ -14206,6 +14206,12 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         }
       }
 
+      if (event.agent === "documenter" && event.action === "shell") {
+        event.effect = "deny"
+        event.message = "Documenter shell command is not admitted. Add a trusted exact command or bounded prefix to the user-owned OpenCode .loom.yaml file; the local shell exception still requires a current runnable step."
+        return
+      }
+
       if (event.agent === "diagnostic" && event.action === "shell") {
         if (diagnosticShellResourcesAllowed(event.resources)) {
           event.effect = "allow"
