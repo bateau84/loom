@@ -199,7 +199,7 @@ class LoomCaseWorkspaceAdapterTests(unittest.TestCase):
     def test_explicit_suite_paths_override_default_corpus_including_external_file(self):
         write_suite(self.root, "default", [base_case("DEFAULT-01", "role-decision")])
         with tempfile.TemporaryDirectory(prefix="loom-external-eval-suite-") as outside:
-            suite = Path(outside) / "custom.json"
+            suite = Path(outside) / "custom-eval-suite"
             suite.write_text(json.dumps({
                 "version": 1, "name": "external", "default": False,
                 "cases": [base_case("CUSTOM-01", "conversation-response")],
