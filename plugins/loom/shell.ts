@@ -575,6 +575,10 @@ function gitInspectionHasUnsafeOption(args: readonly string[]) {
 }
 
 export function isGitInspectionShellCommand(command: string) {
+  const words = parsedCommandWords(command)
+  if (words?.length === 2 && words[0] === "git" &&
+      ["--version", "version"].includes(words[1])) return true
+
   const parsed = parsedGitCommand(command)
   if (!parsed || gitInspectionHasUnsafeOption(parsed.args)) return false
 
@@ -660,6 +664,8 @@ export function isButlerInspectionShellCommand(command: string) {
   if (!parsed) return false
 
   if (parsed.subcommand === "help" || parsed.subcommand === "diff") return true
+  if (["--version", "-V", "-v"].includes(parsed.subcommand) &&
+      parsed.args.length === 0) return true
 
   if (parsed.subcommand === "status") {
     return parsed.args.every((word) =>
