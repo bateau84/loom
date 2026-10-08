@@ -1,5 +1,5 @@
 import { YAML } from "bun"
-import { open } from "node:fs/promises"
+import { open, realpath } from "node:fs/promises"
 import { constants } from "node:fs"
 import { homedir } from "node:os"
 import { isAbsolute, join, resolve } from "node:path"
@@ -76,6 +76,7 @@ function safeConfiguredWrite(path: string) {
   // Never expand the trusted file policy into Loom state, Git internals,
   // durable promotion reports, or ephemeral evidence scratch namespaces.
   if (parts.includes(".git") || parts.includes(".loom") ||
+    normalized === ".loom.yaml" || normalized === ".loom.yml" ||
     normalized === "docs/reports" || normalized.startsWith("docs/reports/") ||
     normalized === "ephemeral-reports" || normalized.startsWith("ephemeral-reports/")) {
     throw new Error("Local write rules cannot authorize internal Git/Loom or report state: " + path)
@@ -131,6 +132,25 @@ export function localPolicyPath() {
   const base = configHome && isAbsolute(configHome)
     ? configHome : join(homedir(), ".config")
   return join(base, "opencode", ".loom.yaml")
+}
+
+/** A writable project may also be the OpenCode config checkout.
+ * Never let an agent edit the trusted local policy itself, including via
+ * an in-project symlink alias. This remains a user-controlled file.
+ */
+export async function targetsLocalPermissionPolicy(
+  projectDirectory: string,
+  resource: string,
+  policyPath = localPolicyPath(),
+) {
+  const expected = resolve(policyPath)
+  const target = resolve(projectDirectory, resource)
+  if (target === expected) return true
+  const [resolvedTarget, resolvedPolicy] = await Promise.all([
+    realpath(target).catch(() => target),
+    realpath(expected).catch(() => expected),
+  ])
+  return resolvedTarget === resolvedPolicy
 }
 
 /** Read for each admission: edits are applied without a build or restart. */
