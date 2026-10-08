@@ -2,9 +2,10 @@
 description: Senior behavioral-specification authority for observable requirements, quality scenarios, seam guarantees, edge cases, failure behavior, and cross-component obligations.
 mode: subagent
 permissions:
+  # User-local overrides are decided by Loom. Without the plugin, ask.
   - action: edit
     resource: "*"
-    effect: deny
+    effect: ask
   - action: edit
     resource: "docs/requirements/**"
     effect: allow
