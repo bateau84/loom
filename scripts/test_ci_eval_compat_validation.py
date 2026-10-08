@@ -62,7 +62,7 @@ class CompatValidationTests(unittest.TestCase):
                 mock.patch.object(w, "_run", return_value=0) as run,
                 mock.patch.dict(os.environ, {"OPENCODE_EVAL_RUNNER_BIN": str(runner)}, clear=False),
             ):
-                status = w.main(["--cases", "ROLE-1", "--model", "fixture/model", "--artifact-dir", temp])
+                status = w.main(["--cases", "ROLE-1", "--model", "fixture/model", "--artifact-dir", str(Path(temp) / "artifacts")])
         self.assertEqual(status, 0)
         self.assertEqual(run.call_count, 1)
         command = run.call_args.args[0]
@@ -84,17 +84,17 @@ class CompatValidationTests(unittest.TestCase):
                 mock.patch.object(w, "_run", side_effect=[0, 0]) as run,
                 mock.patch.dict(os.environ, {"OPENCODE_EVAL_RUNNER_BIN": str(runner)}, clear=False),
             ):
-                status = w.main(["--all", "--model", "fixture/model", "--artifact-dir", temp])
+                status = w.main(["--all", "--model", "fixture/model", "--artifact-dir", str(Path(temp) / "artifacts")])
         self.assertEqual(status, 0)
         self.assertEqual(run.call_count, 2)
         generic = run.call_args_list[0].args[0]
         paired = run.call_args_list[1].args[0]
         self.assertEqual(generic[generic.index("--cases") + 1], "RUNTIME-1")
-        self.assertIn(str(Path(temp) / "normal"), generic)
+        self.assertIn(str(Path(temp) / "artifacts" / "normal"), generic)
         self.assertIn(str(w.PAIRED_RUNNER), paired)
         self.assertNotIn(str(w.LEGACY_RUNNER), paired)
         self.assertEqual(paired[paired.index("--cases") + 1], "SKILL-demo-S1")
-        self.assertIn(str(Path(temp) / "skill-ablation"), paired)
+        self.assertIn(str(Path(temp) / "artifacts" / "skill-ablation"), paired)
         self.assertIsNotNone(run.call_args_list[1].kwargs.get("env"))
 
     def test_skill_only_uses_paired_without_normal_or_legacy_path(self):
@@ -111,7 +111,7 @@ class CompatValidationTests(unittest.TestCase):
                 mock.patch.object(w, "_run", return_value=0) as run,
                 mock.patch.dict(os.environ, {"OPENCODE_EVAL_RUNNER_BIN": str(runner)}, clear=False),
             ):
-                status = w.main(["--cases", skill["id"], "--model", "fixture/model", "--artifact-dir", temp])
+                status = w.main(["--cases", skill["id"], "--model", "fixture/model", "--artifact-dir", str(Path(temp) / "artifacts")])
         self.assertEqual(status, 0)
         self.assertEqual(run.call_count, 1)
         command = run.call_args.args[0]
