@@ -350,7 +350,10 @@ export function isElevatableVerificationShell(command: string) {
     /(?:^|[\/._-])(?:deploy|install|publish|release|migrate|delete|remove|wipe|reset|clean|destroy|push|prune)(?:[\/._-]|$)/i.test(word)
   )) return false
   if (["make", "just"].includes(runner)) {
-    return Boolean(action && /^(?:test|check|verify|validate|lint|qa|unit|integration|e2e)(?:[._:-]|$)/.test(action))
+    // Options after a target still affect the Makefile/Justfile being run.
+    // In particular -f/-C/--eval can replace local test code with external code.
+    return words.length === 2 &&
+      /^(?:test|check|verify|validate|lint|qa|unit|integration|e2e)(?:[._:-]|$)/.test(action)
   }
   if (["bash", "sh"].includes(runner)) {
     return Boolean(action && projectScriptPath(action, /\.(?:sh|bash)$/))
@@ -358,7 +361,8 @@ export function isElevatableVerificationShell(command: string) {
   if (/^python(?:3(?:\.[0-9]+)?)?$/.test(runner)) {
     if (action === "-m" && target) {
       return !/^(?:pip|ensurepip|venv)(?:$|\.)/.test(target) &&
-        /^[A-Za-z0-9_.-]+$/.test(target)
+        /^[A-Za-z0-9_.-]+$/.test(target) &&
+        /(?:^|[._-])(?:test|tests|testing|check|checks|verify|validate|validation|lint|qa|spec|unit|integration|e2e|ci|diagnose|diagnostic|repro|reproduce)(?:$|[._-])/.test(target)
     }
     return Boolean(action && projectScriptPath(action, /\.py$/))
   }
@@ -367,6 +371,21 @@ export function isElevatableVerificationShell(command: string) {
       safeProjectRelativePath(target))
   }
   return false
+}
+
+/**
+ * Return a filesystem entrypoint that must resolve inside this project.
+ * A lexical relative path is insufficient when a symlink can escape the root.
+ */
+export function elevatedVerificationEntrypoint(command: string): string | undefined {
+  if (!isElevatableVerificationShell(command)) return undefined
+  const words = parsedCommandWords(command)
+  if (!words) return undefined
+  const [runner, action, target] = words
+  if (["bash", "sh"].includes(runner)) return action
+  if (/^python(?:3(?:\\.[0-9]+)?)?$/.test(runner) && action !== "-m") return action
+  if (runner === "go" && action === "run") return target
+  return undefined
 }
 
 type ParsedGitCommand = {
