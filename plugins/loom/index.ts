@@ -148,7 +148,7 @@ import {
   shellResourcesAllowed,
   workerShellResourcesAllowed,
 } from "./shell"
-import { readLocalPermissionPolicy, projectShellOverrides, projectWriteOverrides } from "./local-policy"
+import { readLocalPermissionPolicy, projectShellOverrides, projectWriteOverrides, targetsLocalPermissionPolicy } from "./local-policy"
 import { prepareReportPromotion, publishPreparedReport, reconcilePendingReportPromotion, type ReportPromotionInput, type ReportPromotionRecord } from "./reports"
 import {
   findPaths,
@@ -4614,6 +4614,11 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       directMutationPaths: string[],
     ) => {
       if (directMutationPaths.length === 0 || !raw.sessionID) return
+      if ((await Promise.all(directMutationPaths.map((path) =>
+        targetsLocalPermissionPolicy(ctx.location.directory, path),
+      ))).some(Boolean)) {
+        throw new Error("Local Loom permission YAML is user-owned and cannot be edited by agents.")
+      }
 
       const sessionID = String(raw.sessionID)
       const workflowId = (await ctx.storage.get(
@@ -12548,6 +12553,13 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             paths: string[]
             reason: string
           }
+          if ((await Promise.all(value.paths.map((path) =>
+            targetsLocalPermissionPolicy(ctx.location.directory, path),
+          ))).some(Boolean)) {
+            return { content: renderToolOutput({
+              error: "Local Loom permission YAML is user-owned; do not use scope elevation to edit it.",
+            }) }
+          }
           const reason = value.reason.trim()
           if (!reason) {
             return {
@@ -13687,6 +13699,15 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         }
       }
       if (event.action === "edit") {
+        if ((await Promise.all(
+          event.resources.map((resource: string) =>
+            targetsLocalPermissionPolicy(ctx.location.directory, resource),
+          ),
+        )).some(Boolean)) {
+          event.effect = "deny"
+          event.message = "Local Loom permission YAML is user-owned and cannot be edited by agents."
+          return
+        }
         const classified = await Promise.all(
           event.resources.map((resource: string) =>
             classifyScopeTarget(ctx.location.directory, resource),
