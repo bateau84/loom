@@ -10137,6 +10137,7 @@ async function waveLifecycleFixture(
   dependentRole = "worker",
   includeLastFutureWave = false,
   planAuthorityRefs?: string[],
+  includeThirdPendingTask = false,
 ) {
   const h = await harness()
   try {
@@ -10161,6 +10162,10 @@ async function waveLifecycleFixture(
     const planner = await attach("plan", "planner")
     const task: WorkPlanTask = { ...richPlanTask("one", "One", "Build one"), role: taskRole, responsibility: taskResponsibility }
     const future = richPlanTask("two", "Two", "Build two", ["one"])
+    const third: WorkPlanTask = {
+      ...richPlanTask("third", "Third", "Build remaining c03", ["dependent"]),
+      role: "worker", responsibility: "execute",
+    }
     const dependentWorker: WorkPlanTask = {
       ...richPlanTask("dependent", "Dependent", "Consume independently reviewed work", ["one"]),
       role: dependentRole,
@@ -10171,7 +10176,10 @@ async function waveLifecycleFixture(
         id: "core",
         title: "Core",
         waves: [
-          { id: "first", title: "First", tasks: [task, ...(includeDependentWorker ? [dependentWorker] : [])] },
+          { id: "first", title: "First", tasks: [
+             task, ...(includeDependentWorker ? [dependentWorker] : []),
+             ...(includeThirdPendingTask ? [third] : []),
+           ] },
           ...(includeFutureWave ? [
             { id: "second", title: "Second", tasks: [future] },
             ...(includeLastFutureWave ? [{
@@ -10187,6 +10195,7 @@ async function waveLifecycleFixture(
       workflowId, tasks: [
         { ...task, write: taskResponsibility === "obtain-user-decision" ? [] : taskRole === "worker" ? ["src/**"] : ["docs/architecture/**"], skills: [] },
         ...(includeDependentWorker ? [{ ...dependentWorker, write: dependentRole === "user" ? [] : dependentRole === "worker" ? ["src/**"] : ["docs/architecture/**"], skills: [] }] : []),
+        ...(includeThirdPendingTask ? [{ ...third, write: ["src/**"], skills: [] }] : []),
       ],
     }, "planner", planner)).error).toBeUndefined()
     expect((await h.call("complete", { workflowId, stepId: "plan", summary: "Planned" }, "planner", planner)).error).toBeUndefined()
@@ -17235,6 +17244,305 @@ test("ordinary Plan reopen invalidates modern completion after code drift", asyn
       cleanRepositoryHead: receipt.cleanRepositoryHead,
       invalidatedReason: expect.stringContaining("Plan reopened"),
     })
+  } finally {
+    h.restore()
+  }
+})
+
+
+test("Wave recompilation preserves two completed receipts when only c03 is split", async () => {
+  const h = await waveLifecycleFixture("wave", false, "worker", true, "execute", "worker", false, undefined, true)
+  try {
+    expect((await h.finish("task:one", "worker")).error).toBeUndefined()
+    expect((await h.finish("task:dependent", "worker")).error).toBeUndefined()
+    const before = await h.work()
+    const receipts = ["one", "dependent"].map((id) =>
+      structuredClone(before.nodes.find((node: any) => node.type === "task" && node.logicalId === id).result))
+
+    const raised = await h.call("oq_raise", {
+      workflowId: h.workflowId, taskId: "third",
+      question: "Split the pending c03 only; c01 and c02 remain unchanged.",
+      responder: "planner", blocking: false,
+    }, "general", "parent")
+    expect(raised.error).toBeUndefined()
+    const grant = await h.call("dispatch_grant", {
+      workflowId: h.workflowId, questionId: raised.question.id,
+    }, "general", "parent")
+    const session = "split-only-third-planner"
+    expect((await h.call("attach", {
+      workflowId: h.workflowId, questionId: raised.question.id, grantId: grant.grantId,
+    }, "planner", session)).error).toBeUndefined()
+    const thirdA = {
+      ...richPlanTask("third-a", "Third A", "Implement first c03 part", ["dependent"]),
+      role: "worker", responsibility: "execute",
+    }
+    const thirdB = {
+      ...richPlanTask("third-b", "Third B", "Implement second c03 part", ["third-a"]),
+      role: "worker", responsibility: "execute",
+    }
+    const amendment = await h.call("work_amend", {
+      workflowId: h.workflowId, questionId: raised.question.id,
+      expectedVersion: before.version,
+      reason: "Split only the remaining c03 into smaller Tasks.",
+      operations: [
+        { action: "remove-task", taskId: "third" },
+        { action: "add-task", phaseId: "core", waveId: "first", task: thirdA },
+        { action: "add-task", phaseId: "core", waveId: "first", task: thirdB },
+      ],
+    }, "planner", session)
+    expect(amendment.error).toBeUndefined()
+    expect(amendment.affectedTaskIds).not.toContain("one")
+    expect(amendment.affectedTaskIds).not.toContain("dependent")
+
+    const reopened = await h.call("reopen", {
+      workflowId: h.workflowId, stepId: "plan", reason: "Compile split c03 with retained c01/c02.",
+      newEvidence: true, changedHypothesis: false, changedStrategy: false,
+      reducedUnresolved: false,
+    }, "general", "parent")
+    expect(reopened.error).toBeUndefined()
+    expect(reopened.reset).not.toContain("task:one")
+    expect(reopened.reset).not.toContain("task:dependent")
+
+    const planner = await h.attach("plan", "planner", "split-third-recompiler")
+    const current = await h.work()
+    const tasks = current.plans.at(-1).phases[0].waves[0].tasks
+    const compiled = await h.call("task_plan", {
+      workflowId: h.workflowId, tasks: tasks.map((task: any) => ({
+        ...task, write: ["src/**"], skills: [],
+      })),
+    }, "planner", planner)
+    expect(compiled.error).toBeUndefined()
+    expect(compiled.reusedTaskIds.slice().sort()).toEqual(["dependent", "one"])
+    expect(compiled.archivedReceiptTaskIds).toEqual([])
+    const workflow = await h.workflow()
+    const after = await h.work()
+    for (const [i, id] of ["one", "dependent"].entries()) {
+      expect(workflow.steps.find((step: any) => step.id === "task:" + id).status).toBe("complete")
+      expect(after.nodes.find((node: any) => node.type === "task" && node.logicalId === id).result)
+        .toEqual(receipts[i])
+    }
+    expect(workflow.steps.find((step: any) => step.id === "task:third-a").status).toBe("pending")
+    expect(workflow.steps.find((step: any) => step.id === "task:third-b").status).toBe("pending")
+  } finally {
+    h.restore()
+  }
+})
+
+test("archived original producer receipts reconcile after Wave recompilation without Worker budget", async () => {
+  const h = await waveLifecycleFixture("wave", false, "worker", true, "execute", "worker")
+  try {
+    const completeWithEvidence = async (id: string) => {
+      const child = await h.attach("task:" + id, "worker", "archived-receipt-" + id)
+      const event = {
+        tool: "shell", id: "receipt-evidence-" + id, messageID: "receipt-message-" + id,
+        sessionID: child, agent: "worker", input: { command: "git rev-parse HEAD" },
+      }
+      await h.toolHooks.get("execute.before")!(event)
+      await h.toolHooks.get("execute.after")!({
+        ...event, status: "completed", result: "original host observation",
+      })
+      const evidence = (await h.durableStorage.scan({ prefix: "evidence/", limit: 100 }))
+        .entries.map((entry: any) => entry.value)
+        .find((entry: any) => entry.tool === "shell" && entry.sessionID === child)
+      expect(evidence?.admission).toBeDefined()
+      const claim = await h.call("evidence_claim", {
+        workflowId: h.workflowId, stepId: "task:" + id, kind: "other",
+        statement: "Original observed implementation", observationIds: [evidence.id],
+      }, "worker", child)
+      expect(claim.error).toBeUndefined()
+      expect((await h.call("complete", {
+        workflowId: h.workflowId, stepId: "task:" + id, summary: "Completed " + id,
+      }, "worker", child)).error).toBeUndefined()
+    }
+    await completeWithEvidence("one")
+    await completeWithEvidence("dependent")
+    const original = await h.work()
+    const originalReceipts = ["one", "dependent"].map((id) =>
+      structuredClone(original.nodes.find((node: any) => node.type === "task" && node.logicalId === id).result))
+
+    const reopened = await h.call("reopen", {
+      workflowId: h.workflowId, stepId: "plan",
+      reason: "Recompile while preserving original implementation evidence.",
+      newEvidence: true, changedHypothesis: false, changedStrategy: false,
+      reducedUnresolved: false,
+    }, "general", "parent")
+    expect(reopened.error).toBeUndefined()
+    expect(reopened.reset).not.toContain("task:one")
+    expect(reopened.reset).not.toContain("task:dependent")
+
+    // Model a persisted compiler/Plan invalidation: execution receipts are
+    // archived, but the independently observed original proof is unchanged.
+    const archivedWork = await h.work()
+    for (const id of ["one", "dependent"]) {
+      const node = archivedWork.nodes.find((entry: any) => entry.type === "task" && entry.logicalId === id)
+      node.priorResults = [...(node.priorResults ?? []), {
+        ...node.result, invalidatedAt: new Date().toISOString(),
+        invalidatedByRevision: archivedWork.plans.at(-1).revision,
+        invalidatedReason: "Plan recompilation archived original receipt",
+      }]
+      delete node.result
+    }
+    archivedWork.version++
+    await h.durableStorage.set(h.workKey, archivedWork)
+    const planner = await h.attach("plan", "planner", "archive-carry-forward-planner")
+    // The Plan advances a revision without changing either archived Task's
+    // semantic closure. Recovery must validate against BOTH revisions.
+    const added = await h.call("work_amend", {
+      workflowId: h.workflowId, expectedVersion: archivedWork.version,
+      reason: "Add one new unexecuted sibling while old Tasks remain unchanged.",
+      operations: [{
+        action: "add-task", phaseId: "core", waveId: "first",
+        task: { ...richPlanTask("remaining", "Remaining", "Unexecuted sibling", ["dependent"]),
+          role: "worker", responsibility: "execute" },
+      }],
+    }, "planner", planner)
+    expect(added.error).toBeUndefined()
+    expect(added.affectedTaskIds).not.toContain("one")
+    expect(added.affectedTaskIds).not.toContain("dependent")
+    const waveTasks = (await h.work()).plans.at(-1).phases[0].waves[0].tasks
+    const compiled = await h.call("task_plan", {
+      workflowId: h.workflowId,
+      tasks: waveTasks.map((task: any) => ({ ...task, write: ["src/**"], skills: [] })),
+    }, "planner", planner)
+    expect(compiled.error).toBeUndefined()
+    expect(compiled.reusedTaskIds).toEqual([])
+    expect(compiled.archivedReceiptTaskIds.slice().sort()).toEqual(["dependent", "one"])
+    expect((await h.workflow()).steps.find((step: any) => step.id === "task:one").status)
+      .toBe("pending")
+
+    expect((await h.call("complete", {
+      workflowId: h.workflowId, stepId: "plan", summary: "Recompiled Plan",
+    }, "planner", planner)).error).toBeUndefined()
+    expect((await h.finish("review-plan", "reviewer", "pass")).error).toBeUndefined()
+
+    const budgetKey = "budget/" + h.workflowId
+    const budget = await h.durableStorage.get(budgetKey)
+    const reconciled = await h.call("work_reconcile", {
+      workflowId: h.workflowId, taskIds: ["dependent", "one"],
+    }, "general", "parent")
+    expect(reconciled.error).toBeUndefined()
+    expect(reconciled.reconciled.slice().sort()).toEqual(["dependent", "one"])
+    expect(reconciled.restoredArchived.slice().sort()).toEqual(["dependent", "one"])
+    expect(reconciled.refused).toEqual([])
+    expect(reconciled.budgetUnchanged).toBe(true)
+    expect(await h.durableStorage.get(budgetKey)).toEqual(budget)
+    const recoveredWork = await h.work()
+    for (const [i, id] of ["one", "dependent"].entries()) {
+      expect(recoveredWork.nodes.find((node: any) => node.type === "task" && node.logicalId === id).result)
+        .toEqual(originalReceipts[i])
+      expect((await h.workflow()).steps.find((step: any) => step.id === "task:" + id).status)
+        .toBe("complete")
+    }
+    expect((await h.workflow()).steps.find((step: any) => step.id === "review-implementation").status)
+      .toBe("pending")
+  } finally {
+    h.restore()
+  }
+})
+
+test("Wave compiler refuses to erase a completed Step with no current or archived receipt", async () => {
+  const h = await waveLifecycleFixture("wave", false, "worker")
+  try {
+    expect((await h.finish("task:one", "worker")).error).toBeUndefined()
+    const reopened = await h.call("reopen", {
+      workflowId: h.workflowId, stepId: "plan",
+      reason: "Recompile original Task after planning context changed.",
+      newEvidence: true, changedHypothesis: false, changedStrategy: false,
+      reducedUnresolved: false,
+    }, "general", "parent")
+    expect(reopened.error).toBeUndefined()
+    const work = await h.work()
+    const node = work.nodes.find((candidate: any) => candidate.type === "task" && candidate.logicalId === "one")
+    delete node.result
+    delete node.priorResults
+    await h.durableStorage.set(h.workKey, work)
+    const planner = await h.attach("plan", "planner", "unproven-compiler-planner")
+    const before = await h.workflow()
+    const compiled = await h.call("task_plan", {
+      workflowId: h.workflowId,
+      tasks: work.plans.at(-1).phases[0].waves[0].tasks.map((task: any) => ({
+        ...task, write: ["src/**"], skills: [],
+      })),
+    }, "planner", planner)
+    expect(compiled.error).toContain("Refusing to recompile completed Tasks")
+    expect(await h.workflow()).toEqual(before)
+  } finally {
+    h.restore()
+  }
+})
+
+test("archived receipt without exact original host evidence cannot be reconciled", async () => {
+  const h = await waveLifecycleFixture("wave", false, "worker")
+  try {
+    expect((await h.finish("task:one", "worker")).error).toBeUndefined()
+    expect((await h.call("reopen", {
+      workflowId: h.workflowId, stepId: "plan",
+      reason: "Recompile with a historical receipt requiring independent verification.",
+      newEvidence: true, changedHypothesis: false, changedStrategy: false,
+      reducedUnresolved: false,
+    }, "general", "parent")).error).toBeUndefined()
+    const work = await h.work()
+    const node = work.nodes.find((entry: any) => entry.type === "task" && entry.logicalId === "one")
+    node.priorResults = [{
+      ...node.result, evidenceClaimIds: ["nonexistent-original-claim"],
+      invalidatedAt: new Date().toISOString(),
+      invalidatedByRevision: 1,
+      invalidatedReason: "Missing original evidence",
+    }]
+    delete node.result
+    await h.durableStorage.set(h.workKey, work)
+    const planner = await h.attach("plan", "planner", "unproven-archive-planner")
+    const compiled = await h.call("task_plan", {
+      workflowId: h.workflowId,
+      tasks: work.plans.at(-1).phases[0].waves[0].tasks.map((task: any) => ({
+        ...task, write: ["src/**"], skills: [],
+      })),
+    }, "planner", planner)
+    expect(compiled.error).toBeUndefined()
+    expect(compiled.archivedReceiptTaskIds).toEqual(["one"])
+    expect((await h.call("complete", {
+      workflowId: h.workflowId, stepId: "plan", summary: "Plan requires independent review",
+    }, "planner", planner)).error).toBeUndefined()
+    expect((await h.finish("review-plan", "reviewer", "pass")).error).toBeUndefined()
+    const result = await h.call("work_reconcile", {
+      workflowId: h.workflowId, taskIds: ["one"],
+    }, "general", "parent")
+    expect(result.error).toBeUndefined()
+    expect(result.reconciled).toEqual([])
+    expect(result.refused[0].reason).toContain("evidence claim set")
+    expect((await h.work()).nodes.find((entry: any) => entry.type === "task" && entry.logicalId === "one").result)
+      .toBeUndefined()
+  } finally {
+    h.restore()
+  }
+})
+
+
+test("reconciliation refuses a dependent if its pending producer was not independently verified", async () => {
+  const h = await waveLifecycleFixture("wave", false, "worker", true)
+  try {
+    const work = await h.work()
+    const producer = work.nodes.find((node: any) => node.type === "task" && node.logicalId === "one")
+    const dependent = work.nodes.find((node: any) => node.type === "task" && node.logicalId === "dependent")
+    const base = {
+      workflowId: h.workflowId, evidenceClaimIds: ["unavailable"],
+      completedAt: "2026-10-07T00:00:00Z",
+      completedAttempt: 0, producerAgent: "worker", planRevision: 1,
+    }
+    producer.result = { ...base, summary: "Unverified producer" }
+    dependent.result = {
+      ...base,
+      dependencyResultDigests: {
+        one: createHash("sha256").update(JSON.stringify(producer.result)).digest("hex"),
+      },
+    }
+    await h.durableStorage.set(h.workKey, work)
+    const attempted = await h.call("work_reconcile", {
+      workflowId: h.workflowId, taskIds: ["dependent"],
+    }, "general", "parent")
+    expect(attempted.error).toBeUndefined()
+    expect(attempted.reconciled).toEqual([])
+    expect(attempted.refused[0].reason).toContain("Dependent producer result")
   } finally {
     h.restore()
   }
