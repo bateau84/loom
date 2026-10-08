@@ -383,7 +383,7 @@ export function elevatedVerificationEntrypoint(command: string): string | undefi
   if (!words) return undefined
   const [runner, action, target] = words
   if (["bash", "sh"].includes(runner)) return action
-  if (/^python(?:3(?:\\.[0-9]+)?)?$/.test(runner) && action !== "-m") return action
+  if (/^python(?:3(?:\.[0-9]+)?)?$/.test(runner) && action !== "-m") return action
   if (runner === "go" && action === "run") return target
   return undefined
 }
