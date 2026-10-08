@@ -23,6 +23,8 @@ import {
   workPlanSemanticFingerprint,
   taskSemanticFingerprintAtRevision,
   taskSemanticClosureFingerprintAtRevision,
+  taskExecutionClosureFingerprintAtRevision,
+  diagnoseTaskReceiptSemantics,
   workflowTaskSemanticFingerprint,
   validatePlanRoleFeasibility,
   type WorkPlanDefinition,
@@ -588,6 +590,126 @@ describe("Loom persistent work hierarchy", () => {
       expect(workflowTaskSemanticFingerprint(work, ["a"], generation, 1), scenario.kind)
         .toBe(originalWaveFingerprint)
     }
+  })
+
+  test("rev32 c03/c10 amendment leaves c01/c02 original completion proofs reusable", () => {
+    const work = createWorkHierarchy("docs/anchors/product/anchor.md", "wf-rev32", now)
+    const definition = plan()
+    materializeWorkPlan(work, "wf-rev32", definition, now)
+    const receipt = (id: string) => ({
+      workflowId: "wf-rev32",
+      completedAt: now,
+      planRevision: 1,
+      evidenceClaimIds: ["historical-claim"],
+      semanticClosureFingerprint: taskSemanticClosureFingerprintAtRevision(work, id, work.generation, 1)!,
+    })
+    // a and b correspond to the completed c01/c02; c is pending c03.
+    const completeA = receipt("a")
+    const completeB = receipt("b")
+    const completeC = receipt("c")
+    const runtime = definition.phases[0].waves[1]
+    const c = structuredClone(runtime.tasks[0])
+    const c10 = {
+      ...structuredClone(c), id: "c10", title: "C10",
+      objective: "Prepare the new precondition", dependsOn: ["b"],
+      rationale: "Supply the dependency needed before c03",
+    }
+    const changedC = { ...c, dependsOn: ["b", "c10"] }
+    const amendments = amendWorkPlan(work, {
+      expectedVersion: work.version, by: "planner",
+      reason: "Rev32 adds c10 as a c03 dependency; c01/c02 remain unchanged.",
+      operations: [
+        { action: "remove-task", taskId: "c" },
+        { action: "add-task", phaseId: "core", waveId: "runtime", task: c10 },
+        { action: "add-task", phaseId: "core", waveId: "runtime", task: changedC },
+      ],
+      planPatch: {
+        obligations: [...definition.obligations, {
+          id: "obl-c10", sourceRef: "docs/anchors/product/anchor.md",
+          statement: "Deliver the c03 prerequisite.", disposition: "implement",
+          taskIds: ["c10"], verification: ["c10 is independently checked"],
+        }],
+        acceptanceCoverage: [...definition.acceptanceCoverage, {
+          id: "pa-c10", title: "C10 prerequisite",
+          criterion: "The prerequisite is available before c03.", taskIds: ["c10"],
+        }],
+      },
+    }, "rev32")
+    expect(amendments.affectedTaskIds).not.toContain("a")
+    expect(amendments.affectedTaskIds).not.toContain("b")
+    expect(amendments.affectedTaskIds).toContain("c")
+
+    for (const [id, original] of [["a", completeA], ["b", completeB]] as const) {
+      const diagnostic = diagnoseTaskReceiptSemantics(work, id, original)
+      expect(diagnostic.originalProof).toBe("valid")
+      expect(diagnostic.currentContract).toBe("unchanged")
+      expect(diagnostic.changedSemanticFields).toEqual([])
+      expect(taskExecutionClosureFingerprintAtRevision(work, id, work.generation, 1))
+        .toBe(taskExecutionClosureFingerprintAtRevision(work, id))
+    }
+    const changed = diagnoseTaskReceiptSemantics(work, "c", completeC)
+    expect(changed.originalProof).toBe("valid")
+    expect(changed.currentContract).toBe("changed")
+    expect(changed.changedSemanticFields).toContain("task:c.task.dependsOn")
+  })
+
+  test("display-only Phase/Wave renames do not invalidate authenticated Task receipts", () => {
+    const work = createWorkHierarchy("docs/anchors/product/anchor.md", "wf-rename", now)
+    materializeWorkPlan(work, "wf-rename", plan(), now)
+    const previous = taskSemanticClosureFingerprintAtRevision(work, "a")!
+    const receipt = {
+      workflowId: "wf-rename", evidenceClaimIds: ["original-claim"], completedAt: now,
+      planRevision: 1, semanticClosureFingerprint: previous,
+    }
+    const amended = amendWorkPlan(work, {
+      expectedVersion: work.version, by: "planner", reason: "Rename headings only.",
+      operations: [
+        { action: "patch-phase", phaseId: "core", patch: { title: "Core (new heading)" } },
+        { action: "patch-wave", phaseId: "core", waveId: "foundation",
+          patch: { title: "Foundation (new heading)" } },
+      ],
+    }, "rev2")
+    expect(amended.affectedTaskIds).not.toContain("a")
+    expect(amended.affectedTaskIds).not.toContain("b")
+    expect(taskSemanticClosureFingerprintAtRevision(work, "a")).not.toBe(previous)
+    const status = diagnoseTaskReceiptSemantics(work, "a", receipt)
+    expect(status.originalProof).toBe("valid")
+    expect(status.currentContract).toBe("unchanged")
+    expect(status.changedSemanticFields).toEqual([])
+    expect(status.changedDisplayFields).toEqual([
+      "task:a.phase.title", "task:a.wave.title",
+    ])
+  })
+
+  test("changed objectives and missing/mismatched historical proof remain fail-closed", () => {
+    const work = createWorkHierarchy("docs/anchors/product/anchor.md", "wf-semantic-negative", now)
+    materializeWorkPlan(work, "wf-semantic-negative", plan(), now)
+    const original = taskSemanticClosureFingerprintAtRevision(work, "b", work.generation, 1)!
+    const receipt = {
+      workflowId: "wf-semantic-negative", evidenceClaimIds: ["historical-claim"],
+      completedAt: now, planRevision: 1, semanticClosureFingerprint: original,
+    }
+    const amended = amendWorkPlan(work, {
+      expectedVersion: work.version, by: "planner",
+      reason: "Parent objective materially changes.",
+      operations: [{ action: "patch-phase", phaseId: "core",
+        patch: { objective: "Changed accepted phase outcome." } }],
+    }, "rev2")
+    expect(amended.affectedTaskIds).toContain("a")
+    expect(amended.affectedTaskIds).toContain("b")
+    const changed = diagnoseTaskReceiptSemantics(work, "b", receipt)
+    expect(changed.originalProof).toBe("valid")
+    expect(changed.currentContract).toBe("changed")
+    expect(changed.changedSemanticFields).toContain("task:b.phase.objective")
+    expect(diagnoseTaskReceiptSemantics(work, "b", {
+      ...receipt, semanticClosureFingerprint: undefined,
+    }).originalProof).toBe("missing-receipt-fingerprint")
+    expect(diagnoseTaskReceiptSemantics(work, "b", {
+      ...receipt, semanticClosureFingerprint: "f".repeat(64),
+    }).originalProof).toBe("original-proof-mismatch")
+    expect(diagnoseTaskReceiptSemantics(work, "b", {
+      ...receipt, planRevision: 999,
+    }).originalProof).toBe("original-plan-unavailable")
   })
 
   test("Task semantic closure changes when a transitive dependency contract changes", () => {
