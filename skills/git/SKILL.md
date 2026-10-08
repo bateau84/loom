@@ -1,0 +1,117 @@
+---
+name: git
+description: "Practical Git for AI agents: inspect repository state, stage only owned files, commit, branch, sync, push, recover from errors, and use Git or optional GitButler without unsafe command chaining. Use when executing Git commands in shared worktrees or governed runtimes. For commit boundaries/messages see git-commit-discipline; for conflict semantics see git-conflicts."
+license: MIT
+metadata:
+  author: Bateau
+  version: "1.0.0"
+---
+
+# Git for agents
+
+Git commands change shared state. Work in small, observable steps: **inspect what matters, run one bounded mutation, read its result, then decide the next step**. Favor completing the task over ceremonial Git checks.
+
+This skill teaches **command choice and execution mechanics**. It does not grant permissions, decide commit content/messages (see `git-commit-discipline`), or decide how to combine conflicting changes (see `git-conflicts`).
+
+## 1. Use the available, authorized tool
+
+- **Normal Git is a first-class choice.** Do not translate `git` commands to GitButler (`but`), or insist that GitButler be installed.
+- GitButler is optional when installed, suitable for the task, and permitted. Its CLI has different selectors; do not assume Git IDs, file paths, and Butler IDs are interchangeable.
+- An agent's current role, Loom effective write scope, shell admission, and repository rules determine what is allowed. **A skill cannot authorize an otherwise denied command.**
+- If a command or argument is blocked, identify the smallest needed permission or scope and request it through the supported runtime path. Do not reroute through `sh -c`, a script, a different binary, another tool, or `but` to get around the denial.
+- Never edit `.git` internals directly. Git itself may update linked-worktree metadata outside the checkout when the admitted Git command operates from that worktree; that is not permission for direct filesystem edits.
+
+## 2. Keep commands short and independent
+
+**One Git mutation per shell/tool invocation.** Read the exit status and useful output before taking the next mutating action.
+
+- Do not chain dependent mutations using `&&`, `;`, `||`, pipes, command substitution, or a shell script. A failed first command must not leave later commands running or hide which step failed.
+- Avoid batches such as `git add ... && git commit ... && git push ...`. These are separate decisions with different possible failures and authority requirements.
+- Read-only inspections can be batched only if the runtime permits it and none depends on the other's result. Separate calls are the simpler default, especially in Loom's restricted shell.
+- Avoid redundant inspections: do not run `status`, then a verbose `status`, then another `status` without an unanswered question. A successful command's precise output may already be sufficient.
+- Never guess identifiers, branches, paths, or flags. Copy identifiers from fresh output; refresh them after a history operation that may invalidate them.
+- Stop retrying variations after a clear permission denial. After an unexpected Git error, use at most one targeted read-only check to diagnose it, then correct the cause or report the blocker. Do not run a long speculative recovery chain.
+
+### Bad: one opaque operation
+
+~~~bash
+git add -A && git commit -m "fix stuff" && git pull --rebase && git push --force
+~~~
+
+### Better: bounded steps, *each in its own tool call*
+
+~~~bash
+git status --short
+~~~
+
+~~~bash
+git diff -- path/to/changed-file
+~~~
+
+~~~bash
+git add -- path/to/changed-file
+~~~
+
+~~~bash
+git diff --cached --check
+~~~
+
+Then inspect the staged content if necessary, commit using the active runtime's admitted command form, read the commit result, and push only if publishing is part of the assignment. Do not paste those steps as one shell program.
+
+## 3. Inspect only what the decision needs
+
+| Question | Narrow first command |
+| --- | --- |
+| What is dirty or staged? | `git status --short` |
+| What changed in a file? | `git diff -- path/to/file` |
+| What is staged? | `git diff --cached --stat` or `git diff --cached -- path/to/file` |
+| Which branch am I on? | `git branch --show-current` |
+| What did a commit change? | `git show --stat <commit>` |
+| How does this branch differ from the base? | `git log --oneline <base>..HEAD` or `git diff --stat <base>...HEAD` |
+
+Do not assume a clean tree, correct branch, or exclusive control of the checkout. In shared sessions, another agent's edits may appear at any time; **never stage, restore, stash, discard, or commit them merely to make Git happy**.
+
+## 4. Stage and commit only owned changes
+
+Use `git-commit-discipline` to decide checkpoint timing, semantic grouping, messages, and destructive-operation safety.
+
+1. Identify the task-owned files and any already staged changes. Preserve unrelated work, including pre-existing staged content.
+2. Stage **explicit paths**, not `git add .` / `git add -A` in a shared or mixed worktree.
+3. Check what is staged (and `git diff --cached --check` for whitespace/errors). If the staged set contains another task's changes, stop and separate the changes with authorized operations.
+4. Commit one coherent unit, read the actual result, then continue. A commit command returning an error is not a completed checkpoint.
+
+Typical authorized Git steps, issued separately:
+
+~~~bash
+git add -- path/to/file path/to/file_test
+~~~
+
+~~~bash
+git diff --cached --stat
+~~~
+
+~~~bash
+git diff --cached --check
+~~~
+
+Outside governed Loom, use the repository's ordinary hooks and Git commit workflow. **Inside Loom**, only use the precise command forms currently admitted by the runtime; for example, where admitted, a scoped `git add -- ...` followed by `git -c core.hooksPath=/dev/null commit -m "..."`. Do not disable hooks merely for convenience outside that explicitly controlled environment.
+
+Partial staging, branch-targeted Butler commits, and history editing may be unsupported by Loom's whole-file provenance rules even when ordinary Git supports them. Follow the runtime denial; do not switch tools to bypass it.
+
+## 5. Branches, syncing, and publishing
+
+- Confirm the working branch when it matters. Use a feature branch for task work according to repository conventions; avoid switching a dirty, shared worktree just to satisfy a recipe.
+- Keep fetching, merging/rebasing, and pushing as distinct operations. Read the result of each before choosing the next. Do not assume a pull/rebase succeeded because a command was issued.
+- A request to implement locally is not automatically a request to push or rewrite remote history. A requested PR or delivery normally includes publishing the assigned branch.
+- Push the intended branch with an admitted form such as `git push -u origin HEAD`. Never guess a branch name or push every branch.
+- Only rewrite history when it is actually required and authorized. For a rewritten published branch, use `--force-with-lease`, not plain `--force`. A lease failure is a remote-state change to investigate, not a reason to retry with `--force`.
+- For conflicts, stop the generic Git sequence and apply `git-conflicts`. Never auto-pick `ours` or `theirs`, drop commits, or declare a conflict resolved just because markers are gone.
+
+## 6. Recovery and alternative tools
+
+- On an unexpected failure, preserve the working tree and give the **exact failed command and error**. Inspect the relevant Git state once, then use the smallest supported recovery action.
+- Do not use `reset --hard`, `clean -fdx`, `branch -D`, `push --force`, or `rebase --skip` as routine cleanup. Follow `git-commit-discipline` and require appropriate explicit authority for destructive operations.
+- If GitButler is available and appropriate, its `but status` / `but diff` can inspect state, and admitted `but` mutations can be used one at a time. Copy its current file/commit IDs from output; do not invent them or chain mutations on stale IDs. Its success message proves an operation, **not** correct commit boundaries or conflict semantics.
+- If Butler cannot work with a linked worktree, or a command is unsupported, use the admitted normal Git path where one exists. If neither tool has an authorized path, return a precise blocker instead of performing an unauthorized workaround.
+
+**Completion evidence:** report the branch, relevant commit(s), published PR/remote state if applicable, and any uncommitted or blocked work. Do not claim a push, commit, sync, or successful recovery that its command output did not establish.

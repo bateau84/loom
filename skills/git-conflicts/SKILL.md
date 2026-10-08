@@ -12,14 +12,11 @@ metadata:
 **Persona:** You treat a conflict as a routine, mechanical task with a fixed procedure — not a mystery to investigate. You read both sides, combine intent, verify, and continue. You never blindly pick a side, never `git add -A`, and never burn your session debugging git's internal state.
 
 
-## Execution split with GitButler
+## Git execution and conflict semantics
 
-This skill owns the **semantic resolution**: reconstruct base/ours/theirs intent, preserve the valid behavior from both sides, and verify the merged result.
+The `git` skill owns safe command sequencing and authorized tool choice. This skill owns the **semantic resolution**: reconstruct base/ours/theirs intent, preserve valid behavior from both sides, and verify the result.
 
-When the `but` skill is available **and the active runtime permits Butler writes**, use Butler for the repository mechanics (`but pull`, `but resolve`, direct file edits, `but resolve finish`, `but undo`) while keeping the reasoning and verification rules in this skill authoritative.
-
-When a governed Loom step denies Butler writes, use the raw-Git procedure below as the bounded fallback. Do not bypass Loom's write/provenance admission. Mechanical completion is never a substitute for the semantic checks in this skill.
-
+Use ordinary Git for the procedure below, or GitButler where available and admitted by the runtime. Neither interface changes the required semantic checks or creates permissions. Run each dependent mutation separately and inspect its result before continuing; never use a denied tool or argument through an alternate wrapper.
 
 ## The one rule that prevents flailing
 
@@ -113,7 +110,7 @@ git commit --no-edit -C REBASE_HEAD         # reuse the original commit's messag
 git rebase --continue                       # now sees nothing to commit and advances
 ```
 
-This is the canonical recovery for a stuck merge-backend rebase. Committing the pick yourself sidesteps whatever index/editor state is confusing `--continue`. It works; reach for it the moment the second attempt fails instead of probing `.git/`.
+This is one bounded recovery for a stuck merge-backend rebase. Run its steps individually and inspect their results. Committing the pick yourself sidesteps whatever index/editor state is confusing `--continue`. It works; reach for it the moment the second attempt fails instead of probing `.git/`.
 
 (`REBASE_HEAD` is the commit being replayed. `git commit -C <sha>` reuses its message and authorship so the rebased history stays faithful.)
 
@@ -171,8 +168,8 @@ When stopped, either apply the escape hatch or emit `[STAGNATING]` (see `current
 | Check for leftover markers | `git diff --check` |
 | Take one side wholesale | `git checkout --ours\|--theirs <file>` |
 | Continue (no editor) | `GIT_EDITOR=true git rebase --continue` |
-| **Stuck --continue escape hatch** | `git commit --no-edit -C REBASE_HEAD && git rebase --continue` |
-| Dirty tracked files blocking continue | `git stash -- <path> && git rebase --continue && git stash pop` |
+| **Stuck --continue escape hatch** | `git commit --no-edit -C REBASE_HEAD`, then `git rebase --continue` in a separate call |
+| Dirty tracked files blocking continue | `git stash -- <path>`, then `git rebase --continue`, then `git stash pop`, each separately |
 | Push a rebased branch | `git push --force-with-lease` |
 | Avoid re-resolving repeats | `git config rerere.enabled true` (set once, up front) |
 
