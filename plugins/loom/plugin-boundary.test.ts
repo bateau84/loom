@@ -17353,7 +17353,9 @@ test("archived original producer receipts reconcile after Wave recompilation wit
       const child = await h.attach("task:" + id, "worker", "archived-receipt-" + id)
       const event = {
         tool: "shell", id: "receipt-evidence-" + id, messageID: "receipt-message-" + id,
-        sessionID: child, agent: "worker", input: { command: "git rev-parse HEAD" },
+        sessionID: child, agent: "worker", input: {
+          command: id === "one" ? "go test ./... && go build ./... && go vet ./..." : "git rev-parse HEAD",
+        },
       }
       await h.toolHooks.get("execute.before")!(event)
       await h.toolHooks.get("execute.after")!({
@@ -17368,6 +17370,16 @@ test("archived original producer receipts reconcile after Wave recompilation wit
         statement: "Original observed implementation", observationIds: [evidence.id],
       }, "worker", child)
       expect(claim.error).toBeUndefined()
+      if (id === "one") {
+        for (const kind of ["test", "build", "lint"]) {
+          const shared = await h.call("evidence_claim", {
+            workflowId: h.workflowId, stepId: "task:one", kind,
+            statement: "Original " + kind + " check from the same completed shell invocation",
+            observationIds: [evidence.id],
+          }, "worker", child)
+          expect(shared.error).toBeUndefined()
+        }
+      }
       expect((await h.call("complete", {
         workflowId: h.workflowId, stepId: "task:" + id, summary: "Completed " + id,
       }, "worker", child)).error).toBeUndefined()
@@ -17377,6 +17389,7 @@ test("archived original producer receipts reconcile after Wave recompilation wit
     const original = await h.work()
     const originalReceipts = ["one", "dependent"].map((id) =>
       structuredClone(original.nodes.find((node: any) => node.type === "task" && node.logicalId === id).result))
+    expect(originalReceipts[0].evidenceClaimIds).toHaveLength(4)
 
     const reopened = await h.call("reopen", {
       workflowId: h.workflowId, stepId: "plan",
@@ -17432,6 +17445,34 @@ test("archived original producer receipts reconcile after Wave recompilation wit
       workflowId: h.workflowId, stepId: "plan", summary: "Recompiled Plan",
     }, "planner", planner)).error).toBeUndefined()
     expect((await h.finish("review-plan", "reviewer", "pass")).error).toBeUndefined()
+
+    const originalObservation = (await h.durableStorage.scan({ prefix: "evidence/", limit: 100 }))
+      .entries.map((entry: any) => entry.value)
+      .find((entry: any) => entry.tool === "shell" && entry.command?.includes("go test ./..."))
+    expect(originalObservation).toBeDefined()
+    const observationKey = "evidence/" + originalObservation.id
+    for (const alteration of [
+      null,
+      { admission: {
+        ...originalObservation.admission, attempt: originalObservation.admission.attempt + 1,
+      } },
+      { status: "failed" },
+      { command: "git rev-parse HEAD" },
+    ] as const) {
+      if (alteration === null) expect(await h.durableStorage.delete?.(observationKey)).toBe(true)
+      else await h.durableStorage.set(observationKey, { ...originalObservation, ...alteration })
+      expect(await h.durableStorage.get(observationKey)).toEqual(
+        alteration === null ? undefined : { ...originalObservation, ...alteration })
+      const denied = await h.call("work_reconcile", {
+        workflowId: h.workflowId, taskIds: ["one"],
+      }, "general", "parent")
+      expect(denied.error).toBeUndefined()
+      expect(denied.reconciled).toEqual([])
+      expect(denied.refused[0].reason).toContain("Original host observations")
+      expect((await h.workflow()).steps.find((step: any) => step.id === "task:one").status)
+        .toBe("pending")
+      await h.durableStorage.set(observationKey, originalObservation)
+    }
 
     const budgetKey = "budget/" + h.workflowId
     const budget = await h.durableStorage.get(budgetKey)
