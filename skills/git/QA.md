@@ -2,7 +2,7 @@
 
 Challenge cases where Git output looks successful but the work is incomplete, misattributed, or unsafe.
 
-## Adversarial probes
+## QA criteria
 
 - **Shared checkout race:** another agent edits or stages a file between status, add, and commit. Could the reported commit silently absorb work the acting agent does not own?
 - **Partial success:** commit succeeds, fetch/rebase fails, or one remote push succeeds while another fails. Does the final claim accurately separate completed and blocked steps?
