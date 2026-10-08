@@ -14327,8 +14327,20 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         const scope = (await ctx.storage.get(scopeKey(workflowId, stepId))) as TaskScope | undefined
         if (!workerShellResourcesAllowed(event.resources, scope?.write ?? [])) {
           event.effect = "deny"
-          event.message =
-            "Worker shell is limited to inspection, build/test/run, safe delivery operations, and writes already inside the current Loom scope. Call loom_scope_elevate before retrying a newly discovered project-local write target."
+          // Only suggest a write-scope grant for recognized scoped writes.
+          // Unsupported shell execution is not fixed by enlarging file scope.
+          const scopedWrite = event.resources.some((resource: string) =>
+            Boolean(scopedGofmtWriteTargets(resource)?.length ||
+              scopedGitAddTargets(resource)?.length),
+          )
+          const otherwiseAdmitted = event.resources.every((resource: string) =>
+            workerShellResourcesAllowed([resource]) ||
+            Boolean(scopedGofmtWriteTargets(resource)?.length ||
+              scopedGitAddTargets(resource)?.length),
+          )
+          event.message = scopedWrite && otherwiseAdmitted
+            ? "Worker shell write target is outside the current Loom write scope. Call loom_scope_elevate for the specific project-local path(s), then retry."
+            : "Worker shell command is not admitted by Loom's command policy. This is not a write-scope denial: loom_scope_elevate only grants file paths, not arbitrary shell execution. Use an admitted inspection command or, for supported tests/generators, request loom_command_elevate."
           return
         }
 
