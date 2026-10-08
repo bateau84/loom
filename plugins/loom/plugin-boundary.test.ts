@@ -4741,6 +4741,122 @@ Verdict: FAIL
   })
 
 
+  test("user-local YAML extends commands and bounded Worker writes without source edits", async () => {
+    const h = await harness()
+    try {
+      const parent = "local-policy-general"
+      const child = "local-policy-worker"
+      const started = await h.call("start", {
+        request: "Create one small source file.",
+      }, "general", parent)
+      const workflowId = started.workflowId
+      expect(workflowId).toBeDefined()
+      expect((await h.call("route", {
+        humanFacing: false,
+        behavioral: false,
+        structural: false,
+        externalUnknown: false,
+        diagnostic: false,
+        productOutcome: false,
+        implementationRequested: true,
+        executionDepth: "task",
+      }, "general", parent)).error).toBeUndefined()
+      const grant = await h.call("dispatch_grant", {
+        workflowId, stepId: "worker",
+      }, "general", parent)
+      expect((await h.call("attach", {
+        workflowId, stepId: "worker", grantId: grant.grantId,
+      }, "worker", child)).attached).toBe(true)
+
+      const evaluate = h.permissionHooks.get("evaluate")!
+      const edit = {
+        agent: "worker", action: "edit", resources: ["src/local.ts"],
+        sessionID: child, effect: "ask", message: "",
+      }
+      await evaluate(edit)
+      expect(edit.effect).toBe("deny")
+      expect((await h.call("policy_status", {}, "worker", child)).status).toBe("absent")
+
+      const configHome = join(h.root, "opencode-config-home", "opencode")
+      await mkdir(configHome, { recursive: true })
+      const policyPath = join(configHome, ".loom.yaml")
+      const policyText = [
+        "version: 1",
+        "shell:",
+        "  exact:",
+        "    - node --version",
+        "  prefixes:",
+        "    - kubectl get",
+        "projects:",
+        "  " + JSON.stringify(h.root) + ":",
+        "    writes:",
+        "      worker:",
+        "        - src/local.ts",
+        "      documenter:",
+        "        - docs/index.md",
+        "",
+      ].join("\n")
+      await writeFile(policyPath, policyText, { mode: 0o600 })
+
+      const status = await h.call("policy_status", {}, "worker", child)
+      expect(status.status).toBe("loaded")
+      expect(status.writes.worker).toEqual(["src/local.ts"])
+      expect((await h.call("scope_status", {
+        workflowId, stepId: "worker",
+      }, "worker", child)).effectiveWrite).toContain("src/local.ts")
+
+      for (const command of ["node --version", "kubectl get pods -n test"]) {
+        const permission: any = {
+          agent: "worker", action: "shell", resources: [command],
+          sessionID: child, effect: "ask",
+        }
+        await evaluate(permission)
+        expect(permission.effect).toBe("allow")
+      }
+      const unsafe: any = {
+        agent: "worker", action: "shell",
+        resources: ["node --version && touch /tmp/escape"],
+        sessionID: child, effect: "ask",
+      }
+      await evaluate(unsafe)
+      expect(unsafe.effect).toBe("deny")
+
+      const inScope = { ...edit, effect: "ask" }
+      await evaluate(inScope)
+      expect(inScope.effect).toBe("allow")
+      const outside: any = { ...edit, resources: ["src/not-approved.ts"], effect: "ask" }
+      await evaluate(outside)
+      expect(outside.effect).toBe("deny")
+
+      const mutation = {
+        tool: "write", callID: "local-policy-write", messageID: "local-policy-write-message",
+        sessionID: child, agent: "worker",
+        input: { filePath: join(h.root, "src", "local.ts"), content: "export const value = 1\n" },
+      }
+      await h.toolHooks.get("execute.before")!(mutation)
+      await writeFile(join(h.root, "src", "local.ts"), "export const value = 1\n")
+      await h.toolHooks.get("execute.after")!({ ...mutation, status: "completed", result: "written" })
+
+      const stage: any = {
+        agent: "worker", action: "shell", resources: ["git add -- src/local.ts"],
+        sessionID: child, effect: "ask",
+      }
+      await evaluate(stage)
+      expect(stage.effect).toBe("allow")
+
+      // Revocation is immediate and does not preserve a hidden durable scope.
+      await writeFile(policyPath, "version: 1\n")
+      const revoked: any = { ...edit, effect: "ask" }
+      await evaluate(revoked)
+      expect(revoked.effect).toBe("deny")
+      expect((await h.call("policy_status", {}, "worker", child)).writes).toEqual({})
+
+      const deniedStage: any = { ...stage, effect: "ask" }
+      await evaluate(deniedStage)
+      expect(deniedStage.effect).toBe("deny")
+    } finally { h.restore() }
+  })
+
   test("Worker can dispatch without guessed scope and self-elevate discovered files", async () => {
     const h = await harness()
     try {
