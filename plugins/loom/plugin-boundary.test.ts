@@ -5561,6 +5561,93 @@ Verdict: FAIL
   })
 
 
+  test("Worker creates a bounded sibling Git worktree without granting raw .git mutation", async () => {
+    const h = await harness()
+    const general = "worktree-general"
+    const worker = "worktree-worker"
+    let target: string | undefined
+    try {
+      const started = await h.call("start", {
+        request: "Make an isolated repair branch without disrupting the current checkout.",
+      }, "general", general)
+      const workflowId = String(started.workflowId)
+      expect((await h.call("route", {
+        humanFacing: false, behavioral: false, structural: false,
+        externalUnknown: false, diagnostic: false, productOutcome: false,
+        implementationRequested: true, executionDepth: "task",
+      }, "general", general)).error).toBeUndefined()
+      const head = (await git(h.root, ["rev-parse", "HEAD"])).stdout.trim()
+      const oldBranch = (await git(h.root, ["branch", "--show-current"])).stdout.trim()
+      const values = {
+        workflowId, stepId: "worker", name: "repair-test",
+        branch: "loom/repair-test", startCommit: head,
+      }
+      const denied = await h.call("git_worktree_create", values, "worker", "unattached-worker")
+      expect(denied.error).toContain("exact current runnable Worker step")
+      expect((await h.call("git_worktree_create", values, "diagnostic", general)).error).toContain("Only Worker")
+
+      const grant = await h.call("dispatch_grant", {
+        workflowId, stepId: "worker",
+      }, "general", general)
+      expect((await h.call("attach", {
+        grantId: grant.grantId, workflowId, stepId: "worker",
+      }, "worker", worker)).attached).toBe(true)
+      const withoutScope = await h.call("git_worktree_create", values, "worker", worker)
+      expect(withoutScope.error).toContain("committable Worker product write scope")
+
+      const setScope = await h.call("step_scope", {
+        workflowId, stepId: "worker", write: ["src/**"],
+      }, "general", general)
+      expect(setScope.error).toBeUndefined()
+
+      const created = await h.call("git_worktree_create", values, "worker", worker)
+      expect(created.error).toBeUndefined()
+      expect(created.created).toBe(true)
+      expect(created.gitMetadataAccess).toBe("git-owned-only")
+      expect(created.existingProjectSessionRebound).toBe(false)
+      target = created.worktreePath
+      expect(target).toBe(join(dirname(h.root), basename(h.root) + "-wt", "repair-test"))
+      expect((await git(h.root, ["rev-parse", "HEAD"])).stdout.trim()).toBe(head)
+      expect((await git(h.root, ["branch", "--show-current"])).stdout.trim()).toBe(oldBranch)
+      expect((await git(h.root, ["status", "--porcelain"])).stdout.trim()).toBe("")
+      expect((await git(target!, ["rev-parse", "--abbrev-ref", "HEAD"])).stdout.trim()).toBe("loom/repair-test")
+
+      const audit = await h.durableStorage.get(
+        ["git-worktree-created", encodeURIComponent(workflowId),
+          encodeURIComponent("worker"), "0", encodeURIComponent("repair-test")].join("/"),
+      )
+      expect(audit).toMatchObject({
+        workflowId, stepId: "worker", bySessionId: worker,
+        branch: "loom/repair-test", startCommit: head,
+      })
+      expect((await h.call("git_worktree_create", {
+        ...values, name: "../outside", branch: "loom/another",
+      }, "worker", worker)).error).toContain("Worktree name")
+
+      const rawEdit: any = {
+        action: "edit",
+        resources: [join(h.root, ".git", "refs", "heads", "manual-change")],
+        agent: "worker", sessionID: worker, effect: "ask",
+      }
+      await h.permissionHooks.get("evaluate")!(rawEdit)
+      expect(rawEdit.effect).toBe("deny")
+      expect(rawEdit.message).toContain("Hard-boundary write denied")
+
+      const legacyElevation = await h.call("scope_elevate", {
+        workflowId, stepId: "worker",
+        paths: [join(h.root, ".git", "refs", "heads")],
+        reason: "Attempt to obtain broad raw metadata access instead of using Git",
+      }, "worker", worker)
+      expect(legacyElevation.continue).toBe(false)
+    } finally {
+      if (target) {
+        await git(h.root, ["worktree", "remove", "--force", target]).catch(() => undefined)
+      }
+      await rm(h.root + "-wt", { recursive: true, force: true })
+      h.restore()
+    }
+  })
+
   test("late Diagnostic OQ can investigate a failed executed workflow without rewriting its steps", async () => {
     const h = await harness()
     const general = "late-diagnostic-general"
