@@ -14657,8 +14657,15 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       // remain passive, but a second mutation must fail closed rather than
       // sharing the first call's lock identity.
       if (pendingObservations.has(key)) {
+        // A rejected second execution must not poison the first execution's
+        // evidence or spend another command grant.
+        if (elevationRequired) {
+          throw new Error(
+            "Command execution blocked: this tool-call identity already has an in-flight execution.",
+          )
+        }
         pendingObservations.get(key)!.ambiguous = true
-        if (mutationNeedsLock || elevationRequired) {
+        if (mutationNeedsLock) {
           throw new Error(
             "Write blocked: this tool-call identity is already performing a mutation. Try again later.",
           )
