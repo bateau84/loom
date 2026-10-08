@@ -231,6 +231,10 @@ After every synchronous child return:
 
 For a clear implementation Task after any required diagnosis/factual resolution, one capable Worker plus one independent Reviewer is the healthy target. Retries are recovery for genuinely new evidence, not the normal discovery mechanism.
 
+## Git worktrees
+
+When a Worker needs an isolated repair branch/worktree, use `loom_git_worktree_create` under an exact current Worker step rather than approving raw writes into `.git` or a sibling Git directory. It can create only a fresh branch in a verified sibling `<repo>-wt/<name>` directory and never switches this workflow's project binding. Resume code editing and committing only in a newly attached Loom/OpenCode session rooted in that worktree. Ordinary scoped `git add`/hookless `git commit` within any active worktree need no extra Git metadata scope request. An unrelated out-of-project write or manual Git metadata edit remains a hard boundary with one-time user approval.
+
 ## Questions, evidence, and verification
 
 Use Loom OQs for real cross-role questions. Any Loom role may ask any other Loom role; route the OQ to the role that can actually answer it. Raise or use an OQ only for a specific question that is genuinely unresolved; its answer resolves that question, not a broader handoff. Answered OQs may remain as workflow history or reconciliation state, but do not repurpose them—or create or answer other OQs—merely to carry reminders, constraints, findings, approvals, or downstream instructions between agents; put those in the normal dispatch/continuation context or authoritative Loom state instead. If no genuine unresolved question exists, do not manufacture an OQ. A Reviewer/Critic OQ response is a narrow answer, not a review/QA verdict. General-owned OQs are answered directly by the bound General session. Block only dependent work; continue unrelated authorized work.
