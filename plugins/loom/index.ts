@@ -12109,7 +12109,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             workflowId: string; stepId: string; command: string; reason: string
           }
           const command = value.command.trim()
-          const reason = value.reason.trim()
+          const reason = redactCommand(value.reason.trim())
           if (!verificationTestAgents.has(tool.agent)) {
             return { content: renderToolOutput({
               error: "Command elevation is restricted to implementation/verification roles.",
@@ -15194,13 +15194,17 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         }
       }
 
+      const unclassifiedRunner = String((input as any)?.command ?? "")
+        .trim().split(/\s+/)
+        .find((word: string) => word && !/^[A-Za-z_][A-Za-z0-9_]*=/.test(word)) ?? ""
+
       const shellTrace: EvidenceObservation["commandTrace"] | undefined =
         (tool === "shell" || tool === "bash") &&
         pending?.startedAtMs !== undefined && pending.startedAt
           ? {
             family: pending.verification?.family ?? "custom",
             runner: pending.verification?.runner ??
-              String((input as any)?.command ?? "").trim().split(/\s+/)[0].slice(0, 64),
+              redactCommand(unclassifiedRunner).slice(0, 64),
             access: pending.commandElevationId
               ? "elevated"
               : pending.verification ? "routine" : "unclassified",
