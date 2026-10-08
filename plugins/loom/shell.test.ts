@@ -27,6 +27,63 @@ import {
 } from "./shell"
 
 describe("Loom Worker shell policy", () => {
+  test("admits tool metadata and binary lookup as inspection without a write scope", () => {
+    for (const command of [
+      "node --version",
+      "bun --version",
+      "node -v",
+      "bun -v",
+      "npm --version",
+      "python3.12 -V",
+      "go version", // Existing safe Go inspection
+      "git --version",
+      "git version",
+      "but --version",
+      "but --help", // Existing Butler inspection
+      "kubectl --help",
+      "GOENV=off node --version",
+      "command -v node",
+      "command -v bun",
+    ]) {
+      expect(isAllowedWorkerShell(command)).toBe(true)
+      expect(shellResourcesAllowed([command])).toBe(true)
+      expect(diagnosticShellResourcesAllowed([command])).toBe(true)
+      expect(workerShellResourcesAllowed([command])).toBe(true)
+    }
+    expect(workerShellResourcesAllowed(["node --version", "bun --version"])).toBe(true)
+  })
+
+  test("metadata inspection does not admit arbitrary executable code or shell writes", () => {
+    for (const command of [
+      "node -e 'require(\"fs\").writeFileSync(\"/tmp/out\", \"x\")'",
+      "node -p process.version",
+      "bun -e 'console.log(1)'",
+      "node --require ./inject.cjs --version",
+      "node --version other.js",
+      "bun --help ./script.ts",
+      "npm install --version",
+      "bash -v", // Verbose execution, not a version query
+      "bash -h",
+      "python -v", // Verbose interpreter, not a version query
+      "go -v",
+      "constructor -v",
+      "__proto__ -v",
+      "./node --version",
+      "unknown-tool --version",
+      "node --version && touch /tmp/out",
+      "bun --version > /tmp/out",
+      "git --version; git reset --hard",
+      "command -v ./tool",
+      "command -v node; touch /tmp/out",
+      "PATH=/tmp node --version",
+      "GOENV=on node --version",
+    ]) {
+      expect(isAllowedWorkerShell(command)).toBe(false)
+      expect(shellResourcesAllowed([command])).toBe(false)
+    }
+    expect(workerShellResourcesAllowed(["node --version", "node -e 'console.log(1)'"])).toBe(false)
+  })
+
   test("classifies unsafe Git and Butler chains as repository commands so runtime can fail closed", () => {
     expect(isGitShellCommand("git status && rm -f README.md")).toBe(true)
     expect(isGitInspectionShellCommand("git status && rm -f README.md")).toBe(false)
@@ -39,6 +96,8 @@ describe("Loom Worker shell policy", () => {
   test("allows universal read-only Git inspection and rejects mutation-shaped or escaping forms", () => {
     for (const command of [
       "git status --short",
+      "git --version",
+      "git version",
       "git diff --stat",
       "git --no-pager log --oneline -20",
       "git show HEAD",
@@ -84,6 +143,7 @@ describe("Loom Worker shell policy", () => {
   test("allows Butler inspection commands but keeps mutations classified", () => {
     for (const command of [
       "but status",
+      "but --version",
       "but --json status -fv",
       "but status --upstream --no-hint",
       "but diff",
