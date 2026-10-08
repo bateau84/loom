@@ -6,6 +6,7 @@ import {
   diagnosticShellResourcesAllowed,
   isAllowedButlerCommit,
   isAllowedGitCommit,
+  isAllowedPackageScriptShell,
   isAllowedWorkerShell,
   isGitInspectionShellCommand,
   isGitShellCommand,
@@ -176,6 +177,39 @@ describe("Loom Worker shell policy", () => {
       "find src -name '*.go'",
     ]) {
       expect(isAllowedWorkerShell(command)).toBe(true)
+    }
+  })
+
+  test("allows named package scripts for project verification", () => {
+    for (const command of [
+      "bun run test:unit",
+      "npm run test:unit",
+      "pnpm run quality:check",
+      "yarn run build:prod",
+      "bun run my.task",
+      "npm run lint:fix -- --write",
+      "XDG_CACHE_HOME=/tmp/loom-cache bun run test:unit -- --filter unit",
+    ]) {
+      expect(isAllowedPackageScriptShell(command)).toBe(true)
+      expect(isAllowedWorkerShell(command)).toBe(true)
+      expect(shellResourcesAllowed([command])).toBe(true)
+      expect(diagnosticShellResourcesAllowed([command])).toBe(true)
+      expect(workerShellResourcesAllowed([command])).toBe(true)
+    }
+
+    for (const command of [
+      "bun run",
+      "npm run --prefix ../other test",
+      "bun run ./scripts/probe.ts",
+      "npm run ../other",
+      "npm install",
+      "npm run test:unit && rm -rf src",
+      "npm run test:unit | cat",
+      "npm run test:unit > results.txt",
+      "npm run test:unit$(touch pwn)",
+      "PATH=/tmp npm run test:unit",
+    ]) {
+      expect(isAllowedPackageScriptShell(command)).toBe(false)
     }
   })
 

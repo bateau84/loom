@@ -10226,6 +10226,67 @@ async function waveLifecycleFixture(
   }
 }
 
+test("package scripts are admitted for governed Reviewer, Critic, and Acceptance steps", async () => {
+  const roleScript = async (
+    evaluate: (event: any) => Promise<unknown>,
+    agent: string,
+    sessionID: string,
+    command: string,
+    expected: "allow" | "deny",
+  ) => {
+    const event: any = {
+      agent, action: "shell", resources: [command], sessionID, effect: "ask",
+    }
+    await evaluate(event)
+    expect(event.effect).toBe(expected)
+  }
+
+  const crit = await harness()
+  try {
+    const generalSession = "script-critic-parent"
+    const criticSession = "script-critic-child"
+    const { workflowId } = await crit.call("start", {
+      anchor: "docs/anchors/lifecycle/anchor.md",
+    }, "general", generalSession)
+    expect((await crit.call("route", {
+      humanFacing: false, behavioral: false, structural: false,
+      externalUnknown: false, diagnostic: false, productOutcome: true,
+      implementationRequested: true, executionDepth: "objective",
+      workLevel: "wave",
+    }, "general", generalSession)).error).toBeUndefined()
+    const grant = await crit.call("dispatch_grant", {
+      workflowId, stepId: "critic-solution",
+    }, "general", generalSession)
+    expect((await crit.call("attach", {
+      workflowId, stepId: "critic-solution", grantId: grant.grantId,
+    }, "critic", criticSession)).attached).toBe(true)
+    const evaluate = crit.permissionHooks.get("evaluate")!
+    await roleScript(evaluate, "critic", criticSession, "npm run test:unit", "allow")
+    await roleScript(evaluate, "critic", "unattached-critic", "npm run test:unit", "deny")
+  } finally {
+    crit.restore()
+  }
+
+  const h = await waveLifecycleFixture("objective")
+  try {
+    const evaluate = h.permissionHooks.get("evaluate")!
+    await h.finish("task:one", "worker")
+    const reviewer = await h.attach("review-implementation", "reviewer")
+    await roleScript(evaluate, "reviewer", reviewer, "bun run test:unit", "allow")
+    await roleScript(evaluate, "reviewer", "unattached-reviewer", "bun run test:unit", "deny")
+    expect((await h.call("complete", {
+      workflowId: h.workflowId, stepId: "review-implementation",
+      outcome: "pass", summary: "Package-script permission fixture review",
+    }, "reviewer", reviewer)).error).toBeUndefined()
+    expect((await h.finishKnowledge()).error).toBeUndefined()
+    const acceptance = await h.attach("product-acceptance", "acceptance")
+    await roleScript(evaluate, "acceptance", acceptance, "pnpm run test:e2e", "allow")
+    await roleScript(evaluate, "acceptance", "unattached-acceptance", "pnpm run test:e2e", "deny")
+  } finally {
+    h.restore()
+  }
+})
+
 test("legacy persisted Task fingerprints remain admissible after authority-delta fingerprint refinement", async () => {
   const h = await waveLifecycleFixture(
     "wave",

@@ -126,6 +126,7 @@ import {
   diagnosticShellResourcesAllowed,
   isAllowedButlerCommit,
   isAllowedGitCommit,
+  isAllowedPackageScriptShell,
   isButlerCommitShellCommand,
   isGitInspectionShellCommand,
   isGitShellCommand,
@@ -13633,6 +13634,41 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         event.effect = "deny"
         event.message =
           "Conversational Diagnostic shell is read-only. Arbitrary project execution is available only after attachment to a governed Diagnostic step; repository and delivery mutation remain denied."
+        return
+      }
+
+      if (
+        event.action === "shell" &&
+        ["reviewer", "critic", "acceptance"].includes(String(event.agent ?? "")) &&
+        event.resources.length > 0 &&
+        event.resources.every((command: string) => isAllowedPackageScriptShell(command))
+      ) {
+        const workflowId = (await ctx.storage.get(
+          sessionKey(event.sessionID),
+        )) as string | undefined
+        const stepId = (await ctx.storage.get(
+          sessionStepKey(event.sessionID),
+        )) as string | undefined
+        if (
+          !workflowId ||
+          !stepId ||
+          !(await exactRunnableStepAttemptBinding(
+            ctx, event.sessionID, workflowId, stepId,
+          ))
+        ) {
+          event.effect = "deny"
+          event.message =
+            "Package script execution requires this role's current runnable Loom step attempt."
+          return
+        }
+        try {
+          await assertCurrentStepPlanAdmission(ctx, workflowId, stepId)
+        } catch (error) {
+          event.effect = "deny"
+          event.message = error instanceof Error ? error.message : String(error)
+          return
+        }
+        event.effect = "allow"
         return
       }
 

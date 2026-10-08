@@ -43,10 +43,9 @@ const safePatterns = [
   /^govulncheck(?:\s|$)/,
 
   /^bun test(?:\s|$)/,
-  /^bun run (?:test|typecheck|build|lint)(?:\s|$)/,
-  /^npm (?:test|run (?:test|typecheck|build|lint))(?:\s|$)/,
-  /^pnpm (?:test|run (?:test|typecheck|build|lint))(?:\s|$)/,
-  /^yarn (?:test|run (?:test|typecheck|build|lint))(?:\s|$)/,
+  /^npm test(?:\s|$)/,
+  /^pnpm test(?:\s|$)/,
+  /^yarn test(?:\s|$)/,
 
   /^pytest(?:\s|$)/,
   /^python3? -m pytest(?:\s|$)/,
@@ -176,6 +175,7 @@ export function isAllowedWorkerShell(command: string) {
 
   if (!normalized) return false
   if (hasForbiddenShellSyntax(normalized)) return false
+  if (isAllowedPackageScriptShell(normalized)) return true
   if (isButlerInspectionShellCommand(normalized)) return true
 
   const parsed = parseEnvironmentPrefix(normalized)
@@ -246,6 +246,19 @@ function parsedCommandWords(command: string) {
   const parsed = parseEnvironmentPrefix(normalized)
   if (!parsed || !parsed.command || !environmentAllowed(parsed.assignments)) return undefined
   return splitShellWords(parsed.command)
+}
+
+// Named package scripts execute project code. The command and environment
+// remain bounded, but script effects are not restricted by this allowlist.
+export function isAllowedPackageScriptShell(command: string) {
+  const words = parsedCommandWords(command)
+  return Boolean(
+    words &&
+    words.length >= 3 &&
+    ["bun", "npm", "pnpm", "yarn"].includes(words[0]) &&
+    words[1] === "run" &&
+    /^[A-Za-z0-9][A-Za-z0-9._:-]*$/.test(words[2]),
+  )
 }
 
 
