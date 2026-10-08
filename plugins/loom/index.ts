@@ -12060,6 +12060,101 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       })
 
       addLoomTool({
+        name: "command_elevate",
+        description:
+          "Grant exactly one near-term execution of a project-local verification command outside the routine test-runner allowlist. Available only to an attached Worker, Diagnostic, Reviewer, Critic, or Acceptance step. Records who requested it, why, and the resulting shell evidence. This does not authorize file writes, Git mutations, host access, or arbitrary shell eval; scripts themselves are not sandboxed.",
+        input: {
+          type: "object",
+          properties: {
+            workflowId: { type: "string" },
+            stepId: { type: "string" },
+            command: { type: "string" },
+            reason: { type: "string" },
+          },
+          required: ["workflowId", "stepId", "command", "reason"],
+          additionalProperties: false,
+        },
+        options: { namespace: "loom", codemode: false },
+        execute: async (input, tool) => {
+          const value = input as {
+            workflowId: string; stepId: string; command: string; reason: string
+          }
+          const command = value.command.trim()
+          const reason = value.reason.trim()
+          if (!verificationTestAgents.has(tool.agent)) {
+            return { content: renderToolOutput({
+              error: "Command elevation is restricted to implementation/verification roles.",
+            }) }
+          }
+          if (!reason || reason.length > 4000 || !command || command.length > 4000 ||
+              !isElevatableVerificationShell(command)) {
+            return { content: renderToolOutput({
+              error: "Provide a reason and one project-local verification command. Shell eval, unsafe syntax, package installs, Git, and arbitrary commands cannot be self-elevated.",
+            }) }
+          }
+          try {
+            const receipt = await withRuntimeLocks(runtime, [
+              { aggregate: "workflow", resourceIdentity: value.workflowId },
+              stepAuthorityResource(value.workflowId, value.stepId),
+            ], async () => {
+              if (!(await exactRunnableStepAttemptBinding(
+                ctx, tool.sessionID, value.workflowId, value.stepId,
+              ))) throw new Error("Elevation needs an exact runnable step attachment.")
+              const workflow = await readWorkflow(ctx, value.workflowId)
+              const step = workflow?.steps.find((candidate) => candidate.id === value.stepId)
+              if (!step || step.agent !== tool.agent) {
+                throw new Error("Elevation needs ownership of the requested step.")
+              }
+              await assertCurrentStepPlanAdmission(ctx, value.workflowId, value.stepId)
+              if (tool.agent === "worker") {
+                await assertWorkerWorkClaim(ctx, value.workflowId, value.stepId)
+              }
+              const attempt = await ctx.storage.get(sessionStepAttemptKey(tool.sessionID))
+              if (!Number.isSafeInteger(attempt)) {
+                throw new Error("Missing step-attempt binding.")
+              }
+              const currentKey = commandElevationCurrentKey(tool.sessionID)
+              const priorId = await ctx.storage.get(currentKey) as string | undefined
+              const prior = priorId
+                ? await ctx.storage.get(commandElevationKey(priorId)) as CommandElevation | undefined
+                : undefined
+              if (prior && !prior.consumedAt && !prior.supersededAt) {
+                await ctx.storage.set(commandElevationKey(prior.id), {
+                  ...prior, supersededAt: new Date().toISOString(),
+                } satisfies CommandElevation)
+              }
+              const now = Date.now()
+              const grant: CommandElevation = {
+                id: crypto.randomUUID(),
+                workflowId: value.workflowId, stepId: value.stepId,
+                agent: tool.agent, sessionID: tool.sessionID,
+                attempt: attempt as number,
+                commandDigest: verificationCommandDigest(command),
+                commandSummary: redactCommand(command).slice(0, 1000),
+                reason,
+                grantedAt: new Date(now).toISOString(),
+                expiresAt: new Date(now + 15 * 60_000).toISOString(),
+              }
+              await ctx.storage.set(commandElevationKey(grant.id), grant)
+              await ctx.storage.set(currentKey, grant.id)
+              return grant
+            })
+            return { content: renderToolOutput({
+              granted: true, grantId: receipt.id,
+              workflowId: receipt.workflowId, stepId: receipt.stepId,
+              command: receipt.commandSummary, expiresAt: receipt.expiresAt,
+              singleUse: true,
+              limitation: "Permission and execution are recorded, but Loom does not inspect subprocesses or enforce script-internal writes.",
+            }) }
+          } catch (error) {
+            return { content: renderToolOutput({
+              error: error instanceof Error ? error.message : String(error),
+            }) }
+          }
+        },
+      })
+
+      addLoomTool({
         name: "scope_elevate",
         description:
           "Expand the current attached child step's write scope when discovery reveals additional files or folders. Project-local elevation is immediate, durable, and traceable; the child continues in the same session. Hard-boundary paths (outside the current project or repository-internal .git state) cannot self-authorize: this tool returns continue=false plus an exact user question payload. When continue=false, STOP the current child turn immediately and return control to General; do not retry the write or continue assuming access will arrive later.",
