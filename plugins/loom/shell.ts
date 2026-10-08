@@ -26,7 +26,7 @@ function isReadOnlyMetadataShell(command: string) {
   const words = parsedCommandWords(command)
   if (!words) return false
   if (words.length === 2 && metadataFlags.has(words[1])) {
-    return metadataTools.has(words[0]) || /^python3\\.[0-9]+$/.test(words[0])
+    return metadataTools.has(words[0]) || /^python3\.[0-9]+$/.test(words[0])
   }
   // Shell command lookup is not command execution. Refuse paths and flags,
   // including the executable's own potentially unsafe options.
