@@ -12091,7 +12091,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       addLoomTool({
         name: "command_elevate",
         description:
-          "Grant exactly one near-term execution of a project-local verification command outside the routine test-runner allowlist. Available only to an attached Worker, Diagnostic, Reviewer, Critic, or Acceptance step. Records who requested it, why, and the resulting shell evidence. This does not authorize file writes, Git mutations, host access, or arbitrary shell eval; scripts themselves are not sandboxed.",
+          "Grant exactly one near-term execution of a project-local verification command outside the routine test-runner allowlist. Available only to an attached Worker, Diagnostic, Reviewer, Critic, or Acceptance step. Records who requested it, why, and the resulting shell evidence. This does not expand Loom's direct file-edit or Git authority or allow arbitrary shell eval. The command runs with host permissions, and nested script effects are not sandboxed.",
         input: {
           type: "object",
           properties: {
