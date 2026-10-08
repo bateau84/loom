@@ -10493,6 +10493,11 @@ test("Worker generation elevation checks outputs, locks invocation and owns only
 
     const run = { tool: "shell", callID: "generated-swagger-output",
       sessionID: worker, agent: "worker", input: { command } }
+    await expect(h.toolHooks.get("execute.before")!({
+      ...run, callID: "wrong-generator-cwd",
+      input: { command, workdir: tmpdir() },
+    })).rejects.toThrow("current project root")
+    expect((await h.durableStorage.get("command-elevation/" + grant.grantId) as any).consumedAt).toBeUndefined()
     await h.toolHooks.get("execute.before")!(run)
     const outputDir = join(h.root, "internal", "swagger", "v2")
     await mkdir(outputDir, { recursive: true })
