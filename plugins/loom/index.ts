@@ -201,6 +201,7 @@ import {
   syncWorkTaskStatuses,
   workPlanContext,
   workPlanSemanticFingerprint,
+  diagnoseTaskReceiptSemantics,
   taskSemanticFingerprintAtRevision,
   taskSemanticClosureFingerprintAtRevision,
   validateWorkflowWave,
@@ -3314,25 +3315,32 @@ async function reusableCompletedTaskIds(
     // The execution result, not the roll-up status, is the reusable receipt.
     if (!workTask?.result || workTask.result.workflowId !== workflow.id) continue
 
-    const currentClosure = taskSemanticClosureFingerprintAtRevision(
-      work,
-      taskStep.task!.id,
-      workflow.work.generation,
+    const receipt = workTask.result
+    const semantic = diagnoseTaskReceiptSemantics(
+      work, taskStep.task!.id, receipt, workflow.work.generation,
     )
-    if (
-      !workTask.result.semanticClosureFingerprint ||
-      workTask.result.semanticClosureFingerprint !== currentClosure
-    ) {
+    const modernReceipt = receipt.completedAttempt !== undefined || receipt.planRevision !== undefined
+    // Modern proof must match the exact original revision; only the execution
+    // closure is compared with the newly reviewed Plan. Legacy completions
+    // keep their historical strict current-hash check (no broadened reuse).
+    const semanticValid = modernReceipt
+      ? semantic.originalProof === "valid" && semantic.currentContract === "unchanged"
+      : Boolean(
+          receipt.semanticClosureFingerprint &&
+          receipt.semanticClosureFingerprint === taskSemanticClosureFingerprintAtRevision(
+            work, taskStep.task!.id, workflow.work.generation,
+          ),
+        )
+    if (!semanticValid) {
       if (invalidReceipt === "rerun") continue
       throw new Error(
-        `Completed Task ${taskStep.task!.id} cannot be reused because its Plan/dependency/authority receipt is missing or stale.`,
+        `Completed Task ${taskStep.task!.id} cannot be reused: original proof=${semantic.originalProof}, current execution contract=${semantic.currentContract}.`,
       )
     }
 
     // Modern receipts must stay valid across EVERY Plan reopen, not just the
     // explicit reconciliation that first restored their workflow Step.
     // Legacy receipts without modern provenance keep their historical path.
-    const receipt = workTask.result
     if (receipt.completedAttempt !== undefined) {
       if (!checkedCleanHead) {
         currentCleanHead = await cleanRepositoryHead(ctx.location.directory)
@@ -10600,13 +10608,15 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                     refuse(id, "Original producer attempt or role is missing or inconsistent.")
                     continue
                   }
-                  const nowClosure = taskSemanticClosureFingerprintAtRevision(work, id, work.generation)
-                  const oldClosure = taskSemanticClosureFingerprintAtRevision(
-                    work, id, work.generation, receipt.planRevision)
-                  if (!receipt.semanticClosureFingerprint ||
-                      receipt.semanticClosureFingerprint !== nowClosure ||
-                      receipt.semanticClosureFingerprint !== oldClosure) {
-                    refuse(id, "Plan/authority/dependency closure changed or original semantic proof is missing.")
+                  const semantic = diagnoseTaskReceiptSemantics(work, id, receipt, work.generation)
+                  if (semantic.originalProof !== "valid") {
+                    refuse(id, "Original completion semantic proof failed: " + semantic.originalProof + ".")
+                    continue
+                  }
+                  if (semantic.currentContract !== "unchanged") {
+                    refuse(id, "Execution-significant Task/dependency/authority closure changed: " +
+                      semantic.currentContract + " (" +
+                      semantic.changedSemanticFields.slice(0, 8).join(", ") + ").")
                     continue
                   }
                   const executableFingerprint = createHash("sha256")
