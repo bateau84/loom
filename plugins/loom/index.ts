@@ -10737,14 +10737,11 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                     ...audit, state: "committed", workflowRevision: workflow.revision,
                   })
                 }
-                // Work, Workflow and the committed audit must advance together.
-                // The project-scoped durable storage supports transactions;
-                // fallback stores still leave a prepared (not committed) audit.
-                if (ctx.storage.transaction) {
-                  await ctx.storage.transaction(commitReconciliation)
-                } else {
-                  await commitReconciliation()
-                }
+                // withWorkflowWorkLocks already runs this entire callback in
+                // Loom's durable runtime transaction, covering the Work result,
+                // Workflow Step, and committed reconciliation audit together.
+                // OpenCode's StorageDomain has no transaction method.
+                await commitReconciliation()
                 return {
                   auditId, reconciled, restoredArchived, refused, alreadyComplete,
                   planRevision: plan.revision, budgetUnchanged: true,
