@@ -61,6 +61,8 @@ export type OpenQuestion = {
   answer?: OQAnswer
   reconciliations: Record<string, OQReconciliation>
   createdAt: string
+  /** Increments on every reopen so an earlier attachment cannot authorize new experiments. */
+  attempt?: number
   reopened?: {
     by: string
     reason: string
@@ -138,6 +140,7 @@ export function raiseQuestion(input: RaiseQuestionInput): OpenQuestion {
     status: "open",
     reconciliations: {},
     createdAt: input.now,
+    attempt: 0,
   }
 }
 
@@ -235,6 +238,7 @@ export function reopenQuestion(
   if (!mayReopen) throw new Error("Agent is not authorized to reopen this question.")
 
   question.reconciliations = {}
+  question.attempt = (question.attempt ?? 0) + 1
   if (!preserveAnswer) delete question.answer
   question.status = preserveAnswer && question.answer ? "answered" : "open"
   question.reopened = { by: actor, reason, preservedAnswer: preserveAnswer, at: now }
