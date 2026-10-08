@@ -15145,7 +15145,9 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             family: pending.verification?.family ?? "custom",
             runner: pending.verification?.runner ??
               String((input as any)?.command ?? "").trim().split(/\s+/)[0].slice(0, 64),
-            access: pending.commandElevationId ? "elevated" : "routine",
+            access: pending.commandElevationId
+              ? "elevated"
+              : pending.verification ? "routine" : "unclassified",
             startedAt: pending.startedAt,
             durationMs: Math.max(0, Date.now() - pending.startedAtMs),
             ...(pending.commandElevationId ? { grantId: pending.commandElevationId } : {}),

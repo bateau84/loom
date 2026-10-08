@@ -20,7 +20,7 @@ export type EvidenceObservation = {
   commandTrace?: {
     family: "package" | "python" | "go" | "shell" | "custom"
     runner: string
-    access: "routine" | "elevated"
+    access: "routine" | "elevated" | "unclassified"
     startedAt: string
     durationMs: number
     grantId?: string
