@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto"
 import { AsyncLocalStorage } from "node:async_hooks"
 import { lstat, mkdir, readFile, readlink, realpath, unlink } from "node:fs/promises"
-import { dirname, isAbsolute, join, relative, resolve } from "node:path"
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path"
 import { execFile } from "node:child_process"
 import { promisify } from "node:util"
 import { captureEvidenceAdmission, observationCallKey, persistEvidenceObservation, sessionAttachmentKey, type EvidenceAdmission } from "./evidence-admission"
@@ -2194,6 +2194,46 @@ function pathBeforeGlob(path: string) {
   const boundary = prefix.lastIndexOf("/")
   if (boundary < 0) return "."
   return prefix.slice(0, boundary) || "/"
+}
+
+/**
+ * Git already owns the metadata writes of a scoped git add/commit. In a linked
+ * worktree, .git is a pointer FILE and the actual gitdir/common objects/refs
+ * are outside this checkout. Those exact paths are not product write scopes.
+ *
+ * Recognizing them lets scope_elevate explain the normal Git path without
+ * manufacturing an unnecessary hard-boundary user-approval request.
+ * Recognition NEVER grants permission to edit/write those paths directly.
+ */
+async function linkedWorktreeCommitMetadataPaths(projectDirectory: string): Promise<Set<string> | undefined> {
+  try {
+    const root = await realpath(projectDirectory)
+    const gitFile = join(root, ".git")
+    const info = await lstat(gitFile)
+    if (!info.isFile() || info.isSymbolicLink()) return undefined
+    const pointer = (await readFile(gitFile, "utf8")).match(/^gitdir: ([^\r\n]+)\r?\n?$/)
+    if (!pointer) return undefined
+    const gitdir = await realpath(resolve(root, pointer[1]))
+    const env = Object.fromEntries(
+      Object.entries(process.env).filter(([key]) => !key.startsWith("GIT_")),
+    ) as NodeJS.ProcessEnv
+    const readGit = async (flag: string) =>
+      String((await execFileAsync("git", ["rev-parse", flag], {
+        cwd: root, encoding: "utf8", timeout: 10_000, env,
+      })).stdout).trim()
+    const topLevel = await realpath(await readGit("--show-toplevel"))
+    const observedGitdir = await realpath(await readGit("--absolute-git-dir"))
+    const commonDir = await realpath(resolve(root, await readGit("--git-common-dir")))
+    if (topLevel !== root || observedGitdir !== gitdir) return undefined
+    // Require the normal linked-worktree entry under a verified common .git.
+    if (dirname(dirname(gitdir)) !== join(commonDir, "worktrees") &&
+        dirname(gitdir) !== join(commonDir, "worktrees")) return undefined
+    if (basename(commonDir) !== ".git" || !(await lstat(commonDir)).isDirectory()) return undefined
+    return new Set([gitFile, gitdir, join(commonDir, "objects"), join(commonDir, "refs")])
+  } catch {
+    // If identity cannot be proven, retain the existing hard-boundary behavior.
+    return undefined
+  }
 }
 
 async function classifyScopeTarget(projectDirectory: string, raw: string) {
@@ -12493,6 +12533,43 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                   : {}),
               }),
             )
+
+          // A linked worktree's .git *file*, private gitdir and common
+          // objects/refs are updated by the Git CLI. They must not be added to
+          // Loom's product write scope, and do not require user approval for
+          // normal scoped git add/commit.
+          if (tool.agent === "worker" && projectPaths.length === 0 && hardBoundaryPaths.length > 0) {
+            const recognized = await linkedWorktreeCommitMetadataPaths(ctx.location.directory)
+            if (recognized && hardBoundaryPaths.every((path) => recognized.has(resolve(path)))) {
+              try {
+                if (!(await exactRunnableStepAttemptBinding(
+                  ctx, tool.sessionID, value.workflowId, value.stepId,
+                ))) throw new Error("Linked-worktree Git use requires the exact current Worker step attempt.")
+                await assertCurrentStepPlanAdmission(ctx, value.workflowId, value.stepId)
+                await assertWorkerWorkClaim(ctx, value.workflowId, value.stepId)
+                const scope = (await ctx.storage.get(
+                  scopeKey(value.workflowId, value.stepId),
+                )) as TaskScope | undefined
+                if (!scope || committableWriteScope(scope.write).length === 0) {
+                  throw new Error("Commit needs an admitted committable project write scope.")
+                }
+                return {
+                  content: renderToolOutput({
+                    status: "not-required",
+                    continue: true,
+                    newPermissionGranted: false,
+                    reason: "These exact paths are Git-owned metadata for the current linked worktree.",
+                    nextAction: "Do not edit .git, the linked worktree gitdir, objects or refs directly. Commit the already-admitted files using scoped git add -- <file> and git -c core.hooksPath=/dev/null commit -m <message> in the current worktree. Git resolves the .git pointer file and updates its external metadata automatically.",
+                    metadataPaths: hardBoundaryPaths,
+                  }),
+                }
+              } catch (error) {
+                return { content: renderToolOutput({
+                  error: error instanceof Error ? error.message : String(error),
+                }) }
+              }
+            }
+          }
 
           const roleWriteDefault = artifactWriteDefaults[tool.agent] ?? []
           let reviewerRepairCandidate = false
