@@ -10726,17 +10726,25 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 // Crash between audit and workflow persistence must not present
                 // a prepared record as a successful carry-forward.
                 await ctx.storage.set(auditKey, { ...audit, state: "prepared" })
-                if (restoredArchived.length) {
-                  work.version++
-                  work.updatedAt = restoredAt
-                  // Write original Work receipts first. If workflow persistence
-                  // fails, Steps remain pending and may be reconciled again.
-                  await ctx.storage.set(workKey(work.objectiveId), work)
+                const commitReconciliation = async () => {
+                  if (restoredArchived.length) {
+                    work.version++
+                    work.updatedAt = restoredAt
+                    await ctx.storage.set(workKey(work.objectiveId), work)
+                  }
+                  if (reconciled.length) await persistWorkflowMutationLocked(ctx, runtime, workflow)
+                  await ctx.storage.set(auditKey, {
+                    ...audit, state: "committed", workflowRevision: workflow.revision,
+                  })
                 }
-                if (reconciled.length) await persistWorkflowMutationLocked(ctx, runtime, workflow)
-                await ctx.storage.set(auditKey, {
-                  ...audit, state: "committed", workflowRevision: workflow.revision,
-                })
+                // Work, Workflow and the committed audit must advance together.
+                // The project-scoped durable storage supports transactions;
+                // fallback stores still leave a prepared (not committed) audit.
+                if (ctx.storage.transaction) {
+                  await ctx.storage.transaction(commitReconciliation)
+                } else {
+                  await commitReconciliation()
+                }
                 return {
                   auditId, reconciled, restoredArchived, refused, alreadyComplete,
                   planRevision: plan.revision, budgetUnchanged: true,
