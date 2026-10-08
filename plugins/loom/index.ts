@@ -4470,11 +4470,19 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         }
       }
       const scope = (await ctx.storage.get(scopeKey(workflowId, stepId))) as TaskScope | undefined
-      if (!scope?.write.length || !resourcesWithinScope(outputPaths, scope.write)) {
+      const effectiveWrite = mergeWriteScope(
+        scope?.write ?? [],
+        projectWriteOverrides(
+          (await readLocalPermissionPolicy()).policy,
+          ctx.location.directory,
+          "worker",
+        ),
+      )
+      if (effectiveWrite.length === 0 || !resourcesWithinScope(outputPaths, effectiveWrite)) {
         throw new Error(
           "Generated output is outside the current Loom write scope (" +
           elevatedGenerationOutput(command) +
-          "). Call loom_scope_elevate for the generated files before retrying.",
+          "). Grant the bounded generated paths through local .loom.yaml writes.worker or loom_scope_elevate before retrying.",
         )
       }
     }
@@ -14963,6 +14971,30 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         }
       }
       let elevationRequired = false
+      // A personal command grant is live user authority, not a source-code
+      // allowlist. Bind it to the SAME current executable step at the host
+      // execution boundary; OQ-only and stale attachments cannot use it.
+      let locallyAdmittedShell = false
+      if (shellCommand && raw.sessionID && loomAgents.has(String(raw.agent ?? ""))) {
+        const localPolicy = await readLocalPermissionPolicy()
+        const localRules = projectShellOverrides(localPolicy.policy, ctx.location.directory)
+        if (localPolicyShellAllowed(shellCommand, localRules)) {
+          const sessionID = String(raw.sessionID)
+          const workflowId = await ctx.storage.get(sessionKey(sessionID))
+          const stepId = await ctx.storage.get(sessionStepKey(sessionID))
+          if (typeof workflowId !== "string" || typeof stepId !== "string" ||
+              !(await exactRunnableStepAttemptBinding(ctx, sessionID, workflowId, stepId))) {
+            throw new Error("Local command authorization requires this agent's exact current runnable Loom step.")
+          }
+          await assertCurrentStepPlanAdmission(ctx, workflowId, stepId)
+          if (raw.agent === "worker") await assertWorkerWorkClaim(ctx, workflowId, stepId)
+          // A generator still has declared outputs even with a local command grant.
+          if (generationPaths.length > 0) {
+            await assertProjectGenerationWrite(workflowId, stepId, shellCommand)
+          }
+          locallyAdmittedShell = true
+        }
+      }
       if (shellCommand && raw.sessionID &&
           verificationTestAgents.has(String(raw.agent ?? "")) &&
           (isElevatableVerificationShell(shellCommand) || generationPaths.length > 0)) {
@@ -14972,7 +15004,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           : agent === "diagnostic"
             ? diagnosticExecutionShellResourcesAllowed([shellCommand])
             : Boolean(classifyVerificationShell(shellCommand))
-        if (!allowedWithoutElevation) {
+        if (!allowedWithoutElevation && !locallyAdmittedShell) {
           elevationRequired = true
           if (!observationCallKey(raw)) {
             throw new Error(
