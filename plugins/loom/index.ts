@@ -12368,6 +12368,31 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       })
 
       addLoomTool({
+        name: "policy_status",
+        description:
+          "Inspect the optional user-owned ~/.config/opencode/.loom.yaml policy, its validity, and the shell/write exceptions effective for this project. Re-read on each check; no build or restart is needed.",
+        input: {
+          type: "object",
+          properties: {},
+          additionalProperties: false,
+        },
+        options: { namespace: "loom", codemode: false },
+        execute: async () => {
+          const local = await readLocalPermissionPolicy()
+          const project = local.policy?.projects[resolve(ctx.location.directory)]
+          return { content: renderToolOutput({
+            path: local.path,
+            status: local.status,
+            ...(local.error ? { error: local.error } : {}),
+            project: ctx.location.directory,
+            shell: projectShellOverrides(local.policy, ctx.location.directory),
+            writes: project?.writes ?? {},
+            note: "Only commands explicitly listed in this trusted file are locally admitted. Local write paths still require a current runnable workflow step, and hard boundaries remain guarded. An OQ answer is not a runnable mutation step.",
+          }) }
+        },
+      })
+
+      addLoomTool({
         name: "command_elevate",
         description:
           "Grant one near-term execution of a non-routine project-local test or bounded generator command. Verification supports make/just tests, local scripts, selected Python modules and go run. Generation currently supports Worker-only swag init with an explicit --output inside its current write scope (use loom_scope_elevate first). Exact command, session, attempt and audit evidence are bound; Git, installs, shell eval and arbitrary executables remain denied. The tool runs with host permissions and does not sandbox nested script effects.",
