@@ -186,6 +186,21 @@ export function compactWorkflowState(
       total: workflow.steps.length,
       failed: failed.length,
     },
+    now: ready.map((step) => ({
+      step: step.id,
+      agent: step.agent,
+      kind: step.kind,
+      ...(step.agent === "reviewer"
+        ? {
+            reviewMode: step.review?.mode ?? "review-only",
+            independentApprovalPending:
+              step.review?.independentApprovalPending ?? false,
+            resumeSessionId: step.review?.preferredSessionId,
+            ineligibleReviewerSessionIds:
+              step.review?.ineligibleIndependentSessionIds ?? [],
+          }
+        : {}),
+    })),
     readiness: ready.map((step) => {
       const constraints = completionConstraints(workflow, questions, step.id)
       const observed = stepReadiness[step.id]
@@ -225,6 +240,13 @@ export function compactWorkflowState(
       agent: step.agent,
       status: step.status,
       ...(step.summary ? { summary: clippedSummary(step.summary) } : {}),
+      ...(step.agent === "reviewer" && step.review?.receipts?.length
+        ? {
+            reviewReceipt: step.review.receipts.at(-1),
+            independentApprovalPending:
+              step.review.independentApprovalPending ?? false,
+          }
+        : {}),
     })),
     upcoming: (workflow.cancellation ? [] : blockedPending.slice(0, 6)).map((step) => ({
       step: step.id,
@@ -406,6 +428,17 @@ export function renderStatusMarkdown(view: StatusView, artifact?: StatusArtifact
       lines.push(
         `- **Work:** ${statusGlyph(item.status)} ${item.phase} / ${item.wave} · ${item.progress.finished}/${item.progress.total}`,
       )
+    }
+  }
+
+  if (view.now.length) {
+    lines.push("", "### Now")
+    for (const step of view.now.slice(0, 5)) {
+      const review =
+        "reviewMode" in step && step.reviewMode
+          ? ` · ${step.reviewMode}${step.independentApprovalPending ? " · independent approval pending" : ""}`
+          : ""
+      lines.push(`- → **${step.agent}** · ${markdownCode(step.step)}${review}`)
     }
   }
 
@@ -638,7 +671,11 @@ function currentHtml(view: StatusView) {
                   .join(", "),
             )
           }
-          return `<li><span class="agent">${esc(step.agent)}</span><code>${esc(step.step)}</code><span class="muted">${esc(details.join(" · "))}</span></li>`
+          const reviewer = view.now.find((candidate) => candidate.step === step.step)
+          const review = reviewer && "reviewMode" in reviewer && reviewer.reviewMode
+            ? ` · ${esc(reviewer.reviewMode)}${reviewer.independentApprovalPending ? " · independent approval pending" : ""}`
+            : ""
+          return `<li><span class="agent">${esc(step.agent)}</span><code>${esc(step.step)}</code><span class="muted">${esc(details.join(" · "))}${review}</span></li>`
         })
         .join("")
     : '<li class="muted">No structurally runnable step.</li>'

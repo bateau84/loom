@@ -5,6 +5,41 @@ import type { EvidenceKind } from "./evidence"
 export type StepKind = "work" | "gate" | "wait"
 export type StepStatus = "pending" | "waiting" | "complete" | "passed" | "failed"
 
+export type ReviewAssignmentMode =
+  | "review-only"
+  | "repair-authorized"
+  | "independent-re-review"
+
+export type ReviewReceipt = {
+  kind: "review" | "repair"
+  attempt: number
+  sessionId: string
+  headSha: string
+  assurance: "independent" | "self-verified"
+  outcome: "pass" | "fail" | "self-verified"
+  summary: string
+  evidenceBound: number
+  evidenceClaimIds?: string[]
+  finding?: string
+  changeSummary?: string
+  verificationSummary?: string
+  recordedAt: string
+}
+
+export type ReviewControl = {
+  mode: ReviewAssignmentMode
+  lastReviewerSessionId?: string
+  attachedHeadSha?: string
+  preferredSessionId?: string
+  freshSessionRequired?: boolean
+  repairSessionId?: string
+  repairFinding?: string
+  repairReason?: string
+  ineligibleIndependentSessionIds?: string[]
+  independentApprovalPending?: boolean
+  receipts?: ReviewReceipt[]
+}
+
 export type Step = {
   id: string
   agent: string
@@ -14,6 +49,7 @@ export type Step = {
   attempt?: number
   summary?: string
   task?: TaskSpec
+  review?: ReviewControl
 }
 
 export type WorkLevel = "objective" | "wave"
@@ -215,9 +251,13 @@ export function resetVerificationAfterReopen(workflow: Workflow, resetStepIds: s
       continue
     }
 
+    // Reopening only the consumer gate does not invalidate an existing proof.
+    // Proof follows the producer/evidence path; the fresh gate may review the
+    // same proof again without redispatching unchanged work.
     if (
       requirement.status === "satisfied" &&
-      (reset.has(requirement.beforeStepId) || (requirement.proof?.stepId && reset.has(requirement.proof.stepId)))
+      requirement.proof?.stepId &&
+      reset.has(requirement.proof.stepId)
     ) {
       requirement.status = "open"
       delete requirement.proof
@@ -427,6 +467,17 @@ export function preserveSatisfied(previous: Step[], next: Step[]) {
   for (const step of next) {
     const old = byID.get(step.id)
     if (old) step.attempt = (old.attempt ?? 0) + 1
+    if (old?.review && step.agent === "reviewer") {
+      step.review = {
+        ...old.review,
+        ...(old.review.ineligibleIndependentSessionIds
+          ? { ineligibleIndependentSessionIds: [...old.review.ineligibleIndependentSessionIds] }
+          : {}),
+        ...(old.review.receipts
+          ? { receipts: old.review.receipts.map((receipt) => ({ ...receipt, ...(receipt.evidenceClaimIds ? { evidenceClaimIds: [...receipt.evidenceClaimIds] } : {}) })) }
+          : {}),
+      }
+    }
     const sameDependencies =
       old?.dependsOn.length === step.dependsOn.length &&
       old.dependsOn.every((dependency, index) => dependency === step.dependsOn[index])
@@ -511,6 +562,250 @@ export function reopenFrom(workflow: Workflow, stepId: string) {
   return [...affected]
 }
 
+function reviewerControl(step: Step) {
+  if (step.agent !== "reviewer" || step.kind !== "gate") {
+    throw new Error("Review control applies only to Reviewer gates.")
+  }
+  if (!step.review) step.review = { mode: "review-only" }
+  if (!step.review.receipts) step.review.receipts = []
+  if (!step.review.ineligibleIndependentSessionIds) {
+    step.review.ineligibleIndependentSessionIds = []
+  }
+  return step.review
+}
+
+export function reviewAssignmentMode(step: Step): ReviewAssignmentMode {
+  return step.review?.mode ?? "review-only"
+}
+
+export function recordReviewerAttachment(step: Step, sessionId: string, headSha: string) {
+  const review = reviewerControl(step)
+  const normalizedHeadSha = headSha.trim()
+  if (!normalizedHeadSha || normalizedHeadSha === "unavailable") {
+    throw new Error("Reviewer attachment requires exact repository revision evidence.")
+  }
+  review.lastReviewerSessionId = sessionId
+  review.attachedHeadSha = normalizedHeadSha
+  review.freshSessionRequired = false
+  return review
+}
+
+export function authorizeReviewerRepair(
+  step: Step,
+  input: {
+    repairSessionId: string
+    finding: string
+    reason: string
+    preferredIndependentSessionId?: string
+  },
+) {
+  if (step.id !== "review-implementation" || step.agent !== "reviewer" || step.kind !== "gate") {
+    throw new Error("Reviewer repair is available only for implementation-review gates.")
+  }
+  if (step.status !== "failed") {
+    throw new Error("Reviewer repair requires a failed implementation review.")
+  }
+  const repairSessionId = input.repairSessionId.trim()
+  const finding = input.finding.trim()
+  const reason = input.reason.trim()
+  if (!repairSessionId || !finding || !reason) {
+    throw new Error("Reviewer repair requires an exact repair session, finding, and reason.")
+  }
+
+  const review = reviewerControl(step)
+  review.mode = "repair-authorized"
+  review.repairSessionId = repairSessionId
+  review.repairFinding = finding
+  review.repairReason = reason
+  review.independentApprovalPending = true
+  review.freshSessionRequired = false
+  review.ineligibleIndependentSessionIds = [
+    ...new Set([...(review.ineligibleIndependentSessionIds ?? []), repairSessionId]),
+  ]
+  const preferred = input.preferredIndependentSessionId?.trim()
+  review.preferredSessionId =
+    preferred && preferred !== repairSessionId &&
+    !review.ineligibleIndependentSessionIds.includes(preferred)
+      ? preferred
+      : undefined
+
+  step.attempt = (step.attempt ?? 0) + 1
+  step.status = "pending"
+  delete step.summary
+  return review
+}
+
+export function completeReviewerRepair(
+  step: Step,
+  input: {
+    sessionId: string
+    headSha: string
+    changeSummary: string
+    verificationSummary: string
+    evidenceBound: number
+    evidenceClaimIds?: string[]
+    recordedAt: string
+  },
+) {
+  const review = reviewerControl(step)
+  if (step.id !== "review-implementation" || review.mode !== "repair-authorized") {
+    throw new Error("Current Reviewer assignment is not repair-authorized.")
+  }
+  if (!review.repairSessionId || review.repairSessionId !== input.sessionId) {
+    throw new Error("Only the exact Reviewer session authorized for this repair may complete it.")
+  }
+  if (step.status !== "pending") {
+    throw new Error("Reviewer repair completion requires the current pending gate attempt.")
+  }
+  const headSha = input.headSha.trim()
+  const changeSummary = input.changeSummary.trim()
+  const verificationSummary = input.verificationSummary.trim()
+  if (!headSha || headSha === "unavailable" || !changeSummary || !verificationSummary) {
+    throw new Error("Reviewer repair completion requires exact revision, change, and verification evidence.")
+  }
+
+  review.receipts!.push({
+    kind: "repair",
+    attempt: step.attempt ?? 0,
+    sessionId: input.sessionId,
+    headSha,
+    assurance: "self-verified",
+    outcome: "self-verified",
+    summary: changeSummary,
+    finding: review.repairFinding,
+    changeSummary,
+    verificationSummary,
+    evidenceBound: input.evidenceBound,
+    ...(input.evidenceClaimIds?.length ? { evidenceClaimIds: [...input.evidenceClaimIds] } : {}),
+    recordedAt: input.recordedAt,
+  })
+  review.lastReviewerSessionId = input.sessionId
+  review.mode = "independent-re-review"
+  review.independentApprovalPending = true
+  review.freshSessionRequired = !review.preferredSessionId
+  delete review.repairSessionId
+  delete review.repairFinding
+  delete review.repairReason
+
+  step.attempt = (step.attempt ?? 0) + 1
+  step.status = "pending"
+  delete step.summary
+  return review
+}
+
+export function prepareReviewerAfterProducerRepair(
+  step: Step,
+  preferredSessionId?: string,
+) {
+  const review = reviewerControl(step)
+  const preferred = preferredSessionId?.trim()
+  review.mode = review.independentApprovalPending
+    ? "independent-re-review"
+    : "review-only"
+  review.preferredSessionId =
+    preferred && !(review.ineligibleIndependentSessionIds ?? []).includes(preferred)
+      ? preferred
+      : undefined
+  review.freshSessionRequired = false
+  delete review.repairSessionId
+  delete review.repairFinding
+  delete review.repairReason
+  return review
+}
+
+export function prepareReviewerAfterAuthorityChange(step: Step) {
+  const review = reviewerControl(step)
+  review.mode = review.independentApprovalPending
+    ? "independent-re-review"
+    : "review-only"
+  review.preferredSessionId = undefined
+  review.freshSessionRequired = true
+  delete review.repairSessionId
+  delete review.repairFinding
+  delete review.repairReason
+  return review
+}
+
+export function reviewerSessionEligibleForIndependentReview(
+  step: Step,
+  sessionId: string,
+) {
+  const review = reviewerControl(step)
+  return !(review.ineligibleIndependentSessionIds ?? []).includes(sessionId)
+}
+
+export function recordReviewerVerdict(
+  step: Step,
+  input: {
+    sessionId: string
+    outcome: "pass" | "fail"
+    summary: string
+    headSha: string
+    evidenceBound: number
+    evidenceClaimIds?: string[]
+    recordedAt: string
+  },
+) {
+  const review = reviewerControl(step)
+  if (review.mode === "repair-authorized") {
+    throw new Error(
+      "A repair-authorized Reviewer cannot record an independent verdict. Complete the repair as self-verified first.",
+    )
+  }
+  if (
+    review.mode === "independent-re-review" &&
+    !reviewerSessionEligibleForIndependentReview(step, input.sessionId)
+  ) {
+    throw new Error("This Reviewer session authored repair and is ineligible for independent re-review.")
+  }
+  const headSha = input.headSha.trim()
+  if (input.outcome === "pass") {
+    if (!headSha || headSha === "unavailable") {
+      throw new Error("Reviewer PASS requires exact repository revision evidence.")
+    }
+    if (
+      step.id === "review-implementation" &&
+      (!review.attachedHeadSha || review.attachedHeadSha !== headSha)
+    ) {
+      throw new Error(
+        "Reviewer PASS is stale because repository HEAD changed after this Reviewer attached. Re-attach and review the current revision.",
+      )
+    }
+  }
+
+  review.receipts!.push({
+    kind: "review",
+    attempt: step.attempt ?? 0,
+    sessionId: input.sessionId,
+    headSha,
+    assurance: "independent",
+    outcome: input.outcome,
+    summary: input.summary,
+    evidenceBound: input.evidenceBound,
+    ...(input.evidenceClaimIds?.length ? { evidenceClaimIds: [...input.evidenceClaimIds] } : {}),
+    recordedAt: input.recordedAt,
+  })
+  review.lastReviewerSessionId = input.sessionId
+  if (input.outcome === "pass") {
+    review.independentApprovalPending = false
+    delete review.preferredSessionId
+  }
+  return review
+}
+
+export function knownReviewerSessions(step: Step) {
+  const review = reviewerControl(step)
+  return [
+    ...new Set(
+      [
+        review.lastReviewerSessionId,
+        review.preferredSessionId,
+        review.repairSessionId,
+        ...(review.receipts ?? []).map((receipt) => receipt.sessionId),
+      ].filter((value): value is string => Boolean(value)),
+    ),
+  ]
+}
 
 export function plannedTaskSteps(workflow: Workflow) {
   return workflow.steps.filter((step) => step.task)
@@ -553,7 +848,11 @@ function userDecisionContract(task: TaskSpec) {
   ])
 }
 
-export function applyTaskPlan(workflow: Workflow, tasks: TaskSpec[]) {
+export function applyTaskPlan(
+  workflow: Workflow,
+  tasks: TaskSpec[],
+  preserveSatisfiedTaskIds: string[] = [],
+) {
   const plan = workflow.steps.find((step) => step.id === "plan")
   if (!plan) throw new Error("Workflow has no planning step.")
   if (plan.status !== "pending") throw new Error("Planning step must be pending before replacing the task graph.")
@@ -562,21 +861,22 @@ export function applyTaskPlan(workflow: Workflow, tasks: TaskSpec[]) {
   }
 
   const existing = plannedTaskSteps(workflow)
-  const startedTasks = existing.filter((step) => {
-    const untouchedUserDecision =
-      step.kind === "wait" &&
-      step.status === "waiting" &&
-      step.agent === "user" &&
-      step.task?.role === "user" &&
-      step.task.responsibility === "obtain-user-decision"
-    return step.status !== "pending" && !untouchedUserDecision
-  })
-  if (startedTasks.length > 0) {
-    const details = startedTasks.map((step) => `${step.id} (${step.kind}/${step.status})`).join(", ")
-    throw new Error(`Task graph cannot change after task execution has started: ${details}.`)
+  const preserve = new Set(preserveSatisfiedTaskIds)
+  const preserved = existing.filter(
+    (step) => step.task && preserve.has(step.task.id) && satisfied(step),
+  )
+
+  for (const step of preserved) {
+    const refreshed = tasks.find((candidate) => candidate.id === step.task!.id)
+    if (refreshed && JSON.stringify(refreshed) !== JSON.stringify(step.task)) {
+      throw new Error(
+        `Completed Task ${step.task!.id} cannot reuse its result with a changed executable contract; invalidate/replan that Task instead.`,
+      )
+    }
   }
+
   for (const step of existing) {
-    if (step.status !== "waiting") continue
+    if (step.status !== "waiting" || preserve.has(step.task!.id)) continue
     const task = step.task!
     const refreshed = tasks.find((candidate) => candidate.id === task.id)
     if (
@@ -589,9 +889,18 @@ export function applyTaskPlan(workflow: Workflow, tasks: TaskSpec[]) {
     }
   }
 
+  const executableTasks = tasks.filter((task) => !preserve.has(task.id))
+  const allTaskSpecs = [
+    ...preserved.map((step) => step.task!),
+    ...executableTasks,
+  ]
+  const taskById = new Map(allTaskSpecs.map((task) => [task.id, task]))
+  if (taskById.size !== allTaskSpecs.length) {
+    throw new Error("Task graph contains duplicate Task identities after completion reuse.")
+  }
+
   const executionGateId = "review-plan"
-  const taskById = new Map(tasks.map((task) => [task.id, task]))
-  const taskSteps: Step[] = tasks.map((task) => {
+  const rebuilt: Step[] = executableTasks.map((task) => {
     if (!task.role || !task.responsibility) {
       throw new Error(`Task ${task.id} requires an accountable role and responsibility; amend and review the Plan before admission.`)
     }
@@ -628,12 +937,18 @@ export function applyTaskPlan(workflow: Workflow, tasks: TaskSpec[]) {
       attempt: (existing.find((step) => step.id === taskStepId(task.id))?.attempt ?? -1) + 1,
     }
   })
-  const handoffGates: Step[] = tasks
+
+  const preservedById = new Map(preserved.map((step) => [step.task!.id, step]))
+  const taskSteps = allTaskSpecs.map((task) =>
+    preservedById.get(task.id) ?? rebuilt.find((step) => step.task?.id === task.id)!,
+  )
+
+  const handoffGates: Step[] = allTaskSpecs
     .filter((source) => source.responsibility !== "review" && source.responsibility !== "obtain-user-decision" &&
-      tasks.some((target) => target.role !== source.role && target.responsibility !== "review" && target.dependsOn.includes(source.id)))
+      allTaskSpecs.some((target) => target.role !== source.role && target.responsibility !== "review" && target.dependsOn.includes(source.id)))
     .map((source) => ({
       id: `task-review:${source.id}`, agent: "reviewer", kind: "gate",
-      dependsOn: [taskStepId(source.id)], status: "pending",
+      dependsOn: [executionGateId, taskStepId(source.id)], status: "pending",
     }))
 
   const withoutTasks = workflow.steps.filter((step) => !step.task && !step.id.startsWith("task-review:"))
