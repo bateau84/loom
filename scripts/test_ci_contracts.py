@@ -75,47 +75,13 @@ class ActivationTests(unittest.TestCase):
         self.assertIn("grep -Fxq 'PASS missing plugin rejected'", workflow)
 
 
-class AgentButlerPermissionTests(unittest.TestCase):
-    def test_every_agent_exposes_butler_as_fail_safe_ask(self):
+class AgentGitPermissionTests(unittest.TestCase):
+    def test_every_agent_exposes_git_as_fail_safe_ask(self):
         permission = (
             '  - action: shell\n'
-            '    resource: "but *"\n'
+            '    resource: "git *"\n'
             '    effect: ask'
         )
-        for path in sorted((ROOT / "agents").glob("*.md")):
-            text = path.read_text()
-            header_end = text.find("\n---", 4)
-            self.assertGreater(header_end, 0, path.name)
-            header = text[:header_end]
-            with self.subTest(agent=path.stem):
-                self.assertIn(permission, header)
-                wildcard_deny = (
-                    '  - action: shell\n'
-                    '    resource: "*"\n'
-                    '    effect: deny'
-                )
-                if wildcard_deny in header:
-                    self.assertGreater(
-                        header.index(permission),
-                        header.index(wildcard_deny),
-                        "Butler ask fallback must follow wildcard shell deny",
-                    )
-
-
-class AgentGitPermissionTests(unittest.TestCase):
-    def test_every_agent_exposes_git_and_but_as_fail_safe_ask(self):
-        permissions = [
-            (
-                '  - action: shell\n'
-                '    resource: "git *"\n'
-                '    effect: ask'
-            ),
-            (
-                '  - action: shell\n'
-                '    resource: "but *"\n'
-                '    effect: ask'
-            ),
-        ]
         wildcard_deny = (
             '  - action: shell\n'
             '    resource: "*"\n'
@@ -127,14 +93,13 @@ class AgentGitPermissionTests(unittest.TestCase):
             self.assertGreater(header_end, 0, path.name)
             header = text[:header_end]
             with self.subTest(agent=path.stem):
-                for permission in permissions:
-                    self.assertIn(permission, header)
-                    if wildcard_deny in header:
-                        self.assertGreater(
-                            header.index(permission),
-                            header.index(wildcard_deny),
-                            "Git/Butler ask fallback must follow wildcard shell deny",
-                        )
+                self.assertIn(permission, header)
+                if wildcard_deny in header:
+                    self.assertGreater(
+                        header.index(permission),
+                        header.index(wildcard_deny),
+                        "Git ask fallback must follow wildcard shell deny",
+                    )
 
     def test_runtime_has_universal_git_inspection_and_fail_closed_fallback(self):
         source = (ROOT / "plugins/loom/index.ts").read_text()
@@ -142,7 +107,6 @@ class AgentGitPermissionTests(unittest.TestCase):
             path.read_text() for path in sorted((ROOT / "agents").glob("*.md"))
         )
         self.assertNotIn('resource: "git *"\n    effect: allow', agents)
-        self.assertNotIn('resource: "but *"\n    effect: allow', agents)
         self.assertIn("isGitInspectionShellCommand(resource)", source)
         self.assertIn(
             "Read-only repository inspection is universally available",
