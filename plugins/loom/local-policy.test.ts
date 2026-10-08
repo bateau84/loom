@@ -61,6 +61,10 @@ describe("local personal Loom permission policy", () => {
     ]) {
       expect(localPolicyShellAllowed(command, rules)).toBe(true)
     }
+    expect(localPolicyShellAllowed(
+      "GOENV=off git push origin HEAD",
+      { exact: ["GOENV=off git push origin HEAD"], prefixes: ["GOENV=off git push"] },
+    )).toBe(false)
     for (const command of [
       "kubectl getpods", "node -e 'console.log(1)'",
       "bun --version && touch /tmp/oops",
