@@ -1315,6 +1315,29 @@ function planTaskSemanticFingerprint(plan: WorkPlanDefinition, taskId: string) {
 }
 
 /**
+ * The existing completion receipt hashes the full historical Plan closure.
+ * Its hash must continue to verify exactly as written. Carry-forward compares
+ * a separate execution closure that drops only display-only Phase/Wave titles.
+ * Goal, scope, authority, obligations, parent objectives, constraints, Task
+ * contract and every transitive dependency remain binding.
+ */
+function planTaskExecutionSemanticFingerprint(plan: WorkPlanDefinition, taskId: string) {
+  const authorityRefs = relevantTaskAuthorityRefs(plan, taskId)
+  if (!authorityRefs) return undefined
+  const payload = planTaskFingerprintPayload(plan, taskId, authorityRefs)
+  if (!payload) return undefined
+  return JSON.stringify({
+    ...payload,
+    phase: { id: payload.phase.id, objective: payload.phase.objective },
+    wave: {
+      id: payload.wave.id,
+      objective: payload.wave.objective,
+      constraints: payload.wave.constraints,
+    },
+  })
+}
+
+/**
  * Pre-authority-delta fingerprint retained only to admit already-persisted
  * in-flight workflow bindings across this runtime upgrade.
  */
@@ -1333,7 +1356,11 @@ export function taskSemanticFingerprintAtRevision(
   return snapshot ? planTaskSemanticFingerprint(snapshot, taskId) : undefined
 }
 
-function planTaskSemanticClosureFingerprint(plan: WorkPlanDefinition, taskId: string) {
+function planTaskSemanticClosureFingerprint(
+  plan: WorkPlanDefinition,
+  taskId: string,
+  fingerprintForTask: (plan: WorkPlanDefinition, taskId: string) => string | undefined = planTaskSemanticFingerprint,
+) {
   const fingerprints = new Map<string, string>()
   const visiting = new Set<string>()
   const visit = (id: string): boolean => {
@@ -1346,7 +1373,7 @@ function planTaskSemanticClosureFingerprint(plan: WorkPlanDefinition, taskId: st
       if (!visit(dependency)) return false
     }
     visiting.delete(id)
-    const fingerprint = planTaskSemanticFingerprint(plan, id)
+    const fingerprint = fingerprintForTask(plan, id)
     if (!fingerprint) return false
     fingerprints.set(id, fingerprint)
     return true
@@ -1370,6 +1397,132 @@ export function taskSemanticClosureFingerprintAtRevision(
 ) {
   const snapshot = planSnapshot(hierarchy, generation, revision)
   return snapshot ? planTaskSemanticClosureFingerprint(snapshot, taskId) : undefined
+}
+
+/** The execution-significant closure, including all transitive Task dependencies. */
+export function taskExecutionClosureFingerprintAtRevision(
+  hierarchy: WorkHierarchy,
+  taskId: string,
+  generation = hierarchy.generation,
+  revision?: number,
+) {
+  const snapshot = planSnapshot(hierarchy, generation, revision)
+  return snapshot
+    ? planTaskSemanticClosureFingerprint(snapshot, taskId, planTaskExecutionSemanticFingerprint)
+    : undefined
+}
+
+export type TaskReceiptSemanticDiagnosis = {
+  originalProof: "valid" | "missing-receipt-fingerprint" | "original-plan-unavailable" | "original-proof-mismatch"
+  currentContract: "unchanged" | "changed" | "unknown"
+  originalPlanRevision?: number
+  hashes: {
+    recordedOriginal?: string
+    reconstructedOriginal?: string
+    legacyCurrent?: string
+    executionOriginal?: string
+    executionCurrent?: string
+  }
+  changedSemanticFields: string[]
+  changedDisplayFields: string[]
+}
+
+/**
+ * Read-only diagnosis. Provenance and the current contract are independent:
+ * a receipt can be authentic for its original Plan while its Task is stale.
+ * Never infer original proof from a matching *current* fingerprint.
+ */
+export function diagnoseTaskReceiptSemantics(
+  hierarchy: WorkHierarchy,
+  taskId: string,
+  receipt: WorkTaskResult,
+  generation = hierarchy.generation,
+): TaskReceiptSemanticDiagnosis {
+  const revision = receipt.planRevision
+  const original = revision
+    ? taskSemanticClosureFingerprintAtRevision(hierarchy, taskId, generation, revision)
+    : undefined
+  const current = taskSemanticClosureFingerprintAtRevision(hierarchy, taskId, generation)
+  const originalExecution = revision
+    ? taskExecutionClosureFingerprintAtRevision(hierarchy, taskId, generation, revision)
+    : undefined
+  const currentExecution = taskExecutionClosureFingerprintAtRevision(hierarchy, taskId, generation)
+  const originalProof = !receipt.semanticClosureFingerprint
+    ? "missing-receipt-fingerprint"
+    : !original || !originalExecution
+      ? "original-plan-unavailable"
+      : receipt.semanticClosureFingerprint !== original
+        ? "original-proof-mismatch"
+        : "valid"
+  const currentContract = !originalExecution || !currentExecution
+    ? "unknown"
+    : originalExecution === currentExecution ? "unchanged" : "changed"
+
+  const oldPlan = revision ? planSnapshot(hierarchy, generation, revision) : undefined
+  const currentPlan = planSnapshot(hierarchy, generation)
+  const semanticFields = new Set<string>()
+  const displayFields = new Set<string>()
+  if (oldPlan && currentPlan) {
+    const ids = new Set<string>()
+    const visit = (plan: WorkPlanDefinition, id: string) => {
+      if (ids.has(id)) return
+      ids.add(id)
+      const located = findPlanTask(plan, id)
+      for (const dep of located?.task.dependsOn ?? []) visit(plan, dep)
+    }
+    visit(oldPlan, taskId)
+    visit(currentPlan, taskId)
+    for (const id of [...ids].sort()) {
+      const oldRefs = relevantTaskAuthorityRefs(oldPlan, id)
+      const newRefs = relevantTaskAuthorityRefs(currentPlan, id)
+      const before = oldRefs && planTaskFingerprintPayload(oldPlan, id, oldRefs)
+      const after = newRefs && planTaskFingerprintPayload(currentPlan, id, newRefs)
+      if (!before || !after) {
+        semanticFields.add(`task:${id}.removed-or-added`)
+        continue
+      }
+      for (const field of [
+        "goal", "assumptions", "outOfScope", "authorityRefs", "obligations",
+        "risks", "acceptanceCoverage", "relationships", "correctionRouting",
+      ] as const) {
+        if (JSON.stringify(before[field]) !== JSON.stringify(after[field])) {
+          semanticFields.add(`task:${id}.${field}`)
+        }
+      }
+      for (const field of ["id", "objective"] as const) {
+        if (before.phase[field] !== after.phase[field]) semanticFields.add(`task:${id}.phase.${field}`)
+      }
+      for (const field of ["id", "objective", "constraints"] as const) {
+        if (JSON.stringify(before.wave[field]) !== JSON.stringify(after.wave[field])) {
+          semanticFields.add(`task:${id}.wave.${field}`)
+        }
+      }
+      const beforeTask = before.task
+      const afterTask = after.task
+      for (const field of new Set([...Object.keys(beforeTask), ...Object.keys(afterTask)])) {
+        const key = field as keyof WorkPlanTask
+        if (JSON.stringify(beforeTask[key]) !== JSON.stringify(afterTask[key])) {
+          semanticFields.add(`task:${id}.task.${field}`)
+        }
+      }
+      if (before.phase.title !== after.phase.title) displayFields.add(`task:${id}.phase.title`)
+      if (before.wave.title !== after.wave.title) displayFields.add(`task:${id}.wave.title`)
+    }
+  }
+  return {
+    originalProof,
+    currentContract,
+    ...(revision ? { originalPlanRevision: revision } : {}),
+    hashes: {
+      ...(receipt.semanticClosureFingerprint ? { recordedOriginal: receipt.semanticClosureFingerprint } : {}),
+      ...(original ? { reconstructedOriginal: original } : {}),
+      ...(current ? { legacyCurrent: current } : {}),
+      ...(originalExecution ? { executionOriginal: originalExecution } : {}),
+      ...(currentExecution ? { executionCurrent: currentExecution } : {}),
+    },
+    changedSemanticFields: [...semanticFields].slice(0, 64),
+    changedDisplayFields: [...displayFields].slice(0, 64),
+  }
 }
 
 function workflowTaskSemanticFingerprintUsing(
@@ -1709,7 +1862,8 @@ export function amendWorkPlan(
     planTaskIds(beforePlan).map((taskId) => [taskId, planTaskSemanticFingerprint(beforePlan, taskId)]),
   )
   const beforeTaskClosureFingerprints = new Map(
-    planTaskIds(beforePlan).map((taskId) => [taskId, planTaskSemanticClosureFingerprint(beforePlan, taskId)]),
+    planTaskIds(beforePlan).map((taskId) =>
+      [taskId, planTaskSemanticClosureFingerprint(beforePlan, taskId, planTaskExecutionSemanticFingerprint)]),
   )
   const beforeWaveFingerprints = new Map(
     planWaveKeys(beforePlan).map((key) => {
@@ -1917,7 +2071,8 @@ export function amendWorkPlan(
   )
   const affectedTaskIds = [...allTaskIds].filter(
     (taskId) =>
-      beforeTaskClosureFingerprints.get(taskId) !== planTaskSemanticClosureFingerprint(validated, taskId),
+      beforeTaskClosureFingerprints.get(taskId) !==
+        planTaskSemanticClosureFingerprint(validated, taskId, planTaskExecutionSemanticFingerprint),
   )
   const allWaveKeys = new Set([...beforeWaveFingerprints.keys(), ...planWaveKeys(validated)])
   const changedWaveKeys = [...allWaveKeys].filter((key) => {

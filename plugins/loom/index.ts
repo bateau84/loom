@@ -201,6 +201,7 @@ import {
   syncWorkTaskStatuses,
   workPlanContext,
   workPlanSemanticFingerprint,
+  diagnoseTaskReceiptSemantics,
   taskSemanticFingerprintAtRevision,
   taskSemanticClosureFingerprintAtRevision,
   validateWorkflowWave,
@@ -3314,25 +3315,32 @@ async function reusableCompletedTaskIds(
     // The execution result, not the roll-up status, is the reusable receipt.
     if (!workTask?.result || workTask.result.workflowId !== workflow.id) continue
 
-    const currentClosure = taskSemanticClosureFingerprintAtRevision(
-      work,
-      taskStep.task!.id,
-      workflow.work.generation,
+    const receipt = workTask.result
+    const semantic = diagnoseTaskReceiptSemantics(
+      work, taskStep.task!.id, receipt, workflow.work.generation,
     )
-    if (
-      !workTask.result.semanticClosureFingerprint ||
-      workTask.result.semanticClosureFingerprint !== currentClosure
-    ) {
+    const modernReceipt = receipt.completedAttempt !== undefined || receipt.planRevision !== undefined
+    // Modern proof must match the exact original revision; only the execution
+    // closure is compared with the newly reviewed Plan. Legacy completions
+    // keep their historical strict current-hash check (no broadened reuse).
+    const semanticValid = modernReceipt
+      ? semantic.originalProof === "valid" && semantic.currentContract === "unchanged"
+      : Boolean(
+          receipt.semanticClosureFingerprint &&
+          receipt.semanticClosureFingerprint === taskSemanticClosureFingerprintAtRevision(
+            work, taskStep.task!.id, workflow.work.generation,
+          ),
+        )
+    if (!semanticValid) {
       if (invalidReceipt === "rerun") continue
       throw new Error(
-        `Completed Task ${taskStep.task!.id} cannot be reused because its Plan/dependency/authority receipt is missing or stale.`,
+        `Completed Task ${taskStep.task!.id} cannot be reused: original proof=${semantic.originalProof}, current execution contract=${semantic.currentContract}.`,
       )
     }
 
     // Modern receipts must stay valid across EVERY Plan reopen, not just the
     // explicit reconciliation that first restored their workflow Step.
     // Legacy receipts without modern provenance keep their historical path.
-    const receipt = workTask.result
     if (receipt.completedAttempt !== undefined) {
       if (!checkedCleanHead) {
         currentCleanHead = await cleanRepositoryHead(ctx.location.directory)
@@ -10443,7 +10451,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       addLoomTool({
         name: "work_reconcile",
         description:
-          "Reconcile pending producer Tasks from original current or last archived completion receipts after independent review-plan PASS. Archive recovery requires exact original evidence, unchanged code, executable contracts and dependencies. General can run this without Worker dispatch; Planner needs an exact Planner OQ attachment. Rejects missing or stale proof and returns per-Task reasons.",
+          "Reconcile pending producer Tasks from original current or last archived completion receipts after independent review-plan PASS. Archive recovery requires exact original evidence, unchanged code, executable contracts and dependencies. General can run this without Worker dispatch; Planner needs an exact Planner OQ attachment. On refusal, call loom_work_reconcile_diagnose to inspect the exact proof and contract checks before attempting any Worker rerun.",
         input: {
           type: "object",
           properties: {
@@ -10600,13 +10608,15 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                     refuse(id, "Original producer attempt or role is missing or inconsistent.")
                     continue
                   }
-                  const nowClosure = taskSemanticClosureFingerprintAtRevision(work, id, work.generation)
-                  const oldClosure = taskSemanticClosureFingerprintAtRevision(
-                    work, id, work.generation, receipt.planRevision)
-                  if (!receipt.semanticClosureFingerprint ||
-                      receipt.semanticClosureFingerprint !== nowClosure ||
-                      receipt.semanticClosureFingerprint !== oldClosure) {
-                    refuse(id, "Plan/authority/dependency closure changed or original semantic proof is missing.")
+                  const semantic = diagnoseTaskReceiptSemantics(work, id, receipt, work.generation)
+                  if (semantic.originalProof !== "valid") {
+                    refuse(id, "Original completion semantic proof failed: " + semantic.originalProof + ".")
+                    continue
+                  }
+                  if (semantic.currentContract !== "unchanged") {
+                    refuse(id, "Execution-significant Task/dependency/authority closure changed: " +
+                      semantic.currentContract + " (" +
+                      semantic.changedSemanticFields.slice(0, 8).join(", ") + ").")
                     continue
                   }
                   const executableFingerprint = createHash("sha256")
@@ -10744,6 +10754,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 await commitReconciliation()
                 return {
                   auditId, reconciled, restoredArchived, refused, alreadyComplete,
+                  ...(refused.length ? { diagnosticTool: "loom_work_reconcile_diagnose" } : {}),
                   planRevision: plan.revision, budgetUnchanged: true,
                   freshImplementationReviewRequired: true,
                 }
@@ -10753,6 +10764,177 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           } catch (error) {
             return { content: renderToolOutput({ error: error instanceof Error ? error.message : String(error) }) }
           }
+        },
+      })
+
+      addLoomTool({
+        name: "work_reconcile_diagnose",
+        description:
+          "Read-only original-receipt and current Plan-closure diagnostics for pending Tasks. Separates missing or mismatched original proof from changed executable semantics, code, dependencies, and host observations. This never reconciles, creates an audit, or grants Task completion.",
+        input: {
+          type: "object",
+          properties: {
+            workflowId: { type: "string" },
+            taskIds: { type: "array", items: { type: "string" } },
+          },
+          required: ["workflowId"],
+          additionalProperties: false,
+        },
+        options: { namespace: "loom", codemode: false },
+        execute: async (input, tool) => {
+          if (tool.agent !== "general" && tool.agent !== "planner") {
+            return { content: renderToolOutput({ error: "Only General or an attached Planner may diagnose Task reconciliation." }) }
+          }
+          const value = input as { workflowId: string; taskIds?: string[] }
+          const workflow = await readBoundWorkflow(ctx, tool.sessionID, value.workflowId, ensureLegacySession)
+          if (!workflow?.work) {
+            return { content: renderToolOutput({ error: "Bound workflow with persistent Work is required." }) }
+          }
+          const work = await readWork(ctx, workflow.work.objectiveId)
+          if (!work) return { content: renderToolOutput({ error: "Persistent Work hierarchy is missing." }) }
+          const taskSteps = plannedTaskSteps(workflow)
+          const byId = new Map(taskSteps.map((step) => [step.task!.id, step]))
+          const ids = value.taskIds ?? [...byId.keys()]
+          if (!Array.isArray(ids) || ids.length < 1 || ids.length > 24 ||
+              new Set(ids).size !== ids.length || ids.some((id) => !byId.has(id))) {
+            return { content: renderToolOutput({ error: "Choose 1-24 distinct Tasks in the compiled Wave." }) }
+          }
+          const plan = workPlanContext(work, undefined, "focused", workflow.work.generation)
+          const reviewed = workflow.steps.find((step) => step.id === "review-plan")
+          const allIds = [...byId.keys()]
+          const reviewValid = Boolean(
+            plan && !plan.invalidated && reviewed?.status === "passed" &&
+            workflow.work.reviewedPlanRevision === plan.revision &&
+            workflow.work.reviewedPlanFingerprint ===
+              workPlanSemanticFingerprint(work, workflow.work.generation))
+          const compiledValid = Boolean(
+            plan && workflow.work.taskPlanRevision === plan.revision &&
+            workflow.work.taskPlanFingerprint ===
+              workflowTaskSemanticFingerprint(work, allIds, workflow.work.generation))
+          let claimed = false
+          try {
+            assertWaveClaimForTasks(work, workflow.id, workflow.work.generation, allIds)
+            claimed = true
+          } catch {
+            // Report a missing claim, without acquiring or changing it.
+          }
+          const head = await cleanRepositoryHead(ctx.location.directory)
+          const questions = await readQuestions(ctx, workflow.id)
+          const diagnostics = []
+          for (const id of ids) {
+            const step = byId.get(id)!
+            const node = work.nodes.find((candidate) =>
+              candidate.type === "task" && candidate.generation === workflow.work!.generation &&
+              candidate.logicalId === id && candidate.status !== "superseded")
+            const archived = lastArchivedCompletionReceipt(node, workflow.id)
+            const receipt = node?.result ?? archived
+            const source = node?.result ? "current" : archived ? "last-archived" : "missing"
+            const semantic = receipt
+              ? diagnoseTaskReceiptSemantics(work, id, receipt, workflow.work.generation)
+              : null
+            const expectedExecutable = createHash("sha256")
+              .update(JSON.stringify(step.task)).digest("hex")
+            const executable = !receipt?.executableTaskFingerprint ? "missing-receipt-fingerprint"
+              : receipt.executableTaskFingerprint === expectedExecutable ? "unchanged" : "changed"
+            const code = !receipt?.cleanRepositoryHead ? "missing-original-head"
+              : !head ? "current-head-not-clean-or-unavailable"
+              : receipt.cleanRepositoryHead === head ? "unchanged" : "changed"
+            const provenance = !receipt ? "missing-receipt"
+              : !Number.isSafeInteger(receipt.completedAttempt) ||
+                  (receipt.completedAttempt ?? -1) < 0 ||
+                  (satisfied(step)
+                    ? (receipt.completedAttempt ?? -1) > (step.attempt ?? 0)
+                    : (receipt.completedAttempt ?? -1) >= (step.attempt ?? 0)) ||
+                  receipt.producerAgent !== step.agent ||
+                  receipt.workflowId !== workflow.id
+                ? "missing-or-inconsistent-original-attempt"
+                : "consistent"
+            const dependencies = (step.task?.dependsOn ?? []).map((dependencyId) => {
+              const sourceStep = byId.get(dependencyId)
+              if (!sourceStep) return { taskId: dependencyId, status: "external-wave-not-assessed" }
+              const upstream = work.nodes.find((candidate) =>
+                candidate.type === "task" && candidate.generation === workflow.work!.generation &&
+                candidate.logicalId === dependencyId && candidate.status !== "superseded")
+              const result = upstream?.result ?? lastArchivedCompletionReceipt(upstream, workflow.id)
+              const expected = receipt?.dependencyResultDigests?.[dependencyId]
+              const actual = result && createHash("sha256").update(JSON.stringify(result)).digest("hex")
+              const status = !expected ? "missing-original-digest"
+                : !result ? "missing-dependency-result"
+                : actual !== expected ? "changed-dependency-result"
+                : !satisfied(sourceStep) ? "pending-upstream-requires-reconciliation"
+                : "matching-completed-dependency"
+              return { taskId: dependencyId, status }
+            })
+            const originalAttempt = receipt?.completedAttempt
+            const savedClaimIds = Array.isArray(receipt?.evidenceClaimIds)
+              ? receipt.evidenceClaimIds : []
+            const attemptClaims = receipt && Number.isSafeInteger(originalAttempt)
+              ? (await stepClaims(ctx, workflow.id, step.id)).filter((claim) =>
+                  (claim.attempt ?? 0) === originalAttempt && claim.byAgent === step.agent)
+              : []
+            const canonical = await Promise.all(savedClaimIds.map((claimId) =>
+              ctx.storage.get(claimIdKey(claimId)) as Promise<EvidenceClaim | undefined>))
+            const claimsValid = savedClaimIds.length > 0 &&
+              JSON.stringify([...savedClaimIds].sort()) ===
+                JSON.stringify(attemptClaims.map((claim) => claim.id).sort()) &&
+              canonical.every((claim) =>
+                claim && claim.workflowId === workflow.id && claim.stepId === step.id &&
+                claim.byAgent === step.agent && (claim.attempt ?? 0) === originalAttempt)
+            const originalWorkflow: Workflow = {
+              ...workflow,
+              steps: workflow.steps.map((candidate) => candidate.id === step.id
+                ? { ...candidate, attempt: originalAttempt ?? -1 } : candidate),
+            }
+            const observations = await Promise.all(attemptClaims.flatMap((claim) =>
+              claim.observationIds.map((observationId) =>
+                ctx.storage.get(evidenceKey(observationId)) as Promise<EvidenceObservation | undefined>)))
+            const observationsValid = claimsValid && observations.length > 0 &&
+              observations.every((observation) =>
+                observation && observation.status === "completed" && observation.admission &&
+                observationMatchesStep(observation, originalWorkflow, step.id)) &&
+              attemptClaims.every((claim) => {
+                const found = observations.filter((observation) =>
+                  claim.observationIds.includes(observation?.id ?? ""))
+                  .filter((observation): observation is EvidenceObservation => Boolean(observation))
+                return found.length === claim.observationIds.length &&
+                  observationsSupportKind(claim.kind, found)
+              })
+            const blocking = blockingQuestionsForStep(questions, step.id).map((q) => q.id)
+            const openVerification = (workflow.verification ?? [])
+              .filter((requirement) =>
+                requirement.beforeStepId === step.id && requirement.status === "open")
+              .map((requirement) => requirement.id)
+            const checks = {
+              originalSemanticProof: semantic?.originalProof ?? "missing-receipt",
+              currentExecutionContract: semantic?.currentContract ?? "unknown",
+              executableContract: executable,
+              cleanRepositoryHead: code,
+              producerAttempt: provenance,
+              dependencyResults: dependencies,
+              originalEvidenceClaims: claimsValid ? "valid" : "missing-or-mismatched",
+              originalHostObservations: observationsValid ? "valid" : "missing-or-mismatched",
+              blockingQuestionIds: blocking,
+              openVerificationIds: openVerification,
+            }
+            diagnostics.push({
+              taskId: id, stepStatus: step.status, receiptSource: source,
+              ...(receipt ? { originalPlanRevision: receipt.planRevision ?? null } : {}),
+              checks,
+              semantic: semantic ?? null,
+              // A diagnostic is not a carry-forward verdict. Even all matching
+              // fields require the normal guarded reconciliation and audit.
+              diagnosticOnly: true,
+            })
+          }
+          return { content: renderToolOutput({
+            workflowId: workflow.id, generation: workflow.work.generation,
+            currentPlanRevision: plan?.revision ?? null,
+            reviewPlanCurrent: reviewValid,
+            compiledTaskPlanCurrent: compiledValid,
+            waveClaimCurrent: claimed,
+            diagnosticOnly: true, dispatchBudgetUsed: 0,
+            tasks: diagnostics,
+          }) }
         },
       })
 
