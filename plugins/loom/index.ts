@@ -30,7 +30,7 @@ import {
 } from "./upgrade-actions"
 
 export const LOOM_NATIVE_TOOL_GUIDANCE =
-  "Loom control-plane tools are available through two equivalent OpenCode surfaces: native loom_* tools and Code Mode mirrors under tools.loom.code.*. Use either surface directly according to the active tool paradigm. If using Code Mode, search for Loom tools and invoke the returned tools.loom.code.* signatures; do not fall back to shell/filesystem discovery for Loom commands. Reviewer/Critic methodology uses a two-part contract: load practitioner guidance with OpenCode's native skill tool, then consume the role companion through loom_assessment or loom_qa; a plain ASSESSMENT.md/QA.md read is artifact inspection, not methodology loading. Interactive status is dashboard-first and does not depend on model prose: the Loom sidebar exposes a stable workflow dashboard URL, while loom_status may also return presentation metadata. Desktop browser preview is optional metadata only; do not invoke tools.browser.preview merely because presentation metadata exists. Every Loom agent may use both Git and GitButler for repository inspection: read-only Git commands such as `git status`, `git diff`, `git log`, `git show`, and `git rev-parse`, plus GitButler commands such as `but status`, `but diff`, and `but show`. When any role has durable project-local write scope, that same effective scope authorizes commits of the admitted bytes; this includes paths added by `loom_scope_elevate`. Load git-commit-discipline before committing so the commit remains coherent and reviewable; load the `but` skill when GitButler mechanics matter. Loom admits selected whole-file-ID Butler commits only: use untargeted `but commit -m ... <file-id>...`; Loom resolves those IDs back to repository paths and revalidates current task/session ownership under lock. Bare commit-all, empty, interactive, current-directory override, and unsupported history-wide Butler mutations are denied. The existing bounded `git -c core.hooksPath=/dev/null commit -m ...` path remains a fallback; long Markdown messages may instead use `git -c core.hooksPath=/dev/null commit -F ephemeral-reports/<role>/commit-messages/<name>.md`. Compose that scratch file with edit/write tools, never shell redirection. Plain `git commit` is intentionally denied so repository hooks cannot change the staged scope after Loom validates it. Git itself owns .git objects, refs and worktree metadata during scoped add/commit, so do not request raw .git write scope for routine commits (including inside a linked worktree). For a fresh isolated sibling repair branch/worktree, an attached Worker with committable write scope uses loom_git_worktree_create rather than asking for Git internal or external path elevation. This operation does not transfer Loom's project root; open a separately attached session in the new worktree for product edits and commits. Runtime write scope is discoverable: an attached child that needs additional project-local files calls loom_scope_elevate and continues immediately when granted. If any Loom tool returns continue=false, the child MUST stop its current turn and return control immediately; it must not retry the blocked mutation or continue assuming authority will arrive later."
+  "Loom control-plane tools are available through two equivalent OpenCode surfaces: native loom_* tools and Code Mode mirrors under tools.loom.code.*. Use either surface directly according to the active tool paradigm. If using Code Mode, search for Loom tools and invoke the returned tools.loom.code.* signatures; do not fall back to shell/filesystem discovery for Loom commands. Reviewer/Critic methodology uses a two-part contract: load practitioner guidance with OpenCode's native skill tool, then consume the role companion through loom_assessment or loom_qa; a plain ASSESSMENT.md/QA.md read is artifact inspection, not methodology loading. Interactive status is dashboard-first and does not depend on model prose: the Loom sidebar exposes a stable workflow dashboard URL, while loom_status may also return presentation metadata. Desktop browser preview is optional metadata only; do not invoke tools.browser.preview merely because presentation metadata exists. Every Loom agent may use both Git and GitButler for repository inspection: read-only Git commands such as `git status`, `git diff`, `git log`, `git show`, and `git rev-parse`, plus GitButler commands such as `but status`, `but diff`, and `but show`. When any role has durable project-local write scope, that same effective scope authorizes commits of the admitted bytes; this includes paths added by `loom_scope_elevate`. Load git-commit-discipline before committing so the commit remains coherent and reviewable; load the `but` skill when GitButler mechanics matter. Loom admits selected whole-file-ID Butler commits only: use untargeted `but commit -m ... <file-id>...`; Loom resolves those IDs back to repository paths and revalidates current task/session ownership under lock. Bare commit-all, empty, interactive, current-directory override, and unsupported history-wide Butler mutations are denied. The existing bounded `git -c core.hooksPath=/dev/null commit -m ...` path remains a fallback; long Markdown messages may instead use `git -c core.hooksPath=/dev/null commit -F ephemeral-reports/<role>/commit-messages/<name>.md`. Compose that scratch file with edit/write tools, never shell redirection. Plain `git commit` is intentionally denied so repository hooks cannot change the staged scope after Loom validates it. Git itself owns .git objects, refs and worktree metadata during scoped add/commit, including the external Git directory of a linked worktree. Do not request raw .git write scope for routine commits; use the admitted git add/commit commands with the current project root. Runtime write scope is discoverable: an attached child that needs additional project-local files calls loom_scope_elevate and continues immediately when granted. If any Loom tool returns continue=false, the child MUST stop its current turn and return control immediately; it must not retry the blocked mutation or continue assuming authority will arrive later."
 import {
   assertWorkflowNotCancelled,
   WorkflowCancelledError,
@@ -148,7 +148,6 @@ import {
   workerShellResourcesAllowed,
 } from "./shell"
 import { prepareReportPromotion, publishPreparedReport, reconcilePendingReportPromotion, type ReportPromotionInput, type ReportPromotionRecord } from "./reports"
-import { createIsolatedGitWorktree } from "./git-worktree"
 import {
   findPaths,
   grepText,
@@ -12411,111 +12410,9 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       })
 
       addLoomTool({
-        name: "git_worktree_create",
-        description:
-          "Create an isolated fresh Git branch and sibling worktree using Git-owned metadata operations. Worker only, with an exact runnable current step, reviewed Plan/claim if applicable, and committable product write scope. This DOES NOT grant .git edits, overwrite existing branches, switch this session's project root, or authorize product edits in the new worktree. Start a separately attached Loom/OpenCode session there for further edits and commits.",
-        input: {
-          type: "object",
-          properties: {
-            workflowId: { type: "string" },
-            stepId: { type: "string" },
-            name: {
-              type: "string",
-              description: "Single flat worktree directory name under the verified primary checkout's sibling <repo>-wt/ directory.",
-            },
-            branch: {
-              type: "string",
-              description: "Fresh branch name, never an existing branch, ref reset or force operation.",
-            },
-            startCommit: {
-              type: "string",
-              description: "Optional exact 40-character commit SHA; omitted means current HEAD at operation time.",
-            },
-          },
-          required: ["workflowId", "stepId", "name", "branch"],
-          additionalProperties: false,
-        },
-        options: { namespace: "loom", codemode: false },
-        execute: async (input, tool) => {
-          if (tool.agent !== "worker") {
-            return { content: renderToolOutput({ error: "Only Worker may create an isolated Git worktree." }) }
-          }
-          const value = input as {
-            workflowId: string
-            stepId: string
-            name: string
-            branch: string
-            startCommit?: string
-          }
-          try {
-            const result = await withRuntimeLocks(runtime, [
-              { aggregate: "workflow", resourceIdentity: value.workflowId },
-              stepAuthorityResource(value.workflowId, value.stepId),
-              { aggregate: "git-worktree", resourceIdentity: ctx.location.directory },
-            ], async () => {
-              if (!(await exactRunnableStepAttemptBinding(
-                ctx, tool.sessionID, value.workflowId, value.stepId,
-              ))) {
-                throw new Error("Worktree creation requires the exact current runnable Worker step attachment.")
-              }
-              const workflow = await readWorkflow(ctx, value.workflowId)
-              const step = workflow?.steps.find((candidate) => candidate.id === value.stepId)
-              if (!step || step.agent !== "worker") {
-                throw new Error("Worktree creation requires Worker ownership of the attached step.")
-              }
-              await assertCurrentStepPlanAdmission(ctx, value.workflowId, value.stepId)
-              await assertWorkerWorkClaim(ctx, value.workflowId, value.stepId)
-              const scope = (await ctx.storage.get(
-                scopeKey(value.workflowId, value.stepId),
-              )) as TaskScope | undefined
-              if (!scope || committableWriteScope(scope.write).length === 0) {
-                throw new Error("Worktree creation requires a current committable Worker product write scope.")
-              }
-              const attempt = step.attempt ?? 0
-              const created = await createIsolatedGitWorktree(ctx.location.directory, {
-                name: value.name,
-                branch: value.branch,
-                ...(value.startCommit !== undefined ? { startCommit: value.startCommit } : {}),
-              })
-              await ctx.storage.set(
-                ["git-worktree-created", encodeURIComponent(value.workflowId),
-                  encodeURIComponent(value.stepId), String(attempt),
-                  encodeURIComponent(value.name)].join("/"),
-                {
-                  workflowId: value.workflowId,
-                  stepId: value.stepId,
-                  attempt,
-                  bySessionId: tool.sessionID,
-                  branch: created.branch,
-                  worktreePath: created.worktreePath,
-                  startCommit: created.startCommit,
-                  at: new Date().toISOString(),
-                },
-              )
-              return created
-            })
-            return {
-              content: renderToolOutput({
-                created: true,
-                ...result,
-                nextAction:
-                  "Use a separate Loom/OpenCode session rooted at worktreePath for edits and normal scoped git add/commit. This operation does not rebind the current workflow or grant writes to .git/refs, objects or external worktree gitdirs.",
-              }),
-            }
-          } catch (error) {
-            return {
-              content: renderToolOutput({
-                error: error instanceof Error ? error.message : String(error),
-              }),
-            }
-          }
-        },
-      })
-
-      addLoomTool({
         name: "scope_elevate",
         description:
-          "Expand the current attached child step's write scope when discovery reveals additional files or folders. Project-local elevation is immediate, durable, and traceable; the child continues in the same session. Hard-boundary paths (outside the current project or repository-internal .git state) cannot self-authorize: this tool returns continue=false plus an exact user question payload. Do not request raw Git metadata paths for normal commits; use the admitted scoped Git add/commit commands, or loom_git_worktree_create for a fresh isolated worktree. When continue=false, STOP the current child turn immediately and return control to General; do not retry the write or continue assuming access will arrive later.",
+          "Expand the current attached child step's write scope when discovery reveals additional files or folders. Project-local elevation is immediate, durable, and traceable; the child continues in the same session. Hard-boundary paths (outside the current project or repository-internal .git state) cannot self-authorize: this tool returns continue=false plus an exact user question payload. Do not request raw Git metadata paths for normal commits; use admitted scoped Git add/commit commands in the current worktree. When continue=false, STOP the current child turn immediately and return control to General; do not retry the write or continue assuming access will arrive later.",
         input: {
           type: "object",
           properties: {
