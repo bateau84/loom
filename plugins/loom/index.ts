@@ -130,6 +130,9 @@ import {
   isAllowedPackageScriptShell,
   classifyVerificationShell,
   isElevatableVerificationShell,
+  elevatedGenerationOutput,
+  elevatedGenerationPaths,
+  generationElevationError,
   elevatedVerificationEntrypoint,
   isButlerCommitShellCommand,
   isGitInspectionShellCommand,
@@ -455,6 +458,8 @@ type CommandElevation = {
   sessionID: string
   commandDigest: string
   commandSummary: string
+  kind?: "verification" | "generation"
+  outputPath?: string
   reason: string
   grantedAt: string
   expiresAt: string
@@ -4297,6 +4302,8 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       startedAtMs?: number
       startedAt?: string
       commandElevationId?: string
+      generationBefore?: Record<string, string>
+      generationPaths?: string[]
       verification?: ReturnType<typeof classifyVerificationShell>
     }>()
 
@@ -4328,6 +4335,65 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       }
     }
 
+
+    // A host shell can finish its tool call while the subprocess exits non-zero.
+    // Do not infer generation success from tool status alone when the shell
+    // supplies its exit/timeout metadata.
+    const generatorResultError = (result: unknown): string | undefined => {
+      let decoded = result
+      if (typeof result === "string" && result.length < 32_768 &&
+          result.trimStart().startsWith("{")) {
+        try {
+          decoded = JSON.parse(result)
+        } catch {
+          // Unstructured shell output is handled by the normal result parser.
+        }
+      }
+      const value = decoded && typeof decoded === "object" && !Array.isArray(decoded)
+        ? decoded as Record<string, unknown>
+        : undefined
+      const metadata = value?.metadata && typeof value.metadata === "object" &&
+        !Array.isArray(value.metadata)
+        ? value.metadata as Record<string, unknown>
+        : undefined
+      if (metadata?.timeout === true || value?.timeout === true) {
+        return "Generator shell execution timed out."
+      }
+      const exit = metadata?.exit ?? value?.exit ?? metadata?.exitCode ?? value?.exitCode
+      // A null exit is not an observed success (for example after a signal).
+      const hasExit = metadata && Object.prototype.hasOwnProperty.call(metadata, "exit") ||
+        value && Object.prototype.hasOwnProperty.call(value, "exit") ||
+        metadata && Object.prototype.hasOwnProperty.call(metadata, "exitCode") ||
+        value && Object.prototype.hasOwnProperty.call(value, "exitCode")
+      if (hasExit && exit !== 0 && exit !== "0") {
+        return "Generator shell execution did not exit successfully (exit: " + String(exit) + ")."
+      }
+      return safeResultError(result)
+    }
+
+    const assertProjectGenerationWrite = async (
+      workflowId: string, stepId: string, command: string,
+    ) => {
+      const outputPaths = elevatedGenerationPaths(command)
+      if (outputPaths.length === 0) return
+      for (const path of outputPaths) {
+        const target = await classifyScopeTarget(ctx.location.directory, path)
+        if (target.kind !== "project") {
+          throw new Error(
+            "Generated output is outside this project or targets protected state: " + path,
+          )
+        }
+      }
+      const scope = (await ctx.storage.get(scopeKey(workflowId, stepId))) as TaskScope | undefined
+      if (!scope?.write.length || !resourcesWithinScope(outputPaths, scope.write)) {
+        throw new Error(
+          "Generated output is outside the current Loom write scope (" +
+          elevatedGenerationOutput(command) +
+          "). Call loom_scope_elevate for the generated files before retrying.",
+        )
+      }
+    }
+
     // Each historical elevation record is retained by ID. At most one remains
     // available to the same child session at any moment.
     const currentCommandElevation = async (sessionID: string, agent: string, command: string) => {
@@ -4345,13 +4411,13 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       return grant
     }
 
-    const consumeCommandElevation = async (sessionID: string, agent: string, command: string) => {
+    const consumeCommandElevation = async (
+      sessionID: string, agent: string, command: string,
+      stepAuthorityAlreadyLocked = false,
+    ) => {
       const observed = await currentCommandElevation(sessionID, agent, command)
       if (!observed) return undefined
-      return withRuntimeLocks(runtime, [
-        { aggregate: "workflow", resourceIdentity: observed.workflowId },
-        stepAuthorityResource(observed.workflowId, observed.stepId),
-      ], async () => {
+      const consume = async () => {
         const grant = await currentCommandElevation(sessionID, agent, command)
         if (!grant || grant.id !== observed.id) return undefined
         await assertCurrentStepPlanAdmission(ctx, grant.workflowId, grant.stepId)
@@ -4359,7 +4425,16 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         const consumed = { ...grant, consumedAt: new Date().toISOString() }
         await ctx.storage.set(commandElevationKey(grant.id), consumed)
         return consumed
-      })
+      }
+      // A generated-file tool call already holds the step-authority lock
+      // through acquireGitWriteLocks. Re-acquiring it here would deadlock.
+      // The same held lock serializes grant consumption with grant issuance.
+      return stepAuthorityAlreadyLocked
+        ? consume()
+        : withRuntimeLocks(runtime, [
+            { aggregate: "workflow", resourceIdentity: observed.workflowId },
+            stepAuthorityResource(observed.workflowId, observed.stepId),
+          ], consume)
     }
 
     const activeGitWriteCalls = new Map<
@@ -12195,7 +12270,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       addLoomTool({
         name: "command_elevate",
         description:
-          "Grant exactly one near-term execution of a project-local verification command outside the routine test-runner allowlist. Available only to an attached Worker, Diagnostic, Reviewer, Critic, or Acceptance step. Records who requested it, why, and the resulting shell evidence. This does not expand Loom's direct file-edit or Git authority or allow arbitrary shell eval. The command runs with host permissions, and nested script effects are not sandboxed.",
+          "Grant one near-term execution of a non-routine project-local test or bounded generator command. Verification supports make/just tests, local scripts, selected Python modules and go run. Generation currently supports Worker-only swag init with an explicit --output inside its current write scope (use loom_scope_elevate first). Exact command, session, attempt and audit evidence are bound; Git, installs, shell eval and arbitrary executables remain denied. The tool runs with host permissions and does not sandbox nested script effects.",
         input: {
           type: "object",
           properties: {
@@ -12219,14 +12294,27 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               error: "Command elevation is restricted to implementation/verification roles.",
             }) }
           }
-          if (!reason || reason.length > 4000 || !command || command.length > 4000 ||
-              !isElevatableVerificationShell(command)) {
+          const outputPath = elevatedGenerationOutput(command)
+          const verification = isElevatableVerificationShell(command)
+          if (!reason || reason.length > 4000 || !command || command.length > 4000) {
             return { content: renderToolOutput({
-              error: "Provide a reason and one project-local verification command. Shell eval, unsafe syntax, package installs, Git, and arbitrary commands cannot be self-elevated.",
+              error: "Command elevation requires one exact command (max 4000 characters) and a non-empty reason (max 4000 characters).",
+            }) }
+          }
+          if (!verification && !outputPath) {
+            return { content: renderToolOutput({
+              error: generationElevationError(command) ??
+                "Unsupported command form. Verification supports bounded make/just, shell/Python and go run tests. Generation supports swag init with an explicit project-relative --output directory. Arbitrary executables, installs, Git and shell eval cannot be self-elevated.",
+            }) }
+          }
+          if (outputPath && tool.agent !== "worker") {
+            return { content: renderToolOutput({
+              error: "Project generation requires an attached Worker step; independent verification roles cannot elevate product writes.",
             }) }
           }
           try {
             await assertProjectVerificationEntrypoint(command)
+            if (outputPath) await assertProjectGenerationWrite(value.workflowId, value.stepId, command)
             const receipt = await withRuntimeLocks(runtime, [
               { aggregate: "workflow", resourceIdentity: value.workflowId },
               stepAuthorityResource(value.workflowId, value.stepId),
@@ -12243,6 +12331,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               if (tool.agent === "worker") {
                 await assertWorkerWorkClaim(ctx, value.workflowId, value.stepId)
               }
+              if (outputPath) await assertProjectGenerationWrite(value.workflowId, value.stepId, command)
               const attempt = await ctx.storage.get(sessionStepAttemptKey(tool.sessionID))
               if (!Number.isSafeInteger(attempt)) {
                 throw new Error("Missing step-attempt binding.")
@@ -12265,6 +12354,8 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 attempt: attempt as number,
                 commandDigest: verificationCommandDigest(command),
                 commandSummary: redactCommand(command).slice(0, 1000),
+                kind: outputPath ? "generation" : "verification",
+                ...(outputPath ? { outputPath } : {}),
                 reason,
                 grantedAt: new Date(now).toISOString(),
                 expiresAt: new Date(now + 15 * 60_000).toISOString(),
@@ -12276,9 +12367,10 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             return { content: renderToolOutput({
               granted: true, grantId: receipt.id,
               workflowId: receipt.workflowId, stepId: receipt.stepId,
-              command: receipt.commandSummary, expiresAt: receipt.expiresAt,
-              singleUse: true,
-              limitation: "Permission and execution are recorded, but Loom does not inspect subprocesses or enforce script-internal writes.",
+              command: receipt.commandSummary, kind: receipt.kind,
+              ...(receipt.outputPath ? { outputPath: receipt.outputPath } : {}),
+              expiresAt: receipt.expiresAt, singleUse: true,
+              limitation: "Exact output paths are scope-checked and recognized files are tracked, but the host command is not sandboxed: Loom cannot prevent other process-internal writes.",
             }) }
           } catch (error) {
             return { content: renderToolOutput({
@@ -13946,7 +14038,8 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         )
         const governedVerification = ["reviewer", "critic", "acceptance"].includes(agent)
         const needsElevation = event.resources.length === 1 &&
-          isElevatableVerificationShell(event.resources[0]) &&
+          (isElevatableVerificationShell(event.resources[0]) ||
+            (agent === "worker" && Boolean(elevatedGenerationOutput(event.resources[0])))) &&
           !(agent === "worker" && workerShellResourcesAllowed(event.resources)) &&
           !(agent === "diagnostic" &&
             diagnosticExecutionShellResourcesAllowed(event.resources))
@@ -13981,8 +14074,17 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           ))) {
             event.effect = "deny"
             event.message =
-              "This project verification command needs a one-use loom_command_elevate grant with a reason before execution."
+              "This non-routine project command needs a one-use loom_command_elevate grant with a reason before execution."
             return
+          }
+          if (needsElevation && elevatedGenerationOutput(event.resources[0])) {
+            try {
+              await assertProjectGenerationWrite(workflowId, stepId, event.resources[0])
+            } catch (error) {
+              event.effect = "deny"
+              event.message = error instanceof Error ? error.message : String(error)
+              return
+            }
           }
           event.effect = "allow"
           return
@@ -14589,10 +14691,31 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         typeof (raw.input as any).command === "string"
           ? String((raw.input as any).command)
           : undefined
+      const generationPaths = raw.agent === "worker" && shellCommand
+        ? elevatedGenerationPaths(shellCommand) : []
+      // Generator output flags are relative to the shell cwd. A different
+      // workdir would make the granted output paths refer to different files.
+      if (generationPaths.length > 0) {
+        const input = raw.input as Record<string, unknown>
+        const directories = [input.workdir, input.cwd].filter(
+          (value) => value !== undefined,
+        )
+        const root = await realpath(ctx.location.directory)
+        for (const directory of directories) {
+          const target = typeof directory === "string"
+            ? (isAbsolute(directory) ? directory : resolve(root, directory))
+            : ""
+          if (!target || await realpath(target).catch(() => "") !== root) {
+            throw new Error(
+              "Generator elevation requires execution from the current project root; remove the alternate workdir.",
+            )
+          }
+        }
+      }
       let elevationRequired = false
       if (shellCommand && raw.sessionID &&
           verificationTestAgents.has(String(raw.agent ?? "")) &&
-          isElevatableVerificationShell(shellCommand)) {
+          (isElevatableVerificationShell(shellCommand) || generationPaths.length > 0)) {
         const agent = String(raw.agent)
         const allowedWithoutElevation = agent === "worker"
           ? workerShellResourcesAllowed([shellCommand])
@@ -14603,10 +14726,18 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           elevationRequired = true
           if (!observationCallKey(raw)) {
             throw new Error(
-              "Test execution blocked: a stable tool-call identity is required before consuming command elevation.",
+              "Command execution blocked: a stable tool-call identity is required before consuming command elevation.",
             )
           }
           await assertProjectVerificationEntrypoint(shellCommand)
+          if (generationPaths.length > 0) {
+            const workflowId = await ctx.storage.get(sessionKey(String(raw.sessionID)))
+            const stepId = await ctx.storage.get(sessionStepKey(String(raw.sessionID)))
+            if (typeof workflowId !== "string" || typeof stepId !== "string") {
+              throw new Error("Generator execution needs the current attached Worker step.")
+            }
+            await assertProjectGenerationWrite(workflowId, stepId, shellCommand)
+          }
         }
       }
       const butlerSelection =
@@ -14623,6 +14754,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           ctx.location.directory,
         ),
         ...(butlerSelection?.paths ?? []),
+        ...generationPaths,
       ]
       const lockGitIndex =
         toolNeedsGitIndexLock(tool, raw.input) ||
@@ -14784,6 +14916,8 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         gitStageBefore?: GitStageSnapshot
         startedAtMs?: number; startedAt?: string
         commandElevationId?: string
+        generationBefore?: Record<string, string>
+        generationPaths?: string[]
         verification?: ReturnType<typeof classifyVerificationShell>
       } = {
         ambiguous: false, ready: false,
@@ -14812,6 +14946,20 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           await revalidateDirectMutationUnderLock(raw, directMutationPaths)
           if (butlerSelection) {
             await revalidateButlerCommitUnderLock(raw, butlerSelection)
+          }
+          if (generationPaths.length > 0 && shellCommand) {
+            const workflowId = await ctx.storage.get(sessionKey(String(raw.sessionID)))
+            const stepId = await ctx.storage.get(sessionStepKey(String(raw.sessionID)))
+            if (typeof workflowId !== "string" || typeof stepId !== "string") {
+              throw new Error("Generator execution lost its current Worker attachment.")
+            }
+            await assertProjectGenerationWrite(workflowId, stepId, shellCommand)
+            pending.generationPaths = generationPaths
+            pending.generationBefore = Object.fromEntries(await Promise.all(
+              generationPaths.map(async (path) => [
+                path, await worktreeFingerprint(ctx.location.directory, path),
+              ] as const),
+            ))
           }
           if (lockGitIndex) {
             await revalidateGitMutationUnderLock(raw)
@@ -14844,10 +14992,11 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         try {
           const consumed = await consumeCommandElevation(
             String(raw.sessionID), String(raw.agent), shellCommand,
+            generationPaths.length > 0,
           )
           if (!consumed) {
             throw new Error(
-              "Test execution blocked: this command has no unconsumed exact loom_command_elevate grant.",
+              "Command execution blocked: this command has no unconsumed exact loom_command_elevate grant.",
             )
           }
           pending.commandElevationId = consumed.id
@@ -15046,6 +15195,10 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       const input = raw.input
       const inputDigest = input === undefined ? undefined : await digest(input)
       const eventMatches = Boolean(pending) && inputDigest === pending!.inputDigest
+      const generatorToolError = pending?.generationPaths?.length
+        ? generatorResultError(raw.result ?? raw.output)
+        : undefined
+      let generatorOutputError: string | undefined
 
       if (
         raw.agent === "general" &&
@@ -15183,6 +15336,39 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           }
 
           if (writeScope.length) {
+            // A completed tool call is not a successful generator result when
+            // its content reports an error. Do not confer Git provenance on
+            // a failed or unverified generation.
+            if (raw.status === "completed" &&
+                !generatorToolError &&
+                pending.generationBefore && pending.generationPaths) {
+              const command = (input as { command?: unknown } | undefined)?.command
+              if (typeof command !== "string") {
+                generatorOutputError = "Generated-file provenance requires the exact observed command."
+              } else {
+                try {
+                  // Detect output symlink/authority changes during host execution.
+                  // This does not sandbox the host process; it prevents false
+                  // claims of owned outputs and preserves an error receipt.
+                  await assertProjectGenerationWrite(admission.workflowId, admission.stepId, command)
+                } catch (error) {
+                  generatorOutputError = error instanceof Error ? error.message : String(error)
+                }
+              }
+              if (!generatorOutputError) {
+                const changed: string[] = []
+                for (const path of pending.generationPaths) {
+                  const after = await worktreeFingerprint(ctx.location.directory, path)
+                  if (after !== pending.generationBefore[path] &&
+                      resourcesWithinScope([path], writeScope)) changed.push(path)
+                }
+                if (changed.length > 0) {
+                  await recordGitSessionOwnership(
+                    ctx, sessionID, ctx.location.directory, changed,
+                  )
+                }
+              }
+            }
             if (raw.status === "completed") {
               const owned = successfulMutationPaths(
                 tool,
@@ -15268,7 +15454,9 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       const summary = pending?.summary ?? safeInputSummary(tool, input)
       const returnedResult = raw.result ?? raw.output
       const reportedError =
-        raw.status === "completed" ? safeResultError(returnedResult) : undefined
+        raw.status === "completed"
+          ? generatorOutputError ?? generatorToolError ?? safeResultError(returnedResult)
+          : undefined
       const resultSummary =
         raw.status === "completed" && !reportedError ? safeResultSummary(tool, returnedResult) : {}
       let reportPromotion: EvidenceObservation["reportPromotion"]
