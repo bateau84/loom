@@ -454,6 +454,11 @@ function parseGenerationCommand(command: string): GenerationCommand | undefined 
       if (!/^[0-3]$/.test(value)) {
         return { error: "swag init parse dependency level must be 0, 1, 2 or 3." }
       }
+    } else if (flag === "--tags" || flag === "-t") {
+      // Swag documents !tag for exclusion; this is CLI data, not shell eval.
+      if (!/^[!A-Za-z0-9_.,/-]+$/.test(value)) {
+        return { error: "Unsafe or unsupported swag init tags value." }
+      }
     } else if (!/^[A-Za-z0-9_.,/-]+$/.test(value)) {
       return { error: "Unsafe or unsupported value for swag init option " + flag + "." }
     }
