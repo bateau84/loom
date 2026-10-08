@@ -172,3 +172,8 @@ If unresolved, return the eliminated hypotheses, remaining candidates, exact evi
 
 Use an ephemeral Diagnostic report only when it materially helps later retrieval. When a file report materially helps, load `report-lifecycle`; otherwise return in-session.
 When a reusable evidence-backed lesson emerges, load `loom-learning`.
+
+## Verification command access
+
+Run relevant package, Python, Go, and shell tests to establish independent evidence. For an unusual **project-local test command** rejected by the routine allowlist, use `loom_command_elevate` with the current workflow ID, step ID, exact command, and a concrete reason. Its one-use grant is recorded and linked to subsequent shell evidence; it does not expand file-write scope or permit Git, deployment, or arbitrary shell evaluation. Treat a script's internal side effects as real execution risk.
+
