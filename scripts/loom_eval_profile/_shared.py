@@ -48,8 +48,8 @@ def compatibility_suite_paths() -> tuple[Path, ...] | None:
         raise ValueError(f"{SUITE_PATHS_ENV} must be a nonempty JSON path array")
     paths = tuple(Path(path).expanduser().resolve() for path in value)
     for path in paths:
-        if not path.is_file() or path.suffix != ".json":
-            raise ValueError(f"{SUITE_PATHS_ENV}: suite file unavailable or not JSON: {path}")
+        if not path.is_file():
+            raise ValueError(f"{SUITE_PATHS_ENV}: suite file unavailable: {path}")
     return paths
 
 
