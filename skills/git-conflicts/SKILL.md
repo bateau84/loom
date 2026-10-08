@@ -16,7 +16,7 @@ metadata:
 
 The `git` skill owns safe command sequencing and authorized tool choice. This skill owns the **semantic resolution**: reconstruct base/ours/theirs intent, preserve valid behavior from both sides, and verify the result.
 
-Use ordinary Git for the procedure below, or GitButler where available and admitted by the runtime. Neither interface changes the required semantic checks or creates permissions. Run each dependent mutation separately and inspect its result before continuing; never use a denied tool or argument through an alternate wrapper.
+Use plain Git for the procedure below, limited to the forms admitted by the active runtime. Git success does not replace the required semantic checks or create permissions. Run each dependent mutation separately and inspect its result before continuing; never use a denied command or argument through an alternate wrapper.
 
 ## The one rule that prevents flailing
 

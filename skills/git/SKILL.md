@@ -1,6 +1,6 @@
 ---
 name: git
-description: "Practical Git for AI agents: inspect repository state, stage only owned files, commit, branch, sync, push, recover from errors, and use Git or optional GitButler without unsafe command chaining. Use when executing Git commands in shared worktrees or governed runtimes. For commit boundaries/messages see git-commit-discipline; for conflict semantics see git-conflicts."
+description: "Practical Git for AI agents: inspect repository state, stage only owned files, commit, branch, sync, push, recover from errors, and use plain Git without unsafe command chaining. Use when executing Git commands in shared worktrees or governed runtimes. For commit boundaries/messages see git-commit-discipline; for conflict semantics see git-conflicts."
 license: MIT
 metadata:
   author: Bateau
@@ -15,10 +15,10 @@ This skill teaches **command choice and execution mechanics**. It does not grant
 
 ## 1. Use the available, authorized tool
 
-- **Normal Git is a first-class choice.** Do not translate `git` commands to GitButler (`but`), or insist that GitButler be installed.
-- GitButler is optional when installed, suitable for the task, and permitted. Its CLI has different selectors; do not assume Git IDs, file paths, and Butler IDs are interchangeable.
+- **Use plain Git directly.** Do not require another version-control CLI, extra setup, or different command syntax.
+- Keep file paths, branch names, and commit identifiers from current Git output; do not invent selectors.
 - An agent's current role, Loom effective write scope, shell admission, and repository rules determine what is allowed. **A skill cannot authorize an otherwise denied command.**
-- If a command or argument is blocked, identify the smallest needed permission or scope and request it through the supported runtime path. Do not reroute through `sh -c`, a script, a different binary, another tool, or `but` to get around the denial.
+- If a command or argument is blocked, identify the smallest needed permission or scope and request it through the supported runtime path. Do not reroute through `sh -c`, a script, a different binary, another tool, to get around the denial.
 - Never edit `.git` internals directly. Git itself may update linked-worktree metadata outside the checkout when the admitted Git command operates from that worktree; that is not permission for direct filesystem edits.
 
 ## 2. Keep commands short and independent
@@ -96,7 +96,7 @@ git diff --cached --check
 
 Outside governed Loom, use the repository's ordinary hooks and Git commit workflow. **Inside Loom**, only use the precise command forms currently admitted by the runtime; for example, where admitted, a scoped `git add -- ...` followed by `git -c core.hooksPath=/dev/null commit -m "..."`. Do not disable hooks merely for convenience outside that explicitly controlled environment.
 
-Partial staging, branch-targeted Butler commits, and history editing may be unsupported by Loom's whole-file provenance rules even when ordinary Git supports them. Follow the runtime denial; do not switch tools to bypass it.
+Partial staging and history editing may be unsupported by Loom's whole-file provenance rules even when Git supports them. Follow the runtime denial; do not switch tools to bypass it.
 
 ## 5. Branches, syncing, and publishing
 
@@ -107,11 +107,11 @@ Partial staging, branch-targeted Butler commits, and history editing may be unsu
 - Only rewrite history when it is actually required and authorized. For a rewritten published branch, use `--force-with-lease`, not plain `--force`. A lease failure is a remote-state change to investigate, not a reason to retry with `--force`.
 - For conflicts, stop the generic Git sequence and apply `git-conflicts`. Never auto-pick `ours` or `theirs`, drop commits, or declare a conflict resolved just because markers are gone.
 
-## 6. Recovery and alternative tools
+## 6. Recovery and failure handling
 
 - On an unexpected failure, preserve the working tree and give the **exact failed command and error**. Inspect the relevant Git state once, then use the smallest supported recovery action.
 - Do not use `reset --hard`, `clean -fdx`, `branch -D`, `push --force`, or `rebase --skip` as routine cleanup. Follow `git-commit-discipline` and require appropriate explicit authority for destructive operations.
-- If GitButler is available and appropriate, its `but status` / `but diff` can inspect state, and admitted `but` mutations can be used one at a time. Copy its current file/commit IDs from output; do not invent them or chain mutations on stale IDs. Its success message proves an operation, **not** correct commit boundaries or conflict semantics.
-- If Butler cannot work with a linked worktree, or a command is unsupported, use the admitted normal Git path where one exists. If neither tool has an authorized path, return a precise blocker instead of performing an unauthorized workaround.
+- If the required Git command or argument is unsupported or denied, use an admitted Git approach when one exists. Otherwise, return the exact blocker and request the smallest necessary permission or change of plan.
+- Do not introduce another Git frontend or a script wrapper to bypass a runtime restriction.
 
 **Completion evidence:** report the branch, relevant commit(s), published PR/remote state if applicable, and any uncommitted or blocked work. Do not claim a push, commit, sync, or successful recovery that its command output did not establish.
