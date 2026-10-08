@@ -262,6 +262,99 @@ export function isAllowedPackageScriptShell(command: string) {
 }
 
 
+export type VerificationShellCommand = {
+  family: "package" | "python" | "go" | "shell"
+  runner: string
+}
+
+function projectScriptPath(path: string, extension: RegExp) {
+  return !path.startsWith("-") && safeProjectRelativePath(path) &&
+    extension.test(path.replace(/^\.\/+/, ""))
+}
+
+function namedTestScript(path: string) {
+  if (!projectScriptPath(path, /\.(?:py|sh|bash)$/)) return false
+  const parts = path.replace(/^\.\/+/, "").split("/")
+  const basename = parts[parts.length - 1] ?? ""
+  return parts.some((part) => /^(?:test|tests|spec|specs|checks)$/.test(part)) ||
+    /(?:^|[._-])(?:test|tests|check|verify|validate|lint|qa|spec|e2e|integration)(?:[._-]|$)/.test(basename)
+}
+
+/** Test runners are executable project code; this classifies command shape, not side effects. */
+export function classifyVerificationShell(command: string): VerificationShellCommand | undefined {
+  const words = parsedCommandWords(command)
+  if (!words?.length) return undefined
+  const [runner, action, target] = words
+  if (isAllowedPackageScriptShell(command)) return { family: "package", runner }
+
+  if (runner === "go") {
+    if (["test", "vet"].includes(action) ||
+        (action === "tool" && ["cover", "test2json"].includes(target))) {
+      return { family: "go", runner }
+    }
+  }
+
+  if (/^python(?:3(?:\.[0-9]+)?)?$/.test(runner)) {
+    if (action === "-m" && [
+      "pytest", "unittest", "tox", "nox", "coverage", "behave",
+      "compileall", "py_compile", "mypy", "ruff",
+    ].includes(target)) return { family: "python", runner }
+    if (action && namedTestScript(action) && action.endsWith(".py")) {
+      return { family: "python", runner }
+    }
+  }
+  if (["pytest", "tox", "nox", "mypy", "pyright", "coverage", "behave"].includes(runner) ||
+      (runner === "ruff" && action === "check")) {
+    return { family: "python", runner }
+  }
+
+  if (["shellcheck", "bats"].includes(runner) ||
+      (runner === "shfmt" && words.some((word) => ["-d", "-l"].includes(word)))) {
+    return { family: "shell", runner }
+  }
+  if (["bash", "sh"].includes(runner)) {
+    if (action === "-n" && target && projectScriptPath(target, /\.(?:sh|bash)$/)) {
+      return { family: "shell", runner }
+    }
+    if (action && namedTestScript(action) && /\.(?:sh|bash)$/.test(action)) {
+      return { family: "shell", runner }
+    }
+  }
+  if (/^\.\/.*\.(?:sh|bash)$/.test(runner) && namedTestScript(runner)) {
+    return { family: "shell", runner }
+  }
+  return undefined
+}
+
+/**
+ * Explicit one-use elevation can cover project verification entrypoints not
+ * included in the routine list. It never admits shell eval, Git, package
+ * installation, arbitrary command chains, or paths outside the project.
+ */
+export function isElevatableVerificationShell(command: string) {
+  const words = parsedCommandWords(command)
+  if (!words?.length || classifyVerificationShell(command)) return false
+  const [runner, action, target] = words
+  if (["make", "just"].includes(runner)) {
+    return Boolean(action && /^(?:test|check|verify|validate|lint|qa|unit|integration|e2e)(?:[._:-]|$)/.test(action))
+  }
+  if (["bash", "sh"].includes(runner)) {
+    return Boolean(action && projectScriptPath(action, /\.(?:sh|bash)$/))
+  }
+  if (/^python(?:3(?:\.[0-9]+)?)?$/.test(runner)) {
+    if (action === "-m" && target) {
+      return !["pip", "ensurepip", "venv"].includes(target) &&
+        /^[A-Za-z0-9_.-]+$/.test(target)
+    }
+    return Boolean(action && projectScriptPath(action, /\.py$/))
+  }
+  if (runner === "go" && action === "run") {
+    return Boolean(target && target.startsWith("./") &&
+      safeProjectRelativePath(target))
+  }
+  return false
+}
+
 type ParsedGitCommand = {
   subcommand: string
   args: string[]
@@ -948,6 +1041,7 @@ export function diagnosticShellResourcesAllowed(resources: readonly string[]) {
     (command) =>
       isAllowedWorkerShell(command) ||
       isAllowedPackageScriptShell(command) ||
+      Boolean(classifyVerificationShell(command)) ||
       githubInspectionAllowed(command),
   )
 }

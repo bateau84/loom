@@ -4,6 +4,8 @@ import {
   butlerCommitSourceIds,
   diagnosticExecutionShellResourcesAllowed,
   diagnosticShellResourcesAllowed,
+  classifyVerificationShell,
+  isElevatableVerificationShell,
   isAllowedButlerCommit,
   isAllowedGitCommit,
   isAllowedPackageScriptShell,
@@ -211,6 +213,95 @@ describe("Loom Worker shell policy", () => {
       "PATH=/tmp npm run test:unit",
     ]) {
       expect(isAllowedPackageScriptShell(command)).toBe(false)
+    }
+  })
+
+  test("admits Python, Go, and shell testing for the verification roles", () => {
+    const groups = [
+      ["python", [
+        "python -m unittest discover -s tests",
+        "python3 -m pytest tests -q",
+        "python3.12 -m coverage run -m pytest",
+        "python scripts/test_api.py",
+        "python ./tests/run.py",
+        "pytest -q",
+        "tox -e py312",
+        "ruff check .",
+      ]],
+      ["go", [
+        "go test ./...",
+        "go test -race -count=1 ./...",
+        "go vet ./...",
+        "go tool cover -func=coverage.out",
+      ]],
+      ["shell", [
+        "bash scripts/test-unit.sh",
+        "sh ./tests/run.sh",
+        "bash -n scripts/deploy.sh",
+        "shellcheck ./scripts/test-unit.sh",
+        "bats tests/example.bats",
+        "shfmt -d scripts/test-unit.sh",
+        "./scripts/test-unit.sh",
+      ]],
+    ] as const
+    for (const [family, commands] of groups) {
+      for (const command of commands) {
+        expect(classifyVerificationShell(command)?.family).toBe(family)
+        expect(diagnosticShellResourcesAllowed([command])).toBe(true)
+        expect(workerShellResourcesAllowed([command])).toBe(true)
+      }
+    }
+    // Research does not inherit the new project-execution entitlement.
+    expect(shellResourcesAllowed(["bash scripts/test-unit.sh"])).toBe(false)
+    expect(shellResourcesAllowed(["python -m unittest discover"])).toBe(false)
+  })
+
+  test("rejects shell code injection and non-test entrypoints", () => {
+    for (const command of [
+      "bash -c 'rm -rf src'",
+      "sh -lc 'go test ./...'",
+      "python -c 'import os; os.system(\"touch /tmp/pwn\")'",
+      "go generate ./...",
+      "go env -w GOPROXY=direct",
+      "bash ../outside/test.sh",
+      "bash /tmp/test.sh",
+      "bash scripts/deploy.sh",
+      "python scripts/deploy.py",
+      "bash scripts/test.sh && git push origin main",
+      "python -m pip install -r requirements.txt",
+    ]) {
+      expect(classifyVerificationShell(command)).toBeUndefined()
+    }
+  })
+
+  test("explicit verification elevation accepts only bounded runner shapes", () => {
+    for (const command of [
+      "make test",
+      "just test:unit",
+      "bash scripts/ci.sh",
+      "sh ./scripts/validate-all.sh",
+      "python scripts/reproduce.py",
+      "python3 -m custom_test_runner",
+      "go run ./cmd/test-runner",
+    ]) {
+      expect(isElevatableVerificationShell(command)).toBe(true)
+    }
+    for (const command of [
+      "make deploy",
+      "just clean",
+      "bash -c 'echo hello'",
+      "sh -lc 'echo hello'",
+      "python -c 'print(1)'",
+      "python -m pip install",
+      "go run ../other",
+      "go run /tmp/script.go",
+      "bash /tmp/ci.sh",
+      "bash scripts/test.sh; rm -rf src",
+      "git push origin main",
+      "npm install",
+      "rm -rf src",
+    ]) {
+      expect(isElevatableVerificationShell(command)).toBe(false)
     }
   })
 
