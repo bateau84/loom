@@ -2,7 +2,7 @@ import { YAML } from "bun"
 import { lstat, readFile } from "node:fs/promises"
 import { homedir } from "node:os"
 import { isAbsolute, join, resolve } from "node:path"
-import { mergeWriteScope, validateScopeElevation } from "./scope"
+import { validateScopeElevation } from "./scope"
 
 export type LocalShellRules = {
   exact: string[]
@@ -179,7 +179,7 @@ export function projectShellOverrides(
 ): LocalShellRules {
   const project = policy?.projects[resolve(directory)]
   return {
-    exact: mergeWriteScope(policy?.shell.exact ?? [], project?.shell.exact ?? []),
-    prefixes: mergeWriteScope(policy?.shell.prefixes ?? [], project?.shell.prefixes ?? []),
+    exact: [...new Set([...(policy?.shell.exact ?? []), ...(project?.shell.exact ?? [])])],
+    prefixes: [...new Set([...(policy?.shell.prefixes ?? []), ...(project?.shell.prefixes ?? [])])],
   }
 }
