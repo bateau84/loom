@@ -4285,6 +4285,8 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       startedAtMs?: number
       startedAt?: string
       commandElevationId?: string
+      generationBefore?: Record<string, string>
+      generationPaths?: string[]
       verification?: ReturnType<typeof classifyVerificationShell>
     }>()
 
@@ -14539,10 +14541,12 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         typeof (raw.input as any).command === "string"
           ? String((raw.input as any).command)
           : undefined
+      const generationPaths = raw.agent === "worker" && shellCommand
+        ? elevatedGenerationPaths(shellCommand) : []
       let elevationRequired = false
       if (shellCommand && raw.sessionID &&
           verificationTestAgents.has(String(raw.agent ?? "")) &&
-          isElevatableVerificationShell(shellCommand)) {
+          (isElevatableVerificationShell(shellCommand) || generationPaths.length > 0)) {
         const agent = String(raw.agent)
         const allowedWithoutElevation = agent === "worker"
           ? workerShellResourcesAllowed([shellCommand])
@@ -14553,10 +14557,18 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           elevationRequired = true
           if (!observationCallKey(raw)) {
             throw new Error(
-              "Test execution blocked: a stable tool-call identity is required before consuming command elevation.",
+              "Command execution blocked: a stable tool-call identity is required before consuming command elevation.",
             )
           }
           await assertProjectVerificationEntrypoint(shellCommand)
+          if (generationPaths.length > 0) {
+            const workflowId = await ctx.storage.get(sessionKey(String(raw.sessionID)))
+            const stepId = await ctx.storage.get(sessionStepKey(String(raw.sessionID)))
+            if (typeof workflowId !== "string" || typeof stepId !== "string") {
+              throw new Error("Generator execution needs the current attached Worker step.")
+            }
+            await assertProjectGenerationWrite(workflowId, stepId, shellCommand)
+          }
         }
       }
       const butlerSelection =
@@ -14573,6 +14585,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           ctx.location.directory,
         ),
         ...(butlerSelection?.paths ?? []),
+        ...generationPaths,
       ]
       const lockGitIndex =
         toolNeedsGitIndexLock(tool, raw.input) ||
@@ -14734,6 +14747,8 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         gitStageBefore?: GitStageSnapshot
         startedAtMs?: number; startedAt?: string
         commandElevationId?: string
+        generationBefore?: Record<string, string>
+        generationPaths?: string[]
         verification?: ReturnType<typeof classifyVerificationShell>
       } = {
         ambiguous: false, ready: false,
@@ -14762,6 +14777,20 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           await revalidateDirectMutationUnderLock(raw, directMutationPaths)
           if (butlerSelection) {
             await revalidateButlerCommitUnderLock(raw, butlerSelection)
+          }
+          if (generationPaths.length > 0 && shellCommand) {
+            const workflowId = await ctx.storage.get(sessionKey(String(raw.sessionID)))
+            const stepId = await ctx.storage.get(sessionStepKey(String(raw.sessionID)))
+            if (typeof workflowId !== "string" || typeof stepId !== "string") {
+              throw new Error("Generator execution lost its current Worker attachment.")
+            }
+            await assertProjectGenerationWrite(workflowId, stepId, shellCommand)
+            pending.generationPaths = generationPaths
+            pending.generationBefore = Object.fromEntries(await Promise.all(
+              generationPaths.map(async (path) => [
+                path, await worktreeFingerprint(ctx.location.directory, path),
+              ] as const),
+            ))
           }
           if (lockGitIndex) {
             await revalidateGitMutationUnderLock(raw)
@@ -14797,7 +14826,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           )
           if (!consumed) {
             throw new Error(
-              "Test execution blocked: this command has no unconsumed exact loom_command_elevate grant.",
+              "Command execution blocked: this command has no unconsumed exact loom_command_elevate grant.",
             )
           }
           pending.commandElevationId = consumed.id
@@ -15133,6 +15162,19 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           }
 
           if (writeScope.length) {
+            if (raw.status === "completed" && pending.generationBefore && pending.generationPaths) {
+              const changed: string[] = []
+              for (const path of pending.generationPaths) {
+                const after = await worktreeFingerprint(ctx.location.directory, path)
+                if (after !== pending.generationBefore[path] &&
+                    resourcesWithinScope([path], writeScope)) changed.push(path)
+              }
+              if (changed.length > 0) {
+                await recordGitSessionOwnership(
+                  ctx, sessionID, ctx.location.directory, changed,
+                )
+              }
+            }
             if (raw.status === "completed") {
               const owned = successfulMutationPaths(
                 tool,
