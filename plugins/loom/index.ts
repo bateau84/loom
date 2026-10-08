@@ -14148,6 +14148,39 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         }
       }
 
+      // A user-owned local rule is a deliberate command exception. Keep the
+      // exact runnable-step gate for governed actors; an OQ answer is not a
+      // substitute for execution authority.
+      if (event.action === "shell" && event.resources.length > 0 &&
+          loomAgents.has(String(event.agent ?? ""))) {
+        const local = await readLocalPermissionPolicy()
+        const shell = projectShellOverrides(local.policy, ctx.location.directory)
+        if (event.resources.every((command: string) => localPolicyShellAllowed(command, shell))) {
+          const workflowId = (await ctx.storage.get(
+            sessionKey(event.sessionID),
+          )) as string | undefined
+          const stepId = (await ctx.storage.get(
+            sessionStepKey(event.sessionID),
+          )) as string | undefined
+          if (!workflowId || !stepId ||
+              !(await exactRunnableStepAttemptBinding(ctx, event.sessionID, workflowId, stepId))) {
+            event.effect = "deny"
+            event.message = "Local shell exceptions require this role's exact current runnable Loom step. An OQ attachment does not authorize executable work."
+            return
+          }
+          try {
+            await assertCurrentStepPlanAdmission(ctx, workflowId, stepId)
+            if (event.agent === "worker") await assertWorkerWorkClaim(ctx, workflowId, stepId)
+          } catch (error) {
+            event.effect = "deny"
+            event.message = error instanceof Error ? error.message : String(error)
+            return
+          }
+          event.effect = "allow"
+          return
+        }
+      }
+
       if (event.agent === "diagnostic" && event.action === "shell") {
         if (diagnosticShellResourcesAllowed(event.resources)) {
           event.effect = "allow"
@@ -14377,7 +14410,15 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         }
 
         const scope = (await ctx.storage.get(scopeKey(workflowId, stepId))) as TaskScope | undefined
-        if (!workerShellResourcesAllowed(event.resources, scope?.write ?? [])) {
+        const effectiveWrite = mergeWriteScope(
+          scope?.write ?? [],
+          projectWriteOverrides(
+            (await readLocalPermissionPolicy()).policy,
+            ctx.location.directory,
+            "worker",
+          ),
+        )
+        if (!workerShellResourcesAllowed(event.resources, effectiveWrite)) {
           event.effect = "deny"
           event.message =
             "Worker shell is limited to inspection, build/test/run, safe delivery operations, and writes already inside the current Loom scope. Call loom_scope_elevate before retrying a newly discovered project-local write target."
