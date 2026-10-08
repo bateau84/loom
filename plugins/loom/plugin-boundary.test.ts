@@ -17390,11 +17390,17 @@ test("archived original producer receipts reconcile after Wave recompilation wit
     const added = await h.call("work_amend", {
       workflowId: h.workflowId, expectedVersion: archivedWork.version,
       reason: "Add one new unexecuted sibling while old Tasks remain unchanged.",
-      operations: [{
-        action: "add-task", phaseId: "core", waveId: "first",
-        task: { ...richPlanTask("remaining", "Remaining", "Unexecuted sibling", ["dependent"]),
-          role: "worker", responsibility: "execute" },
-      }],
+      operations: [
+        {
+          action: "add-task", phaseId: "core", waveId: "first",
+          task: { ...richPlanTask("remaining", "Remaining", "Unexecuted sibling", ["dependent"]),
+            role: "worker", responsibility: "execute" },
+        },
+        {
+          action: "patch-wave", phaseId: "core", waveId: "first",
+          patch: { title: "First (display-only heading update)" },
+        },
+      ],
     }, "planner", planner)
     expect(added.error).toBeUndefined()
     expect(added.affectedTaskIds).not.toContain("one")
@@ -17417,6 +17423,26 @@ test("archived original producer receipts reconcile after Wave recompilation wit
 
     const budgetKey = "budget/" + h.workflowId
     const budget = await h.durableStorage.get(budgetKey)
+    const beforeDiagnosticWork = await h.work()
+    const beforeDiagnosticWorkflow = await h.workflow()
+    const inspected = await h.call("work_reconcile_diagnose", {
+      workflowId: h.workflowId, taskIds: ["one", "dependent"],
+    }, "general", "parent")
+    expect(inspected.error).toBeUndefined()
+    expect(inspected.diagnosticOnly).toBe(true)
+    expect(inspected.dispatchBudgetUsed).toBe(0)
+    expect(inspected.reviewPlanCurrent).toBe(true)
+    for (const item of inspected.tasks) {
+      expect(item.receiptSource).toBe("last-archived")
+      expect(item.semantic.originalProof).toBe("valid")
+      expect(item.semantic.currentContract).toBe("unchanged")
+      expect(item.semantic.changedDisplayFields).toContain(`task:${item.taskId}.wave.title`)
+      expect(item.semantic.hashes.reconstructedOriginal).not.toBe(item.semantic.hashes.legacyCurrent)
+    }
+    expect(await h.work()).toEqual(beforeDiagnosticWork)
+    expect(await h.workflow()).toEqual(beforeDiagnosticWorkflow)
+    expect(await h.durableStorage.get(budgetKey)).toEqual(budget)
+
     const reconciled = await h.call("work_reconcile", {
       workflowId: h.workflowId, taskIds: ["dependent", "one"],
     }, "general", "parent")
@@ -17543,6 +17569,76 @@ test("reconciliation refuses a dependent if its pending producer was not indepen
     expect(attempted.error).toBeUndefined()
     expect(attempted.reconciled).toEqual([])
     expect(attempted.refused[0].reason).toContain("Dependent producer result")
+  } finally {
+    h.restore()
+  }
+})
+
+
+test("read-only reconciliation diagnosis separates missing original proof from stale current code", async () => {
+  const h = await waveLifecycleFixture("wave", false, "worker")
+  try {
+    expect((await h.finish("task:one", "worker")).error).toBeUndefined()
+    const prior = await h.work()
+    const source = prior.nodes.find((node: any) => node.type === "task" && node.logicalId === "one")
+    const originalFingerprint = source.result.semanticClosureFingerprint
+
+    const workflowBefore = await h.workflow()
+    const budgetKey = "budget/" + h.workflowId
+    const budgetBefore = await h.durableStorage.get(budgetKey)
+    const first = await h.call("work_reconcile_diagnose", {
+      workflowId: h.workflowId, taskIds: ["one"],
+    }, "general", "parent")
+    expect(first.error).toBeUndefined()
+    expect(first.diagnosticOnly).toBe(true)
+    expect(first.reviewPlanCurrent).toBe(true)
+    expect(first.tasks[0].semantic.originalProof).toBe("valid")
+    expect(first.tasks[0].semantic.currentContract).toBe("unchanged")
+    expect(first.tasks[0].checks.originalEvidenceClaims).toBe("missing-or-mismatched")
+    expect(await h.workflow()).toEqual(workflowBefore)
+    expect(await h.work()).toEqual(prior)
+    expect(await h.durableStorage.get(budgetKey)).toEqual(budgetBefore)
+
+    source.result.semanticClosureFingerprint = "a".repeat(64)
+    await h.durableStorage.set(h.workKey, prior)
+    const mismatched = await h.call("work_reconcile_diagnose", {
+      workflowId: h.workflowId, taskIds: ["one"],
+    }, "general", "parent")
+    expect(mismatched.tasks[0].semantic.originalProof).toBe("original-proof-mismatch")
+    expect(mismatched.tasks[0].semantic.currentContract).toBe("unchanged")
+
+    source.result.semanticClosureFingerprint = undefined
+    await h.durableStorage.set(h.workKey, prior)
+    const missing = await h.call("work_reconcile_diagnose", {
+      workflowId: h.workflowId, taskIds: ["one"],
+    }, "general", "parent")
+    expect(missing.tasks[0].semantic.originalProof).toBe("missing-receipt-fingerprint")
+
+    source.result.semanticClosureFingerprint = originalFingerprint
+    await h.durableStorage.set(h.workKey, prior)
+    await writeFile(join(h.root, "src", "local-edit.ts"), "export const uncommitted = true\\n")
+    const codeChanged = await h.call("work_reconcile_diagnose", {
+      workflowId: h.workflowId, taskIds: ["one"],
+    }, "general", "parent")
+    expect(codeChanged.tasks[0].checks.cleanRepositoryHead).toBe("current-head-not-clean-or-unavailable")
+    expect(codeChanged.tasks[0].semantic.originalProof).toBe("valid")
+    expect(codeChanged.tasks[0].semantic.currentContract).toBe("unchanged")
+  } finally {
+    h.restore()
+  }
+})
+
+test("unrelated sessions cannot inspect a workflow's reconciliation receipts", async () => {
+  const h = await waveLifecycleFixture("wave", false, "worker")
+  try {
+    const unauthorized = await h.call("work_reconcile_diagnose", {
+      workflowId: h.workflowId, taskIds: ["one"],
+    }, "worker", "unattached-worker")
+    expect(unauthorized.error).toContain("Only General")
+    const unbound = await h.call("work_reconcile_diagnose", {
+      workflowId: h.workflowId, taskIds: ["one"],
+    }, "general", "foreign-unbound-session")
+    expect(unbound.error).toContain("Bound workflow")
   } finally {
     h.restore()
   }
