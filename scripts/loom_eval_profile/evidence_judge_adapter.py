@@ -72,6 +72,23 @@ same order and with the exact supplied text. passed must agree with the detailed
 judgments.
 """
 
+# OpenCode's pinned runner invocation reads but does not forward the
+# InvocationSpec.system field to the OpenCode process. Unlike Copilot, an
+# OpenCode judge therefore needs its instructions in a real isolated
+# primary-agent file (the same mechanism used by paired skill ablations).
+# Never relax the strict verdict parser to accommodate ignored instructions.
+JUDGE_AGENT_NAME = "eval-judge"
+JUDGE_AGENT_DOCUMENT = """---
+description: Isolated Loom behavioral-evaluation judge
+mode: primary
+permissions:
+  - action: "*"
+    resource: "*"
+    effect: deny
+---
+
+""" + JUDGE_SYSTEM
+
 _PROVIDER_ENVS = (
     "OPENAI_API_KEY",
     "ANTHROPIC_API_KEY",
@@ -248,7 +265,7 @@ class LoomEvidenceJudgeAdapter:
             transport=transport,
             model=model,
             reasoning=reasoning,
-            agent=None,
+            agent=JUDGE_AGENT_NAME,
             skill=None,
             workspace=prepared.judge_workspace,
             workspace_mode="ro",
