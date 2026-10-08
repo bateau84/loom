@@ -5561,6 +5561,75 @@ Verdict: FAIL
   })
 
 
+  test("late Diagnostic OQ can investigate a failed executed workflow without rewriting its steps", async () => {
+    const h = await harness()
+    const general = "late-diagnostic-general"
+    const child = "late-diagnostic-child"
+    try {
+      const started = await h.call("start", {
+        request: "Investigate an intermittent request abort after implementation.",
+      }, "general", general)
+      const workflowId = String(started.workflowId)
+      const effects = {
+        humanFacing: false, behavioral: false, structural: false,
+        externalUnknown: false, diagnostic: false, productOutcome: false,
+        implementationRequested: true, executionDepth: "task",
+      }
+      expect((await h.call("route", effects, "general", general)).error).toBeUndefined()
+      const current = await h.durableStorage.get(`workflow/${workflowId}`) as any
+      current.steps.find((step: any) => step.id === "worker").status = "complete"
+      current.steps.find((step: any) => step.id === "worker").summary = "Browser guards implemented"
+      current.steps.find((step: any) => step.id === "review-implementation").status = "failed"
+      current.steps.find((step: any) => step.id === "review-implementation").summary = "Flaky keyboard test"
+      await h.durableStorage.set(`workflow/${workflowId}`, current)
+      const stepsBefore = structuredClone(current.steps)
+
+      const refused = await h.call("route", { ...effects, diagnostic: true }, "general", general)
+      expect(refused.error).toContain("Route reclassification after completed execution")
+
+      const raised = await h.call("oq_raise", {
+        workflowId,
+        question: "Which request lifecycle event cancels the intermittent keyboard data request?",
+        responder: "diagnostic",
+        blocking: true,
+        consumerStepIds: ["review-implementation"],
+        evidence: ["2 failures in 40 runs; merge remains blocked"],
+      }, "general", general)
+      expect(raised.error).toBeUndefined()
+      const questionId = String(raised.question.id)
+
+      const grant = await h.call("dispatch_grant", { workflowId, questionId }, "general", general)
+      expect(grant.error).toBeUndefined()
+      const attached = await h.call("attach", {
+        grantId: grant.grantId, workflowId, questionId,
+      }, "diagnostic", child)
+      expect(attached.attached).toBe(true)
+      expect(await h.durableStorage.get(`session-oq-attempt/${child}`)).toBe(0)
+
+      const experiment = await h.call("diagnostic_sandbox_start", {
+        image: "--invalid-image", network: "none",
+      }, "diagnostic", child)
+      expect(experiment.error).toContain("Diagnostic sandbox image")
+      expect(experiment.error).not.toContain("requires an exact runnable Diagnostic step")
+      const stranger = await h.call("diagnostic_sandbox_start", {
+        image: "--invalid-image", network: "none",
+      }, "diagnostic", "unattached-diagnostic")
+      expect(stranger.error).toContain("exact runnable Diagnostic step or unanswered Diagnostic OQ")
+
+      const reopened = await h.call("oq_reopen", {
+        workflowId, questionId, preserveAnswer: false, reason: "New cancellation evidence",
+      }, "general", general)
+      expect(reopened.error).toBeUndefined()
+      const stale = await h.call("diagnostic_sandbox_start", {
+        image: "--invalid-image", network: "none",
+      }, "diagnostic", child)
+      expect(stale.error).toContain("exact runnable Diagnostic step or unanswered Diagnostic OQ")
+      expect((await h.durableStorage.get(`workflow/${workflowId}`) as any).steps).toEqual(stepsBefore)
+    } finally {
+      h.restore()
+    }
+  })
+
   test("conversational Research and Diagnostic are technically non-mutating", async () => {
     const { permissionHooks, restore } = await harness()
     try {
