@@ -17121,7 +17121,21 @@ test("archived original producer receipts reconcile after Wave recompilation wit
     archivedWork.version++
     await h.durableStorage.set(h.workKey, archivedWork)
     const planner = await h.attach("plan", "planner", "archive-carry-forward-planner")
-    const waveTasks = archivedWork.plans.at(-1).phases[0].waves[0].tasks
+    // The Plan advances a revision without changing either archived Task's
+    // semantic closure. Recovery must validate against BOTH revisions.
+    const added = await h.call("work_amend", {
+      workflowId: h.workflowId, expectedVersion: archivedWork.version,
+      reason: "Add one new unexecuted sibling while old Tasks remain unchanged.",
+      operations: [{
+        action: "add-task", phaseId: "core", waveId: "first",
+        task: { ...richPlanTask("remaining", "Remaining", "Unexecuted sibling", ["dependent"]),
+          role: "worker", responsibility: "execute" },
+      }],
+    }, "planner", planner)
+    expect(added.error).toBeUndefined()
+    expect(added.affectedTaskIds).not.toContain("one")
+    expect(added.affectedTaskIds).not.toContain("dependent")
+    const waveTasks = (await h.work()).plans.at(-1).phases[0].waves[0].tasks
     const compiled = await h.call("task_plan", {
       workflowId: h.workflowId,
       tasks: waveTasks.map((task: any) => ({ ...task, write: ["src/**"], skills: [] })),
@@ -17178,8 +17192,8 @@ test("Wave compiler refuses to erase a completed Step with no current or archive
     delete node.result
     delete node.priorResults
     await h.durableStorage.set(h.workKey, work)
-    const before = await h.workflow()
     const planner = await h.attach("plan", "planner", "unproven-compiler-planner")
+    const before = await h.workflow()
     const compiled = await h.call("task_plan", {
       workflowId: h.workflowId,
       tasks: work.plans.at(-1).phases[0].waves[0].tasks.map((task: any) => ({
