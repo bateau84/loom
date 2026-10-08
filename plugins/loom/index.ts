@@ -12149,7 +12149,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 )
               }
               await ctx.storage.set(sessionOqKey(tool.sessionID), value.questionId ?? "")
-              await ctx.storage.set(sessionOqAttemptKey(tool.sessionID), value.questionId ? questionAttempt : null)
+              await ctx.storage.set(sessionOqAttemptKey(tool.sessionID), value.questionId ? (questionAttempt ?? null) : null)
               if (value.stepId === "review-plan" && planContext) {
                 const planningOnly = planningOnlyObjective(workflow.effects)
                 const executableFingerprint = executableTaskPlanFingerprint(workflow)
