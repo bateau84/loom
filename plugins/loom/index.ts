@@ -130,6 +130,7 @@ import {
   isAllowedPackageScriptShell,
   classifyVerificationShell,
   isElevatableVerificationShell,
+  elevatedVerificationEntrypoint,
   isButlerCommitShellCommand,
   isGitInspectionShellCommand,
   isGitShellCommand,
@@ -4282,6 +4283,34 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       commandElevationId?: string
       verification?: ReturnType<typeof classifyVerificationShell>
     }>()
+
+    const assertProjectVerificationEntrypoint = async (command: string) => {
+      const entry = elevatedVerificationEntrypoint(command)
+      if (!entry) return
+      try {
+        const projectRoot = await realpath(ctx.location.directory)
+        const targetPath = await realpath(resolve(projectRoot, entry))
+        const targetRelative = relative(projectRoot, targetPath)
+        if (
+          !targetRelative ||
+          targetRelative === ".." ||
+          targetRelative.startsWith("../") ||
+          targetRelative.startsWith("..\\") ||
+          isAbsolute(targetRelative)
+        ) {
+          throw new Error("Verification entrypoint must resolve inside the current project.")
+        }
+        const targetInfo = await lstat(targetPath)
+        if (!targetInfo.isFile() && !targetInfo.isDirectory()) {
+          throw new Error("Verification entrypoint must resolve to a project file or directory.")
+        }
+      } catch (error) {
+        throw new Error(
+          "Project-local command elevation denied: " +
+          (error instanceof Error ? error.message : String(error)),
+        )
+      }
+    }
 
     // Each historical elevation record is retained by ID. At most one remains
     // available to the same child session at any moment.
@@ -12093,6 +12122,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             }) }
           }
           try {
+            await assertProjectVerificationEntrypoint(command)
             const receipt = await withRuntimeLocks(runtime, [
               { aggregate: "workflow", resourceIdentity: value.workflowId },
               stepAuthorityResource(value.workflowId, value.stepId),
