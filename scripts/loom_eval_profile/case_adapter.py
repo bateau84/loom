@@ -19,7 +19,7 @@ from typing import Any
 from runner.eval_api import InvocationSpec, JsonValue, NormalizedCase
 
 from ._shared import PreparedLoomCase, compatibility_env_names, compatibility_suite_paths
-from .evidence_judge_adapter import JUDGE_AGENT_DOCUMENT, JUDGE_AGENT_NAME
+from .judge_instructions import JUDGE_AGENT_DOCUMENT, JUDGE_AGENT_NAME
 
 
 ROOT = Path(__file__).resolve().parents[2]
