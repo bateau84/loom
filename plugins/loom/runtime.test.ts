@@ -1,9 +1,12 @@
 import { describe, expect, test } from "bun:test"
+import { assertIsolatedTestProcess } from "./test-isolation"
 import { mkdir, mkdtemp, readFile, rename, rm, symlink, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
 import { fileURLToPath } from "node:url"
 import { RUNTIME_STATE_VERSION, consumeDispatchGrant, createProjectStorage, createTransactionalStorage, ensureRuntimeStateVersion, findUsableDispatchGrant, importLegacyPluginStorage, issueDispatchGrant, migrateLegacySessionState, resolveRuntimeIdentity, sessionBoundToOq, sessionBoundToStep, sessionBoundToWorkflow, tryAcquireRuntimeLocks } from "./runtime"
+
+await assertIsolatedTestProcess()
 
 // These identity fixtures intentionally model the pre-upgrade v1 store.
 // Schema transformation/replay is tested separately above and at the plugin boundary.
@@ -2342,7 +2345,7 @@ describe("Loom runtime identity and scoped storage", () => {
 
 
 describe("production runtime writer fencing", () => {
-  test("legacy records survive v9 and all older fence-capable writers are rejected", async () => {
+  test("legacy records survive v10 without advisory backfill and older writers are rejected", async () => {
     await withRoots(async (root) => {
       const project = join(root, "holistic-plan-upgrade")
       await mkdir(project, { recursive: true })
@@ -2381,11 +2384,15 @@ describe("production runtime writer fencing", () => {
       const priorV8 = createProjectStorage(raw, runtime.projectId, { expectedRuntimeVersion: 8 })
       expect(await priorV8.get("workflow/before-upgrade")).toEqual(history)
 
+      await ensureRuntimeStateVersion(raw, runtime, { targetVersion: 9 })
+      const priorV9 = createProjectStorage(raw, runtime.projectId, { expectedRuntimeVersion: 9 })
+      expect(await priorV9.get("workflow/before-upgrade")).toEqual(history)
+
       const schema = await ensureRuntimeStateVersion(raw, runtime)
       expect(schema.currentVersion).toBe(RUNTIME_STATE_VERSION)
-      expect(schema.lastUpgradeId).toBe("plan-authority-delta-v9")
+      expect(schema.lastUpgradeId).toBe("brainstorm-native-advice-v10")
 
-      for (const stale of [old, draftV2, priorV3, priorV4, priorV5, priorV6, priorV7, priorV8]) {
+      for (const stale of [old, draftV2, priorV3, priorV4, priorV5, priorV6, priorV7, priorV8, priorV9]) {
         await expect(stale.set("workflow/before-upgrade", { overwritten: true })).rejects.toThrow("does not match")
         await expect(stale.get("workflow/before-upgrade")).rejects.toThrow("does not match")
       }
@@ -2393,7 +2400,7 @@ describe("production runtime writer fencing", () => {
       const current = createProjectStorage(raw, runtime.projectId, { expectedRuntimeVersion: RUNTIME_STATE_VERSION })
       expect(await current.get("workflow/before-upgrade")).toEqual(history)
       const receipts = await raw.scan({ prefix: "installation/runtime-upgrades/" })
-      expect(receipts.entries).toHaveLength(8)
+      expect(receipts.entries).toHaveLength(9)
       await ensureRuntimeStateVersion(raw, runtime)
       expect(await raw.scan({ prefix: "installation/runtime-upgrades/" })).toEqual(receipts)
       expect(await current.get("workflow/before-upgrade")).toEqual(history)
