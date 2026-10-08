@@ -11,6 +11,7 @@ import { LoomRpc } from "./rpc"
 import { assertLoomToolAdmission, assertCancelledChildToolAdmission, cancelWorkflow, ensureCompletedWaveHistory, workflowBindingTerminal, type CancelWorkflowInput } from "./lifecycle"
 import { buildSidebarSnapshot } from "./sidebar"
 import { renderToolOutput } from "./presentation"
+import { loomPlanningInsights } from "./planning-insights"
 import {
   buildStatusView,
   clippedSummary,
@@ -4856,7 +4857,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       addLoomTool({
         name: "roster",
         description:
-          "Read-only live OpenCode agent names and descriptions. Available only to General and Planner; this is discovery, not execution authority.",
+          "Read-only live OpenCode agent names/descriptions with separate bounded Loom planning advice. General and Planner only; advice is not permission or proof of Task/OQ path support.",
         input: {
           type: "object",
           properties: {},
@@ -4887,6 +4888,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                   : "",
               })),
               truncated: agents.length > maxAgents,
+              planningInsights: loomPlanningInsights(agents.slice(0, maxAgents).map(({ name }) => name)),
               provenance: {
                 plugin: "loom",
                 worktree: runtime.canonicalLocation,

@@ -33,6 +33,12 @@ tags: [component, loom, agents]
 
 Each subagent runs fresh and is given only its bounded objective/context.
 
+## Routing discovery
+
+General and Planner use `loom_roster` for current host agent names/descriptions and a separate `planningInsights` advisory view. Each call asks the host for the current worktree; the roster is not filtered by Loom role names or advice availability. The response bounds the roster to 200 agents (with `truncated`), names to 128 characters and descriptions to 2,000. Advice is plugin-maintained in `plugins/loom/planning-insights.ts`, keyed by exact live name, with at most 200 hints and 1,000 characters per native-work/caution field. Missing, malformed, or stale entries contribute no hint and never remove a host agent; advice for a truncated name is omitted rather than matched ambiguously.
+
+The advisory table is not a duplicate installed-agent registry, a permission source, a Task contract, or a native-path descriptor. No external `.loom` advice registry is read by this increment, and no custom agent frontmatter is used. Runtime Task/OQ validation remains separate. Brainstorm advisory OQs are supported; planned Brainstorm, Planner, Critic and Acceptance Tasks remain unsupported. Provider-free mock-host boundary tests verify this discovery increment; they do not prove actual installed-host behavior or full Objective acceptance.
+
 When a shared OQ answer becomes durable, Loom sends a best-effort synthetic steer to the latest session attached to each current consumer step attempt. The wake-up carries only correlation, not answer authority: the child re-reads persisted OQ state and reconciles it before completion. Same-attempt redispatch replaces the session pointer, and reopened attempts use a different pointer, so stale child sessions are not revived. General treats that runtime wake as the first continuation attempt and does not launch a parallel continuation merely because the answer arrived. Recovery is consumer-specific and follows fresh current-state/delivery evidence; when delivery status is genuinely unknowable, the answered OQ remains a resumable incomplete boundary rather than being guessed into a duplicate dispatch.
 
 ## Repository execution and delivery
