@@ -10540,6 +10540,81 @@ test("Worker generation elevation checks outputs, locks invocation and owns only
   }
 })
 
+test("generator result containing an error cannot confer Git provenance", async () => {
+  const h = await waveLifecycleFixture("wave")
+  try {
+    const worker = await h.attach("task:one", "worker", "failed-generator-worker")
+    const command = "swag init --output ./internal/swagger/v2"
+    expect((await h.call("scope_elevate", {
+      workflowId: h.workflowId, stepId: "task:one",
+      paths: ["internal/swagger/v2/**"], reason: "Regenerate Swagger files.",
+    }, "worker", worker)).error).toBeUndefined()
+    const grant = await h.call("command_elevate", {
+      workflowId: h.workflowId, stepId: "task:one",
+      command, reason: "Regenerate Swagger from changed annotations.",
+    }, "worker", worker)
+    expect(grant.granted).toBe(true)
+
+    const run = { tool: "shell", callID: "generator-embedded-error",
+      sessionID: worker, agent: "worker", input: { command } }
+    await h.toolHooks.get("execute.before")!(run)
+    const out = join(h.root, "internal", "swagger", "v2")
+    await mkdir(out, { recursive: true })
+    await writeFile(join(out, "docs.go"), "package swagger\n")
+    await h.toolHooks.get("execute.after")!({
+      ...run, status: "completed", result: { error: "swag exited non-zero after partial output" },
+    })
+
+    const ownership = await h.durableStorage.get(
+      "git-session-ownership/" + encodeURIComponent(worker),
+    ) as any
+    expect(ownership?.paths ?? []).not.toContain("internal/swagger/v2/docs.go")
+    const receipt = await h.durableStorage.get("command-elevation/" + grant.grantId) as any
+    expect(receipt.outcome).toBe("error")
+    const observations = (await h.call("evidence_observations",
+      { detail: true }, "worker", worker)).observations
+    expect(observations.find((item: any) => item.id === receipt.observationId)?.status).toBe("error")
+  } finally {
+    h.restore()
+  }
+})
+
+test("generator output symlink swapped during execution cannot acquire Git ownership", async () => {
+  const h = await waveLifecycleFixture("wave")
+  const external = await mkdtemp(join(tmpdir(), "loom-generator-post-escape-"))
+  try {
+    const worker = await h.attach("task:one", "worker", "post-generation-escape-worker")
+    const command = "swag init --output ./internal/swagger/v2"
+    expect((await h.call("scope_elevate", {
+      workflowId: h.workflowId, stepId: "task:one",
+      paths: ["internal/swagger/v2/**"], reason: "Regenerate Swagger files.",
+    }, "worker", worker)).error).toBeUndefined()
+    const granted = await h.call("command_elevate", {
+      workflowId: h.workflowId, stepId: "task:one",
+      command, reason: "Regenerate Swagger from changed annotations.",
+    }, "worker", worker)
+    expect(granted.granted).toBe(true)
+
+    const outputDir = join(h.root, "internal", "swagger", "v2")
+    await mkdir(outputDir, { recursive: true })
+    const run = { tool: "shell", callID: "generator-output-post-execution-swap",
+      sessionID: worker, agent: "worker", input: { command } }
+    await h.toolHooks.get("execute.before")!(run)
+    await rm(outputDir, { recursive: true })
+    await symlink(external, outputDir)
+    await expect(h.toolHooks.get("execute.after")!({
+      ...run, status: "completed", result: "success",
+    })).rejects.toThrow("outside this project")
+    const ownership = await h.durableStorage.get(
+      "git-session-ownership/" + encodeURIComponent(worker),
+    ) as any
+    expect(ownership?.paths ?? []).not.toContain("internal/swagger/v2/docs.go")
+  } finally {
+    await rm(external, { recursive: true, force: true })
+    h.restore()
+  }
+})
+
 test("generator output symlink escape is denied before spending an exact grant", async () => {
   const h = await waveLifecycleFixture("wave")
   const external = await mkdtemp(join(tmpdir(), "loom-generator-escape-"))
