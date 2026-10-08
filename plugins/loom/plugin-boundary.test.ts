@@ -10265,6 +10265,12 @@ test("package scripts are admitted for governed Reviewer, Critic, and Acceptance
     await roleScript(evaluate, "critic", criticSession, "python3 -m unittest discover", "allow")
     await roleScript(evaluate, "critic", criticSession, "go test ./...", "allow")
     await roleScript(evaluate, "critic", criticSession, "bash scripts/test.sh", "allow")
+    const criticGrant = await crit.call("command_elevate", {
+      workflowId, stepId: "critic-solution",
+      command: "make test", reason: "Run a repository CI test target.",
+    }, "critic", criticSession)
+    expect(criticGrant.granted).toBe(true)
+    await roleScript(evaluate, "critic", criticSession, "make test", "allow")
     await roleScript(evaluate, "critic", "unattached-critic", "npm run test:unit", "deny")
   } finally {
     crit.restore()
@@ -10279,6 +10285,12 @@ test("package scripts are admitted for governed Reviewer, Critic, and Acceptance
     await roleScript(evaluate, "reviewer", reviewer, "pytest -q", "allow")
     await roleScript(evaluate, "reviewer", reviewer, "go vet ./...", "allow")
     await roleScript(evaluate, "reviewer", reviewer, "bats tests/unit.bats", "allow")
+    const reviewerGrant = await h.call("command_elevate", {
+      workflowId: h.workflowId, stepId: "review-implementation",
+      command: "just test:unit", reason: "Independently verify unit coverage.",
+    }, "reviewer", reviewer)
+    expect(reviewerGrant.granted).toBe(true)
+    await roleScript(evaluate, "reviewer", reviewer, "just test:unit", "allow")
     await roleScript(evaluate, "reviewer", "unattached-reviewer", "bun run test:unit", "deny")
     expect((await h.call("complete", {
       workflowId: h.workflowId, stepId: "review-implementation",
@@ -10290,6 +10302,12 @@ test("package scripts are admitted for governed Reviewer, Critic, and Acceptance
     await roleScript(evaluate, "acceptance", acceptance, "python -m pytest", "allow")
     await roleScript(evaluate, "acceptance", acceptance, "go test -race ./...", "allow")
     await roleScript(evaluate, "acceptance", acceptance, "sh tests/integration.sh", "allow")
+    const acceptanceGrant = await h.call("command_elevate", {
+      workflowId: h.workflowId, stepId: "product-acceptance",
+      command: "make test", reason: "Verify assembled product behavior.",
+    }, "acceptance", acceptance)
+    expect(acceptanceGrant.granted).toBe(true)
+    await roleScript(evaluate, "acceptance", acceptance, "make test", "allow")
     await roleScript(evaluate, "acceptance", "unattached-acceptance", "pnpm run test:e2e", "deny")
   } finally {
     h.restore()
