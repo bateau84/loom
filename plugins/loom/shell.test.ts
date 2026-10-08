@@ -300,6 +300,7 @@ describe("Loom Worker shell policy", () => {
     expect(elevatedGenerationOutput("swag init -o internal/swagger/v2 -t 'internal-app-v1'")).toBe("internal/swagger/v2")
     expect(elevatedGenerationOutput("swag init --ot json,yaml -o internal/swagger/v2")).toBe("internal/swagger/v2")
     expect(elevatedGenerationOutput("swag init --parseDepth 100 --pdl 3 -q -o internal/swagger/v2")).toBe("internal/swagger/v2")
+    expect(elevatedGenerationOutput("swag init --tags '!internal-app-v1' -o internal/swagger/v2")).toBe("internal/swagger/v2")
     expect(generationElevationError("swag init --badOption 1 -o internal/swagger/v2")).toContain("Unsupported swag init option")
     expect(generationElevationError("swag init --output ../outside")).toContain("project-relative")
     expect(generationElevationError("swag init -g doc.go")).toContain("explicit -o or --output")
