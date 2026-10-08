@@ -13,7 +13,7 @@ const writeFlags = [
 // from build/test execution: flags such as node -e and bun run are not
 // inspection, even when their arguments look informational.
 const metadataTools = new Set([
-  "bash", "bun", "cargo", "clang", "cmake", "corepack", "deno",
+  "bash", "bun", "but", "cargo", "clang", "cmake", "corepack", "deno",
   "docker", "eslint", "gcc", "gh", "git", "go", "gofmt", "gopls",
   "helm", "java", "javac", "jq", "just", "kubectl", "make",
   "node", "nodejs", "npm", "npx", "pip", "pip3", "pnpm", "podman",
@@ -28,6 +28,7 @@ function isReadOnlyMetadataShell(command: string) {
   if (words.length === 2 && metadataFlags.has(words[1])) {
     return metadataTools.has(words[0]) || /^python3\.[0-9]+$/.test(words[0])
   }
+  if (words.length === 2 && words[0] === "go" && words[1] === "version") return true
   // Shell command lookup is not command execution. Refuse paths and flags,
   // including the executable's own potentially unsafe options.
   return words.length === 3 &&
