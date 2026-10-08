@@ -7,6 +7,7 @@ import {
   projectShellOverrides,
   projectWriteOverrides,
   readLocalPermissionPolicy,
+  targetsLocalPermissionPolicy,
 } from "./local-policy"
 import { localPolicyShellAllowed } from "./shell"
 
@@ -82,7 +83,7 @@ describe("local personal Loom permission policy", () => {
   test("rejects unbounded/protected path grants, unknown roles and malformed schemas", () => {
     for (const scope of [
       "*", "**", ".", "../other", "/tmp/a", ".git/**", ".loom/**",
-      "docs/reports/**", "ephemeral-reports/**",
+      "docs/reports/**", "ephemeral-reports/**", ".loom.yaml",
     ]) {
       expect(() => parseLocalPermissionPolicy(
         "version: 1\nprojects:\n  /work/example:\n    writes:\n      worker: [\"" + scope + "\"]\n",
@@ -94,6 +95,18 @@ describe("local personal Loom permission policy", () => {
     expect(() => parseLocalPermissionPolicy("version: 2")).toThrow("version: 1")
     expect(() => parseLocalPermissionPolicy("version: 1\nextra: yes")).toThrow("unsupported")
     expect(() => parseLocalPermissionPolicy("version: 1\nprojects:\n  ../other: {}")).toThrow("absolute")
+  })
+
+  test("does not allow project-local policy self-mutation or an in-project symlink alias", async () => {
+    const root = await mkdtemp(join(tmpdir(), "loom-personal-policy-"))
+    temporary.push(root)
+    const path = join(root, ".loom.yaml")
+    await writeFile(path, "version: 1\n", { mode: 0o600 })
+    const alias = join(root, "policy-link.yaml")
+    await symlink(path, alias)
+    expect(await targetsLocalPermissionPolicy(root, ".loom.yaml", path)).toBe(true)
+    expect(await targetsLocalPermissionPolicy(root, "policy-link.yaml", path)).toBe(true)
+    expect(await targetsLocalPermissionPolicy(root, "README.md", path)).toBe(false)
   })
 
   test("reads edits on next admission, fails closed on unsafe files, and preserves absence", async () => {
