@@ -374,6 +374,71 @@ export function isElevatableVerificationShell(command: string) {
 }
 
 /**
+ * Project generation is separate from verification: it writes product files.
+ * Only admitted generator forms with a mandatory, explicit output directory
+ * can use a one-shot elevation. Future generators need their own shape parser,
+ * rather than an arbitrary-executable fallback.
+ */
+export function elevatedGenerationOutput(command: string): string | undefined {
+  const words = parsedCommandWords(command)
+  if (!words || words[0] !== "swag" || words[1] !== "init") return undefined
+
+  const booleanFlags = new Set([
+    "--parseDependency", "--parseInternal", "--requiredByDefault",
+    "--parseVendor", "--parseGoList", "--parseFuncBody", "--generatedTime",
+    "--quiet",
+  ])
+  const valueFlags = new Set([
+    "-g", "--generalInfo", "-d", "--dir", "-o", "--output",
+    "-t", "--tags", "--outputTypes", "-ot", "--instanceName",
+    "--parseDepth", "--parseDependencyLevel", "--codeExampleFiles",
+  ])
+  let output: string | undefined
+  for (let index = 2; index < words.length; index += 1) {
+    const word = words[index]
+    const separator = word.indexOf("=")
+    const flag = separator < 0 ? word : word.slice(0, separator)
+    if (booleanFlags.has(flag)) {
+      if (separator >= 0) return undefined
+      continue
+    }
+    if (!valueFlags.has(flag)) return undefined
+    const value = separator >= 0 ? word.slice(separator + 1) : words[++index]
+    if (!value || value.startsWith("-")) return undefined
+    if (flag === "-o" || flag === "--output") {
+      if (output || !safeProjectRelativePath(value)) return undefined
+      output = value.replace(/^\.\//, "").replace(/\/$/, "")
+    } else if (flag === "-g" || flag === "--generalInfo") {
+      if (!safeProjectRelativePath(value) || !value.endsWith(".go")) return undefined
+    } else if (flag === "-d" || flag === "--dir") {
+      if (!value.split(",").every((part) => safeProjectRelativePath(part))) return undefined
+    } else if (flag === "--codeExampleFiles") {
+      if (!safeProjectRelativePath(value)) return undefined
+    } else if (flag === "--outputTypes" || flag === "-ot") {
+      if (!value.split(",").every((type) => ["go", "json", "yaml"].includes(type))) return undefined
+    } else if (flag === "--parseDepth") {
+      if (!/^[1-9][0-9]?$/.test(value)) return undefined
+    } else if (flag === "--parseDependencyLevel") {
+      if (!/^[0-3]$/.test(value)) return undefined
+    } else if (!/^[A-Za-z0-9_.,/-]+$/.test(value)) {
+      return undefined
+    }
+  }
+  if (!output || output === "." ||
+    output === ".git" || output.startsWith(".git/") ||
+    output === ".loom" || output.startsWith(".loom/")) return undefined
+  return output
+}
+
+/** Exact known outputs for the supported Swagger generator. */
+export function elevatedGenerationPaths(command: string): string[] {
+  const output = elevatedGenerationOutput(command)
+  return output
+    ? ["docs.go", "swagger.json", "swagger.yaml"].map((file) => output + "/" + file)
+    : []
+}
+
+/**
  * Return a filesystem entrypoint that must resolve inside this project.
  * A lexical relative path is insufficient when a symlink can escape the root.
  */
