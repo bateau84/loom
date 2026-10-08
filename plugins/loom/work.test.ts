@@ -34,6 +34,24 @@ const now = "2026-09-21T00:00:00Z"
 const PLAN_CONTEXT_TEST_MAX = 340
 const graphFingerprint = "a".repeat(64)
 
+test("whole-Plan advice requires an actual receiver and prevents direct meaning bypass across Waves", () => {
+  const definition = plan()
+  const advice = definition.phases[0].waves[0].tasks[0]
+  advice.role = "brainstorm"
+  advice.responsibility = "produce"
+  Object.assign(advice, { adviceForTaskId: "b" })
+  expect(validatePlanRoleFeasibility(validateWorkPlan(definition))).toBe(true)
+  Object.assign(advice, { adviceForTaskId: "c" })
+  expect(() => validatePlanRoleFeasibility(validateWorkPlan(definition))).toThrow("directly depend")
+  Object.assign(advice, { adviceForTaskId: "b" })
+  definition.phases[0].waves[1].tasks[0].dependsOn = ["a"]
+  expect(() => validatePlanRoleFeasibility(validateWorkPlan(definition))).toThrow("receiver")
+  definition.phases[0].waves[1].tasks[0].dependsOn = ["b"]
+  definition.phases[0].waves[0].tasks[1].role = "reviewer"
+  definition.phases[0].waves[0].tasks[1].responsibility = "review"
+  expect(() => validatePlanRoleFeasibility(validateWorkPlan(definition))).toThrow("receiver")
+})
+
 function plan(): WorkPlanDefinition {
   const richTask = (id: string, title: string, objective: string, dependsOn: string[]) => ({
     id,

@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto"
-import { assertWorkflowNotCancelled, type Workflow } from "./workflow"
+import { assertWorkflowNotCancelled, executableTaskPlanFingerprint, type Workflow } from "./workflow"
+import { workPlanSemanticFingerprint, type WorkHierarchy } from "./work"
 import { execFile, spawn } from "node:child_process"
 import { once } from "node:events"
 import { AsyncLocalStorage } from "node:async_hooks"
@@ -49,7 +50,7 @@ const PROJECT_PREFIX = "project/"
 const GLOBAL_PREFIXES = ["installation/", "episode/", "heuristic/"]
 
 export const RUNTIME_BASELINE_VERSION = 1
-export const RUNTIME_STATE_VERSION = 9
+export const RUNTIME_STATE_VERSION = 10
 
 export type RuntimeUpgradePhase =
   | "canonical-upgrade"
@@ -162,6 +163,13 @@ const RUNTIME_UPGRADE_STEPS: RuntimeUpgradeStep[] = [{
     planAuthorityDelta: true,
     taskFingerprintRefinement: true,
   }),
+}, {
+  id: "brainstorm-native-advice-v10",
+  fromVersion: 9,
+  toVersion: 10,
+  // Fence writers that strip receiver associations or lack causal resolution.
+  // Old supported results/OQs retain their meaning; no advisory backfill.
+  applyInstallation: async () => ({ nativeAdvisoryTasks: true, digestBoundAdviceResolution: true }),
 }]
 
 function sha256(value: string) {
@@ -2017,6 +2025,13 @@ export type DispatchGrantV1 = {
   consumedAt?: string
   consumingSessionId?: string
   revokedAt?: string
+  advisoryBinding?: {
+    generation: number
+    stepAttempt: number
+    taskPlanFingerprint?: string
+    executableFingerprint?: string
+    planFingerprint?: string
+  }
 }
 
 export async function revokeWorkflowDispatchGrantsLocked(
@@ -2047,6 +2062,26 @@ async function assertGrantWorkflowActive(storage: RawStorage, workflowId: string
     throw new Error("Dispatch grant workflow is missing or belongs to another project.")
   }
   assertWorkflowNotCancelled(workflow)
+  return workflow
+}
+
+async function advisoryGrantBinding(storage: RawStorage, workflow: Workflow, stepId?: string): Promise<DispatchGrantV1["advisoryBinding"]> {
+  if (!stepId || !workflow.work) return undefined
+  const work = await storage.get(`work/${encodeURIComponent(workflow.work.objectiveId)}`) as WorkHierarchy | undefined
+  const plan = work?.plans?.find((plan) => plan.generation === workflow.work!.generation)
+  if (!plan?.phases.some((phase) => phase.waves.some((wave) => wave.tasks.some((task) => task.role === "brainstorm")))) return undefined
+  const step = workflow.steps.find((step) => step.id === stepId)
+  if (!step) throw new Error("Advisory dispatch step is missing.")
+  return { generation: workflow.work.generation, stepAttempt: step.attempt ?? 0,
+    ...(stepId === "review-plan" || stepId === "plan" ? { planFingerprint: workPlanSemanticFingerprint(work!, workflow.work.generation) }
+      : { taskPlanFingerprint: workflow.work.taskPlanFingerprint, executableFingerprint: executableTaskPlanFingerprint(workflow) }) }
+}
+
+async function assertAdvisoryGrantBinding(storage: RawStorage, workflow: Workflow, grant: DispatchGrantV1) {
+  const current = await advisoryGrantBinding(storage, workflow, grant.stepId)
+  if (JSON.stringify(current) !== JSON.stringify(grant.advisoryBinding)) {
+    throw new Error("Stale advisory Task/Plan grant: attempt, generation, receiver contract or executable graph changed.")
+  }
 }
 
 function dispatchGrantKey(grantId: string) {
@@ -2082,7 +2117,7 @@ export async function issueDispatchGrantLocked(
   runtime: LoomRuntimeIdentity,
   input: IssueDispatchGrantInput,
 ): Promise<DispatchGrantV1> {
-  await assertGrantWorkflowActive(storage, input.workflowId, runtime.projectId)
+  const workflow = await assertGrantWorkflowActive(storage, input.workflowId, runtime.projectId)
   if (Boolean(input.stepId) === Boolean(input.oqId)) {
     throw new Error("Dispatch grant requires exactly one of stepId or oqId.")
   }
@@ -2108,6 +2143,7 @@ export async function issueDispatchGrantLocked(
     issuingParentSessionId: input.issuingParentSessionId,
     createdAt: now.toISOString(),
     expiresAt: new Date(now.getTime() + ttlMs).toISOString(),
+    ...(input.stepId ? { advisoryBinding: await advisoryGrantBinding(storage, workflow, input.stepId) } : {}),
   }
   await storage.set(dispatchGrantKey(grant.grantId), grant)
   return grant
@@ -2140,6 +2176,7 @@ export async function findUsableDispatchGrant(
     throw new Error("Dispatch grant workflow is missing or belongs to another project.")
   }
   if (workflow.cancellation) return undefined
+  const binding = await advisoryGrantBinding(storage, workflow, input.stepId)
   const now = (input.now ?? new Date()).getTime()
   let after: string | undefined
   do {
@@ -2157,7 +2194,8 @@ export async function findUsableDispatchGrant(
         !grant.consumedAt &&
         !grant.revokedAt &&
         Date.parse(grant.expiresAt) > now &&
-        grantMatchesSelector(grant, input)
+        grantMatchesSelector(grant, input) &&
+        JSON.stringify(grant.advisoryBinding) === JSON.stringify(binding)
       ) {
         return grant
       }
@@ -2188,7 +2226,8 @@ export async function admitDispatchGrantLocked(
   if (!grant || grant.schemaVersion !== 1) throw new Error("Dispatch grant not found.")
   if (grant.projectId !== runtime.projectId) throw new Error("Dispatch grant belongs to another project.")
   if (!grantMatchesSelector(grant, input)) throw new Error("Dispatch grant scope changed before dispatch.")
-  await assertGrantWorkflowActive(storage, input.workflowId, runtime.projectId)
+  const workflow = await assertGrantWorkflowActive(storage, input.workflowId, runtime.projectId)
+  await assertAdvisoryGrantBinding(storage, workflow, grant)
   if (grant.revokedAt) throw new Error("Dispatch grant has been revoked.")
   if (grant.consumedAt) throw new Error("Dispatch grant has already been consumed.")
   if (grant.admittedAt) throw new Error("Dispatch grant has already admitted a subagent launch.")
@@ -2225,7 +2264,8 @@ export async function consumeDispatchGrantLocked(
   if (!grant || grant.schemaVersion !== 1) throw new Error("Dispatch grant not found.")
   if (grant.projectId !== runtime.projectId) throw new Error("Dispatch grant belongs to another project.")
   if (!grantMatchesSelector(grant, input)) throw new Error("Dispatch grant scope does not match this attachment.")
-  await assertGrantWorkflowActive(storage, input.workflowId, runtime.projectId)
+  const workflow = await assertGrantWorkflowActive(storage, input.workflowId, runtime.projectId)
+  await assertAdvisoryGrantBinding(storage, workflow, grant)
   if (grant.revokedAt) throw new Error("Dispatch grant has been revoked.")
   if (grant.consumedAt) throw new Error("Dispatch grant has already been consumed.")
 

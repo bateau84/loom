@@ -190,6 +190,8 @@ export function compactWorkflowState(
       step: step.id,
       agent: step.agent,
       kind: step.kind,
+      ...(step.id === "review-implementation" && !workflow.steps.some((candidate) => candidate.task && candidate.agent === "worker")
+        ? { scope: "role-work Wave review" } : {}),
       ...(step.agent === "reviewer"
         ? {
             reviewMode: step.review?.mode ?? "review-only",

@@ -6,7 +6,7 @@ import {
   MAX_TASK_TEXT_LENGTH,
   type TaskSpec,
 } from "./tasks"
-import { PLAN_PRODUCER_ROLES } from "./tasks"
+import { nativeTaskPath, validateAdviceAssociation } from "./tasks"
 
 export const MAX_WORK_ID_LENGTH = 96
 export const MAX_WORK_PHASES = 32
@@ -45,6 +45,7 @@ export type WorkPlanTask = {
   /** Accountable role; absent only in truthful legacy Plan history. */
   role?: string
   responsibility?: "produce" | "execute" | "review" | "obtain-user-decision"
+  adviceForTaskId?: string
 }
 
 export type WorkPlanObligationDisposition =
@@ -215,6 +216,42 @@ export type WorkTaskResult = {
   dependencyResultDigests?: Record<string, string>
   /** Clean Git HEAD at completion. Missing values cannot prove code continuity. */
   cleanRepositoryHead?: string
+  nativeKind?: "advisory" | "producer"
+  generation?: number
+  taskId?: string
+  stepId?: string
+  producerSessionId?: string
+  adviceForTaskId?: string
+  resultDigest?: string
+  adviceResolutions?: AdviceResolution[]
+}
+
+export type AdviceResolution = {
+  taskId: string
+  resultDigest: string
+  disposition: "adopted" | "rejected" | "deferred"
+  rationale: string
+  resolutionRef: string
+}
+
+/** Immutable advisory identity/content. Never re-digest a reused result against new semantics. */
+export function advisoryResultDigest(result: WorkTaskResult) {
+  if (result.nativeKind !== "advisory" || result.producerAgent !== "brainstorm" ||
+      !result.generation || !result.taskId || !result.stepId || !result.producerSessionId ||
+      !Number.isSafeInteger(result.completedAttempt) || result.completedAttempt! < 0 ||
+      !/^[0-9a-f]{64}$/.test(result.semanticClosureFingerprint ?? "") ||
+      !/^[0-9a-f]{64}$/.test(result.executableTaskFingerprint ?? "") || !result.adviceForTaskId ||
+      typeof result.summary !== "string" || !result.summary.trim() || result.summary.length > MAX_TASK_TEXT_LENGTH ||
+      !Array.isArray(result.evidenceClaimIds)) {
+    throw new Error("Original advisory result provenance is missing.")
+  }
+  return createHash("sha256").update(JSON.stringify({
+    workflowId: result.workflowId, generation: result.generation, taskId: result.taskId,
+    stepId: result.stepId, attempt: result.completedAttempt, producerRole: result.producerAgent,
+    nativeKind: result.nativeKind, semanticClosureFingerprint: result.semanticClosureFingerprint,
+    executableTaskFingerprint: result.executableTaskFingerprint, adviceForTaskId: result.adviceForTaskId,
+    summary: result.summary, evidenceClaimIds: [...result.evidenceClaimIds].sort(),
+  })).digest("hex")
 }
 
 export type HistoricalWorkTaskResult = WorkTaskResult & {
@@ -425,6 +462,7 @@ function validateWorkPlanPhases(phases: WorkPlanPhase[]) {
         if (taskInput.responsibility && !["produce", "execute", "review", "obtain-user-decision"].includes(taskInput.responsibility)) {
           throw new Error(`Task ${taskId} has invalid responsibility.`)
         }
+        validateAdviceAssociation({ ...taskInput, id: taskId, role: taskInput.role?.trim() })
 
         tasks.push({
           id: taskId,
@@ -446,6 +484,7 @@ function validateWorkPlanPhases(phases: WorkPlanPhase[]) {
           verify: normalizedTextList(taskInput.verify, `Task ${taskId} verify`, true),
           ...(taskInput.role ? { role: taskInput.role.trim() } : {}),
           ...(taskInput.responsibility ? { responsibility: taskInput.responsibility } : {}),
+          ...(taskInput.adviceForTaskId !== undefined ? { adviceForTaskId: taskInput.adviceForTaskId } : {}),
         })
       }
 
@@ -665,7 +704,6 @@ export function validateWorkPlan(input: WorkPlanDefinition): WorkPlanDefinition 
 
 /** Feasibility is checked against routes shipped in this runtime, not proposed architecture. */
 export function validatePlanRoleFeasibility(plan: WorkPlanDefinition) {
-  const producerRoles = new Set<string>(PLAN_PRODUCER_ROLES)
   const allTasks = plan.phases.flatMap((phase) => phase.waves.flatMap((wave) => wave.tasks))
   const taskById = new Map(allTasks.map((task) => [task.id, task]))
   for (const phase of plan.phases) for (const wave of phase.waves) for (const task of wave.tasks) {
@@ -678,6 +716,27 @@ export function validatePlanRoleFeasibility(plan: WorkPlanDefinition) {
     }
     const role = task.role
     const responsibility = task.responsibility
+    validateAdviceAssociation(task)
+    const path = nativeTaskPath(task)
+    if (path?.nativeKind === "advisory") {
+      const receiver = taskById.get(task.adviceForTaskId!)
+      if (!receiver || nativeTaskPath(receiver)?.nativeKind !== "producer") fail("advice receiver must have a supported non-advisory producer/executor path")
+      if (!receiver!.dependsOn.includes(task.id)) fail("advice receiver must directly depend on its advisory Task")
+      const inputs = allTasks.filter((source) => source.adviceForTaskId === receiver!.id)
+      if (inputs.length > MAX_TASK_CONTEXT_ITEMS) fail("receiver exceeds the advice resolution limit")
+      if (plan.authorityRefs.some((ref) => ref === `task:${task.id}` || ref.startsWith(`task:${task.id}#`))) {
+        fail("advisory output cannot be Plan authority or authorize obligation deferral")
+      }
+      for (const target of allTasks) {
+        if (target.dependsOn.includes(task.id) && target.id !== receiver!.id && nativeTaskPath(target)?.nativeKind !== "review") {
+          fail(`Task ${target.id} bypasses the named advice receiver ${receiver!.id}`)
+        }
+        if (target.authorityRefs.some((ref) => ref === `task:${task.id}` || ref.startsWith(`task:${task.id}#`))) {
+          fail(`Task ${target.id} uses advisory output as authority`)
+        }
+      }
+      continue
+    }
     if (!LOOM_AGENT_ROLES.includes("reviewer")) fail("required independent Reviewer gate is unavailable")
     if (responsibility === "obtain-user-decision") {
       if (role !== "user") fail(`user-decision responsibility is not owned by ${role}`)
@@ -689,7 +748,7 @@ export function validatePlanRoleFeasibility(plan: WorkPlanDefinition) {
       continue
     }
     if (responsibility !== "produce" && responsibility !== "execute") fail("unsupported responsibility")
-    if (!producerRoles.has(role)) fail(`role ${role} has no supported Task execution slot`)
+    if (path?.nativeKind !== "producer") fail(`role ${role} has no supported Task execution slot`)
   }
   for (const phase of plan.phases) for (const wave of phase.waves) for (const task of wave.tasks) {
     for (const dependencyId of task.dependsOn) {
@@ -700,6 +759,31 @@ export function validatePlanRoleFeasibility(plan: WorkPlanDefinition) {
         throw new Error(`Plan role path unavailable for Task ${task.id} (dependency ${dependencyId}) in ${phase.id}/${wave.id}: required independent Reviewer handoff gate is unavailable`)
       }
     }
+  }
+  if (allTasks.some((task) => task.role === "brainstorm")) {
+    const owner = new Map<string, string>()
+    const dependencies = new Map<string, Set<string>>()
+    for (const phase of plan.phases) for (const wave of phase.waves) {
+      const key = `${phase.id}/${wave.id}`
+      dependencies.set(key, new Set())
+      for (const task of wave.tasks) owner.set(task.id, key)
+    }
+    for (const task of allTasks) for (const id of task.dependsOn) {
+      if (!taskById.has(id)) throw new Error(`Task ${task.id} depends on unknown Task ${id}.`)
+      const source = owner.get(id)!
+      const target = owner.get(task.id)!
+      if (source !== target) dependencies.get(target)!.add(source)
+    }
+    const visiting = new Set<string>(), visited = new Set<string>()
+    const visit = (wave: string) => {
+      if (visiting.has(wave)) throw new Error(`Advisory Plan Wave dependency cycle includes ${wave}.`)
+      if (visited.has(wave)) return
+      visiting.add(wave)
+      for (const predecessor of dependencies.get(wave)!) visit(predecessor)
+      visiting.delete(wave)
+      visited.add(wave)
+    }
+    for (const wave of dependencies.keys()) visit(wave)
   }
   return true
 }
@@ -1038,6 +1122,10 @@ function contextResult(result: WorkNode["result"] | undefined) {
   if (!result) return undefined
   return {
     workflowId: result.workflowId,
+    ...(result.nativeKind ? { nativeKind: result.nativeKind } : {}),
+    ...(result.resultDigest ? { resultDigest: result.resultDigest } : {}),
+    ...(result.adviceForTaskId ? { adviceForTaskId: result.adviceForTaskId } : {}),
+    ...(result.adviceResolutions ? { adviceResolutions: result.adviceResolutions } : {}),
     ...(result.summary ? { summary: contextText(result.summary) } : {}),
     evidenceClaimIds: result.evidenceClaimIds.slice(0, PLAN_CONTEXT_EVIDENCE_LIMIT),
     ...(result.evidenceClaimIds.length > PLAN_CONTEXT_EVIDENCE_LIMIT
@@ -1130,6 +1218,16 @@ export function workPlanContext(
           objective: contextText(candidateTask.objective, PLAN_CONTEXT_MAP_TEXT_LIMIT),
           role: candidateTask.role ?? "unassigned (legacy Plan)",
           responsibility: candidateTask.responsibility ?? "unassigned (legacy Plan)",
+          nativeKind: nativeTaskPath(candidateTask)?.nativeKind ?? "unsupported",
+          ...(candidateTask.adviceForTaskId ? {
+            adviceForTaskId: candidateTask.adviceForTaskId,
+            adviceState: !taskNodes.get(candidateTask.id)?.result ? "pending-advice"
+              : taskNodes.get(candidateTask.id)?.status !== "complete" ? "advice-review-pending"
+              : !taskNodes.get(candidateTask.adviceForTaskId)?.result?.adviceResolutions?.some((entry) =>
+                  entry.taskId === candidateTask.id && entry.resultDigest === taskNodes.get(candidateTask.id)?.result?.resultDigest)
+                ? "receiver-resolution-pending"
+                : taskNodes.get(candidateTask.adviceForTaskId)?.status !== "complete" ? "receiver-review-pending" : "resolved-by-receiver",
+          } : {}),
           status: taskNodes.get(candidateTask.id)?.status,
           result: contextResult(taskNodes.get(candidateTask.id)?.result),
         })),
@@ -1288,6 +1386,10 @@ function planTaskFingerprintPayload(
       constraints: located.wave.constraints,
     },
     task: located.task,
+    ...(located.task.adviceForTaskId ? {
+      // Association context is fingerprinted, not an execution back-edge.
+      adviceReceiver: findPlanTask(plan, located.task.adviceForTaskId)?.task,
+    } : {}),
     obligations,
     risks: plan.riskBoundaries.filter((item) => item.taskIds.includes(taskId)),
     acceptanceCoverage: plan.acceptanceCoverage.filter((item) => item.taskIds.includes(taskId)),
@@ -1471,6 +1573,8 @@ export function legacyWorkflowTaskSemanticFingerprint(
   generation = hierarchy.generation,
   revision?: number,
 ) {
+  const plan = planSnapshot(hierarchy, generation, revision)
+  if (plan?.phases.some((phase) => phase.waves.some((wave) => wave.tasks.some((task) => task.adviceForTaskId !== undefined || task.role === "brainstorm")))) return undefined
   return workflowTaskSemanticFingerprintUsing(
     hierarchy,
     taskIds,
@@ -1667,7 +1771,7 @@ function assertAmendOperationShape(operation: WorkPlanAmendOperation) {
       operation.patch as Record<string, unknown>,
       [
         "title", "objective", "rationale", "dependsOn", "authorityRefs", "constraints",
-        "acceptanceCriteria", "subtasks", "integration", "verify", "role", "responsibility",
+        "acceptanceCriteria", "subtasks", "integration", "verify", "role", "responsibility", "adviceForTaskId",
       ],
       "patch-task",
     )
@@ -2647,6 +2751,7 @@ export function validateWorkflowWave(
       ["rationale", task.rationale ?? "", contract.rationale],
       ["role", task.role, contract.role],
       ["responsibility", task.responsibility, contract.responsibility],
+      ["adviceForTaskId", task.adviceForTaskId, contract.adviceForTaskId],
       ["authorityRefs", task.authorityRefs ?? [], contract.authorityRefs],
       ["constraints", task.constraints ?? [], contract.constraints],
       ["acceptanceCriteria", task.acceptanceCriteria ?? [], contract.acceptanceCriteria],

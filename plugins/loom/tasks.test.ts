@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { taskStepId, validateTaskPlan, type TaskSpec } from "./tasks"
+import { nativeTaskPath, taskStepId, validateTaskPlan, type TaskSpec } from "./tasks"
 
 function task(id: string, overrides: Partial<TaskSpec> = {}): TaskSpec {
   return {
@@ -21,6 +21,17 @@ function task(id: string, overrides: Partial<TaskSpec> = {}): TaskSpec {
 }
 
 describe("Loom task graph", () => {
+  test("Brainstorm produces native advice for an explicit receiver without authority or writes", () => {
+    const advice = task("advice", { role: "brainstorm", responsibility: "produce", adviceForTaskId: "receiver", write: [] })
+    const receiver = task("receiver", { role: "architect", responsibility: "produce", dependsOn: ["advice"] })
+    expect(nativeTaskPath(advice)).toEqual({ nativeKind: "advisory", stepKind: "work", agent: "brainstorm", result: "advisory-v1", write: "none", requiredReview: "scoped-independent" })
+    expect(validateTaskPlan([advice, receiver])[0].adviceForTaskId).toBe("receiver")
+    expect(() => validateTaskPlan([{ ...advice, adviceForTaskId: undefined }, receiver])).toThrow("adviceForTaskId")
+    expect(() => validateTaskPlan([{ ...advice, write: ["src/**"] }, receiver])).toThrow("write")
+    expect(() => validateTaskPlan([{ ...receiver, adviceForTaskId: "advice" }])).toThrow("adviceForTaskId")
+    expect(nativeTaskPath({ role: "brainstorm", responsibility: "execute" })).toBeUndefined()
+    for (const role of ["planner", "critic", "acceptance"]) expect(nativeTaskPath({ role, responsibility: "produce" })).toBeUndefined()
+  })
   test("accepts independent bounded tasks", () => {
     const plan = validateTaskPlan([task("api"), task("ui")])
     expect(plan.map((item) => item.id)).toEqual(["api", "ui"])
