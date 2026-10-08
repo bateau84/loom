@@ -8,6 +8,7 @@ import {
   isElevatableVerificationShell,
   elevatedGenerationOutput,
   elevatedGenerationPaths,
+  generationElevationError,
   elevatedVerificationEntrypoint,
   isAllowedButlerCommit,
   isAllowedGitCommit,
@@ -297,6 +298,11 @@ describe("Loom Worker shell policy", () => {
     expect(isElevatableVerificationShell(command)).toBe(false)
     expect(elevatedGenerationOutput("swag init --output=internal/swagger/v2 --outputTypes=json,yaml")).toBe("internal/swagger/v2")
     expect(elevatedGenerationOutput("swag init -o internal/swagger/v2 -t 'internal-app-v1'")).toBe("internal/swagger/v2")
+    expect(elevatedGenerationOutput("swag init --ot json,yaml -o internal/swagger/v2")).toBe("internal/swagger/v2")
+    expect(elevatedGenerationOutput("swag init --parseDepth 100 --pdl 3 -q -o internal/swagger/v2")).toBe("internal/swagger/v2")
+    expect(generationElevationError("swag init --badOption 1 -o internal/swagger/v2")).toContain("Unsupported swag init option")
+    expect(generationElevationError("swag init --output ../outside")).toContain("project-relative")
+    expect(generationElevationError("swag init -g doc.go")).toContain("explicit -o or --output")
 
     for (const invalid of [
       "swag init",
@@ -309,6 +315,9 @@ describe("Loom Worker shell policy", () => {
       "swag init --output internal/swagger/v2 --dir ../outside",
       "swag init --output internal/swagger/v2 -g ../outside/doc.go",
       "swag init --output internal/swagger/v2 --outputTypes xml",
+      "swag init --output internal/swagger/v2 --ot html",
+      "swag init --output internal/swagger/v2 --parseDepth 0",
+      "swag init --output internal/swagger/v2 --parseDepth 1001",
       "swag init --output internal/swagger/v2 --templateDelims unsafe",
       "swag init --output internal/swagger/v2 && git push origin main",
       "swag init --output 'internal/swagger/v2;rm'",
