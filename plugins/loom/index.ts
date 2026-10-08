@@ -79,6 +79,7 @@ import {
   observationsSupportKind,
   observationMatchesStep,
   safeInputSummary,
+  redactCommand,
   safeResultError,
   safeResultSummary,
   type EvidenceClaim,
@@ -127,6 +128,8 @@ import {
   isAllowedButlerCommit,
   isAllowedGitCommit,
   isAllowedPackageScriptShell,
+  classifyVerificationShell,
+  isElevatableVerificationShell,
   isButlerCommitShellCommand,
   isGitInspectionShellCommand,
   isGitShellCommand,
@@ -438,6 +441,33 @@ const productScopeElevatingAgents = new Set([
 ])
 
 const generalGitWriteScope = ["docs/anchors/**"]
+
+const verificationTestAgents = new Set(["worker", "diagnostic", "reviewer", "critic", "acceptance"])
+
+type CommandElevation = {
+  id: string
+  workflowId: string
+  stepId: string
+  attempt: number
+  agent: string
+  sessionID: string
+  commandDigest: string
+  commandSummary: string
+  reason: string
+  grantedAt: string
+  expiresAt: string
+  consumedAt?: string
+  supersededAt?: string
+  observationId?: string
+  outcome?: "completed" | "error"
+  observedAt?: string
+}
+
+const commandElevationCurrentKey = (sessionID: string) => "command-elevation-current/" + sessionID
+const commandElevationKey = (id: string) => "command-elevation/" + id
+const verificationCommandDigest = (command: string) =>
+  createHash("sha256").update(command.trim()).digest("hex")
+
 
 // Commit authority follows the current effective committable write scope, not
 // a role allowlist. This helper only establishes the role-owned scratch
@@ -4247,7 +4277,46 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       summary?: ReturnType<typeof safeInputSummary>
       admission?: EvidenceAdmission
       gitStageBefore?: GitStageSnapshot
+      startedAtMs?: number
+      startedAt?: string
+      commandElevationId?: string
+      verification?: ReturnType<typeof classifyVerificationShell>
     }>()
+
+    // Each historical elevation record is retained by ID. At most one remains
+    // available to the same child session at any moment.
+    const currentCommandElevation = async (sessionID: string, agent: string, command: string) => {
+      const id = await ctx.storage.get(commandElevationCurrentKey(sessionID)) as string | undefined
+      const grant = id
+        ? await ctx.storage.get(commandElevationKey(id)) as CommandElevation | undefined
+        : undefined
+      if (!grant || grant.sessionID !== sessionID || grant.agent !== agent ||
+          grant.commandDigest !== verificationCommandDigest(command) || grant.consumedAt ||
+          grant.supersededAt || Date.parse(grant.expiresAt) <= Date.now()) return undefined
+      if (!(await exactRunnableStepAttemptBinding(
+        ctx, sessionID, grant.workflowId, grant.stepId,
+      ))) return undefined
+      if ((await ctx.storage.get(sessionStepAttemptKey(sessionID))) !== grant.attempt) return undefined
+      return grant
+    }
+
+    const consumeCommandElevation = async (sessionID: string, agent: string, command: string) => {
+      const observed = await currentCommandElevation(sessionID, agent, command)
+      if (!observed) return undefined
+      return withRuntimeLocks(runtime, [
+        { aggregate: "workflow", resourceIdentity: observed.workflowId },
+        stepAuthorityResource(observed.workflowId, observed.stepId),
+      ], async () => {
+        const grant = await currentCommandElevation(sessionID, agent, command)
+        if (!grant || grant.id !== observed.id) return undefined
+        await assertCurrentStepPlanAdmission(ctx, grant.workflowId, grant.stepId)
+        if (agent === "worker") await assertWorkerWorkClaim(ctx, grant.workflowId, grant.stepId)
+        const consumed = { ...grant, consumedAt: new Date().toISOString() }
+        await ctx.storage.set(commandElevationKey(grant.id), consumed)
+        return consumed
+      })
+    }
+
     const activeGitWriteCalls = new Map<
       string,
       { paths: string[]; release: () => Promise<void> }
