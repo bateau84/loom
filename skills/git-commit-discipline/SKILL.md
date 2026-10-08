@@ -10,23 +10,15 @@ metadata:
 **This skill governs commit frequency, message format, and destructive-git-command safety. Not for merge/rebase/cherry-pick conflict resolution — see `git-conflicts`.**
 
 
-## Execution split with GitButler
+## Composition with the git skill
 
-This skill owns **what the commit history should mean**: when to checkpoint, which changes belong together, commit dependency/order, message content, and destructive-history safety. It does not need to own the mechanics of how those decisions are applied.
+Use `git` for tool selection, bounded command sequencing, staging inspection, and truthful interpretation of Git results. This skill still owns **what commits mean**: their boundaries, checkpoint timing, order, messages, and destructive-operation safety.
 
-When the `but` skill is available **and the active runtime permits Butler writes**:
-
-1. inspect the actual change set and decide semantic commit boundaries with this skill;
-2. manufacture the commit message with this skill's dual-audience format;
-3. use `but diff` / `but status -fv` only as needed to identify the exact mechanical targets;
-4. let `but` perform commit/amend/split/squash/reorder/recovery/push mechanics;
-5. re-check the resulting history against this skill's semantic rules.
-
-Do not duplicate this skill's policy inside Butler. A successful `but` command proves only that the repository mutation succeeded; it does not prove the resulting commits are coherent or well explained.
+Use plain Git as the sole command interface, limited to the forms admitted by the active runtime. A successful mutation does not establish semantic correctness. Run each dependent Git mutation separately; inspect its result before issuing the next.
 
 **Linked-worktree commits:** Git's `.git` entry in a linked worktree is a pointer file; the metadata lives in the primary repository, often outside Loom's project root. Run the same admitted scoped `git add` and hookless `git commit` commands in that worktree. Git itself may update its private index, objects and refs. No additional `.git` write scope or one-time hard-boundary approval is needed. Do not call `loom_scope_elevate` for those paths or edit them directly. Loom recognizes these exact paths as Git-owned for permitted commands, without granting raw filesystem access. Ordinary external-path edits still require their normal permission decision.
 
-**Governed Loom runtime:** commit authority follows the current effective durable project write scope, including paths added through `loom_scope_elevate`; it is not restricted to a fixed set of roles. Prefer an explicit untargeted whole-file-ID `but commit -m "..." <file-id>...` when GitButler is installed. Loom maps each file ID back to exactly one repository file and revalidates the same task/session ownership before the commit executes. Hunk IDs remain unsupported inside governed Loom execution because Loom's provenance model admits whole-file bytes. The bounded raw-Git forms below remain the fallback when GitButler is unavailable. Explicit Butler branch/history targeting and broader history mutations remain denied until Loom has authority/provenance rules for that history surface.
+**Governed Loom runtime:** commit authority follows the current effective durable project write scope, including paths added through `loom_scope_elevate`. Use only the admitted explicit-path Git staging and bounded commit commands below. Partial staging and broad history mutations may be denied by Loom's current provenance/admission rules. Do not bypass denials with alternate executables or shell wrappers.
 
 
 > **House skill.** Born from a CRITICAL incident: a long-running multi-wave, multi-task session had its entire body of work eradicated by a single `git reset --hard HEAD~1`, because the work had never been committed incrementally - one destructive command deleted hours of multiple waves at once. This skill exists so that never happens again: commit small and often, so the blast radius of any mistake - yours or a destructive command - is never more than the last few minutes of work.
@@ -35,9 +27,9 @@ Do not duplicate this skill's policy inside Butler. A successful `but` command p
 
 A commit small enough to be safe (§1) is also small enough to explain honestly (§2) - the two disciplines reinforce each other. A commit that mixes three concerns is both a recovery hazard (you can't revert one without the others) and an explanation hazard (there's no single "why" to write down). Split it for either reason and you've split it for both.
 
-## Loom-compatible Git fallback
+## Loom-compatible Git mechanics
 
-When GitButler is unavailable, Loom's raw-Git surface is intentionally narrower than generic Git. Use these forms rather than improvising equivalent commands. Outside Loom, use the repository/host's normal approved commit mechanism; this skill does not independently authorize disabling repository hooks.
+Within Loom, raw Git is intentionally narrower than generic Git. Use the following admitted forms rather than improvising equivalents; issue each dependent mutation as a separate command. Outside Loom, use normal repository hooks and the approved commit mechanism. This skill does not independently authorize disabling hooks.
 
 ```bash
 git status --short

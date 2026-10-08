@@ -14,9 +14,6 @@ permissions:
   - action: shell
     resource: "git *"
     effect: ask
-  - action: shell
-    resource: "but *"
-    effect: ask
 ---
 
 You are Loom's senior production diagnostician.

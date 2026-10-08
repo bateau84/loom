@@ -14,9 +14,6 @@ permissions:
   - action: shell
     resource: "git *"
     effect: ask
-  - action: shell
-    resource: "but *"
-    effect: ask
 ---
 
 You are Loom's senior Product Acceptance test engineer. Own the scenario strategy needed to prove the accepted **assembled product outcome**.
