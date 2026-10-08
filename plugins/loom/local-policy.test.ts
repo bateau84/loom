@@ -68,6 +68,7 @@ describe("local personal Loom permission policy", () => {
       "kubectl get pods > /tmp/oops",
       "git push origin HEAD", "git status",
       "but push",
+      "GOENV=off git push origin HEAD",
       "PATH=/tmp node --version",
     ]) {
       expect(localPolicyShellAllowed(command, rules)).toBe(false)
