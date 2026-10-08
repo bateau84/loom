@@ -85,6 +85,10 @@ signatures against an attacker with artifact-write access.
   `--parallel`, `--runtime-parallel`, models, transports, reasoning, network,
   engine, timeout, retries, images, auth/config/catalog/database,
   environment and artifact controls. Some controls only apply to one mode.
+  An explicit `--suite path/to/cases.json` **replaces** default central-case
+  discovery for normal evaluations; the wrapper forwards the exact resolved
+  file list to the generic profile. Files outside the checkout are supported.
+  Without `--suite`, inherited override values are ignored.
 - `--parallel N` permits non-runtime concurrency. Runtime jobs remain
   **serialized by default** (`--runtime-parallel 1`), even with
   `--parallel 3`. Explicitly raising runtime parallelism is a stress test.
@@ -94,7 +98,8 @@ signatures against an attacker with artifact-write access.
   previous flat `<case>.iteration-N.json` files. Paired jobs use
   `opencode-eval-runner/eval-paired-artifact/v1` at
   `pairs/<case>/iteration-N.json` under their selected artifact root.
-  An explicit artifact directory must be empty.
+  An explicit artifact directory must be new or empty (including the parent
+  of a mixed normal/ablation run); a nonempty root is rejected before inference.
 - Preserve the meaning of `pass`, `fail` and `non-evidence` when
   comparing pre/post cutover; do not demand byte-for-byte artifact or
   stdout compatibility. A positive score delta never overrides a
@@ -102,8 +107,10 @@ signatures against an attacker with artifact-write access.
   treated as score zero or made into a valid pair comparison.
 - `--runner-evidence-safety` is retired and rejected. Normal generic
   evals reject `--keep-temp`; neither option may silently restore
-  legacy authority. Native skill-routing runtime cases require an OpenCode
-  target. Skill-owned ablation accepts OpenCode or Copilot CLI.
+  legacy authority. **All normal runtime cases** require an OpenCode target,
+  even when no skill is named; unsupported Copilot runtime targets fail before
+  model inference. Skill-owned reasoning-only ablation accepts OpenCode or
+  Copilot CLI.
 - Local skill-owned paired runs require the runner Python module on
   `PYTHONPATH`, or `OPENCODE_EVAL_RUNNER_BIN` pointing to a compatible
   checkout. The pinned live workflow provides this library.
