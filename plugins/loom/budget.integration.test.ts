@@ -15,6 +15,10 @@ import {
   resolveRuntimeIdentity,
 } from "./runtime"
 import type { Workflow } from "./workflow"
+import { assertIsolatedTestProcess, assertIsolatedFixtureRuntime, disableFixtureDashboardAutostart } from "./test-isolation"
+
+await assertIsolatedTestProcess()
+await disableFixtureDashboardAutostart()
 
 type RegisteredTool = {
   name: string
@@ -131,6 +135,7 @@ describe("Loom budget recovery plugin integration", () => {
       await (loomPlugin as any).setup(ctx)
 
       const runtime = await resolveRuntimeIdentity(project, ctx.storage)
+      await assertIsolatedFixtureRuntime(runtime)
       const storage = createProjectStorage(
         await createTransactionalStorage(runtime),
         runtime.projectId,

@@ -1,4 +1,5 @@
 import { readFile, writeFile } from "node:fs/promises"
+import { assertIsolatedTestProcess, assertIsolatedFixturePath, assertIsolatedFixtureRuntime } from "./test-isolation"
 import { createProjectStorage, createTransactionalStorage, ensureRuntimeStateVersion, resolveRuntimeIdentity, withRuntimeLock, withRuntimeLocks, type RawStorage } from "./runtime"
 
 class ProcessStorage implements RawStorage {
@@ -11,8 +12,13 @@ class ProcessStorage implements RawStorage {
 
 const [mode, project, ...args] = process.argv.slice(2)
 if (!mode || !project) throw new Error("mode and project are required")
+// Existing child tests deliberately omit XDG_RUNTIME_DIR to exercise the
+// state-root fallback. HOME/state/temp still must be private before initialization.
+await assertIsolatedTestProcess(process.env, { allowRuntimeFallback: true })
+await assertIsolatedFixturePath(project, { allowRuntimeFallback: true })
 
 const runtime = await resolveRuntimeIdentity(project, new ProcessStorage())
+await assertIsolatedFixtureRuntime(runtime, { allowRuntimeFallback: true })
 
 if (mode === "identity") {
   process.stdout.write(runtime.projectId + "\n")

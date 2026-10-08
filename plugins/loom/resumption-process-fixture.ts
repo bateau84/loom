@@ -1,5 +1,6 @@
 import { expect, mock, setDefaultTimeout, test } from "bun:test"
 import { readFile, writeFile } from "node:fs/promises"
+import { assertIsolatedTestProcess, assertIsolatedFixturePath, disableFixtureDashboardAutostart } from "./test-isolation"
 
 class FixtureStorage {
   private readonly values = new Map<string, unknown>()
@@ -42,12 +43,15 @@ const mode = process.env.LOOM_RESUMPTION_FIXTURE_MODE
 setDefaultTimeout(30_000)
 
 test("production Loom process fixture executes an actual registered tool", async () => {
+  await assertIsolatedTestProcess()
+  await disableFixtureDashboardAutostart()
   if (!mode) throw new Error("Fixture must be launched with LOOM_RESUMPTION_FIXTURE_MODE.")
   const projectRoot = process.env.LOOM_RESUMPTION_PROJECT_ROOT
   const sessionID = process.env.LOOM_RESUMPTION_SESSION_ID
   const agent = process.env.LOOM_RESUMPTION_AGENT
   const input = JSON.parse(process.env.LOOM_RESUMPTION_INPUT ?? "{}") as unknown
   if (!projectRoot || !sessionID || !agent) throw new Error("Process fixture identity inputs are incomplete.")
+  await assertIsolatedFixturePath(projectRoot)
 
   const actualRuntime = await import("./runtime")
   const originalWithRuntimeLock = actualRuntime.withRuntimeLock

@@ -37,11 +37,11 @@ describe("separate Loom planning advice", () => {
     expect(projectPlanningInsights([longName], { [longName]: entry }).hints).toEqual([])
   })
 
-  test("native-work advice does not enable unsupported planned roles", () => {
+  test("planning advice supplies neither native paths nor missing advisory prerequisites", () => {
     for (const role of ["brainstorm", "planner", "critic", "acceptance"]) {
       const insights = loomPlanningInsights([role])
       expect(insights.advisoryOnly).toBe(true)
-      expect(insights.hints[0]?.caution).toContain("not supported")
+      expect(insights.hints[0]?.caution).toContain(role === "brainstorm" ? "explicit adviceForTaskId receiver" : "not supported")
       const plan: WorkPlanDefinition = {
         goal: "Bounded native work", assumptions: [], outOfScope: [], authorityRefs: ["anchor"],
         obligations: [], riskBoundaries: [], acceptanceCoverage: [], relationships: [], correctionRouting: [],
@@ -53,7 +53,7 @@ describe("separate Loom planning advice", () => {
           }],
         }] }],
       }
-      expect(() => validatePlanRoleFeasibility(plan)).toThrow(`role ${role} has no supported Task execution slot`)
+      expect(() => validatePlanRoleFeasibility(plan)).toThrow(role === "brainstorm" ? "adviceForTaskId" : `role ${role} has no supported Task execution slot`)
     }
   })
 })
