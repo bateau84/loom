@@ -79,6 +79,7 @@ import {
   observationsSupportKind,
   observationMatchesStep,
   safeInputSummary,
+  redactCommand,
   safeResultError,
   safeResultSummary,
   type EvidenceClaim,
@@ -126,6 +127,10 @@ import {
   diagnosticShellResourcesAllowed,
   isAllowedButlerCommit,
   isAllowedGitCommit,
+  isAllowedPackageScriptShell,
+  classifyVerificationShell,
+  isElevatableVerificationShell,
+  elevatedVerificationEntrypoint,
   isButlerCommitShellCommand,
   isGitInspectionShellCommand,
   isGitShellCommand,
@@ -198,6 +203,7 @@ import {
   workPlanSemanticFingerprint,
   taskSemanticFingerprintAtRevision,
   taskSemanticClosureFingerprintAtRevision,
+  inspectTaskSemanticClosure,
   validateWorkflowWave,
   validatePlanRoleFeasibility,
   workflowTaskSemanticFingerprint,
@@ -437,6 +443,33 @@ const productScopeElevatingAgents = new Set([
 ])
 
 const generalGitWriteScope = ["docs/anchors/**"]
+
+const verificationTestAgents = new Set(["worker", "diagnostic", "reviewer", "critic", "acceptance"])
+
+type CommandElevation = {
+  id: string
+  workflowId: string
+  stepId: string
+  attempt: number
+  agent: string
+  sessionID: string
+  commandDigest: string
+  commandSummary: string
+  reason: string
+  grantedAt: string
+  expiresAt: string
+  consumedAt?: string
+  supersededAt?: string
+  observationId?: string
+  outcome?: "completed" | "error"
+  observedAt?: string
+}
+
+const commandElevationCurrentKey = (sessionID: string) => "command-elevation-current/" + sessionID
+const commandElevationKey = (id: string) => "command-elevation/" + id
+const verificationCommandDigest = (command: string) =>
+  createHash("sha256").update(command.trim()).digest("hex")
+
 
 // Commit authority follows the current effective committable write scope, not
 // a role allowlist. This helper only establishes the role-owned scratch
@@ -3240,6 +3273,23 @@ async function assertWorkerWorkClaim(ctx: any, workflowId: string, stepId: strin
   )
 }
 
+/** Historical receipts remain audit records until their ORIGINAL proof is verified. */
+function lastArchivedCompletionReceipt(
+  node: WorkHierarchy["nodes"][number] | undefined,
+  workflowId: string,
+): NonNullable<WorkHierarchy["nodes"][number]["result"]> | undefined {
+  if (!node || node.result) return undefined
+  const latest = node.priorResults?.at(-1)
+  if (!latest || latest.workflowId !== workflowId) return undefined
+  const {
+    invalidatedAt: _at,
+    invalidatedByRevision: _revision,
+    invalidatedReason: _reason,
+    ...receipt
+  } = latest
+  return receipt
+}
+
 async function reusableCompletedTaskIds(
   ctx: any,
   work: WorkHierarchy,
@@ -3265,15 +3315,13 @@ async function reusableCompletedTaskIds(
     // The execution result, not the roll-up status, is the reusable receipt.
     if (!workTask?.result || workTask.result.workflowId !== workflow.id) continue
 
-    const currentClosure = taskSemanticClosureFingerprintAtRevision(
-      work,
-      taskStep.task!.id,
-      workflow.work.generation,
-    )
-    if (
-      !workTask.result.semanticClosureFingerprint ||
-      workTask.result.semanticClosureFingerprint !== currentClosure
-    ) {
+    const closure = workTask.result.planRevision
+      ? inspectTaskSemanticClosure(work, taskStep.task!.id,
+          workTask.result.planRevision, workTask.result.semanticClosureFingerprint)
+      : { status: workTask.result.semanticClosureFingerprint &&
+          workTask.result.semanticClosureFingerprint === taskSemanticClosureFingerprintAtRevision(
+          work, taskStep.task!.id, workflow.work.generation) ? "unchanged" : "missing-receipt" }
+    if (closure.status !== "unchanged") {
       if (invalidReceipt === "rerun") continue
       throw new Error(
         `Completed Task ${taskStep.task!.id} cannot be reused because its Plan/dependency/authority receipt is missing or stale.`,
@@ -4246,7 +4294,74 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       summary?: ReturnType<typeof safeInputSummary>
       admission?: EvidenceAdmission
       gitStageBefore?: GitStageSnapshot
+      startedAtMs?: number
+      startedAt?: string
+      commandElevationId?: string
+      verification?: ReturnType<typeof classifyVerificationShell>
     }>()
+
+    const assertProjectVerificationEntrypoint = async (command: string) => {
+      const entry = elevatedVerificationEntrypoint(command)
+      if (!entry) return
+      try {
+        const projectRoot = await realpath(ctx.location.directory)
+        const targetPath = await realpath(resolve(projectRoot, entry))
+        const targetRelative = relative(projectRoot, targetPath)
+        if (
+          !targetRelative ||
+          targetRelative === ".." ||
+          targetRelative.startsWith("../") ||
+          targetRelative.startsWith("..\\") ||
+          isAbsolute(targetRelative)
+        ) {
+          throw new Error("Verification entrypoint must resolve inside the current project.")
+        }
+        const targetInfo = await lstat(targetPath)
+        if (!targetInfo.isFile() && !targetInfo.isDirectory()) {
+          throw new Error("Verification entrypoint must resolve to a project file or directory.")
+        }
+      } catch (error) {
+        throw new Error(
+          "Project-local command elevation denied: " +
+          (error instanceof Error ? error.message : String(error)),
+        )
+      }
+    }
+
+    // Each historical elevation record is retained by ID. At most one remains
+    // available to the same child session at any moment.
+    const currentCommandElevation = async (sessionID: string, agent: string, command: string) => {
+      const id = await ctx.storage.get(commandElevationCurrentKey(sessionID)) as string | undefined
+      const grant = id
+        ? await ctx.storage.get(commandElevationKey(id)) as CommandElevation | undefined
+        : undefined
+      if (!grant || grant.sessionID !== sessionID || grant.agent !== agent ||
+          grant.commandDigest !== verificationCommandDigest(command) || grant.consumedAt ||
+          grant.supersededAt || Date.parse(grant.expiresAt) <= Date.now()) return undefined
+      if (!(await exactRunnableStepAttemptBinding(
+        ctx, sessionID, grant.workflowId, grant.stepId,
+      ))) return undefined
+      if ((await ctx.storage.get(sessionStepAttemptKey(sessionID))) !== grant.attempt) return undefined
+      return grant
+    }
+
+    const consumeCommandElevation = async (sessionID: string, agent: string, command: string) => {
+      const observed = await currentCommandElevation(sessionID, agent, command)
+      if (!observed) return undefined
+      return withRuntimeLocks(runtime, [
+        { aggregate: "workflow", resourceIdentity: observed.workflowId },
+        stepAuthorityResource(observed.workflowId, observed.stepId),
+      ], async () => {
+        const grant = await currentCommandElevation(sessionID, agent, command)
+        if (!grant || grant.id !== observed.id) return undefined
+        await assertCurrentStepPlanAdmission(ctx, grant.workflowId, grant.stepId)
+        if (agent === "worker") await assertWorkerWorkClaim(ctx, grant.workflowId, grant.stepId)
+        const consumed = { ...grant, consumedAt: new Date().toISOString() }
+        await ctx.storage.set(commandElevationKey(grant.id), consumed)
+        return consumed
+      })
+    }
+
     const activeGitWriteCalls = new Map<
       string,
       { paths: string[]; release: () => Promise<void> }
@@ -10327,7 +10442,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       addLoomTool({
         name: "work_reconcile",
         description:
-          "Reconcile reset pending producer Tasks from ORIGINAL persisted completions after independent review-plan PASS. General can run this without Worker dispatch; Planner needs an exact Planner OQ attachment. Rejects missing or stale receipts and changed code, preserves gate independence, and returns per-Task reasons.",
+          "Reconcile pending producer Tasks from original current or last archived completion receipts after independent review-plan PASS. Archive recovery requires exact original evidence, unchanged code, executable contracts and dependencies. General can run this without Worker dispatch; Planner needs an exact Planner OQ attachment. Rejects missing or stale proof and returns per-Task reasons.",
         input: {
           type: "object",
           properties: {
@@ -10394,11 +10509,27 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 const byId = new Map(taskSteps.map((step) => [step.task!.id, step]))
                 const questions = await readQuestions(ctx, workflow.id)
                 const head = await cleanRepositoryHead(ctx.location.directory)
-                const eligible = new Map<string, { step: Workflow["steps"][number]; receipt: NonNullable<WorkHierarchy["nodes"][number]["result"]> }>()
+                const eligible = new Map<string, {
+                  step: Workflow["steps"][number]
+                  node: WorkHierarchy["nodes"][number]
+                  receipt: NonNullable<WorkHierarchy["nodes"][number]["result"]>
+                  fromArchive: boolean
+                }>()
                 const refused: Array<{ taskId: string; reason: string }> = []
                 const refuse = (taskId: string, reason: string) => refused.push({ taskId, reason })
                 const alreadyComplete = ids.filter((id) => satisfied(byId.get(id)!))
-                for (const id of ids) {
+                // Resolve dependencies first, regardless of caller order. An
+                // archived dependent may use only a newly VERIFIED source.
+                const remaining = new Set(ids)
+                const orderedIds: string[] = []
+                while (remaining.size > 0) {
+                  const next = [...remaining].find((id) =>
+                    (byId.get(id)?.task?.dependsOn ?? []).every((dep) => !remaining.has(dep)))
+                  if (!next) throw new Error("Compiled Task graph contains a dependency cycle.")
+                  orderedIds.push(next)
+                  remaining.delete(next)
+                }
+                for (const id of orderedIds) {
                   const step = byId.get(id)!
                   if (satisfied(step)) continue
                   if (step.status !== "pending" || step.kind !== "work" || !step.task ||
@@ -10409,9 +10540,10 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                   const node = work.nodes.find((candidate) =>
                     candidate.generation === work.generation && candidate.type === "task" &&
                     candidate.logicalId === id && candidate.status !== "superseded")
-                  const receipt = node?.result
+                  const archivedReceipt = lastArchivedCompletionReceipt(node, workflow.id)
+                  const receipt = node?.result ?? archivedReceipt
                   if (!receipt || receipt.workflowId !== workflow.id) {
-                    refuse(id, "No current persisted Task result; archived results and commits cannot substitute.")
+                    refuse(id, "No current persisted Task result or verifiable last archived receipt; commits cannot substitute.")
                     continue
                   }
                   if (node!.claimedByWorkflowId !== workflow.id) {
@@ -10440,14 +10572,22 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                     const upstream = work.nodes.find((candidate) =>
                       candidate.generation === work.generation && candidate.type === "task" &&
                       candidate.logicalId === dependencyId && candidate.status !== "superseded")
-                    // A dependent's old result cannot survive a newer producer execution.
-                    return !upstream?.result || upstream.result.workflowId !== workflow.id ||
+                    // A dependent's old result cannot survive a newer producer
+                    // execution or an archived dependency not yet verified here.
+                    const upstreamStep = byId.get(dependencyId)
+                    // An in-Wave pending producer is not trusted merely
+                    // because Work still contains its old result. It must
+                    // satisfy this reconciliation or already be complete.
+                    if (upstreamStep && !satisfied(upstreamStep) &&
+                        !eligible.has(dependencyId)) return true
+                    const upstreamReceipt = upstream?.result ?? eligible.get(dependencyId)?.receipt
+                    return !upstreamReceipt || upstreamReceipt.workflowId !== workflow.id ||
                       !receipt.dependencyResultDigests?.[dependencyId] ||
-                      createHash("sha256").update(JSON.stringify(upstream.result)).digest("hex") !==
+                      createHash("sha256").update(JSON.stringify(upstreamReceipt)).digest("hex") !==
                         receipt.dependencyResultDigests[dependencyId] ||
-                      !Number.isSafeInteger(upstream.result.completedAttempt) ||
-                      !upstream.result.completedAt || !receipt.completedAt ||
-                      upstream.result.completedAt > receipt.completedAt
+                      !Number.isSafeInteger(upstreamReceipt.completedAttempt) ||
+                      !upstreamReceipt.completedAt || !receipt.completedAt ||
+                      upstreamReceipt.completedAt > receipt.completedAt
                   })
                   if (staleDependency) {
                     refuse(id, "Dependent producer result is missing or was replaced after this completion.")
@@ -10459,13 +10599,16 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                     refuse(id, "Original producer attempt or role is missing or inconsistent.")
                     continue
                   }
-                  const nowClosure = taskSemanticClosureFingerprintAtRevision(work, id, work.generation)
-                  const oldClosure = taskSemanticClosureFingerprintAtRevision(
-                    work, id, work.generation, receipt.planRevision)
-                  if (!receipt.semanticClosureFingerprint ||
-                      receipt.semanticClosureFingerprint !== nowClosure ||
-                      receipt.semanticClosureFingerprint !== oldClosure) {
-                    refuse(id, "Plan/authority/dependency closure changed or original semantic proof is missing.")
+                  const closure = inspectTaskSemanticClosure(
+                    work, id, receipt.planRevision, receipt.semanticClosureFingerprint)
+                  if (closure.status !== "unchanged") {
+                    const explanation = {
+                      "missing-receipt": "Original semantic closure receipt is missing.",
+                      "invalid-original": "Original semantic closure receipt does not match its historical Plan revision.",
+                      "changed-current": "Current Plan/authority/dependency closure changed",
+                    }[closure.status]
+                    refuse(id, explanation + (closure.changedFields.length
+                      ? ": " + closure.changedFields.join(", ") + "." : ""))
                     continue
                   }
                   const executableFingerprint = createHash("sha256")
@@ -10521,7 +10664,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                     refuse(id, "Original host observations are missing or belong to another producer attempt.")
                     continue
                   }
-                  eligible.set(id, { step, receipt })
+                  eligible.set(id, { step, node: node!, receipt, fromArchive: Boolean(archivedReceipt) })
                 }
                 let changed = true
                 while (changed) {
@@ -10542,9 +10685,18 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                   throw new Error("Repository changed during reconciliation; no Task completion was restored.")
                 }
                 const reconciled: string[] = []
+                const restoredArchived: string[] = []
+                const restoredAt = new Date().toISOString()
                 for (const id of ids) {
                   const candidate = eligible.get(id)
                   if (!candidate) continue
+                  if (candidate.fromArchive) {
+                    // Only verified, canonical ORIGINAL proof may become current
+                    // again. Do not invent completion from Step state or commits.
+                    candidate.node.result = structuredClone(candidate.receipt)
+                    candidate.node.updatedAt = restoredAt
+                    restoredArchived.push(id)
+                  }
                   candidate.step.status = "complete"
                   // Keep the current reset attempt as a monotonic authority fence.
                   // The source attempt stays only in the original Work receipt/audit.
@@ -10559,9 +10711,11 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                   at: new Date().toISOString(), byAgent: tool.agent, bySessionId: tool.sessionID,
                   cleanHead: head ?? null,
                   recovered: reconciled.map((id) => {
-                    const receipt = eligible.get(id)!.receipt
+                    const candidate = eligible.get(id)!
+                    const receipt = candidate.receipt
                     return {
                       taskId: id, workflowId: receipt.workflowId,
+                      receiptSource: candidate.fromArchive ? "last-archived" : "current",
                       originalAttempt: receipt.completedAttempt!,
                       originalPlanRevision: receipt.planRevision!,
                       semanticClosureFingerprint: receipt.semanticClosureFingerprint!,
@@ -10574,12 +10728,24 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 // Crash between audit and workflow persistence must not present
                 // a prepared record as a successful carry-forward.
                 await ctx.storage.set(auditKey, { ...audit, state: "prepared" })
-                if (reconciled.length) await persistWorkflowMutationLocked(ctx, runtime, workflow)
-                await ctx.storage.set(auditKey, {
-                  ...audit, state: "committed", workflowRevision: workflow.revision,
-                })
+                const commitReconciliation = async () => {
+                  if (restoredArchived.length) {
+                    work.version++
+                    work.updatedAt = restoredAt
+                    await ctx.storage.set(workKey(work.objectiveId), work)
+                  }
+                  if (reconciled.length) await persistWorkflowMutationLocked(ctx, runtime, workflow)
+                  await ctx.storage.set(auditKey, {
+                    ...audit, state: "committed", workflowRevision: workflow.revision,
+                  })
+                }
+                // withWorkflowWorkLocks already runs this entire callback in
+                // Loom's durable runtime transaction, covering the Work result,
+                // Workflow Step, and committed reconciliation audit together.
+                // OpenCode's StorageDomain has no transaction method.
+                await commitReconciliation()
                 return {
-                  auditId, reconciled, refused, alreadyComplete,
+                  auditId, reconciled, restoredArchived, refused, alreadyComplete,
                   planRevision: plan.revision, budgetUnchanged: true,
                   freshImplementationReviewRequired: true,
                 }
@@ -10980,6 +11146,39 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
                 const preservedTaskIds = await reusableCompletedTaskIds(ctx, work, workflow)
                 const preserved = new Set(preservedTaskIds)
+                // Never silently discard a previously completed Step on compilation.
+                // An archived receipt requires an independently reviewed Plan and
+                // exact original-evidence reconciliation; it is NOT reusable yet.
+                const completedWithoutCurrentReceipt = plannedTaskSteps(workflow)
+                  .filter((step) => satisfied(step) && !preserved.has(step.task!.id))
+                const archivedReceiptTaskIds = completedWithoutCurrentReceipt
+                  .filter((step) => {
+                    const node = work.nodes.find((candidate) =>
+                      candidate.generation === workflow.work!.generation &&
+                      candidate.type === "task" && candidate.logicalId === step.task!.id &&
+                      candidate.status !== "superseded")
+                    return Boolean(lastArchivedCompletionReceipt(node, workflow.id))
+                  })
+                  .map((step) => step.task!.id)
+                // A changed Plan closure is work to rerun, not a proof
+                // failure. Refuse only unexplained loss of a completion
+                // where the semantic contract still matches.
+                const unprovenCompleted = completedWithoutCurrentReceipt.filter((step) => {
+                  if (archivedReceiptTaskIds.includes(step.task!.id)) return false
+                  const currentClosure = taskSemanticClosureFingerprintAtRevision(
+                    work, step.task!.id, workflow.work!.generation)
+                  const previousClosure = taskSemanticClosureFingerprintAtRevision(
+                    work, step.task!.id, workflow.work!.generation,
+                    workflow.work!.taskPlanRevision)
+                  return Boolean(currentClosure && previousClosure && currentClosure === previousClosure)
+                })
+                if (unprovenCompleted.length > 0) {
+                  throw new Error(
+                    "Refusing to recompile completed Tasks without a current completion receipt " +
+                    "or a same-workflow archived receipt: " +
+                    unprovenCompleted.map((step) => step.task!.id).join(", ") + ".",
+                  )
+                }
                 const executableTasks = tasks.filter((task) => !preserved.has(task.id))
                 const steps = applyTaskPlan(workflow, tasks, preservedTaskIds)
                 reconcileVerificationAfterRoute(workflow)
@@ -11056,6 +11255,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                   wave,
                   steps,
                   reusedTaskIds: preservedTaskIds,
+                  archivedReceiptTaskIds,
                   planReviewRequired: true,
                   workLevel: workflow.effects?.workLevel ?? "objective",
                   workLevelAuto: Boolean(workflow.effects?.workLevelAuto),
@@ -11073,6 +11273,9 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 workLevelAuto: claimed.workLevelAuto,
                 autoResolvedWorkLevel: claimed.autoResolvedWorkLevel,
                 reusedTaskIds: claimed.reusedTaskIds,
+                // These Steps require a fresh review-plan PASS followed by
+                // loom_work_reconcile; the compiler does not attest old work.
+                archivedReceiptTaskIds: claimed.archivedReceiptTaskIds,
                 tasks: steps.map((step) => ({
                   stepId: step.id,
                   task: step.task,
@@ -11985,6 +12188,102 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               elevations: scope?.elevations ?? [],
               scopeSemantics: "starting-expectation-with-runtime-elevation",
             }),
+          }
+        },
+      })
+
+      addLoomTool({
+        name: "command_elevate",
+        description:
+          "Grant exactly one near-term execution of a project-local verification command outside the routine test-runner allowlist. Available only to an attached Worker, Diagnostic, Reviewer, Critic, or Acceptance step. Records who requested it, why, and the resulting shell evidence. This does not expand Loom's direct file-edit or Git authority or allow arbitrary shell eval. The command runs with host permissions, and nested script effects are not sandboxed.",
+        input: {
+          type: "object",
+          properties: {
+            workflowId: { type: "string" },
+            stepId: { type: "string" },
+            command: { type: "string" },
+            reason: { type: "string" },
+          },
+          required: ["workflowId", "stepId", "command", "reason"],
+          additionalProperties: false,
+        },
+        options: { namespace: "loom", codemode: false },
+        execute: async (input, tool) => {
+          const value = input as {
+            workflowId: string; stepId: string; command: string; reason: string
+          }
+          const command = value.command.trim()
+          const reason = redactCommand(value.reason.trim())
+          if (!verificationTestAgents.has(tool.agent)) {
+            return { content: renderToolOutput({
+              error: "Command elevation is restricted to implementation/verification roles.",
+            }) }
+          }
+          if (!reason || reason.length > 4000 || !command || command.length > 4000 ||
+              !isElevatableVerificationShell(command)) {
+            return { content: renderToolOutput({
+              error: "Provide a reason and one project-local verification command. Shell eval, unsafe syntax, package installs, Git, and arbitrary commands cannot be self-elevated.",
+            }) }
+          }
+          try {
+            await assertProjectVerificationEntrypoint(command)
+            const receipt = await withRuntimeLocks(runtime, [
+              { aggregate: "workflow", resourceIdentity: value.workflowId },
+              stepAuthorityResource(value.workflowId, value.stepId),
+            ], async () => {
+              if (!(await exactRunnableStepAttemptBinding(
+                ctx, tool.sessionID, value.workflowId, value.stepId,
+              ))) throw new Error("Elevation needs an exact runnable step attachment.")
+              const workflow = await readWorkflow(ctx, value.workflowId)
+              const step = workflow?.steps.find((candidate) => candidate.id === value.stepId)
+              if (!step || step.agent !== tool.agent) {
+                throw new Error("Elevation needs ownership of the requested step.")
+              }
+              await assertCurrentStepPlanAdmission(ctx, value.workflowId, value.stepId)
+              if (tool.agent === "worker") {
+                await assertWorkerWorkClaim(ctx, value.workflowId, value.stepId)
+              }
+              const attempt = await ctx.storage.get(sessionStepAttemptKey(tool.sessionID))
+              if (!Number.isSafeInteger(attempt)) {
+                throw new Error("Missing step-attempt binding.")
+              }
+              const currentKey = commandElevationCurrentKey(tool.sessionID)
+              const priorId = await ctx.storage.get(currentKey) as string | undefined
+              const prior = priorId
+                ? await ctx.storage.get(commandElevationKey(priorId)) as CommandElevation | undefined
+                : undefined
+              if (prior && !prior.consumedAt && !prior.supersededAt) {
+                await ctx.storage.set(commandElevationKey(prior.id), {
+                  ...prior, supersededAt: new Date().toISOString(),
+                } satisfies CommandElevation)
+              }
+              const now = Date.now()
+              const grant: CommandElevation = {
+                id: crypto.randomUUID(),
+                workflowId: value.workflowId, stepId: value.stepId,
+                agent: tool.agent, sessionID: tool.sessionID,
+                attempt: attempt as number,
+                commandDigest: verificationCommandDigest(command),
+                commandSummary: redactCommand(command).slice(0, 1000),
+                reason,
+                grantedAt: new Date(now).toISOString(),
+                expiresAt: new Date(now + 15 * 60_000).toISOString(),
+              }
+              await ctx.storage.set(commandElevationKey(grant.id), grant)
+              await ctx.storage.set(currentKey, grant.id)
+              return grant
+            })
+            return { content: renderToolOutput({
+              granted: true, grantId: receipt.id,
+              workflowId: receipt.workflowId, stepId: receipt.stepId,
+              command: receipt.commandSummary, expiresAt: receipt.expiresAt,
+              singleUse: true,
+              limitation: "Permission and execution are recorded, but Loom does not inspect subprocesses or enforce script-internal writes.",
+            }) }
+          } catch (error) {
+            return { content: renderToolOutput({
+              error: error instanceof Error ? error.message : String(error),
+            }) }
           }
         },
       })
@@ -13637,6 +13936,60 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       }
 
       if (
+        event.action === "shell" &&
+        verificationTestAgents.has(String(event.agent ?? "")) &&
+        event.resources.length > 0
+      ) {
+        const agent = String(event.agent)
+        const routine = event.resources.every(
+          (command: string) => Boolean(classifyVerificationShell(command)),
+        )
+        const governedVerification = ["reviewer", "critic", "acceptance"].includes(agent)
+        const needsElevation = event.resources.length === 1 &&
+          isElevatableVerificationShell(event.resources[0]) &&
+          !(agent === "worker" && workerShellResourcesAllowed(event.resources)) &&
+          !(agent === "diagnostic" &&
+            diagnosticExecutionShellResourcesAllowed(event.resources))
+        if ((governedVerification && routine) || needsElevation) {
+          const workflowId = (await ctx.storage.get(
+            sessionKey(event.sessionID),
+          )) as string | undefined
+          const stepId = (await ctx.storage.get(
+            sessionStepKey(event.sessionID),
+          )) as string | undefined
+          if (
+            !workflowId ||
+            !stepId ||
+            !(await exactRunnableStepAttemptBinding(
+              ctx, event.sessionID, workflowId, stepId,
+            ))
+          ) {
+            event.effect = "deny"
+            event.message = "Test execution requires this role's exact runnable Loom step."
+            return
+          }
+          try {
+            await assertCurrentStepPlanAdmission(ctx, workflowId, stepId)
+            if (agent === "worker") await assertWorkerWorkClaim(ctx, workflowId, stepId)
+          } catch (error) {
+            event.effect = "deny"
+            event.message = error instanceof Error ? error.message : String(error)
+            return
+          }
+          if (needsElevation && !(await currentCommandElevation(
+            event.sessionID, agent, event.resources[0],
+          ))) {
+            event.effect = "deny"
+            event.message =
+              "This project verification command needs a one-use loom_command_elevate grant with a reason before execution."
+            return
+          }
+          event.effect = "allow"
+          return
+        }
+      }
+
+      if (
         (event.agent === "research" || event.agent === "diagnostic") &&
         (event.action === "shell" || event.action === "edit")
       ) {
@@ -14236,6 +14589,26 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         typeof (raw.input as any).command === "string"
           ? String((raw.input as any).command)
           : undefined
+      let elevationRequired = false
+      if (shellCommand && raw.sessionID &&
+          verificationTestAgents.has(String(raw.agent ?? "")) &&
+          isElevatableVerificationShell(shellCommand)) {
+        const agent = String(raw.agent)
+        const allowedWithoutElevation = agent === "worker"
+          ? workerShellResourcesAllowed([shellCommand])
+          : agent === "diagnostic"
+            ? diagnosticExecutionShellResourcesAllowed([shellCommand])
+            : Boolean(classifyVerificationShell(shellCommand))
+        if (!allowedWithoutElevation) {
+          elevationRequired = true
+          if (!observationCallKey(raw)) {
+            throw new Error(
+              "Test execution blocked: a stable tool-call identity is required before consuming command elevation.",
+            )
+          }
+          await assertProjectVerificationEntrypoint(shellCommand)
+        }
+      }
       const butlerSelection =
         shellCommand && isAllowedButlerCommit(shellCommand)
           ? await resolveButlerCommitSelection(
@@ -14388,6 +14761,13 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       // remain passive, but a second mutation must fail closed rather than
       // sharing the first call's lock identity.
       if (pendingObservations.has(key)) {
+        // A rejected second execution must not poison the first execution's
+        // evidence or spend another command grant.
+        if (elevationRequired) {
+          throw new Error(
+            "Command execution blocked: this tool-call identity already has an in-flight execution.",
+          )
+        }
         pendingObservations.get(key)!.ambiguous = true
         if (mutationNeedsLock) {
           throw new Error(
@@ -14402,13 +14782,29 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         ambiguous: boolean; ready: boolean; inputDigest?: string
         summary?: ReturnType<typeof safeInputSummary>; admission?: EvidenceAdmission
         gitStageBefore?: GitStageSnapshot
-      } = { ambiguous: false, ready: false }
+        startedAtMs?: number; startedAt?: string
+        commandElevationId?: string
+        verification?: ReturnType<typeof classifyVerificationShell>
+      } = {
+        ambiguous: false, ready: false,
+        ...(shellCommand ? {
+          startedAtMs: Date.now(),
+          startedAt: new Date().toISOString(),
+          verification: classifyVerificationShell(shellCommand),
+        } : {}),
+      }
       pendingObservations.set(key, pending)
       if (pendingObservations.size > 1024) pendingObservations.delete(pendingObservations.keys().next().value!)
-      pending.admission = await captureEvidenceAdmission(ctx.storage as any, runtime, String(raw.sessionID), String(raw.agent ?? ""))
-      pending.inputDigest = raw.input === undefined ? undefined : await digest(raw.input)
-      pending.summary = safeInputSummary(tool, raw.input)
-      pending.ready = true
+      try {
+        pending.admission = await captureEvidenceAdmission(ctx.storage as any, runtime, String(raw.sessionID), String(raw.agent ?? ""))
+        pending.inputDigest = raw.input === undefined ? undefined : await digest(raw.input)
+        pending.summary = safeInputSummary(tool, raw.input)
+        pending.ready = true
+      } catch (error) {
+        // A failed preflight did not run a tool and must not poison retries.
+        pendingObservations.delete(key)
+        throw error
+      }
 
       if (mutationNeedsLock) {
         try {
@@ -14434,6 +14830,27 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               )
             }
           }
+        } catch (error) {
+          await releaseGitWriteLocks(raw)
+          pendingObservations.delete(key)
+          throw error
+        }
+      }
+
+      // Consume only after a stable observation identity and all admission
+      // preflights have succeeded. A malformed/duplicate rejected invocation
+      // must not spend the single-use grant without a tool execution.
+      if (elevationRequired && shellCommand) {
+        try {
+          const consumed = await consumeCommandElevation(
+            String(raw.sessionID), String(raw.agent), shellCommand,
+          )
+          if (!consumed) {
+            throw new Error(
+              "Test execution blocked: this command has no unconsumed exact loom_command_elevate grant.",
+            )
+          }
+          pending.commandElevationId = consumed.id
         } catch (error) {
           await releaseGitWriteLocks(raw)
           pendingObservations.delete(key)
@@ -14887,6 +15304,26 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         }
       }
 
+      const unclassifiedRunner = String((input as any)?.command ?? "")
+        .trim().split(/\s+/)
+        .find((word: string) => word && !/^[A-Za-z_][A-Za-z0-9_]*=/.test(word)) ?? ""
+
+      const shellTrace: EvidenceObservation["commandTrace"] | undefined =
+        (tool === "shell" || tool === "bash") &&
+        pending?.startedAtMs !== undefined && pending.startedAt
+          ? {
+            family: pending.verification?.family ?? "custom",
+            runner: pending.verification?.runner ??
+              redactCommand(unclassifiedRunner).slice(0, 64),
+            access: pending.commandElevationId
+              ? "elevated"
+              : pending.verification ? "routine" : "unclassified",
+            startedAt: pending.startedAt,
+            durationMs: Math.max(0, Date.now() - pending.startedAtMs),
+            ...(pending.commandElevationId ? { grantId: pending.commandElevationId } : {}),
+          }
+          : undefined
+
       const observation: EvidenceObservation = {
         id: crypto.randomUUID(),
         sessionID: String(raw.sessionID),
@@ -14903,11 +15340,22 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             : {}),
         ...summary,
         ...resultSummary,
+        ...(shellTrace ? { commandTrace: shellTrace } : {}),
         ...(reportPromotion ? { reportPromotion } : {}),
         ...(!eventMatches && pending ? { unscopedReason: "input-changed" } : {}),
       }
 
       await persistEvidenceObservation(ctx.storage as any, runtime, observation, pending?.admission)
+      if (pending?.commandElevationId) {
+        const key = commandElevationKey(pending.commandElevationId)
+        const grant = await ctx.storage.get(key) as CommandElevation | undefined
+        if (grant && grant.consumedAt && !grant.observationId) {
+          await ctx.storage.set(key, {
+            ...grant, observationId: observation.id,
+            outcome: observation.status, observedAt: observation.observedAt,
+          } satisfies CommandElevation)
+        }
+      }
       } finally {
         await releaseGitWriteLocks(raw)
       }
