@@ -17516,3 +17516,34 @@ test("archived receipt without exact original host evidence cannot be reconciled
     h.restore()
   }
 })
+
+
+test("reconciliation refuses a dependent if its pending producer was not independently verified", async () => {
+  const h = await waveLifecycleFixture("wave", false, "worker", true)
+  try {
+    const work = await h.work()
+    const producer = work.nodes.find((node: any) => node.type === "task" && node.logicalId === "one")
+    const dependent = work.nodes.find((node: any) => node.type === "task" && node.logicalId === "dependent")
+    const base = {
+      workflowId: h.workflowId, evidenceClaimIds: ["unavailable"],
+      completedAt: "2026-10-07T00:00:00Z",
+      completedAttempt: 0, producerAgent: "worker", planRevision: 1,
+    }
+    producer.result = { ...base, summary: "Unverified producer" }
+    dependent.result = {
+      ...base,
+      dependencyResultDigests: {
+        one: createHash("sha256").update(JSON.stringify(producer.result)).digest("hex"),
+      },
+    }
+    await h.durableStorage.set(h.workKey, work)
+    const attempted = await h.call("work_reconcile", {
+      workflowId: h.workflowId, taskIds: ["dependent"],
+    }, "general", "parent")
+    expect(attempted.error).toBeUndefined()
+    expect(attempted.reconciled).toEqual([])
+    expect(attempted.refused[0].reason).toContain("Dependent producer result")
+  } finally {
+    h.restore()
+  }
+})
