@@ -14340,7 +14340,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           )
           event.message = scopedWrite && otherwiseAdmitted
             ? "Worker shell write target is outside the current Loom write scope. Call loom_scope_elevate for the specific project-local path(s), then retry."
-            : "Worker shell command is not admitted by Loom's command policy. This is not a write-scope denial: loom_scope_elevate only grants file paths, not arbitrary shell execution. Use an admitted inspection command or, for supported tests/generators, request loom_command_elevate."
+            : "Worker shell command is not admitted by Loom's command policy. This is not a write-scope denial: use an admitted inspection command or, for supported tests/generators, request loom_command_elevate. Adding file write scope does not authorize arbitrary shell execution."
           return
         }
 
