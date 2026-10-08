@@ -257,8 +257,11 @@ export function localPolicyShellAllowed(
   rules: { exact: readonly string[]; prefixes: readonly string[] },
 ) {
   const normalized = command.trim()
-  if (!parsedCommandWords(normalized)) return false
-  if (isGitShellCommand(normalized) || isButlerShellCommand(normalized)) return false
+  const words = parsedCommandWords(normalized)
+  if (!words) return false
+  // Reject Git/Butler regardless of allowed environment prefixes. Repository
+  // mutation has its own provenance/ownership-aware authorization route.
+  if (words[0] === "git" || words[0] === "but") return false
   if (rules.exact.includes(normalized)) return true
   return rules.prefixes.some((prefix) =>
     normalized === prefix || normalized.startsWith(prefix + " "),
