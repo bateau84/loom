@@ -248,6 +248,145 @@ function parsedCommandWords(command: string) {
   return splitShellWords(parsed.command)
 }
 
+// Named package scripts execute project code. The command and environment
+// remain bounded, but script effects are not restricted by this allowlist.
+export function isAllowedPackageScriptShell(command: string) {
+  const words = parsedCommandWords(command)
+  return Boolean(
+    words &&
+    words.length >= 3 &&
+    ["bun", "npm", "pnpm", "yarn"].includes(words[0]) &&
+    words[1] === "run" &&
+    /^[A-Za-z0-9][A-Za-z0-9._:-]*$/.test(words[2]),
+  )
+}
+
+
+export type VerificationShellCommand = {
+  family: "package" | "python" | "go" | "shell"
+  runner: string
+}
+
+function projectScriptPath(path: string, extension: RegExp) {
+  return !path.startsWith("-") && safeProjectRelativePath(path) &&
+    extension.test(path.replace(/^\.\/+/, ""))
+}
+
+function namedTestScript(path: string) {
+  if (!projectScriptPath(path, /\.(?:py|sh|bash)$/)) return false
+  const parts = path.replace(/^\.\/+/, "").split("/")
+  const basename = parts[parts.length - 1] ?? ""
+  return parts.some((part) => /^(?:test|tests|spec|specs|checks)$/.test(part)) ||
+    /(?:^|[._-])(?:test|tests|check|verify|validate|lint|qa|spec|e2e|integration)(?:[._-]|$)/.test(basename)
+}
+
+/** Test runners are executable project code; this classifies command shape, not side effects. */
+export function classifyVerificationShell(command: string): VerificationShellCommand | undefined {
+  const words = parsedCommandWords(command)
+  if (!words?.length) return undefined
+  const [runner, action, target] = words
+  if (isAllowedPackageScriptShell(command) ||
+      (["bun", "npm", "pnpm", "yarn"].includes(runner) && action === "test")) {
+    return { family: "package", runner }
+  }
+
+  if (runner === "go") {
+    if (["test", "vet"].includes(action) ||
+        (action === "tool" && ["cover", "test2json"].includes(target))) {
+      return { family: "go", runner }
+    }
+  }
+
+  if (/^python(?:3(?:\.[0-9]+)?)?$/.test(runner)) {
+    if (action === "-m" && [
+      "pytest", "unittest", "tox", "nox", "coverage", "behave",
+      "compileall", "py_compile", "mypy", "ruff",
+    ].includes(target) &&
+      !(target === "ruff" && words.some((word) => ["--fix", "--fix-only", "--unsafe-fixes"].includes(word)))) {
+      return { family: "python", runner }
+    }
+    if (action && namedTestScript(action) && action.endsWith(".py")) {
+      return { family: "python", runner }
+    }
+  }
+  if (["pytest", "tox", "nox", "mypy", "pyright", "coverage", "behave"].includes(runner) ||
+      (runner === "ruff" && action === "check" &&
+        !words.some((word) => ["--fix", "--fix-only", "--unsafe-fixes"].includes(word)))) {
+    return { family: "python", runner }
+  }
+
+  if (["shellcheck", "bats"].includes(runner) ||
+      (runner === "shfmt" &&
+        words.some((word) => ["-d", "-l"].includes(word)) &&
+        !words.some((word) => ["-w", "--write"].includes(word)))) {
+    return { family: "shell", runner }
+  }
+  if (["bash", "sh"].includes(runner)) {
+    if (action === "-n" && target && projectScriptPath(target, /\.(?:sh|bash)$/)) {
+      return { family: "shell", runner }
+    }
+    if (action && namedTestScript(action) && /\.(?:sh|bash)$/.test(action)) {
+      return { family: "shell", runner }
+    }
+  }
+  if (/^\.\/.*\.(?:sh|bash)$/.test(runner) && namedTestScript(runner)) {
+    return { family: "shell", runner }
+  }
+  return undefined
+}
+
+/**
+ * Explicit one-use elevation can cover project verification entrypoints not
+ * included in the routine list. It never admits shell eval, Git, package
+ * installation, arbitrary command chains, or paths outside the project.
+ */
+export function isElevatableVerificationShell(command: string) {
+  const words = parsedCommandWords(command)
+  if (!words?.length || classifyVerificationShell(command)) return false
+  const [runner, action, target] = words
+  // A self-elevation is for testing, not obviously destructive lifecycle work.
+  // This does not inspect the contents/effects of the requested scripts.
+  if (words.some((word) =>
+    /(?:^|[\/._-])(?:deploy|install|publish|release|migrate|delete|remove|wipe|reset|clean|destroy|push|prune)(?:[\/._-]|$)/i.test(word)
+  )) return false
+  if (["make", "just"].includes(runner)) {
+    // Options after a target still affect the Makefile/Justfile being run.
+    // In particular -f/-C/--eval can replace local test code with external code.
+    return words.length === 2 &&
+      /^(?:test|check|verify|validate|lint|qa|unit|integration|e2e)(?:[._:-]|$)/.test(action)
+  }
+  if (["bash", "sh"].includes(runner)) {
+    return Boolean(action && projectScriptPath(action, /\.(?:sh|bash)$/))
+  }
+  if (/^python(?:3(?:\.[0-9]+)?)?$/.test(runner)) {
+    if (action === "-m" && target) {
+      return !/^(?:pip|ensurepip|venv)(?:$|\.)/.test(target) &&
+        /^[A-Za-z0-9_.-]+$/.test(target) &&
+        /(?:^|[._-])(?:test|tests|testing|check|checks|verify|validate|validation|lint|qa|spec|unit|integration|e2e|ci|diagnose|diagnostic|repro|reproduce)(?:$|[._-])/.test(target)
+    }
+    return Boolean(action && projectScriptPath(action, /\.py$/))
+  }
+  if (runner === "go" && action === "run") {
+    return Boolean(target && target.startsWith("./") &&
+      safeProjectRelativePath(target))
+  }
+  return false
+}
+
+/**
+ * Return a filesystem entrypoint that must resolve inside this project.
+ * A lexical relative path is insufficient when a symlink can escape the root.
+ */
+export function elevatedVerificationEntrypoint(command: string): string | undefined {
+  if (!isElevatableVerificationShell(command)) return undefined
+  const words = parsedCommandWords(command)
+  if (!words) return undefined
+  const [runner, action, target] = words
+  if (["bash", "sh"].includes(runner)) return action
+  if (/^python(?:3(?:\.[0-9]+)?)?$/.test(runner) && action !== "-m") return action
+  if (runner === "go" && action === "run") return target
+  return undefined
+}
 
 type ParsedGitCommand = {
   subcommand: string
@@ -934,6 +1073,8 @@ export function diagnosticShellResourcesAllowed(resources: readonly string[]) {
   return resources.every(
     (command) =>
       isAllowedWorkerShell(command) ||
+      isAllowedPackageScriptShell(command) ||
+      Boolean(classifyVerificationShell(command)) ||
       githubInspectionAllowed(command),
   )
 }

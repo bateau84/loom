@@ -79,6 +79,7 @@ import {
   observationsSupportKind,
   observationMatchesStep,
   safeInputSummary,
+  redactCommand,
   safeResultError,
   safeResultSummary,
   type EvidenceClaim,
@@ -126,6 +127,10 @@ import {
   diagnosticShellResourcesAllowed,
   isAllowedButlerCommit,
   isAllowedGitCommit,
+  isAllowedPackageScriptShell,
+  classifyVerificationShell,
+  isElevatableVerificationShell,
+  elevatedVerificationEntrypoint,
   isButlerCommitShellCommand,
   isGitInspectionShellCommand,
   isGitShellCommand,
@@ -437,6 +442,33 @@ const productScopeElevatingAgents = new Set([
 ])
 
 const generalGitWriteScope = ["docs/anchors/**"]
+
+const verificationTestAgents = new Set(["worker", "diagnostic", "reviewer", "critic", "acceptance"])
+
+type CommandElevation = {
+  id: string
+  workflowId: string
+  stepId: string
+  attempt: number
+  agent: string
+  sessionID: string
+  commandDigest: string
+  commandSummary: string
+  reason: string
+  grantedAt: string
+  expiresAt: string
+  consumedAt?: string
+  supersededAt?: string
+  observationId?: string
+  outcome?: "completed" | "error"
+  observedAt?: string
+}
+
+const commandElevationCurrentKey = (sessionID: string) => "command-elevation-current/" + sessionID
+const commandElevationKey = (id: string) => "command-elevation/" + id
+const verificationCommandDigest = (command: string) =>
+  createHash("sha256").update(command.trim()).digest("hex")
+
 
 // Commit authority follows the current effective committable write scope, not
 // a role allowlist. This helper only establishes the role-owned scratch
@@ -4263,7 +4295,74 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       summary?: ReturnType<typeof safeInputSummary>
       admission?: EvidenceAdmission
       gitStageBefore?: GitStageSnapshot
+      startedAtMs?: number
+      startedAt?: string
+      commandElevationId?: string
+      verification?: ReturnType<typeof classifyVerificationShell>
     }>()
+
+    const assertProjectVerificationEntrypoint = async (command: string) => {
+      const entry = elevatedVerificationEntrypoint(command)
+      if (!entry) return
+      try {
+        const projectRoot = await realpath(ctx.location.directory)
+        const targetPath = await realpath(resolve(projectRoot, entry))
+        const targetRelative = relative(projectRoot, targetPath)
+        if (
+          !targetRelative ||
+          targetRelative === ".." ||
+          targetRelative.startsWith("../") ||
+          targetRelative.startsWith("..\\") ||
+          isAbsolute(targetRelative)
+        ) {
+          throw new Error("Verification entrypoint must resolve inside the current project.")
+        }
+        const targetInfo = await lstat(targetPath)
+        if (!targetInfo.isFile() && !targetInfo.isDirectory()) {
+          throw new Error("Verification entrypoint must resolve to a project file or directory.")
+        }
+      } catch (error) {
+        throw new Error(
+          "Project-local command elevation denied: " +
+          (error instanceof Error ? error.message : String(error)),
+        )
+      }
+    }
+
+    // Each historical elevation record is retained by ID. At most one remains
+    // available to the same child session at any moment.
+    const currentCommandElevation = async (sessionID: string, agent: string, command: string) => {
+      const id = await ctx.storage.get(commandElevationCurrentKey(sessionID)) as string | undefined
+      const grant = id
+        ? await ctx.storage.get(commandElevationKey(id)) as CommandElevation | undefined
+        : undefined
+      if (!grant || grant.sessionID !== sessionID || grant.agent !== agent ||
+          grant.commandDigest !== verificationCommandDigest(command) || grant.consumedAt ||
+          grant.supersededAt || Date.parse(grant.expiresAt) <= Date.now()) return undefined
+      if (!(await exactRunnableStepAttemptBinding(
+        ctx, sessionID, grant.workflowId, grant.stepId,
+      ))) return undefined
+      if ((await ctx.storage.get(sessionStepAttemptKey(sessionID))) !== grant.attempt) return undefined
+      return grant
+    }
+
+    const consumeCommandElevation = async (sessionID: string, agent: string, command: string) => {
+      const observed = await currentCommandElevation(sessionID, agent, command)
+      if (!observed) return undefined
+      return withRuntimeLocks(runtime, [
+        { aggregate: "workflow", resourceIdentity: observed.workflowId },
+        stepAuthorityResource(observed.workflowId, observed.stepId),
+      ], async () => {
+        const grant = await currentCommandElevation(sessionID, agent, command)
+        if (!grant || grant.id !== observed.id) return undefined
+        await assertCurrentStepPlanAdmission(ctx, grant.workflowId, grant.stepId)
+        if (agent === "worker") await assertWorkerWorkClaim(ctx, grant.workflowId, grant.stepId)
+        const consumed = { ...grant, consumedAt: new Date().toISOString() }
+        await ctx.storage.set(commandElevationKey(grant.id), consumed)
+        return consumed
+      })
+    }
+
     const activeGitWriteCalls = new Map<
       string,
       { paths: string[]; release: () => Promise<void> }
@@ -12071,6 +12170,102 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       })
 
       addLoomTool({
+        name: "command_elevate",
+        description:
+          "Grant exactly one near-term execution of a project-local verification command outside the routine test-runner allowlist. Available only to an attached Worker, Diagnostic, Reviewer, Critic, or Acceptance step. Records who requested it, why, and the resulting shell evidence. This does not expand Loom's direct file-edit or Git authority or allow arbitrary shell eval. The command runs with host permissions, and nested script effects are not sandboxed.",
+        input: {
+          type: "object",
+          properties: {
+            workflowId: { type: "string" },
+            stepId: { type: "string" },
+            command: { type: "string" },
+            reason: { type: "string" },
+          },
+          required: ["workflowId", "stepId", "command", "reason"],
+          additionalProperties: false,
+        },
+        options: { namespace: "loom", codemode: false },
+        execute: async (input, tool) => {
+          const value = input as {
+            workflowId: string; stepId: string; command: string; reason: string
+          }
+          const command = value.command.trim()
+          const reason = redactCommand(value.reason.trim())
+          if (!verificationTestAgents.has(tool.agent)) {
+            return { content: renderToolOutput({
+              error: "Command elevation is restricted to implementation/verification roles.",
+            }) }
+          }
+          if (!reason || reason.length > 4000 || !command || command.length > 4000 ||
+              !isElevatableVerificationShell(command)) {
+            return { content: renderToolOutput({
+              error: "Provide a reason and one project-local verification command. Shell eval, unsafe syntax, package installs, Git, and arbitrary commands cannot be self-elevated.",
+            }) }
+          }
+          try {
+            await assertProjectVerificationEntrypoint(command)
+            const receipt = await withRuntimeLocks(runtime, [
+              { aggregate: "workflow", resourceIdentity: value.workflowId },
+              stepAuthorityResource(value.workflowId, value.stepId),
+            ], async () => {
+              if (!(await exactRunnableStepAttemptBinding(
+                ctx, tool.sessionID, value.workflowId, value.stepId,
+              ))) throw new Error("Elevation needs an exact runnable step attachment.")
+              const workflow = await readWorkflow(ctx, value.workflowId)
+              const step = workflow?.steps.find((candidate) => candidate.id === value.stepId)
+              if (!step || step.agent !== tool.agent) {
+                throw new Error("Elevation needs ownership of the requested step.")
+              }
+              await assertCurrentStepPlanAdmission(ctx, value.workflowId, value.stepId)
+              if (tool.agent === "worker") {
+                await assertWorkerWorkClaim(ctx, value.workflowId, value.stepId)
+              }
+              const attempt = await ctx.storage.get(sessionStepAttemptKey(tool.sessionID))
+              if (!Number.isSafeInteger(attempt)) {
+                throw new Error("Missing step-attempt binding.")
+              }
+              const currentKey = commandElevationCurrentKey(tool.sessionID)
+              const priorId = await ctx.storage.get(currentKey) as string | undefined
+              const prior = priorId
+                ? await ctx.storage.get(commandElevationKey(priorId)) as CommandElevation | undefined
+                : undefined
+              if (prior && !prior.consumedAt && !prior.supersededAt) {
+                await ctx.storage.set(commandElevationKey(prior.id), {
+                  ...prior, supersededAt: new Date().toISOString(),
+                } satisfies CommandElevation)
+              }
+              const now = Date.now()
+              const grant: CommandElevation = {
+                id: crypto.randomUUID(),
+                workflowId: value.workflowId, stepId: value.stepId,
+                agent: tool.agent, sessionID: tool.sessionID,
+                attempt: attempt as number,
+                commandDigest: verificationCommandDigest(command),
+                commandSummary: redactCommand(command).slice(0, 1000),
+                reason,
+                grantedAt: new Date(now).toISOString(),
+                expiresAt: new Date(now + 15 * 60_000).toISOString(),
+              }
+              await ctx.storage.set(commandElevationKey(grant.id), grant)
+              await ctx.storage.set(currentKey, grant.id)
+              return grant
+            })
+            return { content: renderToolOutput({
+              granted: true, grantId: receipt.id,
+              workflowId: receipt.workflowId, stepId: receipt.stepId,
+              command: receipt.commandSummary, expiresAt: receipt.expiresAt,
+              singleUse: true,
+              limitation: "Permission and execution are recorded, but Loom does not inspect subprocesses or enforce script-internal writes.",
+            }) }
+          } catch (error) {
+            return { content: renderToolOutput({
+              error: error instanceof Error ? error.message : String(error),
+            }) }
+          }
+        },
+      })
+
+      addLoomTool({
         name: "scope_elevate",
         description:
           "Expand the current attached child step's write scope when discovery reveals additional files or folders. Project-local elevation is immediate, durable, and traceable; the child continues in the same session. Hard-boundary paths (outside the current project or repository-internal .git state) cannot self-authorize: this tool returns continue=false plus an exact user question payload. When continue=false, STOP the current child turn immediately and return control to General; do not retry the write or continue assuming access will arrive later.",
@@ -13718,6 +13913,60 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       }
 
       if (
+        event.action === "shell" &&
+        verificationTestAgents.has(String(event.agent ?? "")) &&
+        event.resources.length > 0
+      ) {
+        const agent = String(event.agent)
+        const routine = event.resources.every(
+          (command: string) => Boolean(classifyVerificationShell(command)),
+        )
+        const governedVerification = ["reviewer", "critic", "acceptance"].includes(agent)
+        const needsElevation = event.resources.length === 1 &&
+          isElevatableVerificationShell(event.resources[0]) &&
+          !(agent === "worker" && workerShellResourcesAllowed(event.resources)) &&
+          !(agent === "diagnostic" &&
+            diagnosticExecutionShellResourcesAllowed(event.resources))
+        if ((governedVerification && routine) || needsElevation) {
+          const workflowId = (await ctx.storage.get(
+            sessionKey(event.sessionID),
+          )) as string | undefined
+          const stepId = (await ctx.storage.get(
+            sessionStepKey(event.sessionID),
+          )) as string | undefined
+          if (
+            !workflowId ||
+            !stepId ||
+            !(await exactRunnableStepAttemptBinding(
+              ctx, event.sessionID, workflowId, stepId,
+            ))
+          ) {
+            event.effect = "deny"
+            event.message = "Test execution requires this role's exact runnable Loom step."
+            return
+          }
+          try {
+            await assertCurrentStepPlanAdmission(ctx, workflowId, stepId)
+            if (agent === "worker") await assertWorkerWorkClaim(ctx, workflowId, stepId)
+          } catch (error) {
+            event.effect = "deny"
+            event.message = error instanceof Error ? error.message : String(error)
+            return
+          }
+          if (needsElevation && !(await currentCommandElevation(
+            event.sessionID, agent, event.resources[0],
+          ))) {
+            event.effect = "deny"
+            event.message =
+              "This project verification command needs a one-use loom_command_elevate grant with a reason before execution."
+            return
+          }
+          event.effect = "allow"
+          return
+        }
+      }
+
+      if (
         (event.agent === "research" || event.agent === "diagnostic") &&
         (event.action === "shell" || event.action === "edit")
       ) {
@@ -14317,6 +14566,26 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         typeof (raw.input as any).command === "string"
           ? String((raw.input as any).command)
           : undefined
+      let elevationRequired = false
+      if (shellCommand && raw.sessionID &&
+          verificationTestAgents.has(String(raw.agent ?? "")) &&
+          isElevatableVerificationShell(shellCommand)) {
+        const agent = String(raw.agent)
+        const allowedWithoutElevation = agent === "worker"
+          ? workerShellResourcesAllowed([shellCommand])
+          : agent === "diagnostic"
+            ? diagnosticExecutionShellResourcesAllowed([shellCommand])
+            : Boolean(classifyVerificationShell(shellCommand))
+        if (!allowedWithoutElevation) {
+          elevationRequired = true
+          if (!observationCallKey(raw)) {
+            throw new Error(
+              "Test execution blocked: a stable tool-call identity is required before consuming command elevation.",
+            )
+          }
+          await assertProjectVerificationEntrypoint(shellCommand)
+        }
+      }
       const butlerSelection =
         shellCommand && isAllowedButlerCommit(shellCommand)
           ? await resolveButlerCommitSelection(
@@ -14469,6 +14738,13 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       // remain passive, but a second mutation must fail closed rather than
       // sharing the first call's lock identity.
       if (pendingObservations.has(key)) {
+        // A rejected second execution must not poison the first execution's
+        // evidence or spend another command grant.
+        if (elevationRequired) {
+          throw new Error(
+            "Command execution blocked: this tool-call identity already has an in-flight execution.",
+          )
+        }
         pendingObservations.get(key)!.ambiguous = true
         if (mutationNeedsLock) {
           throw new Error(
@@ -14483,13 +14759,29 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         ambiguous: boolean; ready: boolean; inputDigest?: string
         summary?: ReturnType<typeof safeInputSummary>; admission?: EvidenceAdmission
         gitStageBefore?: GitStageSnapshot
-      } = { ambiguous: false, ready: false }
+        startedAtMs?: number; startedAt?: string
+        commandElevationId?: string
+        verification?: ReturnType<typeof classifyVerificationShell>
+      } = {
+        ambiguous: false, ready: false,
+        ...(shellCommand ? {
+          startedAtMs: Date.now(),
+          startedAt: new Date().toISOString(),
+          verification: classifyVerificationShell(shellCommand),
+        } : {}),
+      }
       pendingObservations.set(key, pending)
       if (pendingObservations.size > 1024) pendingObservations.delete(pendingObservations.keys().next().value!)
-      pending.admission = await captureEvidenceAdmission(ctx.storage as any, runtime, String(raw.sessionID), String(raw.agent ?? ""))
-      pending.inputDigest = raw.input === undefined ? undefined : await digest(raw.input)
-      pending.summary = safeInputSummary(tool, raw.input)
-      pending.ready = true
+      try {
+        pending.admission = await captureEvidenceAdmission(ctx.storage as any, runtime, String(raw.sessionID), String(raw.agent ?? ""))
+        pending.inputDigest = raw.input === undefined ? undefined : await digest(raw.input)
+        pending.summary = safeInputSummary(tool, raw.input)
+        pending.ready = true
+      } catch (error) {
+        // A failed preflight did not run a tool and must not poison retries.
+        pendingObservations.delete(key)
+        throw error
+      }
 
       if (mutationNeedsLock) {
         try {
@@ -14515,6 +14807,27 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               )
             }
           }
+        } catch (error) {
+          await releaseGitWriteLocks(raw)
+          pendingObservations.delete(key)
+          throw error
+        }
+      }
+
+      // Consume only after a stable observation identity and all admission
+      // preflights have succeeded. A malformed/duplicate rejected invocation
+      // must not spend the single-use grant without a tool execution.
+      if (elevationRequired && shellCommand) {
+        try {
+          const consumed = await consumeCommandElevation(
+            String(raw.sessionID), String(raw.agent), shellCommand,
+          )
+          if (!consumed) {
+            throw new Error(
+              "Test execution blocked: this command has no unconsumed exact loom_command_elevate grant.",
+            )
+          }
+          pending.commandElevationId = consumed.id
         } catch (error) {
           await releaseGitWriteLocks(raw)
           pendingObservations.delete(key)
@@ -14968,6 +15281,26 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         }
       }
 
+      const unclassifiedRunner = String((input as any)?.command ?? "")
+        .trim().split(/\s+/)
+        .find((word: string) => word && !/^[A-Za-z_][A-Za-z0-9_]*=/.test(word)) ?? ""
+
+      const shellTrace: EvidenceObservation["commandTrace"] | undefined =
+        (tool === "shell" || tool === "bash") &&
+        pending?.startedAtMs !== undefined && pending.startedAt
+          ? {
+            family: pending.verification?.family ?? "custom",
+            runner: pending.verification?.runner ??
+              redactCommand(unclassifiedRunner).slice(0, 64),
+            access: pending.commandElevationId
+              ? "elevated"
+              : pending.verification ? "routine" : "unclassified",
+            startedAt: pending.startedAt,
+            durationMs: Math.max(0, Date.now() - pending.startedAtMs),
+            ...(pending.commandElevationId ? { grantId: pending.commandElevationId } : {}),
+          }
+          : undefined
+
       const observation: EvidenceObservation = {
         id: crypto.randomUUID(),
         sessionID: String(raw.sessionID),
@@ -14984,11 +15317,22 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             : {}),
         ...summary,
         ...resultSummary,
+        ...(shellTrace ? { commandTrace: shellTrace } : {}),
         ...(reportPromotion ? { reportPromotion } : {}),
         ...(!eventMatches && pending ? { unscopedReason: "input-changed" } : {}),
       }
 
       await persistEvidenceObservation(ctx.storage as any, runtime, observation, pending?.admission)
+      if (pending?.commandElevationId) {
+        const key = commandElevationKey(pending.commandElevationId)
+        const grant = await ctx.storage.get(key) as CommandElevation | undefined
+        if (grant && grant.consumedAt && !grant.observationId) {
+          await ctx.storage.set(key, {
+            ...grant, observationId: observation.id,
+            outcome: observation.status, observedAt: observation.observedAt,
+          } satisfies CommandElevation)
+        }
+      }
       } finally {
         await releaseGitWriteLocks(raw)
       }

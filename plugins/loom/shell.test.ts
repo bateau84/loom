@@ -4,8 +4,12 @@ import {
   butlerCommitSourceIds,
   diagnosticExecutionShellResourcesAllowed,
   diagnosticShellResourcesAllowed,
+  classifyVerificationShell,
+  isElevatableVerificationShell,
+  elevatedVerificationEntrypoint,
   isAllowedButlerCommit,
   isAllowedGitCommit,
+  isAllowedPackageScriptShell,
   isAllowedWorkerShell,
   isGitInspectionShellCommand,
   isGitShellCommand,
@@ -177,6 +181,155 @@ describe("Loom Worker shell policy", () => {
     ]) {
       expect(isAllowedWorkerShell(command)).toBe(true)
     }
+  })
+
+  test("allows named package scripts for project verification", () => {
+    for (const command of [
+      "bun run test:unit",
+      "npm run test:unit",
+      "pnpm run quality:check",
+      "yarn run build:prod",
+      "bun run my.task",
+      "npm run lint:fix -- --write",
+      "XDG_CACHE_HOME=/tmp/loom-cache bun run test:unit -- --filter unit",
+    ]) {
+      expect(isAllowedPackageScriptShell(command)).toBe(true)
+      expect(isAllowedWorkerShell(command)).toBe(false)
+      expect(shellResourcesAllowed([command])).toBe(false)
+      expect(diagnosticShellResourcesAllowed([command])).toBe(true)
+      expect(diagnosticExecutionShellResourcesAllowed([command])).toBe(true)
+      expect(workerShellResourcesAllowed([command])).toBe(true)
+    }
+
+    for (const command of [
+      "bun run",
+      "npm run --prefix ../other test",
+      "bun run ./scripts/probe.ts",
+      "npm run ../other",
+      "npm install",
+      "npm run test:unit && rm -rf src",
+      "npm run test:unit | cat",
+      "npm run test:unit > results.txt",
+      "npm run test:unit$(touch pwn)",
+      "PATH=/tmp npm run test:unit",
+    ]) {
+      expect(isAllowedPackageScriptShell(command)).toBe(false)
+    }
+  })
+
+  test("admits Python, Go, and shell testing for the verification roles", () => {
+    const groups = [
+      ["package", [
+        "bun test ./plugins/loom/shell.test.ts",
+        "npm test",
+        "pnpm test",
+        "yarn test",
+      ]],
+      ["python", [
+        "python -m unittest discover -s tests",
+        "python3 -m pytest tests -q",
+        "python3.12 -m coverage run -m pytest",
+        "python scripts/test_api.py",
+        "python ./tests/run.py",
+        "pytest -q",
+        "tox -e py312",
+        "ruff check .",
+      ]],
+      ["go", [
+        "go test ./...",
+        "go test -race -count=1 ./...",
+        "go vet ./...",
+        "go tool cover -func=coverage.out",
+      ]],
+      ["shell", [
+        "bash scripts/test-unit.sh",
+        "sh ./tests/run.sh",
+        "bash -n scripts/deploy.sh",
+        "shellcheck ./scripts/test-unit.sh",
+        "bats tests/example.bats",
+        "shfmt -d scripts/test-unit.sh",
+        "./scripts/test-unit.sh",
+      ]],
+    ] as const
+    for (const [family, commands] of groups) {
+      for (const command of commands) {
+        expect(classifyVerificationShell(command)?.family).toBe(family)
+        expect(diagnosticShellResourcesAllowed([command])).toBe(true)
+        expect(workerShellResourcesAllowed([command])).toBe(true)
+      }
+    }
+    // Research does not inherit the new project-execution entitlement.
+    expect(shellResourcesAllowed(["bash scripts/test-unit.sh"])).toBe(false)
+    expect(shellResourcesAllowed(["python -m unittest discover"])).toBe(false)
+  })
+
+  test("rejects shell code injection and non-test entrypoints", () => {
+    for (const command of [
+      "bash -c 'rm -rf src'",
+      "sh -lc 'go test ./...'",
+      "python -c 'import os; os.system(\"touch /tmp/pwn\")'",
+      "go generate ./...",
+      "go env -w GOPROXY=direct",
+      "bash ../outside/test.sh",
+      "bash /tmp/test.sh",
+      "bash scripts/deploy.sh",
+      "python scripts/deploy.py",
+      "bash scripts/test.sh && git push origin main",
+      "python -m pip install -r requirements.txt",
+      "ruff check --fix .",
+      "python -m ruff check --fix .",
+      "shfmt -d -w scripts/test.sh",
+    ]) {
+      expect(classifyVerificationShell(command)).toBeUndefined()
+    }
+  })
+
+  test("explicit verification elevation accepts only bounded runner shapes", () => {
+    for (const command of [
+      "make test",
+      "just test:unit",
+      "bash scripts/ci.sh",
+      "sh ./scripts/ci.sh",
+      "python scripts/reproduce.py",
+      "python3 -m custom_test_runner",
+      "python3 -m tests.runner",
+      "go run ./cmd/test-runner",
+    ]) {
+      expect(isElevatableVerificationShell(command)).toBe(true)
+    }
+    for (const command of [
+      "bash scripts/deploy.sh",
+      "python scripts/migrate-db.py",
+      "go run ./cmd/deploy",
+      "python3 -m pip._internal",
+      "make test-clean",
+      "make deploy",
+      "make test -f /tmp/outside.mk",
+      "make test --eval 'target:; echo unsafe'",
+      "make test -C /tmp",
+      "just test -f /tmp/Justfile",
+      "python3 -m http.server",
+      "python3 -m os",
+      "just clean",
+      "bash -c 'echo hello'",
+      "sh -lc 'echo hello'",
+      "python -c 'print(1)'",
+      "python -m pip install",
+      "go run ../other",
+      "go run /tmp/script.go",
+      "bash /tmp/ci.sh",
+      "bash scripts/test.sh; rm -rf src",
+      "git push origin main",
+      "npm install",
+      "rm -rf src",
+    ]) {
+      expect(isElevatableVerificationShell(command)).toBe(false)
+    }
+    expect(elevatedVerificationEntrypoint("bash scripts/ci.sh")).toBe("scripts/ci.sh")
+    expect(elevatedVerificationEntrypoint("python scripts/reproduce.py")).toBe("scripts/reproduce.py")
+    expect(elevatedVerificationEntrypoint("go run ./cmd/test-runner")).toBe("./cmd/test-runner")
+    expect(elevatedVerificationEntrypoint("make test")).toBeUndefined()
+    expect(elevatedVerificationEntrypoint("python -m tests.runner")).toBeUndefined()
   })
 
   test("allows constrained Go environment prefixes", () => {
