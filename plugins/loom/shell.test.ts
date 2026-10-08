@@ -6,6 +6,7 @@ import {
   diagnosticShellResourcesAllowed,
   classifyVerificationShell,
   isElevatableVerificationShell,
+  elevatedVerificationEntrypoint,
   isAllowedButlerCommit,
   isAllowedGitCommit,
   isAllowedPackageScriptShell,
@@ -291,6 +292,7 @@ describe("Loom Worker shell policy", () => {
       "sh ./scripts/ci.sh",
       "python scripts/reproduce.py",
       "python3 -m custom_test_runner",
+      "python3 -m tests.runner",
       "go run ./cmd/test-runner",
     ]) {
       expect(isElevatableVerificationShell(command)).toBe(true)
@@ -302,6 +304,12 @@ describe("Loom Worker shell policy", () => {
       "python3 -m pip._internal",
       "make test-clean",
       "make deploy",
+      "make test -f /tmp/outside.mk",
+      "make test --eval 'target:; echo unsafe'",
+      "make test -C /tmp",
+      "just test -f /tmp/Justfile",
+      "python3 -m http.server",
+      "python3 -m os",
       "just clean",
       "bash -c 'echo hello'",
       "sh -lc 'echo hello'",
@@ -317,6 +325,11 @@ describe("Loom Worker shell policy", () => {
     ]) {
       expect(isElevatableVerificationShell(command)).toBe(false)
     }
+    expect(elevatedVerificationEntrypoint("bash scripts/ci.sh")).toBe("scripts/ci.sh")
+    expect(elevatedVerificationEntrypoint("python scripts/reproduce.py")).toBe("scripts/reproduce.py")
+    expect(elevatedVerificationEntrypoint("go run ./cmd/test-runner")).toBe("./cmd/test-runner")
+    expect(elevatedVerificationEntrypoint("make test")).toBeUndefined()
+    expect(elevatedVerificationEntrypoint("python -m tests.runner")).toBeUndefined()
   })
 
   test("allows constrained Go environment prefixes", () => {
