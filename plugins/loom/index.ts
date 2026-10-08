@@ -130,6 +130,7 @@ import {
   isAllowedButlerCommit,
   isAllowedGitCommit,
   isAllowedPackageScriptShell,
+  localPolicyShellAllowed,
   classifyVerificationShell,
   isElevatableVerificationShell,
   elevatedGenerationOutput,
@@ -147,6 +148,7 @@ import {
   shellResourcesAllowed,
   workerShellResourcesAllowed,
 } from "./shell"
+import { readLocalPermissionPolicy, projectShellOverrides, projectWriteOverrides } from "./local-policy"
 import { prepareReportPromotion, publishPreparedReport, reconcilePendingReportPromotion, type ReportPromotionInput, type ReportPromotionRecord } from "./reports"
 import {
   findPaths,
@@ -4697,9 +4699,16 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       const effectiveWriteScope =
         agent === "general"
           ? generalGitWriteScope
-          : declaredScope?.write.length
-            ? declaredScope.write
-            : (artifactWriteDefaults[agent] ?? [])
+          : mergeWriteScope(
+              declaredScope?.write.length
+                ? declaredScope.write
+                : (artifactWriteDefaults[agent] ?? []),
+              projectWriteOverrides(
+                (await readLocalPermissionPolicy()).policy,
+                ctx.location.directory,
+                agent,
+              ),
+            )
 
       if (commitMessagePaths.length > 0) {
         if (committableWriteScope(effectiveWriteScope).length === 0) {
@@ -4812,6 +4821,16 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           scopeKey(workflowId, stepId),
         )) as TaskScope | undefined
         if (scope?.write.length) writeScope = scope.write
+      }
+      if (raw.agent !== "general") {
+        writeScope = mergeWriteScope(
+          writeScope,
+          projectWriteOverrides(
+            (await readLocalPermissionPolicy()).policy,
+            ctx.location.directory,
+            String(raw.agent ?? ""),
+          ),
+        )
       }
       writeScope = committableWriteScope(writeScope)
 
@@ -12319,13 +12338,25 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           if (!step) return { content: renderToolOutput({ error: "Step not found." }) }
           const scope = (await ctx.storage.get(scopeKey(workflowId, stepId))) as TaskScope | undefined
           const roleWriteDefault = artifactWriteDefaults[step.agent] ?? []
-          const effectiveWrite = scope?.write.length ? scope.write : roleWriteDefault
+          const policyState = await readLocalPermissionPolicy()
+          const localWrite = projectWriteOverrides(
+            policyState.policy,
+            ctx.location.directory,
+            step.agent,
+          )
+          const effectiveWrite = mergeWriteScope(
+            scope?.write.length ? scope.write : roleWriteDefault,
+            localWrite,
+          )
           const committableWrite = committableWriteScope(effectiveWrite)
           return {
             content: renderToolOutput({
               scope: scope ?? null,
               agent: step.agent,
               roleWriteDefault,
+              localWrite,
+              localPolicyStatus: policyState.status,
+              ...(policyState.error ? { localPolicyError: policyState.error } : {}),
               effectiveWrite,
               committableWrite,
               commitAuthorized: committableWrite.length > 0,
@@ -13911,9 +13942,16 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             const declaredScope = (await ctx.storage.get(
               scopeKey(workflowId, stepId),
             )) as TaskScope | undefined
-            authorScope = declaredScope?.write.length
-              ? declaredScope.write
-              : (artifactWriteDefaults[agent] ?? [])
+            authorScope = mergeWriteScope(
+              declaredScope?.write.length
+                ? declaredScope.write
+                : (artifactWriteDefaults[agent] ?? []),
+              projectWriteOverrides(
+                (await readLocalPermissionPolicy()).policy,
+                ctx.location.directory,
+                agent,
+              ),
+            )
           } else {
             event.effect = "deny"
             event.message = "Butler authoring is available only to Loom roles."
@@ -14026,9 +14064,16 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             const declaredScope = (await ctx.storage.get(
               scopeKey(workflowId, stepId),
             )) as TaskScope | undefined
-            authorScope = declaredScope?.write.length
-              ? declaredScope.write
-              : (artifactWriteDefaults[agent] ?? [])
+            authorScope = mergeWriteScope(
+              declaredScope?.write.length
+                ? declaredScope.write
+                : (artifactWriteDefaults[agent] ?? []),
+              projectWriteOverrides(
+                (await readLocalPermissionPolicy()).policy,
+                ctx.location.directory,
+                agent,
+              ),
+            )
           }
 
           authorScope = committableWriteScope(authorScope)
@@ -14292,9 +14337,16 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         const declaredScope = (await ctx.storage.get(
           scopeKey(workflowId, stepId),
         )) as TaskScope | undefined
-        const effectiveWrite = declaredScope?.write.length
-          ? declaredScope.write
-          : (artifactWriteDefaults[agent] ?? [])
+        const effectiveWrite = mergeWriteScope(
+          declaredScope?.write.length
+            ? declaredScope.write
+            : (artifactWriteDefaults[agent] ?? []),
+          projectWriteOverrides(
+            (await readLocalPermissionPolicy()).policy,
+            ctx.location.directory,
+            agent,
+          ),
+        )
         if (
           effectiveWrite.length === 0 ||
           !resourcesWithinScope(event.resources, effectiveWrite)
@@ -14428,9 +14480,17 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         const scope = (await ctx.storage.get(
           scopeKey(workflowId, stepId),
         )) as TaskScope | undefined
+        const effectiveWrite = mergeWriteScope(
+          scope?.write ?? [],
+          projectWriteOverrides(
+            (await readLocalPermissionPolicy()).policy,
+            ctx.location.directory,
+            "worker",
+          ),
+        )
         if (
-          !scope?.write.length ||
-          !resourcesWithinScope(event.resources, scope.write)
+          effectiveWrite.length === 0 ||
+          !resourcesWithinScope(event.resources, effectiveWrite)
         ) {
           event.effect = "deny"
           event.message =
