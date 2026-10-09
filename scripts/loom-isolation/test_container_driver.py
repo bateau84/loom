@@ -6,9 +6,39 @@ from pathlib import Path
 import sys
 import tempfile
 import container_gate
+import os
+from unittest.mock import patch
 
 
 class ContextTests(unittest.TestCase):
+    def test_release_is_invisible_during_partial_writes_then_visible_complete(self):
+        with tempfile.TemporaryDirectory(dir=Path(__file__).parent) as directory:
+            control = Path(directory)
+            nonce = "synthetic-complete-launch-token"
+            original_write = os.write
+            observations = []
+
+            def partial_write(fd, data):
+                written = original_write(fd, data[:3])
+                observations.append(container_gate.release_ready(control, nonce))
+                return written
+
+            with patch("container_driver.os.write", side_effect=partial_write):
+                container_driver.publish_release(control, nonce)
+            self.assertGreater(len(observations), 1)
+            self.assertEqual(set(observations), {False})
+            self.assertTrue(container_gate.release_ready(control, nonce))
+            self.assertEqual(list(control.iterdir()), [control / "release"])
+
+    def test_gate_still_refuses_empty_or_wrong_visible_release(self):
+        with tempfile.TemporaryDirectory(dir=Path(__file__).parent) as directory:
+            control = Path(directory)
+            self.assertFalse(container_gate.release_ready(control, "expected"))
+            for value in ("", "expect", "other"):
+                (control / "release").write_text(value)
+                with self.assertRaises(RuntimeError):
+                    container_gate.release_ready(control, "expected")
+
     def test_ambient_witness_requires_actual_misdirection_not_a_duplicate_label(self):
         probes = [{"phase": "before-import", "kind": kind, "operation": operation,
                    "errno": 2, "ambientMisdirected": kind == "ambient"}

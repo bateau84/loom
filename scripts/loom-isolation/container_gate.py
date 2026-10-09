@@ -5,6 +5,7 @@ import os
 import sqlite3
 import subprocess
 import time
+import hashlib
 from pathlib import Path
 
 
@@ -12,6 +13,15 @@ def git_inputs(root: Path) -> list[str]:
     candidates = ("package.json", "bun.lock", "tsconfig.json", "README.md", ".gitignore",
                   "plugins", "scripts", "dashboard", "agents", "skills", "commands", "docs", "evals", ".github")
     return [name for name in candidates if (root / name).exists()]
+
+
+def release_ready(control: Path, nonce: str) -> bool:
+    release = control / "release"
+    if not release.exists():
+        return False
+    if release.is_symlink() or release.read_bytes() != nonce.encode("ascii"):
+        raise RuntimeError("wrong or incomplete launch release")
+    return True
 
 
 def main():
@@ -82,17 +92,16 @@ def main():
         namespaces = {kind: os.readlink("/proc/self/ns/" + kind) for kind in ("user", "mnt", "pid", "ipc", "net")}
         before = probes("before-import")
         emit("ready", restricted=True, uid=1000, namespacePid=1, namespaces=namespaces,
+             gateSha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
              capabilities="zero", seccomp=2, noNewPrivileges=True, inheritedFDs=descriptors,
              stdioTypes={"0": "null", "1": "pipe", "2": "pipe"},
              beforeImportDenials=before)
         phase = "supervisor-release"
         deadline = time.monotonic() + 40
-        while not Path("/control/release").exists():
+        while not release_ready(Path("/control"), nonce):
             if time.monotonic() > deadline:
                 raise RuntimeError("no independent supervisor release")
             time.sleep(0.1)
-        if Path("/control/release").read_text() != nonce:
-            raise RuntimeError("wrong launch release")
         phase = "fresh-state-setup"
         for part in ("home", "config", "data", "state", "cache", "runtime", "tmp"):
             path = Path("/tmp/loom", part)

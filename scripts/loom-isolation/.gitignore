@@ -1,4 +1,5 @@
 .container-results/
+.container-builds/
 .container-build-*/
 .container-run-*/
 .podman-witness-*/
