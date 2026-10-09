@@ -10,6 +10,26 @@
 #   ocw-rm <branch>
 #   ocw-ls
 
+# Anchor ocw paths at the primary checkout, not the current worktree.
+function __ocw_main_root
+    set -l root (git worktree list --porcelain 2>/dev/null | awk 'NR == 1 && /^worktree / {print substr($0, 10); exit}')
+    test -n "$root"; or return 1
+    printf '%s\n' "$root"
+end
+
+# Complete registered worktrees with their exact (possibly nested) branch names.
+function __ocw_worktree_names
+    set -l root (__ocw_main_root); or return
+    git worktree list --porcelain 2>/dev/null | awk -v prefix="$root-wt/" '
+        /^worktree / { path = substr($0, length("worktree ") + 1); next }
+        /^branch refs\/heads\// {
+            branch = substr($0, length("branch refs/heads/") + 1)
+            if (index(path, prefix) == 1 && substr(path, length(prefix) + 1) == branch)
+                print branch
+        }
+    '
+end
+
 function __ocw_find_json
     set -l stem $argv[1]
     if test -f "$stem.jsonc"
@@ -316,7 +336,7 @@ function ocw
         set id "$rundir/$name"
         set args $pre_args $post_args
     else
-        set -l root (git rev-parse --show-toplevel 2>/dev/null); or return 1
+        set -l root (__ocw_main_root); or return 1
         set rundir "$root-wt/$name"
         set id $rundir
         set -l base HEAD
@@ -423,21 +443,35 @@ function ocw-rm
         return 1
     end
     set -l name $argv[1]
-    set -l root (git rev-parse --show-toplevel 2>/dev/null); or return 1
-    git worktree remove --force "$root-wt/$name"; and git branch -D "$name"
+    set -l root (__ocw_main_root); or return 1
+    set -l target "$root-wt/$name"
+    set -l actual (git -C "$target" symbolic-ref --quiet --short HEAD 2>/dev/null); or begin
+        echo "ocw-rm: no checked-out branch at $target" >&2
+        return 1
+    end
+    if test "$actual" != "$name"
+        echo "ocw-rm: '$target' checks out '$actual', not '$name'" >&2
+        return 1
+    end
+
+    # Do not leave the user's shell in a removed directory.
+    set -l here (pwd -P)
+    if test "$here" = "$target"; or string match -q -- "$target/*" "$here"
+        cd "$root"; or return 1
+    end
+    git -C "$root" worktree remove --force "$target"; or return 1
+    git -C "$root" branch -D "$name"; or return 1
+
+    # Remove only empty intermediate directories.
+    set -l parent (dirname "$target")
+    while test "$parent" != "$root-wt"
+        rmdir "$parent" 2>/dev/null; or break
+        set parent (dirname "$parent")
+    end
 end
 
 function ocw-ls
     git worktree list
-end
-
-function __ocw_worktree_names
-    set -l root (git rev-parse --show-toplevel 2>/dev/null); or return
-    set -l wtdir "$root-wt"
-    test -d "$wtdir"; or return
-    for d in $wtdir/*/
-        basename $d
-    end
 end
 
 complete -c ocw -f -n 'test (count (commandline -opc)) -eq 1' -a '(__ocw_worktree_names)'

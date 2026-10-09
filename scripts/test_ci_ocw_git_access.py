@@ -246,6 +246,106 @@ class OcwGitAccessTests(unittest.TestCase):
                 )
                 self._assert_grants(capture, self.repo)
 
+    def _invoke(self, shell, code, *, repo=None):
+        binary, script = shell
+        env = {
+            **self.env,
+            "OCW_SCRIPT": str(SCRIPTS / script),
+            "TEST_REPO": str(repo or self.repo),
+        }
+        if binary == "fish":
+            command = f'cd "$TEST_REPO"; and source "$OCW_SCRIPT"; and {code}'
+        else:
+            command = f'cd "$TEST_REPO" && source "$OCW_SCRIPT" && {code}'
+            if binary == "zsh":
+                command = "autoload -Uz compinit; compinit -u; " + command
+        return subprocess.run([binary, "-c", command], env=env,
+                              text=True, capture_output=True)
+
+    def _new_worktree(self, branch):
+        target = Path(str(self.repo) + "-wt") / branch
+        run("git", "-C", str(self.repo), "worktree",
+            "add", "-q", "-b", branch, str(target))
+        return target
+
+    def test_nested_branch_launch_from_main_and_linked_worktree(self):
+        for shell in self._shells():
+            with self.subTest(shell=shell[0]):
+                name = f"fix/topic-{shell[0]}"
+                launched = self._launch(shell, name, profile="demo")
+                self._assert_grants(launched, self.repo)
+                target = Path(str(self.repo) + "-wt") / name
+                self.assertEqual(Path(launched["cwd"]), target)
+                self.assertEqual(run("git", "-C", str(target),
+                                     "branch", "--show-current").stdout.strip(),
+                                 name)
+                child = f"fix/child-{shell[0]}"
+                launched = self._launch(shell, child, repo=target)
+                self.assertEqual(Path(launched["cwd"]),
+                                 Path(str(self.repo) + "-wt") / child)
+                self._assert_grants(launched, self.repo)
+
+    def test_nested_worktree_completion(self):
+        nested = self._new_worktree("fix/some-branch")
+        self._new_worktree("fix/second-branch")
+        self._new_worktree("docs/other-branch")
+        expected = {"fix/some-branch", "fix/second-branch"}
+        for shell in self._shells():
+            for program in ("ocw", "ocw-rm"):
+                for cwd in (self.repo, nested):
+                    with self.subTest(shell=shell[0], cmd=program, cwd=str(cwd)):
+                        if shell[0] == "bash":
+                            code = (
+                                f'COMP_WORDS=({program} fix/); COMP_CWORD=1; '
+                                '_ocw_complete; printf "%s\\n" "${COMPREPLY[@]}"'
+                            )
+                        elif shell[0] == "zsh":
+                            code = (
+                                'function compadd() { [[ "$1" == "-a" ]] && '
+                                'print -l -- "${names[@]}"; }; CURRENT=2; _ocw'
+                            )
+                        else:
+                            code = f"complete -C '{program} fix/'"
+                        result = self._invoke(shell, code, repo=cwd)
+                        self.assertEqual(result.returncode, 0,
+                                         result.stdout + result.stderr)
+                        matches = {
+                            line.split("\t")[0]
+                            for line in result.stdout.splitlines()
+                            if line.split("\t")[0].startswith("fix/")
+                        }
+                        self.assertEqual(matches, expected)
+
+    def test_nested_branch_removal_from_its_own_directory(self):
+        for shell in self._shells():
+            with self.subTest(shell=shell[0]):
+                name = f"fix/delete-{shell[0]}"
+                sibling = f"fix/keep-{shell[0]}"
+                target = self._new_worktree(name)
+                other = self._new_worktree(sibling)
+                chain = f'ocw-rm "{name}"; and pwd -P' if shell[0] == "fish" \
+                        else f'ocw-rm "{name}" && pwd -P'
+                result = self._invoke(shell, chain, repo=target)
+                self.assertEqual(result.returncode, 0,
+                                 result.stdout + result.stderr)
+                self.assertEqual(result.stdout.splitlines()[-1], str(self.repo))
+                self.assertFalse(target.exists())
+                self.assertTrue(other.exists())
+                self.assertFalse(run("git", "-C", str(self.repo),
+                                     "branch", "--list", name).stdout.strip())
+                result = self._invoke(shell, f'ocw-rm "{sibling}"')
+                self.assertEqual(result.returncode, 0,
+                                 result.stdout + result.stderr)
+                self.assertFalse(other.exists())
+
+    def test_removal_rejects_branch_prefix(self):
+        target = self._new_worktree("fix/actual")
+        for shell in self._shells():
+            with self.subTest(shell=shell[0]):
+                result = self._invoke(shell, "ocw-rm fix")
+                self.assertNotEqual(result.returncode, 0)
+                self.assertTrue(target.exists())
+
     def test_script_syntax_where_shell_is_installed(self):
         for binary, file in SHELLS:
             if shutil.which(binary):

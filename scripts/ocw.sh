@@ -11,6 +11,29 @@
 #   ocw-rm <branch>
 #   ocw-ls
 
+# The first Git worktree entry is the primary checkout, even when called from
+# another worktree. It anchors ocw's sibling -wt directory.
+_ocw_main_root() {
+  local root
+  root="$(git worktree list --porcelain 2>/dev/null | awk 'NR == 1 && /^worktree / {print substr($0, 10); exit}')" || return 1
+  [ -n "$root" ] || return 1
+  printf '%s\n' "$root"
+}
+
+# Git reports full branch names, unlike a shallow directory listing of -wt/*.
+_ocw_worktree_names() {
+  local root
+  root="$(_ocw_main_root)" || return 0
+  git worktree list --porcelain 2>/dev/null | awk -v prefix="${root}-wt/" '
+    /^worktree / { path = substr($0, length("worktree ") + 1); next }
+    /^branch refs\/heads\// {
+      branch = substr($0, length("branch refs/heads/") + 1)
+      if (index(path, prefix) == 1 && substr(path, length(prefix) + 1) == branch)
+        print branch
+    }
+  '
+}
+
 _ocw_find_json() {
   local stem="$1"
   [ -f "${stem}.jsonc" ] && { printf '%s\n' "${stem}.jsonc"; return 0; }
@@ -282,7 +305,7 @@ ocw() {
   if [ "$no_worktree" -eq 1 ]; then
     rundir="$PWD"; id="${rundir}/${name}"
   else
-    root="$(git rev-parse --show-toplevel 2>/dev/null)" || return 1
+    root="$(_ocw_main_root)" || return 1
     rundir="${root}-wt/${name}"; id="$rundir"; base="HEAD"
     if [ "$pre_count" -gt 0 ] && [ "$#" -gt 0 ]; then
       case $1 in -*) ;; *) base="$1"; shift ;; esac
@@ -365,20 +388,40 @@ ocw() {
 }
 
 ocw-rm() {
-  local name="${1:?usage: ocw-rm <branch>}" root
-  root="$(git rev-parse --show-toplevel 2>/dev/null)" || return 1
-  git worktree remove --force "${root}-wt/${name}" && git branch -D "$name"
+  local name="${1:?usage: ocw-rm <branch>}" root target actual parent
+  root="$(_ocw_main_root)" || return 1
+  target="${root}-wt/${name}"
+  actual="$(git -C "$target" symbolic-ref --quiet --short HEAD 2>/dev/null)" || {
+    echo "ocw-rm: no checked-out branch at $target" >&2
+    return 1
+  }
+  if [ "$actual" != "$name" ]; then
+    echo "ocw-rm: '$target' checks out '$actual', not '$name'" >&2
+    return 1
+  fi
+
+  # Do not leave the user's shell in the directory being removed.
+  case "$(pwd -P)/" in "$target/"*) cd "$root" || return 1 ;; esac
+  git -C "$root" worktree remove --force "$target" || return 1
+  git -C "$root" branch -D "$name" || return 1
+
+  # Remove only empty prefix directories (fix/), preserving sibling worktrees.
+  parent="${target%/*}"
+  while [ "$parent" != "${root}-wt" ]; do
+    rmdir "$parent" 2>/dev/null || break
+    parent="${parent%/*}"
+  done
 }
 
 ocw-ls() { git worktree list; }
 
 _ocw_complete() {
-  local cur root wtdir
-  [ "$COMP_CWORD" -eq 1 ] || return 0
+  local cur name
+  [ "${COMP_CWORD:-}" -eq 1 ] || return 0
   cur="${COMP_WORDS[COMP_CWORD]}"
-  root="$(git rev-parse --show-toplevel 2>/dev/null)" || return 0
-  wtdir="${root}-wt"
-  [ -d "$wtdir" ] || return 0
-  COMPREPLY=( $(compgen -W "$(command ls "$wtdir" 2>/dev/null)" -- "$cur") )
+  COMPREPLY=()
+  while IFS= read -r name; do
+    case "$name" in "$cur"*) COMPREPLY+=("$name") ;; esac
+  done < <(_ocw_worktree_names)
 }
 complete -F _ocw_complete ocw ocw-rm
