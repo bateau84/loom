@@ -7,7 +7,7 @@ tags: [loom, architecture, reliability, continuity, simplification]
 
 # Continuity through owned facts and derived execution
 
-**Status:** review-ready recommendation; lifecycle acceptance belongs to the independent gate. No implementation or runtime proof.
+**Status:** accepted by independent architecture review on 2026-10-09, workflow `735f1bce-1974-4f34-9158-4ec7ed5572de`, step `review-architecture`, of Architect revision `d5f976e9a20b27840ca33d786a0362b6b3f0a17c`. No implementation authorization or runtime proof.
 
 ## Derived from / satisfies
 
