@@ -84,12 +84,20 @@ function __ocw_prepare_profile_root
             end
         end
     else
-        # Resolve global/project JSONC and permissions before adding Git access.
-        fish -c 'cd $argv[1]; and opencode debug config' -- "$rundir" > "$merged"; or begin
-            rm -f "$merged"
+        # Keep global/project settings in their original sources. Copy only the
+        # effective permission rules so the scoped rules do not erase project denies.
+        set -l resolved "$root/.opencode.resolved.$fish_pid"
+        fish -c 'cd $argv[1]; and opencode debug config' -- "$rundir" > "$resolved"; or begin
+            rm -f "$resolved"
             echo "ocw: failed to resolve OpenCode config" >&2
             return 2
         end
+        jq '{permissions: (.permissions // [])}' "$resolved" > "$merged"; or begin
+            rm -f "$resolved" "$merged"
+            echo "ocw: invalid resolved OpenCode permissions" >&2
+            return 2
+        end
+        rm -f "$resolved"
     end
 
     if test -n "$git_common_dir"
