@@ -53,7 +53,7 @@ describe("separate Loom planning advice", () => {
           }],
         }] }],
       }
-      expect(() => validatePlanRoleFeasibility(plan)).toThrow(`role ${role} has no supported Task execution slot`)
+      expect(() => validatePlanRoleFeasibility(plan)).toThrow(role === "brainstorm" ? "requires a valid distinct adviceForTaskId" : `role ${role} has no supported Task execution slot`)
     }
   })
 })
