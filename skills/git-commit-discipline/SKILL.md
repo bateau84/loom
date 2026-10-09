@@ -41,13 +41,13 @@ git diff --cached --check
 git diff --cached --stat
 git diff --cached
 
-git -c core.hooksPath=/dev/null commit -m "<type>(<scope>): <subject>"
+git -c core.hooksPath=/dev/null commit -m "<type>(<scope>): <subject>" -- path/to/fileA path/to/fileB
 ```
 
 For a short or medium multi-paragraph message, repeat `-m`:
 
 ```bash
-git -c core.hooksPath=/dev/null commit -m "<type>(<scope>): <subject>" -m "<why / important reasoning>" -m "Verification: <checks performed>"
+git -c core.hooksPath=/dev/null commit -m "<type>(<scope>): <subject>" -m "<why / important reasoning>" -m "Verification: <checks performed>" -- path/to/fileA path/to/fileB
 ```
 
 For a long Markdown message, compose it with the normal edit/write tool under the current role's reserved scratch namespace:
@@ -59,10 +59,12 @@ ephemeral-reports/<role>/commit-messages/<unique-name>.md
 Then use the file as the complete commit message:
 
 ```bash
-git -c core.hooksPath=/dev/null commit -F ephemeral-reports/<role>/commit-messages/<unique-name>.md
+git -c core.hooksPath=/dev/null commit -F ephemeral-reports/<role>/commit-messages/<unique-name>.md -- path/to/fileA path/to/fileB
 ```
 
 The scratch file is non-committable. Never stage it. The current commit-owning role/session must write the exact file bytes before using `-F`; Loom rejects a pre-existing, cross-role, stale/changed, symlink, hardlinked, or other non-single-link regular message file. A successful file-backed commit consumes the scratch file, so write a fresh message file for the next commit. Do not use shell redirection, heredocs, arbitrary `-F` paths, or another role's scratch namespace to construct a commit message.
+
+**For whole-file commits, list the exact files in both `git add` and `git commit`.** The paths after `--` exclude other staged changes, but Git uses the **current working-tree contents** of those paths, not a previously staged snapshot. Re-stage changed files before committing; Loom checks that every named file was staged and that the staged bytes still match its admitted working-tree bytes. Loom's shared-index ownership check may still reject an index containing another task's work.
 
 Loom intentionally rejects plain `git commit`, `git commit -a`, `git add .`, `git add -A`, and partial staging with `git add -p`. Loom tracks admitted whole-file bytes for authorship/provenance, so partial staging does not fit that model.
 
@@ -101,8 +103,8 @@ Never let a multi-wave or multi-task session accumulate uncommitted work. Commit
 - **Before any git operation that touches history or the working tree** (`rebase`, `reset`, `checkout`, `stash`, `clean`) - never run one of these with uncommitted work in flight unless the operation's whole point IS to manage that specific uncommitted change (e.g. `git stash` before a rebase).
 
 ```bash
-git add <files you actually touched for this task>   # never -A/. mid-task, see §2
-git commit -m "<task>: <what changed and why>"
+git add -- path/to/fileA path/to/fileB   # only files owned by this task
+git commit -m "<task>: <what changed and why>" -- path/to/fileA path/to/fileB
 ```
 
 When Loom's runtime is active, use the Loom-compatible hookless commit form documented above instead of plain `git commit`.
@@ -121,13 +123,13 @@ git diff --stat                 # size/shape per file
 **Stage by logical unit, not by "everything":**
 
 ```bash
-git add path/to/fileA.go path/to/fileA_test.go   # one concern, explicitly named
-git diff --staged                                 # verify ONLY that concern is staged
-git commit -m "<concern A>: <what and why>"
+git add -- path/to/fileA.go path/to/fileA_test.go   # one concern, explicitly named
+git diff --staged                                      # verify ownership and intended bytes
+git commit -m "<concern A>: <what and why>" -- path/to/fileA.go path/to/fileA_test.go
 
-git add path/to/fileB.go
+git add -- path/to/fileB.go
 git diff --staged
-git commit -m "<concern B>: <what and why>"
+git commit -m "<concern B>: <what and why>" -- path/to/fileB.go
 ```
 
 Outside Loom, partial staging is appropriate when one file contains two genuinely independent concerns:
@@ -139,6 +141,8 @@ git commit -m "<concern A>: <what and why>"
 git add -p path/to/file.go
 git commit -m "<concern B>: <what and why>"
 ```
+
+**Exception:** Do not append filenames to these partial-staging commits. Git would commit the entire working-tree contents of the named files, including hunks deliberately left unstaged. Verify the entire staged index instead and keep unrelated staged work out by other means.
 
 Under Loom, do **not** use partial staging. Reshape the edit into one coherent file-level checkpoint, or finish one concern and commit it before making the second concern. Loom's provenance model tracks admitted whole-file bytes, so `git add -p` is intentionally unsupported. Use the Loom-compatible commit form from the section above for each Loom commit.
 
