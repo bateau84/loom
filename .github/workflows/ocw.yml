@@ -1,0 +1,31 @@
+name: ocw worktree launchers
+
+on:
+  pull_request:
+    paths:
+      - "scripts/ocw.sh"
+      - "scripts/ocw.zsh"
+      - "scripts/ocw.fish"
+      - "scripts/test_ci_ocw_git_access.py"
+      - ".github/workflows/ocw.yml"
+  push:
+    branches: [main]
+    paths:
+      - "scripts/ocw.sh"
+      - "scripts/ocw.zsh"
+      - "scripts/ocw.fish"
+      - "scripts/test_ci_ocw_git_access.py"
+      - ".github/workflows/ocw.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Install shells and jq
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq zsh fish jq
+      - name: Test sh, zsh and fish ocw launchers
+        run: python3 -m unittest discover -s scripts -p 'test_ci_ocw_git_access.py' -v

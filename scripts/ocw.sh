@@ -19,7 +19,7 @@ _ocw_find_json() {
 }
 
 _ocw_prepare_profile_root() {
-  local cfg="$1" profile="$2" profile_file="$3"
+  local cfg="$1" profile="$2" profile_file="$3" rundir="$4" git_common_dir="$5"
   local root base merged item name
 
   command -v jq >/dev/null 2>&1 || {
@@ -27,8 +27,14 @@ _ocw_prepare_profile_root() {
     return 2
   }
 
-  root="${XDG_RUNTIME_DIR:-/tmp}/ocw-opencode-${UID:-$(id -u)}-${profile}"
-  mkdir -p "$root" || return 1
+  # Isolate generated permissions by worktree and profile.
+  local key runtime_base
+  key="$(printf '%s\0%s' "$rundir" "$profile" | git hash-object --stdin)" || return 1
+  runtime_base="${XDG_RUNTIME_DIR:-/tmp}"
+  root="$runtime_base/ocw-opencode-$(id -u)-$key"
+  [ ! -L "$root" ] || { echo "ocw: unsafe runtime config symlink: $root" >&2; return 1; }
+  (umask 077; mkdir -p "$root") || return 1
+  chmod 700 "$root" || return 1
 
   # Make normal OpenCode assets visible from the profile runtime root.
   for item in "$cfg"/* "$cfg"/.[!.]* "$cfg"/..?*; do
@@ -46,18 +52,51 @@ _ocw_prepare_profile_root() {
   base="$(_ocw_find_json "$cfg/opencode" 2>/dev/null || true)"
   merged="$root/.opencode.json.tmp.$$"
 
-  if [ -n "$base" ]; then
-    jq -s '.[0] * .[1]' "$base" "$profile_file" > "$merged" || {
-      rm -f "$merged"
-      echo "ocw: failed to merge $base with $profile_file" >&2
-      return 2
-    }
+  if [ -n "$profile_file" ]; then
+    if [ -n "$base" ]; then
+      jq -s '.[0] * .[1]' "$base" "$profile_file" > "$merged" || {
+        rm -f "$merged"
+        echo "ocw: failed to merge $base with $profile_file" >&2
+        return 2
+      }
+    else
+      jq '.' "$profile_file" > "$merged" || {
+        rm -f "$merged"
+        echo "ocw: failed to parse $profile_file" >&2
+        return 2
+      }
+    fi
   else
-    jq '.' "$profile_file" > "$merged" || {
-      rm -f "$merged"
-      echo "ocw: failed to parse $profile_file" >&2
+    # Keep global/project settings in their original sources. Copy only the
+    # effective permission rules so the scoped rules do not erase project denies.
+    local resolved="$root/.opencode.resolved.$"
+    (cd "$rundir" && opencode debug config) > "$resolved" || {
+      rm -f "$resolved"
+      echo "ocw: failed to resolve OpenCode config" >&2
       return 2
     }
+    jq '{permissions: (.permissions // [])}' "$resolved" > "$merged" || {
+      rm -f "$resolved" "$merged"
+      echo "ocw: invalid resolved OpenCode permissions" >&2
+      return 2
+    }
+    rm -f "$resolved"
+  fi
+
+  if [ -n "$git_common_dir" ]; then
+    local scoped="$root/.opencode.scoped.$$"
+    jq --arg path "$git_common_dir/*" '
+      .permissions = (
+        (.permissions // []) +
+        (["external_directory", "read", "edit"] |
+         map({action: ., resource: $path, effect: "allow"}))
+      )
+    ' "$merged" > "$scoped" || {
+      rm -f "$merged" "$scoped"
+      echo "ocw: failed to authorize Git metadata: $git_common_dir" >&2
+      return 2
+    }
+    mv -f "$scoped" "$merged" || return 1
   fi
 
   mv -f "$merged" "$root/opencode.json" || return 1
@@ -257,6 +296,19 @@ ocw() {
     fi
   fi
 
+  rundir="$(cd "$rundir" && pwd -P)" || return 1
+  local worktree_root git_common_dir=""
+  if worktree_root="$(git -C "$rundir" rev-parse --show-toplevel 2>/dev/null)"; then
+    worktree_root="$(cd "$worktree_root" && pwd -P)" || return 1
+    git_common_dir="$(git -C "$rundir" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" || return 1
+    git_common_dir="$(cd "$git_common_dir" && pwd -P)" || return 1
+    case "$git_common_dir" in
+      "$worktree_root"/*) git_common_dir="" ;;
+    esac
+  elif [ "$no_worktree" -ne 1 ]; then
+    return 1
+  fi
+
   local state_file="/tmp/ocw-$(printf '%s' "$id" | tr '/' '_')"
   [ -n "$profile" ] && printf '%s\n' "$profile" > "$state_file"
   [ -f "$state_file" ] && profile="$(cat "$state_file")"
@@ -270,14 +322,18 @@ ocw() {
     }
     cli_file="$cfg/cli/$profile.json"
     [ -f "$cli_file" ] || { echo "ocw: CLI profile '$profile' not found: $cli_file" >&2; return 2; }
-    runtime_root="$(_ocw_prepare_profile_root "$cfg" "$profile" "$profile_file")" || return $?
+  fi
+  if [ -n "$profile" ] || [ -n "$git_common_dir" ]; then
+    runtime_root="$(_ocw_prepare_profile_root "$cfg" "$profile" "$profile_file" "$rundir" "$git_common_dir")" || return $?
   fi
 
   (
     cd "$rundir" || exit 1
-    if [ -n "$profile" ]; then
+    if [ -n "$runtime_root" ]; then
       unset OPENCODE_CONFIG OPENCODE_CONFIG_CONTENT
       export OPENCODE_CONFIG_DIR="$runtime_root"
+    fi
+    if [ -n "$profile" ]; then
       export OPENCODE_CLI_CONFIG_CONTENT
       OPENCODE_CLI_CONFIG_CONTENT="$(cat "$cli_file")" || exit 1
     fi
@@ -287,19 +343,19 @@ ocw() {
       exit $?
     fi
 
-    if [ -n "$profile" ]; then
+    if [ -n "$runtime_root" ]; then
       case "${1:-}" in
         run)
-          echo "ocw: active profile -> [$profile] (standalone)" >&2
+          [ -z "$profile" ] || echo "ocw: active profile -> [$profile] (standalone)" >&2
           shift
           exec opencode run --standalone "$@"
           ;;
         ""|-*)
-          echo "ocw: active profile -> [$profile] (standalone)" >&2
+          [ -z "$profile" ] || echo "ocw: active profile -> [$profile] (standalone)" >&2
           exec opencode --standalone "$@"
           ;;
         *)
-          echo "ocw: active profile -> [$profile]" >&2
+          [ -z "$profile" ] || echo "ocw: active profile -> [$profile]" >&2
           exec opencode "$@"
           ;;
       esac
