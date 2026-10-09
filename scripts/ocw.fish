@@ -335,13 +335,18 @@ function ocw
     end
 
     set rundir (cd "$rundir"; and pwd -P); or return 1
-    set -l worktree_root (git -C "$rundir" rev-parse --show-toplevel 2>/dev/null); or return 1
-    set worktree_root (cd "$worktree_root"; and pwd -P); or return 1
-    set -l git_common_dir (git -C "$rundir" rev-parse --path-format=absolute --git-common-dir 2>/dev/null); or return 1
-    set git_common_dir (cd "$git_common_dir"; and pwd -P); or return 1
-    # A normal checkout owns .git; linked worktrees share it with another checkout.
-    if test -d "$worktree_root/.git"; and test "$git_common_dir" = "$worktree_root/.git"
-        set git_common_dir ''
+    set -l worktree_root (git -C "$rundir" rev-parse --show-toplevel 2>/dev/null)
+    set -l git_common_dir ''
+    if test -n "$worktree_root"
+        set worktree_root (cd "$worktree_root"; and pwd -P); or return 1
+        set git_common_dir (git -C "$rundir" rev-parse --path-format=absolute --git-common-dir 2>/dev/null); or return 1
+        set git_common_dir (cd "$git_common_dir"; and pwd -P); or return 1
+        # A normal checkout owns .git; linked worktrees share it with another checkout.
+        if test -d "$worktree_root/.git"; and test "$git_common_dir" = "$worktree_root/.git"
+            set git_common_dir ''
+        end
+    else if test $no_worktree -ne 1
+        return 1
     end
 
     set -l state_file "/tmp/ocw-"(string replace -a '/' '_' "$id")
