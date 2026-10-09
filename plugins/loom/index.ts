@@ -31,7 +31,7 @@ import {
 } from "./upgrade-actions"
 
 export const LOOM_NATIVE_TOOL_GUIDANCE =
-  "Loom control-plane tools are available through two equivalent OpenCode surfaces: native loom_* tools and Code Mode mirrors under tools.loom.code.*. Use either surface directly according to the active tool paradigm. If using Code Mode, search for Loom tools and invoke the returned tools.loom.code.* signatures; do not fall back to shell/filesystem discovery for Loom commands. Reviewer/Critic methodology uses a two-part contract: load practitioner guidance with OpenCode's native skill tool, then consume the role companion through loom_assessment or loom_qa; a plain ASSESSMENT.md/QA.md read is artifact inspection, not methodology loading. Interactive status is dashboard-first and does not depend on model prose: the Loom sidebar exposes a stable workflow dashboard URL, while loom_status may also return presentation metadata. Desktop browser preview is optional metadata only; do not invoke tools.browser.preview merely because presentation metadata exists. Every Loom agent may use read-only Git inspection such as `git status`, `git diff`, `git log`, `git show`, and `git rev-parse`. Load `git` for safe Git mechanics and `git-commit-discipline` before making commits. When any role has durable project-local write scope, that same effective scope authorizes commits of the admitted bytes, including paths added by `loom_scope_elevate`. Loom admits explicit-path Git staging and bounded hookless `git -c core.hooksPath=/dev/null commit -m ...` commands. Long commit messages may use `git -c core.hooksPath=/dev/null commit -F ephemeral-reports/<role>/commit-messages/<name>.md`; compose that scratch file with edit/write tools, never shell redirection. Plain `git commit` is intentionally denied because repository hooks could change the staged scope after validation. Git owns its objects, refs, and worktree metadata during admitted operations, including external Git metadata for linked worktrees; do not request raw `.git` access just to commit. Runtime write scope is discoverable: an attached child that needs additional project-local files calls loom_scope_elevate and continues immediately when granted. If any Loom tool returns continue=false, the child MUST stop its current turn and return control immediately; it must not retry the blocked mutation or continue assuming authority will arrive later."
+  "Loom control-plane tools are available through two equivalent OpenCode surfaces: native loom_* tools and Code Mode mirrors under tools.loom.code.*. Use either surface directly according to the active tool paradigm. If using Code Mode, search for Loom tools and invoke the returned tools.loom.code.* signatures; do not fall back to shell/filesystem discovery for Loom commands. Reviewer/Critic methodology uses a two-part contract: load practitioner guidance with OpenCode's native skill tool, then consume the role companion through loom_assessment or loom_qa; a plain ASSESSMENT.md/QA.md read is artifact inspection, not methodology loading. Interactive status is dashboard-first and does not depend on model prose: the Loom sidebar exposes a stable workflow dashboard URL, while loom_status may also return presentation metadata. Desktop browser preview is optional metadata only; do not invoke tools.browser.preview merely because presentation metadata exists. Every Loom agent may use read-only Git inspection such as `git status`, `git diff`, `git log`, `git show`, and `git rev-parse`. Load `git` for safe Git mechanics and `git-commit-discipline` before making commits. When any role has durable project-local write scope, that same effective scope authorizes commits of the admitted bytes, including paths added by `loom_scope_elevate`. Loom admits explicit-path Git staging and bounded hookless `git -c core.hooksPath=/dev/null commit -m ... -- <owned-files>` commands. Name the exact staged files again when committing; Loom checks those targets are staged and still match their admitted worktree bytes. Long commit messages may use `git -c core.hooksPath=/dev/null commit -F ephemeral-reports/<role>/commit-messages/<name>.md -- <owned-files>`; compose that scratch file with edit/write tools, never shell redirection. Plain `git commit` is intentionally denied because repository hooks could change the staged scope after validation. Git owns its objects, refs, and worktree metadata during admitted operations, including external Git metadata for linked worktrees; do not request raw `.git` access just to commit. Runtime write scope is discoverable: an attached child that needs additional project-local files calls loom_scope_elevate and continues immediately when granted. If any Loom tool returns continue=false, the child MUST stop its current turn and return control immediately; it must not retry the blocked mutation or continue assuming authority will arrive later."
 import {
   assertWorkflowNotCancelled,
   WorkflowCancelledError,
@@ -126,6 +126,7 @@ import {
   commitMessageScratchPath,
   diagnosticExecutionShellResourcesAllowed,
   gitCommitMessageFile,
+  scopedGitCommitTargets,
   diagnosticShellResourcesAllowed,
   isAllowedGitCommit,
   isAllowedPackageScriptShell,
@@ -1006,6 +1007,7 @@ function toolMutationLockPaths(
     const command = (input as any).command
     if (typeof command === "string") {
       paths.push(...(scopedGitAddTargets(command) ?? []))
+      paths.push(...(scopedGitCommitTargets(command) ?? []))
       const messageFile = gitCommitMessageFile(command)
       if (messageFile) paths.push(messageFile)
     }
@@ -1655,6 +1657,7 @@ async function commitScopeError(
   projectDirectory: string,
   writeScope: string[],
   requireExplicitOwnership = true,
+  commitTargets: readonly string[] = [],
 ) {
   try {
     const [ownership, binding, staged] = await Promise.all([
@@ -1663,6 +1666,15 @@ async function commitScopeError(
       stagedGitPaths(projectDirectory),
     ])
     if (staged.length === 0) return "Git commit denied: no staged repository changes."
+    // A path-scoped Git commit reads the working tree, not the index. Require
+    // every named path to be staged first, then apply the existing byte and
+    // ownership checks to the staged set before Git may use those files.
+    const stagedSet = new Set(staged.map(normalizeRepoPath))
+    const notStaged = commitTargets.filter((path) => !stagedSet.has(normalizeRepoPath(path)))
+    if (notStaged.length > 0) {
+      return "Git commit denied: explicitly named files must already be staged and verified: " +
+        notStaged.join(", ")
+    }
     const outside = staged.filter((path) => !resourcesWithinScope([path], writeScope))
     if (outside.length > 0) {
       return `Git commit denied: staged changes outside the current role/task write scope: ${outside.join(", ")}`
@@ -4802,6 +4814,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         ctx.location.directory,
         writeScope,
         true,
+        scopedGitCommitTargets(command) ?? [],
       )
       if (error) throw new Error(error)
       if (String(raw.agent ?? "") === "reviewer") {
@@ -13880,6 +13893,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               ctx.location.directory,
               authorScope,
               true,
+              event.resources.flatMap((resource: string) => scopedGitCommitTargets(resource) ?? []),
             )
             if (error) {
               event.effect = "deny"
@@ -14175,6 +14189,8 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             event.sessionID,
             ctx.location.directory,
             scope.write,
+            true,
+            event.resources.flatMap((resource: string) => scopedGitCommitTargets(resource) ?? []),
           )
           if (error) {
             event.effect = "deny"

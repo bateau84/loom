@@ -902,6 +902,7 @@ export function isGitAuthoringShellCommand(command: string) {
 
 type AllowedGitCommit = {
   messageFile?: string
+  paths: string[]
 }
 
 export function commitMessageScratchPath(path: string) {
@@ -927,8 +928,21 @@ function parsedAllowedGitCommit(command: string): AllowedGitCommit | undefined {
 
   let hasInlineMessage = false
   let messageFile: string | undefined
+  const paths: string[] = []
+  let readingPaths = false
+  let sawSeparator = false
   for (let index = 4; index < words.length; index += 1) {
     const word = words[index]
+    if (!readingPaths && word === "--") {
+      readingPaths = true
+      sawSeparator = true
+      continue
+    }
+    if (readingPaths) {
+      if (word.startsWith("-") || !safeProjectRelativePath(word)) return undefined
+      paths.push(word.startsWith("./") ? word.slice(2) : word)
+      continue
+    }
     if (word === "-m" || word === "--message") {
       const message = words[index + 1]
       if (!message || messageFile) return undefined
@@ -953,15 +967,26 @@ function parsedAllowedGitCommit(command: string): AllowedGitCommit | undefined {
     if (word === "--signoff" || word === "-s") {
       continue
     }
+    if (!word.startsWith("-") && safeProjectRelativePath(word)) {
+      readingPaths = true
+      paths.push(word.startsWith("./") ? word.slice(2) : word)
+      continue
+    }
     return undefined
   }
 
   if (!hasInlineMessage && !messageFile) return undefined
-  return messageFile ? { messageFile } : {}
+  if (sawSeparator && paths.length === 0) return undefined
+  if (new Set(paths).size !== paths.length) return undefined
+  return { ...(messageFile ? { messageFile } : {}), paths }
 }
 
 export function gitCommitMessageFile(command: string) {
   return parsedAllowedGitCommit(command)?.messageFile
+}
+
+export function scopedGitCommitTargets(command: string) {
+  return parsedAllowedGitCommit(command)?.paths
 }
 
 export function isAllowedGitCommit(command: string) {

@@ -16,6 +16,7 @@ import {
   isGitShellCommand,
   isGitAuthoringShellCommand,
   scopedGitAddTargets,
+  scopedGitCommitTargets,
   scopedGofmtWriteTargets,
   shellResourcesAllowed,
   workerShellResourcesAllowed,
@@ -793,5 +794,29 @@ describe("Loom Worker shell policy", () => {
     expect(isAllowedGitCommit("git commit -a -m 'all'")).toBe(false)
   })
 
+  test("accepts exact commit paths and rejects broad or unsafe pathspecs", () => {
+    const basic = "git -c core.hooksPath=/dev/null commit -m 'fix: one' -- src/file.ts src/file.test.ts"
+    expect(isAllowedGitCommit(basic)).toBe(true)
+    expect(scopedGitCommitTargets(basic)).toEqual(["src/file.ts", "src/file.test.ts"])
+    expect(scopedGitCommitTargets("git -c core.hooksPath=/dev/null commit -m 'fix: one' src/file.ts")).toEqual(["src/file.ts"])
+    expect(scopedGitCommitTargets("git -c core.hooksPath=/dev/null commit -m 'fix: one' -- ./src/file.ts")).toEqual(["src/file.ts"])
+    expect(scopedGitCommitTargets("git -c core.hooksPath=/dev/null commit -m 'fix: one'")).toEqual([])
+    expect(scopedGitCommitTargets(
+      "git -c core.hooksPath=/dev/null commit -F ephemeral-reports/worker/commit-messages/notes.md -- src/file.ts",
+    )).toEqual(["src/file.ts"])
+    for (const path of [".", "../secrets.md", "/etc/passwd", "src/*.ts", ":(exclude)src/file.ts", "--amend"]) {
+      expect(isAllowedGitCommit(
+        `git -c core.hooksPath=/dev/null commit -m 'fix: one' -- ${path}`,
+      )).toBe(false)
+    }
+    expect(isAllowedGitCommit("git -c core.hooksPath=/dev/null commit -m 'fix: one' --")).toBe(false)
+    expect(isAllowedGitCommit(
+      "git -c core.hooksPath=/dev/null commit -m 'fix: one' -- src/file.ts ./src/file.ts",
+    )).toBe(false)
+    expect(isAllowedGitCommit(
+      "git -c core.hooksPath=/dev/null commit -m 'fix: one' -- src/file.ts -a",
+    )).toBe(false)
+    expect(workerShellResourcesAllowed([basic], ["src/file.ts", "src/file.test.ts"])).toBe(true)
+  })
 
 })
