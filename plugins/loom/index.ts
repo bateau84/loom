@@ -665,6 +665,8 @@ type CommandElevation = {
 }
 
 const commandElevationCurrentKey = (sessionID: string) => "command-elevation-current/" + sessionID
+const commandElevationStepKey = (workflowId: string, stepId: string, attempt: number) =>
+  `command-elevation-step/${workflowId}/${stepId}/${attempt}`
 const commandElevationKey = (id: string) => "command-elevation/" + id
 const verificationCommandDigest = (command: string) =>
   createHash("sha256").update(command.trim()).digest("hex")
@@ -4424,17 +4426,25 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
     // Each historical elevation record is retained by ID. At most one remains
     // available to the same child session at any moment.
     const currentCommandElevation = async (sessionID: string, agent: string, command: string) => {
-      const id = await ctx.storage.get(commandElevationCurrentKey(sessionID)) as string | undefined
+      const workflowId = await ctx.storage.get(sessionKey(sessionID)) as string | undefined
+      const stepId = await ctx.storage.get(sessionStepKey(sessionID)) as string | undefined
+      const attempt = await ctx.storage.get(sessionStepAttemptKey(sessionID))
+      if (!workflowId || !stepId || !Number.isSafeInteger(attempt) ||
+          !(await exactRunnableStepAttemptBinding(ctx, sessionID, workflowId, stepId))) return undefined
+      // The code-mode elevation tool and the subsequent shell invocation can
+      // have distinct session identities even when attached to the same
+      // governed step attempt. Resolve grants by that authoritative attempt,
+      // not by the incidental tool session.
+      const id = await ctx.storage.get(
+        commandElevationStepKey(workflowId, stepId, attempt as number),
+      ) as string | undefined
       const grant = id
         ? await ctx.storage.get(commandElevationKey(id)) as CommandElevation | undefined
         : undefined
-      if (!grant || grant.sessionID !== sessionID || grant.agent !== agent ||
-          grant.commandDigest !== verificationCommandDigest(command) || grant.consumedAt ||
-          grant.supersededAt || Date.parse(grant.expiresAt) <= Date.now()) return undefined
-      if (!(await exactRunnableStepAttemptBinding(
-        ctx, sessionID, grant.workflowId, grant.stepId,
-      ))) return undefined
-      if ((await ctx.storage.get(sessionStepAttemptKey(sessionID))) !== grant.attempt) return undefined
+      if (!grant || grant.agent !== agent || grant.workflowId !== workflowId ||
+          grant.stepId !== stepId || grant.attempt !== attempt ||
+          grant.commandDigest !== verificationCommandDigest(command) ||
+          grant.consumedAt || grant.supersededAt || Date.parse(grant.expiresAt) <= Date.now()) return undefined
       return grant
     }
 
@@ -12356,7 +12366,8 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 throw new Error("Missing step-attempt binding.")
               }
               const currentKey = commandElevationCurrentKey(tool.sessionID)
-              const priorId = await ctx.storage.get(currentKey) as string | undefined
+              const attemptKey = commandElevationStepKey(value.workflowId, value.stepId, attempt as number)
+              const priorId = await ctx.storage.get(attemptKey) as string | undefined
               const prior = priorId
                 ? await ctx.storage.get(commandElevationKey(priorId)) as CommandElevation | undefined
                 : undefined
@@ -12381,6 +12392,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               }
               await ctx.storage.set(commandElevationKey(grant.id), grant)
               await ctx.storage.set(currentKey, grant.id)
+              await ctx.storage.set(attemptKey, grant.id)
               return grant
             })
             return { content: renderToolOutput({
