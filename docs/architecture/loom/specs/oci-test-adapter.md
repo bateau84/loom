@@ -5,7 +5,7 @@ description: Isolated test execution with existing named-package shell observati
 tags: [architecture, loom, verification, isolation, evidence, lifecycle]
 ---
 
-**Status:** proposed implementation-facing execution-realization extension, pending independent architecture review. Adapter implementation, pre-execution safety review, protocol admission and current-source test proof are not yet established. This document authorizes no command by itself.
+**Status:** accepted implementation-facing execution-realization extension after independent architecture review on 2026-10-09 (workflow `4e22715d-c930-4a7e-a721-c3f2247ece3c`, gate `review-architecture`, attempt 2; reviewed revision `85da316`). Adapter implementation, pre-execution safety review, protocol admission and current-source test proof are not yet established. This document authorizes no command by itself.
 
 **Revision 2:** addresses independent review FAIL for `6601577`: replaces the unspecified pre-npm launch with an explicitly reviewed project-test bootstrap on the existing executable-script path; private execution environment now precedes Python discovery/tests and static checks as well as Bun. No accepted Brainstorm semantics or evidence/prove framework changes.
 
