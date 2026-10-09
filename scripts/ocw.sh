@@ -30,8 +30,7 @@ _ocw_prepare_profile_root() {
   # Isolate generated permissions by worktree and profile.
   local key runtime_base
   key="$(printf '%s\0%s' "$rundir" "$profile" | git hash-object --stdin)" || return 1
-  runtime_base="$XDG_RUNTIME_DIR"
-  [ -n "$runtime_base" ] || runtime_base=/tmp
+  runtime_base="${XDG_RUNTIME_DIR:-/tmp}"
   root="$runtime_base/ocw-opencode-$(id -u)-$key"
   [ ! -L "$root" ] || { echo "ocw: unsafe runtime config symlink: $root" >&2; return 1; }
   (umask 077; mkdir -p "$root") || return 1
