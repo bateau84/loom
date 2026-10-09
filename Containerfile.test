@@ -1,0 +1,31 @@
+# Node base identity also used by the pinned runner build; Bun matches Loom CI.
+FROM docker.io/library/node:24-bookworm-slim@sha256:0e0ff40c39bc087845bfb27465a0df4ea419520094bc35842ff83dd8cbe6f9b6
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends python3 git jq zsh ca-certificates \
+    && rm -rf /var/lib/apt/lists/* \
+    && npm install --global bun@1.4.2 \
+    && test "$(bun --version)" = "1.4.2"
+# unittest discovery imports scripts/loom_eval_profile, whose public Python API
+# dependency is pinned to the same source revision as Loom CI. No runner CLI or
+# model invocation is executed; the source is a read-only image dependency.
+RUN git init -q /opt/loom-test-deps/eval-runner \
+    && git -C /opt/loom-test-deps/eval-runner fetch --depth=1 https://github.com/bateau84/opencode-eval-runner.git 1262ac8c2eebbd10af572e3e3560318f6113233b \
+    && git -C /opt/loom-test-deps/eval-runner -c core.hooksPath=/dev/null checkout -q --detach FETCH_HEAD \
+    && test "$(git -C /opt/loom-test-deps/eval-runner rev-parse HEAD)" = "1262ac8c2eebbd10af572e3e3560318f6113233b"
+ENV PYTHONPATH=/opt/loom-test-deps/eval-runner
+WORKDIR /workspace
+COPY --chown=node:node package.json bun.lock ./
+# Do not execute dependency or project lifecycle hooks during the networked build.
+RUN bun install --frozen-lockfile --ignore-scripts
+COPY --chown=node:node . .
+COPY scripts/loom-isolation/container_gate.py /opt/loom-test-gate.py
+RUN chown node:node /workspace
+ENV HOME=/tmp/loom/home XDG_CONFIG_HOME=/tmp/loom/config \
+    XDG_DATA_HOME=/tmp/loom/data XDG_STATE_HOME=/tmp/loom/state \
+    XDG_CACHE_HOME=/tmp/loom/cache XDG_RUNTIME_DIR=/tmp/loom/runtime \
+    TMPDIR=/tmp/loom/tmp OPENCODE_DB=/tmp/loom/data/opencode.db \
+    OPENCODE_DISABLE_AUTOUPDATE=1
+USER node
+# The driver verifies the engine and trusted gate BEFORE releasing bun run test.
+ENTRYPOINT ["python3", "-I", "-S", "-B", "/opt/loom-test-gate.py"]
+CMD ["bun", "run", "test"]

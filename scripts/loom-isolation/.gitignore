@@ -1,0 +1,5 @@
+.container-results/
+.container-build-*/
+.container-run-*/
+.podman-witness-*/
+__pycache__/
