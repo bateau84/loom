@@ -1,6 +1,6 @@
 # Reliability and simplification
 
-**Status:** proposed for independent review; no implementation or runtime proof claimed.
+**Status:** accepted by independent design/requirements semantic review on 2026-10-09, workflow `735f1bce-1974-4f34-9158-4ec7ed5572de`, step `review-think`. Acceptance covers this requirements bundle only; no implementation or runtime proof claimed.
 **Authority:** [accepted Anchor](../../anchors/loom-reliability/anchor.md), commit `54e0c23543958640d763b5019c5f1d78b0c5b191`.
 
 ## Normative homes
