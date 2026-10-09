@@ -169,7 +169,8 @@ class OcwGitAccessTests(unittest.TestCase):
             with self.subTest(shell=shell[0]):
                 capture = self._launch(shell, "plain")
                 config = self._assert_grants(capture, self.repo)
-                self.assertEqual(config["model"], "resolved/model")
+                self.assertNotIn("model", config)
+                self.assertNotIn("agents", config)
                 self.assertIn(GIT_DENY, config["permissions"])
                 self.assertIn(
                     {"action": "edit", "resource": "*/secrets/*", "effect": "deny"},
