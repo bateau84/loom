@@ -1,6 +1,6 @@
 # Continuity architecture
 
-**Status:** review-ready Architect recommendation, not independently accepted architecture or implementation authorization. Workflow `735f1bce-1974-4f34-9158-4ec7ed5572de`, architect attempt 0, 2026-10-09. Static discovery only.
+**Status:** accepted by independent architecture review on 2026-10-09, workflow `735f1bce-1974-4f34-9158-4ec7ed5572de`, step `review-architecture`, of Architect revision `d5f976e9a20b27840ca33d786a0362b6b3f0a17c`. Acceptance covers this architecture bundle only; static review, no implementation authorization or runtime proof.
 
 **Authority:** [accepted Anchor](../../../anchors/loom-reliability/anchor.md) at `54e0c23543958640d763b5019c5f1d78b0c5b191`; [accepted experience](../../../design/loom-reliability/continuity-experience.md); [accepted requirements and P1–P8](../../../requirements/loom-reliability/index.md), acceptance bookkeeping `2874f121311f56570fd8beceaf5f0f5a336722f3`. These remain the semantic owners.
 

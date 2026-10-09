@@ -7,7 +7,7 @@ tags: [loom, architecture, contracts, applicability, capabilities, provenance]
 
 # Continuity realization seams
 
-**Status:** review-ready companion contract conditional on independent acceptance of [parent decision](fact-model-and-continuity.md); not shipped APIs. Specifies interoperable semantic inputs and transaction outcomes, not final table names or command syntax. [Accepted authority](index.md) controls observable meaning.
+**Status:** accepted by independent architecture review on 2026-10-09, workflow `735f1bce-1974-4f34-9158-4ec7ed5572de`, step `review-architecture`, of Architect revision `d5f976e9a20b27840ca33d786a0362b6b3f0a17c`; not shipped APIs. Specifies interoperable semantic inputs and transaction outcomes, not final table names or command syntax. [Accepted authority](index.md) controls observable meaning.
 
 ## Modules and trust boundaries
 
