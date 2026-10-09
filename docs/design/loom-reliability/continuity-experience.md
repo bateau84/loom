@@ -7,7 +7,7 @@ tags: [design, loom, continuity, reliability, recovery]
 
 # Continuity experience
 
-**Status:** proposed for independent review. Docs-only design; no prototype, product test, production read, recovery execution or user study performed.
+**Status:** accepted by independent design/requirements semantic review on 2026-10-09, workflow `735f1bce-1974-4f34-9158-4ec7ed5572de`, step `review-think`. Docs-only design; no prototype, product test, production read, recovery execution or user study performed.
 
 **Authority:** [Anchor](../../anchors/loom-reliability/anchor.md) at `54e0c23543958640d763b5019c5f1d78b0c5b191`. Spending OQ `d0334518-1ed9-4d30-a976-059044f488c6` separately permits eight potentially paid initial-path dispatches, not implementation, retries or a monetary ceiling.
 
