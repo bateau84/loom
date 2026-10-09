@@ -2383,7 +2383,7 @@ describe("production runtime writer fencing", () => {
 
       const schema = await ensureRuntimeStateVersion(raw, runtime)
       expect(schema.currentVersion).toBe(RUNTIME_STATE_VERSION)
-      expect(schema.lastUpgradeId).toBe("plan-authority-delta-v9")
+      expect(schema.lastUpgradeId).toBe("brainstorm-native-advice-v10")
 
       for (const stale of [old, draftV2, priorV3, priorV4, priorV5, priorV6, priorV7, priorV8]) {
         await expect(stale.set("workflow/before-upgrade", { overwritten: true })).rejects.toThrow("does not match")
