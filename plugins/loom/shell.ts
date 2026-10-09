@@ -992,6 +992,7 @@ export function scopedGitCommitTargets(command: string) {
 export function isAllowedGitCommit(command: string) {
   return Boolean(parsedAllowedGitCommit(command))
 }
+
 function workerExecutionAllowed(command: string) {
   const words = parsedCommandWords(command)
   if (!words) return false
