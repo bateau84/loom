@@ -41,7 +41,7 @@ describe("separate Loom planning advice", () => {
     for (const role of ["brainstorm", "planner", "critic", "acceptance"]) {
       const insights = loomPlanningInsights([role])
       expect(insights.advisoryOnly).toBe(true)
-      expect(insights.hints[0]?.caution).toContain("not supported")
+      expect(insights.hints[0]?.caution).toContain("Advisory OQs")
       const plan: WorkPlanDefinition = {
         goal: "Bounded native work", assumptions: [], outOfScope: [], authorityRefs: ["anchor"],
         obligations: [], riskBoundaries: [], acceptanceCoverage: [], relationships: [], correctionRouting: [],
