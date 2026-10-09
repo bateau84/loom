@@ -114,6 +114,10 @@ class OcwGitAccessTests(unittest.TestCase):
             source = f"cd $TEST_REPO; and source $OCW_SCRIPT; and {command}"
         else:
             source = f'cd "$TEST_REPO" && source "$OCW_SCRIPT" && {command}'
+            if shell_bin == "zsh":
+                # The launcher registers tab completion, normally initialized
+                # by the user's interactive zsh setup.
+                source = "autoload -Uz compinit; compinit -u; " + source
         result = subprocess.run(
             [shell_bin, "-c", source],
             env=env,
@@ -125,7 +129,10 @@ class OcwGitAccessTests(unittest.TestCase):
             f"{shell_bin}: {result.stdout}\n{result.stderr}",
         )
         self.assertTrue(capture.exists(), f"{shell_bin}: missing launch capture")
-        return json.loads(capture.read_text())
+        payload = json.loads(capture.read_text())
+        payload["_launch_stderr"] = result.stderr
+        payload["_launch_stdout"] = result.stdout
+        return payload
 
     def _shells(self):
         for shell in SHELLS:
@@ -134,6 +141,7 @@ class OcwGitAccessTests(unittest.TestCase):
 
     def _assert_grants(self, capture, repo):
         common = str(repo / ".git") + "/*"
+        self.assertIsNotNone(capture["config"], f"missing scoped config: {capture}")
         config_dir = Path(capture["config"])
         config = json.loads((config_dir / "opencode.json").read_text())
         for action in ("external_directory", "read", "edit"):
