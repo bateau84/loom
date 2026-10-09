@@ -7,7 +7,7 @@ tags: [loom, architecture, recovery, isolation, verification, reliability]
 
 # Safety, recovery and decisive proof
 
-**Status:** review-ready owning correction, Architect attempt 1; prior producer `d5f976e9`/acceptance `f54b563` remain historical. Future proof protocol, not executed proof. Static inspection only: no product imports/tests, host Bun/npm, engines/images/providers, installed databases, credentials, private engine store, backup, migration or live recovery accessed/executed. [Authority and correction scope](index.md), [fact decision](fact-model-and-continuity.md), [seams](realization-seams.md).
+**Status:** accepted by fresh independent architecture review on 2026-10-09, workflow `735f1bce-1974-4f34-9158-4ec7ed5572de`, step `review-architecture`, attempt 1, of Architect revision `fe1c8b49f70f8e62777927964e59f1291d44b8c5`; prior producer `d5f976e9`/acceptance `f54b563` remain historical. Future proof protocol, not executed proof. Static inspection only: no product imports/tests, host Bun/npm, engines/images/providers, installed databases, credentials, private engine store, backup, migration or live recovery accessed/executed. [Authority and correction scope](index.md), [fact decision](fact-model-and-continuity.md), [seams](realization-seams.md).
 
 ## Decisive assumptions before dependent delivery
 

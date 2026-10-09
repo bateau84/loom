@@ -7,7 +7,7 @@ tags: [loom, architecture, contracts, applicability, capabilities, provenance]
 
 # Continuity realization seams
 
-**Status:** review-ready owning correction, Architect attempt 1; not shipped APIs. Previous producer `d5f976e9`/acceptance `f54b563` remain historical. Specifies interoperable semantic inputs and transaction outcomes, not final table names or command syntax. [Accepted authority and correction scope](index.md) control observable meaning.
+**Status:** accepted by fresh independent architecture review on 2026-10-09, workflow `735f1bce-1974-4f34-9158-4ec7ed5572de`, step `review-architecture`, attempt 1, of Architect revision `fe1c8b49f70f8e62777927964e59f1291d44b8c5`; not shipped APIs. Previous producer `d5f976e9`/acceptance `f54b563` remain historical. Specifies interoperable semantic inputs and transaction outcomes, not final table names or command syntax. [Accepted authority and correction scope](index.md) control observable meaning.
 
 ## Modules and trust boundaries
 

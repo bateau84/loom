@@ -7,7 +7,7 @@ tags: [loom, architecture, reliability, continuity, simplification]
 
 # Continuity through owned facts and derived execution
 
-**Status:** review-ready owning correction, Architect attempt 1. Prior independent acceptance of producer `d5f976e9a20b27840ca33d786a0362b6b3f0a17c` and lifecycle `f54b563` remains historical, not approval of this revision. No implementation authorization or runtime proof. See [correction authority](index.md).
+**Status:** accepted by fresh independent architecture review on 2026-10-09, workflow `735f1bce-1974-4f34-9158-4ec7ed5572de`, step `review-architecture`, attempt 1, of Architect revision `fe1c8b49f70f8e62777927964e59f1291d44b8c5`. Prior independent acceptance of producer `d5f976e9a20b27840ca33d786a0362b6b3f0a17c` and lifecycle `f54b563` remains historical, not approval of this revision. No implementation authorization or runtime proof. See [correction authority](index.md).
 
 ## Derived from / satisfies
 

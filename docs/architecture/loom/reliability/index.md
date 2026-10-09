@@ -1,6 +1,6 @@
 # Continuity architecture
 
-**Status:** review-ready correction, Architect attempt 1, workflow `735f1bce-1974-4f34-9158-4ec7ed5572de`. Prior producer `d5f976e9a20b27840ca33d786a0362b6b3f0a17c` and independent acceptance/bookkeeping `f54b563` remain historical. This materially changed revision requires fresh architecture review and renewed solution assessment; it does not inherit their PASS. No implementation authorization or runtime proof.
+**Status:** accepted by fresh independent architecture review on 2026-10-09, workflow `735f1bce-1974-4f34-9158-4ec7ed5572de`, step `review-architecture`, attempt 1, of Architect revision `fe1c8b49f70f8e62777927964e59f1291d44b8c5`. Prior producer `d5f976e9a20b27840ca33d786a0362b6b3f0a17c` and independent acceptance/bookkeeping `f54b563` remain historical; this acceptance does not inherit their PASS. Renewed solution assessment and final independent Plan review remain pending. Acceptance covers this architecture bundle only; no implementation authorization or runtime proof.
 
 **Authority:** [accepted Anchor](../../../anchors/loom-reliability/anchor.md) at `54e0c23543958640d763b5019c5f1d78b0c5b191`; [accepted experience](../../../design/loom-reliability/continuity-experience.md); [accepted requirements and P1–P8](../../../requirements/loom-reliability/index.md), acceptance bookkeeping `2874f121311f56570fd8beceaf5f0f5a336722f3`. These remain the semantic owners.
 
