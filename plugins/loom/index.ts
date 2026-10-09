@@ -131,6 +131,7 @@ import {
   isAllowedPackageScriptShell,
   classifyVerificationShell,
   isElevatableVerificationShell,
+  elevatedGoWriteTargets,
   elevatedGenerationOutput,
   elevatedGenerationPaths,
   generationElevationError,
@@ -4386,6 +4387,15 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         return "Generator shell execution did not exit successfully (exit: " + String(exit) + ")."
       }
       return safeResultError(result)
+    }
+
+    const assertGoWriteScope = async (workflowId: string, stepId: string, targets: string[]) => {
+      const scope = (await ctx.storage.get(scopeKey(workflowId, stepId))) as TaskScope | undefined
+      if (targets.includes("**")) {
+        if (!scope?.write.includes("**")) throw new Error("Go fmt/generate requires repository-wide Worker write scope (**).")
+      } else if (!scope?.write.length || !resourcesWithinScope(targets, scope.write)) {
+        throw new Error("Go mod tidy requires Worker write scope covering go.mod and go.sum.")
+      }
     }
 
     const assertProjectGenerationWrite = async (
@@ -12276,7 +12286,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       addLoomTool({
         name: "command_elevate",
         description:
-          "Grant one near-term execution of a non-routine project-local test or bounded generator command. Verification supports make/just tests, local scripts, selected Python modules and go run. Generation currently supports Worker-only swag init with an explicit --output inside its current write scope (use loom_scope_elevate first). Exact command, session, attempt and audit evidence are bound; Git, installs, shell eval and arbitrary executables remain denied. The tool runs with host permissions and does not sandbox nested script effects.",
+          "Grant one near-term execution of a non-routine project-local test or bounded generator command. Verification supports make/just tests, local scripts, selected Python modules and go run. Generation supports Worker-only go mod tidy, go fmt, go generate and swag init within its current write scope (use loom_scope_elevate first). Exact command, session, attempt and audit evidence are bound; Git, installs, shell eval and arbitrary executables remain denied. The tool runs with host permissions and does not sandbox nested script effects.",
         input: {
           type: "object",
           properties: {
@@ -12302,6 +12312,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           }
           const outputPath = elevatedGenerationOutput(command)
           const verification = isElevatableVerificationShell(command)
+          const goWriteTargets = elevatedGoWriteTargets(command)
           if (!reason || reason.length > 4000 || !command || command.length > 4000) {
             return { content: renderToolOutput({
               error: "Command elevation requires one exact command (max 4000 characters) and a non-empty reason (max 4000 characters).",
@@ -12310,10 +12321,10 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           if (!verification && !outputPath) {
             return { content: renderToolOutput({
               error: generationElevationError(command) ??
-                "Unsupported command form. Verification supports bounded make/just, shell/Python and go run tests. Generation supports swag init with an explicit project-relative --output directory. Arbitrary executables, installs, Git and shell eval cannot be self-elevated.",
+                "Unsupported command form. Verification supports bounded make/just, shell/Python and Go commands. Generation supports scoped go mod tidy, go fmt, go generate and swag init. Arbitrary executables, installs, Git and shell eval cannot be self-elevated.",
             }) }
           }
-          if (outputPath && tool.agent !== "worker") {
+          if ((outputPath || goWriteTargets) && tool.agent !== "worker") {
             return { content: renderToolOutput({
               error: "Project generation requires an attached Worker step; independent verification roles cannot elevate product writes.",
             }) }
@@ -12321,6 +12332,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           try {
             await assertProjectVerificationEntrypoint(command)
             if (outputPath) await assertProjectGenerationWrite(value.workflowId, value.stepId, command)
+            if (goWriteTargets) await assertGoWriteScope(value.workflowId, value.stepId, goWriteTargets)
             const receipt = await withRuntimeLocks(runtime, [
               { aggregate: "workflow", resourceIdentity: value.workflowId },
               stepAuthorityResource(value.workflowId, value.stepId),
@@ -12338,6 +12350,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 await assertWorkerWorkClaim(ctx, value.workflowId, value.stepId)
               }
               if (outputPath) await assertProjectGenerationWrite(value.workflowId, value.stepId, command)
+            if (goWriteTargets) await assertGoWriteScope(value.workflowId, value.stepId, goWriteTargets)
               const attempt = await ctx.storage.get(sessionStepAttemptKey(tool.sessionID))
               if (!Number.isSafeInteger(attempt)) {
                 throw new Error("Missing step-attempt binding.")
@@ -12360,7 +12373,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 attempt: attempt as number,
                 commandDigest: verificationCommandDigest(command),
                 commandSummary: redactCommand(command).slice(0, 1000),
-                kind: outputPath ? "generation" : "verification",
+                kind: (outputPath || goWriteTargets) ? "generation" : "verification",
                 ...(outputPath ? { outputPath } : {}),
                 reason,
                 grantedAt: new Date(now).toISOString(),
@@ -13983,6 +13996,15 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             event.message =
               "This non-routine project command needs a one-use loom_command_elevate grant with a reason before execution."
             return
+          }
+          if (needsElevation && elevatedGoWriteTargets(event.resources[0])) {
+            try {
+              await assertGoWriteScope(workflowId, stepId, elevatedGoWriteTargets(event.resources[0])!)
+            } catch (error) {
+              event.effect = "deny"
+              event.message = error instanceof Error ? error.message : String(error)
+              return
+            }
           }
           if (needsElevation && elevatedGenerationOutput(event.resources[0])) {
             try {
