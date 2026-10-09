@@ -78,7 +78,7 @@ Use `git-commit-discipline` to decide checkpoint timing, semantic grouping, mess
 1. Identify the task-owned files and any already staged changes. Preserve unrelated work, including pre-existing staged content.
 2. Stage **explicit paths**, not `git add .` / `git add -A` in a shared or mixed worktree.
 3. Check what is staged (and `git diff --cached --check` for whitespace/errors). If the staged set contains another task's changes, stop and separate the changes with authorized operations.
-4. Commit one coherent unit, read the actual result, then continue. A commit command returning an error is not a completed checkpoint.
+4. **Name those same files explicitly in the commit command.** Ensure no one changed the files after staging; a path-scoped Git commit takes the current working-tree bytes, not an older staged snapshot. Read the actual commit result before continuing.
 
 Typical authorized Git steps, issued separately:
 
@@ -94,7 +94,13 @@ git diff --cached --stat
 git diff --cached --check
 ~~~
 
-Outside governed Loom, use the repository's ordinary hooks and Git commit workflow. **Inside Loom**, only use the precise command forms currently admitted by the runtime; for example, where admitted, a scoped `git add -- ...` followed by `git -c core.hooksPath=/dev/null commit -m "..."`. Do not disable hooks merely for convenience outside that explicitly controlled environment.
+~~~bash
+git -c core.hooksPath=/dev/null commit -m "fix: update changed file" -- path/to/file path/to/file_test
+~~~
+
+The path list after `--` limits the commit to those named files, even if other files were staged. It does **not** freeze the staged bytes: re-stage any changed file before committing. Loom verifies that the named paths were staged and that staged bytes still match the admitted working-tree bytes. A shared index containing work from another Loom step may still be blocked by Loom's ownership rules.
+
+Outside governed Loom, keep repository hooks enabled: `git commit -m "fix: update changed file" -- path/to/file path/to/file_test`. Path-scoped commits are for **whole-file** checkpoints. For partial staging with `git add -p` or for merge/rebase continuation, use the appropriate staged-index/conflict workflow instead. Do not disable hooks merely for convenience outside the explicitly controlled Loom environment.
 
 Partial staging and history editing may be unsupported by Loom's whole-file provenance rules even when Git supports them. Follow the runtime denial; do not switch tools to bypass it.
 
