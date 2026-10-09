@@ -87,7 +87,19 @@ describe("Diagnostic sandbox", () => {
     expect(diff.status).toContain("?? new-evidence.txt")
     expect(await readFile(join(project, "src", "value.txt"), "utf8")).toBe("before\n")
 
-    await destroyDiagnosticSandbox(sandbox)
+    // This fixture materializes real copied files, not an OCI container. Keep
+    // the external engine boundary synthetic while exercising real cleanup.
+    const cleanupCalls: Array<{ executable: string; args: string[] }> = []
+    const destroyedAt = "2026-10-09T00:00:00.000Z"
+    const destroyed = await destroyDiagnosticSandbox(sandbox, destroyedAt, async (executable, args, options) => {
+      cleanupCalls.push({ executable, args: [...args] })
+      expect(options).toMatchObject({ encoding: "utf8", timeout: 10_000, maxBuffer: 512_000 })
+      return { stdout: "", stderr: "" }
+    })
+    expect(cleanupCalls).toEqual([{ executable: "podman", args: ["rm", "-f", diagnosticSandboxContainerName(sandbox)] }])
+    expect(destroyed).toEqual({ sandboxId: sandbox.id, destroyed: true, destroyedAt })
+    expect(sandbox.active).toBe(false)
+    expect(sandbox.destroyedAt).toBe(destroyedAt)
     await expect(stat(sandbox.rootPath)).rejects.toThrow()
   })
 

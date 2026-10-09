@@ -8,6 +8,7 @@ import { dirname, join } from "node:path"
 import { tmpdir } from "node:os"
 import { fileURLToPath } from "node:url"
 import loomPlugin from "./index"
+import { assertIsolatedTestProcess, assertIsolatedFixturePath, assertIsolatedFixtureRuntime, disableFixtureDashboardAutostart } from "./test-isolation"
 import { cancelWorkflow } from "./lifecycle"
 import { deleteWorkflowRecords } from "./workflow-cleanup"
 import { createWorkHierarchy, materializeWorkPlan, claimWorkflowWave, syncWorkTaskStatuses,
@@ -25,6 +26,8 @@ import {
 } from "./runtime"
 
 const roots: string[] = []
+await assertIsolatedTestProcess()
+await disableFixtureDashboardAutostart()
 setDefaultTimeout(30_000)
 
 const execFileAsync = promisify(execFile)
@@ -87,6 +90,7 @@ async function harness(
 ) {
   const root = existing?.root ?? await mkdtemp(join(tmpdir(), "loom-plugin-boundary-"))
   if (!existing) roots.push(root)
+  await assertIsolatedFixturePath(root)
   await mkdir(join(root, "src"), { recursive: true })
   if (!existing) {
     await initializeGitFixture(root)
@@ -96,6 +100,14 @@ async function harness(
   const previousState = process.env.XDG_STATE_HOME
   const previousRuntime = process.env.XDG_RUNTIME_DIR
   const previousOutput = process.env.LOOM_TOOL_OUTPUT
+  const restore = () => {
+    if (previousState === undefined) delete process.env.XDG_STATE_HOME
+    else process.env.XDG_STATE_HOME = previousState
+    if (previousRuntime === undefined) delete process.env.XDG_RUNTIME_DIR
+    else process.env.XDG_RUNTIME_DIR = previousRuntime
+    if (previousOutput === undefined) delete process.env.LOOM_TOOL_OUTPUT
+    else process.env.LOOM_TOOL_OUTPUT = previousOutput
+  }
   process.env.XDG_STATE_HOME = join(root, "state")
   process.env.XDG_RUNTIME_DIR = join(root, "runtime")
   process.env.LOOM_TOOL_OUTPUT = "json"
@@ -108,7 +120,7 @@ async function harness(
   const syntheticMessages: Array<Record<string, any>> = []
   const storage = existing?.storage ?? new MemoryStorage()
   const projectID = "opencode-project-a"
-  await seed?.(storage, root, projectID)
+  try { await seed?.(storage, root, projectID) } catch (error) { restore(); throw error }
 
   const ctx: any = {
     location: {
@@ -168,13 +180,18 @@ async function harness(
     },
   }
 
-  const runtime = await resolveRuntimeIdentity(root, ctx.storage)
-  const durableStorage = createProjectStorage(
-    await createTransactionalStorage(runtime),
-    runtime.projectId,
-  )
-
-  await (loomPlugin as any).setup(ctx)
+  const { runtime, durableStorage } = await (async () => {
+    try {
+      const runtime = await resolveRuntimeIdentity(root, ctx.storage)
+      await assertIsolatedFixtureRuntime(runtime)
+      const durableStorage = createProjectStorage(await createTransactionalStorage(runtime), runtime.projectId)
+      await (loomPlugin as any).setup(ctx)
+      return { runtime, durableStorage }
+    } catch (error) {
+      restore()
+      throw error
+    }
+  })()
 
   const call = async (
     name: string,
@@ -232,17 +249,27 @@ async function harness(
     }
   }
 
-  const restore = () => {
-    if (previousState === undefined) delete process.env.XDG_STATE_HOME
-    else process.env.XDG_STATE_HOME = previousState
-    if (previousRuntime === undefined) delete process.env.XDG_RUNTIME_DIR
-    else process.env.XDG_RUNTIME_DIR = previousRuntime
-    if (previousOutput === undefined) delete process.env.LOOM_TOOL_OUTPUT
-    else process.env.LOOM_TOOL_OUTPUT = previousOutput
-  }
-
   return { root, storage, runtime, projectID, registered, namespaces, sessionHooks, permissionHooks, toolHooks, syntheticMessages, durableStorage, call, callObserved, restore }
 }
+
+test("isolated fixture environment is restored when initialization fails before return", async () => {
+  const before = [process.env.XDG_STATE_HOME, process.env.XDG_RUNTIME_DIR, process.env.LOOM_TOOL_OUTPUT]
+  await expect(harness(() => { throw new Error("deliberate fixture initialization failure") })).rejects.toThrow("deliberate fixture initialization failure")
+  expect([process.env.XDG_STATE_HOME, process.env.XDG_RUNTIME_DIR, process.env.LOOM_TOOL_OUTPUT]).toEqual(before)
+})
+
+test("isolated fixture environment remains private through restoration and dashboard retry intervals", async () => {
+  const before = [process.env.XDG_STATE_HOME, process.env.XDG_RUNTIME_DIR, process.env.LOOM_TOOL_OUTPUT]
+  const first = await harness()
+  const second = await harness()
+  second.restore()
+  first.restore()
+  expect([process.env.XDG_STATE_HOME, process.env.XDG_RUNTIME_DIR, process.env.LOOM_TOOL_OUTPUT]).toEqual(before)
+  await Bun.sleep(11_000)
+  await assertIsolatedTestProcess()
+  expect(process.env.LOOM_DASHBOARD_AUTOSTART).toBe("0")
+  expect([process.env.XDG_STATE_HOME, process.env.XDG_RUNTIME_DIR, process.env.LOOM_TOOL_OUTPUT]).toEqual(before)
+})
 
 function resumptionProcessEnvironment(
   projectRoot: string,
@@ -13976,7 +14003,7 @@ test("invalidated Plan blocks stale role-owned Task grants and attachments after
       stepId: "task:one",
       grantId: staleGrant.grantId,
     }, "architect", "stale-role-task-child")
-    expect(attached.error ?? "").toContain("current valid Plan generation")
+    expect(attached.error ?? "").toContain("invalidated")
   } finally {
     h.restore()
   }

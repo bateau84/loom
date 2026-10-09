@@ -305,7 +305,8 @@ function plannedTaskSatisfied(workflow: Workflow, step: Workflow["steps"][number
 function reviewedAdviceInputs(workflow: Workflow, work: WorkHierarchy, taskId: string) {
   const generation = workflow.work?.generation
   const plan = work.plans?.find((candidate) => candidate.generation === generation)
-  if (!plan || plan.invalidated || generation !== work.generation) throw new Error("Advice requires the current valid Plan generation.")
+  if (plan?.invalidated) throw new Error(`Task ${taskId} cannot consume an invalidated Plan generation.`)
+  if (!plan || generation !== work.generation) throw new Error("Advice requires the current valid Plan generation.")
   const tasks = plan.phases.flatMap((phase) => phase.waves.flatMap((wave) => wave.tasks))
   const receiver = tasks.find((task) => task.id === taskId)
   if (!receiver) throw new Error("Advice receiver is missing from the current Plan.")
