@@ -378,13 +378,14 @@ function ocw
         set runtime_root (__ocw_prepare_profile_root "$cfg" "$profile" "$profile_file" "$rundir" "$git_common_dir"); or return $status
     end
 
+    # Fish block-local exports disappear after `end`; use function-scoped exports.
     if test -n "$runtime_root"
         set -e OPENCODE_CONFIG
         set -e OPENCODE_CONFIG_CONTENT
-        set -lx OPENCODE_CONFIG_DIR "$runtime_root"
+        set -fx OPENCODE_CONFIG_DIR "$runtime_root"
     end
     if test -n "$profile"
-        set -lx OPENCODE_CLI_CONFIG_CONTENT (cat "$cli_file" | string collect)
+        set -fx OPENCODE_CLI_CONFIG_CONTENT (cat "$cli_file" | string collect)
     end
 
     if test $explain -eq 1
