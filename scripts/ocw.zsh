@@ -298,14 +298,17 @@ ocw() {
   fi
 
   rundir="$(cd "$rundir" && pwd -P)" || return 1
-  local worktree_root git_common_dir
-  worktree_root="$(git -C "$rundir" rev-parse --show-toplevel 2>/dev/null)" || return 1
-  worktree_root="$(cd "$worktree_root" && pwd -P)" || return 1
-  git_common_dir="$(git -C "$rundir" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" || return 1
-  git_common_dir="$(cd "$git_common_dir" && pwd -P)" || return 1
-  case "$git_common_dir" in
-    "$worktree_root"/*) git_common_dir="" ;;
-  esac
+  local worktree_root git_common_dir=""
+  if worktree_root="$(git -C "$rundir" rev-parse --show-toplevel 2>/dev/null)"; then
+    worktree_root="$(cd "$worktree_root" && pwd -P)" || return 1
+    git_common_dir="$(git -C "$rundir" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" || return 1
+    git_common_dir="$(cd "$git_common_dir" && pwd -P)" || return 1
+    case "$git_common_dir" in
+      "$worktree_root"/*) git_common_dir="" ;;
+    esac
+  elif [ "$no_worktree" -ne 1 ]; then
+    return 1
+  fi
 
   local state_file="/tmp/ocw-$(printf '%s' "$id" | tr '/' '_')"
   [ -n "$profile" ] && printf '%s\n' "$profile" > "$state_file"
