@@ -23,7 +23,9 @@ async function execute(command: string[], env: Record<string, string | undefined
 // Invoke the existing launch-environment implementation, not a second runner.
 // This bounded child launcher is a test subject, never a host-permission bypass.
 const isolatedLaunch = `
-import json, pathlib, runpy, subprocess, sys, tempfile
+import json, os, pathlib, runpy, subprocess, sys, tempfile
+for key in ('GIT_DIR', 'GIT_WORK_TREE', 'GIT_OPTIONAL_LOCKS'):
+    os.environ.pop(key, None)
 m = runpy.run_path('scripts/run-unit-tests.py')
 with tempfile.TemporaryDirectory(prefix='child-', dir=sys.argv[1]) as directory:
     root = pathlib.Path(directory)
