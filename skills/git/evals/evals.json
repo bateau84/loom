@@ -91,9 +91,9 @@
       "id": "GIT-06",
       "name": "explicit-commit-targets-are-not-staged-snapshots",
       "trap": "The agent stages specific files, then commits without paths or assumes named paths use the old staged snapshot.",
-      "prompt": "In a shared checkout you edit file1.md and file2.ts. Another task has a separate staged file. Show the commands you would use for your two whole-file changes and explain how to handle an edit made to file1.md after staging. You are running inside Loom.",
+      "prompt": "Your task edits file1.md and file2.ts, while a different task left an unrelated file staged in a shared checkout. Describe the safe whole-file staging and commit commands when permitted, how Loom's shared-index ownership gate affects the attempt, and what changes if file1.md is edited again after staging.",
       "expectations": [
-        "Stages only file1.md and file2.ts with explicit git add path arguments.",
+        "Shows explicit git add -- file1.md file2.ts as the intended staging step, but stops if Loom's shared-index ownership gate rejects that staging.",
         "Uses the admitted hookless commit form and repeats file1.md and file2.ts as explicit commit path arguments.",
         "Recognizes Git path-scoped commits use the current worktree versions, so changed files must be re-staged and checked before committing.",
         "Does not bypass Loom's shared-index ownership gate if another task has staged content."
