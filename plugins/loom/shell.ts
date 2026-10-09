@@ -37,6 +37,9 @@ const safePatterns = [
   /^go list(?:\s|$)/,
   /^go env(?:\s|$)/,
   /^go mod graph(?:\s|$)/,
+  /^go version$/,
+  /^go mod verify$/,
+  /^go mod tidy -diff$/,
   /^gofmt(?:\s|$)/,
   /^golangci-lint run(?:\s|$)/,
   /^gosec(?:\s|$)/,
@@ -334,6 +337,22 @@ export function classifyVerificationShell(command: string): VerificationShellCom
   return undefined
 }
 
+/** Write-capable Go forms. Package-wide operations require explicit broad Worker scope. */
+export function elevatedGoWriteTargets(command: string): string[] | undefined {
+  const words = parsedCommandWords(command)
+  if (!words || words[0] !== "go") return undefined
+  if (words[1] === "mod" && words[2] === "tidy" &&
+      words.slice(3).every(flag => ["-v", "-e", "-diff"].includes(flag))) {
+    return words.includes("-diff") ? undefined : ["go.mod", "go.sum"]
+  }
+  if (["fmt", "generate"].includes(words[1] ?? "") && words.length >= 3 &&
+      words.slice(2).every(path => path === "." || path === "./..." ||
+        (safeProjectRelativePath(path) && /^[A-Za-z0-9_./-]+$/.test(path)))) {
+    return ["**"]
+  }
+  return undefined
+}
+
 /**
  * Explicit one-use elevation can cover project verification entrypoints not
  * included in the routine list. It never admits shell eval, Git, package
@@ -342,6 +361,7 @@ export function classifyVerificationShell(command: string): VerificationShellCom
 export function isElevatableVerificationShell(command: string) {
   const words = parsedCommandWords(command)
   if (!words?.length || classifyVerificationShell(command)) return false
+  if (elevatedGoWriteTargets(command)) return true
   const [runner, action, target] = words
   // A self-elevation is for testing, not obviously destructive lifecycle work.
   // This does not inspect the contents/effects of the requested scripts.
