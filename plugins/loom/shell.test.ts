@@ -5,6 +5,7 @@ import {
   diagnosticShellResourcesAllowed,
   classifyVerificationShell,
   isElevatableVerificationShell,
+  elevatedGoWriteTargets,
   elevatedGenerationOutput,
   elevatedGenerationPaths,
   generationElevationError,
@@ -22,6 +23,21 @@ import {
 } from "./shell"
 
 describe("Loom Worker shell policy", () => {
+  test("supports bounded Go command families", () => {
+    for (const command of ["go version", "go mod verify", "go mod tidy -diff"]) {
+      expect(isAllowedWorkerShell(command)).toBe(true)
+    }
+    for (const command of ["go mod tidy", "go fmt ./...", "go generate ./..."]) {
+      expect(isElevatableVerificationShell(command)).toBe(true)
+    }
+    expect(elevatedGoWriteTargets("go mod tidy")).toEqual(["go.mod", "go.sum"])
+    expect(elevatedGoWriteTargets("go fmt ./...")).toEqual(["**"])
+    expect(elevatedGoWriteTargets("go generate ./...")).toEqual(["**"])
+    for (const command of ["go fmt ../other", "go mod tidy -unknown", "go generate /tmp/out", "go fmt ./...; rm -rf ."]) {
+      expect(elevatedGoWriteTargets(command)).toBeUndefined()
+    }
+  })
+
   test("classifies unsafe Git command chains so runtime can fail closed", () => {
     expect(isGitShellCommand("git status && rm -f README.md")).toBe(true)
     expect(isGitInspectionShellCommand("git status && rm -f README.md")).toBe(false)
