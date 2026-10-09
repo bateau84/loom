@@ -13976,7 +13976,7 @@ test("invalidated Plan blocks stale role-owned Task grants and attachments after
       stepId: "task:one",
       grantId: staleGrant.grantId,
     }, "architect", "stale-role-task-child")
-    expect(attached.error ?? "").toContain("invalidated")
+    expect(attached.error ?? "").toContain("current valid Plan generation")
   } finally {
     h.restore()
   }
