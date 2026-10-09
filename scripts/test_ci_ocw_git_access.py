@@ -217,6 +217,17 @@ class OcwGitAccessTests(unittest.TestCase):
                 self.assertIsNone(capture["config"])
                 self.assertEqual(capture["args"], [])
 
+    def test_no_worktree_outside_git_still_launches(self):
+        outside = self.root / "not-a-repository"
+        outside.mkdir()
+        for shell in self._shells():
+            with self.subTest(shell=shell[0]):
+                capture = self._launch(
+                    shell, "outside", no_worktree=True, repo=outside
+                )
+                self.assertIsNone(capture["config"])
+                self.assertEqual(capture["args"], [])
+
     def test_existing_linked_worktree_no_worktree_mode_gets_git_access(self):
         for shell in self._shells():
             with self.subTest(shell=shell[0]):
