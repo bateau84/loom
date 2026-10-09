@@ -5671,7 +5671,18 @@ Verdict: FAIL
         ...stageCall, status: "completed", result: "staged",
       })
 
-      const commitCommand = "git -c core.hooksPath=/dev/null commit -m 'test: worktree commit'"
+      // A named file outside the verified staging set cannot be smuggled
+      // into Git's implicit --only working-tree snapshot.
+      const notStagedCommand = "git -c core.hooksPath=/dev/null commit -m 'test: unverified file' -- src/not-staged.txt"
+      const deniedCommit: any = {
+        agent: "worker", action: "shell", resources: [notStagedCommand],
+        sessionID: worker, effect: "ask",
+      }
+      await evaluate(deniedCommit)
+      expect(deniedCommit.effect).toBe("deny")
+      expect(deniedCommit.message).toContain("explicitly named files must already be staged")
+
+      const commitCommand = `git -c core.hooksPath=/dev/null commit -m 'test: worktree commit' -- ${file}`
       const commitPermission: any = {
         agent: "worker", action: "shell", resources: [commitCommand],
         sessionID: worker, effect: "ask",
@@ -5683,7 +5694,7 @@ Verdict: FAIL
         sessionID: worker, agent: "worker", input: { command: commitCommand },
       }
       await h.toolHooks.get("execute.before")!(commitCall)
-      await git(linked, ["-c", "core.hooksPath=/dev/null", "commit", "-m", "test: worktree commit", "-q"])
+      await git(linked, ["-c", "core.hooksPath=/dev/null", "commit", "-m", "test: worktree commit", "-q", "--", file])
       await h.toolHooks.get("execute.after")!({
         ...commitCall, status: "completed", result: "committed",
       })
