@@ -2393,7 +2393,7 @@ describe("production runtime writer fencing", () => {
       const current = createProjectStorage(raw, runtime.projectId, { expectedRuntimeVersion: RUNTIME_STATE_VERSION })
       expect(await current.get("workflow/before-upgrade")).toEqual(history)
       const receipts = await raw.scan({ prefix: "installation/runtime-upgrades/" })
-      expect(receipts.entries).toHaveLength(8)
+      expect(receipts.entries).toHaveLength(9)
       await ensureRuntimeStateVersion(raw, runtime)
       expect(await raw.scan({ prefix: "installation/runtime-upgrades/" })).toEqual(receipts)
       expect(await current.get("workflow/before-upgrade")).toEqual(history)
