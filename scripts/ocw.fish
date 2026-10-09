@@ -27,6 +27,8 @@ function __ocw_prepare_profile_root
     set -l cfg $argv[1]
     set -l profile $argv[2]
     set -l profile_file $argv[3]
+    set -l rundir $argv[4]
+    set -l git_common_dir $argv[5]
 
     type -q jq; or begin
         echo 'ocw: jq is required for profile generation' >&2
@@ -38,8 +40,15 @@ function __ocw_prepare_profile_root
         set runtime_base $XDG_RUNTIME_DIR
     end
     set -l uid (id -u)
-    set -l root "$runtime_base/ocw-opencode-$uid-$profile"
+    # Isolate generated permissions by worktree and profile.
+    set -l key (printf '%s\0%s' "$rundir" "$profile" | git hash-object --stdin); or return 1
+    set -l root "$runtime_base/ocw-opencode-$uid-$key"
+    if test -L "$root"
+        echo "ocw: unsafe runtime config symlink: $root" >&2
+        return 1
+    end
     mkdir -p "$root"; or return 1
+    chmod 700 "$root"; or return 1
 
     for item in $cfg/*
         test -e "$item"; or continue
@@ -60,18 +69,43 @@ function __ocw_prepare_profile_root
     set -l base (__ocw_find_json "$cfg/opencode" 2>/dev/null)
     set -l merged "$root/.opencode.json.tmp.$fish_pid"
 
-    if test -n "$base"
-        jq -s '.[0] * .[1]' "$base" "$profile_file" > "$merged"; or begin
-            rm -f "$merged"
-            echo "ocw: failed to merge $base with $profile_file" >&2
-            return 2
+    if test -n "$profile_file"
+        if test -n "$base"
+            jq -s '.[0] * .[1]' "$base" "$profile_file" > "$merged"; or begin
+                rm -f "$merged"
+                echo "ocw: failed to merge $base with $profile_file" >&2
+                return 2
+            end
+        else
+            jq '.' "$profile_file" > "$merged"; or begin
+                rm -f "$merged"
+                echo "ocw: failed to parse $profile_file" >&2
+                return 2
+            end
         end
     else
-        jq '.' "$profile_file" > "$merged"; or begin
+        # Resolve global/project JSONC and permissions before adding Git access.
+        fish -c 'cd $argv[1]; and opencode debug config' -- "$rundir" > "$merged"; or begin
             rm -f "$merged"
-            echo "ocw: failed to parse $profile_file" >&2
+            echo "ocw: failed to resolve OpenCode config" >&2
             return 2
         end
+    end
+
+    if test -n "$git_common_dir"
+        set -l scoped "$root/.opencode.scoped.$fish_pid"
+        jq --arg path "$git_common_dir/*" '
+          .permissions = (
+            (.permissions // []) +
+            (["external_directory", "read", "edit"] |
+             map({action: ., resource: $path, effect: "allow"}))
+          )
+        ' "$merged" > "$scoped"; or begin
+            rm -f "$merged" "$scoped"
+            echo "ocw: failed to authorize Git metadata: $git_common_dir" >&2
+            return 2
+        end
+        mv -f "$scoped" "$merged"; or return 1
     end
 
     mv -f "$merged" "$root/opencode.json"; or return 1
@@ -292,6 +326,16 @@ function ocw
         end
     end
 
+    set rundir (cd "$rundir"; and pwd -P); or return 1
+    set -l worktree_root (git -C "$rundir" rev-parse --show-toplevel 2>/dev/null); or return 1
+    set worktree_root (cd "$worktree_root"; and pwd -P); or return 1
+    set -l git_common_dir (git -C "$rundir" rev-parse --path-format=absolute --git-common-dir 2>/dev/null); or return 1
+    set git_common_dir (cd "$git_common_dir"; and pwd -P); or return 1
+    # A normal checkout owns .git; linked worktrees share it with another checkout.
+    if test -d "$worktree_root/.git"; and test "$git_common_dir" = "$worktree_root/.git"
+        set git_common_dir ''
+    end
+
     set -l state_file "/tmp/ocw-"(string replace -a '/' '_' "$id")
     test -n "$profile"; and printf '%s\n' "$profile" > "$state_file"
     test -f "$state_file"; and set profile (cat "$state_file")
@@ -316,13 +360,17 @@ function ocw
             echo "ocw: CLI profile '$profile' not found: $cli_file" >&2
             return 2
         end
-        set runtime_root (__ocw_prepare_profile_root "$cfg" "$profile" "$profile_file"); or return $status
+    end
+    if test -n "$profile"; or test -n "$git_common_dir"
+        set runtime_root (__ocw_prepare_profile_root "$cfg" "$profile" "$profile_file" "$rundir" "$git_common_dir"); or return $status
     end
 
-    if test -n "$profile"
+    if test -n "$runtime_root"
         set -e OPENCODE_CONFIG
         set -e OPENCODE_CONFIG_CONTENT
         set -lx OPENCODE_CONFIG_DIR "$runtime_root"
+    end
+    if test -n "$profile"
         set -lx OPENCODE_CLI_CONFIG_CONTENT (cat "$cli_file" | string collect)
     end
 
@@ -337,17 +385,17 @@ function ocw
     set -l first ''
     test (count $args) -gt 0; and set first $args[1]
 
-    if test -n "$profile"
+    if test -n "$runtime_root"
         switch "$first"
             case run
-                echo "ocw: active profile -> [$profile] (standalone)" >&2
+                test -z "$profile"; or echo "ocw: active profile -> [$profile] (standalone)" >&2
                 set -e args[1]
                 fish -c 'cd $argv[1]; or exit 1; exec opencode run --standalone $argv[2..-1]' -- "$rundir" $args
             case '' '-*'
-                echo "ocw: active profile -> [$profile] (standalone)" >&2
+                test -z "$profile"; or echo "ocw: active profile -> [$profile] (standalone)" >&2
                 fish -c 'cd $argv[1]; or exit 1; exec opencode --standalone $argv[2..-1]' -- "$rundir" $args
             case '*'
-                echo "ocw: active profile -> [$profile]" >&2
+                test -z "$profile"; or echo "ocw: active profile -> [$profile]" >&2
                 fish -c 'cd $argv[1]; or exit 1; exec opencode $argv[2..-1]' -- "$rundir" $args
         end
     else
