@@ -4,9 +4,9 @@ Critic-only adversarial contract. Assume competent production and normal review 
 
 ## QA criteria
 
-Critic seeks false positives: reverse test order, run repeatedly/parallel/race, remove hand-injected state, make timing slower/faster, and swap mocks for the real boundary where the claim requires it. Ask what defect could exist while every cited test still passes.
+Critic seeks material false positives: vary order/timing, use race or stress testing when concurrency matters, and inspect hand-injected state or mocked boundaries when they could conceal the claimed behavior. Ask what **credible accepted-behavior defect** survives the cited tests, not what test technique is missing.
 
-Block when tests cited for a mandatory verification claim do not exercise that behavior or can systematically false-pass. Missing optional unit-test style preference is non-blocking if stronger evidence exists.
+Block when tests cited for a mandatory verification claim do not exercise that behavior or can systematically false-pass. Missing optional Go test technique, extra scenario, or coverage target is non-blocking when existing evidence suffices.
 
 ## QA depth
 

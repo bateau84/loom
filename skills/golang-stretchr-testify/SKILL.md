@@ -31,7 +31,7 @@ allowed-tools: Read Edit Write Glob Grep Bash(go:*) Bash(golangci-lint:*) Bash(g
 
 # stretchr/testify
 
-testify complements Go's `testing` package with readable assertions, mocks, and suites. It does not replace `testing` — always use `*testing.T` as the entry point.
+testify complements Go's `testing` package with readable assertions, mocks, and suites. It does not replace `testing` — always use `*testing.T` as the entry point. This is an API reference **for repositories already using testify**; `test-driven-development` chooses valuable test cases, and this skill does not require adding testify, mock suites, or interaction assertions.
 
 This skill is not exhaustive. Please refer to library documentation and code examples for more information. Context7 can help as a discoverability platform.
 
@@ -126,7 +126,7 @@ is.EventuallyWithT(func(c *assert.CollectT) {
 
 ## testify/mock
 
-Mock interfaces to isolate the unit under test. Embed `mock.Mock`, implement methods with `m.Called()`, always verify with `AssertExpectations(t)`.
+When the behavior requires mocking an actual boundary, `testify/mock` can implement an existing interface. Use `mock.Mock` and `AssertExpectations(t)` when interaction expectations are a genuine contract; prefer real inexpensive collaborators where possible. Do not introduce an interface solely to make a mock.
 
 Key matchers: `mock.Anything`, `mock.AnythingOfType("T")`, `mock.MatchedBy(func)`. Call modifiers: `.Once()`, `.Times(n)`, `.Maybe()`, `.Run(func)`.
 

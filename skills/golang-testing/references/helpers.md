@@ -2,7 +2,7 @@
 
 ## Test Timeout
 
-For tests that may hang, use a timeout helper that panics with caller location:
+Prefer the built-in `go test -timeout` for suite-level hang protection, and `context.WithTimeout` or `t.Deadline()` when the operation itself supports cancellation. A detached watchdog that panics can abruptly abort unrelated tests. The legacy helper below is an illustration, not a default test utility:
 
 ```go
 // https://github.com/stretchr/testify/issues/1101

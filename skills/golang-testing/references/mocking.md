@@ -1,8 +1,10 @@
 # Mocking and Test Fixtures
 
+This is an API/pattern reference, not a requirement to mock dependencies. Follow `test-driven-development` for test value. Prefer real cheap collaborators; use an existing interface at a real external boundary when a double is needed. Avoid introducing interfaces, mocks, or fixtures solely for test style.
+
 ## Mocks with testify/mock
 
-Create interfaces for your dependencies, then mock them.
+If a boundary already uses an interface and interaction assertions are meaningful, `testify/mock` is an option:
 
 > For the full testify/mock API (argument matchers, call modifiers, verification), consult the testify documentation (→ See `golang-pkg-go-dev` skill).
 
@@ -67,7 +69,7 @@ func TestService_GetUser_NotFound(t *testing.T) {
 
 ## Mock Organization
 
-For larger codebases, organize mocks alongside the code they mock:
+Where several justified tests share mocks, keep them near their consumers. Do not add separate mock files or packages for one simple test:
 
 ```go
 // user_service.go

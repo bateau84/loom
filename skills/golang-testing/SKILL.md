@@ -1,6 +1,6 @@
 ---
 name: golang-testing
-description: "Production-ready Golang tests — table-driven tests, testify suites and mocks, parallel tests, fuzzing, fixtures, goroutine leak detection with goleak, snapshot testing, code coverage, integration tests, idiomatic test naming. Use when writing or reviewing Go tests, choosing a testing approach, setting up Go test CI, or debugging flaky/slow tests. For testify-specific APIs, consult the testify documentation (→ See `golang-pkg-go-dev` skill); for measurement methodology see `golang-benchmark`."
+description: "Go testing mechanics: testing and t.Run, t.Parallel, httptest, synctest, race detection, fuzzing, goleak, fixtures, integration tests, benchmarks and coverage tools. Use when implementing/reviewing Go tests or diagnosing Go test failures. test-driven-development owns which tests to write, their regression value, and when to stop; this skill explains applicable Go-specific techniques."
 license: MIT
 metadata:
   author: Bateau
@@ -10,38 +10,31 @@ metadata:
 
 > **House skill.** Adapted from `samber/cc-skills-golang@golang-testing` for this workspace. Follow `golang-common-practice` and `current Loom role directive and control-plane state`.
 
-**Persona:** You are a Go engineer who treats tests as executable specifications. You write tests to constrain behavior, not to hit coverage targets.
+**Scope:** `test-driven-development` owns test selection, behavioral proof, realism, proportionality, and stopping/deleting tests. **This skill owns Go-specific mechanics only.** Apply a technique when it solves a concrete Go test problem; examples are options, not required coverage, dependencies, or scaffolding. Prefer the project's existing tools and conventions.
 
 **Modes:**
 
-- **Write mode** — generating new tests for existing or new code. Work sequentially through the code under test; use `gotests` to scaffold table-driven tests, then enrich with edge cases and error paths.
-- **Review mode** — reviewing a PR's test changes. Focus on the diff: check coverage of new behaviour, assertion quality, table-driven structure, and absence of flakiness patterns. Sequential.
-- **Audit mode** — auditing an existing test suite for gaps, flakiness, or bad patterns (order-dependent tests, missing `t.Parallel()`, implementation-detail coupling). Cover three concerns: (1) unit test quality and coverage gaps, (2) integration test isolation and build tags, (3) goroutine leaks and race conditions. Within the current Loom task, covers all three itself, sequentially.
+- **Write mode** — implement the smallest set of Go tests selected under `test-driven-development`. Use `gotests` scaffolding only when it saves work; do not generate extra scenarios to fill a template.
+- **Review mode** — check whether new tests prove their claimed Go behavior, are deterministic, and add distinct regression value. Do not demand a table, mock, or parallelism for style alone.
+- **Audit mode** — inspect relevant suites for false greens, nondeterminism, material uncovered behavior, redundant tests, and costly scaffolding. Check races and goroutine lifecycle only where that risk exists.
 - **Debug mode** — a test is failing or flaky. Work sequentially: reproduce reliably, isolate the failing assertion, trace the root cause in production code or test setup.
 
 > **Community default.** A company skill that explicitly supersedes `golang-testing` skill takes precedence.
 
-**Dependencies:**
+**Optional tool:** `gotests` can scaffold table-driven tests if already available; do not install tools merely to generate boilerplate.
 
-- gotests: `go install github.com/cweill/gotests/gotests@latest`
+# Go testing mechanics
 
-# Go Testing Best Practices
+Use `testing` and the repository's established framework. Relevant choices:
 
-This skill guides the creation of production-ready tests for Go applications. Follow these principles to write maintainable, fast, and reliable tests.
-
-## Best Practices Summary
-
-1. Table-driven tests MUST use named subtests -- every test case needs a `name` field passed to `t.Run`
-2. Integration tests MUST use build tags (`//go:build integration`) to separate from unit tests
-3. Tests MUST NOT depend on execution order -- each test MUST be independently runnable
-4. Independent tests SHOULD use `t.Parallel()` when possible
-5. NEVER test implementation details -- test observable behavior and public API contracts
-6. Packages with goroutines SHOULD use `goleak.VerifyTestMain` in `TestMain` to detect goroutine leaks
-7. Use testify as helpers, not a replacement for standard library
-8. Mock interfaces, not concrete types
-9. Keep unit tests fast (< 1ms), use build tags for integration tests
-10. Run tests with race detection in CI
-11. Include examples as executable documentation
+- Named `t.Run` subtests make table-driven cases diagnosable when each represents a distinct useful behavior; a single straightforward test need not become a table.
+- Use `t.Parallel()` only when isolation is sound and there is meaningful throughput benefit. No parallelism quota.
+- Use `go test -race` for concurrency-sensitive behavior and in CI where practical. It detects races, not higher-level ordering or lifecycle correctness.
+- Use `goleak` when a component owns goroutine shutdown and a leak is a credible regression; do not install it or add global `TestMain` merely because a package uses goroutines.
+- Use `testing/synctest` or a fake clock when time affects correctness; avoid flaky real sleeps. Do not redesign production APIs to inject clocks when a smaller faithful test suffices.
+- Use build tags for integration tests when they need explicit dependency/setup isolation; `testing.Short()` or separate CI jobs may be suitable under existing repository policy.
+- Keep tests reasonably fast and deterministic; no universal per-test millisecond limit.
+- Use testify, fuzzing, benchmarks, and Example functions when they help prove a real behavior or answer a measurement/documentation need, not as mandatory checklist items.
 
 ## Refactoring: Audit All Call Sites on Signature Changes
 
@@ -123,7 +116,7 @@ Use `httptest` for handler tests with table-driven patterns. See [HTTP Testing](
 
 ## Goroutine Leak Detection with goleak
 
-Use `go.uber.org/goleak` to detect leaking goroutines, especially for concurrent code:
+Use `go.uber.org/goleak` when verifying that a component actually shuts down its owned goroutines. It adds a dependency and may be noisy around unrelated library goroutines; package-wide `TestMain` is optional, not a default:
 
 ```go
 import (
@@ -274,7 +267,7 @@ Available on `*testing.T`, `*testing.B`, and `*testing.F` in Go 1.26+.
 
 ## Parallel Tests
 
-Use `t.Parallel()` to run tests concurrently:
+Use `t.Parallel()` for independent tests only when parallel execution is useful and all shared state is isolated:
 
 ```go
 func TestParallelOperations(t *testing.T) {
@@ -300,7 +293,7 @@ func TestParallelOperations(t *testing.T) {
 
 ## Fuzzing
 
-Use fuzzing to find edge cases and bugs:
+When a parser, decoder, or security boundary processes broad/untrusted input, fuzzing can find failures that examples miss. It is optional and should check a meaningful property, not a tautology:
 
 ```go
 func FuzzReverse(f *testing.F) {
@@ -320,7 +313,7 @@ func FuzzReverse(f *testing.F) {
 
 ## Examples as Documentation
 
-Examples are executable documentation verified by `go test`:
+Add Example functions when executable examples materially improve public API documentation; they are not required for every package or function:
 
 ```go
 func ExampleCalculatePrice() {
@@ -338,6 +331,8 @@ func ExampleCalculatePrice_singleItem() {
 
 ## Code Coverage
 
+Coverage is a diagnostic to locate potential gaps, not a target or test-generation instruction. Investigate uncovered code only when it contains meaningful behavior or credible failure risk.
+
 ```bash
 # Generate coverage file
 go test -coverprofile=coverage.out ./...
@@ -354,7 +349,7 @@ go tool cover -func=coverage.out | grep total
 
 ## Integration Tests
 
-Use build tags to separate integration tests from unit tests:
+Build tags are one way to isolate tests requiring external setup; follow existing repository conventions. Choose them when normal `go test` must not invoke those dependencies:
 
 ```go
 //go:build integration
@@ -382,13 +377,13 @@ For Docker Compose fixtures, SQL schemas, and integration test suites, see [Inte
 
 ## Mocking
 
-Mock interfaces, not concrete types. Define interfaces where consumed, then create mock implementations.
+When mocking is justified, substitute an existing consumer-facing interface or a real boundary; do not create production interfaces solely to accommodate tests. Use real cheap collaborators where possible.
 
 For mock patterns, test fixtures, and time mocking, see [Mocking](./references/mocking.md).
 
 ## Enforce with Linters
 
-Many test best practices are enforced automatically by linters: `thelper`, `paralleltest`, `testifylint`. See the `golang-lint` skill for configuration and usage.
+Linters such as `thelper` and `testifylint` can catch mechanical mistakes. Enable only checks appropriate to the repository; do not introduce `paralleltest` merely to force `t.Parallel()`. See `golang-lint` for mechanics.
 
 ## Cross-References
 
