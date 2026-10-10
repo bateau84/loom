@@ -70,13 +70,14 @@ function seedControlState() {
   const dbPath = join(stateRoot, "loom", "execution-state.sqlite")
   const code = String.raw`
 import { Database } from "bun:sqlite";
+import { RUNTIME_STATE_VERSION } from "./plugins/loom/runtime.ts";
 const db = new Database(process.env.LOOM_TEST_DB, { create: true });
 db.run("PRAGMA journal_mode = WAL");
 db.run("CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY NOT NULL, value TEXT NOT NULL)");
 db.run("DELETE FROM kv");
 const set = (key, value) => db.query("INSERT INTO kv(key,value) VALUES(?1,?2)").run(key, JSON.stringify(value));
 set("installation/id", "installation-e2e");
-set("installation/runtime-schema", { schemaVersion: 1, currentVersion: 9, initializedAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
+set("installation/runtime-schema", { schemaVersion: 1, currentVersion: RUNTIME_STATE_VERSION, initializedAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
 for (const [projectId, canonicalLocation] of [["project-a","/work/project-a"],["project-d","/work/project-d"]]) {
   set("installation/projects/" + projectId, { projectId, canonicalLocation, identitySource: "loom-project-marker", markerLocation: canonicalLocation + "/.loom/project-id", lastSeenAt: new Date().toISOString() });
 }
