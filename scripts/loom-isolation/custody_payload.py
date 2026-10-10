@@ -8,28 +8,17 @@ from pathlib import Path
 def main():
     if not os.environ.get("LOOM_CONTAINER_NONCE") or Path("/control/release").exists():
         raise RuntimeError("held verified fixture required")
-    root = Path("/tmp/loom-custody")
-    root.mkdir(mode=0o700)
     child = os.fork()
     if child == 0:
-        grandchild = os.fork()
-        if grandchild != 0:
-            (root / "child.json").write_text(json.dumps({"child": os.getpid(), "grandchild": grandchild}))
-    else:
-        deadline = time.monotonic() + 2
-        while not (root / "child.json").exists():
-            if time.monotonic() >= deadline:
-                raise RuntimeError("synthetic tree setup timeout")
-            time.sleep(0.01)
-        members = json.loads((root / "child.json").read_text())
-        (root / "ready.json").write_text(json.dumps({"parent": os.getpid(), **members}))
+        os.fork()
     pid = os.getpid()
     count = 0
     while True:
         count += 1
-        pending = root / f".{pid}.pending"
-        pending.write_text(str(count))
-        pending.replace(root / f"{pid}.counter")
+        message = json.dumps({"nonce": os.environ["LOOM_CONTAINER_NONCE"], "pid": pid, "count": count}) + "\n"
+        # One write below PIPE_BUF per record; three writers cannot interleave
+        # a JSON record. The parent holds only the read end via its exact exec.
+        os.write(1, message.encode("ascii"))
         time.sleep(0.02)
 
 

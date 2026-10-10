@@ -122,11 +122,12 @@ The parent binds full container ID, creation/start generation, host PID/start
 ticks and engine-resolved `libpod-<full-ID>.scope` domain. It rejects restart,
 competing exec, identity/path/inode drift and gate membership outside the domain.
 All engine commands explicitly force local mode; no remote context fallback.
-The running-state bounded engine member query is not used while Paused (Podman
-Top is Running-only). Frozen rechecks instead read current `cgroup.procs` in the
+Podman Top is Running-only and its HPID translation is not the recursive
+membership authority. Running and frozen rechecks read current `cgroup.procs` in the
 held exact workload directory and its bounded descendants with no-symlink,
 read-only descriptors; each current member's PID birth/membership is checked.
-Kernel frozen state is verified before and after this traversal. Missing/drifted
+Kernel frozen state is verified before and after this traversal. Running
+membership refuses when its before/after snapshots differ. Missing/drifted
 observation refuses; the old running member list is not frozen proof. Command
 stage, exit and fixed safe error signatures distinguish engine errors without
 dumping arbitrary engine stderr or private-store metadata.
@@ -145,15 +146,69 @@ if held-gate transitions are observed, it returns78/fullTask unproven; further
 positive coverage and independent verification are required before product release.
 
 The current custody witness adds a fixed stdlib synthetic parent/child/grandchild
-exec with private counter files. Its single exact exec identity is bound before
+exec with nonce-bound, monotonic counters on an owned read-only pipe. Its single exact exec identity is bound before
 closing admissions; no arbitrary exec or product release is exposed. The parent
 checks running/thawed counter progress and frozen counter stability, plus current
-kernel membership. A bounded reader is armed on the same core-events handle
+kernel membership. Paused observation does not call Podman cp/exec, reopen process
+roots or thaw the workload; it drains bounded transport backlog and checks the
+owned stream while the same kernel domain remains fully frozen. A bounded reader is armed on the same core-events handle
 BEFORE kill, and requires an actual recursive `populated=0` sample. A missed sample,
 ENODEV/EIO/EACCES/EBADF or unbound observation remains unknown/refusal; this mode
-does not infer retirement. Cgroup2 filesystem magic, device/inode/event identities,
+does not infer retirement from errno. A second read-only inotify observer is armed
+on the held DIRECTORY descriptor alias before termination: only matching
+directory-self deletion can produce domain-lifetime evidence. File-only deletion,
+unmount, queue loss, unrelated watch, ignored-only notification and missing event
+refuse. This evidence still needs locally applicable kernel/runtime destruction
+semantics and complete lifetime coverage/fencing before it qualifies as full
+workload retirement. Cgroup2 filesystem magic, device/inode/event identities,
 loaded kernel release/build, rootless principal and installed engine/runtime
 version/executable hashes accompany the new observations.
+
+Relevant matched source inspection: Linux `v7.2.9` `cgroup_destroy_locked`
+rejects remaining tasks and online children under the cgroup mutex, then offlines
+the domain to prevent migration/child creation before kernfs removal. Kernfs
+`dir.c` documents VFS directory-removal fsnotify delivery and distinguishes
+file-only removal. crun `1.28` systemd cleanup calls `cgroup_killall_path`, exact
+scope StopUnit/job reconciliation and `destroy_cgroup_path`; unified destruction
+uses rmdir/recursive rmdir and repeated kill, not survivor migration out of the
+domain. These public source observations plus applicable Fedora source/build
+provenance support qualification, not a claim that source alone proves a runtime
+transition, no-escape lifetime coverage, or full P6. Original unreadable/missed
+samples and failed paused-copy runs remain unknown historical observations.
+
+## Pinned inner synthetic proof
+
+`container_driver.py inner --image sha256:<ID> --receipt <receipt>` additionally
+uses only the approved scoped proc-unmask fixture and launches fixed
+`inner_policy.py`/`inner_gate.py`. The launcher attests non-setuid bwrap bytes and
+canonical policy/BPF digests; libseccomp generates required EPERM rules for
+mount/namespace/ptrace/privilege and terminal-injection operations, including
+namespace-bearing clone flags. Missing rules/export refuse, never silently skip.
+The inner root is fresh tmpfs with private proc/dev/tmp, read-only image-copied
+`/usr` toolchain and approved `/workspace`, read-only synthetic probe/control
+inputs, fresh HOME/XDG/DB locators and no ambient environment. No host roots,
+production state, cgroup controls, shared Git metadata or sockets are passed.
+
+Before the separate atomic `inner-release`, the external parent observes actual
+inner host PID/start identity, all fresh namespace identities, capability/NNP
+state, inherited FD allowlist, empty root and mount allowlist, added seccomp
+filter count and workload membership, plus physical prerelease freeze/thaw.
+The original outer `release` is NEVER written by this mode. Fixed trusted probes
+record protected synthetic direct/link/ambient denials before import, after
+private state setup and in a forked descendant; no product imports occur.
+This is an implementation/proof surface, not automatically full Task completion:
+hostile escape, parent-loss, lost-response and release-race coverage and the
+independent requirement verdict remain separate obligations.
+
+`inner-parent-loss` attests the same held inner gate and binds read-only pidfds
+for its actual namespace reaper/gate/standby child/grandchild before publishing
+a nonce-bound test marker. The trusted policy parent deliberately exits88
+without explicitly killing its child; all bound peer pidfds must become readable
+through the real bwrap die-with-parent/PID-namespace path, with no inner release.
+`inner-refusal` supplies a missing required filter descriptor to the real fixed
+argument preflight and requires exit78 before bwrap child creation; no unconfined
+fallback is provided. These are bounded synthetic fault scenarios, not production
+parent control, kernel availability claims or retroactive success for old runs.
 
 Failures refuse before release where possible; the unique owned container is
 force-removed in cleanup and has an engine execution timeout. Cleanup failure

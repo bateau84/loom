@@ -10,6 +10,23 @@ from podman_witness import Refusal, error_class
 
 
 class CustodyTests(unittest.TestCase):
+    def test_directory_retirement_event_rejects_unbound_loss_or_file_only_events(self):
+        import struct
+        self.assertTrue(engine_custody.retirement_events(struct.pack("iIII", 7, 0x400, 0, 0), 7))
+        for wd, mask in ((8, 0x400), (7, 0x8000), (7, 0x2000), (7, 0x4000), (7, 0x200)):
+            with self.assertRaises(Refusal):
+                engine_custody.retirement_events(struct.pack("iIII", wd, mask, 0, 0), 7)
+    def test_counter_stream_requires_exact_nonce_and_monotonic_member_counts(self):
+        stream = engine_custody.TreeStream.__new__(engine_custody.TreeStream)
+        stream.nonce, stream.counts = "bound", {}
+        stream.accept(b'{"nonce":"bound","pid":2,"count":1}')
+        stream.accept(b'{"nonce":"bound","pid":2,"count":2}')
+        self.assertEqual(stream.counts, {2: 2})
+        for data in (b'{"nonce":"foreign","pid":2,"count":3}',
+                     b'{"nonce":"bound","pid":2,"count":2}',
+                     b'{"nonce":"bound","pid":1,"count":3}'):
+            with self.assertRaises(Refusal):
+                stream.accept(data)
     def test_zero_observer_never_turns_errno_or_missing_transition_into_success(self):
         import errno
         import threading
@@ -64,6 +81,13 @@ class CustodyTests(unittest.TestCase):
                 (root / "cgroup.events").write_text("populated 1\nfrozen 0\n")
                 with self.assertRaises(Refusal):
                     observer.current()
+                record["State"].update(Running=True, Paused=False)
+                observer.phase = "post-thaw"
+                with patch.object(engine_custody, "process_identity", return_value=(7, "0::/workload/nested\n")):
+                    observer.current()
+                self.assertEqual(observer.observations[-1]["hostPids"], [42, 43])
+                self.assertEqual(observer.observations[-1]["phase"], "current-running-recursive-membership")
+                self.assertNotIn("top", calls)
             finally:
                 observer.close()
 
@@ -87,6 +111,8 @@ class CustodyTests(unittest.TestCase):
     def test_pid_start_identity_and_membership_are_not_pid_only(self):
         fields = ["S"] + ["0"] * 18 + ["12345"]
         self.assertEqual(engine_custody.start_ticks("42 (name with ) bracket) " + " ".join(fields)), 12345)
+        fields[3] = "456"
+        self.assertEqual(engine_custody.session_id("42 (name with ) bracket) " + " ".join(fields)), 456)
         self.assertTrue(engine_custody.in_scope("0::/user.slice/libpod-a.scope/container/child\n",
                                              "/user.slice/libpod-a.scope/container"))
         self.assertFalse(engine_custody.in_scope("0::/user.slice/libpod-a.scope/container-foreign\n",

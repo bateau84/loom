@@ -15,12 +15,14 @@ import stat
 import tempfile
 import time
 import uuid
+import traceback
 from pathlib import Path, PurePosixPath
 from datetime import datetime, timezone
 
 from podman_witness import ENGINE_INFO_FORMAT, PODMAN, Refusal, call, capture_command, error_class, one_record
 import image_binding
 import engine_custody
+import inner_policy
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -29,7 +31,8 @@ OWNED = {"Containerfile.test", ".containerignore", *(
     ("container_driver.py", "container_gate.py", "test_container_driver.py",
      "podman_witness.py", "podman_gate.py", "test_podman_witness.py", "README.md",
      "image_binding.py", "test_image_binding.py", "bubblewrap_probe.py", "test_bubblewrap_probe.py",
-     "engine_custody.py", "test_engine_custody.py", "custody_payload.py"))}
+     "engine_custody.py", "test_engine_custody.py", "custody_payload.py",
+     "inner_policy.py", "inner_gate.py", "test_inner_policy.py"))}
 BUILDS = Path(__file__).parent / ".container-builds"
 
 
@@ -142,9 +145,11 @@ def validate_probes(probes: list[dict], phase: str) -> None:
             raise Refusal("synthetic-probe-denial-or-ambient-contrast")
 
 
-def publish_release(control: Path, nonce: str) -> None:
+def publish_release(control: Path, nonce: str, filename: str = "release") -> None:
     """Publish one complete token atomically; the gate never sees partial bytes."""
-    final = control / "release"
+    if filename not in {"release", "inner-release", "inner-parent-loss"}:
+        raise Refusal("fixed-release-name-required")
+    final = control / filename
     if final.exists():
         raise Refusal("release-already-published")
     pending = control / (".release-" + uuid.uuid4().hex + ".pending")
@@ -304,7 +309,8 @@ def compare_proc(image: str, receipt_path: Path) -> int:
 
 
 def run_tests(image: str, receipt_path: Path, *, prerequisites: bool = False, scoped_proc: bool = False,
-              comparison_records: list | None = None, custody: bool = False) -> int:
+              comparison_records: list | None = None, custody: bool = False, inner: bool = False,
+              parent_loss: bool = False, policy_refusal: bool = False) -> int:
     if not image.startswith("sha256:") or len(image) != 71 or any(c not in "0123456789abcdef" for c in image[7:]):
         raise Refusal("run-requires-content-addressed-image")
     receipt, receipt_sha = image_binding.load_receipt(receipt_path, BUILDS)
@@ -397,62 +403,77 @@ def run_tests(image: str, receipt_path: Path, *, prerequisites: bool = False, sc
                     "started": record["State"]["StartedAt"], "hostPid": record["State"]["Pid"],
                     "engineResolvedScope": record["State"].get("CgroupPath"), "ociRuntime": record.get("OCIRuntime")}
                 observer = engine_custody.Custody(record, diagnostic["custodyObservations"])
+                tree = None
                 try:
-                    # A single fixed trusted synthetic exec, admitted under this
-                    # launch owner before its freeze/release admissions close.
-                    token = call([PODMAN, "exec", "--detach", record["Id"], "python3", "-I", "-S", "-B",
-                                  "/workspace/scripts/loom-isolation/custody_payload.py"]).decode().strip()
-                    if len(token) != 64 or any(c not in "0123456789abcdef" for c in token):
-                        raise Refusal("custody-fixed-exec-identity")
-                    observer.trusted_exec = {token}
-                    members = None
-                    for _ in range(50):
-                        copied = root / "custody-ready.json"
-                        captured = capture_command([PODMAN, "cp", record["Id"] + ":/tmp/loom-custody/ready.json", str(copied)])
-                        if captured["status"] == 0:
-                            members = json.loads(copied.read_text())
-                            break
-                        time.sleep(0.02)
-                    if not isinstance(members, dict) or set(members) != {"parent", "child", "grandchild"}:
-                        raise Refusal("custody-fixed-tree-unavailable")
-                    pids = sorted(members.values())
-                    if len(set(pids)) != 3 or any(not isinstance(pid, int) or pid <= 1 for pid in pids):
-                        raise Refusal("custody-fixed-tree-identity")
-                    diagnostic["syntheticTree"] = {"namespacePids": members, "trustedExecId": token}
-                    def counters():
-                        values = []
-                        for pid in pids:
-                            output = root / "custody-counter"
-                            call([PODMAN, "cp", f"{record['Id']}:/tmp/loom-custody/{pid}.counter", str(output)])
-                            values.append(int(output.read_text()))
-                        return values
-                    def progress(stage, frozen):
+                    if policy_refusal:
+                        refused = engine_custody.InnerRefusal(record["Id"], nonce)
                         try:
-                            before = counters()
-                            time.sleep(0.1)
-                            after = counters()
-                        except Refusal as error:
-                            # This independent observation gap cannot license a
-                            # product release or become counter success. Kernel
-                            # custody/teardown checks remain safely exercisable
-                            # with the product gate held and fixed helpers only.
-                            diagnostic["custodyObservations"].append({"phase": stage + "-counter-unproven",
-                                "operation": "exact-object-counter-copy", "error": str(error),
-                                "outcome": "unknown", "containerId": record["Id"]})
-                            diagnostic["counterProof"] = "unproven"
-                            return
-                        if ((frozen and after != before) or
-                                (not frozen and any(new <= old for old, new in zip(before, after)))):
-                            raise Refusal("custody-counter-transition-unproven-" + stage)
-                        diagnostic["custodyObservations"].append({"phase": stage + "-synthetic-tree-counter",
-                            "namespacePids": pids, "before": before, "after": after, "frozen": frozen,
-                            "containerId": record["Id"]})
-                    observer.exercise(progress)
+                            diagnostic["innerMissingPolicyRefusal"] = refused.proof()
+                        finally:
+                            refused.close()
+                        observer.current()
+                    if inner:
+                        inner_stream = engine_custody.InnerStream(record["Id"], nonce)
+                        try:
+                            bound = one_record(call([PODMAN, "inspect", record["Id"]]))
+                            observer.trusted_exec = set(bound.get("ExecIDs", []))
+                            if len(observer.trusted_exec) != 1:
+                                raise Refusal("inner-fixed-exec-identity")
+                            observer.current()
+                            observer.command("pause")
+                            observer.observe("inner-prerelease-frozen", populated=1, frozen=1)
+                            observer.phase = "post-freeze"
+                            observer.current()
+                            observer.command("unpause")
+                            observer.observe("inner-prerelease-thawed", populated=1, frozen=0)
+                            observer.phase = "post-thaw"
+                            observer.current()
+                            outer_status = dict(row.split(":", 1) for row in Path(f"/proc/{observer.pid}/status").read_text().splitlines() if ":" in row)
+                            diagnostic["innerStage"] = "independent-kernel-observation"
+                            independent = inner_stream.inspect_gate(record["Id"], ready[0]["namespaces"], observer.relative,
+                                                                   int(outer_status["Seccomp_filters"].strip()),
+                                                                   engine_custody.session_id(observer.proc("stat")))
+                            prepared = [value for value in inner_stream.events if value["event"] == "inner-policy-prepared"]
+                            expected = hashlib.sha256(json.dumps(inner_policy.POLICY, sort_keys=True).encode()).hexdigest()
+                            if len(prepared) != 1 or prepared[0]["policySha256"] != expected or prepared[0]["filterBytes"] <= 0:
+                                raise Refusal("inner-pinned-policy-binding")
+                            announcement = next(value for value in inner_stream.events if value["event"] == "inner-ready")
+                            validate_probes(announcement["beforeImportDenials"], "before-import")
+                            diagnostic["innerIndependentRestriction"] = independent
+                            diagnostic["innerPolicyBinding"] = prepared[0]
+                            diagnostic["innerStage"] = "atomic-inner-release"
+                            if parent_loss:
+                                peers = inner_stream.bind_namespace_lifetime(record["Id"])
+                                publish_release(root / "control", nonce, "inner-parent-loss")
+                                diagnostic["innerParentLoss"] = inner_stream.parent_loss(peers)
+                            else:
+                                publish_release(root / "control", nonce, "inner-release")
+                                values = inner_stream.finish()
+                                diagnostic["innerStage"] = "positive-probe-validation"
+                                for event, phase in (("inner-setup", "setup"), ("inner-descendant", "descendant")):
+                                    matches = [value for value in values if value["event"] == event]
+                                    if len(matches) != 1:
+                                        raise Refusal("inner-positive-probe-coverage")
+                                    validate_probes(matches[0]["denials"], phase)
+                                diagnostic["innerSyntheticProof"] = values
+                        finally:
+                            inner_stream.close()
+                        observer.trusted_exec = set()
+                    tree = engine_custody.TreeStream(record["Id"], nonce)
+                    bound = one_record(call([PODMAN, "inspect", record["Id"]]))
+                    tokens = bound.get("ExecIDs", [])
+                    if len(tokens) != 1 or len(tokens[0]) != 64 or any(c not in "0123456789abcdef" for c in tokens[0]):
+                        raise Refusal("custody-fixed-exec-identity")
+                    observer.trusted_exec = set(tokens)
+                    diagnostic["syntheticTree"] = {"namespacePids": sorted(tree.counts), "trustedExecId": tokens[0]}
+                    observer.exercise(lambda stage, frozen: tree.progress(observer, stage, frozen))
                 finally:
+                    if tree:
+                        tree.close()
                     observer.close()
                 diagnostic.update(sentinelUnchanged=sentinel.read_bytes() == b"outer-synthetic-sentinel",
                                   custodyResult="held-gate-recursive-transitions-observed",
-                                  proofLimits="no full inner-policy, escape, parent-loss or release-race proof yet")
+                                  proofLimits="fixed synthetic proof only; general product-launch integration, lost-response, release-race and hostile escape/restart coverage remain unproven")
                 print(json.dumps({"event": "held-gate-custody-observed", "identity": diagnostic["custodyIdentity"],
                                   "observations": diagnostic["custodyObservations"], "fullTask": "unproven"}), flush=True)
                 return 78
@@ -527,6 +548,12 @@ def run_tests(image: str, receipt_path: Path, *, prerequisites: bool = False, sc
             diagnostic.update(operationError="custody-kernel-observation-unavailable" if custody else "os-error",
                               errno=error.errno, attemptedObservation=error.filename)
             raise
+        except ValueError as error:
+            diagnostic.update(operationError="inner-observation-parse-error" if inner else "value-error",
+                              errorClass=type(error).__name__, errorTrace=[
+                                  {"module": Path(frame.filename).name, "line": frame.lineno, "function": frame.name}
+                                  for frame in traceback.extract_tb(error.__traceback__)])
+            raise
         finally:
             try:
                 call([PODMAN, "rm", "--force", diagnostic.get("custodyIdentity", {}).get("containerId", name)])
@@ -588,7 +615,7 @@ def save_diagnostic(record: dict) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("operation", choices=("build", "run", "probe", "compare-proc", "custody"))
+    parser.add_argument("operation", choices=("build", "run", "probe", "compare-proc", "custody", "inner", "inner-parent-loss", "inner-refusal"))
     parser.add_argument("--image")
     parser.add_argument("--receipt", type=Path, help="Required verified build receipt for run")
     args = parser.parse_args(argv)
@@ -598,14 +625,17 @@ def main(argv: list[str] | None = None) -> int:
             raise Refusal("run-driver-from-repository-root")
         engine_ready()
         print(json.dumps({"event": "rootless-engine-observed", "rootless": True, "cgroupVersion": "v2"}), flush=True)
-        if args.operation in {"run", "probe", "compare-proc", "custody"}:
+        if args.operation in {"run", "probe", "compare-proc", "custody", "inner", "inner-parent-loss", "inner-refusal"}:
             if not args.image or not args.receipt:
                 raise Refusal("run-needs-image-and-verified-build-receipt")
             phase = "gated-test"
             if args.operation == "compare-proc":
                 return compare_proc(args.image, args.receipt)
-            return run_tests(args.image, args.receipt, prerequisites=args.operation in {"probe", "custody"},
-                             custody=args.operation == "custody")
+            is_inner = args.operation in {"inner", "inner-parent-loss"}
+            is_refusal = args.operation == "inner-refusal"
+            return run_tests(args.image, args.receipt, prerequisites=args.operation in {"probe", "custody"} or is_inner or is_refusal,
+                             custody=args.operation == "custody" or is_inner or is_refusal, inner=is_inner,
+                             scoped_proc=is_inner, parent_loss=args.operation == "inner-parent-loss", policy_refusal=is_refusal)
         phase = "source-context"
         with tempfile.TemporaryDirectory(prefix=".container-build-", dir=Path(__file__).parent) as directory:
             root = Path(directory).resolve()
