@@ -7,6 +7,8 @@ Reviewer-only domain contract. It does not create Loom authority, product meanin
 - **Discovery contract:** the description names the capability, uses concrete retrieval anchors for intended work, and defines sibling negative space where overlap exists without becoming a miniature workflow.
 - **Trigger resilience:** edits do not casually drop known useful lexical/symptom/tool anchors; any meaningful description compression is treated as a re-test signal rather than assumed harmless.
 - **Practitioner completeness:** `SKILL.md` contains the minimum load-bearing method and no Reviewer/Critic rubric leakage.
+- **Ordinary task fit:** check a representative real task from user inputs through decisions/tools to an observable outcome; a correct but reference-heavy catalog is not enough if the ordinary method remains unclear. Do not reject valid reference-shaped skills just for being references.
+- **Actual eval consumer:** when eval files are supplied, identify the intended runner and test their shape with its real loader/validator. Local tests that check only an invented schema do not prove compatibility. Distinguish an unrun case specification from actual baseline/candidate results.
 - **Progressive disclosure:** the normal path is usable from `SKILL.md`; references contain depth rather than missing core behavior and do not form deep answer chains.
 - **Shape fitness:** the body structure fits the skill type and domain instead of mechanically applying one template to technique, reference, pattern, and discipline skills.
 - **Risk-matched specificity:** instruction precision matches consequence and fragility; low-risk expert work is not over-scripted, while destructive/security/protocol work is not left dangerously vague.

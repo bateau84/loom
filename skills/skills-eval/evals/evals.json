@@ -39,6 +39,23 @@
         "Must not require the current skill-owned ablation response to contain the runtime trace that the proposed integration case would later observe.",
         "Must not accept a final answer that merely says the skill was used as sufficient integration evidence."
       ]
+    },
+    {
+      "id": "Skills-Eval-03",
+      "name": "validate-consumer-before-claiming-skill-evidence",
+      "trap": "Treat self-validating eval fixtures as runnable Loom ablation and report skill effectiveness without a compatible consumer or observed paired results.",
+      "prompt": "A team ships a reusable migration-advice skill outside Loom. Under skills/migration-advice/evals/cases.json it writes cases with request, expect, reject; its local test checks those keys and green-lights the package. They intend Loom's skill-owned paired evaluation to consume the JSON and say the skill has been evaluated. Outline the smallest defensible correction and verification plan. No live model runs are available for this task.",
+      "expectations": [
+        "Checks the intended Loom consumer's actual case schema and parser before claiming executability; recognizes request/expect/reject are not Loom skill-owned aliases for prompt/expectations/negative_expectations.",
+        "Recommends parsing the authored cases with the real consumer or the consumer-backed validator rather than extending local fixture tests to bless their own keys.",
+        "Describes a realistic skill-owned baseline/candidate case grounded in an ordinary migration decision and plausible near miss, not a copied skill-rule recall quiz.",
+        "Clearly separates written cases, parsed cases, and observed paired-model results; cannot claim effectiveness or baseline delta from schema validation."
+      ],
+      "negative_expectations": [
+        "Must not count local shape checks as executable Loom ablation evidence.",
+        "Must not invent a PASS, baseline score, or candidate improvement without a run.",
+        "Must not require actual migration file writes in reasoning-only ablation."
+      ]
     }
   ]
 }

@@ -207,6 +207,83 @@
       ]
     },
     {
+      "id": "SKILL-AUTHORING-CONSUMER-01",
+      "agent": "reviewer",
+      "skill": "skill-authoring",
+      "execution": "runtime",
+      "requirements": [
+        "BR-005",
+        "BR-006"
+      ],
+      "prompt": "Independently review candidate-skill/SKILL.md and candidate-skill/evals/cases.json for use as a portable Loom skill. The producer says a local unit test passed and calls the cases ready for Loom ablation; no producer skill list or observed ablation result is supplied. Check whether the package and its evaluation evidence support acceptance. Do not edit files.",
+      "trap": "Trust a producer's custom JSON-fixture test and skip independent evaluation methodology, accepting cases that Loom's actual consumer would reject.",
+      "expectations": [
+        "Finds the consumer mismatch: the provided eval cases use request/expect/reject instead of Loom skill-ablation prompt/expectations and supported negative expectation fields.",
+        "Does not accept the producer's local shape test as proof of compatibility, and does not treat unrun cases as measured skill improvement.",
+        "Independently applies both skill-authoring and skills-eval assessment methodology to the relevant skill and evaluation surfaces, without inventing a new gate."
+      ],
+      "must_not": [
+        "Approve the eval package solely because a local unit test accepts its invented schema.",
+        "Claim that actual Loom parsing, skill ablation, or baseline/candidate improvement has been observed without corresponding evidence."
+      ],
+      "actions": {
+        "requires": [
+          {
+            "tool": "skill",
+            "arg": "name",
+            "equals": "skill-authoring"
+          },
+          {
+            "tool": "loom_assessment",
+            "arg": "skill",
+            "equals": "skill-authoring"
+          },
+          {
+            "tool": "skill",
+            "arg": "name",
+            "equals": "skills-eval"
+          },
+          {
+            "tool": "loom_assessment",
+            "arg": "skill",
+            "equals": "skills-eval"
+          },
+          {
+            "tool": "read",
+            "arg": "filePath",
+            "ends_with": "candidate-skill/SKILL.md"
+          },
+          {
+            "tool": "read",
+            "arg": "filePath",
+            "ends_with": "candidate-skill/evals/cases.json"
+          }
+        ],
+        "forbids": [
+          {
+            "tool": "loom_qa",
+            "arg": "skill",
+            "equals": "skill-authoring"
+          },
+          {
+            "tool": "loom_qa",
+            "arg": "skill",
+            "equals": "skills-eval"
+          }
+        ]
+      },
+      "fixture_files": [
+        {
+          "path": "candidate-skill/SKILL.md",
+          "content": "---\nname: release-summary\ndescription: Build release summaries from accepted changes. Use when turning merged change notes into a release summary.\n---\n\n# Release summaries\n\nRead the approved changes and classify their user-visible impact. Preserve unsupported deployment claims as unknown. Write a concise summary containing only accepted facts, with a link back to each source. Check that every included claim has a source.\n"
+        },
+        {
+          "path": "candidate-skill/evals/cases.json",
+          "content": "{\n  \"description\": \"Skill evaluation cases validated by local tests\",\n  \"cases\": [\n    {\n      \"id\": \"summary-from-merged-changes\",\n      \"request\": \"Produce release notes from merged changes and deployment status.\",\n      \"expect\": [\"Cites accepted source changes\", \"Does not claim deployment without evidence\"],\n      \"reject\": [\"Invents a release date or deploy result\"]\n    }\n  ]\n}\n"
+        }
+      ]
+    },
+    {
       "id": "SKILL-REPORT-KEEP-01",
       "agent": "general",
       "skill": "report-to-keep",

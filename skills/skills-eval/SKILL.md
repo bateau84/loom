@@ -30,6 +30,14 @@ Use a **central native integration case** in `evals/skills.json` when the questi
 
 Do not use native skill loading as a proxy for skill usefulness, and do not use reasoning-only ablation to prove runtime integration.
 
+## Match the actual consumer before authoring cases
+
+For Loom skill-owned ablation, `scripts/run-evals-legacy.py` (`load_skill_owned_cases` / `normalize_skill_eval_case`) is the current case loader used by the paired runner. Its cases require `prompt` and non-empty `expectations`; `trap` and `negative_expectations` (or `must_not`) express the wrong-path behavior. `request` / `expect` / `reject` are not accepted aliases. See the actual parser before relying on any listed field names.
+
+Run `npm run eval:validate` in Loom, or `python3 scripts/validate-skill-evals.py --skills-root /path/to/repo/skills` from a Loom checkout for a portable skill package. These checks prove consumer parsing, **not** behavioral value. A homegrown test that approves a different JSON shape cannot substitute. If the intended consumer is unavailable, label the cases as *unverified specifications*, not executable Loom evals.
+
+Use a realistic task that exercises the method and its observable decision/outcome, plus a credible near miss; do not merely quiz the model on an example already copied into the skill. Reasoning-only ablation can show the decision inline, while file/tool effects need separate runtime proof.
+
 ## Native integration proof checklist
 
 When the claim is production skill/companion integration:
