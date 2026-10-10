@@ -17,17 +17,17 @@ jobs:
         with:
           persist-credentials: false
       - name: Smoke test pinned eval-runner action/runtime pair
-        uses: bateau84/opencode-eval-runner@ad4d6a26fc137202e4f35f2a14503f53b81991ca
+        uses: bateau84/opencode-eval-runner@fd9da10cbe2a8182fc8910ec199a221250deb3ca
         with:
-          opencode-image: ghcr.io/bateau84/opencode-eval-runner@sha256:68ef7322c75aede0e8cc76d0e3531e8b82dd417bbb5e5100264a89eab7fe8627
-          copilot-image: ghcr.io/bateau84/opencode-eval-runner@sha256:ab10a2865d0cf76306b8a3a07bbf446612c8524e09b197ad82b7d8698e90c477
+          opencode-image: ghcr.io/bateau84/opencode-eval-runner@sha256:104a0895c83e4f36fb597e388656a4c6e445035c9a1fb5aaa2c9e922ad172a36
+          copilot-image: ghcr.io/bateau84/opencode-eval-runner@sha256:7b06209cac3a0125a0d90d49a200fd71c7f91dae24477183e95ba4df0a822818
           prepare-opencode: true
           prepare-copilot: true
           command: |
             opencode-eval-runner --help
             opencode-eval-runner invoke --help | grep -F -- '--reasoning'
             docker image inspect "$OPENCODE_EVAL_RUNNER_OPENCODE_IMAGE" >/dev/null
-            docker run --rm --entrypoint opencode "$OPENCODE_EVAL_RUNNER_OPENCODE_IMAGE" --version | grep -F "2.0.18"
+            docker run --rm --entrypoint opencode "$OPENCODE_EVAL_RUNNER_OPENCODE_IMAGE" --version | grep -F "2.0.23"
             docker run --rm --entrypoint opencode "$OPENCODE_EVAL_RUNNER_OPENCODE_IMAGE" run --help | grep -F -- 'provider/model#variant'
             docker image inspect "$OPENCODE_EVAL_RUNNER_COPILOT_IMAGE" >/dev/null
             docker run --rm --entrypoint copilot "$OPENCODE_EVAL_RUNNER_COPILOT_IMAGE" --help | grep -F -- '--effort'
@@ -44,7 +44,7 @@ jobs:
       - name: Verify real Loom plugin activation and rejection in pinned eval runner
         run: |
           set -euo pipefail
-          image="ghcr.io/bateau84/opencode-eval-runner@sha256:68ef7322c75aede0e8cc76d0e3531e8b82dd417bbb5e5100264a89eab7fe8627"
+          image="ghcr.io/bateau84/opencode-eval-runner@sha256:104a0895c83e4f36fb597e388656a4c6e445035c9a1fb5aaa2c9e922ad172a36"
           workspace="$RUNNER_TEMP/loom-runtime-workspace"
           runtime="$RUNNER_TEMP/loom-preflight-runtime"
           rm -rf "$workspace" "$runtime"
