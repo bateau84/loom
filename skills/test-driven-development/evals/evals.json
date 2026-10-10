@@ -147,6 +147,58 @@
         "Still writes and observes the regression test fail before fixing the bug when practical",
         "Adds more cases only if implementation reveals a real boundary or counterexample within accepted scope"
       ]
+    },
+    {
+      "id": 12,
+      "name": "non-tdd-verification-does-not-require-test-first-theater",
+      "prompt": "I'm renaming a private variable and extracting a small helper without changing observable behavior. Existing unit and integration tests cover the affected code, and I can run a typecheck and the focused suite. A reviewer says I must invent a new failing test before touching any code because every change must follow Red-Green-Refactor. Is that justified?",
+      "expected_output": "Keep behavioral regression protection, run existing checks, and reject mandatory new Red for a behavior-preserving refactor; RGR belongs to chosen test-first development.",
+      "trap": "The model turns a testing principle into universal TDD ritual and invents a fake failing case for a refactor.",
+      "expectations": [
+        "Distinguishes general testing value from optional test-first methodology.",
+        "Rejects a mandatory new Red for a behavior-preserving refactor.",
+        "Uses existing discriminating regression tests and checks as evidence.",
+        "Adds a new test only if a distinct accepted behavior or credible gap is discovered."
+      ]
+    },
+    {
+      "id": 13,
+      "name": "refuse-redundant-and-impossible-cases",
+      "prompt": "A pure function accepts a non-null string per its type contract and converts ASCII uppercase letters to lowercase. Existing tests cover normal and empty input and a mixed-case example. A teammate wants tests for null, network failure, thread starvation, and 50 more case combinations for '100% robustness.' What should the next test be?",
+      "expected_output": "No extra tests by default: avoid unreachable inputs, unrelated failure modes, and redundant combinations, and explain the stopping rule.",
+      "trap": "The model rewards speculative edge-case enumeration, ignores reachable API contract, and writes boilerplate to appear thorough.",
+      "expectations": [
+        "Rejects null when the language/API contract makes it impossible without a real boundary requiring runtime validation.",
+        "Rejects network/thread cases unrelated to this pure function.",
+        "Checks whether existing cases discriminate the accepted rule and stops when adequate.",
+        "Does not chase test counts or coverage percentage."
+      ]
+    },
+    {
+      "id": 14,
+      "name": "keep-high-consequence-real-regression",
+      "prompt": "A credential broker has an accepted rule: credentials may only be used for explicitly authorized resources. The normal authorized path already has tests. Someone argues the denied-resource path is probably rare, so its regression test is bloat. Is removing it wise?",
+      "expected_output": "Retain or add a focused test of the actual authorization boundary because impact is high, despite low expected frequency.",
+      "trap": "The model over-corrects toward minimalism and skips a load-bearing security guarantee.",
+      "expectations": [
+        "Identifies an accepted authorization obligation and serious consequence.",
+        "Keeps a focused denied-resource regression test using the real authorization decision path.",
+        "Does not require a broad fuzzing/adversarial input matrix without additional risks.",
+        "Balances likelihood with consequence rather than automatically optimizing test count."
+      ]
+    },
+    {
+      "id": 15,
+      "name": "delete-redundant-tests-without-losing-protection",
+      "prompt": "A repository has six identical tests calling the same public API with equivalent inputs; a seventh contract test already catches the same broken behavior and has a better failure message. A reviewer says tests must never be deleted because that reduces coverage. How should we refactor?",
+      "expected_output": "Confirm the stronger test discriminates the same accepted behavior, then consolidate/delete redundant tests and rerun the containing suite.",
+      "trap": "The model treats test count as a one-way ratchet or deletes all coverage without checking retained proof.",
+      "expectations": [
+        "Checks whether the retained test truly protects the same semantic behavior.",
+        "Supports deleting redundant tests and fixtures after ensuring no distinct regression value is lost.",
+        "Keeps useful coverage and reruns the relevant suite.",
+        "Rejects raw test count as a quality measure."
+      ]
     }
   ]
 }
