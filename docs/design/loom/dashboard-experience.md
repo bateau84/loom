@@ -1,170 +1,133 @@
 ---
 type: design
-title: Loom Control Panel Experience
-description: Human-facing information architecture for understanding and cleaning up Loom work outside OpenCode.
+title: Loom Operator Dashboard Experience
+description: A session-aware overview of current work with independent Sessions, Workflows, Work, and Projects views.
 tags: [design, loom, dashboard, control-panel, ux, ui]
 ---
 
-**Status:** proposed
+**Status:** proposed — design-first draft; screens below describe the target, not implemented UI.
 
 ## Experience goal
 
-Loom should feel like a **control panel for the user's work**, not a cockpit for Loom internals.
+Opening the dashboard should answer:
 
-The first screen should answer, in plain language:
+> What is everything doing, how does it connect to the work, and does anything need me?
 
-- Where am I working?
-- Which sessions exist there?
-- What is happening in a session?
-- Does anything need me?
-- Which workflow is responsible?
-- Can obsolete failed work be removed?
-
-Runtime concepts such as revisions, publishers, dispatch budgets, and agent internals remain available for diagnosis, but they do not define the primary navigation.
+The user should not need to understand Loom's record layout or open each project/session to answer that question. Keep technical diagnosis available, but put current work and its relationships first.
 
 ## Mental model
 
-The primary containment hierarchy is:
+Use several linked views of the same state, not one forced containment tree:
+
+| Object | What the user needs to know |
+| --- | --- |
+| Host instance | Which observed OpenCode runtime is available? |
+| Session | Which conversation/agent is doing or waiting for what? |
+| Workflow | Which execution steps and sessions are working together? |
+| Work | Which outcome, Plan, Phase, Wave, and Task does this advance? |
+| Project/worktree | Where does the work belong? |
+
+A host can expose multiple sessions. A workflow can involve multiple sessions. A session can participate in successive workflows; current membership and history are separate. Several workflows can contribute to one Objective. A chat-only session can have no workflow. A Task/Change can exist without a full Objective Plan.
+
+Parent-child session links describe real OpenCode relationships. They do not imply different terminal windows. Instance and session counts must not pretend to count UI windows.
+
+## Navigation
+
+Primary navigation is **Overview · Sessions · Workflows · Work · Projects**. Installation/project/status filters are visible and persist across cross-links where compatible. A project is a useful grouping, not a mandatory first click.
+
+### Overview
+
+Show three connected areas:
+
+1. **Needs you / Blocked:** concrete reason, affected work, responsible session, and the next supported action or a direct link. Normal automated waiting is separate. Do not label every OQ/check as a user decision.
+2. **Sessions now:** observed root sessions with expandable children, current role/activity, project, workflow, Task/step, and last observation. Unbound sessions are included. An optional flat list exposes every child without changing counts.
+3. **Workflows and work:** current workflows with relevant Task progress and Plan links, shown once per stable identity. Full Objective progress is labelled separately from a workflow's own scope.
+
+An illustrative row, not live data:
 
 ```text
-Working directory
-└── Session
-    └── Workflow
-        └── Steps / agents / diagnostics
+Session                 Project     Activity                 Work
+Dashboard work          loom        Waiting for child        Workflow: dashboard
+  Worker                loom        Running tests            Task: session inventory
+  Reviewer              loom        Idle                     Step: review implementation
+Backend handoff         api         Waiting for your answer  Workflow: auth contract
+Ideas                   leash       Idle                     No workflow
 ```
 
-A working directory is the stable context the developer recognizes. A session is the conversation/work context in that directory. A workflow is execution machinery inside a session.
+Only render those activity words when supported by the corresponding observations. A ready review step with no session yet belongs in the workflow's **Ready next** section, not as an invented Reviewer session.
 
-A small conversation may never create a workflow. Conversation-only OpenCode activity has no Loom control-plane state and is therefore outside this control panel until Loom state exists. A projected Loom session may contain more than one workflow.
+The header distinguishes **observed host instances**, **root sessions**, **child sessions**, and **workflows**. Each count states scope/freshness where needed. Overview can be concise, but no eight-row cutoff may strand the rest: show **View all** with the full known count and any coverage limitation.
 
-## Primary pages
+### Sessions
 
-### Control panel
+List actual sessions, independent of workflow existence. Support current/history, project, role, and activity filters plus title/ID search. Use stable IDs internally; show short IDs only as a disambiguator.
 
-The home page shows:
+Session detail contains:
 
-1. working directories;
-2. recent sessions;
-3. sessions that need attention.
+- actual title, project/worktree, observed host association, parent, and children;
+- observed execution state and observation time, with current versus last-observed agent clearly distinguished;
+- current workflow/step/attempt and Plan/Task links when Loom records them;
+- separately labelled previous workflows, attempts, and recent activity;
+- explicit missing-source or incomplete-history notices.
 
-It does not lead with workflow counts, publisher counts, revisions, or budgets.
+A prior failed workflow does not paint the whole current session failed. Multiple verified current activities are displayed as a set, not collapsed to a guessed single active agent. Session navigation never changes agent bindings.
 
-### Working directory
+### Workflows
 
-A directory page shows:
+List workflows directly across projects. Distinguish current work from history without requiring cleanup.
 
-- canonical directory path;
-- recent sessions in that directory;
-- a small summary of active and failed work;
-- a route to **Manage workflows**;
-- the Objective → Phase → Wave → Task work map as an advanced disclosure rather than the default content.
+Workflow detail shows the request, its workflow state, **Running now**, **Waiting**, **Ready next**, completed/failed steps, and all participating sessions. Every running row links to the exact session and step attempt. Show the reason/source for a wait; unknown is acceptable when the source does not record it.
 
-### Session
+Place the related Plan and Task scope beside the execution view. Questions, required verification, budget, Product Acceptance, and knowledge status remain reachable. Only unresolved items that change progress should dominate the summary. Technical revisions, publishers, and evidence provenance are a diagnostic disclosure.
 
-A session page is the main work page.
+Workflow completion is not presented as Objective completion. A planning-only workflow is explicitly labelled and does not claim implementation progress.
 
-It shows:
+### Work
 
-- session title/goal when known;
-- working-directory context;
-- workflows contained in the session;
-- simple workflow states: active, blocked, failed, complete, cancelled;
-- open questions or other user-relevant boundaries;
-- cleanup action when the session contains failed/cancelled workflow attempts.
+Make durable work a primary view rather than an **Advanced work map**. Show:
 
-### Workflow
+```text
+Objective → current Plan → Phase → Wave → Task
+                                Task ↔ workflow ↔ session / step attempt
+```
 
-Workflow detail remains available for diagnosis. It can expose execution stages, OQs, verification, budget, Product Acceptance, participating sessions, publishers, and technical IDs.
+Keep the hierarchy readable: expand current/blocked work by default; let the user collapse phases and switch to a flat Task list. Plan goal, current revision, progress, and invalidation state are visible without opening technical details.
 
-This is drill-down information, not the default product model.
+Task detail exposes its intended result, acceptance criteria, dependencies, owner, current execution links, questions, and completed result/evidence references. Step attempts and workflow IDs are execution links, not substitutes for Task identity.
 
-## Workflow cleanup
+Standalone work uses its recorded structure and says **No full Plan** where appropriate. A shared Objective appears once even when two workflows reference it. Historical Plans/attempts remain reachable and are never counted as current work.
 
-Failed restart attempts create both visual clutter and stale control-plane state. The user must be able to remove them.
+### Projects
 
-Deletion is available for **terminal failed or cancelled workflows**.
+Projects summarize sessions, workflows, and work for one canonical project/worktree. Paths disambiguate duplicate names. All the same global views can be filtered to this project; no separate hierarchy or competing counts are invented here.
 
-The interaction must:
+## Interaction and status rules
 
-1. show which workflows will be deleted;
-2. explain that project files are not changed;
-3. explain that retained evidence and durable completed work results are not deleted;
-4. require an explicit confirmation action;
-5. remove the deleted workflows from normal Loom views immediately after success;
-6. remove stale workflow/session/control-plane bindings so the deleted attempts cannot interfere with later routing;
-7. refuse deletion of active work;
-8. refuse deletion when a durable completed-Wave review receipt still depends on that workflow record;
-9. treat an interrupted/uncertain browser response as unknown rather than failed, and allow a safe retry without duplicating cleanup.
+Direct links target stable objects. Changing a workflow coordinator must not change the workflow's URL. Support existing `#/project/.../workflow/...` and `#/directory/.../session/.../workflow/...` links through compatibility routing. A child-session link opens that real child's detail rather than looking it up only among coordinator groups.
 
-Deletion is intentionally different from cancellation:
+Back restores the prior list/filters and meaningful scroll position. Refresh preserves focus, selected identity, and open hierarchy nodes. If a target is removed, show its removal/unavailable state and a predictable return link; never select a similarly named replacement.
 
-- **Cancel** stops live work and releases execution authority.
-- **Delete** removes an already-terminal failed/cancelled execution record from active Loom state.
+Keep these concepts separate:
 
-## Progressive disclosure
+| Label | Meaning |
+| --- | --- |
+| Running | Fresh host activity supports execution now. |
+| Idle | The host explicitly reports the session idle. |
+| Waiting | A recorded wait reason exists; show what or whom it waits for. |
+| Ready next | Loom says a step can be dispatched; it may not have a session yet. |
+| Stale / activity unknown | Activity is missing, expired, unsupported, or disconnected. |
+| Complete / failed / cancelled | State of the named workflow or work object, not of every related session. |
 
-Default pages show human concepts first.
+A fresh dashboard poll or publisher heartbeat does not make old activity current. Display status with text and icons as well as restrained color. At 320 CSS pixels, use labelled stacked rows, not horizontally overflowing tables. Core functions must not depend on hover.
 
-Advanced state belongs behind drill-down or disclosure:
+## History, cleanup, and privacy
 
-- Objective/Phase/Wave/Task plan details;
-- publishers and projection freshness;
-- workflow revisions and internal IDs;
-- dispatch budget;
-- agent/step diagnostics;
-- provenance.
+History is a view/filter, not a requirement to delete records. Preserve the existing explicit, confirmed deletion of terminal failed/cancelled workflows and its server-side protections. It does not cancel live work, modify project files, remove retained evidence, or delete host sessions. Keep the confirmation dialog keyboard accessible and preserve its focus behavior.
 
-A warning or count may surface at a higher level when it changes the user's next action.
+Titles/activity summaries are bounded, escaped, and redacted. Do not fetch full transcripts to populate an overview row. Missing titles get an honest short-ID label, not a title copied from an unrelated workflow. Model/token/cost details and opt-in output previews are secondary to the operational overview.
 
-## Interaction rules
+## Validation and implementation boundary
 
-- Browser Back preserves the directory → session → workflow path.
-- Existing legacy workflow deep links remain valid during migration.
-- Background refresh does not steal focus or replace the selected object with a similarly named object.
-- If an object disappears after cleanup, navigation returns predictably to its session or directory.
-- Status is expressed with text/icon semantics, not color alone.
-- Destructive actions are keyboard reachable and use a modal confirmation with focus trapping/native dialog behavior.
-- Narrow layouts collapse to one column without hiding required actions behind hover.
+[BR-018](../../requirements/loom/br-018-external-operational-dashboard.md) owns behavioral acceptance. The [operator-model specification](../../architecture/loom/specs/dashboard-operator-model.md) defines data sources, relationships, delivery slices, and the multi-instance test matrix.
 
-## Empty and failure states
-
-Distinguish:
-
-- no working directories projected;
-- directory with no sessions;
-- session with no workflows;
-- no failed/cancelled workflows to clean up;
-- stale/offline projection;
-- consistency conflict;
-- missing optional telemetry.
-
-Unknown values are never shown as healthy zero.
-
-## Visual direction
-
-The control panel should be quiet.
-
-Use:
-
-- generous spacing;
-- simple lists instead of dense cards when possible;
-- one clear primary action per context;
-- restrained status color;
-- technical details only when requested.
-
-Avoid dashboard decoration whose only purpose is to make the page look busy.
-
-## Validation scenarios
-
-Designer validation should cover:
-
-1. developer switches among several working directories and resumes a recent session;
-2. one session contains several workflows and their relationship is immediately clear;
-3. four failed restart workflows are deleted in one confirmed cleanup action;
-4. active workflow deletion is unavailable/refused;
-5. project files remain unchanged after workflow cleanup;
-6. stale projection and consistency conflict remain understandable;
-7. keyboard-only directory → session → workflow → back navigation;
-8. modal open/close/confirmation focus behavior;
-9. 320 CSS-pixel narrow layout without horizontal overflow;
-10. technical diagnostics remain reachable without dominating normal use.
+Validate the resulting product by navigating from Overview to a child's current Task and its Plan, then back, and by identifying the concrete blocker without opening all sessions. The six-instance fixture must also include a chat-only session and a stale source. A pleasant mockup alone does not prove live session coverage or truthful status.
