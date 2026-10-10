@@ -1,42 +1,11 @@
-# Test Helpers
+# Test Timeouts
 
-## Test Timeout
+Use the Go test runner's built-in timeout when protecting against a hung suite:
 
-For tests that may hang, use a timeout helper that panics with caller location:
-
-```go
-// https://github.com/stretchr/testify/issues/1101
-func testWithTimeout(t *testing.T, timeout time.Duration) {
-    t.Helper()
-
-    testFinished := make(chan struct{})
-    t.Cleanup(func() {
-        close(testFinished)
-    })
-
-    var pc [1]uintptr
-    n := runtime.Callers(2, pc[:])
-    line, funcName := "", ""
-    if n > 0 {
-        frames := runtime.CallersFrames(pc[:])
-        frame, _ := frames.Next()
-        line = frame.File + ":" + strconv.Itoa(frame.Line)
-        funcName = frame.Function
-    }
-
-    go func() {
-        select {
-        case <-testFinished:
-        case <-time.After(timeout):
-            panic(fmt.Sprintf("%s: Test timed out after: %v\n%s", funcName, timeout, line))
-        }
-    }()
-}
-
-// Usage
-func TestLongRunningOperation(t *testing.T) {
-    testWithTimeout(t, 2*time.Second)
-    result := LongRunningOperation()
-    // If this takes longer than 2 seconds, the test panics with location info
-}
+```bash
+go test -timeout=30s ./...
 ```
+
+For an operation whose accepted contract includes cancellation or deadlines, test it through the real context-aware API. Use `context.WithTimeout` or `t.Context()` as appropriate to the module's Go version. If the test must prove timer ordering or deadline behavior, prefer `testing/synctest` or a controlled clock rather than waiting for real wall-clock time.
+
+Do not add a detached goroutine that panics after a test-specific delay: the panic can terminate the entire test process and obscure the actual failing behavior. A test-specific deadline should justify its own cost by protecting a real hang or cancellation scenario.

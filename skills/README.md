@@ -60,9 +60,13 @@ The focused cases in `evals/product-development.json` cover these decisions; see
 
 The authoring skills own the production artifact. The eval skills own benchmark design. Evals verify a production contract; they do not create one.
 
+## Testing skill responsibilities
+
+`test-driven-development` owns **test selection, regression value, honest evidence, proportionality, stopping/deleting tests, and the optional Red → Green → Refactor method**. Language-specific testing skills (`golang-testing`, `typescript-testing`, `python-testing`, and Terraform testing skills) own domain mechanics only. Their examples and techniques do not impose extra coverage quotas or mandatory test infrastructure. Reviewer and Critic evaluate material test evidence against accepted behavior; they do not require techniques merely because a skill documents them.
+
 ## Loading discipline
 
-Load the smallest useful set. A Go database task might use `golang-common-practice`, `golang-database`, and `golang-testing`; it should not load every Go skill.
+Load the smallest useful set. For a Go database change, load `test-driven-development` when deciding what needs tests and add `golang-testing` or `golang-database` only for relevant mechanics; do not load every Go skill.
 
 Reviewer loads only assessment companions relevant to the reviewed surface. Critic loads QA companions only for load-bearing or materially risky domains, normally a small set rather than every skill touched by the workflow.
 

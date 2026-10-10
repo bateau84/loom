@@ -1,8 +1,10 @@
 # Integration Testing
 
+Integration tests are valuable when an accepted behavior depends on **actual composition** across boundaries. Follow `test-driven-development` for what warrants that proof. The Docker Compose setup below is an example for tests that truly need external services, not a mandatory project fixture.
+
 ## Docker Compose Fixture
 
-Create `pkg/myfeature/testdata/docker-compose.yml` for test services:
+If an actual Postgres/Redis test environment is needed and the repository already uses Compose, a possible `pkg/myfeature/testdata/docker-compose.yml` is:
 
 ```yaml
 version: "3.8"
@@ -77,6 +79,7 @@ INSERT INTO orders (user_id, amount, status) VALUES
 package database_test
 
 import (
+    "context"
     "database/sql"
     "os"
     "os/exec"
@@ -97,11 +100,21 @@ func (s *DatabaseTestSuite) SetupSuite() {
         s.T().Fatalf("failed to start docker-compose: %v", err)
     }
 
-    time.Sleep(5 * time.Second)
-
     db, err := sql.Open("postgres", "postgres://test:test@localhost:5433/testdb?sslmode=disable")
     if err != nil {
-        s.T().Fatalf("failed to connect to database: %v", err)
+        s.T().Fatalf("failed to open database: %v", err)
+    }
+    // Wait for observed readiness, not an arbitrary fixed startup delay.
+    ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+    defer cancel()
+    for {
+        if err = db.PingContext(ctx); err == nil {
+            break
+        }
+        if ctx.Err() != nil {
+            s.T().Fatalf("database not ready: %v", err)
+        }
+        time.Sleep(100 * time.Millisecond)
     }
     s.db = db
 

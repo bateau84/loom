@@ -69,7 +69,7 @@ Attack:
 - contradictions between accepted layers or between authority and realized behavior;
 - aggregate patterns that are harmless locally but dangerous together.
 
-Do not manufacture requirements merely to appear thorough.
+Do not manufacture requirements merely to appear thorough. Do not turn adversarial thought experiments into mandatory tests unless they expose a credible accepted-obligation failure with distinct regression value; existing sufficient proof is valid.
 
 ### 4. Gate-specific adjudication
 

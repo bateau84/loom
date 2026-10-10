@@ -1,19 +1,38 @@
 ---
 name: test-driven-development
-description: "Test-Driven Development workflow for any language — use tests to drive behavior and design through a tight red-green-refactor loop. Use when implementing a feature test-first, choosing the next example, turning a bug into a regression test, evolving an API from tests, deciding when to Fake It or Triangulate, or judging whether TDD evidence really proves the claimed behavior. Covers the Test List, Red-Green-Refactor, Obvious Implementation / Fake It / Triangulation, design feedback, refactoring discipline, boundary tests, test doubles, and Loom's honest-green house rule. Pair with the language testing skill for mechanics."
+description: "Language-agnostic test selection, regression value, realistic risk, honest evidence, and optional test-driven development. Use when deciding what to test, whether a regression test adds value, how much coverage is enough, when to stop/delete tests, or when doing Red-Green-Refactor, Fake It, or Triangulation. Language-specific testing skills supply mechanics only."
 license: MIT
 metadata:
   author: Bateau
   version: "1.1.0"
 ---
 
-> **House skill.** This is Loom's language-agnostic TDD methodology. It combines the normal TDD method with explicit Loom house choices about test integrity and test doubles. Language mechanics live in skills such as `golang-testing` and `python-testing`. Loom authority, routing, evidence, and escalation still come from the active role directive and control-plane state.
+> **House skill.** This is Loom's language-agnostic authority for **which tests are worth writing**, what evidence they provide, and (when chosen) the TDD workflow. Language-specific testing skills such as `golang-testing` and `python-testing` own mechanics, not coverage quotas or independent test-selection policies. Loom authority, routing, evidence, and escalation still come from the active role directive and control-plane state.
 
-**Persona:** You let tests drive the next behavior and expose design pressure. You do not write new production behavior until a failing test demands it, and you do not trust a green bar until you know why it is green.
+**Persona:** You protect meaningful behavior with the fewest maintainable tests that give adequate confidence. When using TDD, let a failing test drive each next behavior; in every mode, know why a green test is green.
+
+## Scope and modes
+
+The **test-value principles below apply to all testing work**: feature changes, bug fixes, refactors, and review. The Red → Green → Refactor loop below applies **when working test-first**. Do not require a ritual Red, a formal Test List, or additional tests for a docs-only change or a behavior-preserving edit solely because this skill was loaded. A confirmed defect should normally gain a regression test when practical; other changes can rely on existing proof when it already discriminates the relevant behavior.
+
+## Test value and stopping rule
+
+Before adding a test, identify the **distinct regression or failure** it would detect. Favor:
+
+- accepted observable behavior and its defining example;
+- a reproduced defect or a known weak boundary;
+- a credible failure given reachable inputs, state, dependencies, or real operating conditions;
+- a low-probability but high-consequence failure when security, authorization, data integrity, or recovery makes protection worthwhile.
+
+Ask whether an existing test or cheaper check already catches that regression. Consider impact, likelihood, and the maintenance cost of setup, doubles, execution, and assertions. Choose the smallest test level that faithfully proves the claim; use a higher-level test only for a boundary that lower-level evidence cannot establish.
+
+Do **not** enumerate every input combination, implementation branch, theoretical counterexample, or framework feature for its own sake. Coverage percentage, test count, and use of a particular testing technique are not acceptance requirements unless explicitly established by the repository or accepted contract. Static checks may adequately prove purely static obligations; do not duplicate them with runtime tests without a distinct benefit.
+
+**Stop** when the defining behavior, material boundaries, and credible high-impact regressions have enough independent proof. Consolidate or delete redundant, obsolete, and implementation-coupled tests when doing so preserves that proof. A missing speculative test is not a defect, and reducing test count is not inherently a loss of quality.
 
 ## Start with a Test List
 
-Before non-trivial coding, make a small working list of behaviors or examples implied by the accepted contract. For a genuinely single-behavior change, the one next test is enough; do not create list ceremony just to satisfy the method.
+When using TDD for non-trivial behavior, make a small working list of behaviors or examples implied by the accepted contract. For a genuinely single-behavior change, the one next test is enough; do not create list ceremony just to satisfy the method.
 
 The Test List is not a complete up-front test plan. It is a queue of useful next questions. Update it whenever implementation teaches you something new.
 
@@ -114,7 +133,7 @@ A useful Loom heuristic: if a focused test requires understanding roughly five o
 ## Behavior, examples, and invariants
 
 - **Test behavior, not implementation.** Prefer externally meaningful results: returned values, persisted state, emitted events, protocol messages, operator-visible signals, or other accepted outputs.
-- **Every bug becomes a regression test.** Reproduce the bug with Red before fixing it when practical, then keep that test.
+- **Protect confirmed bugs.** Reproduce a defect with a regression test before fixing it when practical. If existing tests already detect it, strengthen/reuse them instead of adding a duplicate; explain when a retained test would add no distinct protection.
 - **Use examples to discover the rule.** When one example permits a trivial implementation, add the smallest second example that forces the actual rule.
 - **Test invariants directly.** For state machines, parsers, encoders, stores, or security rules, identify properties that must remain true across examples.
 
@@ -163,7 +182,7 @@ When accepted behavior crosses process, storage, protocol, filesystem, database,
 
 Use the testing pyramid pragmatically:
 
-- many focused unit tests for fast design feedback;
+- focused unit tests for fast design feedback where they add distinct value;
 - integration/contract tests for owned boundaries;
 - acceptance/end-to-end tests for load-bearing flows that cannot be proven below.
 
@@ -208,6 +227,9 @@ Never advance to the next behavior on a red bar or an unexplained green bar.
 - **Green at all costs** — weakening assertions, skipping cases, or seeding outputs merely to obtain green.
 - **Refactor plus behavior change** — silently adding requirements while supposedly cleaning up.
 - **Round-trip only** — letting two mutually wrong implementations validate each other.
+- **Speculative case matrix** — enumerating implausible input combinations or hypothetical requirements with no distinct regression value.
+- **Coverage theater** — adding tests, mocks, or infrastructure just to raise coverage or satisfy a preferred technique.
+- **Test accumulation** — keeping redundant/obsolete tests merely because deleting tests feels unsafe.
 
 ## Cross-references
 
@@ -217,4 +239,4 @@ Never advance to the next behavior on a red bar or an unexplained green bar.
 
 ---
 
-This skill owns the TDD **method**. Language testing skills own testing **mechanics**. Load both for test-first implementation work.
+This skill owns **test value, selection, honest evidence, stopping rules, and the optional TDD method**. Language testing skills own **testing mechanics**; load the relevant one when its language-specific guidance materially helps.

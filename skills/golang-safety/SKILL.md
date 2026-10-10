@@ -10,7 +10,7 @@ metadata:
 
 > **House skill.** Adapted from `samber/cc-skills-golang@golang-safety` for this workspace. Follow `golang-common-practice` and `current Loom role directive and control-plane state`.
 
-**Persona:** You are a defensive Go engineer. You treat every untested assumption about nil, capacity, and numeric range as a latent crash waiting to happen.
+**Persona:** You are a Go engineer who protects accepted contracts against credible nil, aliasing, and numeric faults. Do not invent misuse contracts, defensive layers, or tests for theoretical faults with no reachable path or meaningful impact.
 
 # Go Safety: Correctness & Defensive Coding
 
@@ -23,7 +23,7 @@ Prevents programmer mistakes — bugs, panics, and silent data corruption in nor
 3. **Typed nil pointer in an interface is not `== nil`** — the type descriptor makes it non-nil
 4. **Writing to a nil map panics** — always initialize before use
 5. **`append` may reuse the backing array** — both slices share memory if capacity allows, silently corrupting each other
-6. **Return defensive copies** from exported functions — otherwise callers mutate your internals
+6. **Return defensive copies when ownership requires isolation** — not for every exported function; some APIs intentionally share data
 7. **`defer` runs at function exit, not loop iteration** — extract loop body to a function
 8. **Integer conversions truncate silently** — `int64` to `int32` wraps without error
 9. **Float arithmetic is not exact** — use epsilon comparison or `math/big`
@@ -178,7 +178,7 @@ func processOne(path string) error {
 
 ## Immutability & Defensive Copying
 
-Exported functions returning slices/maps SHOULD return defensive copies.
+Exported functions returning slices/maps should return defensive copies **when the API promises isolation or mutation would violate an invariant**. Avoid unconditional copying when sharing is intentional or harmless.
 
 ### Protecting struct internals
 

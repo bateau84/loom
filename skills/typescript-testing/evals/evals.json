@@ -46,6 +46,17 @@
         "Resets or constructs required state within each test, or provides an explicit reversible setup boundary.",
         "Checks that each test passes independently and cleanup restores singleton or global state."
       ]
+    },
+    {
+      "id": "TypeScriptTesting-05",
+      "name": "avoid-irrelevant-async-test-matrix",
+      "prompt": "A synchronous TypeScript formatLabel(name: string) helper already has meaningful tests for standard and empty input. A teammate wants fake timers, Promise rejection tests, browser E2E, and twenty equivalent cases because the testing skill mentions those tools. What changes should you make?",
+      "trap": "Treats all mechanics listed in the skill as a mandatory test matrix even for pure synchronous code.",
+      "expectations": [
+        "Recognizes that fake timers, Promise rejection tests, and browser E2E do not apply to this function.",
+        "Keeps existing meaningful cases and adds only a distinct credible contract gap, if any.",
+        "Does not expand the suite for technique coverage or test count."
+      ]
     }
   ]
 }

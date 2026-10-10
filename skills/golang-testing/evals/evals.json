@@ -3,69 +3,67 @@
   "evals": [
     {
       "id": 1,
-      "name": "goleak-goroutine-leak-detection",
+      "name": "goroutine-lifecycle-proof-without-mandatory-tool",
       "description": "Tests use goleak for goroutine leak detection, not just task completion",
-      "prompt": "Write tests for a `workerpool` package. The package has a `Pool` struct with `Start(numWorkers int)`, `Submit(task func())`, and `Stop()` methods. Start spawns goroutines, Submit enqueues work, Stop shuts down gracefully. Write comprehensive unit tests covering start, submit tasks, and stop.",
-      "trap": "Model writes normal unit tests verifying task completion but omits goroutine leak detection — Stop() may appear to work while leaking goroutines",
+      "prompt": "Write tests for a workerpool package exposing Start, Submit, and Stop. The pool owns worker goroutines; the contract says Stop waits for in-flight tasks and releases workers. Explain what targeted evidence would catch a real shutdown regression. Avoid unrelated global test setup.",
+      "trap": "The model either fails to verify shutdown or blindly requires a package-level goleak TestMain and new dependency merely because goroutines exist.",
       "expectations": [
-        "Uses goleak (go.uber.org/goleak) — either goleak.VerifyTestMain in TestMain or goleak.VerifyNone per-test — to detect goroutine leaks from the worker pool",
-        "Has a TestMain function if using goleak.VerifyTestMain (the package-level approach)",
-        "Tests verify that Stop() properly cleans up goroutines (not just that tasks complete)",
-        "Imports go.uber.org/goleak"
+        "Calls the real Pool methods and verifies accepted task completion and Stop behavior.",
+        "Covers the actual owned worker lifecycle rather than assuming completed tasks mean goroutines stopped.",
+        "Uses a targeted leak check (goleak or equivalent) when it provides distinct protection; does not require a package-wide TestMain.",
+        "Does not add leak tools, mocks, or unrelated cases for all packages merely because goroutines are mentioned."
       ]
     },
     {
       "id": 2,
-      "name": "integration-build-tag-not-testing-short",
+      "name": "integration-isolation-follows-project-conventions",
       "description": "Integration tests use //go:build integration tag; testing.Short() is not an acceptable alternative",
-      "prompt": "Our team disagrees on how to separate integration tests from unit tests in our Go project. A teammate proposes:\n\n```go\nfunc TestUserRepository_Create(t *testing.T) {\n    if testing.Short() {\n        t.Skip(\"skipping integration test\")\n    }\n    db := connectToPostgres(t)\n    // ... test ...\n}\n```\n\nThey argue: 'testing.Short() is the Go standard way — it's in the stdlib, you can configure it with -short, and every Go developer knows it. Build tags are extra complexity for no benefit.'\n\nHow should integration tests be separated? Is the teammate's approach correct? Write the correct implementation for a TestUserRepository_Create integration test.",
-      "trap": "Model accepts testing.Short() as a valid approach because it's a stdlib feature and the teammate's argument sounds reasonable. The skill teaches: build tags are required because testing.Short() still compiles tests into the binary, requires a flag to skip, and leaks DB connection attempts into normal test runs.",
+      "prompt": "Our Go repository deliberately runs `go test -short ./...` for fast PR checks and `go test ./...` in a prepared integration environment. An existing PostgreSQL test uses `if testing.Short() { t.Skip(...) }` before connecting. A reviewer insists every integration test must instead use `//go:build integration`. Is that mandatory? Explain the trade-off and what evidence each CI job produces.",
+      "trap": "A rigid rule treats testing.Short as invalid in every repository and demands a build-tag migration even when the fast/full CI contract is explicit and safe.",
       "expectations": [
-        "Rejects testing.Short() as the primary separation mechanism — does not accept the teammate's approach as correct",
-        "Uses `//go:build integration` build tag (at the file level, before the package declaration)",
-        "Explains why build tags are preferred: tests using testing.Short() still compile and attempt connections when running without -short, whereas build-tagged files are completely excluded from compilation",
-        "Includes the command to run integration tests: go test -tags=integration ./..."
+        "Recognizes `testing.Short()` as a valid repository-level separation when fast jobs pass -short before dependency setup.",
+        "Explains that build tags are useful when tests must be excluded from compilation or default execution, but are not universally required.",
+        "Keeps real dependency tests running in the intended integration job and does not count skipped tests as integration proof.",
+        "Does not demand a new tag, framework, or duplicate test without a concrete isolation problem."
       ]
     },
     {
       "id": 3,
-      "name": "parallel-subtests-pure-function",
+      "name": "subtest-parallelism-is-optional",
       "description": "Pure function subtests call t.Parallel(); top-level test also parallel",
       "prompt": "Write table-driven tests for a pure function `Slugify(input string) string` that converts titles to URL-friendly slugs (lowercase, hyphens for spaces, strips special chars). Test at least 6 cases: normal title, unicode, multiple spaces, empty string, already-slugified input, and special characters only.",
-      "trap": "Model omits t.Parallel() since the function is pure and 'already fast enough', missing parallelism opportunities for stateless tests",
+      "trap": "The model treats t.Parallel at top level and in every subtest as mandatory rather than deciding whether it helps an already-fast, deterministic pure function.",
       "expectations": [
-        "Subtests call t.Parallel() — these are independent pure function tests with no shared mutable state",
-        "Top-level test function also calls t.Parallel()",
-        "Each test case has a descriptive `name` field used in t.Run",
-        "At least 6 test cases as requested",
-        "No shared mutable state between subtests (each subtest captures its own test case variable)"
+        "Tests the caller-requested Slugify cases with meaningful assertions and diagnosable case names.",
+        "A named table-driven test is acceptable, as is an equally clear alternative matching repository style.",
+        "Does not require t.Parallel for correctness or to satisfy a testing-style quota.",
+        "If t.Parallel is used, cases have isolated state and remain independently correct."
       ]
     },
     {
       "id": 4,
-      "name": "fake-clock-injection-for-time-dependent-tests",
+      "name": "time-dependent-test-with-minimal-clock-seam",
       "description": "Time-dependent code must accept a clock interface so tests can use clockwork.FakeClock; real time.Sleep is unacceptable",
       "prompt": "Here is an existing RateLimiter implementation:\n\n```go\ntype RateLimiter struct {\n    limit   int\n    window  time.Duration\n    count   int\n    resetAt time.Time\n}\n\nfunc NewRateLimiter(limit int, window time.Duration) *RateLimiter {\n    return &RateLimiter{\n        limit:   limit,\n        window:  window,\n        resetAt: time.Now().Add(window),\n    }\n}\n\nfunc (r *RateLimiter) Allow() bool {\n    now := time.Now()\n    if now.After(r.resetAt) {\n        r.count = 0\n        r.resetAt = now.Add(r.window)\n    }\n    if r.count >= r.limit {\n        return false\n    }\n    r.count++\n    return true\n}\n```\n\nWrite tests that verify:\n1. Allow() returns true while under the limit\n2. Allow() returns false when the limit is exceeded\n3. The counter resets after the time window expires\n\nThe tests must run in milliseconds, not seconds. You may modify the implementation if needed.",
-      "trap": "Model uses time.Sleep(window + small margin) to test window expiration — the code uses time.Now() directly, making tests slow and flaky. The skill teaches to refactor the code to accept a clock interface (clockwork.Clock) and inject a FakeClock in tests.",
+      "trap": "The model uses real sleeps and flaky margins, or requires a new clockwork dependency and complicated production clock interface even when a small Now func or Go synctest can prove the boundary.",
       "expectations": [
-        "Modifies the RateLimiter to accept a clock interface (e.g., clockwork.Clock or a custom Now() func) rather than calling time.Now() directly",
-        "Uses clockwork.FakeClock (or equivalent) in tests to advance time without real sleeping — tests run in microseconds",
-        "Tests the window reset scenario by advancing the fake clock past the window duration (e.g., fakeClock.Advance(window + time.Millisecond))",
-        "No real-time time.Sleep in test code; use synctest.Test/synctest.Wait or a fake clock for deterministic synthetic time"
+        "Proves below-limit, above-limit, and window-reset behavior with distinct assertions.",
+        "Uses controlled time without a multi-second sleep.",
+        "Chooses the smallest faithful time-control mechanism for the Go version/repo, such as a Now function, synctest, or existing fake clock.",
+        "Does not add a clock library or elaborate injected service abstraction solely for test style."
       ]
     },
     {
       "id": 5,
-      "name": "consumer-site-interface-mocking",
+      "name": "avoid-new-production-interfaces-just-for-mocks",
       "description": "Tests define interfaces at the consumer site and mock those, not concrete structs",
-      "prompt": "Test a `NotificationService` struct that has a `NotifyUser(userID string) error` method. It depends on two concrete structs: `SMTPClient` (with `Send(to, subject, body string) error`) and `AuditLogger` (with `Log(event string) error`). NotifyUser looks up the user's email, sends an email via SMTPClient, and logs the event via AuditLogger. Write comprehensive tests for NotifyUser.",
-      "trap": "Model embeds or wraps concrete SMTPClient/AuditLogger in mock structs, or creates test doubles that shadow the concrete types, instead of extracting consumer-site interfaces",
+      "prompt": "A NotificationService uses concrete SMTPClient and AuditLogger collaborators to send a message and record the result. I need tests for successful delivery and a failed SMTP send. Do we have to refactor both collaborators behind new interfaces to use mocks? Choose the smallest credible tests and explain where a seam would actually help.",
+      "trap": "The model demands new EmailSender, Logger, and dependency-injection scaffolding purely to satisfy an interface-mocking preference.",
       "expectations": [
-        "Defines interfaces for the dependencies (e.g., EmailSender, Logger) rather than using the concrete SMTPClient/AuditLogger structs directly in tests",
-        "Creates mock implementations of these interfaces (using testify/mock or manual mocks)",
-        "Does NOT embed or wrap the concrete SMTPClient/AuditLogger structs in mock objects",
-        "Uses dependency injection — NotificationService accepts interfaces, not concrete types",
-        "Tests verify both happy path (send succeeds) and error scenarios (send fails, log fails)"
+        "Names the observable delivery/audit result and real SMTP failure that require proof.",
+        "Favors real cheap collaborators and isolates actual network/external effects where needed.",
+        "Does not require production interfaces, mock frameworks, or a mock for every collaborator solely to write tests.",
+        "Introduces an injectable seam only if necessary to exercise the required boundary faithfully and with less overall complexity."
       ]
     },
     {
@@ -83,42 +81,41 @@
     },
     {
       "id": 7,
-      "name": "external-test-package-resists-internal-access",
+      "name": "observable-cache-behavior-without-required-external-package",
       "description": "Tests use package_test to black-box test; does not access unexported state even when a teammate suggests it",
       "prompt": "Write tests for a `tokenizer` package that exports `Tokenize(input string) []Token` and a `Token` struct with `Type` and `Value` fields. The package has an unexported `tokenCache map[string][]Token` field on the package level for memoization.\n\nA teammate says: 'We should verify the cache is being populated correctly — access tokenCache directly in the tests. It's in the same package so it's fine, and it makes the tests more reliable since we can confirm memoization is working.'\n\nWrite the tests. Should you follow the teammate's suggestion?",
-      "trap": "Model follows the teammate's suggestion and uses package tokenizer (white-box) to access tokenCache directly, reasoning that it makes tests more reliable. The skill teaches to use package tokenizer_test and test only observable behavior — cache behavior is an implementation detail, not a contract.",
+      "trap": "The model either tests the unexported cache field or insists every test must use package tokenizer_test even when an internal package test can exercise the same public contract cleanly.",
       "expectations": [
-        "Rejects the teammate's suggestion — does not access tokenCache directly in tests",
-        "Uses `package tokenizer_test` (external test package) instead of `package tokenizer`",
-        "Explains why: cache behavior is an implementation detail — tests should verify the observable contract (same input → same output), not whether a specific optimization is in place",
-        "Tests focus on functional correctness: same input tokenizes identically on repeated calls, edge cases, different token types"
+        "Rejects inspecting tokenCache merely to confirm an internal memoization detail.",
+        "Exercises Tokenize behavior through the exported API with independent expected results.",
+        "Allows either same-package or external-package Go tests according to repository conventions; no mandatory black-box package ceremony.",
+        "Does not build a cache-introspection helper just to satisfy a speculative assertion."
       ]
     },
     {
       "id": 8,
-      "name": "example-functions-as-documentation",
+      "name": "optional-examples-as-useful-documentation",
       "description": "Packages need Example functions with // Output: comments that serve as executable documentation in go doc",
       "prompt": "I've written a `currency` package with these functions:\n\n```go\nfunc Format(cents int64, code string) string  // Format(1234, \"USD\") → \"$12.34\"\nfunc Parse(s string) (int64, string, error)   // Parse(\"$12.34\") → 1234, \"USD\", nil\nfunc Convert(cents int64, from, to string, rate float64) int64\n```\n\nA colleague says: 'The functions are self-explanatory — names and signatures are clear enough. We don't need extra documentation. Just write unit tests with good coverage.'\n\nWrite comprehensive test coverage for this package. Should you follow the colleague's advice about documentation?",
-      "trap": "Model follows the colleague's advice and writes only table-driven unit tests without Example functions — missing the executable documentation that shows real usage in `go doc` and on pkg.go.dev. The skill teaches that Example functions serve as both tests and documentation.",
+      "trap": "The model adds Example functions for every API or blocks on their absence even if existing documentation and targeted tests already cover usage.",
       "expectations": [
-        "Disagrees with the colleague — includes Example functions despite the advice to skip them",
-        "Includes at least one Example function (ExampleFormat, ExampleParse, or ExampleConvert)",
-        "Example functions have `// Output:` comments so they are verified by go test",
-        "Explains that Example functions serve as executable documentation visible in go doc and pkg.go.dev — not just tests"
+        "Writes meaningful assertions for requested Format, Parse, and Convert behavior.",
+        "Explains when an Example function adds distinct executable documentation value.",
+        "Does not require an Example function purely because the package is public or to meet a technique quota.",
+        "If adding an Example, uses valid Go naming and Output syntax, with behavior not merely repeating a redundant unit test."
       ]
     },
     {
       "id": 9,
-      "name": "fuzz-test-for-critical-functions",
+      "name": "security-testing-with-credible-input-threats",
       "description": "Security-critical functions get fuzz tests with seed corpus and property assertions",
       "prompt": "Write tests for a `SanitizeHTML(input string) string` function that strips all HTML tags from input while preserving text content. Make sure to test edge cases thoroughly — this function is critical for security.",
-      "trap": "Model writes only table-driven tests for known edge cases, missing the fuzz test that would discover unexpected inputs causing XSS vulnerabilities",
+      "trap": "The model either ignores credible malicious HTML cases or demands fuzzing and an arbitrary property such as 'output never contains angle brackets' without an accepted security oracle.",
       "expectations": [
-        "Includes a fuzz test function (FuzzSanitizeHTML or similar)",
-        "Fuzz test uses f.Add() to provide seed corpus entries",
-        "Fuzz test includes property-based assertions (e.g., output contains no < or > characters, or double-sanitize is idempotent)",
-        "Also includes regular table-driven tests for known edge cases",
-        "Table tests cover tricky cases like nested tags, unclosed tags, or script tags"
+        "Includes concrete untrusted HTML attack and malformed-input cases relevant to the declared sanitizer contract.",
+        "Uses assertions anchored to accepted preserved-text and tag-removal semantics, not a tautology or unjustified output ban.",
+        "Considers fuzzing for the security boundary when it provides new value; does not make a fuzz target mandatory for every parser.",
+        "Does not expand tests to unrelated theoretical input classes or confuse a sanitizer with full browser XSS proof."
       ]
     },
     {
@@ -136,31 +133,28 @@
     },
     {
       "id": 11,
-      "name": "httptest-recorder-not-real-server",
+      "name": "match-http-test-level-to-boundary",
       "description": "HTTP handler tests use httptest.NewRecorder, not a real HTTP server",
-      "prompt": "Write end-to-end tests for a REST API handler `HandleCreateOrder(w http.ResponseWriter, r *http.Request)` that accepts POST with JSON body `{\"product\": \"...\", \"quantity\": N}`. It returns 201 with the order JSON on success, 400 for invalid JSON, and 422 for validation errors (empty product, quantity <= 0). Test it like a real client would call it.",
-      "trap": "Model starts a real HTTP server with httptest.NewServer or net/http ListenAndServe, adding unnecessary network overhead and port allocation to tests",
+      "prompt": "Write Go tests for a HandleCreateOrder(w http.ResponseWriter, r *http.Request) handler: valid JSON returns 201, invalid JSON returns 400, invalid quantity returns 422. A teammate insists on spinning up a full real HTTP server for each handler test. What is the smallest useful test approach, and when would httptest.NewServer actually be justified?",
+      "trap": "The model starts a real server for simple handler semantics, or claims a Recorder-only unit test proves actual HTTP transport behavior end to end.",
       "expectations": [
-        "Uses httptest.NewRecorder (not httptest.NewServer or a real HTTP server)",
-        "Table-driven with named test cases covering multiple scenarios",
-        "Tests at least 3 status codes (201, 400, 422)",
-        "Verifies response body content (not just status code)",
-        "Sets proper Content-Type header on requests"
+        "Uses httptest.NewRecorder/httptest.NewRequest or equivalent direct handler calls to test handler-level semantics.",
+        "Asserts status and meaningful response behavior, not status alone when payload content is contracted.",
+        "Does not spin up real network infrastructure solely for basic handler logic.",
+        "Recognizes NewServer or a real end-to-end test when actual HTTP transport, routing, or middleware composition is the acceptance claim."
       ]
     },
     {
       "id": 12,
-      "name": "testify-suite-for-integration",
+      "name": "integration-setup-without-mandatory-testify-suite",
       "description": "Integration tests use testify/suite with SetupSuite/TearDownTest for organized setup/teardown",
-      "prompt": "Write integration tests for an `OrderRepository` that interacts with PostgreSQL. It has `Create(order *Order) error`, `GetByID(id string) (*Order, error)`, and `ListByUserID(userID string) ([]*Order, error)`. Tests need database setup (create tables), per-test data cleanup, and graceful teardown. Organize them cleanly so setup/teardown happens automatically. These must not run during normal unit tests.",
-      "trap": "Model uses TestMain or plain setup functions with defer for teardown, mixing setup concerns into each test instead of a suite",
+      "prompt": "An existing Go project uses testing.T and t.Cleanup for PostgreSQL integration tests. Add meaningful Create/GetByID/ListByUserID behavior tests for OrderRepository with a real database. A teammate argues you must first migrate to testify/suite with SetupSuite/SetupTest/TearDownSuite and Docker Compose. Is that necessary?",
+      "trap": "The model demands a testify suite, new framework, or Compose services before writing a few focused tests despite an existing usable database fixture.",
       "expectations": [
-        "Uses testify/suite.Suite struct embedding for test organization",
-        "Has SetupSuite (or similar) for one-time database connection and schema setup",
-        "Has SetupTest or TearDownTest for per-test data cleanup (e.g., TRUNCATE)",
-        "Has TearDownSuite for graceful shutdown (close DB, docker-compose down)",
-        "Uses `//go:build integration` build tag",
-        "Has a runner function `func TestXxx(t *testing.T) { suite.Run(t, ...) }`"
+        "Exercises real repository operations and database semantics required by the claimed integration behavior.",
+        "Reuses working repository fixture/setup and provides reliable test-data cleanup and isolation.",
+        "Does not require testify/suite, Docker Compose, or a full new fixture framework when existing t.Cleanup/helpers suffice.",
+        "Treats a suite and build tags as optional techniques justified by existing project structure and dependency needs."
       ]
     },
     {
@@ -190,6 +184,30 @@
         "Each test function creates its own SafeMap instance — no shared state between test functions",
         "Uses sync.WaitGroup or similar synchronization to coordinate concurrent test goroutines",
         "Tests are independently runnable (any single test can pass when run in isolation with -run)"
+      ]
+    },
+    {
+      "id": 15,
+      "name": "decline-scenario-and-scaffolding-bloat",
+      "prompt": "A new pure Go NormalizeName(s string) string helper has an accepted contract: trim leading/trailing spaces and lowercase ASCII text. The repository already has focused tests for normal input and surrounding whitespace. A reviewer asks for 25 cases including unreachable nil input, goroutine leak detection, mocking strings.ToLower, and t.Parallel in every test. What would you do?",
+      "trap": "The model agrees to create many redundant/unreachable cases and tools because more coverage appears safer.",
+      "expectations": [
+        "Keeps existing adequate tests and proposes only a distinct missing contract boundary if evidence warrants one.",
+        "Explains why nil string input, goroutine leaks, and mocked stdlib functions are irrelevant here.",
+        "Does not require t.Parallel or a giant table for an inexpensive pure helper.",
+        "Uses risk/contract and regression value rather than test quantity as the stopping rule."
+      ]
+    },
+    {
+      "id": 16,
+      "name": "rare-high-impact-regression-still-needs-proof",
+      "prompt": "A Go service updates an account balance and an audit entry in one transaction. Ordinary success tests pass. The accepted contract forbids charging the account without the audit record, and a real outage can make the audit insert fail. Should we skip this case because it is rare? Choose a minimal, credible test.",
+      "trap": "The model interprets test minimalism as skipping high-consequence atomicity cases or replaces the real transaction with two self-confirming mocks.",
+      "expectations": [
+        "Recognizes credible data-integrity consequence outweighs low event probability.",
+        "Adds or recommends a focused failure-path test through the real transaction boundary when feasible.",
+        "Asserts both state outcomes after audit-insert failure, rather than only an error or mock call.",
+        "Does not expand into an exhaustive matrix of unrelated database failures."
       ]
     }
   ]
