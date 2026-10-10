@@ -66,6 +66,6 @@ A strong skill eval should make these distinguishable:
 - baseline wrong, candidate improved but still wrong;
 - candidate introduces a new trap.
 
-Avoid rubrics that reward verbosity, terminology copied from the skill, or merely calling the skill tool.
+Avoid rubrics that reward verbosity, terminology copied from the skill, or merely calling the skill tool. For testing skills, include cases where **declining extra tests or techniques** is correct and high-consequence gaps where adding a focused test is necessary. Do not require one framework, mock library, or implementation form when multiple approaches protect the same behavior.
 
 The case should still make sense to someone who has never seen the model response that motivated it.

@@ -4,7 +4,17 @@ Reviewer-only domain contract. It does not create Loom authority, product meanin
 
 ## Review criteria
 
-Reviewer verifies that TDD generated discriminating behavioral and design evidence rather than ceremony.
+Reviewer verifies that tests provide proportionate behavioral and regression evidence rather than ceremony. Do not demand a test merely to cover an imagined failure, a stylistic preference, or a coverage percentage.
+
+### Test value and selection
+
+- each new test catches a distinct, credible regression or protects a high-consequence accepted obligation; additional examples are not a quota;
+- tests already covering the behavior are reused or strengthened instead of duplicated;
+- the test level and infrastructure are justified by the boundary under proof; simpler evidence is preferred when sufficient;
+- redundant, obsolete, brittle, and implementation-coupled tests may be removed when relevant protection is preserved;
+- Red → Green → Refactor sequencing is reviewed as TDD evidence only when work actually claims a test-first approach.
+
+The remaining sequencing criteria apply to work that claims TDD, not to every change that runs tests.
 
 ### Test selection and sequencing
 
