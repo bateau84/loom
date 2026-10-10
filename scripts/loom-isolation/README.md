@@ -1,7 +1,8 @@
 # Credential-free repository test image
 
 `Containerfile.test` uses pinned Node 24 (Debian bookworm), installs Bun **1.4.2**
-(the repository CI version), Python 3, Git, jq and zsh, copies filtered source, and runs
+(the repository CI version), Python 3, Git, jq, zsh and image-contained bubblewrap,
+copies filtered source, and runs
 `bun install --frozen-lockfile --ignore-scripts` inside the image. No host Bun,
 global package installation, authentication, eval-runner CLI or model execution
 is used. Existing Python unittest discovery imports the
@@ -64,6 +65,84 @@ paths. Git metadata is a new synthetic baseline, not copied host history.
 Release writes go to a private unique pending token and are atomically renamed;
 the gate never sees an empty/partial final file. Empty/wrong visible tokens still
 refuse. A deterministic partial-write regression checks this visibility boundary.
+
+## Original bubblewrap Task prerequisite witness
+
+`container_driver.py probe --image sha256:<built-ID> --receipt <build-receipt>`
+uses the same source/image/gate binding and independently observed OCI boundary,
+but **never releases its outer gate or starts Bun/Loom**. It executes only the
+fixed stdlib-only `bubblewrap_probe.py` inside that fixture. The witness attests
+the image's non-setuid bubblewrap version/digest, attempts namespace setup with
+an empty root and an intentionally nonexistent target (no product payload), and
+observes only the fixture's narrow private cgroup mount/membership. It does not
+allocate/write cgroups or weaken the OCI policy to make nesting work.
+
+Namespace denial there describes that exact fixture, not global host/kernel
+infeasibility. Even successful setup is only a partial precondition; a separately
+allocated parent-owned delegated custody boundary and the complete pinned policy
+must still be supplied/proven. Refusal blocks the original product launch and
+does not satisfy its positive `a3b81985` requirement. No denied host bwrap/proc/hash
+operation is licensed by this image-side witness.
+
+## Approved scoped proc comparison
+
+`container_driver.py compare-proc --image sha256:<built-ID> --receipt <build-receipt>`
+runs the identical fixed no-payload witness twice using the same image, receipt,
+source, toolchain, bwrap command and principal. The ONLY requested policy change
+is the per-container literal `--security-opt unmask=/proc/*` in the second case.
+This mode does not release the outer gate or run Bun/Loom tests. Normal `run`
+never enables proc unmask. No ALL/unconfined/privileged/rootful/SYS_ADMIN or
+additional security contrast is supported.
+
+"Default" here means the existing reviewed fixture, not all stock Podman
+defaults: per-container `label=disable` was already present and is held fixed in
+BOTH cases. Host SELinux enabled is not a claim of container label separation.
+The result records actual inspected security/namespace/principal/resource state
+and contained proc target/type/options (without host backing paths). It rejects
+extra effective-policy changes, missing proc-mount delta, product release or
+failed cleanup. New bounded run records and linked comparison summaries are
+private ignored artifacts under `.container-results`/`.container-comparisons`;
+they do not replace the old refusal or imply a global kernel/LSM cause.
+
+Expected exec-ENOENT of the deliberately absent target after setup is partial
+proc/namespace progress only. The original full policy, delegated parent cgroup
+custody and positive P6 proof remain separate obligations even if the contrast
+improves that setup stage. No production oracle or host control allocation is used.
+`compare-proc` exits 0 when the authorised paired experiment and invariant checks
+complete, even if its `procSetupImproved` result is false. Each underlying witness
+still exits 78 because no positive full-Task/custody claim is made. Admission,
+missing evidence, extra-variable or cleanup failure makes the comparison refuse
+(78); it never silently proceeds with weaker settings.
+
+## Parent engine custody prerequisite
+
+`container_driver.py custody --image sha256:<built-ID> --receipt <build-receipt>`
+keeps the product gate held and exercises only its own freshly created workload.
+The parent binds full container ID, creation/start generation, host PID/start
+ticks and engine-resolved `libpod-<full-ID>.scope` domain. It rejects restart,
+competing exec, identity/path/inode drift and gate membership outside the domain.
+All engine commands explicitly force local mode; no remote context fallback.
+The running-state bounded engine member query is not used while Paused (Podman
+Top is Running-only). Frozen rechecks instead read current `cgroup.procs` in the
+held exact workload directory and its bounded descendants with no-symlink,
+read-only descriptors; each current member's PID birth/membership is checked.
+Kernel frozen state is verified before and after this traversal. Missing/drifted
+observation refuses; the old running member list is not frozen proof. Command
+stage, exit and fixed safe error signatures distinguish engine errors without
+dumping arbitrary engine stderr or private-store metadata.
+
+Through exact-ID Podman pause/unpause/kill operations, it requires recursive
+`cgroup.events` populated/frozen observations via held read-only inode-bound
+descriptors. It reads only the engine-derived scope and its gate PID's stat/cgroup,
+never writes host cgroups, allocates another delegation or scans unrelated scopes.
+Main-process SIGKILL return/removal is NOT empty-subtree proof: missing/deleted
+kernel observation is unknown/refusal. Existing engine/systemd remains sole
+cgroup writer; raw writable delegation is not transferred to the child/Worker.
+
+This prerequisite operation does not yet launch persistent hostile descendants,
+exercise inner pinned bubblewrap policy or prove release races/parent loss. Even
+if held-gate transitions are observed, it returns78/fullTask unproven; further
+positive coverage and independent verification are required before product release.
 
 Failures refuse before release where possible; the unique owned container is
 force-removed in cleanup and has an engine execution timeout. Cleanup failure

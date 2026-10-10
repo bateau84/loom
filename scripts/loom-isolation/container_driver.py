@@ -20,6 +20,7 @@ from datetime import datetime, timezone
 
 from podman_witness import ENGINE_INFO_FORMAT, PODMAN, Refusal, call, capture_command, error_class, one_record
 import image_binding
+import engine_custody
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -27,7 +28,8 @@ OWNED = {"Containerfile.test", ".containerignore", *(
     "scripts/loom-isolation/" + name for name in
     ("container_driver.py", "container_gate.py", "test_container_driver.py",
      "podman_witness.py", "podman_gate.py", "test_podman_witness.py", "README.md",
-     "image_binding.py", "test_image_binding.py"))}
+     "image_binding.py", "test_image_binding.py", "bubblewrap_probe.py", "test_bubblewrap_probe.py",
+     "engine_custody.py", "test_engine_custody.py"))}
 BUILDS = Path(__file__).parent / ".container-builds"
 
 
@@ -195,7 +197,114 @@ def validate(record: dict, image: str, root: Path, *, running: bool) -> None:
         raise Refusal("running-container-identity")
 
 
-def run_tests(image: str, receipt_path: Path) -> int:
+def create_command(image: str, name: str, root: Path, nonce: str, *, prerequisites: bool = False,
+                   scoped_proc: bool = False) -> list[str]:
+    if scoped_proc and not prerequisites:
+        raise Refusal("scoped-proc-change-only-for-fixed-prerequisite-comparison")
+    command = [PODMAN, "create", "--name", name, "--pull", "never", "--network", "none",
+               "--pid", "private", "--ipc", "private", "--cgroupns", "private",
+               "--userns", "keep-id:uid=1000,gid=1000", "--user", "1000:1000",
+               "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
+               "--security-opt", "label=disable", "--image-volume", "ignore",
+               "--pids-limit", "512", "--memory", "2g", "--cpus", "2",
+               "--timeout", "1800", "--stop-timeout", "2", "--hooks-dir", str(root / "hooks"),
+               "--tmpfs", "/tmp:rw,nosuid,nodev,size=1g,mode=1777",
+               "--volume", f"{root / 'control'}:/control:ro",
+               "--volume", f"{root / 'probes'}:/probes:ro",
+               "--env", f"LOOM_CONTAINER_NONCE={nonce}",
+               "--env", f"LOOM_CONTAINER_SENTINEL={root / 'protected' / 'state'}",
+               "--env", "container=podman", "--env", "TERM=dumb"]
+    if scoped_proc:
+        command += ["--security-opt", "unmask=/proc/*"]
+    return command + [image, "bun", "run", "test"]
+
+
+def effective_policy(record: dict) -> dict:
+    host = record.get("HostConfig", {})
+    fields = ("NetworkMode", "PidMode", "IpcMode", "UsernsMode", "CgroupMode", "CgroupnsMode",
+              "Privileged", "CapAdd", "CapDrop", "PidsLimit", "Memory", "NanoCpus", "SecurityOpt",
+              "MaskedPaths", "ReadonlyPaths")
+    return {"hostConfig": {name: host.get(name) for name in fields},
+            "user": record.get("Config", {}).get("User"),
+            "processLabel": record.get("ProcessLabel"), "mountLabel": record.get("MountLabel"),
+            "labelingMeaning": "existing per-container label=disable baseline; not host SELinux disable"}
+
+
+def compare_records(baseline: dict, scoped: dict) -> dict:
+    for record in (baseline, scoped):
+        witness = record["prerequisiteWitness"]
+        if (record.get("payloadReleased") is not False or witness.get("productPayloadStarted") is not False
+                or record.get("sentinelUnchanged") is not True or record.get("cleanup") != "owned-container-removed"):
+            raise Refusal("comparison-product-release-or-cleanup-boundary")
+    for key in ("image", "gateSha256"):
+        if baseline[key] != scoped[key]:
+            raise Refusal("comparison-image-or-gate-drift")
+    if (baseline["buildReceipt"]["sha256"] != scoped["buildReceipt"]["sha256"]
+            or baseline["selectedInputManifest"]["sha256"] != scoped["selectedInputManifest"]["sha256"]):
+        raise Refusal("comparison-receipt-or-source-drift")
+    for key in ("substrate", "setupCommand", "outerRestrictions", "fixtureCgroup"):
+        if baseline["prerequisiteWitness"][key] != scoped["prerequisiteWitness"][key]:
+            raise Refusal("comparison-substrate-command-or-security-drift")
+    policies = []
+    for record in (baseline, scoped):
+        policy = json.loads(json.dumps(record["effectivePolicy"]))
+        host = policy["hostConfig"]
+        options = host["SecurityOpt"] or []
+        if any(value.startswith("unmask=") and value != "unmask=/proc/*" for value in options):
+            raise Refusal("comparison-unapproved-unmask")
+        host["SecurityOpt"] = sorted(value for value in options if value != "unmask=/proc/*")
+        # Podman inspection may omit scoped unmask in SecurityOpt; the actual
+        # contained kernel proc topology below supplies the effective delta.
+        for field in ("MaskedPaths", "ReadonlyPaths"):
+            paths = host.get(field)
+            if paths is not None:
+                host[field] = sorted(path for path in paths if path != "/proc" and not path.startswith("/proc/"))
+        policies.append(policy)
+    if policies[0] != policies[1]:
+        raise Refusal("comparison-extra-effective-policy-change")
+    before = baseline["prerequisiteWitness"]["procTopology"]
+    after = scoped["prerequisiteWitness"]["procTopology"]
+    if before == after:
+        raise Refusal("comparison-no-observed-proc-mount-delta")
+    base_stage = baseline["prerequisiteWitness"]["setupObservation"]
+    scoped_stage = scoped["prerequisiteWitness"]["setupObservation"]
+    return {"onlyRequestedPolicyDelta": "unmask=/proc/*", "heldPolicy": policies[0],
+            "procMountsBefore": before, "procMountsAfter": after,
+            "baselineStage": base_stage, "scopedStage": scoped_stage,
+            "procSetupImproved": base_stage == "proc-mount-denied-in-this-fixture" and
+                                 scoped_stage == "namespace-setup-reached-no-payload",
+            "fullTask": "unproven", "externalCustody": "not-supplied",
+            "conclusionScope": "exact paired fixture only; no global kernel/LSM attribution"}
+
+
+def compare_proc(image: str, receipt_path: Path) -> int:
+    records = []
+    baseline_exit = run_tests(image, receipt_path, prerequisites=True, comparison_records=records)
+    scoped_exit = run_tests(image, receipt_path, prerequisites=True, scoped_proc=True, comparison_records=records)
+    if len(records) != 2:
+        raise Refusal("comparison-missing-variant-observation")
+    result = {"schema": "loom-proc-unmask-comparison/v1", "comparisonId": uuid.uuid4().hex,
+              "image": image, "variantExit": {"baseline": baseline_exit, "scoped": scoped_exit},
+              "result": compare_records(records[0], records[1]),
+              "runs": [{"variant": record["procVariant"], "runId": record["runId"],
+                        "diagnostic": "scripts/loom-isolation/.container-results/" + record["runId"] + ".json",
+                        "diagnosticSha256": hashlib.sha256((Path(__file__).parent / ".container-results" /
+                                                            (record["runId"] + ".json")).read_bytes()).hexdigest()}
+                       for record in records]}
+    directory = Path(__file__).parent / ".container-comparisons"
+    if directory.is_symlink():
+        raise Refusal("comparison-directory-symlink")
+    directory.mkdir(mode=0o700, exist_ok=True)
+    path = directory / (result["comparisonId"] + ".json")
+    image_binding.atomic_json(path, result)
+    print(json.dumps({"event": "proc-unmask-comparison-observed", "path": str(path.relative_to(ROOT)),
+                      "comparisonId": result["comparisonId"], "result": result["result"],
+                      "runs": result["runs"]}), flush=True)
+    return 0
+
+
+def run_tests(image: str, receipt_path: Path, *, prerequisites: bool = False, scoped_proc: bool = False,
+              comparison_records: list | None = None, custody: bool = False) -> int:
     if not image.startswith("sha256:") or len(image) != 71 or any(c not in "0123456789abcdef" for c in image[7:]):
         raise Refusal("run-requires-content-addressed-image")
     receipt, receipt_sha = image_binding.load_receipt(receipt_path, BUILDS)
@@ -212,7 +321,9 @@ def run_tests(image: str, receipt_path: Path) -> int:
     nonce = uuid.uuid4().hex
     name = "loom-tests-" + nonce
     diagnostic = {"schema": "loom-container-test-diagnostic/v1", "runId": nonce,
-                  "image": image, "containerName": name, "command": "bun run test",
+                  "image": image, "containerName": name,
+                  "command": "held-gate-custody-witness" if custody else
+                             ("bubblewrap-prerequisite-witness" if prerequisites else "bun run test"),
                   "credentialInputs": False, "providerInference": False,
                   "streamOrder": "unproven", "preImportObserved": False,
                   "streamsAvailable": False, "loss": "not-captured", "cleanup": "unproven"}
@@ -222,6 +333,7 @@ def run_tests(image: str, receipt_path: Path) -> int:
                       gateSha256=receipt["gateSha256"], currentSource=current_source,
                       sourceHeadAtBuild=receipt["source"]["head"], sourceHeadAtRun=current_head,
                       headOnlyPublicationChange=current_head != receipt["source"]["head"])
+    diagnostic["procVariant"] = "scoped-unmask-/proc/*" if scoped_proc else "reviewed-baseline-default-proc"
     with tempfile.TemporaryDirectory(prefix=".container-run-", dir=Path(__file__).parent) as directory:
         root = Path(directory).resolve()
         for part in ("control", "probes", "protected", "hooks"):
@@ -229,23 +341,13 @@ def run_tests(image: str, receipt_path: Path) -> int:
         sentinel = root / "protected" / "state"
         sentinel.write_bytes(b"outer-synthetic-sentinel")
         (root / "probes" / "outside").symlink_to(sentinel)
-        command = [PODMAN, "create", "--name", name, "--pull", "never", "--network", "none",
-                   "--pid", "private", "--ipc", "private", "--cgroupns", "private",
-                   "--userns", "keep-id:uid=1000,gid=1000", "--user", "1000:1000",
-                   "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
-                   "--security-opt", "label=disable", "--image-volume", "ignore",
-                   "--pids-limit", "512", "--memory", "2g", "--cpus", "2",
-                   "--timeout", "1800", "--stop-timeout", "2", "--hooks-dir", str(root / "hooks"),
-                   "--tmpfs", "/tmp:rw,nosuid,nodev,size=1g,mode=1777",
-                   "--volume", f"{root / 'control'}:/control:ro",
-                   "--volume", f"{root / 'probes'}:/probes:ro",
-                   "--env", f"LOOM_CONTAINER_NONCE={nonce}",
-                   "--env", f"LOOM_CONTAINER_SENTINEL={sentinel}", "--env", "container=podman",
-                   "--env", "TERM=dumb", image, "bun", "run", "test"]
+        command = create_command(image, name, root, nonce, prerequisites=prerequisites, scoped_proc=scoped_proc)
+        diagnostic["createCommand"] = command
         try:
             call(command)
             created = one_record(call([PODMAN, "inspect", name]))
             validate(created, image, root, running=False)
+            diagnostic["effectivePolicy"] = effective_policy(created)
             verify_created_config(created, receipt, nonce, str(sentinel))
             diagnostic["imageFileBinding"] = image_binding.inspect_files(name, root, receipt["source"], receipt["gateSha256"])
             call([PODMAN, "start", name])
@@ -272,7 +374,46 @@ def run_tests(image: str, receipt_path: Path) -> int:
                               preImportGate=ready[0])
             print(json.dumps({"event": "preimport-engine-and-gate-observed", "image": image,
                               "container": record["Id"], "hostPid": record["State"]["Pid"],
-                              "startedAt": record["State"]["StartedAt"], "gate": ready[0]}), flush=True)
+                               "startedAt": record["State"]["StartedAt"], "gate": ready[0]}), flush=True)
+            if custody:
+                diagnostic.update(payloadReleased=False, custodyObservations=[], fullTask="unproven")
+                diagnostic["sentinelUnchanged"] = sentinel.read_bytes() == b"outer-synthetic-sentinel"
+                phase = "exact-object-parent-custody"
+                diagnostic["phase"] = phase
+                diagnostic["custodyIdentity"] = {"containerId": record["Id"], "created": record["Created"],
+                    "started": record["State"]["StartedAt"], "hostPid": record["State"]["Pid"],
+                    "engineResolvedScope": record["State"].get("CgroupPath"), "ociRuntime": record.get("OCIRuntime")}
+                observer = engine_custody.Custody(record, diagnostic["custodyObservations"])
+                try:
+                    observer.exercise()
+                finally:
+                    observer.close()
+                diagnostic.update(sentinelUnchanged=sentinel.read_bytes() == b"outer-synthetic-sentinel",
+                                  custodyResult="held-gate-recursive-transitions-observed",
+                                  proofLimits="no persistent descendant/counter/inner-policy or release-race proof yet")
+                print(json.dumps({"event": "held-gate-custody-observed", "identity": diagnostic["custodyIdentity"],
+                                  "observations": diagnostic["custodyObservations"], "fullTask": "unproven"}), flush=True)
+                return 78
+            if prerequisites:
+                # The proven outer gate remains UNRELEASED: no Bun/Loom setup or
+                # import. Only this fixed trusted capability witness executes
+                # inside the already observed production-excluding OCI fixture.
+                captured = capture_command([PODMAN, "exec", name, "python3", "-I", "-S", "-B",
+                                            "/workspace/scripts/loom-isolation/bubblewrap_probe.py"], timeout=25)
+                if len(captured["stdout"]) > 16384 or captured["stderr"]:
+                    raise Refusal("prerequisite-witness-output-unavailable")
+                report = json.loads(captured["stdout"])
+                if report.get("schema") != "loom-bubblewrap-prerequisites/v1" or report.get("productPayloadStarted") is not False:
+                    raise Refusal("unrecognised-prerequisite-witness")
+                if sentinel.read_bytes() != b"outer-synthetic-sentinel":
+                    raise Refusal("prerequisite-synthetic-sentinel-changed")
+                diagnostic.update(prerequisiteWitness=report, payloadReleased=False,
+                                  witnessExit=captured["status"], sentinelUnchanged=sentinel.read_bytes() == b"outer-synthetic-sentinel",
+                                  streamsAvailable=True, loss="none", byteLimit=1048576,
+                                  bytes={kind: len(captured[kind]) for kind in ("stdout", "stderr")},
+                                  streams={kind: captured[kind].decode("utf-8") for kind in ("stdout", "stderr")})
+                print(captured["stdout"].decode("utf-8"), end="", flush=True)
+                return captured["status"]
             publish_release(root / "control", nonce)
             call([PODMAN, "wait", name], timeout=1805)
             captured = capture_command([PODMAN, "logs", name])
@@ -320,12 +461,18 @@ def run_tests(image: str, receipt_path: Path) -> int:
             elif str(error) == "engine-command-timeout":
                 diagnostic["loss"] = "capture-timeout"
             raise
+        except OSError as error:
+            diagnostic.update(operationError="custody-kernel-observation-unavailable" if custody else "os-error",
+                              errno=error.errno, attemptedObservation=error.filename)
+            raise
         finally:
             try:
-                call([PODMAN, "rm", "--force", name])
+                call([PODMAN, "rm", "--force", diagnostic.get("custodyIdentity", {}).get("containerId", name)])
                 diagnostic["cleanup"] = "owned-container-removed"
             finally:
                 save_diagnostic(diagnostic)
+                if comparison_records is not None:
+                    comparison_records.append(diagnostic)
 
 
 def verify_created_config(record: dict, receipt: dict, nonce: str, sentinel: str) -> None:
@@ -379,7 +526,7 @@ def save_diagnostic(record: dict) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("operation", choices=("build", "run"))
+    parser.add_argument("operation", choices=("build", "run", "probe", "compare-proc", "custody"))
     parser.add_argument("--image")
     parser.add_argument("--receipt", type=Path, help="Required verified build receipt for run")
     args = parser.parse_args(argv)
@@ -389,11 +536,14 @@ def main(argv: list[str] | None = None) -> int:
             raise Refusal("run-driver-from-repository-root")
         engine_ready()
         print(json.dumps({"event": "rootless-engine-observed", "rootless": True, "cgroupVersion": "v2"}), flush=True)
-        if args.operation == "run":
+        if args.operation in {"run", "probe", "compare-proc", "custody"}:
             if not args.image or not args.receipt:
                 raise Refusal("run-needs-image-and-verified-build-receipt")
             phase = "gated-test"
-            return run_tests(args.image, args.receipt)
+            if args.operation == "compare-proc":
+                return compare_proc(args.image, args.receipt)
+            return run_tests(args.image, args.receipt, prerequisites=args.operation in {"probe", "custody"},
+                             custody=args.operation == "custody")
         phase = "source-context"
         with tempfile.TemporaryDirectory(prefix=".container-build-", dir=Path(__file__).parent) as directory:
             root = Path(directory).resolve()

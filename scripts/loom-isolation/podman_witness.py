@@ -68,7 +68,8 @@ def engine_environment() -> dict[str, str]:
 def error_class(data: bytes) -> str:
     """Fixed nonsecret error vocabulary; never return original text or paths."""
     lowered = data.lower()
-    categories = (("template-field-error", (b"can't evaluate field",)),
+    categories = (("top-requires-running", (b"top can only be used on running containers",)),
+                  ("template-field-error", (b"can't evaluate field",)),
                   ("command-option-error", (b"unknown flag", b"unknown shorthand flag")),
                   ("engine-permission-denied", (b"operation not permitted", b"permission denied")),
                   ("local-image-unavailable", (b"image not known", b"no such image")),
@@ -86,6 +87,8 @@ def error_class(data: bytes) -> str:
 
 def capture_command(arguments: list[str], *, timeout: float = 15) -> dict:
     """Bounded pipe capture; never persist/echo raw engine output or errors."""
+    if arguments and arguments[0] == PODMAN and "--remote=false" not in arguments:
+        arguments = [PODMAN, "--remote=false", *arguments[1:]]
     process = subprocess.Popen(arguments, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                                stderr=subprocess.PIPE, env=engine_environment(), close_fds=True,
                                start_new_session=True)

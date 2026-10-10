@@ -11,6 +11,44 @@ from unittest.mock import patch
 
 
 class ContextTests(unittest.TestCase):
+    def test_comparison_rejects_extra_security_delta_or_product_release(self):
+        def sample(scoped):
+            return {"image": "sha256:" + "a" * 64, "buildReceipt": {"sha256": "same"},
+                    "selectedInputManifest": {"sha256": "same"}, "gateSha256": "same-gate",
+                    "payloadReleased": False, "sentinelUnchanged": True, "cleanup": "owned-container-removed",
+                    "effectivePolicy": {"hostConfig": {"SecurityOpt": ["no-new-privileges", "label=disable"] +
+                                                      (["unmask=/proc/*"] if scoped else []),
+                                                      "MaskedPaths": ["/sys/firmware"] + ([] if scoped else ["/proc/kcore"]),
+                                                      "ReadonlyPaths": ["/sys/fs/cgroup"]}, "user": "1000:1000"},
+                    "prerequisiteWitness": {"substrate": {"sha256": "same-binary"}, "setupCommand": ["fixed"],
+                                            "outerRestrictions": {"Seccomp": "2", "NoNewPrivs": "1", "CapEff": "0"},
+                                            "fixtureCgroup": {"mountReadOnly": True}, "productPayloadStarted": False,
+                                            "procTopology": [{"target": "/proc"}] + ([] if scoped else [{"target": "/proc/kcore"}]),
+                                            "setupObservation": "namespace-setup-reached-no-payload" if scoped else "proc-mount-denied-in-this-fixture"}}
+        baseline, scoped = sample(False), sample(True)
+        self.assertTrue(container_driver.compare_records(baseline, scoped)["procSetupImproved"])
+        scoped["effectivePolicy"]["hostConfig"]["SecurityOpt"].append("seccomp=unconfined")
+        with self.assertRaises(podman_witness.Refusal):
+            container_driver.compare_records(baseline, scoped)
+        scoped = sample(True)
+        scoped["payloadReleased"] = True
+        with self.assertRaises(podman_witness.Refusal):
+            container_driver.compare_records(baseline, scoped)
+
+    def test_scoped_proc_option_is_the_only_command_delta_and_probe_only(self):
+        arguments = ("sha256:" + "a" * 64, "fixed-name", Path("/synthetic"), "fixed-nonce")
+        baseline = container_driver.create_command(*arguments, prerequisites=True)
+        scoped = container_driver.create_command(*arguments, prerequisites=True, scoped_proc=True)
+        position = scoped.index("unmask=/proc/*")
+        self.assertEqual(scoped[position - 1], "--security-opt")
+        self.assertEqual(scoped[:position - 1] + scoped[position + 1:], baseline)
+        for forbidden in ("unmask=ALL", "seccomp=unconfined", "--privileged", "SYS_ADMIN"):
+            self.assertNotIn(forbidden, scoped)
+        self.assertEqual(baseline.count("label=disable"), 1)
+        self.assertEqual(scoped.count("label=disable"), 1)
+        with self.assertRaises(podman_witness.Refusal):
+            container_driver.create_command(*arguments, scoped_proc=True)
+
     def test_release_is_invisible_during_partial_writes_then_visible_complete(self):
         with tempfile.TemporaryDirectory(dir=Path(__file__).parent) as directory:
             control = Path(directory)

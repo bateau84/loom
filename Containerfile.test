@@ -1,7 +1,7 @@
 # Node base identity also used by the pinned runner build; Bun matches Loom CI.
 FROM docker.io/library/node:24-bookworm-slim@sha256:0e0ff40c39bc087845bfb27465a0df4ea419520094bc35842ff83dd8cbe6f9b6
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends python3 git jq zsh ca-certificates \
+    && apt-get install -y --no-install-recommends python3 git jq zsh bubblewrap ca-certificates \
     && rm -rf /var/lib/apt/lists/* \
     && npm install --global bun@1.4.2 \
     && test "$(bun --version)" = "1.4.2"
