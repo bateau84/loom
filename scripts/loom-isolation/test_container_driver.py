@@ -11,6 +11,11 @@ from unittest.mock import patch
 
 
 class ContextTests(unittest.TestCase):
+    def test_incoherent_workload_request_refuses_before_engine_or_receipt(self):
+        with self.assertRaisesRegex(podman_witness.Refusal, "inner-workload-flags"):
+            container_driver.run_tests("unused", Path("unused"), custody=True, unit_tests=True)
+        with self.assertRaisesRegex(podman_witness.Refusal, "inner-workload-flags"):
+            container_driver.run_tests("unused", Path("unused"), inner=True)
     def test_comparison_rejects_extra_security_delta_or_product_release(self):
         def sample(scoped):
             return {"image": "sha256:" + "a" * 64, "buildReceipt": {"sha256": "same"},

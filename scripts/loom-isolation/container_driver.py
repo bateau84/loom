@@ -16,6 +16,7 @@ import tempfile
 import time
 import uuid
 import traceback
+import base64
 from pathlib import Path, PurePosixPath
 from datetime import datetime, timezone
 
@@ -147,7 +148,7 @@ def validate_probes(probes: list[dict], phase: str) -> None:
 
 def publish_release(control: Path, nonce: str, filename: str = "release") -> None:
     """Publish one complete token atomically; the gate never sees partial bytes."""
-    if filename not in {"release", "inner-release", "inner-parent-loss"}:
+    if filename not in {"release", "inner-release", "inner-parent-loss", "inner-custody"}:
         raise Refusal("fixed-release-name-required")
     final = control / filename
     if final.exists():
@@ -310,7 +311,15 @@ def compare_proc(image: str, receipt_path: Path) -> int:
 
 def run_tests(image: str, receipt_path: Path, *, prerequisites: bool = False, scoped_proc: bool = False,
               comparison_records: list | None = None, custody: bool = False, inner: bool = False,
-              parent_loss: bool = False, policy_refusal: bool = False) -> int:
+              parent_loss: bool = False, policy_refusal: bool = False,
+              unit_tests: bool = False, lose_response: bool = False) -> int:
+    if not (prerequisites or custody or inner):
+        # The intended product entry no longer bypasses the inner boundary.
+        prerequisites = custody = inner = scoped_proc = unit_tests = True
+    if (inner and not (custody and prerequisites) or unit_tests and not inner
+            or parent_loss and not inner or policy_refusal and inner or lose_response and not custody
+            or unit_tests and (parent_loss or policy_refusal or lose_response)):
+        raise Refusal("inner-workload-flags-incoherent")
     if not image.startswith("sha256:") or len(image) != 71 or any(c not in "0123456789abcdef" for c in image[7:]):
         raise Refusal("run-requires-content-addressed-image")
     receipt, receipt_sha = image_binding.load_receipt(receipt_path, BUILDS)
@@ -402,32 +411,27 @@ def run_tests(image: str, receipt_path: Path, *, prerequisites: bool = False, sc
                 diagnostic["custodyIdentity"] = {"containerId": record["Id"], "created": record["Created"],
                     "started": record["State"]["StartedAt"], "hostPid": record["State"]["Pid"],
                     "engineResolvedScope": record["State"].get("CgroupPath"), "ociRuntime": record.get("OCIRuntime")}
-                observer = engine_custody.Custody(record, diagnostic["custodyObservations"])
+                observer = engine_custody.Custody(record, diagnostic["custodyObservations"], diagnostic["platformIdentity"])
                 tree = None
                 try:
+                    observer.release(lambda: publish_release(root / "control", nonce, "inner-custody"))
                     if policy_refusal:
-                        refused = engine_custody.InnerRefusal(record["Id"], nonce)
+                        refused = observer.admit_exec(lambda: engine_custody.InnerRefusal(record["Id"], nonce))
                         try:
                             diagnostic["innerMissingPolicyRefusal"] = refused.proof()
                         finally:
                             refused.close()
                         observer.current()
                     if inner:
-                        inner_stream = engine_custody.InnerStream(record["Id"], nonce)
+                        stream_type = engine_custody.InnerUnits if unit_tests else engine_custody.InnerStream
+                        inner_stream = observer.admit_exec(lambda: stream_type(record["Id"], nonce))
                         try:
                             bound = one_record(call([PODMAN, "inspect", record["Id"]]))
                             observer.trusted_exec = set(bound.get("ExecIDs", []))
                             if len(observer.trusted_exec) != 1:
                                 raise Refusal("inner-fixed-exec-identity")
-                            observer.current()
-                            observer.command("pause")
-                            observer.observe("inner-prerelease-frozen", populated=1, frozen=1)
-                            observer.phase = "post-freeze"
-                            observer.current()
-                            observer.command("unpause")
-                            observer.observe("inner-prerelease-thawed", populated=1, frozen=0)
-                            observer.phase = "post-thaw"
-                            observer.current()
+                            observer.freeze("inner-prerelease-frozen")
+                            observer.thaw("inner-prerelease-thawed")
                             outer_status = dict(row.split(":", 1) for row in Path(f"/proc/{observer.pid}/status").read_text().splitlines() if ":" in row)
                             diagnostic["innerStage"] = "independent-kernel-observation"
                             independent = inner_stream.inspect_gate(record["Id"], ready[0]["namespaces"], observer.relative,
@@ -435,7 +439,8 @@ def run_tests(image: str, receipt_path: Path, *, prerequisites: bool = False, sc
                                                                    engine_custody.session_id(observer.proc("stat")))
                             prepared = [value for value in inner_stream.events if value["event"] == "inner-policy-prepared"]
                             expected = hashlib.sha256(json.dumps(inner_policy.POLICY, sort_keys=True).encode()).hexdigest()
-                            if len(prepared) != 1 or prepared[0]["policySha256"] != expected or prepared[0]["filterBytes"] <= 0:
+                            if (len(prepared) != 1 or prepared[0]["policySha256"] != expected or prepared[0]["filterBytes"] <= 0
+                                    or prepared[0].get("workload") != ("unit-tests" if unit_tests else "synthetic")):
                                 raise Refusal("inner-pinned-policy-binding")
                             announcement = next(value for value in inner_stream.events if value["event"] == "inner-ready")
                             validate_probes(announcement["beforeImportDenials"], "before-import")
@@ -444,10 +449,10 @@ def run_tests(image: str, receipt_path: Path, *, prerequisites: bool = False, sc
                             diagnostic["innerStage"] = "atomic-inner-release"
                             if parent_loss:
                                 peers = inner_stream.bind_namespace_lifetime(record["Id"])
-                                publish_release(root / "control", nonce, "inner-parent-loss")
+                                observer.release(lambda: publish_release(root / "control", nonce, "inner-parent-loss"))
                                 diagnostic["innerParentLoss"] = inner_stream.parent_loss(peers)
                             else:
-                                publish_release(root / "control", nonce, "inner-release")
+                                observer.release(lambda: publish_release(root / "control", nonce, "inner-release"))
                                 values = inner_stream.finish()
                                 diagnostic["innerStage"] = "positive-probe-validation"
                                 for event, phase in (("inner-setup", "setup"), ("inner-descendant", "descendant")):
@@ -456,17 +461,23 @@ def run_tests(image: str, receipt_path: Path, *, prerequisites: bool = False, sc
                                         raise Refusal("inner-positive-probe-coverage")
                                     validate_probes(matches[0]["denials"], phase)
                                 diagnostic["innerSyntheticProof"] = values
+                                if unit_tests:
+                                    completed = next(value for value in values if value["event"] == "inner-workload-done")
+                                    diagnostic.update(testExit=completed["testExit"], command="bun run test inside pinned bubblewrap",
+                                        streams={channel: bytes(data).decode("utf-8", errors="replace") for channel, data in inner_stream.streams.items()},
+                                        streamsAvailable=True, loss="none", byteLimit=4 * 1048576,
+                                        rawStreamBase64={channel: base64.b64encode(data).decode("ascii") for channel, data in inner_stream.streams.items()})
                         finally:
                             inner_stream.close()
                         observer.trusted_exec = set()
-                    tree = engine_custody.TreeStream(record["Id"], nonce)
+                    tree = observer.admit_exec(lambda: engine_custody.TreeStream(record["Id"], nonce))
                     bound = one_record(call([PODMAN, "inspect", record["Id"]]))
                     tokens = bound.get("ExecIDs", [])
                     if len(tokens) != 1 or len(tokens[0]) != 64 or any(c not in "0123456789abcdef" for c in tokens[0]):
                         raise Refusal("custody-fixed-exec-identity")
                     observer.trusted_exec = set(tokens)
                     diagnostic["syntheticTree"] = {"namespacePids": sorted(tree.counts), "trustedExecId": tokens[0]}
-                    observer.exercise(lambda stage, frozen: tree.progress(observer, stage, frozen))
+                    observer.exercise(lambda stage, frozen: tree.progress(observer, stage, frozen), lose_response=lose_response)
                 finally:
                     if tree:
                         tree.close()
@@ -476,7 +487,7 @@ def run_tests(image: str, receipt_path: Path, *, prerequisites: bool = False, sc
                                   proofLimits="fixed synthetic proof only; general product-launch integration, lost-response, release-race and hostile escape/restart coverage remain unproven")
                 print(json.dumps({"event": "held-gate-custody-observed", "identity": diagnostic["custodyIdentity"],
                                   "observations": diagnostic["custodyObservations"], "fullTask": "unproven"}), flush=True)
-                return 78
+                return diagnostic.get("testExit", 78)
             if prerequisites:
                 # The proven outer gate remains UNRELEASED: no Bun/Loom setup or
                 # import. Only this fixed trusted capability witness executes
@@ -615,7 +626,7 @@ def save_diagnostic(record: dict) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("operation", choices=("build", "run", "probe", "compare-proc", "custody", "inner", "inner-parent-loss", "inner-refusal"))
+    parser.add_argument("operation", choices=("build", "run", "probe", "compare-proc", "custody", "inner", "inner-parent-loss", "inner-refusal", "inner-tests", "inner-loss"))
     parser.add_argument("--image")
     parser.add_argument("--receipt", type=Path, help="Required verified build receipt for run")
     args = parser.parse_args(argv)
@@ -625,17 +636,18 @@ def main(argv: list[str] | None = None) -> int:
             raise Refusal("run-driver-from-repository-root")
         engine_ready()
         print(json.dumps({"event": "rootless-engine-observed", "rootless": True, "cgroupVersion": "v2"}), flush=True)
-        if args.operation in {"run", "probe", "compare-proc", "custody", "inner", "inner-parent-loss", "inner-refusal"}:
+        if args.operation in {"run", "probe", "compare-proc", "custody", "inner", "inner-parent-loss", "inner-refusal", "inner-tests", "inner-loss"}:
             if not args.image or not args.receipt:
                 raise Refusal("run-needs-image-and-verified-build-receipt")
             phase = "gated-test"
             if args.operation == "compare-proc":
                 return compare_proc(args.image, args.receipt)
-            is_inner = args.operation in {"inner", "inner-parent-loss"}
+            is_inner = args.operation in {"run", "inner", "inner-parent-loss", "inner-tests", "inner-loss"}
             is_refusal = args.operation == "inner-refusal"
             return run_tests(args.image, args.receipt, prerequisites=args.operation in {"probe", "custody"} or is_inner or is_refusal,
                              custody=args.operation == "custody" or is_inner or is_refusal, inner=is_inner,
-                             scoped_proc=is_inner, parent_loss=args.operation == "inner-parent-loss", policy_refusal=is_refusal)
+                             scoped_proc=is_inner, parent_loss=args.operation == "inner-parent-loss", policy_refusal=is_refusal,
+                             unit_tests=args.operation in {"run", "inner-tests"}, lose_response=args.operation == "inner-loss")
         phase = "source-context"
         with tempfile.TemporaryDirectory(prefix=".container-build-", dir=Path(__file__).parent) as directory:
             root = Path(directory).resolve()

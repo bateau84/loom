@@ -154,13 +154,12 @@ roots or thaw the workload; it drains bounded transport backlog and checks the
 owned stream while the same kernel domain remains fully frozen. A bounded reader is armed on the same core-events handle
 BEFORE kill, and requires an actual recursive `populated=0` sample. A missed sample,
 ENODEV/EIO/EACCES/EBADF or unbound observation remains unknown/refusal; this mode
-does not infer retirement from errno. A second read-only inotify observer is armed
-on the held DIRECTORY descriptor alias before termination: only matching
-directory-self deletion can produce domain-lifetime evidence. File-only deletion,
-unmount, queue loss, unrelated watch, ignored-only notification and missing event
-refuse. This evidence still needs locally applicable kernel/runtime destruction
-semantics and complete lifetime coverage/fencing before it qualifies as full
-workload retirement. Cgroup2 filesystem magic, device/inode/event identities,
+does not infer retirement from errno. The earlier directory-self notification
+candidate and its strict event negatives remain inspectable, but the implemented
+terminal qualifier below uses metadata of the same held directory plus the held
+core-event transition and matched platform contract. Any retirement evidence needs
+locally applicable destruction semantics and complete lifetime coverage/fencing.
+Cgroup2 filesystem magic, device/inode/event identities,
 loaded kernel release/build, rootless principal and installed engine/runtime
 version/executable hashes accompany the new observations.
 
@@ -209,6 +208,56 @@ through the real bwrap die-with-parent/PID-namespace path, with no inner release
 argument preflight and requires exit78 before bwrap child creation; no unconfined
 fallback is provided. These are bounded synthetic fault scenarios, not production
 parent control, kernel availability claims or retroactive success for old runs.
+
+## Approved workload entry and admission fencing
+
+`run` (alias `inner-tests`) now uses that SAME pinned inner boundary before the
+approved unmodified `bun run test` command. There is no default outer-only product
+launch. `/opt/loom-test-deps` is an explicit read-only image-contained pinned API
+closure, not an installed host tree or a runner CLI. After external inner release,
+the gate copies finite image source into private tmpfs scratch, links read-only
+dependencies, creates only synthetic Git metadata there and executes the fixed
+repository command with fresh HOME/XDG/DB and no LOOM control environment. Output
+is framed by the trusted gate, decoded/bounded by the parent and retained with
+actual exit status; product output cannot impersonate launch-control events.
+The outer trusted gate receives a separate bound custody-hold token and never
+imports product code, including while longer approved tests run.
+
+One launch-bound RLock/epoch admission gate serializes exec/release/freeze/thaw/
+termination. It closes admissions BEFORE issuing freeze/termination, marks unknown
+responses uncertain and rejects stale epoch, frozen release/exec, restart and
+repeat termination. A live contender races actual engine freeze and must be
+denied with no effect after completed kernel freeze. `inner-loss` executes the
+real exact-object termination once, deliberately discards its response at the
+controlled caller boundary, then reconciles actual bound kernel zero/lifetime
+evidence without repeating kill. This is a finite fault injection, not a claim
+that a real external transport failed or that remote effects were undone.
+
+Inner pre-import negatives also attempt namespace-bearing clone and writable
+release/cgroup/engine/system-bus handles. These supplement independent applied
+mount/FD/namespace/capability/filter observations; denials alone are not proof.
+
+The finite toolchain closure recreates only the image's verified awk alternatives
+link in the private root, never binds `/etc` or host configuration. `clone3` stays
+unconditionally denied with ENOSYS so glibc2.36 can use its ordinary clone thread
+fallback; legacy clone still denies every namespace-bearing flag with EPERM.
+The actual policy/BPF identities change accordingly and old EPERM/thread-start
+failure observations retain their original subjects. No syscall is silently
+allowed or negative test removed to obtain compatibility.
+
+If a recursive-zero sample is missed, the implemented retirement qualifier reads
+ONLY the SAME held directory descriptor: its live positive link count must become
+zero with unchanged directory type/device/inode/cgroup2 filesystem and the held
+core-events ENODEV transition. This path is disabled unless loaded kernel build
+and exact installed engine/runtime identities match the inspected Fedora7.2.9 /
+Podman5.8.4 / crun1.28 contract. Matched `cgroup_destroy_locked` checks live tasks
+and online children before offlining; matched kernfs `__kernfs_remove` marks
+nodes removing/deactivated and clears their inode link count when unlinking them.
+File-only deactivation cannot clear the held DOMAIN directory's link count;
+path absence, unbound errno, recycled FD/inode, unmount, wrong filesystem or unknown
+platform do not qualify. Directory-self notification alone is not relied upon by
+this implemented qualifier. No new allocator/writer or kernel-audit privilege is
+introduced, and an unqualified/missed observation stays unknown.
 
 Failures refuse before release where possible; the unique owned container is
 force-removed in cleanup and has an engine execution timeout. Cleanup failure

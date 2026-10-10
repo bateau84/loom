@@ -17,11 +17,17 @@ DENY = ("mount", "umount2", "pivot_root", "unshare", "setns", "ptrace",
 NAMESPACE_FLAGS = (0x20000, 0x2000000, 0x4000000, 0x8000000, 0x10000000, 0x20000000, 0x40000000)
 POLICY = {"schema": "loom-inner-policy/v1", "denySyscalls": DENY,
           "denyCloneNamespaceFlags": NAMESPACE_FLAGS, "denyIoctlRequest": 0x5412,
-          "default": "allow-native-architecture-only", "denial": "EPERM"}
+          "default": "allow-native-architecture-only", "denial": "EPERM", "clone3Denial": "ENOSYS"}
 
 
-def arguments(fd: int, nonce: str, target: str) -> list[str]:
-    if fd < 0 or not nonce or not target.startswith("/"):
+def denial_action(name):
+    # glibc falls back to clone only on ENOSYS. clone3 is STILL never executed;
+    # legacy clone separately denies every namespace-bearing flag.
+    return 0x50000 | (38 if name == "clone3" else 1)
+
+
+def arguments(fd: int, nonce: str, target: str, workload: str = "synthetic") -> list[str]:
+    if fd < 0 or not nonce or not target.startswith("/") or workload not in {"synthetic", "unit-tests"}:
         raise ValueError("fixed policy/filter/identity required")
     args = ["/usr/bin/bwrap", "--unshare-user", "--unshare-pid", "--unshare-net", "--unshare-ipc",
             "--unshare-uts", "--die-with-parent", "--new-session", "--cap-drop", "ALL", "--clearenv",
@@ -35,6 +41,13 @@ def arguments(fd: int, nonce: str, target: str) -> list[str]:
            "XDG_STATE_HOME": "/tmp/loom/state", "XDG_CACHE_HOME": "/tmp/loom/cache",
            "XDG_RUNTIME_DIR": "/tmp/loom/runtime", "OPENCODE_DB": "/tmp/loom/data/opencode.db",
            "LOOM_CONTAINER_NONCE": nonce, "LOOM_CONTAINER_SENTINEL": target}
+    if workload == "unit-tests":
+        args += ["--ro-bind", "/opt/loom-test-deps", "/opt/loom-test-deps"]
+        # Debian's /usr/bin/awk points through /etc/alternatives. Recreate only
+        # the finite image toolchain link, never expose host/image /etc config.
+        args += ["--dir", "/etc", "--dir", "/etc/alternatives", "--symlink", "/usr/bin/mawk", "/etc/alternatives/awk"]
+        env.update(LOOM_INNER_WORKLOAD="unit-tests", PYTHONPATH="/opt/loom-test-deps/eval-runner",
+                   OPENCODE_DISABLE_AUTOUPDATE="1", TMPDIR="/tmp/loom/tmp")
     for key, value in env.items():
         args += ["--setenv", key, value]
     return args + ["--", "/usr/bin/python3", "-I", "-S", "-B", "/workspace/scripts/loom-isolation/inner_gate.py"]
@@ -59,7 +72,7 @@ def filter_fd() -> int:
             number = library.seccomp_syscall_resolve_name(name.encode())
             if number < 0:
                 raise RuntimeError("required seccomp syscall unavailable: " + name)
-            value = library.seccomp_rule_add_array(context, 0x50001, number, 1 if comparison else 0,
+            value = library.seccomp_rule_add_array(context, denial_action(name), number, 1 if comparison else 0,
                                                    ctypes.byref(comparison) if comparison else None)
             if value:
                 raise RuntimeError("required seccomp rule unavailable: " + name)
@@ -87,7 +100,10 @@ def main():
     mode = binary.stat().st_mode
     if not stat.S_ISREG(mode) or mode & (stat.S_ISUID | stat.S_ISGID) or os.getuid() == 0:
         raise RuntimeError("non-setuid rootless substrate required")
-    if sys.argv[1:]:
+    workload = "unit-tests" if sys.argv[1:] == ["--unit-tests"] else "synthetic"
+    if workload == "unit-tests" and Path("/usr/bin/awk").resolve(strict=True) != Path("/usr/bin/mawk"):
+        raise RuntimeError("unverified image awk toolchain closure")
+    if sys.argv[1:] and workload != "unit-tests":
         if sys.argv[1:] != ["--missing-policy"]:
             raise RuntimeError("unsupported fixed proof input")
         try:
@@ -106,10 +122,11 @@ def main():
         bpf = os.pread(fd, 65536, 0)
         print(json.dumps({"event": "inner-policy-prepared", "nonce": nonce,
             "policySha256": hashlib.sha256(json.dumps(POLICY, sort_keys=True).encode()).hexdigest(),
+            "workload": workload,
             "filterSha256": hashlib.sha256(bpf).hexdigest(), "filterBytes": len(bpf),
             "bwrapSha256": hashlib.sha256(binary.read_bytes()).hexdigest(),
             "bwrapVersion": version.stdout.decode("ascii").strip()}), flush=True)
-        process = subprocess.Popen(arguments(fd, nonce, target), pass_fds=(fd,), close_fds=True)
+        process = subprocess.Popen(arguments(fd, nonce, target, workload), pass_fds=(fd,), close_fds=True)
         marker = Path("/control/inner-parent-loss")
         while process.poll() is None:
             if marker.exists():

@@ -6,6 +6,18 @@ from podman_witness import Refusal
 
 
 class InnerPolicyTests(unittest.TestCase):
+    def test_clone3_remains_denied_with_safe_native_thread_fallback(self):
+        self.assertEqual(inner_policy.denial_action("clone3"), 0x50000 | 38)
+        self.assertEqual(inner_policy.denial_action("clone"), 0x50000 | 1)
+        self.assertIn("clone3", inner_policy.DENY)
+    def test_only_approved_finite_workload_is_selectable(self):
+        args = inner_policy.arguments(9, "nonce", "/synthetic/state", "unit-tests")
+        self.assertIn("LOOM_INNER_WORKLOAD", args)
+        self.assertIn("unit-tests", args)
+        self.assertIn("/opt/loom-test-deps", args)
+        self.assertIn("/etc/alternatives/awk", args)
+        with self.assertRaises(ValueError):
+            inner_policy.arguments(9, "nonce", "/synthetic/state", "arbitrary-command")
     def test_missing_policy_result_cannot_hide_child_start_or_wrong_exit(self):
         class Exit:
             status = 78

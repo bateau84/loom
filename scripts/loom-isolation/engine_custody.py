@@ -14,9 +14,44 @@ import selectors
 import json
 import struct
 import select
+import base64
 import time
 from pathlib import Path
 from podman_witness import PODMAN, Refusal, capture_command, error_class, one_record, engine_environment
+
+
+class AdmissionGate:
+    """One launch-bound serialization point; unknown effects close admission."""
+    def __init__(self, epoch, observations):
+        self.epoch, self.observations = epoch, observations
+        self.lock, self.state, self.termination_issued = threading.RLock(), "running", False
+
+    def invoke(self, epoch, operation, effect):
+        with self.lock:
+            expected = {"exec": "running", "release": "running", "freeze": "running", "thaw": "frozen"}
+            if (epoch != self.epoch or operation not in {*expected, "terminate"}
+                    or (operation in expected and self.state != expected[operation])
+                    or (operation == "terminate" and (self.termination_issued or self.state not in {"running", "frozen"}))):
+                self.observations.append({"phase": "admission-denied", "operation": operation, "state": self.state})
+                raise Refusal("launch-admission-epoch-or-state-" + operation)
+            if operation == "terminate":
+                self.termination_issued = True
+            if operation in {"freeze", "thaw", "terminate"}:
+                self.state = {"freeze": "freezing", "thaw": "thawing", "terminate": "terminating"}[operation]
+            self.observations.append({"phase": "admission-issued", "operation": operation, "state": self.state})
+            try:
+                result = effect()
+            except BaseException:
+                self.state = "uncertain"
+                self.observations.append({"phase": "admission-outcome-unknown", "operation": operation})
+                raise
+            if operation in {"freeze", "thaw"}:
+                self.state = "frozen" if operation == "freeze" else "running"
+            return result
+
+    def seal(self, recursive_zero):
+        with self.lock:
+            self.state = "retired" if recursive_zero else "terminal-unproven"
 
 
 def scope_path(value: str, identity: str) -> Path:
@@ -116,10 +151,20 @@ def cgroup_filesystem(fd: int) -> int:
     return value
 
 
+def authenticated_offline(before, after, core_errno, contract_qualified):
+    if (not contract_qualified or core_errno != 19 or before["links"] <= 0 or after["links"] != 0
+            or not before["directory"] or not after["directory"]
+            or before["filesystem"] != 0x63677270 or after["filesystem"] != before["filesystem"]
+            or (after["device"], after["inode"]) != (before["device"], before["inode"])):
+        raise Refusal("custody-domain-retirement-not-authenticated")
+    return True
+
+
 class TreeStream:
     """Own one fixed helper exec and bounded read-only counter pipes."""
     script = "custody_payload.py"
     extra_args = ()
+    byte_limit = 1048576
 
     def ready(self):
         return len(self.counts) == 3
@@ -166,7 +211,7 @@ class TreeStream:
                         return
                     raise Refusal("custody-counter-stream-closed")
                 self.total += len(data)
-                if self.total > 1048576:
+                if self.total > self.byte_limit:
                     raise Refusal("custody-counter-stream-bound")
                 if key.data == "error":
                     raise Refusal("custody-counter-stream-error:" + error_class(data))
@@ -268,13 +313,15 @@ class InnerStream(TreeStream):
             for row in (base / "mountinfo").read_text().splitlines():
                 fields = row.split(" - ", 1)[0].split()
                 target = fields[4]
-                if target not in {"/", "/proc", "/tmp", "/usr", "/workspace", "/control", "/probes", "/dev"} and not target.startswith("/dev/"):
+                if target not in {"/", "/proc", "/tmp", "/usr", "/workspace", "/control", "/probes", "/dev", "/opt/loom-test-deps"} and not target.startswith("/dev/"):
                     raise Refusal("inner-independent-mount-allowlist")
                 mounts[target] = fields[5].split(",")
                 if target == "/":
                     root_filesystem = row.split(" - ", 1)[1].split()[0]
             if any("ro" not in mounts.get(target, []) for target in ("/usr", "/workspace", "/control", "/probes")):
                 raise Refusal("inner-independent-readonly-inputs")
+            if self.extra_args == ("--unit-tests",) and "ro" not in mounts.get("/opt/loom-test-deps", []):
+                raise Refusal("inner-approved-api-closure-not-readonly")
             if root_filesystem != "tmpfs":
                 raise Refusal("inner-independent-empty-root")
             candidates.append({"hostPid": pid, "startTicks": ticks, "namespaces": namespaces,
@@ -357,6 +404,47 @@ class InnerRefusal(InnerStream):
         return value
 
 
+class InnerUnits(InnerStream):
+    extra_args = ("--unit-tests",)
+    byte_limit = 8 * 1048576
+
+    def __init__(self, identity, nonce):
+        self.streams = {"stdout": bytearray(), "stderr": bytearray()}
+        self.sequence = 0
+        super().__init__(identity, nonce)
+
+    def accept(self, data):
+        value = json.loads(data)
+        if value.get("event") in {"inner-workload-stream", "inner-workload-done"}:
+            if value.get("nonce") != self.nonce:
+                raise Refusal("inner-workload-stream-unbound")
+            if value["event"] == "inner-workload-stream":
+                channel = value.get("channel")
+                if channel not in self.streams or value.get("sequence") != self.sequence + 1:
+                    raise Refusal("inner-workload-stream-order-or-channel")
+                self.sequence += 1
+                self.streams[channel].extend(base64.b64decode(value["base64"], validate=True))
+                if sum(len(stream) for stream in self.streams.values()) > 4 * 1048576:
+                    raise Refusal("inner-workload-output-bound")
+            else:
+                if value.get("command") != ["bun", "run", "test"] or value.get("capturedBytes") != sum(len(stream) for stream in self.streams.values()):
+                    raise Refusal("inner-workload-result-binding")
+                self.events.append(value)
+            return
+        super().accept(data)
+
+    def finish(self):
+        deadline = time.monotonic() + 1720
+        while not self.done():
+            if time.monotonic() > deadline:
+                raise Refusal("inner-approved-workload-timeout")
+            self.drain(0.05)
+        completed = [value for value in self.events if value["event"] == "inner-workload-done"]
+        if len(completed) != 1 or self.process.wait(timeout=2) != completed[0]["testExit"]:
+            raise Refusal("inner-workload-exit-unproven")
+        return self.events
+
+
 def retirement_events(data: bytes, descriptor: int) -> bool:
     deleted = False
     while data:
@@ -414,7 +502,7 @@ class DirectoryLifetime:
 
 class Custody:
     """One held-gate owner, no release or arbitrary exec interface."""
-    def __init__(self, record: dict, observations: list):
+    def __init__(self, record: dict, observations: list, platform=None):
         self.identity = record["Id"]
         self.created = record["Created"]
         self.started = record["State"]["StartedAt"]
@@ -426,6 +514,10 @@ class Custody:
                 or record.get("RestartCount") != 0 or record.get("ExecIDs")):
             raise Refusal("custody-restart-or-competing-exec")
         self.observations = observations
+        self.image = record["Image"]
+        self.epoch = (self.identity, self.created, self.started, self.image)
+        self.admission = AdmissionGate(self.epoch, observations)
+        self.platform = platform or {}
         self.directory = self.events_fd = -1
         self.closed = False
         self.trusted_exec = set()
@@ -455,6 +547,7 @@ class Custody:
             self.device = os.fstat(self.directory).st_dev
             self.filesystem = cgroup_filesystem(self.directory)
             self.event_identity = (os.fstat(self.events_fd).st_dev, os.fstat(self.events_fd).st_ino)
+            self.directory_binding = self.directory_snapshot()
         except BaseException:
             self.close()
             raise
@@ -493,6 +586,7 @@ class Custody:
         self.observations.append({"phase": self.phase + "-inspected-state", "containerId": self.identity,
                                   "running": record["State"].get("Running"), "paused": record["State"].get("Paused")})
         if (record["Id"] != self.identity or record["Created"] != self.created
+                or record.get("Image") != getattr(self, "image", record.get("Image"))
                 or record["State"]["StartedAt"] != self.started or record["State"]["Pid"] != self.pid
                 or record["State"]["CgroupPath"] != self.engine_scope or record.get("RestartCount") != 0
                 or set(record.get("ExecIDs", [])) != getattr(self, "trusted_exec", set())
@@ -511,6 +605,38 @@ class Custody:
         # translation (which need not provide a numeric mapping for every row).
         # No row is silently skipped: sample all current recursive kernel members.
         self.frozen_members(require_frozen=False)
+
+    def admit_exec(self, create):
+        def effect():
+            self.current()
+            return create()
+        return self.admission.invoke(self.epoch, "exec", effect)
+
+    def release(self, publish):
+        def effect():
+            self.current()
+            return publish()
+        return self.admission.invoke(self.epoch, "release", effect)
+
+    def freeze(self, phase="frozen", on_issued=None):
+        def effect():
+            self.current()
+            if on_issued:
+                on_issued()
+            self.command("pause")
+            self.observe(phase, populated=1, frozen=1)
+            self.phase = "post-freeze"
+            self.current()
+        return self.admission.invoke(self.epoch, "freeze", effect)
+
+    def thaw(self, phase="thawed"):
+        def effect():
+            self.current()
+            self.command("unpause")
+            self.observe(phase, populated=1, frozen=0)
+            self.phase = "post-thaw"
+            self.current()
+        return self.admission.invoke(self.epoch, "thaw", effect)
 
     def frozen_members(self, require_frozen=True) -> None:
         def frozen():
@@ -587,29 +713,70 @@ class Custody:
             raise Refusal("custody-held-object-drift")
         return parse_events(os.pread(self.events_fd, 4096, 0).decode("ascii"))
 
-    def exercise(self, progress=None) -> None:
+    def directory_snapshot(self):
+        value = os.fstat(self.directory)
+        return {"device": value.st_dev, "inode": value.st_ino, "links": value.st_nlink,
+                "directory": stat.S_ISDIR(value.st_mode), "filesystem": cgroup_filesystem(self.directory)}
+
+    def retirement_contract_qualified(self):
+        # Relevant matching kernel/runtime/vendor sources were independently
+        # inspected for this exact platform (README and retained evidence).
+        # Unknown platforms cannot inherit the retirement implication.
+        return (self.platform.get("kernelRelease") == "7.2.9-100.fc43.x86_64"
+                and self.platform.get("kernelBuild") == "#1 SMP PREEMPT_DYNAMIC Sat Oct  3 18:35:12 UTC 2026"
+                and self.platform.get("engineVersion") == "5.8.4"
+                and self.platform.get("engineSha256") == "d7712a82a43dc271d115708cf9ca741e2b6809a5d3e339fda5bafcd03df8e123"
+                and self.platform.get("runtimeSha256") == "d43d9ff062fe9c8d89301cbd259be71b25b38e32fad02198cb5e246853c67718"
+                and "54f16ffbefcd022bf032af768b5c5ce075c18bfc" in self.platform.get("runtimeVersion", ""))
+
+    def exercise(self, progress=None, lose_response=False) -> None:
         # No product admission exists in this prerequisite operation; all control
         # transitions occur serially under this one owner's held release gate.
         self.current()
         if progress:
             progress("running", False)
-        self.command("pause")
-        self.observe("frozen", populated=1, frozen=1)
-        self.phase = "post-freeze"
-        self.current()
+        issued = threading.Event()
+        contested = []
+        def contender():
+            if not issued.wait(3):
+                contested.append("not-issued")
+                return
+            try:
+                self.release(lambda: contested.append("unsafe-effect"))
+            except Refusal:
+                contested.append("denied")
+        thread = threading.Thread(target=contender, name="competing-release-check")
+        thread.start()
+        try:
+            self.freeze(on_issued=issued.set)
+        finally:
+            issued.set()
+            thread.join(3)
+        if contested != ["denied"]:
+            raise Refusal("live-competing-release-fence-unproven")
+        self.observations.append({"phase": "live-release-freeze-race-denied", "containerId": self.identity,
+                                  "kernelEvents": self.kernel_events(), "effectIssued": False})
+        for operation in ("exec", "restart"):
+            try:
+                self.admission.invoke(self.epoch, operation, lambda: None)
+            except Refusal:
+                pass
+            else:
+                raise Refusal("frozen-late-admission-not-denied")
         if progress:
             progress("frozen", True)
-        self.command("unpause")
-        self.observe("thawed", populated=1, frozen=0)
-        self.phase = "post-thaw"
-        self.current()
+        self.thaw()
         if progress:
             progress("thawed", False)
         self.closed = True
         self.phase = "termination"
         if self.kernel_events() != {"populated": 1, "frozen": 0}:
             raise Refusal("custody-pre-termination-state-drift")
-        lifetime = DirectoryLifetime(self.directory)
+        before = self.directory_snapshot()
+        if (before["device"], before["inode"]) != (self.device, self.inode) or before["links"] <= 0:
+            raise Refusal("custody-pretermination-directory-drift")
+        self.observations.append({"phase": "pretermination-live-domain", "binding": before,
+                                  "containerId": self.identity})
         stop, ready = threading.Event(), threading.Event()
         result = {}
         def run():
@@ -620,7 +787,27 @@ class Custody:
             try:
                 if not ready.wait(1) or result:
                     raise Refusal("custody-zero-observer-not-armed")
-                self.command("kill", "--signal", "KILL")
+                def terminate():
+                    self.command("kill", "--signal", "KILL")
+                    if lose_response:
+                        # Real effect executed once; deliberately drop its
+                        # response at this controlled caller boundary. Kernel
+                        # observation must reconcile, never repeat the effect.
+                        raise Refusal("injected-termination-response-loss")
+                try:
+                    self.admission.invoke(self.epoch, "terminate", terminate)
+                except Refusal as error:
+                    if not lose_response or str(error) != "injected-termination-response-loss":
+                        raise
+                    self.observations.append({"phase": "termination-response-lost", "outcome": "unknown",
+                                              "effectRepeated": False, "containerId": self.identity})
+                    for operation in ("release", "exec", "restart", "terminate"):
+                        try:
+                            self.admission.invoke(self.epoch, operation, lambda: None)
+                        except Refusal:
+                            pass
+                        else:
+                            raise Refusal("unknown-termination-admission-not-closed")
                 watcher.join(6.2)
             finally:
                 stop.set()
@@ -630,11 +817,18 @@ class Custody:
                                           "filesystemMagic": self.filesystem, "eventIdentity": self.event_identity,
                                           "result": result})
             if result.get("recursiveZero") is not True:
-                self.observations.append({"phase": "bound-directory-retirement-observed",
-                    "containerId": self.identity, "observation": lifetime.observed(),
-                    "meaning": "directory lifetime evidence; full coverage/source applicability still required"})
+                after = self.directory_snapshot()
+                qualified = self.retirement_contract_qualified()
+                authenticated_offline(before, after, result.get("errno"), qualified)
+                self.observations.append({"phase": "authenticated-domain-offline", "containerId": self.identity,
+                    "before": before, "after": after, "heldCoreEventErrno": result.get("errno"),
+                    "locallyMatchedDestructionContract": qualified,
+                    "source": "kernel-fstat-original-directory-terminal-links-and-held-core-transition"})
+            self.admission.seal(True)
         finally:
-            lifetime.close()
+            # Directory/core descriptors remain held until Custody.close; never
+            # reopen the path or reuse the object to manufacture terminal proof.
+            stop.set()
 
     def close(self) -> None:
         for fd in (self.events_fd, self.directory):

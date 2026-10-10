@@ -10,6 +10,54 @@ from podman_witness import Refusal, error_class
 
 
 class CustodyTests(unittest.TestCase):
+    def test_authenticated_domain_offline_is_not_errno_or_path_absence(self):
+        before = {"device": 30, "inode": 123, "links": 2, "directory": True, "filesystem": 0x63677270}
+        after = {**before, "links": 0}
+        self.assertTrue(engine_custody.authenticated_offline(before, after, 19, True))
+        for changed in ({**after, "links": 2}, {**after, "inode": 124}, {**after, "directory": False},
+                        {**after, "filesystem": 1}):
+            with self.assertRaises(Refusal):
+                engine_custody.authenticated_offline(before, changed, 19, True)
+        for error in (5, 9, 13, None):
+            with self.assertRaises(Refusal):
+                engine_custody.authenticated_offline(before, after, error, True)
+        with self.assertRaises(Refusal):
+            engine_custody.authenticated_offline(before, after, 19, False)
+    def test_admission_race_epoch_and_unknown_termination_never_release_or_retry(self):
+        import threading
+        gate = engine_custody.AdmissionGate(("object", "epoch"), [])
+        entered, finish = threading.Event(), threading.Event()
+        effects, failures = [], []
+        def freeze():
+            entered.set()
+            finish.wait(1)
+        thread = threading.Thread(target=lambda: gate.invoke(("object", "epoch"), "freeze", freeze))
+        thread.start()
+        self.assertTrue(entered.wait(1))
+        def release():
+            try:
+                gate.invoke(("object", "epoch"), "release", lambda: effects.append("released"))
+            except Refusal:
+                failures.append("denied")
+        contender = threading.Thread(target=release)
+        contender.start()
+        finish.set()
+        thread.join()
+        contender.join()
+        self.assertEqual(effects, [])
+        self.assertEqual(failures, ["denied"])
+        with self.assertRaises(Refusal):
+            gate.invoke(("object", "old-epoch"), "thaw", lambda: effects.append("wrong"))
+        gate.invoke(("object", "epoch"), "thaw", lambda: None)
+        def lost():
+            effects.append("termination-issued")
+            raise Refusal("response-lost")
+        with self.assertRaises(Refusal):
+            gate.invoke(("object", "epoch"), "terminate", lost)
+        for operation in ("release", "exec", "restart", "terminate"):
+            with self.assertRaises(Refusal):
+                gate.invoke(("object", "epoch"), operation, lambda: effects.append("unsafe"))
+        self.assertEqual(effects, ["termination-issued"])
     def test_directory_retirement_event_rejects_unbound_loss_or_file_only_events(self):
         import struct
         self.assertTrue(engine_custody.retirement_events(struct.pack("iIII", 7, 0x400, 0, 0), 7))

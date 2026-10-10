@@ -99,6 +99,16 @@ def main():
         phase = "supervisor-release"
         deadline = time.monotonic() + 40
         while not release_ready(Path("/control"), nonce):
+            hold = Path("/control/inner-custody")
+            if hold.exists():
+                if hold.is_symlink() or hold.read_text() != nonce:
+                    raise RuntimeError("wrong inner custody binding")
+                # Engine timeout and parent-owned custody bound lifetime. This
+                # gate never imports product code while the inner owner runs it.
+                while True:
+                    if Path("/control/release").exists():
+                        raise RuntimeError("competing outer release")
+                    time.sleep(0.1)
             if time.monotonic() > deadline:
                 raise RuntimeError("no independent supervisor release")
             time.sleep(0.1)
