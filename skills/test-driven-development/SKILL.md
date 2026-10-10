@@ -182,7 +182,7 @@ When accepted behavior crosses process, storage, protocol, filesystem, database,
 
 Use the testing pyramid pragmatically:
 
-- many focused unit tests for fast design feedback;
+- focused unit tests for fast design feedback where they add distinct value;
 - integration/contract tests for owned boundaries;
 - acceptance/end-to-end tests for load-bearing flows that cannot be proven below.
 

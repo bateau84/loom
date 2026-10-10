@@ -199,7 +199,7 @@ Key differences in `synctest`:
 
 ## Test Timeouts
 
-For tests that may hang, use a timeout helper that panics with caller location. See [Helpers](./references/helpers.md).
+For tests that may hang, prefer Go's built-in `go test -timeout` and cancellation through an existing context-aware API. Do not add a goroutine-based panic watchdog just for test setup. See [Helpers](./references/helpers.md).
 
 ## Benchmarks
 
