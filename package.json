@@ -5,7 +5,7 @@
   "scripts": {
     "test": "python3 -m unittest discover -s scripts -p 'test_ci_*.py' && python3 scripts/run-unit-tests.py",
     "typecheck": "tsc --noEmit",
-    "eval:validate": "bun scripts/validate-evals.ts",
+    "eval:validate": "bun scripts/validate-evals.ts && python3 scripts/validate-skill-evals.py",
     "eval:list": "python3 scripts/run-evals.py --list",
     "eval:live": "python3 scripts/run-evals.py",
     "eval:system": "python3 scripts/run-evals.py --all",
