@@ -139,10 +139,21 @@ Main-process SIGKILL return/removal is NOT empty-subtree proof: missing/deleted
 kernel observation is unknown/refusal. Existing engine/systemd remains sole
 cgroup writer; raw writable delegation is not transferred to the child/Worker.
 
-This prerequisite operation does not yet launch persistent hostile descendants,
+This prerequisite operation does not yet prove hostile escape resistance,
 exercise inner pinned bubblewrap policy or prove release races/parent loss. Even
 if held-gate transitions are observed, it returns78/fullTask unproven; further
 positive coverage and independent verification are required before product release.
+
+The current custody witness adds a fixed stdlib synthetic parent/child/grandchild
+exec with private counter files. Its single exact exec identity is bound before
+closing admissions; no arbitrary exec or product release is exposed. The parent
+checks running/thawed counter progress and frozen counter stability, plus current
+kernel membership. A bounded reader is armed on the same core-events handle
+BEFORE kill, and requires an actual recursive `populated=0` sample. A missed sample,
+ENODEV/EIO/EACCES/EBADF or unbound observation remains unknown/refusal; this mode
+does not infer retirement. Cgroup2 filesystem magic, device/inode/event identities,
+loaded kernel release/build, rootless principal and installed engine/runtime
+version/executable hashes accompany the new observations.
 
 Failures refuse before release where possible; the unique owned container is
 force-removed in cleanup and has an engine execution timeout. Cleanup failure

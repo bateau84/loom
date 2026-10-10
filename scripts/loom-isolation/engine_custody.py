@@ -7,6 +7,8 @@ host discovery. Missing recursive observation is refusal, never status proof.
 import os
 import re
 import stat
+import threading
+import ctypes
 import time
 from pathlib import Path
 from podman_witness import PODMAN, Refusal, capture_command, error_class, one_record
@@ -68,6 +70,43 @@ def process_identity(pid: int) -> tuple[int, str]:
     return before, membership
 
 
+def watch_zero(read, stop, ready) -> dict:
+    """A missed transition/error is unknown, never inferred retirement."""
+    deadline = time.monotonic() + 6
+    samples = 0
+    try:
+        while not stop.is_set() and time.monotonic() < deadline:
+            state = read()
+            samples += 1
+            ready.set()
+            if state["populated"] == 0:
+                return {"recursiveZero": True, "kernelEvents": state, "samples": samples}
+            stop.wait(0.0005)
+        return {"outcome": "unknown", "samples": samples}
+    except OSError as error:
+        return {"outcome": "unknown", "errno": error.errno, "samples": samples}
+    except Exception as error:
+        return {"outcome": "unknown", "errorClass": type(error).__name__, "samples": samples}
+    finally:
+        ready.set()
+
+
+def cgroup_filesystem(fd: int) -> int:
+    # Linux statfs starts with native-long f_type; sufficiently large buffer
+    # permits the kernel/libc to fill its complete structure without guessing
+    # trailing field layout. This is metadata only, no cgroup write/control.
+    libc = ctypes.CDLL(None, use_errno=True)
+    libc.fstatfs.argtypes = [ctypes.c_int, ctypes.c_void_p]
+    libc.fstatfs.restype = ctypes.c_int
+    buffer = ctypes.create_string_buffer(256)
+    if libc.fstatfs(fd, buffer) != 0:
+        raise OSError(ctypes.get_errno(), "cgroup filesystem metadata unavailable")
+    value = ctypes.c_long.from_buffer(buffer).value
+    if value != 0x63677270:
+        raise Refusal("custody-not-cgroup2-filesystem")
+    return value
+
+
 class Custody:
     """One held-gate owner, no release or arbitrary exec interface."""
     def __init__(self, record: dict, observations: list):
@@ -84,6 +123,7 @@ class Custody:
         self.observations = observations
         self.directory = self.events_fd = -1
         self.closed = False
+        self.trusted_exec = set()
         self.phase = "enrollment"
         self.ticks = start_ticks(self.proc("stat"))
         membership = self.proc("cgroup")
@@ -107,6 +147,9 @@ class Custody:
             self.events_fd = os.open("cgroup.events", os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC,
                                      dir_fd=self.directory)
             self.inode = os.fstat(self.directory).st_ino
+            self.device = os.fstat(self.directory).st_dev
+            self.filesystem = cgroup_filesystem(self.directory)
+            self.event_identity = (os.fstat(self.events_fd).st_dev, os.fstat(self.events_fd).st_ino)
         except BaseException:
             self.close()
             raise
@@ -147,7 +190,8 @@ class Custody:
         if (record["Id"] != self.identity or record["Created"] != self.created
                 or record["State"]["StartedAt"] != self.started or record["State"]["Pid"] != self.pid
                 or record["State"]["CgroupPath"] != self.engine_scope or record.get("RestartCount") != 0
-                or record.get("ExecIDs") or start_ticks(self.proc("stat")) != self.ticks
+                or set(record.get("ExecIDs", [])) != getattr(self, "trusted_exec", set())
+                or start_ticks(self.proc("stat")) != self.ticks
                 or not in_scope(self.proc("cgroup"), self.relative)
                 or self.scope.stat().st_ino != self.inode):
             raise Refusal("custody-object-process-or-scope-drift")
@@ -232,23 +276,56 @@ class Custody:
                 raise Refusal("custody-recursive-transition-unobserved-" + phase)
             time.sleep(0.01)
 
-    def exercise(self) -> None:
+    def kernel_events(self) -> dict:
+        directory = os.fstat(self.directory)
+        event = os.fstat(self.events_fd)
+        if ((directory.st_dev, directory.st_ino) != (self.device, self.inode)
+                or (event.st_dev, event.st_ino) != self.event_identity):
+            raise Refusal("custody-held-object-drift")
+        return parse_events(os.pread(self.events_fd, 4096, 0).decode("ascii"))
+
+    def exercise(self, progress=None) -> None:
         # No product admission exists in this prerequisite operation; all control
         # transitions occur serially under this one owner's held release gate.
         self.current()
+        if progress:
+            progress("running", False)
         self.command("pause")
         self.observe("frozen", populated=1, frozen=1)
         self.phase = "post-freeze"
         self.current()
+        if progress:
+            progress("frozen", True)
         self.command("unpause")
         self.observe("thawed", populated=1, frozen=0)
         self.phase = "post-thaw"
         self.current()
+        if progress:
+            progress("thawed", False)
         self.closed = True
-        self.command("kill", "--signal", "KILL")
-        # SIGKILL API return is NOT recursive proof. Read the held kernel event
-        # handle before removal; disappearance/read failure remains unknown.
-        self.observe("terminated-recursive-empty", populated=0)
+        self.phase = "termination"
+        if self.kernel_events() != {"populated": 1, "frozen": 0}:
+            raise Refusal("custody-pre-termination-state-drift")
+        stop, ready = threading.Event(), threading.Event()
+        result = {}
+        def run():
+            result.update(watch_zero(self.kernel_events, stop, ready))
+        watcher = threading.Thread(target=run, name="bound-cgroup-zero-observer")
+        watcher.start()
+        try:
+            if not ready.wait(1) or result:
+                raise Refusal("custody-zero-observer-not-armed")
+            self.command("kill", "--signal", "KILL")
+            watcher.join(6.2)
+        finally:
+            stop.set()
+            watcher.join()
+            self.observations.append({"phase": "prearmed-recursive-zero-result", "containerId": self.identity,
+                                      "scopeInode": self.inode, "scopeDevice": self.device,
+                                      "filesystemMagic": self.filesystem, "eventIdentity": self.event_identity,
+                                      "result": result})
+        if result.get("recursiveZero") is not True:
+            raise Refusal("custody-recursive-zero-not-observed")
 
     def close(self) -> None:
         for fd in (self.events_fd, self.directory):

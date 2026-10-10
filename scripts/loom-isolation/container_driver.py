@@ -29,7 +29,7 @@ OWNED = {"Containerfile.test", ".containerignore", *(
     ("container_driver.py", "container_gate.py", "test_container_driver.py",
      "podman_witness.py", "podman_gate.py", "test_podman_witness.py", "README.md",
      "image_binding.py", "test_image_binding.py", "bubblewrap_probe.py", "test_bubblewrap_probe.py",
-     "engine_custody.py", "test_engine_custody.py"))}
+     "engine_custody.py", "test_engine_custody.py", "custody_payload.py"))}
 BUILDS = Path(__file__).parent / ".container-builds"
 
 
@@ -377,6 +377,19 @@ def run_tests(image: str, receipt_path: Path, *, prerequisites: bool = False, sc
                                "startedAt": record["State"]["StartedAt"], "gate": ready[0]}), flush=True)
             if custody:
                 diagnostic.update(payloadReleased=False, custodyObservations=[], fullTask="unproven")
+                kernel = os.uname()
+                diagnostic["platformIdentity"] = {"kernelRelease": kernel.release, "kernelBuild": kernel.version,
+                    "machine": kernel.machine, "hostUid": os.geteuid(), "engineExecutable": PODMAN,
+                    "engineSha256": hashlib.sha256(Path(PODMAN).read_bytes()).hexdigest(),
+                    "engineVersion": call([PODMAN, "version", "--format", "{{.Client.Version}}"]).decode().strip()}
+                if record.get("OCIRuntime") != "crun":
+                    raise Refusal("custody-unverified-runtime")
+                runtime_version = capture_command(["/usr/bin/crun", "--version"])
+                if runtime_version["status"] != 0 or len(runtime_version["stdout"]) > 1024 or runtime_version["stderr"]:
+                    raise Refusal("custody-runtime-identity-unavailable")
+                diagnostic["platformIdentity"].update(runtimeExecutable="/usr/bin/crun",
+                    runtimeSha256=hashlib.sha256(Path("/usr/bin/crun").read_bytes()).hexdigest(),
+                    runtimeVersion=runtime_version["stdout"].decode("ascii"))
                 diagnostic["sentinelUnchanged"] = sentinel.read_bytes() == b"outer-synthetic-sentinel"
                 phase = "exact-object-parent-custody"
                 diagnostic["phase"] = phase
@@ -385,12 +398,61 @@ def run_tests(image: str, receipt_path: Path, *, prerequisites: bool = False, sc
                     "engineResolvedScope": record["State"].get("CgroupPath"), "ociRuntime": record.get("OCIRuntime")}
                 observer = engine_custody.Custody(record, diagnostic["custodyObservations"])
                 try:
-                    observer.exercise()
+                    # A single fixed trusted synthetic exec, admitted under this
+                    # launch owner before its freeze/release admissions close.
+                    token = call([PODMAN, "exec", "--detach", record["Id"], "python3", "-I", "-S", "-B",
+                                  "/workspace/scripts/loom-isolation/custody_payload.py"]).decode().strip()
+                    if len(token) != 64 or any(c not in "0123456789abcdef" for c in token):
+                        raise Refusal("custody-fixed-exec-identity")
+                    observer.trusted_exec = {token}
+                    members = None
+                    for _ in range(50):
+                        copied = root / "custody-ready.json"
+                        captured = capture_command([PODMAN, "cp", record["Id"] + ":/tmp/loom-custody/ready.json", str(copied)])
+                        if captured["status"] == 0:
+                            members = json.loads(copied.read_text())
+                            break
+                        time.sleep(0.02)
+                    if not isinstance(members, dict) or set(members) != {"parent", "child", "grandchild"}:
+                        raise Refusal("custody-fixed-tree-unavailable")
+                    pids = sorted(members.values())
+                    if len(set(pids)) != 3 or any(not isinstance(pid, int) or pid <= 1 for pid in pids):
+                        raise Refusal("custody-fixed-tree-identity")
+                    diagnostic["syntheticTree"] = {"namespacePids": members, "trustedExecId": token}
+                    def counters():
+                        values = []
+                        for pid in pids:
+                            output = root / "custody-counter"
+                            call([PODMAN, "cp", f"{record['Id']}:/tmp/loom-custody/{pid}.counter", str(output)])
+                            values.append(int(output.read_text()))
+                        return values
+                    def progress(stage, frozen):
+                        try:
+                            before = counters()
+                            time.sleep(0.1)
+                            after = counters()
+                        except Refusal as error:
+                            # This independent observation gap cannot license a
+                            # product release or become counter success. Kernel
+                            # custody/teardown checks remain safely exercisable
+                            # with the product gate held and fixed helpers only.
+                            diagnostic["custodyObservations"].append({"phase": stage + "-counter-unproven",
+                                "operation": "exact-object-counter-copy", "error": str(error),
+                                "outcome": "unknown", "containerId": record["Id"]})
+                            diagnostic["counterProof"] = "unproven"
+                            return
+                        if ((frozen and after != before) or
+                                (not frozen and any(new <= old for old, new in zip(before, after)))):
+                            raise Refusal("custody-counter-transition-unproven-" + stage)
+                        diagnostic["custodyObservations"].append({"phase": stage + "-synthetic-tree-counter",
+                            "namespacePids": pids, "before": before, "after": after, "frozen": frozen,
+                            "containerId": record["Id"]})
+                    observer.exercise(progress)
                 finally:
                     observer.close()
                 diagnostic.update(sentinelUnchanged=sentinel.read_bytes() == b"outer-synthetic-sentinel",
                                   custodyResult="held-gate-recursive-transitions-observed",
-                                  proofLimits="no persistent descendant/counter/inner-policy or release-race proof yet")
+                                  proofLimits="no full inner-policy, escape, parent-loss or release-race proof yet")
                 print(json.dumps({"event": "held-gate-custody-observed", "identity": diagnostic["custodyIdentity"],
                                   "observations": diagnostic["custodyObservations"], "fullTask": "unproven"}), flush=True)
                 return 78

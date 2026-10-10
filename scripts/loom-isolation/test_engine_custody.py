@@ -10,6 +10,22 @@ from podman_witness import Refusal, error_class
 
 
 class CustodyTests(unittest.TestCase):
+    def test_zero_observer_never_turns_errno_or_missing_transition_into_success(self):
+        import errno
+        import threading
+        done = threading.Event()
+        ready = threading.Event()
+        for code in (errno.ENODEV, errno.EIO, errno.EACCES, errno.EBADF):
+            def failed():
+                raise OSError(code, "synthetic")
+            result = engine_custody.watch_zero(failed, done, ready)
+            self.assertNotIn("recursiveZero", result)
+            self.assertEqual(result["errno"], code)
+        values = iter(({"populated": 1, "frozen": 0}, {"populated": 0, "frozen": 0}))
+        result = engine_custody.watch_zero(lambda: next(values), done, ready)
+        self.assertTrue(result["recursiveZero"])
+        done.set()
+        self.assertNotIn("recursiveZero", engine_custody.watch_zero(lambda: {"populated": 1, "frozen": 0}, done, ready))
     def test_paused_observer_uses_current_recursive_members_not_running_only_top(self):
         with tempfile.TemporaryDirectory(dir=Path(__file__).parent) as scratch:
             root = Path(scratch)
