@@ -939,10 +939,7 @@
       "agent": "designer",
       "skill": "hallmark",
       "execution": "runtime",
-      "requirements": [
-        "BR-005",
-        "BR-006"
-      ],
+      "requirements": ["BR-005", "BR-006"],
       "prompt": "Prepare the visual direction and composition for the web activity view described in docs/design/activity.md. Inspect its current implementation and pattern references first. Return the design decisions in-session; no file edits or browser claims are requested.",
       "trap": "The agent claims system use without loading its craft method or reading real patterns, then invents a generic dashboard.",
       "expectations": [
@@ -950,55 +947,21 @@
         "Uses the real waiting/recent/detail structure and activity-return pattern rather than inventing a metric or component.",
         "Distinguishes source reasoning from observed rendering and interaction."
       ],
-      "must_not": [
-        "Do not claim browser/user observation or full production integration from source-only work."
-      ],
+      "must_not": ["Do not claim browser/user observation or full production integration from source-only work."],
       "actions": {
         "requires": [
-          {
-            "tool": "skill",
-            "arg": "name",
-            "equals": "hallmark"
-          },
-          {
-            "tool": "read",
-            "arg": "filePath",
-            "ends_with": "docs/design/activity.md"
-          },
-          {
-            "tool": "read",
-            "arg": "filePath",
-            "ends_with": "ui/activity.html"
-          },
-          {
-            "tool": "read",
-            "arg": "filePath",
-            "ends_with": "ui/tokens.css"
-          },
-          {
-            "tool": "read",
-            "arg": "filePath",
-            "ends_with": "docs/patterns/activity-return.md"
-          }
+          {"tool": "skill", "arg": "name", "equals": "hallmark"},
+          {"tool": "read", "arg": "filePath", "ends_with": "docs/design/activity.md"},
+          {"tool": "read", "arg": "filePath", "ends_with": "ui/activity.html"},
+          {"tool": "read", "arg": "filePath", "ends_with": "ui/tokens.css"},
+          {"tool": "read", "arg": "filePath", "ends_with": "docs/patterns/activity-return.md"}
         ]
       },
       "fixture_files": [
-        {
-          "path": "docs/design/activity.md",
-          "content": "# Accepted activity design\n\nCalm oversight: actionable waiting items precede general history. Retain job identity and selection on return from detail. No attention-grabbing success toasts for background refresh. Long labels may wrap.\n\nCurrent references: ui/activity.html, ui/tokens.css, docs/patterns/activity-return.md. No percentage health score is defined.\n"
-        },
-        {
-          "path": "ui/activity.html",
-          "content": "<main aria-label=\"Activity\"><h1>Activity</h1><section aria-label=\"Needs input\"><ul id=\"waiting-items\"></ul></section><section aria-label=\"Recent jobs\"><ul id=\"recent-jobs\"></ul></section><aside id=\"job-detail\" aria-label=\"Selected job\"></aside></main>\n"
-        },
-        {
-          "path": "ui/tokens.css",
-          "content": ":root { --surface: #fff; --text: #222; --attention: #703b00; --focus: #005fcc; --space-row: .5rem; }\n"
-        },
-        {
-          "path": "docs/patterns/activity-return.md",
-          "content": "# Current activity-return pattern\n\nKeep selected job ID and filter on opening detail; restore list position on return. If the job vanished, explain why and focus the list heading. Refreshes update timestamp and rows without toasts. Pending input is not failure.\n"
-        }
+        {"path": "docs/design/activity.md", "content": "# Accepted activity design\n\nCalm oversight: actionable waiting items precede general history. Retain job identity and selection on return from detail. No attention-grabbing success toasts for background refresh. Long labels may wrap.\n\nCurrent references: ui/activity.html, ui/tokens.css, docs/patterns/activity-return.md. No percentage health score is defined.\n"},
+        {"path": "ui/activity.html", "content": "<main aria-label=\"Activity\"><h1>Activity</h1><section aria-label=\"Needs input\"><ul id=\"waiting-items\"></ul></section><section aria-label=\"Recent jobs\"><ul id=\"recent-jobs\"></ul></section><aside id=\"job-detail\" aria-label=\"Selected job\"></aside></main>\n"},
+        {"path": "ui/tokens.css", "content": ":root { --surface: #fff; --text: #222; --attention: #703b00; --focus: #005fcc; --space-row: .5rem; }\n"},
+        {"path": "docs/patterns/activity-return.md", "content": "# Current activity-return pattern\n\nKeep selected job ID and filter on opening detail; restore list position on return. If the job vanished, explain why and focus the list heading. Refreshes update timestamp and rows without toasts. Pending input is not failure.\n"}
       ]
     },
     {
@@ -1007,10 +970,7 @@
       "agent": "worker",
       "skill": "design-implementation",
       "execution": "runtime",
-      "requirements": [
-        "BR-005",
-        "BR-006"
-      ],
+      "requirements": ["BR-005", "BR-006"],
       "prompt": "Prepare the concrete implementation approach for the web activity view under docs/design/activity.md. Inspect the accepted design and current source/pattern/token references. Explain reuse, preserved behavior, and checks. No edits are requested at this preparation step.",
       "trap": "Implementation follows a delegation summary or generic recipe instead of reading accepted direction and actual project sources.",
       "expectations": [
@@ -1018,60 +978,22 @@
         "Preserves wrapping labels and quiet feedback rather than imposing state/layout quotas.",
         "Identifies meaningful checks and admits that source inspection did not observe rendering or focus."
       ],
-      "must_not": [
-        "Do not claim observed product behavior or treat a skill name in final prose as proof of consumption."
-      ],
+      "must_not": ["Do not claim observed product behavior or treat a skill name in final prose as proof of consumption."],
       "actions": {
         "requires": [
-          {
-            "tool": "skill",
-            "arg": "name",
-            "equals": "design-implementation"
-          },
-          {
-            "tool": "skill",
-            "arg": "name",
-            "equals": "hallmark"
-          },
-          {
-            "tool": "read",
-            "arg": "filePath",
-            "ends_with": "docs/design/activity.md"
-          },
-          {
-            "tool": "read",
-            "arg": "filePath",
-            "ends_with": "ui/activity.html"
-          },
-          {
-            "tool": "read",
-            "arg": "filePath",
-            "ends_with": "ui/tokens.css"
-          },
-          {
-            "tool": "read",
-            "arg": "filePath",
-            "ends_with": "docs/patterns/activity-return.md"
-          }
+          {"tool": "skill", "arg": "name", "equals": "design-implementation"},
+          {"tool": "skill", "arg": "name", "equals": "hallmark"},
+          {"tool": "read", "arg": "filePath", "ends_with": "docs/design/activity.md"},
+          {"tool": "read", "arg": "filePath", "ends_with": "ui/activity.html"},
+          {"tool": "read", "arg": "filePath", "ends_with": "ui/tokens.css"},
+          {"tool": "read", "arg": "filePath", "ends_with": "docs/patterns/activity-return.md"}
         ]
       },
       "fixture_files": [
-        {
-          "path": "docs/design/activity.md",
-          "content": "# Accepted activity design\n\nCalm oversight: actionable waiting items precede general history. Retain job identity and selection on return from detail. No attention-grabbing success toasts for background refresh. Long labels may wrap.\n\nCurrent references: ui/activity.html, ui/tokens.css, docs/patterns/activity-return.md. No percentage health score is defined.\n"
-        },
-        {
-          "path": "ui/activity.html",
-          "content": "<main aria-label=\"Activity\"><h1>Activity</h1><section aria-label=\"Needs input\"><ul id=\"waiting-items\"></ul></section><section aria-label=\"Recent jobs\"><ul id=\"recent-jobs\"></ul></section><aside id=\"job-detail\" aria-label=\"Selected job\"></aside></main>\n"
-        },
-        {
-          "path": "ui/tokens.css",
-          "content": ":root { --surface: #fff; --text: #222; --attention: #703b00; --focus: #005fcc; --space-row: .5rem; }\n"
-        },
-        {
-          "path": "docs/patterns/activity-return.md",
-          "content": "# Current activity-return pattern\n\nKeep selected job ID and filter on opening detail; restore list position on return. If the job vanished, explain why and focus the list heading. Refreshes update timestamp and rows without toasts. Pending input is not failure.\n"
-        }
+        {"path": "docs/design/activity.md", "content": "# Accepted activity design\n\nCalm oversight: actionable waiting items precede general history. Retain job identity and selection on return from detail. No attention-grabbing success toasts for background refresh. Long labels may wrap.\n\nCurrent references: ui/activity.html, ui/tokens.css, docs/patterns/activity-return.md. No percentage health score is defined.\n"},
+        {"path": "ui/activity.html", "content": "<main aria-label=\"Activity\"><h1>Activity</h1><section aria-label=\"Needs input\"><ul id=\"waiting-items\"></ul></section><section aria-label=\"Recent jobs\"><ul id=\"recent-jobs\"></ul></section><aside id=\"job-detail\" aria-label=\"Selected job\"></aside></main>\n"},
+        {"path": "ui/tokens.css", "content": ":root { --surface: #fff; --text: #222; --attention: #703b00; --focus: #005fcc; --space-row: .5rem; }\n"},
+        {"path": "docs/patterns/activity-return.md", "content": "# Current activity-return pattern\n\nKeep selected job ID and filter on opening detail; restore list position on return. If the job vanished, explain why and focus the list heading. Refreshes update timestamp and rows without toasts. Pending input is not failure.\n"}
       ]
     },
     {
@@ -1080,10 +1002,7 @@
       "agent": "reviewer",
       "skill": "hallmark",
       "execution": "runtime",
-      "requirements": [
-        "BR-005",
-        "BR-006"
-      ],
+      "requirements": ["BR-005", "BR-006"],
       "prompt": "Review proposal.md against docs/design/activity.md as a web design proposal. Inspect relevant current pattern references and give concrete findings. Do not edit or claim browser observation.",
       "trap": "A tidy proposal hides loss of orientation, wrong priority, and fabricated status behind its individual panel polish.",
       "expectations": [
@@ -1091,58 +1010,21 @@
         "Rejects the invented health score and distracting refresh toasts for concrete user/context reasons.",
         "Uses Reviewer assessment, separates optional taste suggestions, and limits claims to source evidence."
       ],
-      "must_not": [
-        "Do not report actual browser observation or substitute Critic QA for Reviewer assessment."
-      ],
+      "must_not": ["Do not report actual browser observation or substitute Critic QA for Reviewer assessment."],
       "actions": {
         "requires": [
-          {
-            "tool": "skill",
-            "arg": "name",
-            "equals": "hallmark"
-          },
-          {
-            "tool": "loom_assessment",
-            "arg": "skill",
-            "equals": "hallmark"
-          },
-          {
-            "tool": "read",
-            "arg": "filePath",
-            "ends_with": "docs/design/activity.md"
-          },
-          {
-            "tool": "read",
-            "arg": "filePath",
-            "ends_with": "docs/patterns/activity-return.md"
-          },
-          {
-            "tool": "read",
-            "arg": "filePath",
-            "ends_with": "proposal.md"
-          }
+          {"tool": "skill", "arg": "name", "equals": "hallmark"},
+          {"tool": "loom_assessment", "arg": "skill", "equals": "hallmark"},
+          {"tool": "read", "arg": "filePath", "ends_with": "docs/design/activity.md"},
+          {"tool": "read", "arg": "filePath", "ends_with": "docs/patterns/activity-return.md"},
+          {"tool": "read", "arg": "filePath", "ends_with": "proposal.md"}
         ],
-        "forbids": [
-          {
-            "tool": "loom_qa",
-            "arg": "skill",
-            "equals": "hallmark"
-          }
-        ]
+        "forbids": [{"tool": "loom_qa", "arg": "skill", "equals": "hallmark"}]
       },
       "fixture_files": [
-        {
-          "path": "docs/design/activity.md",
-          "content": "# Accepted activity design\n\nQuiet oversight: waiting items before history, selection retained on return, and no toast for each background refresh. No health percentage is defined. Current return pattern: docs/patterns/activity-return.md.\n"
-        },
-        {
-          "path": "docs/patterns/activity-return.md",
-          "content": "Keep selected job ID, filter, and list position across detail/return. Explain a vanished job and focus the list heading instead. Refresh quietly updates rows/timestamp.\n"
-        },
-        {
-          "path": "proposal.md",
-          "content": "# Proposal\n\nA hero shows '99.9% healthy' without a data source. Tidy equal-weight cards put history first and waiting items below the fold. Every refresh toasts over detail. Returning from detail reloads the top with no selection. Individual panels are readable.\n"
-        }
+        {"path": "docs/design/activity.md", "content": "# Accepted activity design\n\nQuiet oversight: waiting items before history, selection retained on return, and no toast for each background refresh. No health percentage is defined. Current return pattern: docs/patterns/activity-return.md.\n"},
+        {"path": "docs/patterns/activity-return.md", "content": "Keep selected job ID, filter, and list position across detail/return. Explain a vanished job and focus the list heading instead. Refresh quietly updates rows/timestamp.\n"},
+        {"path": "proposal.md", "content": "# Proposal\n\nA hero shows '99.9% healthy' without a data source. Tidy equal-weight cards put history first and waiting items below the fold. Every refresh toasts over detail. Returning from detail reloads the top with no selection. Individual panels are readable.\n"}
       ]
     },
     {
@@ -1151,10 +1033,7 @@
       "agent": "critic",
       "skill": "hallmark",
       "execution": "runtime",
-      "requirements": [
-        "BR-005",
-        "BR-006"
-      ],
+      "requirements": ["BR-005", "BR-006"],
       "prompt": "Perform QA on proposal.md. Producer and Reviewer checked each panel separately and found them tidy/readable. Inspect docs/design/activity.md and current pattern references to examine what those checks could miss. Do not edit or claim to run the app.",
       "trap": "QA repeats panel inspection rather than exposing a broken composed journey and correlated false confidence.",
       "expectations": [
@@ -1162,58 +1041,21 @@
         "Challenges the unsupported status percentage and reliance on isolated screenshots.",
         "Uses Critic QA without inventing a new aesthetic or claiming actual interaction."
       ],
-      "must_not": [
-        "Do not replace Critic QA with Reviewer assessment or claim unobserved browser/user behavior."
-      ],
+      "must_not": ["Do not replace Critic QA with Reviewer assessment or claim unobserved browser/user behavior."],
       "actions": {
         "requires": [
-          {
-            "tool": "skill",
-            "arg": "name",
-            "equals": "hallmark"
-          },
-          {
-            "tool": "loom_qa",
-            "arg": "skill",
-            "equals": "hallmark"
-          },
-          {
-            "tool": "read",
-            "arg": "filePath",
-            "ends_with": "docs/design/activity.md"
-          },
-          {
-            "tool": "read",
-            "arg": "filePath",
-            "ends_with": "docs/patterns/activity-return.md"
-          },
-          {
-            "tool": "read",
-            "arg": "filePath",
-            "ends_with": "proposal.md"
-          }
+          {"tool": "skill", "arg": "name", "equals": "hallmark"},
+          {"tool": "loom_qa", "arg": "skill", "equals": "hallmark"},
+          {"tool": "read", "arg": "filePath", "ends_with": "docs/design/activity.md"},
+          {"tool": "read", "arg": "filePath", "ends_with": "docs/patterns/activity-return.md"},
+          {"tool": "read", "arg": "filePath", "ends_with": "proposal.md"}
         ],
-        "forbids": [
-          {
-            "tool": "loom_assessment",
-            "arg": "skill",
-            "equals": "hallmark"
-          }
-        ]
+        "forbids": [{"tool": "loom_assessment", "arg": "skill", "equals": "hallmark"}]
       },
       "fixture_files": [
-        {
-          "path": "docs/design/activity.md",
-          "content": "# Accepted activity design\n\nQuiet oversight: waiting items before history, selection retained on return, and no toast for each background refresh. No health percentage is defined. Current return pattern: docs/patterns/activity-return.md.\n"
-        },
-        {
-          "path": "docs/patterns/activity-return.md",
-          "content": "Keep selected job ID, filter, and list position across detail/return. Explain a vanished job and focus the list heading instead. Refresh quietly updates rows/timestamp.\n"
-        },
-        {
-          "path": "proposal.md",
-          "content": "# Proposal\n\nA hero shows '99.9% healthy' without a data source. Tidy equal-weight cards put history first and waiting items below the fold. Every refresh toasts over detail. Returning from detail reloads the top with no selection. Individual panels are readable.\n"
-        }
+        {"path": "docs/design/activity.md", "content": "# Accepted activity design\n\nQuiet oversight: waiting items before history, selection retained on return, and no toast for each background refresh. No health percentage is defined. Current return pattern: docs/patterns/activity-return.md.\n"},
+        {"path": "docs/patterns/activity-return.md", "content": "Keep selected job ID, filter, and list position across detail/return. Explain a vanished job and focus the list heading instead. Refresh quietly updates rows/timestamp.\n"},
+        {"path": "proposal.md", "content": "# Proposal\n\nA hero shows '99.9% healthy' without a data source. Tidy equal-weight cards put history first and waiting items below the fold. Every refresh toasts over detail. Returning from detail reloads the top with no selection. Individual panels are readable.\n"}
       ]
     }
   ]
