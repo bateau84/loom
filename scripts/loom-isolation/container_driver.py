@@ -27,7 +27,8 @@ import inner_policy
 
 
 ROOT = Path(__file__).resolve().parents[2]
-OWNED = {"Containerfile.test", ".containerignore", *(
+OWNED = {"Containerfile.test", ".containerignore", "scripts/test_ci_loom_custodian.py",
+         "scripts/loom-custodian/journal.py", *(
     "scripts/loom-isolation/" + name for name in
     ("container_driver.py", "container_gate.py", "test_container_driver.py",
      "podman_witness.py", "podman_gate.py", "test_podman_witness.py", "README.md",
