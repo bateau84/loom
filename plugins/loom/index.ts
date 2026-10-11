@@ -141,6 +141,7 @@ import {
   scopedGitAddTargets,
   scopedGofmtWriteTargets,
   scopedToolWriteTargets,
+  scopedToolOutputFlagPresent,
   shellResourcesAllowed,
   workerShellResourcesAllowed,
   localPolicyShellAllowed,
@@ -14120,6 +14121,14 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         }
       }
 
+      if (event.action === "shell" && Array.isArray(event.resources) &&
+          event.resources.some((command: string) =>
+            scopedToolOutputFlagPresent(command) && scopedToolWriteTargets(command).length === 0)) {
+        event.effect = "deny"
+        event.message = "Test artifact output is not a safe explicit project file; correct the path before retrying."
+        return
+      }
+
       // Known explicit-output commands inherit the active step's write
       // authority, including bounded scope_elevate and .loom.yaml rules.
       if (event.action === "shell" && Array.isArray(event.resources) &&
@@ -14862,6 +14871,11 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       const activeShellElevation = shellCommand && raw.sessionID && raw.agent
         ? await currentCommandElevation(String(raw.sessionID), String(raw.agent), shellCommand)
         : undefined
+      if (!activeShellElevation && shellCommand &&
+          scopedToolOutputFlagPresent(shellCommand) &&
+          scopedToolWriteTargets(shellCommand).length === 0) {
+        throw new Error("Test artifact output is not a safe explicit project file.")
+      }
       const generationPaths = !activeShellElevation && shellCommand &&
           loomAgents.has(String(raw.agent ?? "")) && raw.agent !== "general"
         ? scopedToolWriteTargets(shellCommand) : []

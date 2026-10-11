@@ -20,6 +20,7 @@ import {
   scopedGitAddTargets,
   scopedGofmtWriteTargets,
   scopedToolWriteTargets,
+  scopedToolOutputFlagPresent,
   shellResourcesAllowed,
   workerShellResourcesAllowed,
 } from "./shell"
@@ -675,6 +676,11 @@ describe("Loom Worker shell policy", () => {
     expect(workerShellResourcesAllowed(["go version"])).toBe(true)
     expect(workerShellResourcesAllowed(["go mod verify"])).toBe(true)
     expect(workerShellResourcesAllowed(["go mod tidy -diff"])).toBe(true)
+    for (const command of ["go test ./... -coverprofile=../outside.out",
+      "pytest --junitxml=../outside.xml", "go test -coverprofile=a -coverprofile=b ./..."]) {
+      expect(scopedToolOutputFlagPresent(command)).toBe(true)
+      expect(workerShellResourcesAllowed([command], ["src/**"])).toBe(false)
+    }
   })
 
   test("lets durable artifact authors stage and commit only their owned files", () => {

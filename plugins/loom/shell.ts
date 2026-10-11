@@ -179,6 +179,7 @@ export function isAllowedWorkerShell(command: string) {
 
   if (!normalized) return false
   if (hasForbiddenShellSyntax(normalized)) return false
+  if (scopedToolOutputFlagPresent(normalized)) return false
 
   const parsed = parseEnvironmentPrefix(normalized)
   if (!parsed || !parsed.command) return false
@@ -1214,6 +1215,7 @@ export function workerShellResourcesAllowed(
     const outputs = scopedToolWriteTargets(command)
     if (outputs.length) return writeScope.length > 0 &&
       resourcesWithinScope(outputs, writeScope)
+    if (scopedToolOutputFlagPresent(command)) return false
     if (
       diagnosticShellResourcesAllowed([command]) ||
       workerExecutionAllowed(command)
@@ -1272,6 +1274,18 @@ function safeRelativeGoFile(path: string) {
  * Predictable outputs for common source-writing tools. The shell still runs
  * with host permissions; only these files can acquire Loom Git provenance.
  */
+/** True when a verifier names an explicit on-disk report output. */
+export function scopedToolOutputFlagPresent(command: string) {
+  const words = parsedCommandWords(command)
+  if (!words) return false
+  const args = /^python(?:3(?:\.[0-9]+)?)?$/.test(words[0]) && words[1] === "-m"
+    ? words.slice(2) : words
+  const flag = args[0] === "go" && args[1] === "test"
+    ? "-coverprofile" : args[0] === "pytest" ? "--junitxml" : undefined
+  return Boolean(flag && args.some((value) =>
+    value === flag || value.startsWith(flag + "=")))
+}
+
 export function scopedToolWriteTargets(command: string): string[] {
   const swagger = elevatedGenerationPaths(command)
   if (swagger.length) return swagger
