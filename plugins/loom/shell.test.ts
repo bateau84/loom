@@ -19,6 +19,7 @@ import {
   isGitAuthoringShellCommand,
   scopedGitAddTargets,
   scopedGofmtWriteTargets,
+  scopedToolWriteTargets,
   shellResourcesAllowed,
   workerShellResourcesAllowed,
 } from "./shell"
@@ -636,6 +637,44 @@ describe("Loom Worker shell policy", () => {
       "git commit -a -m all -- src/app.go",
       "git -c core.hooksPath=/dev/null commit -m fix -- src/*",
     ]) expect(authorGitShellResourcesAllowed([command], scope)).toBe(false)
+  })
+
+  test("bounded test, generator, Go, Python and JS tool output files", () => {
+    const examples: Array<[string, string[]]> = [
+      ["go mod tidy", ["go.mod", "go.sum"]],
+      ["go fmt src/app.go", ["src/app.go"]],
+      ["gofmt -w src/app.go", ["src/app.go"]],
+      ["goimports -w src/app.go", ["src/app.go"]],
+      ["gofumpt -w src/app.go", ["src/app.go"]],
+      ["ruff check --fix scripts/main.py", ["scripts/main.py"]],
+      ["python3 -m ruff format scripts/main.py", ["scripts/main.py"]],
+      ["black scripts/main.py", ["scripts/main.py"]],
+      ["isort scripts/main.py", ["scripts/main.py"]],
+      ["autopep8 --in-place scripts/main.py", ["scripts/main.py"]],
+      ["prettier --write src/app.ts", ["src/app.ts"]],
+      ["eslint --fix src/app.ts", ["src/app.ts"]],
+      ["go test ./... -coverprofile=reports/coverage.out", ["reports/coverage.out"]],
+      ["pytest -q --junitxml=reports/junit.xml", ["reports/junit.xml"]],
+      ["swag init --output docs/swagger", [
+        "docs/swagger/docs.go", "docs/swagger/swagger.json", "docs/swagger/swagger.yaml",
+      ]],
+    ]
+    for (const [command, outputs] of examples) {
+      expect(scopedToolWriteTargets(command)).toEqual(outputs)
+      expect(workerShellResourcesAllowed([command], outputs)).toBe(true)
+      expect(workerShellResourcesAllowed([command], ["src/unrelated.ts"])).toBe(false)
+    }
+    for (const command of [
+      "go fmt ./...", "goimports -w ../outside.go",
+      "go mod tidy -modfile ../external.mod", "ruff check --fix .",
+      "ruff check --fix ../outside.py", "ruff format --check scripts/main.py",
+      "python -m black .", "prettier --write .", "eslint --fix src/**",
+      "pytest --junitxml=../outside.xml", "go test ./... -coverprofile=../../outside",
+      "swag init --output ../outside", "gofmt -w src/app.go && rm -rf src",
+    ]) expect(scopedToolWriteTargets(command)).toEqual([])
+    expect(workerShellResourcesAllowed(["go version"])).toBe(true)
+    expect(workerShellResourcesAllowed(["go mod verify"])).toBe(true)
+    expect(workerShellResourcesAllowed(["go mod tidy -diff"])).toBe(true)
   })
 
   test("lets durable artifact authors stage and commit only their owned files", () => {

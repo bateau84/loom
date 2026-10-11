@@ -37,6 +37,9 @@ const safePatterns = [
   /^go list(?:\s|$)/,
   /^go env(?:\s|$)/,
   /^go mod graph(?:\s|$)/,
+  /^go mod verify$/,
+  /^go mod tidy -diff$/,
+  /^go version$/,
   /^gofmt(?:\s|$)/,
   /^golangci-lint run(?:\s|$)/,
   /^gosec(?:\s|$)/,
@@ -1208,6 +1211,9 @@ export function workerShellResourcesAllowed(
   if (resources.length === 0) return false
 
   return resources.every((command) => {
+    const outputs = scopedToolWriteTargets(command)
+    if (outputs.length) return writeScope.length > 0 &&
+      resourcesWithinScope(outputs, writeScope)
     if (
       diagnosticShellResourcesAllowed([command]) ||
       workerExecutionAllowed(command)
@@ -1260,6 +1266,88 @@ function safeRelativeGoFile(path: string) {
   if (normalized.split("/").includes("..")) return false
   if (/[*?\[\]{}]/.test(normalized)) return false
   return normalized.endsWith(".go")
+}
+
+/**
+ * Predictable outputs for common source-writing tools. The shell still runs
+ * with host permissions; only these files can acquire Loom Git provenance.
+ */
+export function scopedToolWriteTargets(command: string): string[] {
+  const swagger = elevatedGenerationPaths(command)
+  if (swagger.length) return swagger
+  const words = parsedCommandWords(command)
+  if (!words?.length) return []
+  const args = /^python(?:3(?:\.[0-9]+)?)?$/.test(words[0]) && words[1] === "-m"
+    ? words.slice(2) : words
+  const [runner, action] = args
+
+  if (runner === "go" && action === "mod" && args[2] === "tidy" && args.length === 3) {
+    return ["go.mod", "go.sum"]
+  }
+  if (runner === "go" && action === "fmt" && args.length > 2 &&
+      args.slice(2).every((p) => !p.startsWith("-") && safeRelativeGoFile(p))) {
+    return [...new Set(args.slice(2))]
+  }
+  if (["gofmt", "goimports", "gofumpt"].includes(runner)) {
+    const allowed = runner === "gofmt" ? ["-w", "-s"] : ["-w"]
+    const values = args.slice(1)
+    const files = values.filter((v) => !v.startsWith("-"))
+    if (values.includes("-w") && files.length &&
+        values.every((v) => v.startsWith("-")
+          ? allowed.includes(v) : safeRelativeGoFile(v))) return [...new Set(files)]
+    return []
+  }
+
+  const ruffFix = runner === "ruff" && action === "check" && args.includes("--fix")
+  const ruffFormat = runner === "ruff" && action === "format" && !args.includes("--check")
+  const pythonFormat = ["black", "isort"].includes(runner)
+  const pythonInPlace = ["autopep8", "yapf"].includes(runner) &&
+    args.some((v) => ["--in-place", "-i"].includes(v))
+  const jsFormat = (runner === "prettier" && args.includes("--write")) ||
+    (runner === "eslint" && args.includes("--fix"))
+  const shFormat = runner === "shfmt" && args.includes("-w")
+  if (ruffFix || ruffFormat || pythonFormat || pythonInPlace || jsFormat || shFormat) {
+    const allowedFlags = new Set([
+      "--fix", "--unsafe-fixes", "--write", "--in-place",
+      "-i", "-w", "-s", "-q", "--quiet", "-v", "--verbose",
+    ])
+    const values = args.slice(runner === "ruff" ? 2 : 1)
+    const extension = (ruffFix || ruffFormat || pythonFormat || pythonInPlace)
+      ? /\.pyi?$/ : shFormat ? /\.(?:sh|bash)$/ :
+      /\.(?:js|jsx|ts|tsx|mjs|cjs|json|md|yaml|yml|css|scss|html|vue|svelte)$/
+    const files = values.filter((v) => !v.startsWith("-"))
+    if (files.length && values.every((v) => v.startsWith("-")
+      ? allowedFlags.has(v)
+      : safeScopedToolOutput(v) && extension.test(v))) return [...new Set(files)]
+    return []
+  }
+
+  // Tests can have many side effects. Only explicit report-file flags can
+  // receive post-run ownership, never unknown test outputs.
+  const flag = runner === "go" && action === "test"
+    ? "-coverprofile" : runner === "pytest" ? "--junitxml" : undefined
+  if (flag) {
+    const values = args.slice(runner === "go" ? 2 : 1)
+    const outputs: string[] = []
+    for (let i = 0; i < values.length; i += 1) {
+      if (values[i] !== flag && !values[i].startsWith(flag + "=")) continue
+      const path = values[i] === flag ? values[++i] : values[i].slice(flag.length + 1)
+      if (!path || !safeScopedToolOutput(path)) return []
+      outputs.push(path)
+    }
+    if (outputs.length === 1) return outputs
+  }
+  return []
+}
+
+function safeScopedToolOutput(path: string) {
+  const normalized = path.replace(/^\.\//, "")
+  const parts = normalized.split("/")
+  return !path.startsWith("-") && safeProjectRelativePath(path) &&
+    !parts.includes(".git") && !parts.includes(".loom") &&
+    normalized !== ".loom.yaml" && normalized !== ".loom.yml" &&
+    normalized !== "docs/reports" && !normalized.startsWith("docs/reports/") &&
+    normalized !== "ephemeral-reports" && !normalized.startsWith("ephemeral-reports/")
 }
 
 export function scopedGofmtWriteTargets(command: string) {
