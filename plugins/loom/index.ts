@@ -140,6 +140,7 @@ import {
   isGitAuthoringShellCommand,
   scopedGitAddTargets,
   scopedGofmtWriteTargets,
+  scopedToolWriteTargets,
   shellResourcesAllowed,
   workerShellResourcesAllowed,
   localPolicyShellAllowed,
@@ -4470,9 +4471,9 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
     }
 
     const assertProjectGenerationWrite = async (
-      workflowId: string, stepId: string, command: string,
+      workflowId: string, stepId: string, agent: string, command: string,
     ) => {
-      const outputPaths = elevatedGenerationPaths(command)
+      const outputPaths = scopedToolWriteTargets(command)
       if (outputPaths.length === 0) return
       for (const path of outputPaths) {
         const target = await classifyScopeTarget(ctx.location.directory, path)
@@ -4483,12 +4484,15 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         }
       }
       const scope = (await ctx.storage.get(scopeKey(workflowId, stepId))) as TaskScope | undefined
-      const effective = mergeWriteScope(scope?.write ?? [], await policyWriteScope("worker"))
+      const effective = committableWriteScope(mergeWriteScope(
+        scope?.write.length ? scope.write : (artifactWriteDefaults[agent] ?? []),
+        await policyWriteScope(agent),
+      ))
       if (!effective.length || !resourcesWithinScope(outputPaths, effective)) {
         throw new Error(
-          "Generated output is outside the current Loom write scope (" +
-          elevatedGenerationOutput(command) +
-          "). Call loom_scope_elevate for the generated files before retrying.",
+          "Command output is outside the current Loom write scope (" +
+          outputPaths.join(", ") +
+          "). Call loom_scope_elevate for the output files before retrying.",
         )
       }
     }
@@ -14116,6 +14120,37 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         }
       }
 
+      // Known explicit-output commands inherit the active step's write
+      // authority, including bounded scope_elevate and .loom.yaml rules.
+      if (event.action === "shell" && Array.isArray(event.resources) &&
+          event.resources.length > 0 &&
+          event.resources.every((command: string) => scopedToolWriteTargets(command).length > 0) &&
+          loomAgents.has(String(event.agent ?? ""))) {
+        const agent = String(event.agent)
+        const sessionID = String(event.sessionID ?? "")
+        const workflowId = await ctx.storage.get(sessionKey(sessionID))
+        const stepId = await ctx.storage.get(sessionStepKey(sessionID))
+        if (typeof workflowId !== "string" || typeof stepId !== "string" ||
+            !(await exactRunnableStepAttemptBinding(ctx, sessionID, workflowId, stepId))) {
+          event.effect = "deny"
+          event.message = "File-producing commands require the current runnable Loom step."
+          return
+        }
+        try {
+          await assertCurrentStepPlanAdmission(ctx, workflowId, stepId)
+          if (agent === "worker") await assertWorkerWorkClaim(ctx, workflowId, stepId)
+          for (const command of event.resources as string[]) {
+            await assertProjectGenerationWrite(workflowId, stepId, agent, command)
+          }
+        } catch (error) {
+          event.effect = "deny"
+          event.message = error instanceof Error ? error.message : String(error)
+          return
+        }
+        event.effect = "allow"
+        return
+      }
+
       if (event.agent === "documenter" && event.action === "shell") {
         event.effect = "deny"
         event.message = "Documenter shell is not admitted. Add the exact command or a bounded prefix to the global/worktree .loom.yaml, or use loom_command_elevate for one audited execution."
@@ -14204,7 +14239,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           }
           if (needsElevation && elevatedGenerationOutput(event.resources[0])) {
             try {
-              await assertProjectGenerationWrite(workflowId, stepId, event.resources[0])
+              await assertProjectGenerationWrite(workflowId, stepId, agent, event.resources[0])
             } catch (error) {
               event.effect = "deny"
               event.message = error instanceof Error ? error.message : String(error)
@@ -14827,8 +14862,9 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       const activeShellElevation = shellCommand && raw.sessionID && raw.agent
         ? await currentCommandElevation(String(raw.sessionID), String(raw.agent), shellCommand)
         : undefined
-      const generationPaths = !activeShellElevation && raw.agent === "worker" && shellCommand
-        ? elevatedGenerationPaths(shellCommand) : []
+      const generationPaths = !activeShellElevation && shellCommand &&
+          loomAgents.has(String(raw.agent ?? "")) && raw.agent !== "general"
+        ? scopedToolWriteTargets(shellCommand) : []
       // Generator output flags are relative to the shell cwd. A different
       // workdir would make the granted output paths refer to different files.
       if (generationPaths.length > 0) {
@@ -14848,6 +14884,20 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           }
         }
       }
+      // Check output scope before executing and again under file locks.
+      if (generationPaths.length > 0 && shellCommand) {
+        const sessionID = String(raw.sessionID ?? "")
+        const workflowId = await ctx.storage.get(sessionKey(sessionID))
+        const stepId = await ctx.storage.get(sessionStepKey(sessionID))
+        if (typeof workflowId !== "string" || typeof stepId !== "string" ||
+            !(await exactRunnableStepAttemptBinding(ctx, sessionID, workflowId, stepId))) {
+          throw new Error("File-producing command requires the current runnable Loom step.")
+        }
+        await assertCurrentStepPlanAdmission(ctx, workflowId, stepId)
+        if (raw.agent === "worker") await assertWorkerWorkClaim(ctx, workflowId, stepId)
+        await assertProjectGenerationWrite(workflowId, stepId, String(raw.agent), shellCommand)
+      }
+
       // A current, user-owned exact/prefix command rule avoids per-invocation
       // elevation, but still needs this session's current executable step.
       let configuredShell = false
@@ -14865,7 +14915,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           await assertCurrentStepPlanAdmission(ctx, workflowId, stepId)
           if (raw.agent === "worker") await assertWorkerWorkClaim(ctx, workflowId, stepId)
           if (generationPaths.length > 0) {
-            await assertProjectGenerationWrite(workflowId, stepId, shellCommand)
+            await assertProjectGenerationWrite(workflowId, stepId, String(raw.agent), shellCommand)
           }
           configuredShell = true
         }
@@ -14883,7 +14933,8 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           : agent === "diagnostic"
             ? diagnosticExecutionShellResourcesAllowed([shellCommand])
             : Boolean(classifyVerificationShell(shellCommand))
-        if (!allowedWithoutElevation && !configuredShell) {
+        if (!allowedWithoutElevation && !configuredShell &&
+            generationPaths.length === 0) {
           elevationRequired = true
           if (!observationCallKey(raw)) {
             throw new Error(
@@ -14897,7 +14948,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             if (typeof workflowId !== "string" || typeof stepId !== "string") {
               throw new Error("Generator execution needs the current attached Worker step.")
             }
-            await assertProjectGenerationWrite(workflowId, stepId, shellCommand)
+            await assertProjectGenerationWrite(workflowId, stepId, String(raw.agent), shellCommand)
           }
         }
       }
@@ -15096,7 +15147,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             if (typeof workflowId !== "string" || typeof stepId !== "string") {
               throw new Error("Generator execution lost its current Worker attachment.")
             }
-            await assertProjectGenerationWrite(workflowId, stepId, shellCommand)
+            await assertProjectGenerationWrite(workflowId, stepId, String(raw.agent), shellCommand)
             pending.generationPaths = generationPaths
             pending.generationBefore = Object.fromEntries(await Promise.all(
               generationPaths.map(async (path) => [
@@ -15503,7 +15554,9 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                   // Detect output symlink/authority changes during host execution.
                   // This does not sandbox the host process; it prevents false
                   // claims of owned outputs and preserves an error receipt.
-                  await assertProjectGenerationWrite(admission.workflowId, admission.stepId, command)
+                  await assertProjectGenerationWrite(
+                    admission.workflowId, admission.stepId, String(raw.agent), command,
+                  )
                 } catch (error) {
                   generatorOutputError = error instanceof Error ? error.message : String(error)
                 }
@@ -15523,13 +15576,14 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               }
             }
             if (raw.status === "completed") {
-              const owned = successfulMutationPaths(
-                tool,
-                input,
-                ctx.location.directory,
-              ).filter(
-                (path) =>
-                  !isAbsolute(path) &&
+              // File-producing shell commands become Git-owned only after
+              // observed changed-byte fingerprints, not merely shell status.
+              const knownOutputs = typeof (input as any)?.command === "string"
+                ? scopedToolWriteTargets((input as any).command) : []
+              const owned = (knownOutputs.length ? [] : successfulMutationPaths(
+                tool, input, ctx.location.directory,
+              )).filter(
+                (path) => !isAbsolute(path) &&
                   resourcesWithinScope([path], writeScope!),
               )
               if (owned.length > 0) {
