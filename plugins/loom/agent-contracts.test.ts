@@ -27,6 +27,16 @@ describe("optional Loom agent contracts", () => {
       expect(body).toMatch(/mode: (primary|subagent)/)
     }
   })
+  test("configured-write producers use host ask so the Loom policy hook decides admission", () => {
+    for (const role of ["architect", "designer", "specifier", "documenter"] as const) {
+      expect(LOOM_ROLE_PERMISSIONS[role]).toContainEqual({
+        action: "edit", resource: "*", effect: "ask",
+      })
+    }
+    expect(LOOM_ROLE_PERMISSIONS.documenter).toContainEqual({
+      action: "shell", resource: "*", effect: "ask",
+    })
+  })
   test("missing or empty runtime contracts fail closed", async () => {
     const root = await mkdtemp(join(tmpdir(), "loom-contracts-"))
     try {

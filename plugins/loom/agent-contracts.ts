@@ -44,7 +44,7 @@ export const LOOM_ROLE_PERMISSIONS = {
     {
       "action": "edit",
       "resource": "*",
-      "effect": "deny"
+      "effect": "ask"
     },
     {
       "action": "edit",
@@ -120,7 +120,7 @@ export const LOOM_ROLE_PERMISSIONS = {
     {
       "action": "edit",
       "resource": "*",
-      "effect": "deny"
+      "effect": "ask"
     },
     {
       "action": "edit",
@@ -384,7 +384,7 @@ export const LOOM_ROLE_PERMISSIONS = {
     {
       "action": "edit",
       "resource": "*",
-      "effect": "deny"
+      "effect": "ask"
     },
     {
       "action": "edit",
