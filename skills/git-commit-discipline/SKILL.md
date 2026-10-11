@@ -41,8 +41,10 @@ git diff --cached --check
 git diff --cached --stat
 git diff --cached
 
-git -c core.hooksPath=/dev/null commit -m "<type>(<scope>): <subject>"
+git -c core.hooksPath=/dev/null commit -m "<type>(<scope>): <subject>" -- path/to/fileA path/to/fileB
 ```
+
+The explicit `-- path/to/fileA path/to/fileB` form commits only those files, leaving unrelated staged entries untouched. It works with the effective Loom write scope, including new files granted by `loom_scope_elevate` after they have been authored by the current step. The earlier permitted no-path commit form remains available when the entire staged index belongs to the current step.
 
 For a short or medium multi-paragraph message, repeat `-m`:
 
@@ -59,8 +61,10 @@ ephemeral-reports/<role>/commit-messages/<unique-name>.md
 Then use the file as the complete commit message:
 
 ```bash
-git -c core.hooksPath=/dev/null commit -F ephemeral-reports/<role>/commit-messages/<unique-name>.md
+git -c core.hooksPath=/dev/null commit -F ephemeral-reports/<role>/commit-messages/<unique-name>.md -- path/to/fileA path/to/fileB
 ```
+
+Omit the `-- <files>` suffix only if the entire staged index is owned by the current Loom step.
 
 The scratch file is non-committable. Never stage it. The current commit-owning role/session must write the exact file bytes before using `-F`; Loom rejects a pre-existing, cross-role, stale/changed, symlink, hardlinked, or other non-single-link regular message file. A successful file-backed commit consumes the scratch file, so write a fresh message file for the next commit. Do not use shell redirection, heredocs, arbitrary `-F` paths, or another role's scratch namespace to construct a commit message.
 

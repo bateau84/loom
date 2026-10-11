@@ -94,7 +94,9 @@ git diff --cached --stat
 git diff --cached --check
 ~~~
 
-Outside governed Loom, use the repository's ordinary hooks and Git commit workflow. **Inside Loom**, ordinary Git commands use precise scoped forms such as `git add -- ...` and `git -c core.hooksPath=/dev/null commit -m "..."`. A separate exact one-use `loom_command_elevate` grant permits any shell Git command as an **audit-only exception**, without proving trusted Git or file ownership. Do not disable hooks without an explicitly admitted command.
+Outside governed Loom, use the repository's ordinary hooks and Git commit workflow. **Inside Loom**, the current effective file write scope also authorizes Git operations on those exact files. This includes paths added by `loom_scope_elevate`: no separate elevation is needed just to stage, move, remove, or commit an already authorized file. Use `git add -- path/to/file` and the hookless, explicit-path form `git -c core.hooksPath=/dev/null commit -m "message" -- path/to/file` to keep other agents' staged work out of the commit. A plain hookless commit without `-- <files>` commits only when **every** staged file is verified as owned by this step. Scoped `git rm --`, `git mv --`, `git restore --`, `git reset HEAD --`, and `git checkout --` accept explicit authorized files; existing dirty bytes must belong to the same step attempt. A scope grant is not proof that another session's dirty changes belong to this agent.
+
+A separate exact one-use `loom_command_elevate` grant still permits other shell Git commands as an **audit-only exception**, without proving trusted Git or file ownership. Do not disable hooks without an explicitly admitted command.
 
 Partial staging and history editing may be unsupported by Loom's ordinary whole-file provenance rules even when Git supports them. Follow ungranted denials; use explicit command elevation only when the assigned work calls for it. Do not hide an ungranted command behind another executable or wrapper.
 
