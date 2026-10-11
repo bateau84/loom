@@ -19,7 +19,7 @@ describe("optional Loom agent contracts", () => {
   test("portable agent definitions contain neither Loom tool calls nor Loom permission rules", async () => {
     for (const role of LOOM_AGENT_ROLES) {
       const body = await readFile(new URL(`../../agents/${role}.md`, import.meta.url), "utf8")
-      expect(body).not.toMatch(/\\bloom_[a-z_]+\\b/)
+      expect(body).not.toMatch(/\bloom_[a-z_]+\b/)
       expect(body.split("---")[1]).not.toContain("permissions:")
       expect(body).toMatch(/mode: (primary|subagent)/)
     }

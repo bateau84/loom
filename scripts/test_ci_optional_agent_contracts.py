@@ -1,5 +1,4 @@
 """CI guard: professional agents must remain usable without the Loom plugin."""
-import re
 import unittest
 from pathlib import Path
 
@@ -14,8 +13,8 @@ class TestOptionalLoomAgentContracts(unittest.TestCase):
         for role in ROLES:
             with self.subTest(role=role):
                 body = (ROOT / "agents" / f"{role}.md").read_text()
-                self.assertTrue(body.startswith("---\\n"))
-                self.assertNotRegex(body, r"\\bloom_[a-z0-9_]+\\b")
+                self.assertTrue(body.startswith("---\n"))
+                self.assertNotRegex(body, r"\bloom_[a-z0-9_]+\b")
                 self.assertNotIn("permissions:", body.split("---", 2)[1])
                 self.assertRegex(body, r"(?m)^mode: (subagent|primary)$")
 
@@ -26,7 +25,7 @@ class TestOptionalLoomAgentContracts(unittest.TestCase):
             with self.subTest(role=role):
                 contract = (ROOT / "plugins/loom/contracts" / f"{role}.md").read_text()
                 self.assertIn(f"Loom runtime contract: {role}", contract)
-                self.assertRegex(contract, r"\\bloom_[a-z0-9_]+\\b")
+                self.assertRegex(contract, r"\bloom_[a-z0-9_]+\b")
 
     def test_optional_registration_wired_into_host(self):
         plugin = (ROOT / "plugins/loom/index.ts").read_text()
