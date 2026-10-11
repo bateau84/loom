@@ -8,7 +8,7 @@ Loom supports optional **user-owned** command and write whitelists. This uses th
 2. **Global policy:** `$XDG_CONFIG_HOME/opencode/.loom.yaml` (normally `~/.config/opencode/.loom.yaml`) applies only when the worktree file is absent.
 3. **No policy:** Loom uses its existing built-in permission behavior.
 
-**Replacement, not merging:** Missing `shell` or `writes` keys in a worktree file mean no additional grants for that category. A malformed, symlinked, group/other-writable or otherwise unsafe worktree file never falls back to global permissions. Remove the local file to restore the global whitelist. These are *additions* to Loom's usual bounded permissions, not a way to forbid its routine allowed commands.
+**Replacement, not merging:** Missing `shell` or `writes` keys in a worktree file mean no additional grants for that category. A malformed, symlinked, group/other-writable, **Git-tracked**, or otherwise unsafe worktree file never falls back to global permissions. Trackable repository content cannot silently authorize its own access. Remove the local file to restore the global whitelist. These are *additions* to Loom's usual bounded permissions, not a way to forbid its routine allowed commands.
 
 Loom does not create these files. Changes apply at the next permission check, without a restart. Use `loom_policy_status` to inspect the effective rules, source, and errors.
 
@@ -68,6 +68,6 @@ The global file may also contain `projects:` keyed by absolute project paths for
 
 ## Keep policy files untracked
 
-Loom's own `.gitignore` excludes its root `.loom.yaml`. For other repositories, add `.loom.yaml` to your Git global excludes file or the repository's local `.git/info/exclude`. This avoids accidental commits across PR worktrees. Keep each file owned by your account, not writable by group or others (e.g. `chmod 600 .loom.yaml`).
+Loom's own `.gitignore` excludes its root `.loom.yaml`. For other repositories, add `.loom.yaml` to your Git global excludes file or the repository's local `.git/info/exclude`. This avoids accidental commits across PR worktrees. Loom rejects a worktree policy already present in the Git index; use `git rm --cached .loom.yaml` to untrack it before enabling it as a local policy. Keep each file owned by your account, not writable by group or others (e.g. `chmod 600 .loom.yaml`).
 
 Use `loom_policy_status` after editing a policy to verify which source is active.

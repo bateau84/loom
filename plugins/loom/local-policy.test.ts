@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test"
+import { execFile } from "node:child_process"
+import { promisify } from "node:util"
 import { chmod, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -9,6 +11,7 @@ import {
 } from "./local-policy"
 import { localPolicyShellAllowed } from "./shell"
 
+const execFileAsync = promisify(execFile)
 const roots: string[] = []
 afterEach(async () => {
   for (const dir of roots.splice(0)) await rm(dir, { recursive: true, force: true })
@@ -84,6 +87,26 @@ describe("global and per-worktree Loom policy overrides", () => {
     expect(symlinked.status).toBe("invalid")
     await rm(path)
     expect((await readEffectiveLocalPermissionPolicy(first, global)).source).toBe("global")
+  })
+
+  test("tracked worktree policy is invalid until untracked", async () => {
+    const root = await mkdtemp(join(tmpdir(), "loom-policy-tracked-"))
+    roots.push(root)
+    const global = join(root, "global.yaml")
+    const worktree = join(root, "checkout")
+    await mkdir(worktree)
+    await writeFile(global, globalYaml, { mode: 0o600 })
+    await execFileAsync("git", ["init", "-q"], { cwd: worktree })
+    const path = join(worktree, ".loom.yaml")
+    await writeFile(path, worktreeYaml, { mode: 0o600 })
+    expect((await readEffectiveLocalPermissionPolicy(worktree, global)).source).toBe("worktree")
+    await execFileAsync("git", ["add", "--", ".loom.yaml"], { cwd: worktree })
+    const tracked = await readEffectiveLocalPermissionPolicy(worktree, global)
+    expect(tracked).toMatchObject({ source: "worktree", status: "invalid" })
+    expect(tracked.error).toContain("Tracked worktree")
+    expect(tracked.policy).toBeUndefined()
+    await execFileAsync("git", ["rm", "-q", "--cached", "--", ".loom.yaml"], { cwd: worktree })
+    expect((await readEffectiveLocalPermissionPolicy(worktree, global)).status).toBe("loaded")
   })
 
   test("rejects broad and protected write grants in global or worktree files", () => {
