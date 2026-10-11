@@ -2210,14 +2210,17 @@ try {
     `${standaloneServer.baseUrl}/api/agent`, standaloneServer.authorization,
   )
   const standaloneAgents = Array.isArray(standaloneAgentResponse) ? standaloneAgentResponse
-    : Array.isArray(standaloneAgentResponse?.data) ? standaloneAgentResponse.data : []
+    : Array.isArray(standaloneAgentResponse?.agents) ? standaloneAgentResponse.agents
+    : Array.isArray(standaloneAgentResponse?.data) ? standaloneAgentResponse.data
+    : Array.isArray(standaloneAgentResponse?.items) ? standaloneAgentResponse.items
+    : Array.isArray(standaloneAgentResponse?.result) ? standaloneAgentResponse.result : []
   const agentNames = new Set(standaloneAgents.map((agent: any) =>
     String(agent?.id ?? agent?.name ?? "")))
   for (const role of [
     "acceptance", "architect", "brainstorm", "critic", "designer", "diagnostic",
     "documenter", "general", "planner", "research", "reviewer", "specifier", "worker",
   ]) {
-    if (!agentNames.has(role)) throw new Error("Standalone OpenCode failed to load role " + role + "; host agents: " + [...agentNames].join(", "))
+    if (!agentNames.has(role)) throw new Error("Standalone OpenCode failed to load role " + role + "; host agents: " + [...agentNames].join(", ") + "; response: " + JSON.stringify(standaloneAgentResponse).slice(0, 1500))
   }
 
 
