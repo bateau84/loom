@@ -11301,6 +11301,55 @@ test("one-use command elevation is step-bound, audited and linked to shell evide
   }
 })
 
+test("known formatter, Go module and test outputs inherit elevated write authority", async () => {
+  const h = await waveLifecycleFixture("wave")
+  try {
+    const worker = await h.attach("task:one", "worker", "scoped-tools-worker")
+    const permission = async (command: string) => {
+      const event: any = { agent: "worker", action: "shell", resources: [command],
+        sessionID: worker, effect: "ask" }
+      await h.permissionHooks.get("evaluate")!(event)
+      return event
+    }
+    expect((await permission("go mod tidy")).effect).toBe("deny")
+    const elevated = await h.call("scope_elevate", {
+      workflowId: h.workflowId, stepId: "task:one",
+      paths: ["go.mod", "go.sum", "reports/coverage.out", "scripts/fix.py", "docs/swagger/**"],
+      reason: "Run formatters and generate test/Swagger outputs for owned files.",
+    }, "worker", worker)
+    expect(elevated.status).toBe("granted")
+    for (const command of [
+      "go mod tidy", "ruff check --fix scripts/fix.py",
+      "swag init --output docs/swagger", "go test ./... -coverprofile=reports/coverage.out",
+    ]) expect((await permission(command)).effect).toBe("allow")
+    expect((await permission("go test ./... -coverprofile=../outside.out")).effect).toBe("deny")
+
+    const command = "go mod tidy"
+    const call = {
+      tool: "shell", callID: "scoped-output-before", messageID: "scoped-output-message",
+      agent: "worker", sessionID: worker, input: { command },
+    }
+    await h.toolHooks.get("execute.before")!(call)
+    await writeFile(join(h.root, "go.mod"), "module example.invalid/test\n")
+    await writeFile(join(h.root, "go.sum"), "test sum\n")
+    await h.toolHooks.get("execute.after")!({
+      ...call, status: "completed", result: { output: "tidied", metadata: { exit: 0 } },
+    })
+    const owned = await h.durableStorage.get(
+      "git-session-ownership/" + encodeURIComponent(worker),
+    ) as any
+    expect(owned.paths).toContain("go.mod")
+    expect(owned.paths).toContain("go.sum")
+
+    expect((await permission("go mod tidy -diff")).effect).toBe("allow")
+    const blocked = "prettier --write unknown/not-granted.ts"
+    expect((await permission(blocked)).effect).toBe("deny")
+    const denied = { tool: "shell", callID: "outside-tool", messageID: "outside-tool-message",
+      sessionID: worker, agent: "worker", input: { command: blocked } }
+    await expect(h.toolHooks.get("execute.before")!(denied)).rejects.toThrow("loom_scope_elevate")
+  } finally { h.restore() }
+})
+
 test("arbitrary audited elevation admits Git, installers, pipelines and generators without fake write provenance", async () => {
   const h = await waveLifecycleFixture("wave")
   try {
