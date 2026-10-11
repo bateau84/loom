@@ -14008,6 +14008,12 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         }
       }
 
+      if (event.agent === "documenter" && event.action === "shell") {
+        event.effect = "deny"
+        event.message = "Documenter shell is not admitted. Add the exact command or a bounded prefix to the global/worktree .loom.yaml, or use loom_command_elevate for one audited execution."
+        return
+      }
+
       if (event.agent === "diagnostic" && event.action === "shell") {
         if (diagnosticShellResourcesAllowed(event.resources)) {
           event.effect = "allow"
