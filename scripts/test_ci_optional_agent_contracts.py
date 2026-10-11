@@ -35,7 +35,7 @@ class TestOptionalLoomAgentContracts(unittest.TestCase):
             "architect": ("loom_verification", "loom_complete"),
             "brainstorm": ("adviceForTaskId", "loom_oq_answer"),
             "critic": ("critic-solution", "critic-final", "loom_qa"),
-            "designer": ("loom_complete", "design-implementation"),
+            "designer": ("loom_complete", "design-specification"),
             "diagnostic": ("loom_diagnostic_sandbox_start", "loom_diagnostic_sandbox_diff"),
             "documenter": ("loom_knowledge_record", "loom_complete"),
             "general": ("loom_intent_start", "loom_dispatch_grant", "loom_cancel"),
