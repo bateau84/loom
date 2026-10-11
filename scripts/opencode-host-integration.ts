@@ -338,7 +338,7 @@ function chooseMockAction(prompt: string, results: Map<string, unknown>, state: 
   // plugin. The host's own permissions, not Loom, admit ordinary agent tools.
   if (prompt.includes("OPENCODE_STANDALONE_GENERAL")) {
     if (!results.has("read")) {
-      return { name: "read", args: { filePath: "docs/anchors/shared-name/anchor.md" } }
+      return { name: "read", args: { path: "docs/anchors/shared-name/anchor.md" } }
     }
     if (toolRejected(results.get("read")) ||
         !JSON.stringify(results.get("read")).includes("Integration Anchor")) {
@@ -356,7 +356,7 @@ function chooseMockAction(prompt: string, results: Map<string, unknown>, state: 
 
   if (prompt.includes("OPENCODE_STANDALONE_CHILD")) {
     if (!results.has("read")) {
-      return { name: "read", args: { filePath: "docs/anchors/shared-name/anchor.md" } }
+      return { name: "read", args: { path: "docs/anchors/shared-name/anchor.md" } }
     }
     if (toolRejected(results.get("read")) ||
         !JSON.stringify(results.get("read")).includes("Integration Anchor")) {
