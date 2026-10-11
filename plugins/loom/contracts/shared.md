@@ -13,7 +13,9 @@ Only the enabled Loom plugin injects this text. Without Loom, portable agents op
 - For review method companions, load the native OpenCode skill first, then use `loom_assessment` as Reviewer or `loom_qa` as Critic if available. Plain reading is not a recorded methodology load.
 - Tools use two equivalent OpenCode surfaces: native `loom_*` tools and Code Mode mirrors at `tools.loom.code.*`. Use whichever surface is available to the current host; Code Mode can discover the mirror signatures. Do not fall back to shell/file discovery to invoke Loom commands.
 - Tool definitions and live results document prerequisites, permitted roles, transitions and recovery; do not reconstruct workflow rules from agent prompts.
-- For committed changes, load the `git` and `git-commit-discipline` skills. Loom authorizes only exact-path staging and bounded hookless commits of admitted current-scope bytes. Git owns its object/ref/worktree metadata; do not request raw `.git` mutation rights. A denied Git operation must not be retried with a wrapper or other executable.
+- For ordinary committed changes, load the `git` and `git-commit-discipline` skills. Without command elevation, Git authoring is scoped to admitted bytes and bounded commit forms.
+- When a required shell command is blocked, an attached agent may call `loom_command_elevate` with its current workflow/step, the exact full command, and a reason. All command forms are eligible. A successful one-use grant returns `continue=true`: run the exact command once through shell/bash and continue. A different command requires another grant. Do not use wrappers to evade an ungranted denial.
+- Elevated shell commands are audit-only: Loom records the execution and result but does not confine, undo or fully observe its effects. They may mutate Git, files or external systems without creating trusted file ownership or passing independent review. Host OS permissions still apply.
 
 ## Continuing safely
 
