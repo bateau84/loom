@@ -2206,6 +2206,12 @@ try {
     },
   )
   if (!standaloneGeneral?.id) throw new Error("No-Loom General session creation failed.")
+  await sendPrompt(standaloneServer, standaloneGeneral.id, "OPENCODE_STANDALONE_GENERAL")
+  await waitForCondition(
+    () => mock.state.standaloneGeneralCompleted && mock.state.standaloneChildReadObserved,
+    "No-Loom General read and native Worker delegation", () => mock.state.prompts.slice(-12), 30_000,
+  )
+
   const standaloneAgentUrl = new URL("/api/agent", standaloneServer.baseUrl)
   standaloneAgentUrl.searchParams.set("location[directory]", standaloneProject)
   const standaloneAgentResponse = await jsonRequest(
@@ -2225,12 +2231,6 @@ try {
     if (!agentNames.has(role)) throw new Error("Standalone OpenCode failed to load role " + role + "; host agents: " + [...agentNames].join(", ") + "; response: " + JSON.stringify(standaloneAgentResponse).slice(0, 1500))
   }
 
-
-  await sendPrompt(standaloneServer, standaloneGeneral.id, "OPENCODE_STANDALONE_GENERAL")
-  await waitForCondition(
-    () => mock.state.standaloneGeneralCompleted && mock.state.standaloneChildReadObserved,
-    "No-Loom General read and native Worker delegation", () => mock.state.prompts.slice(-12), 30_000,
-  )
   const standaloneWorker = await jsonRequestAny(
     [`${standaloneServer.baseUrl}/api/session`, `${standaloneServer.baseUrl}/session`],
     standaloneServer.authorization, {
