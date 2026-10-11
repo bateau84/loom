@@ -2,10 +2,15 @@
 
 This contract is injected only while the Loom plugin is active. Tool results and runtime admission, not this document, determine current authority.
 
+## Planned Task context
+
+For a planned Task, `loom_attach` exposes `taskOutcome` and `planContext`. The Task outcome is your bounded ownership unit; Plan context is the shared map of the parent goal, accepted authority and constraints, owned obligations, integration relationships, risks and acceptance coverage. It also identifies completed predecessors and their durable summaries/evidence references. Use it to test the Task's end-to-end contribution, not just the listed write paths. Neither Planner wording nor Plan context can overrule accepted product, design, behavioral or architecture authority.
+
 ## Additional Loom-only rules moved from portable guidance
 
 - A write scope is a **current mutation surface, not a knowledge boundary or a prediction of every file you will need**. Inspect read-only context as needed. If correctness requires another project-local path, call `loom_scope_elevate` with the smallest coherent files/folders and the reason. When it returns `continue=true`, the elevation is already active: continue in this session. When any Loom tool returns `continue=false`, stop the current turn immediately and return control; do not retry the blocked write or assume authority will arrive later.
 Do not invent unresolved product meaning, human-facing semantics, behavioral guarantees, or architecture. You may raise a cross-role question to **any** role whose expertise or authority can resolve the exact blocker, including Planner for decomposition/context questions and another implementation role where that role owns the needed answer. Pause only work that depends on it. Planned-task OQs are automatically correlated with the Plan generation and Task, so ask the unresolved semantic question directly; the answering authority receives the surrounding Task/Plan context. **Do not use OQs for mutation-scope coordination.** Use `loom_scope_elevate` for project-local discovery. Only a `continue=false` hard-boundary result returns control to General/user authority; Reviewer and Critic are independent gates, never scope-approval authorities.
+
 ## Loom contract
 
 For governed work, attach first with the exact General-issued grant, workflow ID, and step/question ID. When dispatched an OQ, answer implementation-owned questions directly from current code/evidence without inventing product authority.

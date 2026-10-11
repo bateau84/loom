@@ -22,6 +22,28 @@ When Loom is enabled, `plugins/loom/agent-contracts.ts` loads `plugins/loom/cont
 
 `loom_status` exposes candidate `nextActions` to General based on live step dispatch admission. Candidates do not prove that a child is idle and cannot bypass grant/dispatch checks; status must be refreshed after child return or state changes. Detailed tool contracts define prerequisites and rejection behavior. Do not duplicate the workflow in portable role prompts.
 
+### Instruction migration inventory
+
+The split preserves two distinct layers. The portable `agents/*.md` retain professional judgment, methods, role identity, review independence, user communication and end-to-end responsibility. The enabled-only `plugins/loom/contracts/shared.md` retains tool discovery, dashboard/status, exact workflow admission, Git and command elevation, and policy precedence. Per-role runtime contracts retain the former Loom-specific responsibilities:
+
+| Role | Migrated Loom-specific responsibility |
+| --- | --- |
+| General | Intent, orchestration, scope, dispatch, budgets, cancellation, recovery and persistent follow-through |
+| Worker | Task/Plan attachment context, skill loading, scope discovery, evidence and Git delivery |
+| Reviewer | Independent gate methodology, repair/re-review separation and acceptance bookkeeping |
+| Critic | Solution/final gates, adversarial QA, premise checks and evidence-based verdicts |
+| Acceptance | Executable acceptance plans, immutable scenario outcomes and PASS authority |
+| Planner | Holistic Plan ownership, decomposition, Wave/Task contracts and readiness |
+| Architect | Governed architectural authority, verification and completion |
+| Designer | Governed design output, design implementation and completion |
+| Specifier | Governed behavior/requirements output and completion |
+| Research | Governed source/evidence reporting and completion |
+| Diagnostic | Governed causal investigation and disposable sandbox boundaries |
+| Documenter | Current-reality knowledge, discovery and record of updates |
+| Brainstorm | Advisory Task/OQ contracts, no decision ownership |
+
+Host OpenCode configuration owns the default agent and standalone permissions when Loom is disabled. No Loom policy is injected into these portable agent files. `scripts/test_ci_optional_agent_contracts.py` checks representative migrated contract invariants; the real host integration smoke test creates a separate OpenCode project with **no Loom plugin** and exercises agent discovery, General's read/delegation and Worker's edit/shell operations using host permissions. The real-host test proves these paths, not every role's real-world capability.
+
 ## Authority Contexts
 
 - Designer — human-facing meaning.
