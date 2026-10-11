@@ -10375,7 +10375,14 @@ test("planned Brainstorm permission, grant and typed completion boundaries fail 
     }
     expect((await h.call("step_scope", { workflowId: h.id(), stepId: "task:advice", write: ["src/**"] }, "general", "parent")).error).toContain("independent/advisory")
     expect((await h.call("scope_elevate", { workflowId: h.id(), stepId: "task:advice", paths: ["src/forbidden.ts"], reason: "Advice cannot write" }, "brainstorm", source.sessionId)).error).toContain("independent/advisory")
-    expect((await h.call("command_elevate", { workflowId: h.id(), stepId: "task:advice", command: "make test", reason: "Advice cannot execute" }, "brainstorm", source.sessionId)).error).toContain("restricted")
+    const auditedAdvice = await h.call("command_elevate", {
+      workflowId: h.id(), stepId: "task:advice", command: "make test",
+      reason: "Explicitly audit an advisory command.",
+    }, "brainstorm", source.sessionId)
+    expect(auditedAdvice).toMatchObject({ granted: true, kind: "unrestricted", continue: true })
+    const permittedAdvice: any = { action: "shell", resources: ["make test"], agent: "brainstorm", sessionID: source.sessionId, effect: "ask" }
+    await h.permissionHooks.get("evaluate")!(permittedAdvice)
+    expect(permittedAdvice.effect).toBe("allow")
     const before = JSON.stringify(await h.work())
     expect((await h.call("complete", { workflowId: h.id(), stepId: "task:advice", summary: " " }, "brainstorm", source.sessionId)).error).toContain("bounded summary")
     expect((await h.call("complete", { workflowId: h.id(), stepId: "task:advice", summary: "advice", adviceResolutions: [] }, "brainstorm", source.sessionId)).error).toContain("receiving producer")
@@ -10989,24 +10996,24 @@ test("one-use command elevation is step-bound, audited and linked to shell evide
     expect(first.effect).toBe("deny")
     expect(first.message).toContain("loom_command_elevate")
 
-    const forbidden = await h.call("command_elevate", {
+    const arbitrary = await h.call("command_elevate", {
       workflowId: h.workflowId, stepId: "task:one",
-      command: "bash -c 'rm -rf src'",
-      reason: "Not a project test command.",
+      command: "bash -c 'printf ok'",
+      reason: "Run an arbitrary shell expression.",
     }, "worker", worker)
-    expect(forbidden.error).toContain("Unsupported command form")
+    expect(arbitrary).toMatchObject({ granted: true, kind: "unrestricted", continue: true })
 
     const deniedGeneral = await h.call("command_elevate", {
       workflowId: h.workflowId, stepId: "task:one",
       command, reason: "General must not issue child grants.",
     }, "general", "parent")
-    expect(deniedGeneral.error).toContain("restricted")
+    expect(deniedGeneral.error).toContain("exact runnable step attachment")
 
     const issued = await h.call("command_elevate", {
       workflowId: h.workflowId, stepId: "task:one",
       command, reason: "Execute the repository's named unit test target.",
     }, "worker", worker)
-    expect(issued).toMatchObject({ granted: true, singleUse: true })
+    expect(issued).toMatchObject({ granted: true, singleUse: true, kind: "unrestricted", continue: true })
     const grantId = issued.grantId
     expect(typeof grantId).toBe("string")
 
@@ -11107,158 +11114,94 @@ test("one-use command elevation is step-bound, audited and linked to shell evide
   }
 })
 
-test("Worker generation elevation checks outputs, locks invocation and owns only changed files", async () => {
+test("arbitrary audited elevation admits Git, installers, pipelines and generators without fake write provenance", async () => {
   const h = await waveLifecycleFixture("wave")
   try {
-    const worker = await h.attach("task:one", "worker", "generator-worker")
-    const command = "swag init -g doc.go -d ./internal/apiv2,./internal/app --parseDependency --parseInternal --output ./internal/swagger/v2 --tags 'internal-app-v1' --requiredByDefault"
-    const input = {
-      workflowId: h.workflowId, stepId: "task:one", command,
-      reason: "Regenerate Swagger after the API annotation change.",
-    }
-
-    const missingScope = await h.call("command_elevate", input, "worker", worker)
-    expect(missingScope.error).toContain("outside the current Loom write scope")
-    const rejectedRole = await h.call("command_elevate", input, "reviewer", worker)
-    expect(rejectedRole.error).toContain("attached Worker")
-    const unsupported = await h.call("command_elevate", {
-      ...input, command: "swag init --output ./internal/swagger/v2 --mysteryFlag yes",
-    }, "worker", worker)
-    expect(unsupported.error).toContain("Unsupported swag init option or argument: --mysteryFlag")
-    const unsafeOutput = await h.call("command_elevate", {
-      ...input, command: "swag init --output ../outside",
-    }, "worker", worker)
-    expect(unsafeOutput.error).toContain("safe project-relative directory")
-
-    const scope = await h.call("scope_elevate", {
-      workflowId: h.workflowId, stepId: "task:one",
-      paths: ["internal/swagger/v2/**"],
-      reason: "Swagger output for this Worker task.",
-    }, "worker", worker)
-    expect(scope.error).toBeUndefined()
-
-    const permission = async (commandToCheck = command) => {
-      const event: any = { agent: "worker", action: "shell", resources: [commandToCheck],
-        sessionID: worker, effect: "ask" }
-      await h.permissionHooks.get("evaluate")!(event)
-      return event
-    }
-    expect((await permission()).effect).toBe("deny")
-    const grant = await h.call("command_elevate", input, "worker", worker)
-    expect(grant).toMatchObject({
-      granted: true, kind: "generation",
-      outputPath: "internal/swagger/v2", singleUse: true,
-    })
-    expect((await permission()).effect).toBe("allow")
-    expect((await permission("swag init --output ./internal/swagger/v3")).effect).toBe("deny")
-
-    const run = { tool: "shell", callID: "generated-swagger-output",
-      sessionID: worker, agent: "worker", input: { command } }
-    await expect(h.toolHooks.get("execute.before")!({
-      ...run, callID: "wrong-generator-cwd",
-      input: { command, workdir: tmpdir() },
-    })).rejects.toThrow("current project root")
-    expect((await h.durableStorage.get("command-elevation/" + grant.grantId) as any).consumedAt).toBeUndefined()
-    // Root-relative workdir must not depend on the plugin host's cwd.
-    const rootRelative = { ...run, input: { command, workdir: "." } }
-    await h.toolHooks.get("execute.before")!(rootRelative)
-    const executed = rootRelative
-    const outputDir = join(h.root, "internal", "swagger", "v2")
-    await mkdir(outputDir, { recursive: true })
-    await writeFile(join(outputDir, "docs.go"), "package swagger\\n")
-    await writeFile(join(outputDir, "swagger.json"), "{}\\n")
-    await h.toolHooks.get("execute.after")!({
-      ...executed, status: "completed",
-      result: { output: "Swagger updated", metadata: { exit: 0 } },
-    })
-
-    const ownership = await h.durableStorage.get(
-      "git-session-ownership/" + encodeURIComponent(worker),
-    ) as any
-    expect(ownership.paths).toContain("internal/swagger/v2/docs.go")
-    expect(ownership.paths).toContain("internal/swagger/v2/swagger.json")
-    expect(ownership.paths).not.toContain("internal/swagger/v2/swagger.yaml")
-    // Grant ownership is useful only if the normal Git gate recognizes it.
-    expect((await permission("git add -- internal/swagger/v2/docs.go")).effect).toBe("allow")
-    expect((await permission("git add -- internal/swagger/v2/unowned.go")).effect).toBe("deny")
-
-    const receipt = await h.durableStorage.get("command-elevation/" + grant.grantId) as any
-    expect(receipt).toMatchObject({ kind: "generation", outcome: "completed",
-      outputPath: "internal/swagger/v2", sessionID: worker })
-    expect(receipt.consumedAt).toBeDefined()
-    expect(receipt.observationId).toBeDefined()
-    expect((await permission()).effect).toBe("deny")
-    await expect(h.toolHooks.get("execute.before")!({
-      ...run, callID: "generator-replay",
-    })).rejects.toThrow("no unconsumed exact loom_command_elevate")
-  } finally {
-    h.restore()
-  }
-})
-
-test("generator result containing an error cannot confer Git provenance", async () => {
-  const h = await waveLifecycleFixture("wave")
-  try {
-    const worker = await h.attach("task:one", "worker", "failed-generator-worker")
-    const command = "swag init --output ./internal/swagger/v2"
-    expect((await h.call("scope_elevate", {
-      workflowId: h.workflowId, stepId: "task:one",
-      paths: ["internal/swagger/v2/**"], reason: "Regenerate Swagger files.",
-    }, "worker", worker)).error).toBeUndefined()
-    const grant = await h.call("command_elevate", {
-      workflowId: h.workflowId, stepId: "task:one",
-      command, reason: "Regenerate Swagger from changed annotations.",
-    }, "worker", worker)
-    expect(grant.granted).toBe(true)
-
-    const run = { tool: "shell", callID: "generator-embedded-error",
-      sessionID: worker, agent: "worker", input: { command } }
-    await h.toolHooks.get("execute.before")!(run)
-    const out = join(h.root, "internal", "swagger", "v2")
-    await mkdir(out, { recursive: true })
-    await writeFile(join(out, "docs.go"), "package swagger\n")
-    await h.toolHooks.get("execute.after")!({
-      ...run, status: "completed", result: { error: "swag exited non-zero after partial output" },
-    })
-
-    const ownership = await h.durableStorage.get(
-      "git-session-ownership/" + encodeURIComponent(worker),
-    ) as any
-    expect(ownership?.paths ?? []).not.toContain("internal/swagger/v2/docs.go")
-    const receipt = await h.durableStorage.get("command-elevation/" + grant.grantId) as any
-    expect(receipt.outcome).toBe("error")
-    const observations = (await h.call("evidence_observations",
-      { detail: true }, "worker", worker)).observations
-    expect(observations.find((item: any) => item.id === receipt.observationId)?.status).toBe("error")
-  } finally {
-    h.restore()
-  }
-})
-
-test("generator with failed or missing shell exit cannot claim generated files", async () => {
-  for (const [label, exit] of [["nonzero", 3], ["unknown", null]] as const) {
-    const h = await waveLifecycleFixture("wave")
-    try {
-      const worker = await h.attach("task:one", "worker", "generator-exit-" + label)
-      const command = "swag init --output ./internal/swagger/v2"
-      expect((await h.call("scope_elevate", {
-        workflowId: h.workflowId, stepId: "task:one",
-        paths: ["internal/swagger/v2/**"], reason: "Regenerate Swagger files.",
-      }, "worker", worker)).error).toBeUndefined()
+    const worker = await h.attach("task:one", "worker", "unrestricted-shell-worker")
+    const commands = [
+      "git push --force-with-lease",
+      "npm install --save-dev example-package",
+      "echo ready | cat",
+      "swag init --output ../outside",
+      "go mod tidy -diff",
+    ]
+    for (const [i, command] of commands.entries()) {
       const grant = await h.call("command_elevate", {
         workflowId: h.workflowId, stepId: "task:one",
-        command, reason: "Regenerate Swagger and check the subprocess exit.",
+        command, reason: "Log an exact user-authorized shell invocation.",
       }, "worker", worker)
-      expect(grant.granted).toBe(true)
-      const run = { tool: "shell", callID: "generator-shell-exit-" + label,
+      expect(grant).toMatchObject({
+        granted: true, continue: true, singleUse: true, kind: "unrestricted",
+      })
+      const permission: any = {
+        agent: "worker", action: "shell", resources: [command],
+        sessionID: worker, effect: "ask",
+      }
+      await h.permissionHooks.get("evaluate")!(permission)
+      expect(permission.effect).toBe("allow")
+      const wrongCommand: any = {
+        agent: "worker", action: "shell", resources: [command + " --different"],
+        sessionID: worker, effect: "ask",
+      }
+      await h.permissionHooks.get("evaluate")!(wrongCommand)
+      expect(wrongCommand.effect).not.toBe("allow")
+
+      const run = { tool: "shell", callID: "unrestricted-command-" + i,
         sessionID: worker, agent: "worker", input: { command } }
       await h.toolHooks.get("execute.before")!(run)
-      const dir = join(h.root, "internal", "swagger", "v2")
-      await mkdir(dir, { recursive: true })
-      await writeFile(join(dir, "docs.go"), "package swagger\n")
       await h.toolHooks.get("execute.after")!({
-        ...run, status: "completed", result: { output: "generator failed", metadata: { exit } },
+        ...run, status: "completed", result: { output: "recorded", metadata: { exit: 0 } },
       })
+      const receipt = await h.durableStorage.get("command-elevation/" + grant.grantId) as any
+      expect(receipt).toMatchObject({ outcome: "completed", kind: "unrestricted" })
+      expect(receipt.consumedAt).toBeDefined()
+      expect(receipt.observationId).toBeDefined()
+      const observations = (await h.call("evidence_observations",
+        { detail: true }, "worker", worker)).observations
+      expect(observations.find((item: any) => item.id === receipt.observationId))
+        .toMatchObject({ commandTrace: { access: "elevated", grantId: grant.grantId } })
+    }
+
+    // Shell execution is audited, but it cannot confer write/commit ownership
+    // of unknown effects. Existing edit/scope permission boundaries still apply
+    // to structured edits, and a grant cannot be used twice.
+    const ownership = await h.durableStorage.get(
+      "git-session-ownership/" + encodeURIComponent(worker),
+    ) as any
+    expect(ownership?.paths ?? []).toEqual([])
+    const outsideEdit: any = {
+      agent: "worker", action: "edit", resources: ["../outside-project"],
+      sessionID: worker, effect: "ask",
+    }
+    await h.permissionHooks.get("evaluate")!(outsideEdit)
+    expect(outsideEdit.effect).toBe("deny")
+  } finally {
+    h.restore()
+  }
+})
+
+test("unrestricted elevated command result failure is audited without claiming generator output", async () => {
+  for (const [label, result] of [
+    ["explicit-error", { error: "command failed after partial output" }],
+    ["nonzero-exit", { output: "failed", metadata: { exit: 3 } }],
+    ["unknown-exit", { output: "missing exit", metadata: { exit: null } }],
+  ] as const) {
+    const h = await waveLifecycleFixture("wave")
+    try {
+      const worker = await h.attach("task:one", "worker", "audit-exit-" + label)
+      const command = "swag init --output ./internal/swagger/v2"
+      const grant = await h.call("command_elevate", {
+        workflowId: h.workflowId, stepId: "task:one",
+        command, reason: "Audit a code generator without falsely assigning its outputs.",
+      }, "worker", worker)
+      expect(grant.granted).toBe(true)
+      const run = { tool: "shell", callID: "command-audit-result-" + label,
+        sessionID: worker, agent: "worker", input: { command } }
+      await h.toolHooks.get("execute.before")!(run)
+      const outputDir = join(h.root, "internal", "swagger", "v2")
+      await mkdir(outputDir, { recursive: true })
+      await writeFile(join(outputDir, "docs.go"), "package swagger\n")
+      await h.toolHooks.get("execute.after")!({ ...run, status: "completed", result })
       const ownership = await h.durableStorage.get(
         "git-session-ownership/" + encodeURIComponent(worker),
       ) as any
@@ -11267,129 +11210,42 @@ test("generator with failed or missing shell exit cannot claim generated files",
       expect(receipt.outcome).toBe("error")
       const observations = (await h.call("evidence_observations",
         { detail: true }, "worker", worker)).observations
-      const observed = observations.find((entry: any) => entry.id === receipt.observationId)
+      const observed = observations.find((item: any) => item.id === receipt.observationId)
       expect(observed.status).toBe("error")
-      expect(observed.error).toContain("did not exit successfully")
-    } finally {
-      h.restore()
-    }
+      expect(observed.commandTrace.access).toBe("elevated")
+    } finally { h.restore() }
   }
 })
 
-test("generator output symlink swapped during execution cannot acquire Git ownership", async () => {
+test("elevation logs commands referencing symlinks without asserting project containment", async () => {
   const h = await waveLifecycleFixture("wave")
-  const external = await mkdtemp(join(tmpdir(), "loom-generator-post-escape-"))
+  const external = await mkdtemp(join(tmpdir(), "loom-audit-symlink-"))
   try {
-    const worker = await h.attach("task:one", "worker", "post-generation-escape-worker")
-    const command = "swag init --output ./internal/swagger/v2"
-    expect((await h.call("scope_elevate", {
+    const worker = await h.attach("task:one", "worker", "external-command-worker")
+    const path = join(h.root, "scripts", "ci.sh")
+    await mkdir(join(h.root, "scripts"), { recursive: true })
+    await writeFile(join(external, "ci.sh"), "#!/bin/sh\necho external\n")
+    await symlink(join(external, "ci.sh"), path)
+    const command = "bash scripts/ci.sh"
+    const grant = await h.call("command_elevate", {
       workflowId: h.workflowId, stepId: "task:one",
-      paths: ["internal/swagger/v2/**"], reason: "Regenerate Swagger files.",
-    }, "worker", worker)).error).toBeUndefined()
-    const granted = await h.call("command_elevate", {
-      workflowId: h.workflowId, stepId: "task:one",
-      command, reason: "Regenerate Swagger from changed annotations.",
+      command, reason: "Audit a script call with an external symlink.",
     }, "worker", worker)
-    expect(granted.granted).toBe(true)
-
-    const outputDir = join(h.root, "internal", "swagger", "v2")
-    await mkdir(outputDir, { recursive: true })
-    const run = { tool: "shell", callID: "generator-output-post-execution-swap",
+    expect(grant).toMatchObject({ granted: true, continue: true })
+    const run = { tool: "shell", callID: "audit-symlink-shell",
       sessionID: worker, agent: "worker", input: { command } }
     await h.toolHooks.get("execute.before")!(run)
-    await rm(outputDir, { recursive: true })
-    await symlink(external, outputDir)
     await h.toolHooks.get("execute.after")!({
-      ...run, status: "completed", result: "success",
+      ...run, status: "completed", result: { output: "external", metadata: { exit: 0 } },
     })
+    const receipt = await h.durableStorage.get("command-elevation/" + grant.grantId) as any
+    expect(receipt.outcome).toBe("completed")
     const ownership = await h.durableStorage.get(
       "git-session-ownership/" + encodeURIComponent(worker),
     ) as any
-    expect(ownership?.paths ?? []).not.toContain("internal/swagger/v2/docs.go")
-    const receipt = await h.durableStorage.get("command-elevation/" + granted.grantId) as any
-    expect(receipt.outcome).toBe("error")
-    expect(receipt.observationId).toBeDefined()
-    const observations = (await h.call("evidence_observations",
-      { detail: true }, "worker", worker)).observations
-    const observed = observations.find((item: any) => item.id === receipt.observationId)
-    expect(observed.status).toBe("error")
-    expect(observed.error).toContain("outside this project")
+    expect(ownership?.paths ?? []).toEqual([])
   } finally {
     await rm(external, { recursive: true, force: true })
-    h.restore()
-  }
-})
-
-test("generator output symlink escape is denied before spending an exact grant", async () => {
-  const h = await waveLifecycleFixture("wave")
-  const external = await mkdtemp(join(tmpdir(), "loom-generator-escape-"))
-  try {
-    const worker = await h.attach("task:one", "worker", "generator-symlink-worker")
-    const command = "swag init --output ./internal/swagger/v2"
-    const input = {
-      workflowId: h.workflowId, stepId: "task:one", command,
-      reason: "Generate only inside the authorized project output directory.",
-    }
-    expect((await h.call("scope_elevate", {
-      workflowId: h.workflowId, stepId: "task:one",
-      paths: ["internal/swagger/v2/**"],
-      reason: "Swagger output files.",
-    }, "worker", worker)).error).toBeUndefined()
-
-    const output = join(h.root, "internal", "swagger", "v2")
-    await mkdir(join(h.root, "internal", "swagger"), { recursive: true })
-    await symlink(external, output)
-    const forbidden = await h.call("command_elevate", input, "worker", worker)
-    expect(forbidden.error).toContain("outside this project")
-    await rm(output)
-    await mkdir(output)
-    const issued = await h.call("command_elevate", input, "worker", worker)
-    expect(issued.granted).toBe(true)
-    await rm(output, { recursive: true })
-    await symlink(external, output)
-    await expect(h.toolHooks.get("execute.before")!({
-      tool: "shell", callID: "generator-symlink-swap",
-      sessionID: worker, agent: "worker", input: { command },
-    })).rejects.toThrow("outside this project")
-    expect((await h.durableStorage.get("command-elevation/" + issued.grantId) as any).consumedAt).toBeUndefined()
-  } finally {
-    await rm(external, { recursive: true, force: true })
-    h.restore()
-  }
-})
-
-test("command elevation rejects symlink escapes at grant and execution", async () => {
-  const h = await waveLifecycleFixture("wave")
-  const external = join(tmpdir(), `loom-external-verification-${crypto.randomUUID()}.sh`)
-  try {
-    const worker = await h.attach("task:one", "worker", "entrypoint-bound-worker")
-    const entry = join(h.root, "scripts", "ci.sh")
-    await mkdir(join(h.root, "scripts"), { recursive: true })
-    await writeFile(external, "#!/bin/sh\necho outside\n")
-    await symlink(external, entry)
-
-    const input = {
-      workflowId: h.workflowId, stepId: "task:one", command: "bash scripts/ci.sh",
-      reason: "Run the local project integration script.",
-    }
-    const denied = await h.call("command_elevate", input, "worker", worker)
-    expect(denied.error).toContain("Project-local command elevation denied")
-
-    await rm(entry)
-    await writeFile(entry, "#!/bin/sh\necho inside\n")
-    const granted = await h.call("command_elevate", input, "worker", worker)
-    expect(granted.granted).toBe(true)
-    await rm(entry)
-    await symlink(external, entry)
-
-    await expect(h.toolHooks.get("execute.before")!({
-      tool: "shell", callID: "symlink-swapped-command", sessionID: worker,
-      agent: "worker", input: { command: input.command },
-    })).rejects.toThrow("Project-local command elevation denied")
-    const receipt = await h.durableStorage.get("command-elevation/" + granted.grantId) as any
-    expect(receipt.consumedAt).toBeUndefined()
-  } finally {
-    await rm(external, { force: true })
     h.restore()
   }
 })
