@@ -750,6 +750,68 @@ export function scopedGitAddTargets(command: string) {
   return sawAdd ? [...new Set(targets)] : undefined
 }
 
+
+/** File-specific Git commands inherit the current authorized write paths.
+ * Only literal explicit paths are accepted; Git aliases, wildcard pathspecs,
+ * option expansion and implicit repository-wide mutations are excluded.
+ */
+export type ScopedGitFileMutation = {
+  kind: "rm" | "mv" | "restore" | "reset" | "checkout"
+  paths: string[]
+  writesWorktree: boolean
+  stagesChanges: boolean
+  unstagesChanges: boolean
+}
+
+function safeGitFilePath(path: string) {
+  const normalized = path.replace(/^\.\//, "")
+  const parts = normalized.split("/")
+  return !path.startsWith("-") &&
+    safeProjectRelativePath(path) &&
+    !parts.includes(".git") &&
+    !parts.includes(".loom") &&
+    normalized !== ".loom.yaml" &&
+    normalized !== ".loom.yml" &&
+    normalized !== "docs/reports" &&
+    !normalized.startsWith("docs/reports/") &&
+    normalized !== "ephemeral-reports" &&
+    !normalized.startsWith("ephemeral-reports/")
+}
+
+export function scopedGitFileMutation(command: string): ScopedGitFileMutation | undefined {
+  const words = parsedCommandWords(command)
+  if (!words || words[0] !== "git") return undefined
+  let index = 1
+  if (words[index] === "-c" && words[index + 1] === "core.hooksPath=/dev/null") index += 2
+  const kind = words[index] as ScopedGitFileMutation["kind"]
+  if (!["rm", "mv", "restore", "reset", "checkout"].includes(kind)) return undefined
+  const args = words.slice(index + 1)
+  const dash = args.indexOf("--")
+  if (dash < 0) return undefined
+  const flags = args.slice(0, dash)
+  const paths = args.slice(dash + 1)
+  if (paths.length === 0 || paths.some((path) => !safeGitFilePath(path))) return undefined
+
+  if (kind === "rm" || kind === "mv" || kind === "checkout") {
+    if (flags.length !== 0 || (kind === "mv" && paths.length !== 2)) return undefined
+    return {
+      kind, paths, writesWorktree: true,
+      stagesChanges: kind === "rm" || kind === "mv", unstagesChanges: false,
+    }
+  }
+  if (kind === "reset") {
+    if (flags.length > 1 || (flags.length === 1 && flags[0] !== "HEAD")) return undefined
+    return { kind, paths, writesWorktree: false, stagesChanges: false, unstagesChanges: true }
+  }
+  if (flags.some((flag) => !["--staged", "--worktree"].includes(flag)) ||
+      new Set(flags).size !== flags.length) return undefined
+  const staged = flags.includes("--staged")
+  return {
+    kind, paths, writesWorktree: !staged || flags.includes("--worktree"),
+    stagesChanges: false, unstagesChanges: staged,
+  }
+}
+
 function shellSegmentsForAuthoringClassification(command: string) {
   const segments: string[] = []
   let current = ""
@@ -913,7 +975,7 @@ function gitAuthoringSubcommand(words: readonly string[]) {
       continue
     }
 
-    return word === "add" || word === "commit" ? word : undefined
+    return ["add", "commit", "rm", "mv", "restore", "reset", "checkout"].includes(word) ? word : undefined
   }
 
   return undefined
@@ -928,6 +990,7 @@ export function isGitAuthoringShellCommand(command: string) {
 
 type AllowedGitCommit = {
   messageFile?: string
+  paths: string[]
 }
 
 export function commitMessageScratchPath(path: string) {
@@ -953,8 +1016,14 @@ function parsedAllowedGitCommit(command: string): AllowedGitCommit | undefined {
 
   let hasInlineMessage = false
   let messageFile: string | undefined
+  let paths: string[] = []
   for (let index = 4; index < words.length; index += 1) {
     const word = words[index]
+    if (word === "--") {
+      paths = words.slice(index + 1)
+      if (paths.length === 0 || paths.some((path) => !safeGitFilePath(path))) return undefined
+      break
+    }
     if (word === "-m" || word === "--message") {
       const message = words[index + 1]
       if (!message || messageFile) return undefined
@@ -983,7 +1052,11 @@ function parsedAllowedGitCommit(command: string): AllowedGitCommit | undefined {
   }
 
   if (!hasInlineMessage && !messageFile) return undefined
-  return messageFile ? { messageFile } : {}
+  return { ...(messageFile ? { messageFile } : {}), paths }
+}
+
+export function gitCommitPaths(command: string) {
+  return parsedAllowedGitCommit(command)?.paths ?? []
 }
 
 export function gitCommitMessageFile(command: string) {
@@ -1137,9 +1210,17 @@ export function workerShellResourcesAllowed(
   return resources.every((command) => {
     if (
       diagnosticShellResourcesAllowed([command]) ||
-      workerExecutionAllowed(command) ||
-      workerDeliveryAllowed(command)
+      workerExecutionAllowed(command)
     ) return true
+    if (isAllowedGitCommit(command)) {
+      const paths = gitCommitPaths(command)
+      return writeScope.length > 0 &&
+        (paths.length === 0 || resourcesWithinScope(paths, writeScope))
+    }
+    const operation = scopedGitFileMutation(command)
+    if (operation) return writeScope.length > 0 &&
+      resourcesWithinScope(operation.paths, writeScope)
+    if (workerDeliveryAllowed(command)) return true
 
     const gofmtTargets = scopedGofmtWriteTargets(command)
     if (
@@ -1161,9 +1242,13 @@ export function authorGitShellResourcesAllowed(
   if (resources.length === 0 || writeScope.length === 0) return false
 
   return resources.every((command) => {
-    if (isAllowedGitCommit(command) || authoringInspectionAllowed(command)) {
-      return true
+    if (isAllowedGitCommit(command)) {
+      const paths = gitCommitPaths(command)
+      return paths.length === 0 || resourcesWithinScope(paths, writeScope)
     }
+    if (authoringInspectionAllowed(command)) return true
+    const operation = scopedGitFileMutation(command)
+    if (operation) return resourcesWithinScope(operation.paths, writeScope)
     const targets = scopedGitAddTargets(command)
     return Boolean(targets && resourcesWithinScope(targets, writeScope))
   })

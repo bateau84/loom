@@ -5855,6 +5855,63 @@ test("Worker can dispatch without guessed scope and self-elevate discovered file
       expect((await git(linked, ["show", "--format=%s", "-s", "HEAD"])).stdout.trim()).toBe("test: worktree commit")
       expect((await h.durableStorage.scan({ prefix: "scope-boundary-authorization/" })).entries).toEqual([])
 
+      // Existing file authority plus scope_elevate must also authorize Git
+      // moves and explicit-path commits without absorbing foreign staged files.
+      const moved = "src/linked-moved.txt"
+      const elevated = await h.call("scope_elevate", {
+        workflowId, stepId: "worker", paths: [moved],
+        reason: "Move the authorized artifact into its new location.",
+      }, "worker", worker)
+      expect(elevated.status).toBe("granted")
+      expect(elevated.committableWrite).toContain(moved)
+
+      const moveCommand = `git mv -- ${file} ${moved}`
+      const outsideMove: any = {
+        agent: "worker", action: "shell",
+        resources: [`git mv -- ${file} docs/outside.txt`],
+        sessionID: worker, effect: "ask",
+      }
+      await evaluate(outsideMove)
+      expect(outsideMove.effect).toBe("deny")
+      const movePermission: any = {
+        agent: "worker", action: "shell", resources: [moveCommand],
+        sessionID: worker, effect: "ask",
+      }
+      await evaluate(movePermission)
+      expect(movePermission.effect).toBe("allow")
+      const moveCall = {
+        tool: "shell", callID: "linked-move", messageID: "linked-move-message",
+        sessionID: worker, agent: "worker", input: { command: moveCommand },
+      }
+      await h.toolHooks.get("execute.before")!(moveCall)
+      await git(linked, ["mv", "--", file, moved])
+      await h.toolHooks.get("execute.after")!({
+        ...moveCall, status: "completed", result: "moved",
+      })
+
+      await mkdir(join(linked, "docs"), { recursive: true })
+      await writeFile(join(linked, "docs", "external.txt"), "unrelated\n")
+      await git(linked, ["add", "--", "docs/external.txt"])
+      const selectedCommit = `git -c core.hooksPath=/dev/null commit -m 'test: scoped rename' -- ${file} ${moved}`
+      const selectedPermission: any = {
+        agent: "worker", action: "shell", resources: [selectedCommit],
+        sessionID: worker, effect: "ask",
+      }
+      await evaluate(selectedPermission)
+      expect(selectedPermission.effect).toBe("allow")
+      const selectedCall = {
+        tool: "shell", callID: "linked-selected-commit", messageID: "linked-selected-message",
+        sessionID: worker, agent: "worker", input: { command: selectedCommit },
+      }
+      await h.toolHooks.get("execute.before")!(selectedCall)
+      await git(linked, ["-c", "core.hooksPath=/dev/null", "commit", "-m", "test: scoped rename", "--", file, moved])
+      await h.toolHooks.get("execute.after")!({
+        ...selectedCall, status: "completed", result: "committed selected files",
+      })
+      expect((await git(linked, ["diff", "--cached", "--name-only"])).stdout.trim()).toBe("docs/external.txt")
+      expect((await git(linked, ["show", "--format=", "--name-only", "HEAD"])).stdout).not.toContain("docs/external.txt")
+
+
       // Recognition does not authorize direct metadata edits or other
       // external-path writes.
       const directEdit: any = {

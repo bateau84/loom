@@ -10,6 +10,8 @@ import {
   generationElevationError,
   elevatedVerificationEntrypoint,
   isAllowedGitCommit,
+  gitCommitPaths,
+  scopedGitFileMutation,
   isAllowedPackageScriptShell,
   isAllowedWorkerShell,
   isGitInspectionShellCommand,
@@ -595,6 +597,45 @@ describe("Loom Worker shell policy", () => {
     expect(workerShellResourcesAllowed(["gh pr edit --body-file /etc/passwd"], scope)).toBe(false)
     expect(workerShellResourcesAllowed(["gh run rerun 456 --failed"], scope)).toBe(false)
     expect(workerShellResourcesAllowed(["gh pr merge 123"], scope)).toBe(false)
+  })
+
+  test("grants bounded Git file operations from the same file scope", () => {
+    const scope = ["src/**"]
+    const selected = "git -c core.hooksPath=/dev/null commit -m 'fix: selected files' -- src/app.go src/new.go"
+    expect(gitCommitPaths(selected)).toEqual(["src/app.go", "src/new.go"])
+    expect(isAllowedGitCommit(selected)).toBe(true)
+    expect(authorGitShellResourcesAllowed([selected], scope)).toBe(true)
+    expect(workerShellResourcesAllowed([selected], scope)).toBe(true)
+    expect(authorGitShellResourcesAllowed([
+      "git -c core.hooksPath=/dev/null commit -m fix -- docs/outside.md",
+    ], scope)).toBe(false)
+
+    const permitted = [
+      "git rm -- src/app.go",
+      "git mv -- src/app.go src/new.go",
+      "git restore -- src/app.go",
+      "git restore --staged -- src/app.go",
+      "git restore --staged --worktree -- src/app.go",
+      "git reset HEAD -- src/app.go",
+      "git checkout -- src/app.go",
+    ]
+    for (const command of permitted) {
+      expect(scopedGitFileMutation(command)?.paths.length).toBeGreaterThan(0)
+      expect(isGitAuthoringShellCommand(command)).toBe(true)
+      expect(authorGitShellResourcesAllowed([command], scope)).toBe(true)
+      expect(workerShellResourcesAllowed([command], scope)).toBe(true)
+    }
+    for (const command of [
+      "git rm -r -- src/app.go",
+      "git mv -- src/app.go docs/outside.md",
+      "git restore -- src/../outside.md",
+      "git reset --hard HEAD -- src/app.go",
+      "git checkout main",
+      "git checkout -- .",
+      "git rm -- :/src/app.go",
+      "git commit -a -m all -- src/app.go",
+      "git -c core.hooksPath=/dev/null commit -m fix -- src/*",
+    ]) expect(authorGitShellResourcesAllowed([command], scope)).toBe(false)
   })
 
   test("lets durable artifact authors stage and commit only their owned files", () => {

@@ -124,6 +124,8 @@ import {
   commitMessageScratchPath,
   diagnosticExecutionShellResourcesAllowed,
   gitCommitMessageFile,
+  gitCommitPaths,
+  scopedGitFileMutation,
   diagnosticShellResourcesAllowed,
   isAllowedGitCommit,
   isAllowedPackageScriptShell,
@@ -1009,6 +1011,8 @@ function toolMutationLockPaths(
     const command = (input as any).command
     if (typeof command === "string") {
       paths.push(...(scopedGitAddTargets(command) ?? []))
+      paths.push(...(scopedGitFileMutation(command)?.paths ?? []))
+      paths.push(...gitCommitPaths(command))
       const messageFile = gitCommitMessageFile(command)
       if (messageFile) paths.push(messageFile)
     }
@@ -1022,7 +1026,8 @@ function toolNeedsGitIndexLock(tool: string, input: unknown) {
   }
   const command = (input as any).command
   if (typeof command !== "string") return false
-  return Boolean(scopedGitAddTargets(command)) || isAllowedGitCommit(command)
+  return Boolean(scopedGitAddTargets(command)) ||
+    Boolean(scopedGitFileMutation(command)) || isAllowedGitCommit(command)
 }
 
 function writeLockError(paths: readonly string[]) {
@@ -1217,10 +1222,15 @@ async function recordGitSessionStaging(
 async function clearGitSessionStaging(
   ctx: any,
   sessionID: string,
+  paths?: readonly string[],
 ) {
   const ownership = await gitSessionOwnership(ctx, sessionID)
   if (Object.keys(ownership.stagedFingerprints).length === 0) return
-  ownership.stagedFingerprints = {}
+  if (paths?.length) {
+    for (const path of paths) delete ownership.stagedFingerprints[safeOwnedRepoPath(path)]
+  } else {
+    ownership.stagedFingerprints = {}
+  }
   await ctx.storage.set(gitSessionOwnershipKey(sessionID), ownership)
 }
 
@@ -1346,9 +1356,12 @@ function successfulMutationPaths(
 
   if (tool === "shell" || tool === "bash") {
     const command = (input as any).command
-    return typeof command === "string"
-      ? (scopedGofmtWriteTargets(command) ?? [])
-      : []
+    if (typeof command !== "string") return []
+    const operation = scopedGitFileMutation(command)
+    return [
+      ...(scopedGofmtWriteTargets(command) ?? []),
+      ...(operation?.writesWorktree ? operation.paths : []),
+    ]
   }
 
   return []
@@ -1415,6 +1428,64 @@ async function changedStagedTargetsSince(
     }
   }
   return changed
+}
+
+/** Refuse implicit directory pathspec expansion into other agents' files. */
+async function assertExplicitGitFiles(projectDirectory: string, paths: readonly string[]) {
+  for (const path of paths) {
+    const info = await lstat(join(projectDirectory, safeOwnedRepoPath(path))).catch((error: any) => {
+      if (error?.code === "ENOENT") return undefined
+      throw error
+    })
+    if (info?.isDirectory()) {
+      throw new Error("Git file operation requires explicit file paths, not directories: " + path)
+    }
+  }
+}
+
+async function scopedGitFileOperationError(
+  ctx: any,
+  sessionID: string,
+  projectDirectory: string,
+  operation: NonNullable<ReturnType<typeof scopedGitFileMutation>>,
+  writeScope: string[],
+) {
+  if (!writeScope.length || !resourcesWithinScope(operation.paths, writeScope)) {
+    return "Git file operation denied: target is outside the current committable Loom write scope."
+  }
+  await assertExplicitGitFiles(projectDirectory, operation.paths)
+  // Clean tracked files may be moved/deleted. Existing dirty bytes need
+  // current step-attempt provenance, including any already-staged version.
+  const dirty = new Set(await projectDirtyPaths(projectDirectory))
+  const changed = operation.paths.filter((path) => dirty.has(safeOwnedRepoPath(path)))
+  if (changed.length) {
+    const owned = await resolveGitStagingOwnership(ctx, sessionID, projectDirectory, changed)
+    if (owned.unowned.length || owned.changed.length) {
+      return "Git file operation denied: pre-existing changes are not owned by this step attempt: " +
+        [...owned.unowned, ...owned.changed].join(", ")
+    }
+  }
+  return undefined
+}
+
+async function explicitGitCommitError(
+  ctx: any,
+  sessionID: string,
+  projectDirectory: string,
+  paths: readonly string[],
+  writeScope: string[],
+) {
+  if (!writeScope.length || !resourcesWithinScope(paths, writeScope)) {
+    return "Git commit denied: explicit paths are outside the current committable Loom write scope."
+  }
+  await assertExplicitGitFiles(projectDirectory, paths)
+  // Explicit-path commit uses worktree bytes, not the complete staged index.
+  const owned = await resolveGitStagingOwnership(ctx, sessionID, projectDirectory, paths)
+  if (owned.unowned.length || owned.changed.length) {
+    return "Git commit denied: explicit paths lack current step-attempt authored-byte evidence: " +
+      [...owned.unowned, ...owned.changed].join(", ")
+  }
+  return undefined
 }
 
 async function gitIndexConflictError(
@@ -4773,6 +4844,34 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       }
       writeScope = committableWriteScope(writeScope)
 
+      const operation = scopedGitFileMutation(command)
+      const explicitCommitPaths = gitCommitPaths(command)
+      const scopedTargets = [...(scopedGitAddTargets(command) ?? []),
+        ...(operation?.paths ?? []), ...explicitCommitPaths]
+      if (scopedTargets.length > 0) {
+        const root = await realpath(ctx.location.directory)
+        const input = raw.input as Record<string, unknown>
+        for (const alternate of [input.cwd, input.workdir].filter((v) => v !== undefined)) {
+          const target = typeof alternate === "string"
+            ? (isAbsolute(alternate) ? alternate : resolve(root, alternate)) : ""
+          if (!target || await realpath(target).catch(() => "") !== root) {
+            throw new Error("Scoped Git file operations must execute from the current worktree root.")
+          }
+        }
+        await assertExplicitGitFiles(ctx.location.directory, scopedTargets)
+      }
+      if (operation) {
+        const error = await scopedGitFileOperationError(
+          ctx, String(raw.sessionID), ctx.location.directory, operation, writeScope,
+        )
+        if (error) throw new Error(error)
+        if (operation.stagesChanges) {
+          const conflict = await gitIndexConflictError(
+            ctx, String(raw.sessionID), ctx.location.directory, operation.paths,
+          )
+          if (conflict) throw new Error(conflict)
+        }
+      }
       const addTargets = scopedGitAddTargets(command) ?? []
       if (addTargets.length > 0) {
         if (
@@ -4817,20 +4916,20 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           "Git commit denied: the current step has no committable Loom write scope.",
         )
       }
-      const error = await commitScopeError(
-        ctx,
-        String(raw.sessionID),
-        ctx.location.directory,
-        writeScope,
-        true,
-      )
+      const error = explicitCommitPaths.length
+        ? await explicitGitCommitError(
+            ctx, String(raw.sessionID), ctx.location.directory, explicitCommitPaths, writeScope,
+          )
+        : await commitScopeError(
+            ctx, String(raw.sessionID), ctx.location.directory, writeScope, true,
+          )
       if (error) throw new Error(error)
       if (String(raw.agent ?? "") === "reviewer") {
-        const acceptanceError = await reviewerAcceptanceStagedCommitError(
-          ctx,
-          String(raw.sessionID),
-          ctx.location.directory,
-        )
+        const acceptanceError = explicitCommitPaths.length
+          ? await reviewerAcceptanceCommitError(ctx.location.directory, explicitCommitPaths, "worktree")
+          : await reviewerAcceptanceStagedCommitError(
+              ctx, String(raw.sessionID), ctx.location.directory,
+            )
         if (acceptanceError) throw new Error(acceptanceError)
       }
     }
@@ -13943,29 +14042,38 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               stage.changed.join(", ")
             return
           }
-          if (
-            event.resources.some((resource: string) =>
-              isAllowedGitCommit(resource),
-            )
-          ) {
-            const error = await commitScopeError(
-              ctx,
-              event.sessionID,
-              ctx.location.directory,
-              authorScope,
-              true,
-            )
+          for (const resource of event.resources as string[]) {
+            const operation = scopedGitFileMutation(resource)
+            if (operation) {
+              const error = await scopedGitFileOperationError(
+                ctx, event.sessionID, ctx.location.directory, operation, authorScope,
+              )
+              if (error) {
+                event.effect = "deny"
+                event.message = error
+                return
+              }
+            }
+            if (!isAllowedGitCommit(resource)) continue
+            const explicitPaths = gitCommitPaths(resource)
+            const error = explicitPaths.length
+              ? await explicitGitCommitError(
+                  ctx, event.sessionID, ctx.location.directory, explicitPaths, authorScope,
+                )
+              : await commitScopeError(
+                  ctx, event.sessionID, ctx.location.directory, authorScope, true,
+                )
             if (error) {
               event.effect = "deny"
               event.message = error
               return
             }
             if (agent === "reviewer") {
-              const acceptanceError = await reviewerAcceptanceStagedCommitError(
-                ctx,
-                event.sessionID,
-                ctx.location.directory,
-              )
+              const acceptanceError = explicitPaths.length
+                ? await reviewerAcceptanceCommitError(ctx.location.directory, explicitPaths, "worktree")
+                : await reviewerAcceptanceStagedCommitError(
+                    ctx, event.sessionID, ctx.location.directory,
+                  )
               if (acceptanceError) {
                 event.effect = "deny"
                 event.message = acceptanceError
@@ -15002,14 +15110,15 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               raw.input && typeof raw.input === "object"
                 ? (raw.input as any).command
                 : undefined
-            const addTargets =
-              typeof command === "string"
-                ? (scopedGitAddTargets(command) ?? [])
-                : []
-            if (addTargets.length > 0) {
+            const operation = typeof command === "string"
+              ? scopedGitFileMutation(command) : undefined
+            const stagedTargets = typeof command === "string"
+              ? [...(scopedGitAddTargets(command) ?? []),
+                  ...(operation?.stagesChanges ? operation.paths : [])]
+              : []
+            if (stagedTargets.length > 0) {
               pending.gitStageBefore = await gitStageSnapshot(
-                ctx.location.directory,
-                addTargets,
+                ctx.location.directory, stagedTargets,
               )
             }
           }
@@ -15281,11 +15390,14 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             input && typeof input === "object"
               ? (input as any).command
               : undefined
+          const fileOperation = typeof command === "string"
+            ? scopedGitFileMutation(command) : undefined
           const staged =
             typeof command === "string"
-              ? (scopedGitAddTargets(command) ?? []).filter((path) =>
-                  resourcesWithinScope([path], generalScope),
-                )
+              ? [...(scopedGitAddTargets(command) ?? []),
+                  ...(fileOperation?.stagesChanges ? fileOperation.paths : [])].filter((path) =>
+                    resourcesWithinScope([path], generalScope),
+                  )
               : []
           await recordGitSessionStagingResult(
             ctx,
@@ -15295,12 +15407,16 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             String(raw.status ?? ""),
             pending?.gitStageBefore,
           )
+          if (raw.status === "completed" && fileOperation?.unstagesChanges) {
+            await clearGitSessionStaging(ctx, sessionID, fileOperation.paths)
+          }
           if (
             raw.status === "completed" &&
             typeof command === "string" &&
             isAllowedGitCommit(command)
           ) {
-            await clearGitSessionStaging(ctx, sessionID)
+            const paths = gitCommitPaths(command)
+            await clearGitSessionStaging(ctx, sessionID, paths.length ? paths : undefined)
             const messageFile = gitCommitMessageFile(command)
             if (messageFile) {
               await consumeCommitMessageFile(
@@ -15431,11 +15547,14 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 input && typeof input === "object"
                   ? (input as any).command
                   : undefined
+              const fileOperation = typeof command === "string"
+                ? scopedGitFileMutation(command) : undefined
               const staged =
                 typeof command === "string"
-                  ? (scopedGitAddTargets(command) ?? []).filter((path) =>
-                      resourcesWithinScope([path], writeScope!),
-                    )
+                  ? [...(scopedGitAddTargets(command) ?? []),
+                      ...(fileOperation?.stagesChanges ? fileOperation.paths : [])].filter((path) =>
+                        resourcesWithinScope([path], writeScope!),
+                      )
                   : []
               await recordGitSessionStagingResult(
                 ctx,
@@ -15445,12 +15564,16 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 String(raw.status ?? ""),
                 pending.gitStageBefore,
               )
+              if (raw.status === "completed" && fileOperation?.unstagesChanges) {
+                await clearGitSessionStaging(ctx, sessionID, fileOperation.paths)
+              }
               if (
                 raw.status === "completed" &&
                 typeof command === "string" &&
                 isAllowedGitCommit(command)
               ) {
-                await clearGitSessionStaging(ctx, sessionID)
+                const paths = gitCommitPaths(command)
+                await clearGitSessionStaging(ctx, sessionID, paths.length ? paths : undefined)
                 const messageFile = gitCommitMessageFile(command)
                 if (messageFile) {
                   await consumeCommitMessageFile(
