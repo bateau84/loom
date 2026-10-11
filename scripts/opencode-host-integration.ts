@@ -2206,8 +2206,10 @@ try {
     },
   )
   if (!standaloneGeneral?.id) throw new Error("No-Loom General session creation failed.")
+  const standaloneAgentUrl = new URL("/api/agent", standaloneServer.baseUrl)
+  standaloneAgentUrl.searchParams.set("location[directory]", standaloneProject)
   const standaloneAgentResponse = await jsonRequest(
-    `${standaloneServer.baseUrl}/api/agent`, standaloneServer.authorization,
+    standaloneAgentUrl.toString(), standaloneServer.authorization,
   )
   const standaloneAgents = Array.isArray(standaloneAgentResponse) ? standaloneAgentResponse
     : Array.isArray(standaloneAgentResponse?.agents) ? standaloneAgentResponse.agents
