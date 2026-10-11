@@ -404,8 +404,8 @@ export function isElevatableVerificationShell(command: string) {
 
 /**
  * Project generation is separate from verification: it writes product files.
- * Only admitted generator forms with a mandatory, explicit output directory
- * can use a one-shot elevation. Future generators need their own shape parser,
+ * Only admitted generator forms with a predictable output directory
+ * can use scope-based admission. Other generators require their own parser,
  * rather than an arbitrary-executable fallback.
  */
 type GenerationCommand = { output?: string; error?: string }
@@ -492,9 +492,9 @@ function parseGenerationCommand(command: string): GenerationCommand | undefined 
       return { error: "Unsafe or unsupported value for swag init option " + flag + "." }
     }
   }
-  if (!output) {
-    return { error: "swag init requires an explicit -o or --output directory for scope binding." }
-  }
+  // Swaggo defaults to ./docs. Treat it as three explicit outputs and
+  // require the same write scope as --output ./docs.
+  if (!output) output = "docs"
   if (output === "." ||
     output === ".git" || output.startsWith(".git/") ||
     output === ".loom" || output.startsWith(".loom/")) {
