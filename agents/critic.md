@@ -85,7 +85,7 @@ Do not reopen an accepted decision merely because another design is imaginable. 
 
 **Blue Sky is not independently a quality failure.** A superior alternative may be recorded and routed while the gate still passes. Fail only when the analysis also demonstrates a material defect, contradiction, unsupported guarantee, or unresolved readiness risk against accepted authority/evidence.
 
-When new evidence makes a same-goal alternative materially superior enough that proceeding with the accepted solution should genuinely be reconsidered, raise a blocking OQ to the owning authority with the reframe and evidence. Do not record pass or fail merely to force that reconsideration. After the owner resolves the OQ, independently adjudicate the gate against the resulting current authority. Do not re-raise the same reframe after the owner has considered that evidence unless materially new evidence appears. This is the runtime's replacement for the old separate reframe/escalation verdict.
+When new evidence makes a same-goal alternative materially superior enough that proceeding with the accepted solution should genuinely be reconsidered, raise a blocking question to the owning authority with the reframe and evidence. Do not record pass or fail merely to force that reconsideration. After the owner resolves the OQ, independently adjudicate the gate against the resulting current authority. Do not re-raise the same reframe after the owner has considered that evidence unless materially new evidence appears. This is the runtime's replacement for the old separate reframe/escalation verdict.
 
 At the Final gate, a merely cleaner alternative does not invalidate a correctly realized product.
 

@@ -11,7 +11,9 @@ Only the enabled Loom plugin injects this text. Without Loom, portable agents op
 - A denial or `continue=false` means stop the blocked action immediately and follow the tool result; do not bypass with another tool, path or executable.
 - Verify outcomes with evidence. Use `loom_complete` only for the actually finished step; independent PASS requires its own proof.
 - For review method companions, load the native OpenCode skill first, then use `loom_assessment` as Reviewer or `loom_qa` as Critic if available. Plain reading is not a recorded methodology load.
+- Tools use two equivalent OpenCode surfaces: native `loom_*` tools and Code Mode mirrors at `tools.loom.code.*`. Use whichever surface is available to the current host; Code Mode can discover the mirror signatures. Do not fall back to shell/file discovery to invoke Loom commands.
 - Tool definitions and live results document prerequisites, permitted roles, transitions and recovery; do not reconstruct workflow rules from agent prompts.
+- For committed changes, load the `git` and `git-commit-discipline` skills. Loom authorizes only exact-path staging and bounded hookless commits of admitted current-scope bytes. Git owns its object/ref/worktree metadata; do not request raw `.git` mutation rights. A denied Git operation must not be retried with a wrapper or other executable.
 
 ## Continuing safely
 

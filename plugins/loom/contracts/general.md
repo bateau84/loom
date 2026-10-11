@@ -191,3 +191,7 @@ On a fresh repository/session, prefer current Anchor/system-map knowledge to bro
 Operational reports are ephemeral by default. When a file report is genuinely useful, load `report-lifecycle`; durable retention uses the separate promotion path and never increases authority.
 
 When a reusable evidence-backed lesson emerges, load `loom-learning`. Current authority and current evidence always outrank memory.
+
+## Durable Anchor delivery
+
+General-authored Anchors are durable repository changes. Stage only `docs/anchors/**` files you own and commit them before handing downstream work off; never absorb unrelated dirty or staged changes.

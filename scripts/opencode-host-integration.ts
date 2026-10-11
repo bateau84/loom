@@ -132,7 +132,7 @@ type MockProviderState = {
   upgradeSecondaryResumed: boolean
   statusPreviewRequested: boolean
   statusPreviewFallbackObserved: boolean
-  sawNativeLoomToolGuidance: boolean
+  sawInjectedLoomContract: boolean
   codeModeLoomStatusObserved: boolean
   codeModeLoomSearchObserved: boolean
   statusArtifactPath?: string
@@ -1025,7 +1025,7 @@ async function startMockProvider() {
     upgradeSecondaryResumed: false,
     statusPreviewRequested: false,
     statusPreviewFallbackObserved: false,
-    sawNativeLoomToolGuidance: false,
+    sawInjectedLoomContract: false,
     codeModeLoomStatusObserved: false,
     codeModeLoomSearchObserved: false,
     budgetQuestionObserved: false,
@@ -1064,10 +1064,11 @@ async function startMockProvider() {
       const messages = Array.isArray(body.messages) ? body.messages : []
       if (messages.some((message: any) =>
         message?.role === "system" &&
-        openAiMessageText(message.content).includes("two equivalent OpenCode surfaces") &&
+        openAiMessageText(message.content).includes("# Loom shared runtime contract (plugin only)") &&
+        openAiMessageText(message.content).includes("# Loom runtime contract: general") &&
         openAiMessageText(message.content).includes("tools.loom.code.*")
       )) {
-        state.sawNativeLoomToolGuidance = true
+        state.sawInjectedLoomContract = true
       }
       const delegatedBudgetWorkerPrompt = [...messages]
         .reverse()
@@ -2336,8 +2337,8 @@ try {
   )
 
   mock.state.statusPreviewRequested = false
-  if (!mock.state.sawNativeLoomToolGuidance) {
-    throw new Error("Loom native-tool routing guidance did not reach the real OpenCode provider context")
+  if (!mock.state.sawInjectedLoomContract) {
+    throw new Error("Loom shared and General role contracts did not reach real OpenCode provider context")
   }
 
   await sendPrompt(serverA, sessionA.id, "LOOM_INTEGRATION_CODEMODE_SEARCH")
@@ -2770,7 +2771,7 @@ try {
   console.log(" - crashed budget-question owner reclaimed by restarted OpenCode host: true")
   console.log(` - OpenCode auto-started dashboard endpoint reached from sidebar: ${reviewerStatusUrl}`)
   console.log(` - disconnected browser degraded cleanly: ${mock.state.statusPreviewFallbackObserved}`)
-  console.log(` - native Loom tool guidance reached provider context: ${mock.state.sawNativeLoomToolGuidance}`)
+  console.log(` - Loom optional role contract reached provider context: ${mock.state.sawInjectedLoomContract}`)
   console.log(` - Loom Code Mode mirrors discoverable: ${mock.state.codeModeLoomSearchObserved}`)
   console.log(` - Loom Code Mode mirror executed: ${mock.state.codeModeLoomStatusObserved}`)
   console.log(` - status artifact previewed through browser RPC: ${mock.state.statusPreviewRequested} · ${mock.state.statusArtifactPath}`)

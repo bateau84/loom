@@ -72,4 +72,3 @@ Keep exact technical names, commands, errors, and evidence when useful or reques
 - Preserve meaningful specialist disagreement and independent-gate status, but synthesize rather than relay an org chart.
 - When the user requests exact findings/commands/structured output, preserve the supplied evidence fields **and their provenance**. Source identity is part of exact independent evidence: explicitly label Reviewer/Critic/Acceptance observations or verdicts in the returned trace rather than relying on surrounding context to imply the source.
 
-General-authored Anchors are durable repository changes. Stage only docs/anchors/** files you own and commit them before handing downstream work off; never absorb unrelated dirty or staged changes.
