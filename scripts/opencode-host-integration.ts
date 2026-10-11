@@ -370,7 +370,7 @@ function chooseMockAction(prompt: string, results: Map<string, unknown>, state: 
     if (!results.has("write")) {
       return { name: "write", args: {
         path: "src/standalone-proof.txt",
-        content: "ordinary OpenCode agent write without Loom\\n",
+        content: "ordinary OpenCode agent write without Loom\n",
       } }
     }
     if (toolRejected(results.get("write"))) {
@@ -2198,6 +2198,14 @@ try {
     join(base, "standalone-runtime"), "standalone-no-loom",
   )
   servers.push(standaloneServer)
+  const standaloneGeneral = await jsonRequestAny(
+    [`${standaloneServer.baseUrl}/api/session`, `${standaloneServer.baseUrl}/session`],
+    standaloneServer.authorization, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify(sessionCreateBody("Standalone General", "general")),
+    },
+  )
+  if (!standaloneGeneral?.id) throw new Error("No-Loom General session creation failed.")
   const standaloneAgentResponse = await jsonRequest(
     `${standaloneServer.baseUrl}/api/agent`, standaloneServer.authorization,
   )
@@ -2209,17 +2217,10 @@ try {
     "acceptance", "architect", "brainstorm", "critic", "designer", "diagnostic",
     "documenter", "general", "planner", "research", "reviewer", "specifier", "worker",
   ]) {
-    if (!agentNames.has(role)) throw new Error("Standalone OpenCode failed to load role " + role)
+    if (!agentNames.has(role)) throw new Error("Standalone OpenCode failed to load role " + role + "; host agents: " + [...agentNames].join(", "))
   }
 
-  const standaloneGeneral = await jsonRequestAny(
-    [`${standaloneServer.baseUrl}/api/session`, `${standaloneServer.baseUrl}/session`],
-    standaloneServer.authorization, {
-      method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify(sessionCreateBody("Standalone General", "general")),
-    },
-  )
-  if (!standaloneGeneral?.id) throw new Error("No-Loom General session creation failed.")
+
   await sendPrompt(standaloneServer, standaloneGeneral.id, "OPENCODE_STANDALONE_GENERAL")
   await waitForCondition(
     () => mock.state.standaloneGeneralCompleted && mock.state.standaloneChildReadObserved,
@@ -2241,7 +2242,7 @@ try {
   const standaloneProof = await readFile(
     join(standaloneProject, "src", "standalone-proof.txt"), "utf8",
   )
-  if (standaloneProof !== "ordinary OpenCode agent write without Loom\\n" ||
+  if (standaloneProof !== "ordinary OpenCode agent write without Loom\n" ||
       mock.state.standaloneProviderCalls < 3) {
     throw new Error("No-Loom standalone work failed: missing real file, delegation or model calls.")
   }
