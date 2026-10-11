@@ -14,6 +14,14 @@ tags: [component, loom, agents]
 - `brainstorm` is an optional fresh subagent for independent ideation, not a second user-facing primary mode.
 - `diagnostic` and `research` may be used as fresh-context conversational investigation capabilities without implying permission to implement. They remain bounded internal capabilities rather than user-facing personas.
 
+## Optional Loom runtime
+
+The `agents/*.md` definitions contain portable professional expertise and OpenCode mode only. They do not require Loom tools or encode Loom permissions. With Loom disabled, these agents run with the host's normal policy and may perform ordinary authorized work.
+
+When Loom is enabled, `plugins/loom/agent-contracts.ts` loads `plugins/loom/contracts/shared.md` and exactly one `contracts/<role>.md` for each registered role. Missing or empty files fail plugin setup instead of silently dropping governance. The plugin's `ctx.session.hook("context")` injects this contract only into the active role's model context; other agents are unaffected. A `ctx.agent.transform` provides the previous Loom role permission rules through OpenCode's agent registry only while the plugin is loaded. Loom's runtime permission and step-admission checks remain separate and authoritative.
+
+`loom_status` exposes candidate `nextActions` to General based on live step dispatch admission. Candidates do not prove that a child is idle and cannot bypass grant/dispatch checks; status must be refreshed after child return or state changes. Detailed tool contracts define prerequisites and rejection behavior. Do not duplicate the workflow in portable role prompts.
+
 ## Authority Contexts
 
 - Designer — human-facing meaning.
@@ -69,8 +77,10 @@ A durable command-elevation receipt records the requester, workflow/step/attempt
 
 ## Source
 
-- `agents/*.md`
-- `plugins/loom/index.ts`
+- `agents/*.md` (portable role guidance)
+- `plugins/loom/contracts/*.md` (optional role and shared contracts)
+- `plugins/loom/agent-contracts.ts` (load and optional OpenCode permissions)
+- `plugins/loom/index.ts` (runtime injection and enforcement)
 
 ## Depends on
 

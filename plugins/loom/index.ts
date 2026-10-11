@@ -30,8 +30,6 @@ import {
   upgradeCompatibilityNotice,
 } from "./upgrade-actions"
 
-export const LOOM_NATIVE_TOOL_GUIDANCE =
-  "Loom control-plane tools are available through two equivalent OpenCode surfaces: native loom_* tools and Code Mode mirrors under tools.loom.code.*. Use either surface directly according to the active tool paradigm. If using Code Mode, search for Loom tools and invoke the returned tools.loom.code.* signatures; do not fall back to shell/filesystem discovery for Loom commands. Reviewer/Critic methodology uses a two-part contract: load practitioner guidance with OpenCode's native skill tool, then consume the role companion through loom_assessment or loom_qa; a plain ASSESSMENT.md/QA.md read is artifact inspection, not methodology loading. Interactive status is dashboard-first and does not depend on model prose: the Loom sidebar exposes a stable workflow dashboard URL, while loom_status may also return presentation metadata. Desktop browser preview is optional metadata only; do not invoke tools.browser.preview merely because presentation metadata exists. Every Loom agent may use read-only Git inspection such as `git status`, `git diff`, `git log`, `git show`, and `git rev-parse`. Load `git` for safe Git mechanics and `git-commit-discipline` before making commits. When any role has durable project-local write scope, that same effective scope authorizes commits of the admitted bytes, including paths added by `loom_scope_elevate`. Loom admits explicit-path Git staging and bounded hookless `git -c core.hooksPath=/dev/null commit -m ...` commands. Long commit messages may use `git -c core.hooksPath=/dev/null commit -F ephemeral-reports/<role>/commit-messages/<name>.md`; compose that scratch file with edit/write tools, never shell redirection. Plain `git commit` is intentionally denied because repository hooks could change the staged scope after validation. Git owns its objects, refs, and worktree metadata during admitted operations, including external Git metadata for linked worktrees; do not request raw `.git` access just to commit. Runtime write scope is discoverable: an attached child that needs additional project-local files calls loom_scope_elevate and continues immediately when granted. If any Loom tool returns continue=false, the child MUST stop its current turn and return control immediately; it must not retry the blocked mutation or continue assuming authority will arrive later."
 import {
   assertWorkflowNotCancelled,
   WorkflowCancelledError,
@@ -178,6 +176,8 @@ import {
   type AcceptancePlan,
 } from "./acceptance"
 import { loadSkillCompanion, type SkillCompanionKind } from "./methodology"
+import { loadLoomAgentContracts, LOOM_AGENT_ROLES as LOOM_CONTRACT_ROLES, LOOM_ROLE_PERMISSIONS, type LoomAgentRole } from "./agent-contracts"
+import { candidateLoomTransitions } from "./workflow-guidance"
 import { LOOM_AGENT_ROLES, MAX_TASK_TEXT_LENGTH, MAX_TASK_CONTEXT_ITEMS, nativeTaskPath, taskStepId, validateTaskPlan, type TaskSpec } from "./tasks"
 import {
   amendWorkPlan,
@@ -4276,6 +4276,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
   async setup(ctx) {
     const pluginBuild = createHash("sha256").update(await readFile(new URL(import.meta.url))).digest("hex")
+    const roleContracts = await loadLoomAgentContracts()
     const setupInstance = randomUUID()
     const legacyStorage = ctx.storage as any
     const runtime = await resolveRuntimeIdentity(ctx.location.project.canonical, legacyStorage)
@@ -4990,6 +4991,17 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
     await ctx.agent.transform((editor) => {
       if (editor.get("general")) editor.default("general")
+      // Loom's host-side permissions are optional: portable agent definitions
+      // have no Loom-only permission rules when the plugin is disabled.
+      for (const role of LOOM_CONTRACT_ROLES) {
+        if (!editor.get(role)) continue
+        editor.update(role, (agent) => {
+          agent.permissions = [
+            ...(agent.permissions ?? []),
+            ...LOOM_ROLE_PERMISSIONS[role].map((rule) => ({ ...rule })),
+          ]
+        })
+      }
     })
 
     await ctx.tool.transform((editor) => {
@@ -6601,7 +6613,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
       addLoomTool({
         name: "status",
-        description: "Inspect Loom lifecycle and control-flow readiness: structural/DAG readiness, dispatch admission, execution evidence without inferred liveness, completion/PASS constraints, user attention, OQs/reconciliation, verification, and budget. Compact by default; detail=true returns internals. Interactive status is available independently through Loom's stable dashboard workflow URL exposed in the sidebar; the tool also returns browser-safe presentation metadata as a convenience. OpenCode Desktop browser preview is optional metadata only and must not be invoked merely because presentation metadata exists. Presentation availability never blocks or alters Loom workflow state.",
+        description: "Inspect current Loom workflow truth: ready/blocked DAG steps, dispatch admission, unknown execution liveness, completion/PASS constraints, questions, verification and budget. For General, nextActions names candidate loom_dispatch_grant calls for currently admitted steps; candidates are NOT grants, do not prove no child is already running, and are rechecked by the target tool. Reinspect status after child return or a change in intent. Compact by default; detail=true returns internals. The sidebar dashboard is an independent display; presentation metadata is optional and never alters workflow state.",
         input: {
           type: "object",
           properties: {
@@ -6689,9 +6701,18 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             work,
             stepReadiness,
           )
+          const nextActions = tool.agent === "general"
+            ? candidateLoomTransitions(view.workflowId, view.readiness)
+            : []
           const artifact = await writeStatusArtifact(runtime, view).catch(() => undefined)
           const presentation = statusPresentation(artifact)
           let compact = renderStatusMarkdown(view, artifact)
+          if (nextActions.length > 0) {
+            compact += "\n\n### Candidate next actions (revalidated at call time)\n" +
+              nextActions.map(({ agent, input }) =>
+                `- Request \`loom_dispatch_grant\` for \`${input.stepId}\` (${agent}); execution liveness remains unknown.`
+              ).join("\n")
+          }
           if (scopeElevations.length > 0 || pendingHardBoundaries.length > 0) {
             const lines = ["", "### Scope activity"]
             for (const elevation of scopeElevations.slice(-8)) {
@@ -6735,6 +6756,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 content: renderToolOutput(
                   {
                     ...view,
+                    nextActions,
                     scopeActivity,
                     ...(presentation ? { presentation } : {}),
                   },
@@ -6748,7 +6770,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
           return {
             content: renderToolOutput({
-              summary: view,
+              summary: { ...view, nextActions },
               workflow,
               dagRunnable: runnable(workflow).map((step) => ({ id: step.id, agent: step.agent })),
               questions: questionState(questions, workflow),
@@ -14555,7 +14577,8 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           observedAt: new Date().toISOString(),
         } satisfies ObservedUserMessage)
       }
-      event.system.push({ type: "text", text: LOOM_NATIVE_TOOL_GUIDANCE })
+      const contract = roleContracts.get(String(raw.agent ?? "") as LoomAgentRole)
+      if (contract) event.system.push({ type: "text", text: contract })
 
       // Compatibility guidance is deliberately conditional and tiny. Detailed
       // one-shot migration instructions live behind loom_upgrade_status.
