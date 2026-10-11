@@ -3616,23 +3616,25 @@ describe("Loom registered plugin boundary", () => {
     }
   })
 
-  test("session context tells Code Mode models to call native Loom tools directly", async () => {
+  test("session context injects optional Loom contracts and teaches both native and Code Mode tools", async () => {
     const { sessionHooks, durableStorage, restore } = await harness()
     try {
       const hook = sessionHooks.get("context")
       expect(hook).toBeDefined()
-      const event = { system: [] as Array<{ type: string; text: string }> }
+      const event = { agent: "general", system: [] as Array<{ type: string; text: string }> }
       await hook!(event)
       expect(event.system).toHaveLength(1)
+      expect(event.system[0]?.text).toContain("# Loom shared runtime contract (plugin only)")
+      expect(event.system[0]?.text).toContain("# Loom runtime contract: general")
       expect(event.system[0]?.text).toContain("loom_*")
       expect(event.system[0]?.text).toContain("two equivalent OpenCode surfaces")
       expect(event.system[0]?.text).toContain("tools.loom.code.*")
-      expect(event.system[0]?.text).toContain("do not fall back to shell/filesystem discovery")
-      expect(event.system[0]?.text).toContain("dashboard-first")
-      expect(event.system[0]?.text).toContain("does not depend on model prose")
-      expect(event.system[0]?.text).toContain("stable workflow dashboard URL")
-      expect(event.system[0]?.text).toContain("Desktop browser preview is optional")
-      expect(event.system[0]?.text).toContain("do not invoke tools.browser.preview")
+      expect(event.system[0]?.text).toContain("Do not fall back to shell/file discovery")
+      const customAgent = { agent: "custom-specialist", system: [] as Array<{ type: string; text: string }> }
+      await hook!(customAgent)
+      expect(customAgent.system).toHaveLength(1)
+      expect(customAgent.system[0]?.text).toContain("# Loom shared runtime contract")
+      expect(customAgent.system[0]?.text).not.toContain("# Loom runtime contract: general")
 
       await hook!({
         sessionID: "authorization-session",
