@@ -14732,6 +14732,28 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           }
         }
       }
+      // A current, user-owned exact/prefix command rule avoids per-invocation
+      // elevation, but still needs this session's current executable step.
+      let configuredShell = false
+      if (!activeShellElevation && shellCommand && raw.sessionID &&
+          loomAgents.has(String(raw.agent ?? ""))) {
+        const policy = await currentPolicy()
+        const shell = projectShellOverrides(policy.policy, ctx.location.directory)
+        if (localPolicyShellAllowed(shellCommand, shell)) {
+          const workflowId = await ctx.storage.get(sessionKey(String(raw.sessionID)))
+          const stepId = await ctx.storage.get(sessionStepKey(String(raw.sessionID)))
+          if (typeof workflowId !== "string" || typeof stepId !== "string" ||
+              !(await exactRunnableStepAttemptBinding(
+                ctx, String(raw.sessionID), workflowId, stepId,
+              ))) throw new Error("Configured shell command requires the exact current runnable Loom step.")
+          await assertCurrentStepPlanAdmission(ctx, workflowId, stepId)
+          if (raw.agent === "worker") await assertWorkerWorkClaim(ctx, workflowId, stepId)
+          if (generationPaths.length > 0) {
+            await assertProjectGenerationWrite(workflowId, stepId, shellCommand)
+          }
+          configuredShell = true
+        }
+      }
       let elevationRequired = Boolean(activeShellElevation)
       if (elevationRequired && !observationCallKey(raw)) {
         throw new Error("Command execution blocked: a stable tool-call identity is required before consuming command elevation.")
@@ -14745,7 +14767,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           : agent === "diagnostic"
             ? diagnosticExecutionShellResourcesAllowed([shellCommand])
             : Boolean(classifyVerificationShell(shellCommand))
-        if (!allowedWithoutElevation) {
+        if (!allowedWithoutElevation && !configuredShell) {
           elevationRequired = true
           if (!observationCallKey(raw)) {
             throw new Error(
@@ -15317,11 +15339,11 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           )) as TaskScope | undefined
           const defaultScope =
             artifactWriteDefaults[String(raw.agent)] ?? []
-          const writeScope = committableWriteScope(
+          const writeScope = committableWriteScope(mergeWriteScope(
             declaredScope?.write.length
-              ? declaredScope.write
-              : defaultScope,
-          )
+              ? declaredScope.write : defaultScope,
+            await policyWriteScope(String(raw.agent)),
+          ))
 
           if (raw.status === "completed") {
             const commitMessageOwned = successfulMutationPaths(
