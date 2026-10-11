@@ -342,7 +342,7 @@ function chooseMockAction(prompt: string, results: Map<string, unknown>, state: 
     }
     if (toolRejected(results.get("read")) ||
         !JSON.stringify(results.get("read")).includes("Integration Anchor")) {
-      throw new Error("Standalone General failed to inspect a project file.")
+      throw new Error("Standalone General failed to inspect a project file: " + JSON.stringify(results.get("read")).slice(0, 1200))
     }
     if (!results.has("subagent")) {
       return subagentAction(state, "worker", "OPENCODE_STANDALONE_CHILD", "Standalone delegated inspection")
@@ -360,7 +360,7 @@ function chooseMockAction(prompt: string, results: Map<string, unknown>, state: 
     }
     if (toolRejected(results.get("read")) ||
         !JSON.stringify(results.get("read")).includes("Integration Anchor")) {
-      throw new Error("Standalone delegated Worker failed to read the project file.")
+      throw new Error("Standalone delegated Worker failed to read the project file: " + JSON.stringify(results.get("read")).slice(0, 1200))
     }
     state.standaloneChildReadObserved = true
     return null
@@ -1520,11 +1520,18 @@ async function createProject(base: string, name: string, mockBaseUrl: string, wi
       permission: { browser: "allow" },
       // The standalone fixture supplies host permissions explicitly. Loom is
       // not expected to choose defaults or confer write/delegation capability.
-      ...(withLoom ? {} : { permissions: [
-        { action: "edit", resource: "src/**", effect: "allow" },
-        { action: "shell", resource: "pwd", effect: "allow" },
-        { action: "subagent", resource: "worker", effect: "allow" },
-      ] }),
+      ...(withLoom ? {} : {
+        permissions: [
+          { action: "read", resource: "*", effect: "allow" },
+          { action: "edit", resource: "src/**", effect: "allow" },
+          { action: "shell", resource: "pwd", effect: "allow" },
+        ],
+        // Built-in General denies subagents by default. A user's ordinary
+        // agent config can override that without enabling Loom.
+        agents: { general: { permissions: [
+          { action: "subagent", resource: "worker", effect: "allow" },
+        ] } },
+      }),
       provider: {
         loommock: {
           npm: "@ai-sdk/openai-compatible",
@@ -2202,7 +2209,10 @@ try {
     [`${standaloneServer.baseUrl}/api/session`, `${standaloneServer.baseUrl}/session`],
     standaloneServer.authorization, {
       method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify(sessionCreateBody("Standalone General", "general")),
+      body: JSON.stringify({
+        ...sessionCreateBody("Standalone General", "general"),
+        location: { directory: standaloneProject },
+      }),
     },
   )
   if (!standaloneGeneral?.id) throw new Error("No-Loom General session creation failed.")
@@ -2235,7 +2245,10 @@ try {
     [`${standaloneServer.baseUrl}/api/session`, `${standaloneServer.baseUrl}/session`],
     standaloneServer.authorization, {
       method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify(sessionCreateBody("Standalone Worker", "worker")),
+      body: JSON.stringify({
+        ...sessionCreateBody("Standalone Worker", "worker"),
+        location: { directory: standaloneProject },
+      }),
     },
   )
   if (!standaloneWorker?.id) throw new Error("No-Loom Worker session creation failed.")
