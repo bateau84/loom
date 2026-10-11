@@ -13,6 +13,10 @@ RUN git init -q /opt/loom-test-deps/eval-runner \
     && git -C /opt/loom-test-deps/eval-runner -c core.hooksPath=/dev/null checkout -q --detach FETCH_HEAD \
     && test "$(git -C /opt/loom-test-deps/eval-runner rev-parse HEAD)" = "1262ac8c2eebbd10af572e3e3560318f6113233b"
 ENV PYTHONPATH=/opt/loom-test-deps/eval-runner
+COPY scripts/loom-isolation/stock_artifact.py /opt/loom-stock-artifact.py
+# Exact native V2 tarball is integrity checked and unpacked without executing
+# its binary or any package lifecycle. Network belongs to this build only.
+RUN python3 -I -S -B /opt/loom-stock-artifact.py
 WORKDIR /workspace
 COPY --chown=node:node package.json bun.lock ./
 # Do not execute dependency or project lifecycle hooks during the networked build.

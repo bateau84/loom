@@ -37,7 +37,7 @@ def probes(phase, target):
     return rows
 
 
-def unit_workload(emit):
+def unit_workload(emit, *, stock=False):
     """Only the accepted finite repository command, after external release."""
     work = Path("/tmp/loom/work")
     shutil.copytree("/workspace", work, ignore=shutil.ignore_patterns("node_modules"))
@@ -66,9 +66,13 @@ def unit_workload(emit):
         stream("stderr", setup.stderr)
         if setup.returncode:
             raise RuntimeError("synthetic Git setup refused before runner")
-    process = subprocess.Popen(["bun", "run", "test"], cwd=work, env=env, stdin=subprocess.DEVNULL,
+    command = (["python3", "-I", "-S", "-B", "/workspace/scripts/loom-isolation/stock_probe.py"]
+               if stock else ["bun", "run", "test"])
+    if stock:
+        env["LOOM_INNER_WORKLOAD"] = "custody-stock"
+    process = subprocess.Popen(command, cwd=work, env=env, stdin=subprocess.DEVNULL,
                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, close_fds=True)
-    deadline = time.monotonic() + 1700
+    deadline = time.monotonic() + (90 if stock else 1700)
     try:
         with selectors.DefaultSelector() as selector:
             for pipe, channel in ((process.stdout, "stdout"), (process.stderr, "stderr")):
@@ -84,7 +88,7 @@ def unit_workload(emit):
                         continue
                     stream(key.data, data)
         status = process.wait(timeout=2)
-        emit("inner-workload-done", command=["bun", "run", "test"], testExit=status,
+        emit("inner-workload-done", command=command, testExit=status,
              capturedBytes=total, interleaving="unproven", privateGit=True)
         return status
     finally:
@@ -197,8 +201,10 @@ def main():
         os.kill(pid, signal.SIGKILL)
     os.waitpid(standby_child, 0)
     workload = os.environ.get("LOOM_INNER_WORKLOAD", "synthetic")
-    status = unit_workload(emit) if workload == "unit-tests" else 0
-    emit("inner-proof-done", productImports=workload == "unit-tests", testExit=status)
+    if workload not in {"synthetic", "unit-tests", "custody-stock"}:
+        raise RuntimeError("unsupported inner workload")
+    status = unit_workload(emit, stock=workload == "custody-stock") if workload != "synthetic" else 0
+    emit("inner-proof-done", productImports=workload != "synthetic", testExit=status)
     return status
 
 

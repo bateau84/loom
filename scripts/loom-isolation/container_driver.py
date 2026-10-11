@@ -33,7 +33,9 @@ OWNED = {"Containerfile.test", ".containerignore", "scripts/test_ci_loom_custodi
     ("container_driver.py", "container_gate.py", "test_container_driver.py",
      "podman_witness.py", "podman_gate.py", "test_podman_witness.py", "README.md",
      "image_binding.py", "test_image_binding.py", "bubblewrap_probe.py", "test_bubblewrap_probe.py",
-     "engine_custody.py", "test_engine_custody.py", "custody_payload.py",
+      "engine_custody.py", "test_engine_custody.py", "custody_payload.py",
+      "stock_artifact.py",
+      "stock_probe.py",
      "inner_policy.py", "inner_gate.py", "test_inner_policy.py"))}
 BUILDS = Path(__file__).parent / ".container-builds"
 
@@ -313,13 +315,14 @@ def compare_proc(image: str, receipt_path: Path) -> int:
 def run_tests(image: str, receipt_path: Path, *, prerequisites: bool = False, scoped_proc: bool = False,
               comparison_records: list | None = None, custody: bool = False, inner: bool = False,
               parent_loss: bool = False, policy_refusal: bool = False,
-              unit_tests: bool = False, lose_response: bool = False) -> int:
+              unit_tests: bool = False, lose_response: bool = False, stock: bool = False) -> int:
     if not (prerequisites or custody or inner):
         # The intended product entry no longer bypasses the inner boundary.
         prerequisites = custody = inner = scoped_proc = unit_tests = True
     if (inner and not (custody and prerequisites) or unit_tests and not inner
             or parent_loss and not inner or policy_refusal and inner or lose_response and not custody
-            or unit_tests and (parent_loss or policy_refusal or lose_response)):
+            or unit_tests and (parent_loss or policy_refusal or lose_response)
+            or stock and (not inner or unit_tests or parent_loss or policy_refusal or lose_response)):
         raise Refusal("inner-workload-flags-incoherent")
     if not image.startswith("sha256:") or len(image) != 71 or any(c not in "0123456789abcdef" for c in image[7:]):
         raise Refusal("run-requires-content-addressed-image")
@@ -327,6 +330,8 @@ def run_tests(image: str, receipt_path: Path, *, prerequisites: bool = False, sc
     if receipt["image"] != image:
         raise Refusal("requested-image-not-built-receipt-image")
     entries = receipt["source"]["entries"]
+    if stock and not receipt.get("imageFileBinding", {}).get("stockArtifact"):
+        raise Refusal("stock-workload-needs-bound-native-artifact")
     names, _ = selected_names()
     if names != sorted(entry["path"] for entry in entries) or any(not source_input(entry["path"]) for entry in entries):
         raise Refusal("current-selected-input-closure-changed")
@@ -366,6 +371,7 @@ def run_tests(image: str, receipt_path: Path, *, prerequisites: bool = False, sc
             diagnostic["effectivePolicy"] = effective_policy(created)
             verify_created_config(created, receipt, nonce, str(sentinel))
             diagnostic["imageFileBinding"] = image_binding.inspect_files(name, root, receipt["source"], receipt["gateSha256"])
+            image_binding.verify_stock_binding(diagnostic["imageFileBinding"], receipt)
             call([PODMAN, "start", name])
             deadline = time.monotonic() + 30
             while True:
@@ -424,7 +430,7 @@ def run_tests(image: str, receipt_path: Path, *, prerequisites: bool = False, sc
                             refused.close()
                         observer.current()
                     if inner:
-                        stream_type = engine_custody.InnerUnits if unit_tests else engine_custody.InnerStream
+                        stream_type = engine_custody.InnerStock if stock else (engine_custody.InnerUnits if unit_tests else engine_custody.InnerStream)
                         inner_stream = observer.admit_exec(lambda: stream_type(record["Id"], nonce))
                         try:
                             bound = one_record(call([PODMAN, "inspect", record["Id"]]))
@@ -441,7 +447,7 @@ def run_tests(image: str, receipt_path: Path, *, prerequisites: bool = False, sc
                             prepared = [value for value in inner_stream.events if value["event"] == "inner-policy-prepared"]
                             expected = hashlib.sha256(json.dumps(inner_policy.POLICY, sort_keys=True).encode()).hexdigest()
                             if (len(prepared) != 1 or prepared[0]["policySha256"] != expected or prepared[0]["filterBytes"] <= 0
-                                    or prepared[0].get("workload") != ("unit-tests" if unit_tests else "synthetic")):
+                                    or prepared[0].get("workload") != ("custody-stock" if stock else ("unit-tests" if unit_tests else "synthetic"))):
                                 raise Refusal("inner-pinned-policy-binding")
                             announcement = next(value for value in inner_stream.events if value["event"] == "inner-ready")
                             validate_probes(announcement["beforeImportDenials"], "before-import")
@@ -462,9 +468,9 @@ def run_tests(image: str, receipt_path: Path, *, prerequisites: bool = False, sc
                                         raise Refusal("inner-positive-probe-coverage")
                                     validate_probes(matches[0]["denials"], phase)
                                 diagnostic["innerSyntheticProof"] = values
-                                if unit_tests:
+                                if unit_tests or stock:
                                     completed = next(value for value in values if value["event"] == "inner-workload-done")
-                                    diagnostic.update(testExit=completed["testExit"], command="bun run test inside pinned bubblewrap",
+                                    diagnostic.update(testExit=completed["testExit"], command=("fixed stock startup feasibility inside pinned bubblewrap" if stock else "bun run test inside pinned bubblewrap"),
                                         streams={channel: bytes(data).decode("utf-8", errors="replace") for channel, data in inner_stream.streams.items()},
                                         streamsAvailable=True, loss="none", byteLimit=4 * 1048576,
                                         rawStreamBase64={channel: base64.b64encode(data).decode("ascii") for channel, data in inner_stream.streams.items()})
@@ -627,7 +633,7 @@ def save_diagnostic(record: dict) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("operation", choices=("build", "run", "probe", "compare-proc", "custody", "inner", "inner-parent-loss", "inner-refusal", "inner-tests", "inner-loss"))
+    parser.add_argument("operation", choices=("build", "run", "probe", "compare-proc", "custody", "inner", "inner-parent-loss", "inner-refusal", "inner-tests", "inner-loss", "custody-stock"))
     parser.add_argument("--image")
     parser.add_argument("--receipt", type=Path, help="Required verified build receipt for run")
     args = parser.parse_args(argv)
@@ -637,18 +643,19 @@ def main(argv: list[str] | None = None) -> int:
             raise Refusal("run-driver-from-repository-root")
         engine_ready()
         print(json.dumps({"event": "rootless-engine-observed", "rootless": True, "cgroupVersion": "v2"}), flush=True)
-        if args.operation in {"run", "probe", "compare-proc", "custody", "inner", "inner-parent-loss", "inner-refusal", "inner-tests", "inner-loss"}:
+        if args.operation in {"run", "probe", "compare-proc", "custody", "inner", "inner-parent-loss", "inner-refusal", "inner-tests", "inner-loss", "custody-stock"}:
             if not args.image or not args.receipt:
                 raise Refusal("run-needs-image-and-verified-build-receipt")
             phase = "gated-test"
             if args.operation == "compare-proc":
                 return compare_proc(args.image, args.receipt)
-            is_inner = args.operation in {"run", "inner", "inner-parent-loss", "inner-tests", "inner-loss"}
+            is_inner = args.operation in {"run", "inner", "inner-parent-loss", "inner-tests", "inner-loss", "custody-stock"}
             is_refusal = args.operation == "inner-refusal"
             return run_tests(args.image, args.receipt, prerequisites=args.operation in {"probe", "custody"} or is_inner or is_refusal,
                              custody=args.operation == "custody" or is_inner or is_refusal, inner=is_inner,
                              scoped_proc=is_inner, parent_loss=args.operation == "inner-parent-loss", policy_refusal=is_refusal,
-                             unit_tests=args.operation in {"run", "inner-tests"}, lose_response=args.operation == "inner-loss")
+                             unit_tests=args.operation in {"run", "inner-tests"}, lose_response=args.operation == "inner-loss",
+                             stock=args.operation == "custody-stock")
         phase = "source-context"
         with tempfile.TemporaryDirectory(prefix=".container-build-", dir=Path(__file__).parent) as directory:
             root = Path(directory).resolve()

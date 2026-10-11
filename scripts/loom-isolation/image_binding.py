@@ -13,6 +13,7 @@ import uuid
 from pathlib import Path, PurePosixPath
 
 from podman_witness import PODMAN, Refusal, call, one_record
+import stock_artifact
 
 
 SOURCE_LABEL = "io.loom.tests.inputs"
@@ -103,6 +104,12 @@ def verify_configuration(record: dict, receipt: dict) -> None:
         raise Refusal("receipt-image-label-mismatch")
 
 
+def verify_stock_binding(actual: dict, receipt: dict) -> None:
+    wanted = receipt.get("imageFileBinding", {}).get("stockArtifact")
+    if actual.get("stockArtifact") != wanted:
+        raise Refusal("receipt-stock-artifact-bytes-mismatch")
+
+
 def inspect_files(container: str, root: Path, source: dict, expected_gate: str) -> dict:
     """Copy selected source roots from a stopped container; never start its code.
 
@@ -123,8 +130,16 @@ def inspect_files(container: str, root: Path, source: dict, expected_gate: str) 
     actual_gate = hashlib.sha256(gate).hexdigest()
     if actual_gate != expected_gate:
         raise Refusal("actual-image-gate-bytes-mismatch")
-    return {"inspection": "stopped-container-copy-no-execution", "containerId": record["Id"],
-            "selectedInputs": matched, "gateSha256": actual_gate}
+    result = {"inspection": "stopped-container-copy-no-execution", "containerId": record["Id"],
+              "selectedInputs": matched, "gateSha256": actual_gate}
+    if any(entry["path"] == "scripts/loom-isolation/stock_artifact.py" for entry in source["entries"]):
+        stock_root = root / "image-stock"
+        call([PODMAN, "cp", container + ":/opt/loom-stock", str(stock_root)], timeout=60)
+        try:
+            result["stockArtifact"] = stock_artifact.inspect(stock_root)
+        except stock_artifact.ArtifactRefusal as error:
+            raise Refusal("actual-stock-artifact-mismatch") from error
+    return result
 
 
 def atomic_json(path: Path, value: dict) -> None:

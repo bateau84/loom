@@ -90,6 +90,38 @@ class Receipt:
     digest: str
 
 
+@dataclass(frozen=True)
+class Generation:
+    id: str
+    code_ref: str
+    data_ref: str
+    code_digest: str
+    data_digest: str
+
+    def __post_init__(self):
+        for value in (self.id, self.code_ref, self.data_ref):
+            identity(value)
+        for value in (self.code_digest, self.data_digest):
+            if not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value):
+                raise JournalError("invalid-generation-digest")
+
+
+@dataclass(frozen=True)
+class Selection:
+    generation: Generation | None
+    token: int
+    admissions_open: bool
+
+    def __post_init__(self):
+        if (type(self.token) is not int or not 0 <= self.token < 2**63
+                or type(self.admissions_open) is not bool
+                or (self.generation is not None and type(self.generation) is not Generation)):
+            raise JournalError("invalid-generation-selection")
+        if (self.generation is None and (self.token != 0 or self.admissions_open)
+                or self.generation is not None and self.token == 0):
+            raise JournalError("inconsistent-generation-selection")
+
+
 class Journal:
     """One synchronous live/offline owner. Returning Receipt follows FULL COMMIT.
 
@@ -145,7 +177,7 @@ class Journal:
             if create:
                 with self._transaction():
                     self._db.execute("CREATE TABLE installation (id TEXT PRIMARY KEY, version INTEGER NOT NULL)")
-                    self._db.execute("INSERT INTO installation VALUES (?, 1)", (self.installation,))
+                    self._db.execute("INSERT INTO installation VALUES (?, 2)", (self.installation,))
                     self._db.execute("""CREATE TABLE ingress (
                         sequence INTEGER PRIMARY KEY AUTOINCREMENT,
                         source TEXT NOT NULL, event_id TEXT NOT NULL,
@@ -155,13 +187,25 @@ class Journal:
                         ingress_sequence INTEGER NOT NULL REFERENCES ingress(sequence),
                         digest TEXT NOT NULL, context BLOB NOT NULL, payload BLOB NOT NULL,
                         UNIQUE(ingress_sequence, digest, context))""")
+                    self._db.execute("""CREATE TABLE generation (
+                        id TEXT PRIMARY KEY, code_ref TEXT NOT NULL, data_ref TEXT NOT NULL,
+                        code_digest TEXT NOT NULL, data_digest TEXT NOT NULL)""")
+                    self._db.execute("""CREATE TABLE selection_history (
+                        token INTEGER PRIMARY KEY AUTOINCREMENT,
+                        generation_id TEXT NOT NULL REFERENCES generation(id),
+                        decision_ref TEXT NOT NULL)""")
+                    self._db.execute("""CREATE TABLE current_selection (
+                        singleton INTEGER PRIMARY KEY CHECK(singleton=1),
+                        token INTEGER REFERENCES selection_history(token),
+                        admissions_open INTEGER NOT NULL CHECK(admissions_open IN (0,1)))""")
+                    self._db.execute("INSERT INTO current_selection VALUES (1, NULL, 0)")
                 directory_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW)
                 try:
                     os.fsync(directory_fd)
                 finally:
                     os.close(directory_fd)
             metadata = self._db.execute("SELECT id, version FROM installation").fetchall()
-            if len(metadata) != 1 or metadata[0]["id"] != self.installation or metadata[0]["version"] != 1:
+            if len(metadata) != 1 or metadata[0]["id"] != self.installation or metadata[0]["version"] != 2:
                 raise JournalError("installation-or-format-mismatch")
         except BaseException:
             self.close()
@@ -254,8 +298,59 @@ class Journal:
             raise JournalError("conflict-integrity-failure")
         return events
 
+    def selection(self) -> Selection:
+        row = self._db.execute("""SELECT c.token, c.admissions_open, g.*
+            FROM current_selection c LEFT JOIN selection_history h ON h.token=c.token
+            LEFT JOIN generation g ON g.id=h.generation_id WHERE c.singleton=1""").fetchone()
+        if row is None or row["admissions_open"] not in (0, 1):
+            raise JournalError("selection-integrity-failure")
+        if row["token"] is None:
+            if row["admissions_open"]:
+                raise JournalError("unselected-generation-cannot-admit")
+            return Selection(None, 0, False)
+        if row["id"] is None:
+            raise JournalError("selected-generation-missing")
+        return Selection(Generation(row["id"], row["code_ref"], row["data_ref"],
+                                    row["code_digest"], row["data_digest"]),
+                         row["token"], bool(row["admissions_open"]))
+
+    def _select_generation(self, expected: Selection, pair: Generation, decision_ref: str) -> Selection:
+        """Internal custodian transaction, NEVER a product IPC operation.
+
+        Caller must hold the same admission gate as writes/invocation and have
+        actually verified staged code/data closure, sync and old-domain/handle
+        drainage. This repository proves atomic selection ONLY; an owner lock,
+        digest-shaped string or SQL commit is not physical fencing/restore proof.
+        No admission-open operation exists until that controlling seam is wired.
+        Schema2 is explicit; old schema1 is not silently migrated or overwritten.
+        """
+        identity(decision_ref)
+        if type(pair) is not Generation or type(expected) is not Selection:
+            raise JournalError("generation-selection-contract")
+        with self._transaction():
+            before = self.selection()
+            if before != expected:
+                raise IdentityConflict("generation-selection-changed")
+            if before.admissions_open:
+                raise JournalError("generation-selection-needs-closed-admissions")
+            existing = self._db.execute("SELECT * FROM generation WHERE id=?", (pair.id,)).fetchone()
+            fields = (pair.id, pair.code_ref, pair.data_ref, pair.code_digest, pair.data_digest)
+            if existing is not None:
+                original = (existing["id"], existing["code_ref"], existing["data_ref"],
+                            existing["code_digest"], existing["data_digest"])
+                if original != fields:
+                    raise IdentityConflict("generation-identity-conflict")
+            else:
+                self._db.execute("INSERT INTO generation VALUES (?, ?, ?, ?, ?)", fields)
+            token = self._db.execute("INSERT INTO selection_history (generation_id, decision_ref) VALUES (?, ?)",
+                                     (pair.id, decision_ref)).lastrowid
+            self._db.execute("UPDATE current_selection SET token=?, admissions_open=0 WHERE singleton=1", (token,))
+            selected = self.selection()
+        return selected
+
     def inspect(self) -> dict:
         return {"installation": self.installation,
+                "formatVersion": 2,
                 "ingressCount": self._db.execute("SELECT count(*) FROM ingress").fetchone()[0],
                 "conflictCount": self._db.execute("SELECT count(*) FROM conflict").fetchone()[0],
                 "writeHealthy": self._healthy}

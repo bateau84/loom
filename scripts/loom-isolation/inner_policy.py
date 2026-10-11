@@ -27,7 +27,7 @@ def denial_action(name):
 
 
 def arguments(fd: int, nonce: str, target: str, workload: str = "synthetic") -> list[str]:
-    if fd < 0 or not nonce or not target.startswith("/") or workload not in {"synthetic", "unit-tests"}:
+    if fd < 0 or not nonce or not target.startswith("/") or workload not in {"synthetic", "unit-tests", "custody-stock"}:
         raise ValueError("fixed policy/filter/identity required")
     args = ["/usr/bin/bwrap", "--unshare-user", "--unshare-pid", "--unshare-net", "--unshare-ipc",
             "--unshare-uts", "--die-with-parent", "--new-session", "--cap-drop", "ALL", "--clearenv",
@@ -47,7 +47,10 @@ def arguments(fd: int, nonce: str, target: str, workload: str = "synthetic") -> 
         # the finite image toolchain link, never expose host/image /etc config.
         args += ["--dir", "/etc", "--dir", "/etc/alternatives", "--symlink", "/usr/bin/mawk", "/etc/alternatives/awk"]
         env.update(LOOM_INNER_WORKLOAD="unit-tests", PYTHONPATH="/opt/loom-test-deps/eval-runner",
-                   OPENCODE_DISABLE_AUTOUPDATE="1", TMPDIR="/tmp/loom/tmp")
+                    OPENCODE_DISABLE_AUTOUPDATE="1", TMPDIR="/tmp/loom/tmp")
+    elif workload == "custody-stock":
+        args += ["--ro-bind", "/opt/loom-stock", "/opt/loom-stock"]
+        env.update(LOOM_INNER_WORKLOAD="custody-stock", OPENCODE_DISABLE_AUTOUPDATE="1", TMPDIR="/tmp/loom/tmp")
     for key, value in env.items():
         args += ["--setenv", key, value]
     return args + ["--", "/usr/bin/python3", "-I", "-S", "-B", "/workspace/scripts/loom-isolation/inner_gate.py"]
@@ -100,10 +103,10 @@ def main():
     mode = binary.stat().st_mode
     if not stat.S_ISREG(mode) or mode & (stat.S_ISUID | stat.S_ISGID) or os.getuid() == 0:
         raise RuntimeError("non-setuid rootless substrate required")
-    workload = "unit-tests" if sys.argv[1:] == ["--unit-tests"] else "synthetic"
+    workload = {("--unit-tests",): "unit-tests", ("--custody-stock",): "custody-stock"}.get(tuple(sys.argv[1:]), "synthetic")
     if workload == "unit-tests" and Path("/usr/bin/awk").resolve(strict=True) != Path("/usr/bin/mawk"):
         raise RuntimeError("unverified image awk toolchain closure")
-    if sys.argv[1:] and workload != "unit-tests":
+    if sys.argv[1:] and workload == "synthetic":
         if sys.argv[1:] != ["--missing-policy"]:
             raise RuntimeError("unsupported fixed proof input")
         try:

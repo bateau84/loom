@@ -313,7 +313,10 @@ class InnerStream(TreeStream):
             for row in (base / "mountinfo").read_text().splitlines():
                 fields = row.split(" - ", 1)[0].split()
                 target = fields[4]
-                if target not in {"/", "/proc", "/tmp", "/usr", "/workspace", "/control", "/probes", "/dev", "/opt/loom-test-deps"} and not target.startswith("/dev/"):
+                allowed = {"/", "/proc", "/tmp", "/usr", "/workspace", "/control", "/probes", "/dev", "/opt/loom-test-deps"}
+                if self.extra_args == ("--custody-stock",):
+                    allowed.add("/opt/loom-stock")
+                if target not in allowed and not target.startswith("/dev/"):
                     raise Refusal("inner-independent-mount-allowlist")
                 mounts[target] = fields[5].split(",")
                 if target == "/":
@@ -322,6 +325,8 @@ class InnerStream(TreeStream):
                 raise Refusal("inner-independent-readonly-inputs")
             if self.extra_args == ("--unit-tests",) and "ro" not in mounts.get("/opt/loom-test-deps", []):
                 raise Refusal("inner-approved-api-closure-not-readonly")
+            if self.extra_args == ("--custody-stock",) and "ro" not in mounts.get("/opt/loom-stock", []):
+                raise Refusal("inner-stock-closure-not-readonly")
             if root_filesystem != "tmpfs":
                 raise Refusal("inner-independent-empty-root")
             candidates.append({"hostPid": pid, "startTicks": ticks, "namespaces": namespaces,
@@ -407,6 +412,8 @@ class InnerRefusal(InnerStream):
 class InnerUnits(InnerStream):
     extra_args = ("--unit-tests",)
     byte_limit = 8 * 1048576
+    workload_command = ["bun", "run", "test"]
+    workload_timeout = 1720
 
     def __init__(self, identity, nonce):
         self.streams = {"stdout": bytearray(), "stderr": bytearray()}
@@ -427,14 +434,14 @@ class InnerUnits(InnerStream):
                 if sum(len(stream) for stream in self.streams.values()) > 4 * 1048576:
                     raise Refusal("inner-workload-output-bound")
             else:
-                if value.get("command") != ["bun", "run", "test"] or value.get("capturedBytes") != sum(len(stream) for stream in self.streams.values()):
+                if value.get("command") != self.workload_command or value.get("capturedBytes") != sum(len(stream) for stream in self.streams.values()):
                     raise Refusal("inner-workload-result-binding")
                 self.events.append(value)
             return
         super().accept(data)
 
     def finish(self):
-        deadline = time.monotonic() + 1720
+        deadline = time.monotonic() + self.workload_timeout
         while not self.done():
             if time.monotonic() > deadline:
                 raise Refusal("inner-approved-workload-timeout")
@@ -443,6 +450,12 @@ class InnerUnits(InnerStream):
         if len(completed) != 1 or self.process.wait(timeout=2) != completed[0]["testExit"]:
             raise Refusal("inner-workload-exit-unproven")
         return self.events
+
+
+class InnerStock(InnerUnits):
+    extra_args = ("--custody-stock",)
+    workload_command = ["python3", "-I", "-S", "-B", "/workspace/scripts/loom-isolation/stock_probe.py"]
+    workload_timeout = 110
 
 
 def retirement_events(data: bytes, descriptor: int) -> bool:
