@@ -37,6 +37,9 @@ const safePatterns = [
   /^go list(?:\s|$)/,
   /^go env(?:\s|$)/,
   /^go mod graph(?:\s|$)/,
+  /^go mod verify$/,
+  /^go mod tidy -diff$/,
+  /^go version$/,
   /^gofmt(?:\s|$)/,
   /^golangci-lint run(?:\s|$)/,
   /^gosec(?:\s|$)/,
@@ -176,6 +179,7 @@ export function isAllowedWorkerShell(command: string) {
 
   if (!normalized) return false
   if (hasForbiddenShellSyntax(normalized)) return false
+  if (scopedToolOutputFlagPresent(normalized)) return false
 
   const parsed = parseEnvironmentPrefix(normalized)
   if (!parsed || !parsed.command) return false
@@ -245,6 +249,32 @@ function parsedCommandWords(command: string) {
   const parsed = parseEnvironmentPrefix(normalized)
   if (!parsed || !parsed.command || !environmentAllowed(parsed.assignments)) return undefined
   return splitShellWords(parsed.command)
+}
+
+/** User-owned shell exception. It admits one bounded invocation, not its effects.
+ * Dangerous shell composition and Git authoring are still governed by the
+ * separate one-use loom_command_elevate audit path.
+ */
+export function localPolicyShellAllowed(
+  command: string,
+  rules: { exact: readonly string[]; prefixes: readonly string[] },
+): boolean {
+  const normalized = command.trim()
+  const words = parsedCommandWords(normalized)
+  if (!words?.length) return false
+  // Git mutation has existing ownership-aware admission; arbitrary forms can
+  // instead be explicitly audit-elevated for one exact command.
+  if (words[0] === "git" || words[0] === "but") return false
+  if (new Set([
+    "env", "command", "exec", "sudo", "doas", "su", "runuser",
+    "nice", "nohup", "time", "setsid", "busybox", "xargs", "parallel",
+  ]).has(words[0])) return false
+  if (new Set(["sh", "bash", "dash", "zsh", "fish"]).has(words[0]) &&
+      words.slice(1).some((word) => /^-[a-z]*c[a-z]*$/.test(word))) return false
+  if (rules.exact.includes(normalized)) return true
+  return rules.prefixes.some((prefix) =>
+    normalized === prefix || normalized.startsWith(prefix + " "),
+  )
 }
 
 // Named package scripts execute project code. The command and environment
@@ -374,8 +404,8 @@ export function isElevatableVerificationShell(command: string) {
 
 /**
  * Project generation is separate from verification: it writes product files.
- * Only admitted generator forms with a mandatory, explicit output directory
- * can use a one-shot elevation. Future generators need their own shape parser,
+ * Only admitted generator forms with a predictable output directory
+ * can use scope-based admission. Other generators require their own parser,
  * rather than an arbitrary-executable fallback.
  */
 type GenerationCommand = { output?: string; error?: string }
@@ -462,9 +492,9 @@ function parseGenerationCommand(command: string): GenerationCommand | undefined 
       return { error: "Unsafe or unsupported value for swag init option " + flag + "." }
     }
   }
-  if (!output) {
-    return { error: "swag init requires an explicit -o or --output directory for scope binding." }
-  }
+  // Swaggo defaults to ./docs. Treat it as three explicit outputs and
+  // require the same write scope as --output ./docs.
+  if (!output) output = "docs"
   if (output === "." ||
     output === ".git" || output.startsWith(".git/") ||
     output === ".loom" || output.startsWith(".loom/")) {
@@ -724,6 +754,68 @@ export function scopedGitAddTargets(command: string) {
   return sawAdd ? [...new Set(targets)] : undefined
 }
 
+
+/** File-specific Git commands inherit the current authorized write paths.
+ * Only literal explicit paths are accepted; Git aliases, wildcard pathspecs,
+ * option expansion and implicit repository-wide mutations are excluded.
+ */
+export type ScopedGitFileMutation = {
+  kind: "rm" | "mv" | "restore" | "reset" | "checkout"
+  paths: string[]
+  writesWorktree: boolean
+  stagesChanges: boolean
+  unstagesChanges: boolean
+}
+
+function safeGitFilePath(path: string) {
+  const normalized = path.replace(/^\.\//, "")
+  const parts = normalized.split("/")
+  return !path.startsWith("-") &&
+    safeProjectRelativePath(path) &&
+    !parts.includes(".git") &&
+    !parts.includes(".loom") &&
+    normalized !== ".loom.yaml" &&
+    normalized !== ".loom.yml" &&
+    normalized !== "docs/reports" &&
+    !normalized.startsWith("docs/reports/") &&
+    normalized !== "ephemeral-reports" &&
+    !normalized.startsWith("ephemeral-reports/")
+}
+
+export function scopedGitFileMutation(command: string): ScopedGitFileMutation | undefined {
+  const words = parsedCommandWords(command)
+  if (!words || words[0] !== "git") return undefined
+  let index = 1
+  if (words[index] === "-c" && words[index + 1] === "core.hooksPath=/dev/null") index += 2
+  const kind = words[index] as ScopedGitFileMutation["kind"]
+  if (!["rm", "mv", "restore", "reset", "checkout"].includes(kind)) return undefined
+  const args = words.slice(index + 1)
+  const dash = args.indexOf("--")
+  if (dash < 0) return undefined
+  const flags = args.slice(0, dash)
+  const paths = args.slice(dash + 1)
+  if (paths.length === 0 || paths.some((path) => !safeGitFilePath(path))) return undefined
+
+  if (kind === "rm" || kind === "mv" || kind === "checkout") {
+    if (flags.length !== 0 || (kind === "mv" && paths.length !== 2)) return undefined
+    return {
+      kind, paths, writesWorktree: true,
+      stagesChanges: kind === "rm" || kind === "mv", unstagesChanges: false,
+    }
+  }
+  if (kind === "reset") {
+    if (flags.length > 1 || (flags.length === 1 && flags[0] !== "HEAD")) return undefined
+    return { kind, paths, writesWorktree: false, stagesChanges: false, unstagesChanges: true }
+  }
+  if (flags.some((flag) => !["--staged", "--worktree"].includes(flag)) ||
+      new Set(flags).size !== flags.length) return undefined
+  const staged = flags.includes("--staged")
+  return {
+    kind, paths, writesWorktree: !staged || flags.includes("--worktree"),
+    stagesChanges: false, unstagesChanges: staged,
+  }
+}
+
 function shellSegmentsForAuthoringClassification(command: string) {
   const segments: string[] = []
   let current = ""
@@ -887,7 +979,7 @@ function gitAuthoringSubcommand(words: readonly string[]) {
       continue
     }
 
-    return word === "add" || word === "commit" ? word : undefined
+    return ["add", "commit", "rm", "mv", "restore", "reset", "checkout"].includes(word) ? word : undefined
   }
 
   return undefined
@@ -902,6 +994,7 @@ export function isGitAuthoringShellCommand(command: string) {
 
 type AllowedGitCommit = {
   messageFile?: string
+  paths: string[]
 }
 
 export function commitMessageScratchPath(path: string) {
@@ -927,8 +1020,14 @@ function parsedAllowedGitCommit(command: string): AllowedGitCommit | undefined {
 
   let hasInlineMessage = false
   let messageFile: string | undefined
+  let paths: string[] = []
   for (let index = 4; index < words.length; index += 1) {
     const word = words[index]
+    if (word === "--") {
+      paths = words.slice(index + 1)
+      if (paths.length === 0 || paths.some((path) => !safeGitFilePath(path))) return undefined
+      break
+    }
     if (word === "-m" || word === "--message") {
       const message = words[index + 1]
       if (!message || messageFile) return undefined
@@ -957,7 +1056,11 @@ function parsedAllowedGitCommit(command: string): AllowedGitCommit | undefined {
   }
 
   if (!hasInlineMessage && !messageFile) return undefined
-  return messageFile ? { messageFile } : {}
+  return { ...(messageFile ? { messageFile } : {}), paths }
+}
+
+export function gitCommitPaths(command: string) {
+  return parsedAllowedGitCommit(command)?.paths ?? []
 }
 
 export function gitCommitMessageFile(command: string) {
@@ -1109,11 +1212,23 @@ export function workerShellResourcesAllowed(
   if (resources.length === 0) return false
 
   return resources.every((command) => {
+    const outputs = scopedToolWriteTargets(command)
+    if (outputs.length) return writeScope.length > 0 &&
+      resourcesWithinScope(outputs, writeScope)
+    if (scopedToolOutputFlagPresent(command)) return false
     if (
       diagnosticShellResourcesAllowed([command]) ||
-      workerExecutionAllowed(command) ||
-      workerDeliveryAllowed(command)
+      workerExecutionAllowed(command)
     ) return true
+    if (isAllowedGitCommit(command)) {
+      const paths = gitCommitPaths(command)
+      return writeScope.length > 0 &&
+        (paths.length === 0 || resourcesWithinScope(paths, writeScope))
+    }
+    const operation = scopedGitFileMutation(command)
+    if (operation) return writeScope.length > 0 &&
+      resourcesWithinScope(operation.paths, writeScope)
+    if (workerDeliveryAllowed(command)) return true
 
     const gofmtTargets = scopedGofmtWriteTargets(command)
     if (
@@ -1135,9 +1250,13 @@ export function authorGitShellResourcesAllowed(
   if (resources.length === 0 || writeScope.length === 0) return false
 
   return resources.every((command) => {
-    if (isAllowedGitCommit(command) || authoringInspectionAllowed(command)) {
-      return true
+    if (isAllowedGitCommit(command)) {
+      const paths = gitCommitPaths(command)
+      return paths.length === 0 || resourcesWithinScope(paths, writeScope)
     }
+    if (authoringInspectionAllowed(command)) return true
+    const operation = scopedGitFileMutation(command)
+    if (operation) return resourcesWithinScope(operation.paths, writeScope)
     const targets = scopedGitAddTargets(command)
     return Boolean(targets && resourcesWithinScope(targets, writeScope))
   })
@@ -1149,6 +1268,100 @@ function safeRelativeGoFile(path: string) {
   if (normalized.split("/").includes("..")) return false
   if (/[*?\[\]{}]/.test(normalized)) return false
   return normalized.endsWith(".go")
+}
+
+/**
+ * Predictable outputs for common source-writing tools. The shell still runs
+ * with host permissions; only these files can acquire Loom Git provenance.
+ */
+/** True when a verifier names an explicit on-disk report output. */
+export function scopedToolOutputFlagPresent(command: string) {
+  const words = parsedCommandWords(command)
+  if (!words) return false
+  const args = /^python(?:3(?:\.[0-9]+)?)?$/.test(words[0]) && words[1] === "-m"
+    ? words.slice(2) : words
+  const flag = args[0] === "go" && args[1] === "test"
+    ? "-coverprofile" : args[0] === "pytest" ? "--junitxml" : undefined
+  return Boolean(flag && args.some((value) =>
+    value === flag || value.startsWith(flag + "=")))
+}
+
+export function scopedToolWriteTargets(command: string): string[] {
+  const swagger = elevatedGenerationPaths(command)
+  if (swagger.length) return swagger
+  const words = parsedCommandWords(command)
+  if (!words?.length) return []
+  const args = /^python(?:3(?:\.[0-9]+)?)?$/.test(words[0]) && words[1] === "-m"
+    ? words.slice(2) : words
+  const [runner, action] = args
+
+  if (runner === "go" && action === "mod" && args[2] === "tidy" && args.length === 3) {
+    return ["go.mod", "go.sum"]
+  }
+  if (runner === "go" && action === "fmt" && args.length > 2 &&
+      args.slice(2).every((p) => !p.startsWith("-") && safeRelativeGoFile(p))) {
+    return [...new Set(args.slice(2))]
+  }
+  if (["gofmt", "goimports", "gofumpt"].includes(runner)) {
+    const allowed = runner === "gofmt" ? ["-w", "-s"] : ["-w"]
+    const values = args.slice(1)
+    const files = values.filter((v) => !v.startsWith("-"))
+    if (values.includes("-w") && files.length &&
+        values.every((v) => v.startsWith("-")
+          ? allowed.includes(v) : safeRelativeGoFile(v))) return [...new Set(files)]
+    return []
+  }
+
+  const ruffFix = runner === "ruff" && action === "check" && args.includes("--fix")
+  const ruffFormat = runner === "ruff" && action === "format" && !args.includes("--check")
+  const pythonFormat = ["black", "isort"].includes(runner)
+  const pythonInPlace = ["autopep8", "yapf"].includes(runner) &&
+    args.some((v) => ["--in-place", "-i"].includes(v))
+  const jsFormat = (runner === "prettier" && args.includes("--write")) ||
+    (runner === "eslint" && args.includes("--fix"))
+  const shFormat = runner === "shfmt" && args.includes("-w")
+  if (ruffFix || ruffFormat || pythonFormat || pythonInPlace || jsFormat || shFormat) {
+    const allowedFlags = new Set([
+      "--fix", "--unsafe-fixes", "--write", "--in-place",
+      "-i", "-w", "-s", "-q", "--quiet", "-v", "--verbose",
+    ])
+    const values = args.slice(runner === "ruff" ? 2 : 1)
+    const extension = (ruffFix || ruffFormat || pythonFormat || pythonInPlace)
+      ? /\.pyi?$/ : shFormat ? /\.(?:sh|bash)$/ :
+      /\.(?:js|jsx|ts|tsx|mjs|cjs|json|md|yaml|yml|css|scss|html|vue|svelte)$/
+    const files = values.filter((v) => !v.startsWith("-"))
+    if (files.length && values.every((v) => v.startsWith("-")
+      ? allowedFlags.has(v)
+      : safeScopedToolOutput(v) && extension.test(v))) return [...new Set(files)]
+    return []
+  }
+
+  // Tests can have many side effects. Only explicit report-file flags can
+  // receive post-run ownership, never unknown test outputs.
+  const flag = runner === "go" && action === "test"
+    ? "-coverprofile" : runner === "pytest" ? "--junitxml" : undefined
+  if (flag) {
+    const values = args.slice(runner === "go" ? 2 : 1)
+    const outputs: string[] = []
+    for (let i = 0; i < values.length; i += 1) {
+      if (values[i] !== flag && !values[i].startsWith(flag + "=")) continue
+      const path = values[i] === flag ? values[++i] : values[i].slice(flag.length + 1)
+      if (!path || !safeScopedToolOutput(path)) return []
+      outputs.push(path)
+    }
+    if (outputs.length === 1) return outputs
+  }
+  return []
+}
+
+function safeScopedToolOutput(path: string) {
+  const normalized = path.replace(/^\.\//, "")
+  const parts = normalized.split("/")
+  return !path.startsWith("-") && safeProjectRelativePath(path) &&
+    !parts.includes(".git") && !parts.includes(".loom") &&
+    normalized !== ".loom.yaml" && normalized !== ".loom.yml" &&
+    normalized !== "docs/reports" && !normalized.startsWith("docs/reports/") &&
+    normalized !== "ephemeral-reports" && !normalized.startsWith("ephemeral-reports/")
 }
 
 export function scopedGofmtWriteTargets(command: string) {

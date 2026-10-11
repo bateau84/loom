@@ -10,6 +10,8 @@ import {
   generationElevationError,
   elevatedVerificationEntrypoint,
   isAllowedGitCommit,
+  gitCommitPaths,
+  scopedGitFileMutation,
   isAllowedPackageScriptShell,
   isAllowedWorkerShell,
   isGitInspectionShellCommand,
@@ -17,6 +19,8 @@ import {
   isGitAuthoringShellCommand,
   scopedGitAddTargets,
   scopedGofmtWriteTargets,
+  scopedToolWriteTargets,
+  scopedToolOutputFlagPresent,
   shellResourcesAllowed,
   workerShellResourcesAllowed,
 } from "./shell"
@@ -213,10 +217,12 @@ describe("Loom Worker shell policy", () => {
     expect(elevatedGenerationOutput("swag init --tags '!internal-app-v1' -o internal/swagger/v2")).toBe("internal/swagger/v2")
     expect(generationElevationError("swag init --badOption 1 -o internal/swagger/v2")).toContain("Unsupported swag init option")
     expect(generationElevationError("swag init --output ../outside")).toContain("project-relative")
-    expect(generationElevationError("swag init -g doc.go")).toContain("explicit -o or --output")
+    expect(elevatedGenerationOutput("swag init -g doc.go")).toBe("docs")
+    expect(elevatedGenerationPaths("swag init")).toEqual([
+      "docs/docs.go", "docs/swagger.json", "docs/swagger.yaml",
+    ])
 
     for (const invalid of [
-      "swag init",
       "swag init --output .",
       "swag init --output ../outside",
       "swag init --output /tmp/out",
@@ -595,6 +601,89 @@ describe("Loom Worker shell policy", () => {
     expect(workerShellResourcesAllowed(["gh pr edit --body-file /etc/passwd"], scope)).toBe(false)
     expect(workerShellResourcesAllowed(["gh run rerun 456 --failed"], scope)).toBe(false)
     expect(workerShellResourcesAllowed(["gh pr merge 123"], scope)).toBe(false)
+  })
+
+  test("grants bounded Git file operations from the same file scope", () => {
+    const scope = ["src/**"]
+    const selected = "git -c core.hooksPath=/dev/null commit -m 'fix: selected files' -- src/app.go src/new.go"
+    expect(gitCommitPaths(selected)).toEqual(["src/app.go", "src/new.go"])
+    expect(isAllowedGitCommit(selected)).toBe(true)
+    expect(authorGitShellResourcesAllowed([selected], scope)).toBe(true)
+    expect(workerShellResourcesAllowed([selected], scope)).toBe(true)
+    expect(authorGitShellResourcesAllowed([
+      "git -c core.hooksPath=/dev/null commit -m fix -- docs/outside.md",
+    ], scope)).toBe(false)
+
+    const permitted = [
+      "git rm -- src/app.go",
+      "git mv -- src/app.go src/new.go",
+      "git restore -- src/app.go",
+      "git restore --staged -- src/app.go",
+      "git restore --staged --worktree -- src/app.go",
+      "git reset HEAD -- src/app.go",
+      "git checkout -- src/app.go",
+    ]
+    for (const command of permitted) {
+      expect(scopedGitFileMutation(command)?.paths.length).toBeGreaterThan(0)
+      expect(isGitAuthoringShellCommand(command)).toBe(true)
+      expect(authorGitShellResourcesAllowed([command], scope)).toBe(true)
+      expect(workerShellResourcesAllowed([command], scope)).toBe(true)
+    }
+    for (const command of [
+      "git rm -r -- src/app.go",
+      "git mv -- src/app.go docs/outside.md",
+      "git restore -- src/../outside.md",
+      "git reset --hard HEAD -- src/app.go",
+      "git checkout main",
+      "git checkout -- .",
+      "git rm -- :/src/app.go",
+      "git commit -a -m all -- src/app.go",
+      "git -c core.hooksPath=/dev/null commit -m fix -- src/*",
+    ]) expect(authorGitShellResourcesAllowed([command], scope)).toBe(false)
+  })
+
+  test("bounded test, generator, Go, Python and JS tool output files", () => {
+    const examples: Array<[string, string[]]> = [
+      ["go mod tidy", ["go.mod", "go.sum"]],
+      ["go fmt src/app.go", ["src/app.go"]],
+      ["gofmt -w src/app.go", ["src/app.go"]],
+      ["goimports -w src/app.go", ["src/app.go"]],
+      ["gofumpt -w src/app.go", ["src/app.go"]],
+      ["ruff check --fix scripts/main.py", ["scripts/main.py"]],
+      ["python3 -m ruff format scripts/main.py", ["scripts/main.py"]],
+      ["black scripts/main.py", ["scripts/main.py"]],
+      ["isort scripts/main.py", ["scripts/main.py"]],
+      ["autopep8 --in-place scripts/main.py", ["scripts/main.py"]],
+      ["prettier --write src/app.ts", ["src/app.ts"]],
+      ["eslint --fix src/app.ts", ["src/app.ts"]],
+      ["go test ./... -coverprofile=reports/coverage.out", ["reports/coverage.out"]],
+      ["pytest -q --junitxml=reports/junit.xml", ["reports/junit.xml"]],
+      ["swag init --output docs/swagger", [
+        "docs/swagger/docs.go", "docs/swagger/swagger.json", "docs/swagger/swagger.yaml",
+      ]],
+      ["swag init", ["docs/docs.go", "docs/swagger.json", "docs/swagger.yaml"]],
+    ]
+    for (const [command, outputs] of examples) {
+      expect(scopedToolWriteTargets(command)).toEqual(outputs)
+      expect(workerShellResourcesAllowed([command], outputs)).toBe(true)
+      expect(workerShellResourcesAllowed([command], ["src/unrelated.ts"])).toBe(false)
+    }
+    for (const command of [
+      "go fmt ./...", "goimports -w ../outside.go",
+      "go mod tidy -modfile ../external.mod", "ruff check --fix .",
+      "ruff check --fix ../outside.py", "ruff format --check scripts/main.py",
+      "python -m black .", "prettier --write .", "eslint --fix src/**",
+      "pytest --junitxml=../outside.xml", "go test ./... -coverprofile=../../outside",
+      "swag init --output ../outside", "gofmt -w src/app.go && rm -rf src",
+    ]) expect(scopedToolWriteTargets(command)).toEqual([])
+    expect(workerShellResourcesAllowed(["go version"])).toBe(true)
+    expect(workerShellResourcesAllowed(["go mod verify"])).toBe(true)
+    expect(workerShellResourcesAllowed(["go mod tidy -diff"])).toBe(true)
+    for (const command of ["go test ./... -coverprofile=../outside.out",
+      "pytest --junitxml=../outside.xml", "go test -coverprofile=a -coverprofile=b ./..."]) {
+      expect(scopedToolOutputFlagPresent(command)).toBe(true)
+      expect(workerShellResourcesAllowed([command], ["src/**"])).toBe(false)
+    }
   })
 
   test("lets durable artifact authors stage and commit only their owned files", () => {

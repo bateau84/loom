@@ -94,9 +94,11 @@ git diff --cached --stat
 git diff --cached --check
 ~~~
 
-Outside governed Loom, use the repository's ordinary hooks and Git commit workflow. **Inside Loom**, only use the precise command forms currently admitted by the runtime; for example, where admitted, a scoped `git add -- ...` followed by `git -c core.hooksPath=/dev/null commit -m "..."`. Do not disable hooks merely for convenience outside that explicitly controlled environment.
+Outside governed Loom, use the repository's ordinary hooks and Git commit workflow. **Inside Loom**, the current effective file write scope also authorizes Git operations on those exact files. This includes paths added by `loom_scope_elevate`: no separate elevation is needed just to stage, move, remove, or commit an already authorized file. Use `git add -- path/to/file` and the hookless, explicit-path form `git -c core.hooksPath=/dev/null commit -m "message" -- path/to/file` to keep other agents' staged work out of the commit. A plain hookless commit without `-- <files>` commits only when **every** staged file is verified as owned by this step. Scoped `git rm --`, `git mv --`, `git restore --`, `git reset HEAD --`, and `git checkout --` accept explicit authorized files; existing dirty bytes must belong to the same step attempt. A scope grant is not proof that another session's dirty changes belong to this agent.
 
-Partial staging and history editing may be unsupported by Loom's whole-file provenance rules even when Git supports them. Follow the runtime denial; do not switch tools to bypass it.
+A separate exact one-use `loom_command_elevate` grant still permits other shell Git commands as an **audit-only exception**, without proving trusted Git or file ownership. Do not disable hooks without an explicitly admitted command.
+
+Partial staging and history editing may be unsupported by Loom's ordinary whole-file provenance rules even when Git supports them. Follow ungranted denials; use explicit command elevation only when the assigned work calls for it. Do not hide an ungranted command behind another executable or wrapper.
 
 ## 5. Branches, syncing, and publishing
 

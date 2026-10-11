@@ -106,6 +106,10 @@ const UPGRADE_WORKFLOW_ID = "legacy-upgrade-workflow"
 
 type MockProviderState = {
   programs: Map<string, { code: string; done: boolean; result?: unknown }>
+  standaloneGeneralCompleted: boolean
+  standaloneChildReadObserved: boolean
+  standaloneWorkerCompleted: boolean
+  standaloneProviderCalls: number
   workflowId?: string
   workerGrantId?: string
   reviewerGrantId?: string
@@ -132,7 +136,7 @@ type MockProviderState = {
   upgradeSecondaryResumed: boolean
   statusPreviewRequested: boolean
   statusPreviewFallbackObserved: boolean
-  sawNativeLoomToolGuidance: boolean
+  sawInjectedLoomContract: boolean
   codeModeLoomStatusObserved: boolean
   codeModeLoomSearchObserved: boolean
   statusArtifactPath?: string
@@ -330,6 +334,57 @@ function subagentAction(
 }
 
 function chooseMockAction(prompt: string, results: Map<string, unknown>, state: MockProviderState) {
+  // These scenarios intentionally run in an actual OpenCode host with no Loom
+  // plugin. The host's own permissions, not Loom, admit ordinary agent tools.
+  if (prompt.includes("OPENCODE_STANDALONE_GENERAL")) {
+    if (!results.has("read")) {
+      return { name: "read", args: { path: "docs/anchors/shared-name/anchor.md" } }
+    }
+    if (toolRejected(results.get("read")) ||
+        !JSON.stringify(results.get("read")).includes("Integration Anchor")) {
+      throw new Error("Standalone General failed to inspect a project file: " + JSON.stringify(results.get("read")).slice(0, 1200))
+    }
+    if (!results.has("subagent")) {
+      return subagentAction(state, "worker", "OPENCODE_STANDALONE_CHILD", "Standalone delegated inspection")
+    }
+    if (toolRejected(results.get("subagent")) || !state.standaloneChildReadObserved) {
+      throw new Error("Standalone General could not delegate to Worker without Loom.")
+    }
+    state.standaloneGeneralCompleted = true
+    return null
+  }
+
+  if (prompt.includes("OPENCODE_STANDALONE_CHILD")) {
+    if (!results.has("read")) {
+      return { name: "read", args: { path: "docs/anchors/shared-name/anchor.md" } }
+    }
+    if (toolRejected(results.get("read")) ||
+        !JSON.stringify(results.get("read")).includes("Integration Anchor")) {
+      throw new Error("Standalone delegated Worker failed to read the project file: " + JSON.stringify(results.get("read")).slice(0, 1200))
+    }
+    state.standaloneChildReadObserved = true
+    return null
+  }
+
+  if (prompt.includes("OPENCODE_STANDALONE_WORKER")) {
+    if (!results.has("write")) {
+      return { name: "write", args: {
+        path: "src/standalone-proof.txt",
+        content: "ordinary OpenCode agent write without Loom\n",
+      } }
+    }
+    if (toolRejected(results.get("write"))) {
+      throw new Error("Standalone Worker write was rejected: " + JSON.stringify(results.get("write")))
+    }
+    if (!results.has("shell")) {
+      return { name: "shell", args: { command: "pwd" } }
+    }
+    if (toolRejected(results.get("shell"))) {
+      throw new Error("Standalone Worker shell was rejected: " + JSON.stringify(results.get("shell")))
+    }
+    state.standaloneWorkerCompleted = true
+    return null
+  }
   const program = state.programs.get(prompt)
   if (program) {
     if (!results.has("execute")) return { name: "execute", args: { code: program.code } }
@@ -1005,6 +1060,10 @@ function chooseMockAction(prompt: string, results: Map<string, unknown>, state: 
 async function startMockProvider() {
   const state: MockProviderState = {
     programs: new Map(),
+    standaloneGeneralCompleted: false,
+    standaloneChildReadObserved: false,
+    standaloneWorkerCompleted: false,
+    standaloneProviderCalls: 0,
     workerAttached: false,
     workerShellObserved: false,
     workerCommitPhase: 0,
@@ -1025,7 +1084,7 @@ async function startMockProvider() {
     upgradeSecondaryResumed: false,
     statusPreviewRequested: false,
     statusPreviewFallbackObserved: false,
-    sawNativeLoomToolGuidance: false,
+    sawInjectedLoomContract: false,
     codeModeLoomStatusObserved: false,
     codeModeLoomSearchObserved: false,
     budgetQuestionObserved: false,
@@ -1064,10 +1123,11 @@ async function startMockProvider() {
       const messages = Array.isArray(body.messages) ? body.messages : []
       if (messages.some((message: any) =>
         message?.role === "system" &&
-        openAiMessageText(message.content).includes("two equivalent OpenCode surfaces") &&
+        openAiMessageText(message.content).includes("# Loom shared runtime contract (plugin only)") &&
+        openAiMessageText(message.content).includes("# Loom runtime contract: general") &&
         openAiMessageText(message.content).includes("tools.loom.code.*")
       )) {
-        state.sawNativeLoomToolGuidance = true
+        state.sawInjectedLoomContract = true
       }
       const delegatedBudgetWorkerPrompt = [...messages]
         .reverse()
@@ -1113,6 +1173,23 @@ async function startMockProvider() {
           ? "LOOM_INTEGRATION_BUDGET_WORKER"
           : delegatedBudgetWorkerPrompt ?? latestUserPrompt(messages)
       state.prompts.push(prompt)
+      if (prompt.includes("OPENCODE_STANDALONE_")) {
+        if ([...requestToolNames].some((name) => name.startsWith("loom_"))) {
+          throw new Error("Disabled Loom leaked control-plane tools into the standalone host.")
+        }
+        if (messages.some((message: any) =>
+          message?.role === "system" &&
+          openAiMessageText(message.content).includes("# Loom shared runtime contract"))) {
+          throw new Error("Disabled Loom leaked its runtime contract into standalone model context.")
+        }
+        const required = prompt.includes("OPENCODE_STANDALONE_WORKER") ? ["write", "shell"]
+          : prompt.includes("OPENCODE_STANDALONE_GENERAL") ? ["read", "subagent"] : ["read"]
+        if (required.some((name) => !requestToolNames.has(name))) {
+          throw new Error("Standalone OpenCode tool capabilities missing: " +
+            required.filter((name) => !requestToolNames.has(name)).join(", "))
+        }
+        state.standaloneProviderCalls++
+      }
       const latestUserIndex = messages.findLastIndex((message: any) => message?.role === "user")
       const turnMessages = latestUserIndex >= 0 ? messages.slice(latestUserIndex + 1) : messages
       const results = toolResults(turnMessages)
@@ -1404,7 +1481,7 @@ async function startFakeBrowser(handle: ServerHandle, sessionID: string) {
   }
 }
 
-async function createProject(base: string, name: string, mockBaseUrl: string) {
+async function createProject(base: string, name: string, mockBaseUrl: string, withLoom = true) {
   const project = join(base, name)
   const pluginDir = join(project, ".opencode", "plugins")
   const agentDir = join(project, ".opencode", "agents")
@@ -1416,11 +1493,16 @@ async function createProject(base: string, name: string, mockBaseUrl: string) {
     "# Integration Anchor\n",
     "utf8",
   )
-  await symlink(join(root, "plugins", "loom"), join(pluginDir, "loom"), "dir")
-  if (name === "project-a") {
+  if (withLoom) await symlink(join(root, "plugins", "loom"), join(pluginDir, "loom"), "dir")
+  if (withLoom && name === "project-a") {
     await symlink(join(root, "scripts", "fixtures", "lifecycle-delay-plugin.ts"), join(pluginDir, "lifecycle-delay-plugin.ts"), "file")
   }
-  for (const agent of ["general", "worker", "reviewer", "planner", "diagnostic"]) {
+  const roles = withLoom
+    ? ["general", "worker", "reviewer", "planner", "diagnostic"]
+    : ["acceptance", "architect", "brainstorm", "critic", "designer",
+       "diagnostic", "documenter", "general", "planner", "research",
+       "reviewer", "specifier", "worker"]
+  for (const agent of roles) {
     await symlink(join(root, "agents", `${agent}.md`), join(agentDir, `${agent}.md`), "file")
   }
   await writeFile(
@@ -1432,10 +1514,24 @@ async function createProject(base: string, name: string, mockBaseUrl: string) {
     join(project, "opencode.json"),
     JSON.stringify({
       "$schema": "https://opencode.ai/config.json",
-      plugins: ["./.opencode/plugins/loom", ...(name === "project-a" ? ["./.opencode/plugins/lifecycle-delay-plugin.ts"] : [])],
+      plugins: withLoom ? ["./.opencode/plugins/loom", ...(name === "project-a" ? ["./.opencode/plugins/lifecycle-delay-plugin.ts"] : [])] : [],
       model: "loommock/mock",
       enabled_providers: ["loommock"],
       permission: { browser: "allow" },
+      // The standalone fixture supplies host permissions explicitly. Loom is
+      // not expected to choose defaults or confer write/delegation capability.
+      ...(withLoom ? {} : {
+        permissions: [
+          { action: "read", resource: "*", effect: "allow" },
+          { action: "edit", resource: "src/**", effect: "allow" },
+          { action: "shell", resource: "pwd", effect: "allow" },
+        ],
+        // Built-in General denies subagents by default. A user's ordinary
+        // agent config can override that without enabling Loom.
+        agents: { general: { permissions: [
+          { action: "subagent", resource: "worker", effect: "allow" },
+        ] } },
+      }),
       provider: {
         loommock: {
           npm: "@ai-sdk/openai-compatible",
@@ -2092,13 +2188,83 @@ const servers: ServerHandle[] = []
 const mock = await startMockProvider()
 
 try {
-  const [projectA, projectB, projectTuiBudget, projectRestartBudget] = await Promise.all([
+  const [projectA, projectB, projectTuiBudget, projectRestartBudget, standaloneProject] = await Promise.all([
     createProject(base, "project-a", mock.baseUrl),
     createProject(base, "project-b", mock.baseUrl),
     createProject(base, "project-tui-budget", mock.baseUrl),
     createProject(base, "project-restart-budget", mock.baseUrl),
+    createProject(base, "project-without-loom", mock.baseUrl, false),
   ])
   await prepareTuiBudgetProject(projectTuiBudget)
+
+  // Exercise a real OpenCode server without the plugin. The test does not
+  // select a default agent: General is explicitly chosen, like any user agent.
+  await mkdir(join(standaloneProject, "src"), { recursive: true })
+  const standaloneServer = await startServer(
+    base, standaloneProject, join(base, "standalone-state"),
+    join(base, "standalone-runtime"), "standalone-no-loom",
+  )
+  servers.push(standaloneServer)
+  const standaloneGeneral = await jsonRequestAny(
+    [`${standaloneServer.baseUrl}/api/session`, `${standaloneServer.baseUrl}/session`],
+    standaloneServer.authorization, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        ...sessionCreateBody("Standalone General", "general"),
+        location: { directory: standaloneProject },
+      }),
+    },
+  )
+  if (!standaloneGeneral?.id) throw new Error("No-Loom General session creation failed.")
+  await sendPrompt(standaloneServer, standaloneGeneral.id, "OPENCODE_STANDALONE_GENERAL")
+  await waitForCondition(
+    () => mock.state.standaloneGeneralCompleted && mock.state.standaloneChildReadObserved,
+    "No-Loom General read and native Worker delegation", () => mock.state.prompts.slice(-12), 30_000,
+  )
+
+  const standaloneAgentUrl = new URL("/api/agent", standaloneServer.baseUrl)
+  standaloneAgentUrl.searchParams.set("location[directory]", standaloneProject)
+  const standaloneAgentResponse = await jsonRequest(
+    standaloneAgentUrl.toString(), standaloneServer.authorization,
+  )
+  const standaloneAgents = Array.isArray(standaloneAgentResponse) ? standaloneAgentResponse
+    : Array.isArray(standaloneAgentResponse?.agents) ? standaloneAgentResponse.agents
+    : Array.isArray(standaloneAgentResponse?.data) ? standaloneAgentResponse.data
+    : Array.isArray(standaloneAgentResponse?.items) ? standaloneAgentResponse.items
+    : Array.isArray(standaloneAgentResponse?.result) ? standaloneAgentResponse.result : []
+  const agentNames = new Set(standaloneAgents.map((agent: any) =>
+    String(agent?.id ?? agent?.name ?? "")))
+  for (const role of [
+    "acceptance", "architect", "brainstorm", "critic", "designer", "diagnostic",
+    "documenter", "general", "planner", "research", "reviewer", "specifier", "worker",
+  ]) {
+    if (!agentNames.has(role)) throw new Error("Standalone OpenCode failed to load role " + role + "; host agents: " + [...agentNames].join(", ") + "; response: " + JSON.stringify(standaloneAgentResponse).slice(0, 1500))
+  }
+
+  const standaloneWorker = await jsonRequestAny(
+    [`${standaloneServer.baseUrl}/api/session`, `${standaloneServer.baseUrl}/session`],
+    standaloneServer.authorization, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        ...sessionCreateBody("Standalone Worker", "worker"),
+        location: { directory: standaloneProject },
+      }),
+    },
+  )
+  if (!standaloneWorker?.id) throw new Error("No-Loom Worker session creation failed.")
+  await sendPrompt(standaloneServer, standaloneWorker.id, "OPENCODE_STANDALONE_WORKER")
+  await waitForCondition(
+    () => mock.state.standaloneWorkerCompleted,
+    "No-Loom Worker file edit and shell", () => mock.state.prompts.slice(-12), 30_000,
+  )
+  const standaloneProof = await readFile(
+    join(standaloneProject, "src", "standalone-proof.txt"), "utf8",
+  )
+  if (standaloneProof !== "ordinary OpenCode agent write without Loom\n" ||
+      mock.state.standaloneProviderCalls < 3) {
+    throw new Error("No-Loom standalone work failed: missing real file, delegation or model calls.")
+  }
+  console.log("PASS real OpenCode without Loom: all 13 agents loaded; General read/delegation, Worker edit/shell; no Loom injection")
 
   let dashboardPort = await freePort()
   while (dashboardPort === 4318) dashboardPort = await freePort()
@@ -2336,8 +2502,8 @@ try {
   )
 
   mock.state.statusPreviewRequested = false
-  if (!mock.state.sawNativeLoomToolGuidance) {
-    throw new Error("Loom native-tool routing guidance did not reach the real OpenCode provider context")
+  if (!mock.state.sawInjectedLoomContract) {
+    throw new Error("Loom shared and General role contracts did not reach real OpenCode provider context")
   }
 
   await sendPrompt(serverA, sessionA.id, "LOOM_INTEGRATION_CODEMODE_SEARCH")
@@ -2770,7 +2936,7 @@ try {
   console.log(" - crashed budget-question owner reclaimed by restarted OpenCode host: true")
   console.log(` - OpenCode auto-started dashboard endpoint reached from sidebar: ${reviewerStatusUrl}`)
   console.log(` - disconnected browser degraded cleanly: ${mock.state.statusPreviewFallbackObserved}`)
-  console.log(` - native Loom tool guidance reached provider context: ${mock.state.sawNativeLoomToolGuidance}`)
+  console.log(` - Loom optional role contract reached provider context: ${mock.state.sawInjectedLoomContract}`)
   console.log(` - Loom Code Mode mirrors discoverable: ${mock.state.codeModeLoomSearchObserved}`)
   console.log(` - Loom Code Mode mirror executed: ${mock.state.codeModeLoomStatusObserved}`)
   console.log(` - status artifact previewed through browser RPC: ${mock.state.statusPreviewRequested} · ${mock.state.statusArtifactPath}`)

@@ -30,8 +30,6 @@ import {
   upgradeCompatibilityNotice,
 } from "./upgrade-actions"
 
-export const LOOM_NATIVE_TOOL_GUIDANCE =
-  "Loom control-plane tools are available through two equivalent OpenCode surfaces: native loom_* tools and Code Mode mirrors under tools.loom.code.*. Use either surface directly according to the active tool paradigm. If using Code Mode, search for Loom tools and invoke the returned tools.loom.code.* signatures; do not fall back to shell/filesystem discovery for Loom commands. Reviewer/Critic methodology uses a two-part contract: load practitioner guidance with OpenCode's native skill tool, then consume the role companion through loom_assessment or loom_qa; a plain ASSESSMENT.md/QA.md read is artifact inspection, not methodology loading. Interactive status is dashboard-first and does not depend on model prose: the Loom sidebar exposes a stable workflow dashboard URL, while loom_status may also return presentation metadata. Desktop browser preview is optional metadata only; do not invoke tools.browser.preview merely because presentation metadata exists. Every Loom agent may use read-only Git inspection such as `git status`, `git diff`, `git log`, `git show`, and `git rev-parse`. Load `git` for safe Git mechanics and `git-commit-discipline` before making commits. When any role has durable project-local write scope, that same effective scope authorizes commits of the admitted bytes, including paths added by `loom_scope_elevate`. Loom admits explicit-path Git staging and bounded hookless `git -c core.hooksPath=/dev/null commit -m ...` commands. Long commit messages may use `git -c core.hooksPath=/dev/null commit -F ephemeral-reports/<role>/commit-messages/<name>.md`; compose that scratch file with edit/write tools, never shell redirection. Plain `git commit` is intentionally denied because repository hooks could change the staged scope after validation. Git owns its objects, refs, and worktree metadata during admitted operations, including external Git metadata for linked worktrees; do not request raw `.git` access just to commit. Runtime write scope is discoverable: an attached child that needs additional project-local files calls loom_scope_elevate and continues immediately when granted. If any Loom tool returns continue=false, the child MUST stop its current turn and return control immediately; it must not retry the blocked mutation or continue assuming authority will arrive later."
 import {
   assertWorkflowNotCancelled,
   WorkflowCancelledError,
@@ -126,6 +124,8 @@ import {
   commitMessageScratchPath,
   diagnosticExecutionShellResourcesAllowed,
   gitCommitMessageFile,
+  gitCommitPaths,
+  scopedGitFileMutation,
   diagnosticShellResourcesAllowed,
   isAllowedGitCommit,
   isAllowedPackageScriptShell,
@@ -140,9 +140,13 @@ import {
   isGitAuthoringShellCommand,
   scopedGitAddTargets,
   scopedGofmtWriteTargets,
+  scopedToolWriteTargets,
+  scopedToolOutputFlagPresent,
   shellResourcesAllowed,
   workerShellResourcesAllowed,
+  localPolicyShellAllowed,
 } from "./shell"
+import { readEffectiveLocalPermissionPolicy, projectShellOverrides, projectWriteOverrides, targetsEffectiveLocalPermissionPolicy } from "./local-policy"
 import { prepareReportPromotion, publishPreparedReport, reconcilePendingReportPromotion, type ReportPromotionInput, type ReportPromotionRecord } from "./reports"
 import {
   findPaths,
@@ -178,6 +182,8 @@ import {
   type AcceptancePlan,
 } from "./acceptance"
 import { loadSkillCompanion, type SkillCompanionKind } from "./methodology"
+import { loadLoomAgentContracts, LOOM_AGENT_ROLES as LOOM_CONTRACT_ROLES, LOOM_ROLE_PERMISSIONS, type LoomAgentRole } from "./agent-contracts"
+import { candidateLoomTransitions } from "./workflow-guidance"
 import { LOOM_AGENT_ROLES, MAX_TASK_TEXT_LENGTH, MAX_TASK_CONTEXT_ITEMS, nativeTaskPath, taskStepId, validateTaskPlan, type TaskSpec } from "./tasks"
 import {
   amendWorkPlan,
@@ -652,7 +658,7 @@ type CommandElevation = {
   sessionID: string
   commandDigest: string
   commandSummary: string
-  kind?: "verification" | "generation"
+  kind?: "verification" | "generation" | "unrestricted"
   outputPath?: string
   reason: string
   grantedAt: string
@@ -1007,6 +1013,8 @@ function toolMutationLockPaths(
     const command = (input as any).command
     if (typeof command === "string") {
       paths.push(...(scopedGitAddTargets(command) ?? []))
+      paths.push(...(scopedGitFileMutation(command)?.paths ?? []))
+      paths.push(...gitCommitPaths(command))
       const messageFile = gitCommitMessageFile(command)
       if (messageFile) paths.push(messageFile)
     }
@@ -1020,7 +1028,8 @@ function toolNeedsGitIndexLock(tool: string, input: unknown) {
   }
   const command = (input as any).command
   if (typeof command !== "string") return false
-  return Boolean(scopedGitAddTargets(command)) || isAllowedGitCommit(command)
+  return Boolean(scopedGitAddTargets(command)) ||
+    Boolean(scopedGitFileMutation(command)) || isAllowedGitCommit(command)
 }
 
 function writeLockError(paths: readonly string[]) {
@@ -1215,10 +1224,15 @@ async function recordGitSessionStaging(
 async function clearGitSessionStaging(
   ctx: any,
   sessionID: string,
+  paths?: readonly string[],
 ) {
   const ownership = await gitSessionOwnership(ctx, sessionID)
   if (Object.keys(ownership.stagedFingerprints).length === 0) return
-  ownership.stagedFingerprints = {}
+  if (paths?.length) {
+    for (const path of paths) delete ownership.stagedFingerprints[safeOwnedRepoPath(path)]
+  } else {
+    ownership.stagedFingerprints = {}
+  }
   await ctx.storage.set(gitSessionOwnershipKey(sessionID), ownership)
 }
 
@@ -1344,9 +1358,12 @@ function successfulMutationPaths(
 
   if (tool === "shell" || tool === "bash") {
     const command = (input as any).command
-    return typeof command === "string"
-      ? (scopedGofmtWriteTargets(command) ?? [])
-      : []
+    if (typeof command !== "string") return []
+    const operation = scopedGitFileMutation(command)
+    return [
+      ...(scopedGofmtWriteTargets(command) ?? []),
+      ...(operation?.writesWorktree ? operation.paths : []),
+    ]
   }
 
   return []
@@ -1413,6 +1430,64 @@ async function changedStagedTargetsSince(
     }
   }
   return changed
+}
+
+/** Refuse implicit directory pathspec expansion into other agents' files. */
+async function assertExplicitGitFiles(projectDirectory: string, paths: readonly string[]) {
+  for (const path of paths) {
+    const info = await lstat(join(projectDirectory, safeOwnedRepoPath(path))).catch((error: any) => {
+      if (error?.code === "ENOENT") return undefined
+      throw error
+    })
+    if (info?.isDirectory()) {
+      throw new Error("Git file operation requires explicit file paths, not directories: " + path)
+    }
+  }
+}
+
+async function scopedGitFileOperationError(
+  ctx: any,
+  sessionID: string,
+  projectDirectory: string,
+  operation: NonNullable<ReturnType<typeof scopedGitFileMutation>>,
+  writeScope: string[],
+) {
+  if (!writeScope.length || !resourcesWithinScope(operation.paths, writeScope)) {
+    return "Git file operation denied: target is outside the current committable Loom write scope."
+  }
+  await assertExplicitGitFiles(projectDirectory, operation.paths)
+  // Clean tracked files may be moved/deleted. Existing dirty bytes need
+  // current step-attempt provenance, including any already-staged version.
+  const dirty = new Set(await projectDirtyPaths(projectDirectory))
+  const changed = operation.paths.filter((path) => dirty.has(safeOwnedRepoPath(path)))
+  if (changed.length) {
+    const owned = await resolveGitStagingOwnership(ctx, sessionID, projectDirectory, changed)
+    if (owned.unowned.length || owned.changed.length) {
+      return "Git file operation denied: pre-existing changes are not owned by this step attempt: " +
+        [...owned.unowned, ...owned.changed].join(", ")
+    }
+  }
+  return undefined
+}
+
+async function explicitGitCommitError(
+  ctx: any,
+  sessionID: string,
+  projectDirectory: string,
+  paths: readonly string[],
+  writeScope: string[],
+) {
+  if (!writeScope.length || !resourcesWithinScope(paths, writeScope)) {
+    return "Git commit denied: explicit paths are outside the current committable Loom write scope."
+  }
+  await assertExplicitGitFiles(projectDirectory, paths)
+  // Explicit-path commit uses worktree bytes, not the complete staged index.
+  const owned = await resolveGitStagingOwnership(ctx, sessionID, projectDirectory, paths)
+  if (owned.unowned.length || owned.changed.length) {
+    return "Git commit denied: explicit paths lack current step-attempt authored-byte evidence: " +
+      [...owned.unowned, ...owned.changed].join(", ")
+  }
+  return undefined
 }
 
 async function gitIndexConflictError(
@@ -4276,6 +4351,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
   async setup(ctx) {
     const pluginBuild = createHash("sha256").update(await readFile(new URL(import.meta.url))).digest("hex")
+    const roleContracts = await loadLoomAgentContracts()
     const setupInstance = randomUUID()
     const legacyStorage = ctx.storage as any
     const runtime = await resolveRuntimeIdentity(ctx.location.project.canonical, legacyStorage)
@@ -4302,6 +4378,12 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
     }) as typeof ctx
 
     await recoverPendingReportPromotions(ctx, runtime, ctx.location.directory)
+
+    // Re-read global/worktree policy at every admission. A worktree policy
+    // replaces, rather than unions with, global grants for this checkout.
+    const currentPolicy = () => readEffectiveLocalPermissionPolicy(ctx.location.directory)
+    const policyWriteScope = async (role: string) =>
+      projectWriteOverrides((await currentPolicy()).policy, ctx.location.directory, role)
 
     const dashboardPublisher = createDashboardPublisher(scopedStorage, runtime)
     dashboardPublisher.trigger()
@@ -4390,9 +4472,9 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
     }
 
     const assertProjectGenerationWrite = async (
-      workflowId: string, stepId: string, command: string,
+      workflowId: string, stepId: string, agent: string, command: string,
     ) => {
-      const outputPaths = elevatedGenerationPaths(command)
+      const outputPaths = scopedToolWriteTargets(command)
       if (outputPaths.length === 0) return
       for (const path of outputPaths) {
         const target = await classifyScopeTarget(ctx.location.directory, path)
@@ -4403,11 +4485,15 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         }
       }
       const scope = (await ctx.storage.get(scopeKey(workflowId, stepId))) as TaskScope | undefined
-      if (!scope?.write.length || !resourcesWithinScope(outputPaths, scope.write)) {
+      const effective = committableWriteScope(mergeWriteScope(
+        scope?.write.length ? scope.write : (artifactWriteDefaults[agent] ?? []),
+        await policyWriteScope(agent),
+      ))
+      if (!effective.length || !resourcesWithinScope(outputPaths, effective)) {
         throw new Error(
-          "Generated output is outside the current Loom write scope (" +
-          elevatedGenerationOutput(command) +
-          "). Call loom_scope_elevate for the generated files before retrying.",
+          "Command output is outside the current Loom write scope (" +
+          outputPaths.join(", ") +
+          "). Call loom_scope_elevate for the output files before retrying.",
         )
       }
     }
@@ -4539,6 +4625,11 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       directMutationPaths: string[],
     ) => {
       if (directMutationPaths.length === 0 || !raw.sessionID) return
+      if ((await Promise.all(directMutationPaths.map((p) =>
+        targetsEffectiveLocalPermissionPolicy(ctx.location.directory, p),
+      ))).some(Boolean)) {
+        throw new Error("Loom policy YAML is user-owned and cannot be edited by an agent.")
+      }
 
       const sessionID = String(raw.sessionID)
       const workflowId = (await ctx.storage.get(
@@ -4635,9 +4726,11 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       const effectiveWriteScope =
         agent === "general"
           ? generalGitWriteScope
-          : declaredScope?.write.length
-            ? declaredScope.write
-            : (artifactWriteDefaults[agent] ?? [])
+          : mergeWriteScope(
+              declaredScope?.write.length
+                ? declaredScope.write : (artifactWriteDefaults[agent] ?? []),
+              await policyWriteScope(agent),
+            )
 
       if (commitMessagePaths.length > 0) {
         if (committableWriteScope(effectiveWriteScope).length === 0) {
@@ -4751,8 +4844,39 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         )) as TaskScope | undefined
         if (scope?.write.length) writeScope = scope.write
       }
+      if (raw.agent !== "general") {
+        writeScope = mergeWriteScope(writeScope, await policyWriteScope(String(raw.agent ?? "")))
+      }
       writeScope = committableWriteScope(writeScope)
 
+      const operation = scopedGitFileMutation(command)
+      const explicitCommitPaths = gitCommitPaths(command)
+      const scopedTargets = [...(scopedGitAddTargets(command) ?? []),
+        ...(operation?.paths ?? []), ...explicitCommitPaths]
+      if (scopedTargets.length > 0) {
+        const root = await realpath(ctx.location.directory)
+        const input = raw.input as Record<string, unknown>
+        for (const alternate of [input.cwd, input.workdir].filter((v) => v !== undefined)) {
+          const target = typeof alternate === "string"
+            ? (isAbsolute(alternate) ? alternate : resolve(root, alternate)) : ""
+          if (!target || await realpath(target).catch(() => "") !== root) {
+            throw new Error("Scoped Git file operations must execute from the current worktree root.")
+          }
+        }
+        await assertExplicitGitFiles(ctx.location.directory, scopedTargets)
+      }
+      if (operation) {
+        const error = await scopedGitFileOperationError(
+          ctx, String(raw.sessionID), ctx.location.directory, operation, writeScope,
+        )
+        if (error) throw new Error(error)
+        if (operation.stagesChanges) {
+          const conflict = await gitIndexConflictError(
+            ctx, String(raw.sessionID), ctx.location.directory, operation.paths,
+          )
+          if (conflict) throw new Error(conflict)
+        }
+      }
       const addTargets = scopedGitAddTargets(command) ?? []
       if (addTargets.length > 0) {
         if (
@@ -4797,20 +4921,20 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           "Git commit denied: the current step has no committable Loom write scope.",
         )
       }
-      const error = await commitScopeError(
-        ctx,
-        String(raw.sessionID),
-        ctx.location.directory,
-        writeScope,
-        true,
-      )
+      const error = explicitCommitPaths.length
+        ? await explicitGitCommitError(
+            ctx, String(raw.sessionID), ctx.location.directory, explicitCommitPaths, writeScope,
+          )
+        : await commitScopeError(
+            ctx, String(raw.sessionID), ctx.location.directory, writeScope, true,
+          )
       if (error) throw new Error(error)
       if (String(raw.agent ?? "") === "reviewer") {
-        const acceptanceError = await reviewerAcceptanceStagedCommitError(
-          ctx,
-          String(raw.sessionID),
-          ctx.location.directory,
-        )
+        const acceptanceError = explicitCommitPaths.length
+          ? await reviewerAcceptanceCommitError(ctx.location.directory, explicitCommitPaths, "worktree")
+          : await reviewerAcceptanceStagedCommitError(
+              ctx, String(raw.sessionID), ctx.location.directory,
+            )
         if (acceptanceError) throw new Error(acceptanceError)
       }
     }
@@ -4990,6 +5114,17 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
     await ctx.agent.transform((editor) => {
       if (editor.get("general")) editor.default("general")
+      // Loom's host-side permissions are optional: portable agent definitions
+      // have no Loom-only permission rules when the plugin is disabled.
+      for (const role of LOOM_CONTRACT_ROLES) {
+        if (!editor.get(role)) continue
+        editor.update(role, (agent) => {
+          agent.permissions = [
+            ...(agent.permissions ?? []),
+            ...LOOM_ROLE_PERMISSIONS[role].map((rule) => ({ ...rule })),
+          ]
+        })
+      }
     })
 
     await ctx.tool.transform((editor) => {
@@ -6233,7 +6368,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
       addLoomTool({
         name: "start",
-        description: "Start governed Loom execution for an accepted Anchor or a bounded committed task. Ordinary conversation/investigation does not require this tool. General only.",
+        description: "General only. Start one governed Loom workflow after the user has authorized a change, using exactly one accepted Anchor path or a bounded committed request. Conversational explanation, investigation and standalone assessment do not need a workflow. This creates the workflow record, not a child dispatch: use loom_route to classify it and obtain its first eligible steps. Rejected input grants no work authority.",
         input: {
           type: "object",
           properties: {
@@ -6359,7 +6494,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       addLoomTool({
         name: "route",
         description:
-          "Classify or reclassify accepted work and create the required Loom execution DAG. General only.",
+          "General only. After loom_start, select the smallest justified execution depth and only unresolved domain-authority flags; ordinary UI/code changes do not automatically require new authority. Creates or updates the authoritative Loom step DAG and returns runnable steps/continuation guidance. Does not dispatch agents or authorize bypass of gates; dispatch uses loom_dispatch_grant after reading current status.",
         input: {
           type: "object",
           properties: {
@@ -6601,7 +6736,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
       addLoomTool({
         name: "status",
-        description: "Inspect Loom lifecycle and control-flow readiness: structural/DAG readiness, dispatch admission, execution evidence without inferred liveness, completion/PASS constraints, user attention, OQs/reconciliation, verification, and budget. Compact by default; detail=true returns internals. Interactive status is available independently through Loom's stable dashboard workflow URL exposed in the sidebar; the tool also returns browser-safe presentation metadata as a convenience. OpenCode Desktop browser preview is optional metadata only and must not be invoked merely because presentation metadata exists. Presentation availability never blocks or alters Loom workflow state.",
+        description: "Inspect current Loom workflow truth: ready/blocked DAG steps, dispatch admission, unknown execution liveness, completion/PASS constraints, questions, verification and budget. For General, nextActions names candidate loom_dispatch_grant calls for currently admitted steps; candidates are NOT grants, do not prove no child is already running, and are rechecked by the target tool. Reinspect status after child return or a change in intent. Compact by default; detail=true returns internals. The sidebar dashboard is an independent display; presentation metadata is optional and never alters workflow state.",
         input: {
           type: "object",
           properties: {
@@ -6689,9 +6824,18 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             work,
             stepReadiness,
           )
+          const nextActions = tool.agent === "general"
+            ? candidateLoomTransitions(view.workflowId, view.readiness)
+            : []
           const artifact = await writeStatusArtifact(runtime, view).catch(() => undefined)
           const presentation = statusPresentation(artifact)
           let compact = renderStatusMarkdown(view, artifact)
+          if (nextActions.length > 0) {
+            compact += "\n\n### Candidate next actions (revalidated at call time)\n" +
+              nextActions.map(({ agent, input }) =>
+                `- Request \`loom_dispatch_grant\` for \`${input.stepId}\` (${agent}); execution liveness remains unknown.`
+              ).join("\n")
+          }
           if (scopeElevations.length > 0 || pendingHardBoundaries.length > 0) {
             const lines = ["", "### Scope activity"]
             for (const elevation of scopeElevations.slice(-8)) {
@@ -6735,6 +6879,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 content: renderToolOutput(
                   {
                     ...view,
+                    nextActions,
                     scopeActivity,
                     ...(presentation ? { presentation } : {}),
                   },
@@ -6748,7 +6893,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
           return {
             content: renderToolOutput({
-              summary: view,
+              summary: { ...view, nextActions },
               workflow,
               dagRunnable: runnable(workflow).map((step) => ({ id: step.id, agent: step.agent })),
               questions: questionState(questions, workflow),
@@ -6768,7 +6913,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       addLoomTool({
         name: "complete",
         description:
-          "Finish one Loom step. Work uses complete; Reviewer/Critic gates use pass or fail. Blocking OQs must be answered and reconciled by this step first.",
+          "Complete only the exact currently attached Loom step after verifying its outcome and required evidence; this is a durable state change, not a progress comment. Producer work uses complete; independent Reviewer/Critic gates use pass or fail. Blocking OQs must be answered and reconciled before completion. Denial leaves the step incomplete; do not claim PASS from model prose, stale receipts, or successful tool invocation alone.",
         input: {
           type: "object",
           properties: {
@@ -11554,7 +11699,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       addLoomTool({
         name: "dispatch_grant",
         description:
-          "Issue one short-lived, single-use attachment grant for an exact runnable workflow step or unanswered OQ. General only. A Worker may be dispatched without a predeclared file list so it can inspect first and call loom_scope_elevate when it discovers the actual mutation surface. Pass the returned grantId to the child session.",
+          "General only. After loom_status or loom_route identifies an admitted pending step, or an unanswered specialist OQ, issue a one-use grant for exactly that stepId or questionId; grant issuance alone does not execute it. Pass the returned grantId, workflowId and target identity to the dispatched child, which calls loom_attach. Do not issue duplicate/ambiguous grants or treat a candidate nextAction as permission; admission revalidates state. Worker may inspect with an initially unknown write scope, then call loom_scope_elevate as needed.",
         input: {
           type: "object",
           properties: {
@@ -11745,7 +11890,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       addLoomTool({
         name: "attach",
         description:
-          "Consume a General-issued one-use grant and attach the current child session to its exact Loom workflow step or OQ, including the relevant Task/holistic Plan context when available.",
+          "Called by a governed child before it performs assigned work. Consumes an exact one-use General-issued grant and binds this host session to its workflow step or OQ, including current Task/Plan context. A missing, expired, stale or mismatched grant does not authorize work: stop and return the error to General instead of inventing context or continuing in an unbound session.",
         input: {
           type: "object",
           properties: {
@@ -12234,6 +12379,33 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       })
 
       addLoomTool({
+        name: "policy_status",
+        description:
+          "Inspect currently effective user-owned Loom command/write rules for this OpenCode worktree. The optional root .loom.yaml overrides the global ~/.config/opencode/.loom.yaml, including empty sections. An invalid local file blocks all configured allowances rather than falling back to global. Rules reload on every permission and execution admission. This is read-only; it neither grants permission nor modifies files.",
+        input: {
+          type: "object", properties: {}, additionalProperties: false,
+        },
+        options: { namespace: "loom", codemode: false },
+        execute: async () => {
+          const policy = await currentPolicy()
+          return { content: renderToolOutput({
+            source: policy.source, status: policy.status,
+            path: policy.path, globalPath: policy.globalPath,
+            worktreePath: policy.worktreePath,
+            ...(policy.error ? { error: policy.error } : {}),
+            shell: projectShellOverrides(policy.policy, ctx.location.directory),
+            writes: Object.fromEntries(
+              ["worker", "designer", "specifier", "architect", "documenter"].map((role) => [
+                role, projectWriteOverrides(policy.policy, ctx.location.directory, role),
+              ]),
+            ),
+            precedence: "worktree-file-replaces-global-policy",
+            admission: "current-runnable-step-required",
+          }) }
+        },
+      })
+
+      addLoomTool({
         name: "scope_status",
         description:
           "Inspect one workflow step's current effective write scope, General's declared starting expectation, and durable self-elevation history.",
@@ -12257,13 +12429,22 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           if (!step) return { content: renderToolOutput({ error: "Step not found." }) }
           const scope = (await ctx.storage.get(scopeKey(workflowId, stepId))) as TaskScope | undefined
           const roleWriteDefault = artifactWriteDefaults[step.agent] ?? []
-          const effectiveWrite = scope?.write.length ? scope.write : roleWriteDefault
+          const policy = await currentPolicy()
+          const policyWrite = projectWriteOverrides(policy.policy, ctx.location.directory, step.agent)
+          const effectiveWrite = mergeWriteScope(
+            scope?.write.length ? scope.write : roleWriteDefault,
+            policyWrite,
+          )
           const committableWrite = committableWriteScope(effectiveWrite)
           return {
             content: renderToolOutput({
               scope: scope ?? null,
               agent: step.agent,
               roleWriteDefault,
+              policyWrite,
+              policySource: policy.source,
+              policyStatus: policy.status,
+              ...(policy.error ? { policyError: policy.error } : {}),
               effectiveWrite,
               committableWrite,
               commitAuthorized: committableWrite.length > 0,
@@ -12277,7 +12458,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       addLoomTool({
         name: "command_elevate",
         description:
-          "Grant one near-term execution of a non-routine project-local test or bounded generator command. Verification supports make/just tests, local scripts, selected Python modules and go run. Generation currently supports Worker-only swag init with an explicit --output inside its current write scope (use loom_scope_elevate first). Exact command, session, attempt and audit evidence are bound; Git, installs, shell eval and arbitrary executables remain denied. The tool runs with host permissions and does not sandbox nested script effects.",
+          "Issue a one-use audit grant for any exact shell command, including Git, installs, pipes and shell expressions. This only applies to the requesting agents current attached runnable Loom step; it does not execute the command. Once granted, invoke the exact command using shell/bash and continue work. Loom records the request and outcome, but cannot contain or roll back command side effects, and cannot grant file/Git ownership for unknown shell effects. OS permissions still apply.",
         input: {
           type: "object",
           properties: {
@@ -12296,32 +12477,12 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           }
           const command = value.command.trim()
           const reason = redactCommand(value.reason.trim())
-          if (!verificationTestAgents.has(tool.agent)) {
+          if (!reason || reason.length > 4000 || !command || command.length > 16_384) {
             return { content: renderToolOutput({
-              error: "Command elevation is restricted to implementation/verification roles.",
-            }) }
-          }
-          const outputPath = elevatedGenerationOutput(command)
-          const verification = isElevatableVerificationShell(command)
-          if (!reason || reason.length > 4000 || !command || command.length > 4000) {
-            return { content: renderToolOutput({
-              error: "Command elevation requires one exact command (max 4000 characters) and a non-empty reason (max 4000 characters).",
-            }) }
-          }
-          if (!verification && !outputPath) {
-            return { content: renderToolOutput({
-              error: generationElevationError(command) ??
-                "Unsupported command form. Verification supports bounded make/just, shell/Python and go run tests. Generation supports swag init with an explicit project-relative --output directory. Arbitrary executables, installs, Git and shell eval cannot be self-elevated.",
-            }) }
-          }
-          if (outputPath && tool.agent !== "worker") {
-            return { content: renderToolOutput({
-              error: "Project generation requires an attached Worker step; independent verification roles cannot elevate product writes.",
+              error: "Elevation requires one exact non-empty command (max 16384 characters) and a non-empty reason.",
             }) }
           }
           try {
-            await assertProjectVerificationEntrypoint(command)
-            if (outputPath) await assertProjectGenerationWrite(value.workflowId, value.stepId, command)
             const receipt = await withRuntimeLocks(runtime, [
               { aggregate: "workflow", resourceIdentity: value.workflowId },
               stepAuthorityResource(value.workflowId, value.stepId),
@@ -12338,7 +12499,6 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               if (tool.agent === "worker") {
                 await assertWorkerWorkClaim(ctx, value.workflowId, value.stepId)
               }
-              if (outputPath) await assertProjectGenerationWrite(value.workflowId, value.stepId, command)
               const attempt = await ctx.storage.get(sessionStepAttemptKey(tool.sessionID))
               if (!Number.isSafeInteger(attempt)) {
                 throw new Error("Missing step-attempt binding.")
@@ -12361,8 +12521,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 attempt: attempt as number,
                 commandDigest: verificationCommandDigest(command),
                 commandSummary: redactCommand(command).slice(0, 1000),
-                kind: outputPath ? "generation" : "verification",
-                ...(outputPath ? { outputPath } : {}),
+                kind: "unrestricted",
                 reason,
                 grantedAt: new Date(now).toISOString(),
                 expiresAt: new Date(now + 15 * 60_000).toISOString(),
@@ -12375,9 +12534,9 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               granted: true, grantId: receipt.id,
               workflowId: receipt.workflowId, stepId: receipt.stepId,
               command: receipt.commandSummary, kind: receipt.kind,
-              ...(receipt.outputPath ? { outputPath: receipt.outputPath } : {}),
-              expiresAt: receipt.expiresAt, singleUse: true,
-              limitation: "Exact output paths are scope-checked and recognized files are tracked, but the host command is not sandboxed: Loom cannot prevent other process-internal writes.",
+              expiresAt: receipt.expiresAt, singleUse: true, continue: true,
+              next: "Run the exact command once through shell/bash and continue after recording its result.",
+              limitation: "Audit-only: commands execute with host OS permissions and may change arbitrary files, Git state or external systems. Loom does not sandbox or reverse effects, or credit unverified command writes as owned artifacts.",
             }) }
           } catch (error) {
             return { content: renderToolOutput({
@@ -13549,12 +13708,6 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
     const evaluatePermissionAdmitted = async (event: any) => {
       const delegationAction = event.action === "subagent"
-      if (event.agent === "brainstorm" && (event.action === "edit" || delegationAction ||
-          (event.action === "shell" && !event.resources.every((resource: string) => isGitInspectionShellCommand(resource))))) {
-        event.effect = "deny"
-        event.message = "Brainstorm advisory work has no mutation, command execution or nested dispatch authority."
-        return
-      }
       if (event.action === "edit" || event.action === "shell" || delegationAction) {
         await ensureLegacyCancellationBoundary(event.sessionID)
       }
@@ -13565,6 +13718,28 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           event.message = new WorkflowCancelledError(bound.id).message
           return
         }
+      }
+      if (event.action === "shell" && Array.isArray(event.resources) &&
+          event.resources.length === 1 &&
+          typeof event.resources[0] === "string" &&
+          await currentCommandElevation(String(event.sessionID ?? ""),
+            String(event.agent ?? ""), event.resources[0])) {
+        event.effect = "allow"
+        return
+      }
+      if (event.action === "edit" && Array.isArray(event.resources) &&
+          (await Promise.all(event.resources.map((resource: string) =>
+            targetsEffectiveLocalPermissionPolicy(ctx.location.directory, resource),
+          ))).some(Boolean)) {
+        event.effect = "deny"
+        event.message = "Loom permission YAML is user-owned and cannot be edited through agent tools."
+        return
+      }
+      if (event.agent === "brainstorm" && (event.action === "edit" || delegationAction ||
+          (event.action === "shell" && !event.resources.every((resource: string) => isGitInspectionShellCommand(resource))))) {
+        event.effect = "deny"
+        event.message = "Brainstorm advisory work has no mutation, command execution or nested dispatch authority."
+        return
       }
       if (event.action === "edit") {
         const classified = await Promise.all(
@@ -13828,9 +14003,11 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             const declaredScope = (await ctx.storage.get(
               scopeKey(workflowId, stepId),
             )) as TaskScope | undefined
-            authorScope = declaredScope?.write.length
-              ? declaredScope.write
-              : (artifactWriteDefaults[agent] ?? [])
+            authorScope = mergeWriteScope(
+              declaredScope?.write.length
+                ? declaredScope.write : (artifactWriteDefaults[agent] ?? []),
+              await policyWriteScope(agent),
+            )
           }
 
           authorScope = committableWriteScope(authorScope)
@@ -13870,29 +14047,38 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               stage.changed.join(", ")
             return
           }
-          if (
-            event.resources.some((resource: string) =>
-              isAllowedGitCommit(resource),
-            )
-          ) {
-            const error = await commitScopeError(
-              ctx,
-              event.sessionID,
-              ctx.location.directory,
-              authorScope,
-              true,
-            )
+          for (const resource of event.resources as string[]) {
+            const operation = scopedGitFileMutation(resource)
+            if (operation) {
+              const error = await scopedGitFileOperationError(
+                ctx, event.sessionID, ctx.location.directory, operation, authorScope,
+              )
+              if (error) {
+                event.effect = "deny"
+                event.message = error
+                return
+              }
+            }
+            if (!isAllowedGitCommit(resource)) continue
+            const explicitPaths = gitCommitPaths(resource)
+            const error = explicitPaths.length
+              ? await explicitGitCommitError(
+                  ctx, event.sessionID, ctx.location.directory, explicitPaths, authorScope,
+                )
+              : await commitScopeError(
+                  ctx, event.sessionID, ctx.location.directory, authorScope, true,
+                )
             if (error) {
               event.effect = "deny"
               event.message = error
               return
             }
             if (agent === "reviewer") {
-              const acceptanceError = await reviewerAcceptanceStagedCommitError(
-                ctx,
-                event.sessionID,
-                ctx.location.directory,
-              )
+              const acceptanceError = explicitPaths.length
+                ? await reviewerAcceptanceCommitError(ctx.location.directory, explicitPaths, "worktree")
+                : await reviewerAcceptanceStagedCommitError(
+                    ctx, event.sessionID, ctx.location.directory,
+                  )
               if (acceptanceError) {
                 event.effect = "deny"
                 event.message = acceptanceError
@@ -13903,6 +14089,81 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           event.effect = "allow"
           return
         }
+      }
+
+      // Global user-owned allowlist, replaced by worktree-root .loom.yaml
+      // when present. This grants command admission, not unbounded command
+      // mutation privileges or an exemption from step admission.
+      if (event.action === "shell" && Array.isArray(event.resources) &&
+          event.resources.length > 0 && loomAgents.has(String(event.agent ?? ""))) {
+        const policy = await currentPolicy()
+        const allowed = projectShellOverrides(policy.policy, ctx.location.directory)
+        if (event.resources.every((command: string) => localPolicyShellAllowed(command, allowed))) {
+          const sessionID = String(event.sessionID ?? "")
+          const workflowId = await ctx.storage.get(sessionKey(sessionID))
+          const stepId = await ctx.storage.get(sessionStepKey(sessionID))
+          if (typeof workflowId !== "string" || typeof stepId !== "string" ||
+              !(await exactRunnableStepAttemptBinding(ctx, sessionID, workflowId, stepId))) {
+            event.effect = "deny"
+            event.message = "Configured shell permission requires this role's exact current runnable Loom step, not an OQ attachment."
+            return
+          }
+          try {
+            await assertCurrentStepPlanAdmission(ctx, workflowId, stepId)
+            if (event.agent === "worker") await assertWorkerWorkClaim(ctx, workflowId, stepId)
+          } catch (error) {
+            event.effect = "deny"
+            event.message = error instanceof Error ? error.message : String(error)
+            return
+          }
+          event.effect = "allow"
+          return
+        }
+      }
+
+      if (event.action === "shell" && Array.isArray(event.resources) &&
+          event.resources.some((command: string) =>
+            scopedToolOutputFlagPresent(command) && scopedToolWriteTargets(command).length === 0)) {
+        event.effect = "deny"
+        event.message = "Test artifact output is not a safe explicit project file; correct the path before retrying."
+        return
+      }
+
+      // Known explicit-output commands inherit the active step's write
+      // authority, including bounded scope_elevate and .loom.yaml rules.
+      if (event.action === "shell" && Array.isArray(event.resources) &&
+          event.resources.length > 0 &&
+          event.resources.every((command: string) => scopedToolWriteTargets(command).length > 0) &&
+          loomAgents.has(String(event.agent ?? ""))) {
+        const agent = String(event.agent)
+        const sessionID = String(event.sessionID ?? "")
+        const workflowId = await ctx.storage.get(sessionKey(sessionID))
+        const stepId = await ctx.storage.get(sessionStepKey(sessionID))
+        if (typeof workflowId !== "string" || typeof stepId !== "string" ||
+            !(await exactRunnableStepAttemptBinding(ctx, sessionID, workflowId, stepId))) {
+          event.effect = "deny"
+          event.message = "File-producing commands require the current runnable Loom step."
+          return
+        }
+        try {
+          await assertCurrentStepPlanAdmission(ctx, workflowId, stepId)
+          if (agent === "worker") await assertWorkerWorkClaim(ctx, workflowId, stepId)
+          for (const command of event.resources as string[]) {
+            await assertProjectGenerationWrite(workflowId, stepId, agent, command)
+          }
+        } catch (error) {
+          event.effect = "deny"
+          event.message = error instanceof Error ? error.message : String(error)
+          return
+        }
+        event.effect = "allow"
+        return
+      }
+
+      if (event.agent === "documenter" && event.action === "shell") {
+        event.effect = "deny"
+        event.message = "Documenter shell is not admitted. Add the exact command or a bounded prefix to the global/worktree .loom.yaml, or use loom_command_elevate for one audited execution."
+        return
       }
 
       if (event.agent === "diagnostic" && event.action === "shell") {
@@ -13987,7 +14248,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           }
           if (needsElevation && elevatedGenerationOutput(event.resources[0])) {
             try {
-              await assertProjectGenerationWrite(workflowId, stepId, event.resources[0])
+              await assertProjectGenerationWrite(workflowId, stepId, agent, event.resources[0])
             } catch (error) {
               event.effect = "deny"
               event.message = error instanceof Error ? error.message : String(error)
@@ -14094,9 +14355,11 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         const declaredScope = (await ctx.storage.get(
           scopeKey(workflowId, stepId),
         )) as TaskScope | undefined
-        const effectiveWrite = declaredScope?.write.length
-          ? declaredScope.write
-          : (artifactWriteDefaults[agent] ?? [])
+        const effectiveWrite = mergeWriteScope(
+          declaredScope?.write.length
+            ? declaredScope.write : (artifactWriteDefaults[agent] ?? []),
+          await policyWriteScope(agent),
+        )
         if (
           effectiveWrite.length === 0 ||
           !resourcesWithinScope(event.resources, effectiveWrite)
@@ -14106,6 +14369,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             "Specialist edit is outside the current Loom write scope. Call loom_scope_elevate for the additional project-local path(s) before retrying. If that tool returns continue=false, return control immediately."
           return
         }
+        event.effect = "allow"
         return
       }
 
@@ -14127,7 +14391,8 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         }
 
         const scope = (await ctx.storage.get(scopeKey(workflowId, stepId))) as TaskScope | undefined
-        if (!workerShellResourcesAllowed(event.resources, scope?.write ?? [])) {
+        const effectiveWrite = mergeWriteScope(scope?.write ?? [], await policyWriteScope("worker"))
+        if (!workerShellResourcesAllowed(event.resources, effectiveWrite)) {
           event.effect = "deny"
           event.message =
             "Worker shell is limited to inspection, build/test/run, safe delivery operations, and writes already inside the current Loom scope. Call loom_scope_elevate before retrying a newly discovered project-local write target."
@@ -14175,7 +14440,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             ctx,
             event.sessionID,
             ctx.location.directory,
-            scope.write,
+            effectiveWrite,
           )
           if (error) {
             event.effect = "deny"
@@ -14230,15 +14495,17 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         const scope = (await ctx.storage.get(
           scopeKey(workflowId, stepId),
         )) as TaskScope | undefined
+        const effectiveWrite = mergeWriteScope(scope?.write ?? [], await policyWriteScope("worker"))
         if (
-          !scope?.write.length ||
-          !resourcesWithinScope(event.resources, scope.write)
+          !effectiveWrite.length ||
+          !resourcesWithinScope(event.resources, effectiveWrite)
         ) {
           event.effect = "deny"
           event.message =
             "Worker edit is outside the current Loom write scope. Call loom_scope_elevate for the additional project-local path(s) before retrying. If that tool returns continue=false, return control immediately."
           return
         }
+        event.effect = "allow"
         return
       }
 
@@ -14555,7 +14822,8 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           observedAt: new Date().toISOString(),
         } satisfies ObservedUserMessage)
       }
-      event.system.push({ type: "text", text: LOOM_NATIVE_TOOL_GUIDANCE })
+      const contract = roleContracts.get(String(raw.agent ?? "") as LoomAgentRole) ?? roleContracts.get("*")
+      if (contract) event.system.push({ type: "text", text: contract })
 
       // Compatibility guidance is deliberately conditional and tiny. Detailed
       // one-shot migration instructions live behind loom_upgrade_status.
@@ -14600,8 +14868,17 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         typeof (raw.input as any).command === "string"
           ? String((raw.input as any).command)
           : undefined
-      const generationPaths = raw.agent === "worker" && shellCommand
-        ? elevatedGenerationPaths(shellCommand) : []
+      const activeShellElevation = shellCommand && raw.sessionID && raw.agent
+        ? await currentCommandElevation(String(raw.sessionID), String(raw.agent), shellCommand)
+        : undefined
+      if (!activeShellElevation && shellCommand &&
+          scopedToolOutputFlagPresent(shellCommand) &&
+          scopedToolWriteTargets(shellCommand).length === 0) {
+        throw new Error("Test artifact output is not a safe explicit project file.")
+      }
+      const generationPaths = !activeShellElevation && shellCommand &&
+          loomAgents.has(String(raw.agent ?? "")) && raw.agent !== "general"
+        ? scopedToolWriteTargets(shellCommand) : []
       // Generator output flags are relative to the shell cwd. A different
       // workdir would make the granted output paths refer to different files.
       if (generationPaths.length > 0) {
@@ -14621,8 +14898,47 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           }
         }
       }
-      let elevationRequired = false
-      if (shellCommand && raw.sessionID &&
+      // Check output scope before executing and again under file locks.
+      if (generationPaths.length > 0 && shellCommand) {
+        const sessionID = String(raw.sessionID ?? "")
+        const workflowId = await ctx.storage.get(sessionKey(sessionID))
+        const stepId = await ctx.storage.get(sessionStepKey(sessionID))
+        if (typeof workflowId !== "string" || typeof stepId !== "string" ||
+            !(await exactRunnableStepAttemptBinding(ctx, sessionID, workflowId, stepId))) {
+          throw new Error("File-producing command requires the current runnable Loom step.")
+        }
+        await assertCurrentStepPlanAdmission(ctx, workflowId, stepId)
+        if (raw.agent === "worker") await assertWorkerWorkClaim(ctx, workflowId, stepId)
+        await assertProjectGenerationWrite(workflowId, stepId, String(raw.agent), shellCommand)
+      }
+
+      // A current, user-owned exact/prefix command rule avoids per-invocation
+      // elevation, but still needs this session's current executable step.
+      let configuredShell = false
+      if (!activeShellElevation && shellCommand && raw.sessionID &&
+          loomAgents.has(String(raw.agent ?? ""))) {
+        const policy = await currentPolicy()
+        const shell = projectShellOverrides(policy.policy, ctx.location.directory)
+        if (localPolicyShellAllowed(shellCommand, shell)) {
+          const workflowId = await ctx.storage.get(sessionKey(String(raw.sessionID)))
+          const stepId = await ctx.storage.get(sessionStepKey(String(raw.sessionID)))
+          if (typeof workflowId !== "string" || typeof stepId !== "string" ||
+              !(await exactRunnableStepAttemptBinding(
+                ctx, String(raw.sessionID), workflowId, stepId,
+              ))) throw new Error("Configured shell command requires the exact current runnable Loom step.")
+          await assertCurrentStepPlanAdmission(ctx, workflowId, stepId)
+          if (raw.agent === "worker") await assertWorkerWorkClaim(ctx, workflowId, stepId)
+          if (generationPaths.length > 0) {
+            await assertProjectGenerationWrite(workflowId, stepId, String(raw.agent), shellCommand)
+          }
+          configuredShell = true
+        }
+      }
+      let elevationRequired = Boolean(activeShellElevation)
+      if (elevationRequired && !observationCallKey(raw)) {
+        throw new Error("Command execution blocked: a stable tool-call identity is required before consuming command elevation.")
+      }
+      if (!activeShellElevation && shellCommand && raw.sessionID &&
           verificationTestAgents.has(String(raw.agent ?? "")) &&
           (isElevatableVerificationShell(shellCommand) || generationPaths.length > 0)) {
         const agent = String(raw.agent)
@@ -14631,7 +14947,8 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           : agent === "diagnostic"
             ? diagnosticExecutionShellResourcesAllowed([shellCommand])
             : Boolean(classifyVerificationShell(shellCommand))
-        if (!allowedWithoutElevation) {
+        if (!allowedWithoutElevation && !configuredShell &&
+            generationPaths.length === 0) {
           elevationRequired = true
           if (!observationCallKey(raw)) {
             throw new Error(
@@ -14645,26 +14962,21 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             if (typeof workflowId !== "string" || typeof stepId !== "string") {
               throw new Error("Generator execution needs the current attached Worker step.")
             }
-            await assertProjectGenerationWrite(workflowId, stepId, shellCommand)
+            await assertProjectGenerationWrite(workflowId, stepId, String(raw.agent), shellCommand)
           }
         }
       }
-      const mutationLockPaths = [
-        ...toolMutationLockPaths(
-          tool,
-          raw.input,
-          ctx.location.directory,
-        ),
+      // An arbitrary elevated command is audit-only; its side effects cannot
+      // be inferred as scoped writes or become Git authorship evidence.
+      const mutationLockPaths = activeShellElevation ? [] : [
+        ...toolMutationLockPaths(tool, raw.input, ctx.location.directory),
         ...generationPaths,
       ]
-      const lockGitIndex = toolNeedsGitIndexLock(tool, raw.input)
-      const directMutationPaths = successfulMutationPaths(
-        tool,
-        raw.input,
-        ctx.location.directory,
+      const lockGitIndex = activeShellElevation ? false : toolNeedsGitIndexLock(tool, raw.input)
+      const directMutationPaths = activeShellElevation ? [] : successfulMutationPaths(
+        tool, raw.input, ctx.location.directory,
       )
-
-      await revalidateDirectMutationUnderLock(raw, directMutationPaths)
+      if (!activeShellElevation) await revalidateDirectMutationUnderLock(raw, directMutationPaths)
 
       if (tool === "question") {
         const sessionID = String(raw.sessionID ?? "").trim()
@@ -14849,7 +15161,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             if (typeof workflowId !== "string" || typeof stepId !== "string") {
               throw new Error("Generator execution lost its current Worker attachment.")
             }
-            await assertProjectGenerationWrite(workflowId, stepId, shellCommand)
+            await assertProjectGenerationWrite(workflowId, stepId, String(raw.agent), shellCommand)
             pending.generationPaths = generationPaths
             pending.generationBefore = Object.fromEntries(await Promise.all(
               generationPaths.map(async (path) => [
@@ -14863,14 +15175,15 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               raw.input && typeof raw.input === "object"
                 ? (raw.input as any).command
                 : undefined
-            const addTargets =
-              typeof command === "string"
-                ? (scopedGitAddTargets(command) ?? [])
-                : []
-            if (addTargets.length > 0) {
+            const operation = typeof command === "string"
+              ? scopedGitFileMutation(command) : undefined
+            const stagedTargets = typeof command === "string"
+              ? [...(scopedGitAddTargets(command) ?? []),
+                  ...(operation?.stagesChanges ? operation.paths : [])]
+              : []
+            if (stagedTargets.length > 0) {
               pending.gitStageBefore = await gitStageSnapshot(
-                ctx.location.directory,
-                addTargets,
+                ctx.location.directory, stagedTargets,
               )
             }
           }
@@ -15098,7 +15411,8 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
       if (
         raw.agent === "general" &&
-        eventMatches
+        eventMatches &&
+        !pending?.commandElevationId
       ) {
         const generalScope = generalGitWriteScope
         const sessionID = String(raw.sessionID)
@@ -15141,11 +15455,14 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             input && typeof input === "object"
               ? (input as any).command
               : undefined
+          const fileOperation = typeof command === "string"
+            ? scopedGitFileMutation(command) : undefined
           const staged =
             typeof command === "string"
-              ? (scopedGitAddTargets(command) ?? []).filter((path) =>
-                  resourcesWithinScope([path], generalScope),
-                )
+              ? [...(scopedGitAddTargets(command) ?? []),
+                  ...(fileOperation?.stagesChanges ? fileOperation.paths : [])].filter((path) =>
+                    resourcesWithinScope([path], generalScope),
+                  )
               : []
           await recordGitSessionStagingResult(
             ctx,
@@ -15155,12 +15472,16 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             String(raw.status ?? ""),
             pending?.gitStageBefore,
           )
+          if (raw.status === "completed" && fileOperation?.unstagesChanges) {
+            await clearGitSessionStaging(ctx, sessionID, fileOperation.paths)
+          }
           if (
             raw.status === "completed" &&
             typeof command === "string" &&
             isAllowedGitCommit(command)
           ) {
-            await clearGitSessionStaging(ctx, sessionID)
+            const paths = gitCommitPaths(command)
+            await clearGitSessionStaging(ctx, sessionID, paths.length ? paths : undefined)
             const messageFile = gitCommitMessageFile(command)
             if (messageFile) {
               await consumeCommitMessageFile(
@@ -15177,7 +15498,8 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       if (
         raw.agent &&
         eventMatches &&
-        pending?.admission
+        pending?.admission &&
+        !pending?.commandElevationId
       ) {
         const admission = pending.admission
         const sessionID = String(raw.sessionID)
@@ -15206,11 +15528,11 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           )) as TaskScope | undefined
           const defaultScope =
             artifactWriteDefaults[String(raw.agent)] ?? []
-          const writeScope = committableWriteScope(
+          const writeScope = committableWriteScope(mergeWriteScope(
             declaredScope?.write.length
-              ? declaredScope.write
-              : defaultScope,
-          )
+              ? declaredScope.write : defaultScope,
+            await policyWriteScope(String(raw.agent)),
+          ))
 
           if (raw.status === "completed") {
             const commitMessageOwned = successfulMutationPaths(
@@ -15246,7 +15568,9 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                   // Detect output symlink/authority changes during host execution.
                   // This does not sandbox the host process; it prevents false
                   // claims of owned outputs and preserves an error receipt.
-                  await assertProjectGenerationWrite(admission.workflowId, admission.stepId, command)
+                  await assertProjectGenerationWrite(
+                    admission.workflowId, admission.stepId, String(raw.agent), command,
+                  )
                 } catch (error) {
                   generatorOutputError = error instanceof Error ? error.message : String(error)
                 }
@@ -15266,13 +15590,14 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               }
             }
             if (raw.status === "completed") {
-              const owned = successfulMutationPaths(
-                tool,
-                input,
-                ctx.location.directory,
-              ).filter(
-                (path) =>
-                  !isAbsolute(path) &&
+              // File-producing shell commands become Git-owned only after
+              // observed changed-byte fingerprints, not merely shell status.
+              const knownOutputs = typeof (input as any)?.command === "string"
+                ? scopedToolWriteTargets((input as any).command) : []
+              const owned = (knownOutputs.length ? [] : successfulMutationPaths(
+                tool, input, ctx.location.directory,
+              )).filter(
+                (path) => !isAbsolute(path) &&
                   resourcesWithinScope([path], writeScope!),
               )
               if (owned.length > 0) {
@@ -15290,11 +15615,14 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 input && typeof input === "object"
                   ? (input as any).command
                   : undefined
+              const fileOperation = typeof command === "string"
+                ? scopedGitFileMutation(command) : undefined
               const staged =
                 typeof command === "string"
-                  ? (scopedGitAddTargets(command) ?? []).filter((path) =>
-                      resourcesWithinScope([path], writeScope!),
-                    )
+                  ? [...(scopedGitAddTargets(command) ?? []),
+                      ...(fileOperation?.stagesChanges ? fileOperation.paths : [])].filter((path) =>
+                        resourcesWithinScope([path], writeScope!),
+                      )
                   : []
               await recordGitSessionStagingResult(
                 ctx,
@@ -15304,12 +15632,16 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 String(raw.status ?? ""),
                 pending.gitStageBefore,
               )
+              if (raw.status === "completed" && fileOperation?.unstagesChanges) {
+                await clearGitSessionStaging(ctx, sessionID, fileOperation.paths)
+              }
               if (
                 raw.status === "completed" &&
                 typeof command === "string" &&
                 isAllowedGitCommit(command)
               ) {
-                await clearGitSessionStaging(ctx, sessionID)
+                const paths = gitCommitPaths(command)
+                await clearGitSessionStaging(ctx, sessionID, paths.length ? paths : undefined)
                 const messageFile = gitCommitMessageFile(command)
                 if (messageFile) {
                   await consumeCommitMessageFile(
@@ -15351,7 +15683,8 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       const returnedResult = raw.result ?? raw.output
       const reportedError =
         raw.status === "completed"
-          ? generatorOutputError ?? generatorToolError ?? safeResultError(returnedResult)
+          ? (pending?.commandElevationId ? generatorResultError(returnedResult) : undefined) ??
+            generatorOutputError ?? generatorToolError ?? safeResultError(returnedResult)
           : undefined
       const resultSummary =
         raw.status === "completed" && !reportedError ? safeResultSummary(tool, returnedResult) : {}

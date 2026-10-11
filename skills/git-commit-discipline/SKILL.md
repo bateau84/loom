@@ -18,7 +18,7 @@ Use plain Git as the sole command interface, limited to the forms admitted by th
 
 **Linked-worktree commits:** Git's `.git` entry in a linked worktree is a pointer file; the metadata lives in the primary repository, often outside Loom's project root. Run the same admitted scoped `git add` and hookless `git commit` commands in that worktree. Git itself may update its private index, objects and refs. No additional `.git` write scope or one-time hard-boundary approval is needed. Do not call `loom_scope_elevate` for those paths or edit them directly. Loom recognizes these exact paths as Git-owned for permitted commands, without granting raw filesystem access. Ordinary external-path edits still require their normal permission decision.
 
-**Governed Loom runtime:** commit authority follows the current effective durable project write scope, including paths added through `loom_scope_elevate`. Use only the admitted explicit-path Git staging and bounded commit commands below. Partial staging and broad history mutations may be denied by Loom's current provenance/admission rules. Do not bypass denials with alternate executables or shell wrappers.
+**Governed Loom runtime:** ordinary non-elevated commits use the effective write scope, explicit paths and bounded commands below. With a separate exact one-use `loom_command_elevate` grant, any shell Git command can run under host OS permissions, with an audit receipt but **without Loom's normal Git provenance guarantee**. Elevated shell effects must not be reported as scoped/owned changes or independent verification. Never disguise an ungranted command through alternate executable names or wrappers.
 
 
 > **House skill.** Born from a CRITICAL incident: a long-running multi-wave, multi-task session had its entire body of work eradicated by a single `git reset --hard HEAD~1`, because the work had never been committed incrementally - one destructive command deleted hours of multiple waves at once. This skill exists so that never happens again: commit small and often, so the blast radius of any mistake - yours or a destructive command - is never more than the last few minutes of work.
@@ -41,8 +41,10 @@ git diff --cached --check
 git diff --cached --stat
 git diff --cached
 
-git -c core.hooksPath=/dev/null commit -m "<type>(<scope>): <subject>"
+git -c core.hooksPath=/dev/null commit -m "<type>(<scope>): <subject>" -- path/to/fileA path/to/fileB
 ```
+
+The explicit `-- path/to/fileA path/to/fileB` form commits only those files, leaving unrelated staged entries untouched. It works with the effective Loom write scope, including new files granted by `loom_scope_elevate` after they have been authored by the current step. The earlier permitted no-path commit form remains available when the entire staged index belongs to the current step.
 
 For a short or medium multi-paragraph message, repeat `-m`:
 
@@ -59,8 +61,10 @@ ephemeral-reports/<role>/commit-messages/<unique-name>.md
 Then use the file as the complete commit message:
 
 ```bash
-git -c core.hooksPath=/dev/null commit -F ephemeral-reports/<role>/commit-messages/<unique-name>.md
+git -c core.hooksPath=/dev/null commit -F ephemeral-reports/<role>/commit-messages/<unique-name>.md -- path/to/fileA path/to/fileB
 ```
+
+Omit the `-- <files>` suffix only if the entire staged index is owned by the current Loom step.
 
 The scratch file is non-committable. Never stage it. The current commit-owning role/session must write the exact file bytes before using `-F`; Loom rejects a pre-existing, cross-role, stale/changed, symlink, hardlinked, or other non-single-link regular message file. A successful file-backed commit consumes the scratch file, so write a fresh message file for the next commit. Do not use shell redirection, heredocs, arbitrary `-F` paths, or another role's scratch namespace to construct a commit message.
 
