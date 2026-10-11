@@ -247,6 +247,32 @@ function parsedCommandWords(command: string) {
   return splitShellWords(parsed.command)
 }
 
+/** User-owned shell exception. It admits one bounded invocation, not its effects.
+ * Dangerous shell composition and Git authoring are still governed by the
+ * separate one-use loom_command_elevate audit path.
+ */
+export function localPolicyShellAllowed(
+  command: string,
+  rules: { exact: readonly string[]; prefixes: readonly string[] },
+): boolean {
+  const normalized = command.trim()
+  const words = parsedCommandWords(normalized)
+  if (!words?.length) return false
+  // Git mutation has existing ownership-aware admission; arbitrary forms can
+  // instead be explicitly audit-elevated for one exact command.
+  if (words[0] === "git" || words[0] === "but") return false
+  if (new Set([
+    "env", "command", "exec", "sudo", "doas", "su", "runuser",
+    "nice", "nohup", "time", "setsid", "busybox", "xargs", "parallel",
+  ]).has(words[0])) return false
+  if (new Set(["sh", "bash", "dash", "zsh", "fish"]).has(words[0]) &&
+      words.slice(1).some((word) => /^-[a-z]*c[a-z]*$/.test(word))) return false
+  if (rules.exact.includes(normalized)) return true
+  return rules.prefixes.some((prefix) =>
+    normalized === prefix || normalized.startsWith(prefix + " "),
+  )
+}
+
 // Named package scripts execute project code. The command and environment
 // remain bounded, but script effects are not restricted by this allowlist.
 export function isAllowedPackageScriptShell(command: string) {
