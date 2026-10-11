@@ -4785,7 +4785,107 @@ Verdict: FAIL
   })
 
 
-  test("Worker can dispatch without guessed scope and self-elevate discovered files", async () => {
+  test("global Loom whitelist is replaced by worktree shell and write policy", async () => {
+  const prior = process.env.XDG_CONFIG_HOME
+  const h = await harness()
+  try {
+    const parent = "policy-global-general"
+    const child = "policy-worktree-worker"
+    const { workflowId } = await h.call("start",
+      { request: "Make one bounded source edit." }, "general", parent)
+    expect((await h.call("route", {
+      humanFacing: false, behavioral: false, structural: false,
+      externalUnknown: false, diagnostic: false, productOutcome: false,
+      implementationRequested: true, executionDepth: "task",
+    }, "general", parent)).error).toBeUndefined()
+    const grant = await h.call("dispatch_grant",
+      { workflowId, stepId: "worker" }, "general", parent)
+    expect((await h.call("attach", {
+      workflowId, stepId: "worker", grantId: grant.grantId,
+    }, "worker", child)).attached).toBe(true)
+
+    const config = join(h.root, "config", "opencode")
+    await mkdir(config, { recursive: true })
+    process.env.XDG_CONFIG_HOME = dirname(config)
+    const globalPath = join(config, ".loom.yaml")
+    const globalPolicy = [
+      "version: 1", "shell:", "  exact:", "    - make test",
+      "writes:", "  worker:", "    - src/global.ts", "",
+    ].join("\n")
+    await writeFile(globalPath, globalPolicy, { mode: 0o600 })
+
+    const policyStatus = () => h.call("policy_status", {}, "worker", child)
+    const permission = async (action: "shell" | "edit", resource: string) => {
+      const event: any = {
+        agent: "worker", action, resources: [resource],
+        sessionID: child, effect: "ask",
+      }
+      await h.permissionHooks.get("evaluate")!(event)
+      return event
+    }
+    expect(await policyStatus()).toMatchObject({
+      source: "global", status: "loaded",
+      shell: { exact: ["make test"] },
+      writes: { worker: ["src/global.ts"] },
+    })
+    expect((await permission("shell", "make test")).effect).toBe("allow")
+    expect((await permission("edit", "src/global.ts")).effect).toBe("allow")
+    expect((await permission("edit", "pkg/worktree.ts")).effect).toBe("deny")
+    const makeCall = { tool: "shell", callID: "policy-global-make-test",
+      messageID: "policy-global-make-message", sessionID: child, agent: "worker",
+      input: { command: "make test" } }
+    await h.toolHooks.get("execute.before")!(makeCall)
+    await h.toolHooks.get("execute.after")!({
+      ...makeCall, status: "completed", result: "synthetic make test succeeded",
+    })
+
+    const worktree = join(h.root, ".loom.yaml")
+    await writeFile(worktree, [
+      "version: 1", "shell:", "  exact:", "    - just verify",
+      "writes:", "  worker:", "    - pkg/worktree.ts", "",
+    ].join("\n"), { mode: 0o600 })
+    expect(await policyStatus()).toMatchObject({
+      source: "worktree", status: "loaded",
+      shell: { exact: ["just verify"] },
+      writes: { worker: ["pkg/worktree.ts"] },
+    })
+    expect((await permission("shell", "make test")).effect).toBe("deny")
+    expect((await permission("shell", "just verify")).effect).toBe("allow")
+    expect((await permission("edit", "src/global.ts")).effect).toBe("deny")
+    expect((await permission("edit", "pkg/worktree.ts")).effect).toBe("allow")
+    const justCall = { tool: "shell", callID: "policy-worktree-just-verify",
+      messageID: "policy-worktree-just-message", sessionID: child, agent: "worker",
+      input: { command: "just verify" } }
+    await h.toolHooks.get("execute.before")!(justCall)
+    await h.toolHooks.get("execute.after")!({
+      ...justCall, status: "completed", result: "synthetic just verify succeeded",
+    })
+
+    const policyEdit = await permission("edit", ".loom.yaml")
+    expect(policyEdit.effect).toBe("deny")
+    expect(policyEdit.message).toContain("user-owned")
+    await expect(h.toolHooks.get("execute.before")!({
+      tool: "write", callID: "policy-block-self-write", messageID: "policy-block-self-message",
+      sessionID: child, agent: "worker",
+      input: { filePath: worktree, content: "version: 1\n" },
+    })).rejects.toThrow("user-owned")
+
+    await writeFile(worktree, "version: 2\n")
+    expect(await policyStatus()).toMatchObject({ source: "worktree", status: "invalid" })
+    expect((await permission("shell", "make test")).effect).toBe("deny")
+    expect((await permission("edit", "src/global.ts")).effect).toBe("deny")
+    await rm(worktree)
+    expect(await policyStatus()).toMatchObject({ source: "global", status: "loaded" })
+    expect((await permission("shell", "make test")).effect).toBe("allow")
+    expect((await permission("edit", "src/global.ts")).effect).toBe("allow")
+  } finally {
+    if (prior === undefined) delete process.env.XDG_CONFIG_HOME
+    else process.env.XDG_CONFIG_HOME = prior
+    h.restore()
+  }
+})
+
+test("Worker can dispatch without guessed scope and self-elevate discovered files", async () => {
     const h = await harness()
     try {
       const generalSession = "scope-before-grant-general"
