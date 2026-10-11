@@ -15,13 +15,21 @@ The rootless build uses only the namespace-local CHOWN/DAC_OVERRIDE/FOWNER/
 SETGID/SETUID capabilities needed by apt/dpkg, plus no-new-privileges. It has no
 SYS_ADMIN, privileged mode or host bind mounts. Runtime tests drop **all** caps.
 
-From the repository root, the standalone driver has two operations (in Loom, obtain an exact command grant
-before each non-routine operation):
+From the repository root, the supported finite workload path is build then run
+(in Loom, obtain an exact command grant before each non-routine operation):
 
 ```text
 python3 scripts/loom-isolation/container_driver.py build
 python3 scripts/loom-isolation/container_driver.py run --image sha256:<ID printed by build> --receipt scripts/loom-isolation/.container-builds/<buildId>/receipt.json
 ```
+
+`run` and its alias `inner-tests` execute only the fixed provider-free
+`bun run test` command through the independently attested inner supervisor.
+The remaining purpose-specific operations are `probe`, `compare-proc`, `custody`,
+`inner`, `inner-parent-loss`, `inner-refusal` and `inner-loss`, described below.
+They are not an arbitrary-command API or permission to run model/eval workloads.
+Missing capabilities or source/image binding refuse (78); there is no ambient
+host fallback. Do not open production databases, even read-only, as an oracle.
 
 The build takes a finite snapshot of tracked, regular source files plus the
 explicitly authored image/driver files. Unreviewed dirty source refuses the
@@ -90,9 +98,11 @@ operation is licensed by this image-side witness.
 runs the identical fixed no-payload witness twice using the same image, receipt,
 source, toolchain, bwrap command and principal. The ONLY requested policy change
 is the per-container literal `--security-opt unmask=/proc/*` in the second case.
-This mode does not release the outer gate or run Bun/Loom tests. Normal `run`
-never enables proc unmask. No ALL/unconfined/privileged/rootful/SYS_ADMIN or
-additional security contrast is supported.
+This mode does not release the outer gate or run Bun/Loom tests. The delivered
+`run`/`inner-tests` and positive inner modes use the approved per-container scoped
+proc-unmask profile too; the baseline `probe`/`custody` do not. No
+ALL/unconfined/privileged/rootful/SYS_ADMIN or additional security contrast is
+supported.
 
 "Default" here means the existing reviewed fixture, not all stock Podman
 defaults: per-container `label=disable` was already present and is held fixed in
@@ -137,7 +147,9 @@ Through exact-ID Podman pause/unpause/kill operations, it requires recursive
 descriptors. It reads only the engine-derived scope and its gate PID's stat/cgroup,
 never writes host cgroups, allocates another delegation or scans unrelated scopes.
 Main-process SIGKILL return/removal is NOT empty-subtree proof: missing/deleted
-kernel observation is unknown/refusal. Existing engine/systemd remains sole
+kernel observation alone is unknown/refusal. The qualified terminal observation
+below is a distinct, platform-bound path, not an errno shortcut.
+Existing engine/systemd remains sole
 cgroup writer; raw writable delegation is not transferred to the child/Worker.
 
 This prerequisite operation does not yet prove hostile escape resistance,
@@ -265,11 +277,59 @@ remains a failure, not proof all descendants exited. Images remain cached for
 reuse; the driver does not prune unrelated images/engine state.
 New provider-free run diagnostics are captured under
 `scripts/loom-isolation/.container-results/<runId>.json` (private permissions,
-1 MiB combined stream limit, separate stdout/stderr, explicit loss/ordering and
+4 MiB combined workload stream limit, separate stdout/stderr, explicit loss/ordering and
 cleanup fields). These files are synthetic execution artifacts: do not commit
 them. Hidden result directories are excluded from both snapshot and build.
 
-**Observed verification:** the final image
+## Reviewed finite delivery and evidence subjects
+
+The scoped `isolated-supervisor` Task independently passed implementation review
+on 2026-10-10 at source HEAD `eb4703221e3a57337b197637ae9bf47481bb56b9`.
+The refreshed observed image was
+`sha256:cfc15833dd417780dba8b209f383e14d6c12ec63729e9bbce7bba5769e5b7dd0`,
+bound to 849 selected inputs by
+`.container-builds/a66bd9a0c28c4a53a47343bb1eba8d76/receipt.json`.
+Run `f6088b96f5fd46f2872cfac01a767803` executed the unmodified command:
+**140 Python tests OK; 603 Bun tests across 36 files, 0 failed** (743 total).
+Its parent observed applied restrictions before inner release, all 18 synthetic
+direct/link/ambient read/write denials across pre-import/setup/descendant phases,
+unchanged own sentinel, recursive `populated=0`/`frozen=0` before removal
+(87 samples), and owned-container cleanup. Separate stdout/stderr are retained;
+cross-stream interleaving is unproven.
+
+Reviewer claim `f00fc151-aef7-4b2b-98c0-5d8b03beee94` is independent
+current-source/receipt/log/hash inspection, **not Reviewer runtime replay**.
+Producer claim `9f98aa35-f3e1-41aa-a9eb-9193f2c53086` retains its own authorship.
+Earlier c807 fault scenarios and 741-test runs remain original-input historical
+evidence with narrowly reviewed unchanged relevant-input applicability, not new
+cfc executions. Never rewrite their receipts to match later source.
+
+This documentation update itself changes selected README bytes: the image above
+is a reviewed historical subject, not a runnable binding for the updated tree.
+A future authorized run requires a fresh matching build/receipt; no rerun or
+additional spending is implied here.
+
+Delivery is limited to this approved finite workload on the validated known-image
+Linux/rootless platform, with trusted kernel/runtime/operator assumptions. The
+qualified retirement path is restricted to the matched Fedora kernel 7.2.9,
+Podman 5.8.4 and crun 1.28 identities; unknown platforms cannot inherit it. The
+fixture uses preexisting `label=disable` plus scoped proc unmask, **not SELinux
+container process-label isolation**. There is no arbitrary-image, hostile-payload,
+supply-chain, boot-integrity, other-hardware or external-effect-undo guarantee.
+The workload custody helper is not the later installation-wide custodian.
+Physical stale-writer/stock-service custody, native Git publication repair,
+upgrade/offline restoration, and whole-Objective reliability/net-simplification
+acceptance remain separate unfinished work. USER publications `eaeb9f7e` and
+`5cbe` retain USER attribution; they do not prove repaired native admission.
+
+`supervisor.py --manifest ...` remains a historical source-only manifest validator:
+it deliberately refuses (78) with `payloadStarted=false` and isolation unproven.
+The delivered entry is `container_driver.py run`, not that stub or the older
+eval-image `podman_witness.py` checkpoint.
+
+## Historical checkpoints
+
+**Historical observed verification:** image
 `sha256:34e3893c735bc9589a3836067aeb68be4bf99b8b0642d2337221f8e90866cd8c`
 ran the unmodified `bun run test` successfully: **138 Python tests OK**, then
 **603 Bun tests across 36 files, 0 failed**. The parent/engine and trusted gate
@@ -294,4 +354,4 @@ used `CgroupVersion` instead of Podman's actual Go field `CgroupsVersion` and
 exited 125 before build. That authored defect was corrected and rootless/v2
 was subsequently observed by the driver. Missing jq, eval fixtures, zsh source
 and the Python API dependency were image/context defects, not grounds to skip
-tests or grant production access; the final run above includes their corrections.
+tests or grant production access; that historical run includes their corrections.
