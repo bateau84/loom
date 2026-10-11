@@ -4839,6 +4839,20 @@ Verdict: FAIL
       ...makeCall, status: "completed", result: "synthetic make test succeeded",
     })
 
+    // A configured write must pass both host admission and locked tool
+    // preflight, then be recorded as exact authored bytes for normal Git.
+    const globalWrite = {
+      tool: "write", callID: "policy-global-write", messageID: "policy-global-write-message",
+      sessionID: child, agent: "worker",
+      input: { filePath: join(h.root, "src", "global.ts"), content: "export const global = true\n" },
+    }
+    await h.toolHooks.get("execute.before")!(globalWrite)
+    await writeFile(join(h.root, "src", "global.ts"), "export const global = true\n")
+    await h.toolHooks.get("execute.after")!({
+      ...globalWrite, status: "completed", result: "written",
+    })
+    expect((await permission("shell", "git add -- src/global.ts")).effect).toBe("allow")
+
     const worktree = join(h.root, ".loom.yaml")
     await writeFile(worktree, [
       "version: 1", "shell:", "  exact:", "    - just verify",
@@ -4860,6 +4874,22 @@ Verdict: FAIL
     await h.toolHooks.get("execute.after")!({
       ...justCall, status: "completed", result: "synthetic just verify succeeded",
     })
+    await expect(h.toolHooks.get("execute.before")!({
+      ...makeCall, callID: "policy-revoked-make", messageID: "policy-revoked-make-message",
+    })).rejects.toThrow("loom_command_elevate")
+    expect((await permission("shell", "git add -- src/global.ts")).effect).toBe("deny")
+    await mkdir(join(h.root, "pkg"), { recursive: true })
+    const localWrite = {
+      tool: "write", callID: "policy-local-write", messageID: "policy-local-write-message",
+      sessionID: child, agent: "worker",
+      input: { filePath: join(h.root, "pkg", "worktree.ts"), content: "export const local = true\n" },
+    }
+    await h.toolHooks.get("execute.before")!(localWrite)
+    await writeFile(join(h.root, "pkg", "worktree.ts"), "export const local = true\n")
+    await h.toolHooks.get("execute.after")!({
+      ...localWrite, status: "completed", result: "written",
+    })
+    expect((await permission("shell", "git add -- pkg/worktree.ts")).effect).toBe("allow")
 
     const policyEdit = await permission("edit", ".loom.yaml")
     expect(policyEdit.effect).toBe("deny")
