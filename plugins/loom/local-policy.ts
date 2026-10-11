@@ -1,4 +1,6 @@
 import { YAML } from "bun"
+import { execFile } from "node:child_process"
+import { promisify } from "node:util"
 import { open, realpath } from "node:fs/promises"
 import { constants } from "node:fs"
 import { homedir } from "node:os"
@@ -31,6 +33,7 @@ export type LocalPolicyReadResult = {
 
 const writableRoles = new Set(["worker", "designer", "specifier", "architect", "documenter"])
 const maxPolicyBytes = 65_536
+const execFileAsync = promisify(execFile)
 
 function object(value: unknown, context: string): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -234,6 +237,34 @@ export async function readEffectiveLocalPermissionPolicy(
   const worktreePath = join(resolve(projectDirectory), ".loom.yaml")
   const worktree = await readLocalPermissionPolicy(worktreePath)
   if (worktree.status !== "absent") {
+    // A checked-out repository is not a user-owned permission source. Reject
+    // tracked .loom.yaml even though Git created it with the current user's UID.
+    if (worktree.status === "loaded") {
+      try {
+        await lstat(join(resolve(projectDirectory), ".git"))
+        const { stdout } = await execFileAsync(
+          "git", ["ls-files", "--cached", "-z", "--", ".loom.yaml"],
+          { cwd: resolve(projectDirectory), timeout: 5_000, maxBuffer: 65_536 },
+        )
+        if (stdout.length > 0) {
+          return {
+            path: worktreePath, worktreePath, globalPath, source: "worktree",
+            status: "invalid",
+            error: "Tracked worktree .loom.yaml is not a user-owned local permission file. Untrack it and use a Git exclude.",
+          }
+        }
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException)?.code !== "ENOENT") {
+          return {
+            path: worktreePath, worktreePath, globalPath, source: "worktree",
+            status: "invalid",
+            error: "Could not establish that worktree .loom.yaml is untracked: " +
+              (error instanceof Error ? error.message : String(error)),
+          }
+        }
+        // Outside a Git checkout there is no tracked repository content.
+      }
+    }
     if (worktree.policy?.projects && Object.keys(worktree.policy.projects).length > 0) {
       return {
         path: worktreePath, worktreePath, globalPath, source: "worktree",
