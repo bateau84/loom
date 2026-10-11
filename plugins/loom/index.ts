@@ -14577,7 +14577,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           observedAt: new Date().toISOString(),
         } satisfies ObservedUserMessage)
       }
-      const contract = roleContracts.get(String(raw.agent ?? "") as LoomAgentRole)
+      const contract = roleContracts.get(String(raw.agent ?? "") as LoomAgentRole) ?? roleContracts.get("*")
       if (contract) event.system.push({ type: "text", text: contract })
 
       // Compatibility guidance is deliberately conditional and tiny. Detailed

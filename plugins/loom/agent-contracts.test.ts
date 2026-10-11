@@ -8,7 +8,10 @@ import { loadLoomAgentContracts, LOOM_AGENT_ROLES, LOOM_ROLE_PERMISSIONS } from 
 describe("optional Loom agent contracts", () => {
   test("all installed roles receive the shared plus their own contract", async () => {
     const result = await loadLoomAgentContracts()
-    expect(result.size).toBe(LOOM_AGENT_ROLES.length)
+    expect(result.size).toBe(LOOM_AGENT_ROLES.length + 1)
+    const fallback = result.get("*")
+    expect(fallback).toContain("# Loom shared runtime contract")
+    expect(fallback).not.toContain("# Loom runtime contract:")
     for (const role of LOOM_AGENT_ROLES) {
       const body = result.get(role)
       expect(body).toContain("# Loom shared runtime contract")

@@ -461,5 +461,5 @@ export async function loadLoomAgentContracts(root: URL = new URL("./contracts/",
     if (!specific) throw new Error(`Loom runtime contract is empty for ${role}.`)
     return [role, `${shared}\n\n${specific}`] as const
   }))
-  return new Map<LoomAgentRole, string>(parts)
+  return new Map<string, string>([["*", shared], ...parts])
 }

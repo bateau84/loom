@@ -76,30 +76,26 @@ class ActivationTests(unittest.TestCase):
 
 
 class AgentGitPermissionTests(unittest.TestCase):
-    def test_every_agent_exposes_git_as_fail_safe_ask(self):
-        permission = (
-            '  - action: shell\n'
-            '    resource: "git *"\n'
-            '    effect: ask'
-        )
-        wildcard_deny = (
-            '  - action: shell\n'
-            '    resource: "*"\n'
-            '    effect: deny'
-        )
-        for path in sorted((ROOT / "agents").glob("*.md")):
-            text = path.read_text()
-            header_end = text.find("\n---", 4)
-            self.assertGreater(header_end, 0, path.name)
-            header = text[:header_end]
-            with self.subTest(agent=path.stem):
-                self.assertIn(permission, header)
-                if wildcard_deny in header:
+    def test_every_loom_agent_retains_git_fail_safe_in_plugin_policy(self):
+        source = (ROOT / "plugins/loom/agent-contracts.ts").read_text()
+        definition = source.split("export const LOOM_ROLE_PERMISSIONS = ", 1)[1]
+        encoded = definition.split(" as const", 1)[0]
+        policies = json.loads(encoded)
+        agent_names = {path.stem for path in (ROOT / "agents").glob("*.md")}
+        self.assertEqual(set(policies), agent_names)
+
+        for role, rules in policies.items():
+            with self.subTest(agent=role):
+                fallback = {"action": "shell", "resource": "git *", "effect": "ask"}
+                self.assertIn(fallback, rules)
+                wildcard_deny = {"action": "shell", "resource": "*", "effect": "deny"}
+                if wildcard_deny in rules:
                     self.assertGreater(
-                        header.index(permission),
-                        header.index(wildcard_deny),
+                        rules.index(fallback), rules.index(wildcard_deny),
                         "Git ask fallback must follow wildcard shell deny",
                     )
+                text = (ROOT / "agents" / f"{role}.md").read_text()
+                self.assertNotIn("permissions:", text.split("---", 2)[1])
 
     def test_runtime_has_universal_git_inspection_and_fail_closed_fallback(self):
         source = (ROOT / "plugins/loom/index.ts").read_text()
