@@ -94,9 +94,9 @@ git diff --cached --stat
 git diff --cached --check
 ~~~
 
-Outside governed Loom, use the repository's ordinary hooks and Git commit workflow. **Inside Loom**, only use the precise command forms currently admitted by the runtime; for example, where admitted, a scoped `git add -- ...` followed by `git -c core.hooksPath=/dev/null commit -m "..."`. Do not disable hooks merely for convenience outside that explicitly controlled environment.
+Outside governed Loom, use the repository's ordinary hooks and Git commit workflow. **Inside Loom**, ordinary Git commands use precise scoped forms such as `git add -- ...` and `git -c core.hooksPath=/dev/null commit -m "..."`. A separate exact one-use `loom_command_elevate` grant permits any shell Git command as an **audit-only exception**, without proving trusted Git or file ownership. Do not disable hooks without an explicitly admitted command.
 
-Partial staging and history editing may be unsupported by Loom's whole-file provenance rules even when Git supports them. Follow the runtime denial; do not switch tools to bypass it.
+Partial staging and history editing may be unsupported by Loom's ordinary whole-file provenance rules even when Git supports them. Follow ungranted denials; use explicit command elevation only when the assigned work calls for it. Do not hide an ungranted command behind another executable or wrapper.
 
 ## 5. Branches, syncing, and publishing
 
