@@ -17,6 +17,10 @@ Only the enabled Loom plugin injects this text. Without Loom, portable agents op
 - When a required shell command is blocked, an attached agent may call `loom_command_elevate` with its current workflow/step, the exact full command, and a reason. All command forms are eligible. A successful one-use grant returns `continue=true`: run the exact command once through shell/bash and continue. A different command requires another grant. Do not use wrappers to evade an ungranted denial.
 - Elevated shell commands are audit-only: Loom records the execution and result but does not confine, undo or fully observe its effects. They may mutate Git, files or external systems without creating trusted file ownership or passing independent review. Host OS permissions still apply.
 
+## Global and worktree permissions
+
+The optional user-owned `~/.config/opencode/.loom.yaml` contains `shell.exact`, `shell.prefixes`, and per-role `writes` paths. When `.loom.yaml` exists in the worktree root, it replaces the entire global whitelist for that worktree; rules are not merged. An invalid local file does not restore global allowances. Inspect via `loom_policy_status` and use the current workflow/step's actual effective scope for every mutation. These are grants inside Loom's existing workflow gates, not permission to create new work. Never modify these policy files through agent tools.
+
 ## Continuing safely
 
 - General coordinates the next eligible step, but the current status and control plane remain authoritative. A candidate transition does not authorize duplicate dispatch or bypass gates.

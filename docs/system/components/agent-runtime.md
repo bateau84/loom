@@ -65,6 +65,12 @@ Loom derives ordinary repository capability from the already-attached role; it d
 `loom_complete` rejects admitted product changes that remain uncommitted. Reopen/reroute advances the step attempt, so prior-attempt write/Git provenance cannot silently carry into new work.
 
 
+## User-owned shell and write whitelist (global → worktree)
+
+The optional global policy is `~/.config/opencode/.loom.yaml` (or `$XDG_CONFIG_HOME/opencode/.loom.yaml`). If the current working-directory root has its own `.loom.yaml`, **that entire local policy replaces the global policy** for this worktree, including both command and write whitelists. This is useful for independent PR worktrees. An invalid or unsafe worktree file suppresses global whitelist grants rather than silently falling back. Deleting it restores the global defaults. Rules are re-read for every authorization and execution preflight.
+
+Call `loom_policy_status` to inspect the active source, parse errors, shell rules, and role-write paths. Ordinary built-in Loom policy remains intact. Whitelists grant bounded additional access only to the current executable step, never to stale steps or advisory-only OQ attachments. `loom_command_elevate` remains an explicit one-use audit escape hatch for commands not eligible for routine or configured admission. See [Global and worktree permissions](../local-permissions.md).
+
 ## Project verification commands and traceability
 
 Worker, Diagnostic, Reviewer, Critic, and Acceptance can run named project package scripts (`bun/npm/pnpm/yarn run <name>`), normal Python and Go test runners, and bounded shell test tools and project test scripts. The approval covers the *outer invocation*, not what its tests or scripts execute internally. It never grants product write scope. Research does not gain this role capability.
