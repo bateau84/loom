@@ -1416,12 +1416,13 @@ function relevantTaskAuthorityRefs(plan: WorkPlanDefinition, taskId: string) {
   return plan.authorityRefs.filter((authorityRef) => relevant.has(authorityRef))
 }
 
-function planTaskSemanticFingerprint(plan: WorkPlanDefinition, taskId: string, ignoreWaveObjective = false) {
+function planTaskSemanticFingerprint(plan: WorkPlanDefinition, taskId: string, ignoreDescriptiveFields = false) {
   const authorityRefs = relevantTaskAuthorityRefs(plan, taskId)
   if (!authorityRefs) return undefined
   const payload = planTaskFingerprintPayload(plan, taskId, authorityRefs)
-  return payload ? JSON.stringify(ignoreWaveObjective
-    ? { ...payload, wave: { ...payload.wave, objective: undefined } } : payload) : undefined
+  return payload ? JSON.stringify(ignoreDescriptiveFields
+    ? { ...payload, phase: { ...payload.phase, title: undefined },
+        wave: { ...payload.wave, title: undefined, objective: undefined } } : payload) : undefined
 }
 
 /**
@@ -1482,6 +1483,134 @@ export function taskSemanticClosureFingerprintAtRevision(
   return snapshot ? planTaskSemanticClosureFingerprint(snapshot, taskId) : undefined
 }
 
+/** The execution-significant closure, including all transitive Task dependencies. */
+export function taskExecutionClosureFingerprintAtRevision(
+  hierarchy: WorkHierarchy,
+  taskId: string,
+  generation = hierarchy.generation,
+  revision?: number,
+) {
+  const snapshot = planSnapshot(hierarchy, generation, revision)
+  return snapshot
+    ? planTaskSemanticClosureFingerprint(snapshot, taskId, true)
+    : undefined
+}
+
+export type TaskReceiptSemanticDiagnosis = {
+  originalProof: "valid" | "missing-receipt-fingerprint" | "original-plan-unavailable" | "original-proof-mismatch"
+  currentContract: "unchanged" | "changed" | "unknown"
+  originalPlanRevision?: number
+  hashes: {
+    recordedOriginal?: string
+    reconstructedOriginal?: string
+    legacyCurrent?: string
+    executionOriginal?: string
+    executionCurrent?: string
+  }
+  changedSemanticFields: string[]
+  changedDisplayFields: string[]
+}
+
+/**
+ * Read-only diagnosis. Provenance and the current contract are independent:
+ * a receipt can be authentic for its original Plan while its Task is stale.
+ * Never infer original proof from a matching *current* fingerprint.
+ */
+export function diagnoseTaskReceiptSemantics(
+  hierarchy: WorkHierarchy,
+  taskId: string,
+  receipt: WorkTaskResult,
+  generation = hierarchy.generation,
+): TaskReceiptSemanticDiagnosis {
+  const revision = receipt.planRevision
+  const original = revision
+    ? taskSemanticClosureFingerprintAtRevision(hierarchy, taskId, generation, revision)
+    : undefined
+  const current = taskSemanticClosureFingerprintAtRevision(hierarchy, taskId, generation)
+  const originalExecution = revision
+    ? taskExecutionClosureFingerprintAtRevision(hierarchy, taskId, generation, revision)
+    : undefined
+  const currentExecution = taskExecutionClosureFingerprintAtRevision(hierarchy, taskId, generation)
+  const originalProof = !receipt.semanticClosureFingerprint
+    ? "missing-receipt-fingerprint"
+    : !original || !originalExecution
+      ? "original-plan-unavailable"
+      : receipt.semanticClosureFingerprint !== original
+        ? "original-proof-mismatch"
+        : "valid"
+  const currentContract = !originalExecution || !currentExecution
+    ? "unknown"
+    : originalExecution === currentExecution ? "unchanged" : "changed"
+
+  const oldPlan = revision ? planSnapshot(hierarchy, generation, revision) : undefined
+  const currentPlan = planSnapshot(hierarchy, generation)
+  const semanticFields = new Set<string>()
+  const displayFields = new Set<string>()
+  if (oldPlan && currentPlan) {
+    const ids = new Set<string>()
+    const visit = (plan: WorkPlanDefinition, id: string, seen: Set<string>) => {
+      if (seen.has(id)) return
+      seen.add(id)
+      ids.add(id)
+      const located = findPlanTask(plan, id)
+      for (const dep of located?.task.dependsOn ?? []) visit(plan, dep, seen)
+    }
+    visit(oldPlan, taskId, new Set())
+    visit(currentPlan, taskId, new Set())
+    for (const id of [...ids].sort()) {
+      const oldRefs = relevantTaskAuthorityRefs(oldPlan, id)
+      const newRefs = relevantTaskAuthorityRefs(currentPlan, id)
+      const before = oldRefs && planTaskFingerprintPayload(oldPlan, id, oldRefs)
+      const after = newRefs && planTaskFingerprintPayload(currentPlan, id, newRefs)
+      if (!before || !after) {
+        semanticFields.add(`task:${id}.removed-or-added`)
+        continue
+      }
+      for (const field of [
+        "goal", "assumptions", "outOfScope", "authorityRefs", "obligations",
+        "risks", "acceptanceCoverage", "relationships", "correctionRouting",
+      ] as const) {
+        if (JSON.stringify(before[field]) !== JSON.stringify(after[field])) {
+          semanticFields.add(`task:${id}.${field}`)
+        }
+      }
+      for (const field of ["id", "objective"] as const) {
+        if (before.phase[field] !== after.phase[field]) semanticFields.add(`task:${id}.phase.${field}`)
+      }
+      for (const field of ["id", "constraints"] as const) {
+        if (JSON.stringify(before.wave[field]) !== JSON.stringify(after.wave[field])) {
+          semanticFields.add(`task:${id}.wave.${field}`)
+        }
+      }
+      if (before.wave.objective !== after.wave.objective) displayFields.add(`task:${id}.wave.objective`)
+      const beforeTask = before.task
+      const afterTask = after.task
+      for (const field of new Set([...Object.keys(beforeTask), ...Object.keys(afterTask)])) {
+        const key = field as keyof WorkPlanTask
+        if (JSON.stringify(beforeTask[key]) !== JSON.stringify(afterTask[key])) {
+          semanticFields.add(`task:${id}.task.${field}`)
+        }
+      }
+      if (before.phase.title !== after.phase.title) displayFields.add(`task:${id}.phase.title`)
+      if (before.wave.title !== after.wave.title) displayFields.add(`task:${id}.wave.title`)
+    }
+  }
+  return {
+    originalProof,
+    currentContract,
+    ...(revision ? { originalPlanRevision: revision } : {}),
+    hashes: {
+      ...(receipt.semanticClosureFingerprint ? { recordedOriginal: receipt.semanticClosureFingerprint } : {}),
+      ...(original ? { reconstructedOriginal: original } : {}),
+      ...(current ? { legacyCurrent: current } : {}),
+      ...(originalExecution ? { executionOriginal: originalExecution } : {}),
+      ...(currentExecution ? { executionCurrent: currentExecution } : {}),
+    },
+    changedSemanticFields: [...semanticFields].slice(0, 64),
+    changedDisplayFields: [...displayFields].slice(0, 64),
+  }
+}
+
 /** Inspect an archived producer receipt without rewriting it or the historical Plan. */
 export function inspectTaskSemanticClosure(
   hierarchy: WorkHierarchy,
@@ -1516,6 +1645,12 @@ export function inspectTaskSemanticClosure(
             changedFields.push(`${id}.wave.${waveField}`)
           }
         }
+      } else if (field === "phase") {
+        for (const phaseField of ["id", "title", "objective"] as const) {
+          if (JSON.stringify(oldPayload.phase[phaseField]) !== JSON.stringify(newPayload.phase[phaseField])) {
+            changedFields.push(`${id}.phase.${phaseField}`)
+          }
+        }
       } else if (JSON.stringify(oldPayload[field]) !== JSON.stringify(newPayload[field])) {
         changedFields.push(`${id}.${field}`)
       }
@@ -1523,10 +1658,12 @@ export function inspectTaskSemanticClosure(
     for (const dependency of before.task.dependsOn) inspect(dependency)
   }
   inspect(taskId)
-  // The objective is descriptive Plan prose. Wave identity, title, constraints,
-  // assigned Task contracts, authority and the transitive prerequisites remain
-  // binding; a mere rewording cannot stamp a new receipt onto old evidence.
-  const material = changedFields.some((field) => !field.endsWith(".wave.objective"))
+  // Display headings and descriptive Wave objectives do not change Task meaning.
+  // Identity, authority, constraints, dependencies and evidence remain binding.
+  const material = changedFields.some((field) =>
+    !field.endsWith(".wave.objective") &&
+    !field.endsWith(".phase.title") &&
+    !field.endsWith(".wave.title"))
   return { status: material ? "changed-current" : "unchanged", changedFields }
 }
 
