@@ -6245,7 +6245,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
       addLoomTool({
         name: "start",
-        description: "Start governed Loom execution for an accepted Anchor or a bounded committed task. Ordinary conversation/investigation does not require this tool. General only.",
+        description: "General only. Start one governed Loom workflow after the user has authorized a change, using exactly one accepted Anchor path or a bounded committed request. Conversational explanation, investigation and standalone assessment do not need a workflow. This creates the workflow record, not a child dispatch: use loom_route to classify it and obtain its first eligible steps. Rejected input grants no work authority.",
         input: {
           type: "object",
           properties: {
@@ -6371,7 +6371,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       addLoomTool({
         name: "route",
         description:
-          "Classify or reclassify accepted work and create the required Loom execution DAG. General only.",
+          "General only. After loom_start, select the smallest justified execution depth and only unresolved domain-authority flags; ordinary UI/code changes do not automatically require new authority. Creates or updates the authoritative Loom step DAG and returns runnable steps/continuation guidance. Does not dispatch agents or authorize bypass of gates; dispatch uses loom_dispatch_grant after reading current status.",
         input: {
           type: "object",
           properties: {
@@ -6790,7 +6790,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       addLoomTool({
         name: "complete",
         description:
-          "Finish one Loom step. Work uses complete; Reviewer/Critic gates use pass or fail. Blocking OQs must be answered and reconciled by this step first.",
+          "Complete only the exact currently attached Loom step after verifying its outcome and required evidence; this is a durable state change, not a progress comment. Producer work uses complete; independent Reviewer/Critic gates use pass or fail. Blocking OQs must be answered and reconciled before completion. Denial leaves the step incomplete; do not claim PASS from model prose, stale receipts, or successful tool invocation alone.",
         input: {
           type: "object",
           properties: {
@@ -11576,7 +11576,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       addLoomTool({
         name: "dispatch_grant",
         description:
-          "Issue one short-lived, single-use attachment grant for an exact runnable workflow step or unanswered OQ. General only. A Worker may be dispatched without a predeclared file list so it can inspect first and call loom_scope_elevate when it discovers the actual mutation surface. Pass the returned grantId to the child session.",
+          "General only. After loom_status or loom_route identifies an admitted pending step, or an unanswered specialist OQ, issue a one-use grant for exactly that stepId or questionId; grant issuance alone does not execute it. Pass the returned grantId, workflowId and target identity to the dispatched child, which calls loom_attach. Do not issue duplicate/ambiguous grants or treat a candidate nextAction as permission; admission revalidates state. Worker may inspect with an initially unknown write scope, then call loom_scope_elevate as needed.",
         input: {
           type: "object",
           properties: {
@@ -11767,7 +11767,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       addLoomTool({
         name: "attach",
         description:
-          "Consume a General-issued one-use grant and attach the current child session to its exact Loom workflow step or OQ, including the relevant Task/holistic Plan context when available.",
+          "Called by a governed child before it performs assigned work. Consumes an exact one-use General-issued grant and binds this host session to its workflow step or OQ, including current Task/Plan context. A missing, expired, stale or mismatched grant does not authorize work: stop and return the error to General instead of inventing context or continuing in an unbound session.",
         input: {
           type: "object",
           properties: {

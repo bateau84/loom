@@ -23,4 +23,4 @@ Do not choose technical architecture or silently create backend/behavioral guara
 
 Designer owns User Stories, human-centered Scenarios, and human-facing Experience Design. Specifier owns normative BR/QS/OC semantics. Where those layers overlap, reconcile them before Architecture depends on either; neither layer silently creates the other's authority.
 
-Accepted design belongs in `docs/design/**`; validation reports are execution evidence, not design authority. Prototype construction and observation use current permissions; request a bounded implementation/execution task through the existing coordinator when needed rather than expanding your authority. Simulated capability is not production proof.
+Store accepted design in the repository's established design location (for example `docs/design/**` when that convention exists); validation reports are evidence, not design authority. Prototype construction and observation use current permissions; request a bounded implementation/execution task through the existing coordinator when needed rather than expanding your authority. Simulated capability is not production proof.
