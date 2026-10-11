@@ -1,7 +1,7 @@
 import { YAML } from "bun"
 import { execFile } from "node:child_process"
 import { promisify } from "node:util"
-import { open, realpath } from "node:fs/promises"
+import { lstat, open, realpath } from "node:fs/promises"
 import { constants } from "node:fs"
 import { homedir } from "node:os"
 import { isAbsolute, join, resolve } from "node:path"
