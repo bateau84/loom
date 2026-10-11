@@ -140,7 +140,9 @@ import {
   scopedGofmtWriteTargets,
   shellResourcesAllowed,
   workerShellResourcesAllowed,
+  localPolicyShellAllowed,
 } from "./shell"
+import { readEffectiveLocalPermissionPolicy, projectShellOverrides, projectWriteOverrides, targetsEffectiveLocalPermissionPolicy } from "./local-policy"
 import { prepareReportPromotion, publishPreparedReport, reconcilePendingReportPromotion, type ReportPromotionInput, type ReportPromotionRecord } from "./reports"
 import {
   findPaths,
@@ -4304,6 +4306,12 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
     await recoverPendingReportPromotions(ctx, runtime, ctx.location.directory)
 
+    // Re-read global/worktree policy at every admission. A worktree policy
+    // replaces, rather than unions with, global grants for this checkout.
+    const currentPolicy = () => readEffectiveLocalPermissionPolicy(ctx.location.directory)
+    const policyWriteScope = async (role: string) =>
+      projectWriteOverrides((await currentPolicy()).policy, ctx.location.directory, role)
+
     const dashboardPublisher = createDashboardPublisher(scopedStorage, runtime)
     dashboardPublisher.trigger()
     dashboardPublisher.startHeartbeat()
@@ -4404,7 +4412,8 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         }
       }
       const scope = (await ctx.storage.get(scopeKey(workflowId, stepId))) as TaskScope | undefined
-      if (!scope?.write.length || !resourcesWithinScope(outputPaths, scope.write)) {
+      const effective = mergeWriteScope(scope?.write ?? [], await policyWriteScope("worker"))
+      if (!effective.length || !resourcesWithinScope(outputPaths, effective)) {
         throw new Error(
           "Generated output is outside the current Loom write scope (" +
           elevatedGenerationOutput(command) +
@@ -4540,6 +4549,11 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       directMutationPaths: string[],
     ) => {
       if (directMutationPaths.length === 0 || !raw.sessionID) return
+      if ((await Promise.all(directMutationPaths.map((p) =>
+        targetsEffectiveLocalPermissionPolicy(ctx.location.directory, p),
+      ))).some(Boolean)) {
+        throw new Error("Loom policy YAML is user-owned and cannot be edited by an agent.")
+      }
 
       const sessionID = String(raw.sessionID)
       const workflowId = (await ctx.storage.get(
@@ -4636,9 +4650,11 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       const effectiveWriteScope =
         agent === "general"
           ? generalGitWriteScope
-          : declaredScope?.write.length
-            ? declaredScope.write
-            : (artifactWriteDefaults[agent] ?? [])
+          : mergeWriteScope(
+              declaredScope?.write.length
+                ? declaredScope.write : (artifactWriteDefaults[agent] ?? []),
+              await policyWriteScope(agent),
+            )
 
       if (commitMessagePaths.length > 0) {
         if (committableWriteScope(effectiveWriteScope).length === 0) {
@@ -4751,6 +4767,9 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           scopeKey(workflowId, stepId),
         )) as TaskScope | undefined
         if (scope?.write.length) writeScope = scope.write
+      }
+      if (raw.agent !== "general") {
+        writeScope = mergeWriteScope(writeScope, await policyWriteScope(String(raw.agent ?? "")))
       }
       writeScope = committableWriteScope(writeScope)
 
@@ -12256,6 +12275,33 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       })
 
       addLoomTool({
+        name: "policy_status",
+        description:
+          "Inspect currently effective user-owned Loom command/write rules for this OpenCode worktree. The optional root .loom.yaml overrides the global ~/.config/opencode/.loom.yaml, including empty sections. An invalid local file blocks all configured allowances rather than falling back to global. Rules reload on every permission and execution admission. This is read-only; it neither grants permission nor modifies files.",
+        input: {
+          type: "object", properties: {}, additionalProperties: false,
+        },
+        options: { namespace: "loom", codemode: false },
+        execute: async () => {
+          const policy = await currentPolicy()
+          return { content: renderToolOutput({
+            source: policy.source, status: policy.status,
+            path: policy.path, globalPath: policy.globalPath,
+            worktreePath: policy.worktreePath,
+            ...(policy.error ? { error: policy.error } : {}),
+            shell: projectShellOverrides(policy.policy, ctx.location.directory),
+            writes: Object.fromEntries(
+              ["worker", "designer", "specifier", "architect", "documenter"].map((role) => [
+                role, projectWriteOverrides(policy.policy, ctx.location.directory, role),
+              ]),
+            ),
+            precedence: "worktree-file-replaces-global-policy",
+            admission: "current-runnable-step-required",
+          }) }
+        },
+      })
+
+      addLoomTool({
         name: "scope_status",
         description:
           "Inspect one workflow step's current effective write scope, General's declared starting expectation, and durable self-elevation history.",
@@ -12279,13 +12325,22 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           if (!step) return { content: renderToolOutput({ error: "Step not found." }) }
           const scope = (await ctx.storage.get(scopeKey(workflowId, stepId))) as TaskScope | undefined
           const roleWriteDefault = artifactWriteDefaults[step.agent] ?? []
-          const effectiveWrite = scope?.write.length ? scope.write : roleWriteDefault
+          const policy = await currentPolicy()
+          const policyWrite = projectWriteOverrides(policy.policy, ctx.location.directory, step.agent)
+          const effectiveWrite = mergeWriteScope(
+            scope?.write.length ? scope.write : roleWriteDefault,
+            policyWrite,
+          )
           const committableWrite = committableWriteScope(effectiveWrite)
           return {
             content: renderToolOutput({
               scope: scope ?? null,
               agent: step.agent,
               roleWriteDefault,
+              policyWrite,
+              policySource: policy.source,
+              policyStatus: policy.status,
+              ...(policy.error ? { policyError: policy.error } : {}),
               effectiveWrite,
               committableWrite,
               commitAuthorized: committableWrite.length > 0,
