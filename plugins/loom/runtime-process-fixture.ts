@@ -120,6 +120,46 @@ if (mode === "version-skew-upgrade") {
   process.exit(0)
 }
 
+if (mode === "sqlite-hold-write") {
+  const [key, readyPath, releasePath] = args
+  if (!key || !readyPath || !releasePath) {
+    throw new Error("sqlite-hold-write requires key, readyPath and releasePath")
+  }
+  const storage = await createTransactionalStorage(runtime)
+  await ensureRuntimeStateVersion(storage, runtime)
+  await storage.transaction!(async () => {
+    await storage.set(key, { revision: 2 })
+    await writeFile(readyPath, "ready", "utf8")
+    let released = false
+    for (let i = 0; i < 200; i++) {
+      try {
+        await readFile(releasePath, "utf8")
+        released = true
+        break
+      } catch (error: any) {
+        if (error?.code !== "ENOENT") throw error
+        await Bun.sleep(50)
+      }
+    }
+    if (!released) throw new Error("Timed out waiting to release SQLite write transaction")
+  })
+  process.stdout.write("committed\n")
+  process.exit(0)
+}
+
+if (mode === "sqlite-write") {
+  const [key, revisionText] = args
+  const revision = Number(revisionText)
+  if (!key || !Number.isSafeInteger(revision)) {
+    throw new Error("sqlite-write requires key and integer revision")
+  }
+  const storage = await createTransactionalStorage(runtime)
+  await ensureRuntimeStateVersion(storage, runtime)
+  await storage.set(key, { revision })
+  process.stdout.write("written\n")
+  process.exit(0)
+}
+
 if (mode === "multi-lock") {
   const [aggregateA, resourceA, aggregateB, resourceB, counterPath] = args
   if (!aggregateA || !resourceA || !aggregateB || !resourceB || !counterPath) {
