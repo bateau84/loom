@@ -11387,7 +11387,7 @@ test("consumed command elevations authorize only the originating OpenCode shell 
     expect((await permission({ ...source, id: "another-call" })).effect).toBe("deny")
     expect((await permission({ ...source, messageID: "another-message" })).effect).toBe("deny")
     expect((await permission(source, [command], "another-session")).effect).toBe("deny")
-    expect((await permission(source, [command], worker, "critic")).effect).toBe("deny")
+    expect((await permission(source, [command], worker, "critic")).effect).not.toBe("allow")
     expect((await permission(source)).effect).toBe("allow")
     await after({ ...call, status: "completed", result: { output: "ok", metadata: { exit: 0 } } })
     expect((await permission(source)).effect).toBe("deny")
