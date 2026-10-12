@@ -6599,7 +6599,7 @@ test("Worker can dispatch without guessed scope and self-elevate discovered file
     try {
       await initializeGitFixture(h.root)
       const requirementPath = "docs/requirements/recovery.md"
-      const logPath = "docs/requirements/CHANGELOG.md"
+      const logPath = "docs/log.md"
       await mkdir(join(h.root, "docs", "requirements"), { recursive: true })
       await writeFile(
         join(h.root, requirementPath),
@@ -6693,6 +6693,22 @@ test("Worker can dispatch without guessed scope and self-elevate discovered file
         "ephemeral-reports/reviewer/**",
       ])
 
+      const logElevation = await h.call(
+        "scope_elevate",
+        {
+          workflowId,
+          stepId: "review-think",
+          paths: [logPath],
+          reason: "Append the governed acceptance entry to the existing root documentation log.",
+        },
+        "reviewer",
+        reviewerSession,
+      )
+      expect(logElevation.error).toBeUndefined()
+      expect(logElevation.status).toBe("granted")
+      expect(logElevation.scopeAdded).toEqual([logPath])
+      expect(logElevation.elevation.crossesRoleDefault).toBe(true)
+
       const evaluate = h.permissionHooks.get("evaluate")!
       for (const path of [requirementPath, logPath]) {
         const bookkeepingEdit: any = {
@@ -6736,6 +6752,19 @@ test("Worker can dispatch without guessed scope and self-elevate discovered file
       )
       expect(escaped.error).toContain("independent/advisory role")
       expect(escaped.roleWriteDefault).toEqual(["ephemeral-reports/reviewer/**"])
+
+      const untrackedLog = await h.call(
+        "scope_elevate",
+        {
+          workflowId,
+          stepId: "review-think",
+          paths: ["docs/CHANGELOG.md"],
+          reason: "Attempt to invent a new acceptance log.",
+        },
+        "reviewer",
+        reviewerSession,
+      )
+      expect(untrackedLog.error).toContain("independent/advisory role")
 
       const inventedLogPath = "docs/requirements/acceptance.md"
       const inventedLogEdit = {
