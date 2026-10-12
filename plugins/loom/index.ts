@@ -5097,7 +5097,9 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         await scopedStorage.get(sessionOqKey(sessionID)),
         await scopedStorage.get(sessionPlanReviewKey(sessionID)),
       ]
-      return scopedStorage.transaction ? scopedStorage.transaction(read) : read()
+      return scopedStorage.readTransaction
+        ? scopedStorage.readTransaction(read)
+        : scopedStorage.transaction ? scopedStorage.transaction(read) : read()
     }
 
     const withCoordinatorAdmission = async <T>(sessionID: string, fn: () => Promise<T>) => {
