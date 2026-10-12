@@ -1612,7 +1612,7 @@ async function recordGitSessionStagingResult(
 
 function reviewerAcceptanceLogPath(path: string) {
   const normalized = normalizeRepoPath(path)
-  return /(?:^|\/)(?:changelog|history|changes|acceptance(?:[-_]?log)?|decision(?:s|[-_]?log)?|reviews?)\.md$/i.test(
+  return /(?:^|\/)(?:changelog|log|history|changes|acceptance(?:[-_]?log)?|decision(?:s|[-_]?log)?|reviews?)\.md$/i.test(
     normalized,
   )
 }
@@ -1628,6 +1628,28 @@ async function trackedAtHead(projectDirectory: string, path: string) {
   } catch {
     return false
   }
+}
+
+/** Reviewer may discover existing documentation acceptance logs without
+ * gaining semantic authorship or permission to invent new history files.
+ * The current step and requested paths are rechecked under the workflow lock.
+ */
+async function reviewerAcceptanceScopeElevationAllowed(
+  projectDirectory: string,
+  step: Workflow["steps"][number],
+  paths: readonly string[],
+) {
+  if (step.agent !== "reviewer" || !reviewerOwnsAcceptanceBookkeeping(step) || paths.length === 0) return false
+  const reviewWrite = reviewerAcceptanceWriteScope(step)
+  const permitted = await Promise.all(paths.map(async (path) => {
+    if (resourcesWithinScope([path], reviewWrite)) return true
+    const normalized = normalizeRepoPath(path)
+    const isDocumentationLog =
+      reviewerAcceptanceLogPath(normalized) &&
+      (normalized.startsWith("docs/") || !normalized.includes("/"))
+    return isDocumentationLog && await trackedAtHead(projectDirectory, normalized)
+  }))
+  return permitted.every(Boolean)
 }
 
 function reviewerAcceptanceMetadataLine(line: string) {
@@ -12705,6 +12727,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
           const roleWriteDefault = artifactWriteDefaults[tool.agent] ?? []
           let reviewerRepairCandidate = false
+          let reviewerAcceptanceCandidate = false
           if (tool.agent === "reviewer") {
             const workflow = await readWorkflow(ctx, value.workflowId)
             const step = workflow?.steps.find((candidate) => candidate.id === value.stepId)
@@ -12712,8 +12735,13 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               Boolean(step) &&
               reviewAssignmentMode(step!) === "repair-authorized" &&
               step!.review?.repairSessionId === tool.sessionID
+            if (step && hardBoundaryPaths.length === 0) {
+              reviewerAcceptanceCandidate = await reviewerAcceptanceScopeElevationAllowed(
+                ctx.location.directory, step, projectPaths,
+              )
+            }
           }
-          if (!productScopeElevatingAgents.has(tool.agent) && !reviewerRepairCandidate) {
+          if (!productScopeElevatingAgents.has(tool.agent) && !reviewerRepairCandidate && !reviewerAcceptanceCandidate) {
             const outsideRoleOutput =
               hardBoundaryPaths.length > 0 ||
               projectPaths.some(
@@ -12784,7 +12812,13 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                   tool.agent === "reviewer" &&
                   reviewAssignmentMode(step) === "repair-authorized" &&
                   step.review?.repairSessionId === tool.sessionID
-                if (!productScopeElevatingAgents.has(tool.agent) && !reviewerRepair) {
+                const reviewerAcceptance =
+                  tool.agent === "reviewer" &&
+                  hardBoundaryPaths.length === 0 &&
+                  await reviewerAcceptanceScopeElevationAllowed(
+                    ctx.location.directory, step, projectPaths,
+                  )
+                if (!productScopeElevatingAgents.has(tool.agent) && !reviewerRepair && !reviewerAcceptance) {
                   const outsideRoleOutput =
                     hardBoundaryPaths.length > 0 ||
                     projectPaths.some(

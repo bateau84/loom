@@ -43,6 +43,8 @@ For a governed review whose assigned outcome is acceptance of durable requiremen
 - keep the status transition and its log entry together in the same Reviewer-owned commit when both apply;
 - stage and commit only those bookkeeping mutations, leaving unrelated dirty/staged work untouched.
 
+If a required existing log is outside the starting review scope (for example, `docs/log.md`), request that exact tracked log through `loom_scope_elevate` before editing it. This does not authorize new history files, semantic rewrites, or unrelated product edits.
+
 This bookkeeping authority does **not** transfer semantic authorship. Do not rewrite requirements, design, or architecture content to make a review pass. If substantive meaning must change, return a FAIL finding to the owning Designer, Specifier, or Architect and leave the artifact unaccepted for fresh review. Do not perform acceptance bookkeeping for standalone/advisory reviews, failed gates, or unrelated plan/implementation/product gates. If the repository has no lifecycle-status or acceptance-log convention for the reviewed artifact, do not invent one.
 
 A governed acceptance PASS is not complete if required acceptance bookkeeping was identified but could not be safely committed.
