@@ -849,6 +849,158 @@ describe("Loom pre-project-epoch continuity schema upgrades", () => {
 })
 
 describe("Loom crash-safe durable storage", () => {
+  test("concurrent storage opens reuse the same SQLite handle within a process", async () => {
+    await withRoots(async (root) => {
+      const project = join(root, "concurrent-open-project")
+      await mkdir(project, { recursive: true })
+      const runtime = await resolveRuntimeIdentity(project, new MemoryStorage() as any)
+      const handles = await Promise.all(
+        Array.from({ length: 8 }, () => createTransactionalStorage(runtime)),
+      )
+      for (const handle of handles) expect(handle).toBe(handles[0])
+    })
+  })
+
+  test("version-fenced reads and scans do not wait behind another process's writer", async () => {
+    await withRoots(async (root) => {
+      const project = join(root, "sqlite-reader-project")
+      await mkdir(project, { recursive: true })
+      const runtime = await resolveRuntimeIdentity(project, new MemoryStorage() as any)
+      const raw = await createTransactionalStorage(runtime)
+      await ensureRuntimeStateVersion(raw, runtime)
+      const scoped = createProjectStorage(raw, runtime.projectId, {
+        expectedRuntimeVersion: RUNTIME_STATE_VERSION,
+      })
+      const localKey = "workflow/reader"
+      const key = `project/${runtime.projectId}/${localKey}`
+      await scoped.set(localKey, { revision: 1 })
+
+      const ready = join(root, "writer-ready")
+      const release = join(root, "release-writer")
+      const fixturePath = fileURLToPath(new URL("./runtime-process-fixture.ts", import.meta.url))
+      const proc = Bun.spawn(
+        [process.execPath, fixturePath, "sqlite-hold-write", project, key, ready, release],
+        {
+          env: fixtureProcessEnv({
+            XDG_STATE_HOME: join(root, "state"),
+            XDG_RUNTIME_DIR: join(root, "runtime"),
+          }),
+          stdout: "pipe",
+          stderr: "pipe",
+        },
+      )
+      const stdoutPromise = new Response(proc.stdout).text()
+      const stderrPromise = new Response(proc.stderr).text()
+      let pendingRead: Promise<unknown> | undefined
+      try {
+        await waitForFixtureFile(ready)
+        // The second process has started BEGIN IMMEDIATE and made an
+        // uncommitted change. WAL readers must still see the old snapshot.
+        const reads = Promise.all([
+          scoped.get(localKey),
+          scoped.scan({ prefix: "workflow/" }),
+        ])
+        pendingRead = reads
+        const outcome = await Promise.race([
+          reads.then(
+            (value) => ({ status: "ok" as const, value }),
+            (error: unknown) => ({ status: "error" as const, error }),
+          ),
+          Bun.sleep(2000).then(() => ({ status: "timeout" as const })),
+        ])
+        if (outcome.status === "error") throw outcome.error
+        expect(outcome.status).toBe("ok")
+        if (outcome.status === "ok") {
+          expect(outcome.value[0]).toEqual({ revision: 1 })
+          expect(outcome.value[1].entries).toEqual([
+            { key, value: { revision: 1 } },
+          ])
+        }
+      } finally {
+        await writeFile(release, "released", "utf8")
+        const [stdout, stderr, exitCode] = await Promise.all([
+          stdoutPromise, stderrPromise, proc.exited,
+        ])
+        await pendingRead?.catch(() => {})
+        if (exitCode !== 0) throw new Error(`SQLite writer fixture exited ${exitCode}: ${stderr}`)
+        expect(stdout.trim()).toBe("committed")
+      }
+
+      expect(await scoped.get(localKey)).toEqual({ revision: 2 })
+    })
+  })
+
+  test("a read snapshot allows concurrent commits without mixing values", async () => {
+    await withRoots(async (root) => {
+      const project = join(root, "sqlite-snapshot-project")
+      await mkdir(project, { recursive: true })
+      const runtime = await resolveRuntimeIdentity(project, new MemoryStorage() as any)
+      const raw = await createTransactionalStorage(runtime)
+      await ensureRuntimeStateVersion(raw, runtime)
+      const scoped = createProjectStorage(raw, runtime.projectId, {
+        expectedRuntimeVersion: RUNTIME_STATE_VERSION,
+      })
+      const key = `project/${runtime.projectId}/workflow/snapshot`
+      await scoped.set("workflow/snapshot", { revision: 1 })
+      const env = {
+        XDG_STATE_HOME: join(root, "state"),
+        XDG_RUNTIME_DIR: join(root, "runtime"),
+      }
+
+      await raw.readTransaction!(async () => {
+        expect(await scoped.get("workflow/snapshot")).toEqual({ revision: 1 })
+        expect(await runFixture(["sqlite-write", project, key, "2"], env)).toBe("written")
+        expect(await scoped.get("workflow/snapshot")).toEqual({ revision: 1 })
+        expect((await scoped.scan({ prefix: "workflow/" })).entries).toEqual([
+          { key, value: { revision: 1 } },
+        ])
+      })
+      expect(await scoped.get("workflow/snapshot")).toEqual({ revision: 2 })
+
+      await expect(raw.readTransaction!(async () => raw.set(key, { revision: 3 })))
+        .rejects.toThrow("read-only transaction")
+      await expect(raw.readTransaction!(async () => raw.delete!(key)))
+        .rejects.toThrow("read-only transaction")
+      await expect(raw.readTransaction!(async () =>
+        raw.transaction!(async () => raw.set(key, { revision: 3 })),
+      )).rejects.toThrow("read-only transaction")
+
+      await raw.transaction!(async () => {
+        expect(await raw.readTransaction!(async () => raw.get(key))).toEqual({ revision: 2 })
+        await raw.set(key, { revision: 3 })
+      })
+      expect(await scoped.get("workflow/snapshot")).toEqual({ revision: 3 })
+    })
+  })
+
+  test("a read snapshot pins the version fence across another process's upgrade", async () => {
+    await withRoots(async (root) => {
+      const project = join(root, "sqlite-upgrade-reader")
+      await mkdir(project, { recursive: true })
+      const runtime = await resolveRuntimeIdentity(project, new MemoryStorage() as any)
+      const raw = await createTransactionalStorage(runtime)
+      await ensureRuntimeStateVersion(raw, runtime, { targetVersion: 1 })
+      const scoped = createProjectStorage(raw, runtime.projectId, {
+        expectedRuntimeVersion: 1,
+      })
+      await scoped.set("format", { version: 1 })
+      const env = {
+        XDG_STATE_HOME: join(root, "state"),
+        XDG_RUNTIME_DIR: join(root, "runtime"),
+      }
+      const upgradedPath = join(root, "upgraded")
+      await raw.readTransaction!(async () => {
+        expect(await scoped.get("format")).toEqual({ version: 1 })
+        expect(await runFixture(["version-skew-upgrade", project, upgradedPath], env))
+          .toBe("upgraded")
+        expect(await scoped.get("format")).toEqual({ version: 1 })
+      })
+      await expect(scoped.get("format")).rejects.toThrow(
+        "does not match this running build (1)",
+      )
+    })
+  })
+
   test("crash inside a workflow transaction rolls back every aggregate key", async () => {
     await withRoots(async (root) => {
       const legacy = new MemoryStorage()
