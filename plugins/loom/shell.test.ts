@@ -49,6 +49,10 @@ describe("Loom Worker shell policy", () => {
       "git name-rev HEAD",
       "git ls-tree -r HEAD",
       "git branch --show-current",
+      "git branch",
+      "git branch -a",
+      "git branch -r",
+      "git branch --all -vv",
       "git remote -v",
       "git tag --list",
     ]) {
@@ -63,6 +67,10 @@ describe("Loom Worker shell policy", () => {
       "git restore .",
       "git clean -fd",
       "git branch -D feature",
+      "git branch --delete feature",
+      "git branch --move old new",
+      "git branch -a --edit-description",
+      "git branch --set-upstream-to origin/main",
       "git remote set-url origin https://example.invalid/repo",
       "git tag v1",
       "git diff --output=diff.txt",
@@ -77,6 +85,34 @@ describe("Loom Worker shell policy", () => {
     }
   })
 
+
+  test("allows bounded GitHub repository inspection without repo mutation", () => {
+    const reads = [
+      "gh repo view",
+      "gh repo view nrkno/plattform-vulnerability-dashboard --json defaultBranchRef,url",
+      "gh repo view --json nameWithOwner",
+      "gh repo view owner/repo --json=defaultBranchRef,url",
+    ]
+    for (const command of reads) {
+      expect(diagnosticShellResourcesAllowed([command])).toBe(true)
+      expect(workerShellResourcesAllowed([command])).toBe(true)
+    }
+
+    for (const command of [
+      "gh repo edit owner/repo --default-branch main",
+      "gh repo create owner/repo",
+      "gh repo view owner/repo --web",
+      "gh repo view owner/repo --jq .url",
+      "gh repo view owner/repo --template '{{.url}}'",
+      "gh repo view owner/repo --json ../secret",
+      "gh repo view owner/repo --json url --json name",
+      "gh repo view owner/repo extra",
+      "gh repo view owner/repo --json url && rm -rf src",
+    ]) {
+      expect(diagnosticShellResourcesAllowed([command])).toBe(false)
+      expect(workerShellResourcesAllowed([command])).toBe(false)
+    }
+  })
 
   test("allows common inspection and verification commands", () => {
     for (const command of [
