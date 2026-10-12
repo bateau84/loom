@@ -16,6 +16,8 @@ export type RawStorage = {
   delete?(key: string): Promise<boolean>
   scan(input: { prefix: string; limit?: number; after?: string }): Promise<any>
   transaction?<T>(fn: () => Promise<T>): Promise<T>
+  /** A consistent read snapshot that does not reserve the SQLite writer slot. */
+  readTransaction?<T>(fn: () => Promise<T>): Promise<T>
 }
 
 export type LoomRuntimeIdentity = {
@@ -1013,24 +1015,31 @@ export function createProjectStorage(
     }
   }
 
-  const fencedTransaction = <T>(fn: () => Promise<T>) =>
+  // Version check and read must share one snapshot. A write transaction here
+  // reserves SQLite's single writer slot even for a status/dashboard read.
+  const fencedRead = <T>(fn: () => Promise<T>) => {
+    if (expectedVersion === undefined) return fn()
+    if (raw.readTransaction) return raw.readTransaction(fn)
+    return raw.transaction ? raw.transaction(fn) : fn()
+  }
+  const fencedWrite = <T>(fn: () => Promise<T>) =>
     expectedVersion !== undefined && raw.transaction ? raw.transaction(fn) : fn()
 
   const scoped: RawStorage = {
     async get(key) {
-      return fencedTransaction(async () => {
+      return fencedRead(async () => {
         await assertVersion()
         return raw.get(scopedKey(projectId, key))
       })
     },
     async set(key, value) {
-      return fencedTransaction(async () => {
+      return fencedWrite(async () => {
         await assertVersion()
         return raw.set(scopedKey(projectId, key), value)
       })
     },
     async scan(input) {
-      return fencedTransaction(async () => {
+      return fencedRead(async () => {
         await assertVersion()
         return raw.scan({ ...input, prefix: scopedKey(projectId, input.prefix) })
       })
@@ -1038,7 +1047,7 @@ export function createProjectStorage(
   }
   if (raw.delete) {
     scoped.delete = (key) =>
-      fencedTransaction(async () => {
+      fencedWrite(async () => {
         await assertVersion()
         return raw.delete!(scopedKey(projectId, key))
       })
@@ -1046,6 +1055,13 @@ export function createProjectStorage(
   if (raw.transaction) {
     scoped.transaction = (fn) =>
       raw.transaction!(async () => {
+        await assertVersion()
+        return fn()
+      })
+  }
+  if (raw.readTransaction || raw.transaction) {
+    scoped.readTransaction = (fn) =>
+      (raw.readTransaction ?? raw.transaction)!(async () => {
         await assertVersion()
         return fn()
       })
@@ -1086,6 +1102,7 @@ export async function sessionBoundToOq(
 }
 
 const transactionalStores = new Map<string, RawStorage>()
+const initializingTransactionalStores = new Map<string, Promise<RawStorage>>()
 
 function escapeLikePrefix(value: string) {
   return value.replaceAll("\\", "\\\\").replaceAll("%", "\\%").replaceAll("_", "\\_")
@@ -1096,104 +1113,147 @@ export async function createTransactionalStorage(
 ): Promise<RawStorage> {
   const existing = transactionalStores.get(runtime.stateRoot)
   if (existing) return existing
+  const pending = initializingTransactionalStores.get(runtime.stateRoot)
+  if (pending) return pending
 
-  const path = join(runtime.stateRoot, "execution-state.sqlite")
-  const db = new Database(path, { create: true })
-  db.run("PRAGMA journal_mode = WAL")
-  db.run("PRAGMA synchronous = FULL")
-  db.run("PRAGMA busy_timeout = 5000")
-  db.run(
-    "CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY NOT NULL, value TEXT NOT NULL)",
-  )
-  await chmod(path, 0o600).catch(() => {})
-
-  const transactionContext = new AsyncLocalStorage<boolean>()
-  let tail: Promise<void> = Promise.resolve()
-
-  const exclusive = async <T>(fn: () => T | Promise<T>): Promise<T> => {
-    if (transactionContext.getStore()) return await fn()
-
-    const previous = tail
-    let release!: () => void
-    const next = new Promise<void>((resolve) => {
-      release = resolve
-    })
-    tail = previous.then(() => next)
-    await previous
+  // Multiple plugin instances can initialize in the same process. Publish the
+  // in-flight open before its first filesystem await to avoid duplicate handles.
+  const initialization = (async (): Promise<RawStorage> => {
+    const path = join(runtime.stateRoot, "execution-state.sqlite")
+    const db = new Database(path, { create: true })
     try {
-      return await fn()
-    } finally {
-      release()
-    }
-  }
+      // WAL setup and CREATE TABLE can themselves contend on a shared startup.
+      db.run("PRAGMA busy_timeout = 5000")
+      db.run("PRAGMA journal_mode = WAL")
+      db.run("PRAGMA synchronous = FULL")
+      db.run(
+        "CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY NOT NULL, value TEXT NOT NULL)",
+      )
+      await chmod(path, 0o600).catch(() => {})
 
-  const readValue = (key: string) => {
-    const row = db.query("SELECT value FROM kv WHERE key = ?1").get(key) as
-      | { value: string }
-      | null
-    return row ? JSON.parse(row.value) : undefined
-  }
+      const transactionContext = new AsyncLocalStorage<"read" | "write">()
+      let tail: Promise<void> = Promise.resolve()
 
-  const writeValue = (key: string, value: unknown) => {
-    if (value === undefined) throw new Error("Loom durable storage cannot persist undefined.")
-    db.query(
-      "INSERT INTO kv(key, value) VALUES(?1, ?2) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-    ).run(key, JSON.stringify(value))
-    return value
-  }
+      const exclusive = async <T>(fn: () => T | Promise<T>): Promise<T> => {
+        if (transactionContext.getStore()) return await fn()
 
-  const storage: RawStorage = {
-    async get(key: string) {
-      return exclusive(() => readValue(key))
-    },
-    async set(key: string, value: unknown) {
-      return exclusive(() => writeValue(key, value))
-    },
-    async delete(key: string) {
-      return exclusive(() => {
-        const result = db.query("DELETE FROM kv WHERE key = ?1").run(key) as { changes?: number }
-        return Number(result.changes ?? 0) > 0
-      })
-    },
-    async scan(input: { prefix: string; limit?: number; after?: string }) {
-      return exclusive(() => {
-        const limit = Math.max(1, Math.min(input.limit ?? 100, 1000))
-        const prefix = `${escapeLikePrefix(input.prefix)}%`
-        const after = input.after ?? ""
-        const rows = db
-          .query(
-            "SELECT key, value FROM kv WHERE key LIKE ?1 ESCAPE '\\' AND key > ?2 ORDER BY key LIMIT ?3",
-          )
-          .all(prefix, after, limit + 1) as Array<{ key: string; value: string }>
-        const selected = rows.slice(0, limit)
-        return {
-          entries: selected.map((row) => ({ key: row.key, value: JSON.parse(row.value) })),
-          next: rows.length > limit ? selected.at(-1)?.key : undefined,
-        }
-      })
-    },
-    async transaction<T>(fn: () => Promise<T>): Promise<T> {
-      if (transactionContext.getStore()) return fn()
-      return exclusive(async () => {
-        db.run("BEGIN IMMEDIATE")
+        const previous = tail
+        let release!: () => void
+        const next = new Promise<void>((resolve) => {
+          release = resolve
+        })
+        tail = previous.then(() => next)
+        await previous
         try {
-          const result = await transactionContext.run(true, fn)
-          db.run("COMMIT")
-          return result
-        } catch (error) {
-          try {
-            db.run("ROLLBACK")
-          } catch {
-            // Preserve the original transaction error.
-          }
-          throw error
+          return await fn()
+        } finally {
+          release()
         }
-      })
-    },
-  }
+      }
 
-  transactionalStores.set(runtime.stateRoot, storage)
-  return storage
+      const assertWritable = () => {
+        if (transactionContext.getStore() === "read") {
+          throw new Error("Loom read-only transaction cannot write durable state.")
+        }
+      }
+
+      const readValue = (key: string) => {
+        const row = db.query("SELECT value FROM kv WHERE key = ?1").get(key) as
+          | { value: string }
+          | null
+        return row ? JSON.parse(row.value) : undefined
+      }
+
+      const writeValue = (key: string, value: unknown) => {
+        assertWritable()
+        if (value === undefined) throw new Error("Loom durable storage cannot persist undefined.")
+        db.query(
+          "INSERT INTO kv(key, value) VALUES(?1, ?2) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        ).run(key, JSON.stringify(value))
+        return value
+      }
+
+      const transact = async <T>(
+        mode: "read" | "write",
+        fn: () => Promise<T>,
+      ): Promise<T> => {
+        const active = transactionContext.getStore()
+        if (active) {
+          if (active === "read" && mode === "write") {
+            throw new Error("Loom read-only transaction cannot start a write transaction.")
+          }
+          return fn()
+        }
+
+        return exclusive(async () => {
+          db.run(mode === "read" ? "BEGIN" : "BEGIN IMMEDIATE")
+          try {
+            const result = await transactionContext.run(mode, fn)
+            db.run("COMMIT")
+            return result
+          } catch (error) {
+            try {
+              db.run("ROLLBACK")
+            } catch {
+              // Preserve the original transaction error.
+            }
+            throw error
+          }
+        })
+      }
+
+      const storage: RawStorage = {
+        async get(key: string) {
+          return exclusive(() => readValue(key))
+        },
+        async set(key: string, value: unknown) {
+          return exclusive(() => writeValue(key, value))
+        },
+        async delete(key: string) {
+          return exclusive(() => {
+            assertWritable()
+            const result = db.query("DELETE FROM kv WHERE key = ?1").run(key) as { changes?: number }
+            return Number(result.changes ?? 0) > 0
+          })
+        },
+        async scan(input: { prefix: string; limit?: number; after?: string }) {
+          return exclusive(() => {
+            const limit = Math.max(1, Math.min(input.limit ?? 100, 1000))
+            const prefix = `${escapeLikePrefix(input.prefix)}%`
+            const after = input.after ?? ""
+            const rows = db
+              .query(
+                "SELECT key, value FROM kv WHERE key LIKE ?1 ESCAPE '\\' AND key > ?2 ORDER BY key LIMIT ?3",
+              )
+              .all(prefix, after, limit + 1) as Array<{ key: string; value: string }>
+            const selected = rows.slice(0, limit)
+            return {
+              entries: selected.map((row) => ({ key: row.key, value: JSON.parse(row.value) })),
+              next: rows.length > limit ? selected.at(-1)?.key : undefined,
+            }
+          })
+        },
+        async readTransaction<T>(fn: () => Promise<T>): Promise<T> {
+          return transact("read", fn)
+        },
+        async transaction<T>(fn: () => Promise<T>): Promise<T> {
+          return transact("write", fn)
+        },
+      }
+
+      transactionalStores.set(runtime.stateRoot, storage)
+      return storage
+    } catch (error) {
+      db.close()
+      throw error
+    }
+  })()
+  initializingTransactionalStores.set(runtime.stateRoot, initialization)
+  try {
+    return await initialization
+  } finally {
+    initializingTransactionalStores.delete(runtime.stateRoot)
+  }
 }
 
 type AtomicFileStorageOptions = {
