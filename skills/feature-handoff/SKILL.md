@@ -1,54 +1,62 @@
 ---
 name: feature-handoff
-description: Compile a compact, self-contained implementation request for another component, repository, or fresh agent session when current work depends on functionality elsewhere. Use for cross-component or cross-session handoffs such as frontend→backend, service A→service B, application→infrastructure, or one independently handled subsystem→another. Not for Loom internal task routing, implementation plans, or authoring durable product/architecture authority (use behavioral-spec, obligation-contract, or architectural-spec when those artifacts are the actual work).
+description: Transfer an actionable, self-contained dependency request to another component, repository, or fresh agent session. Preserve enough background, decisions, evidence, and expected outcomes that the receiver does not need the original conversation. Use focused YAML for simple seams or context-rich Markdown for unfamiliar or complex work. Not for Loom internal task routing or replacing durable specifications.
 ---
 
-# Feature Handoff
+# Feature handoff
 
-Use this skill when work in the current context discovers a dependency that must be implemented somewhere else, often by another agent in a separate session.
+Use this skill when work in one context discovers a dependency that another independently handled component, repository, or session must address.
 
-The output is a **copy/paste artifact**, not a conversation summary. The receiving agent must be able to understand and act on it without access to the source session.
+A handoff is a **copy/paste transfer of understanding and an actionable request**, not a raw chat summary. The receiver may know little about the source product, its terminology, or why earlier decisions were made. Optimize for **minimum reconstruction effort**, not minimum document length. One sufficiently complete handoff is better than a short handoff that forces the receiver to rediscover the source session.
 
-## Boundary
+## Authority and scope
 
-A handoff packages the need already established by the current work. It does not create new product authority.
+A handoff conveys existing intent; it does **not** create new product or architecture authority.
 
-- Preserve accepted requirements and constraints at their existing strength.
-- Do not promote an idea, example, or implementation convenience into a requirement.
-- Describe the required outcome before proposing a mechanism.
-- Do not prescribe the receiving component's internal implementation unless the interface or mechanism is itself part of the established dependency.
-- If the handoff exposes a correctness-sensitive semantic seam that needs durable normative authority, use `obligation-contract` instead of hiding that work inside the handoff.
-- If the work is really a durable behavioral specification, use `behavioral-spec`. A feature handoff may reference such artifacts but does not replace them.
+- Preserve accepted requirements, constraints, and decisions at their established strength. Link their authoritative artifacts when available.
+- Separate **verified facts**, **source-side reports**, **assumptions**, **proposals**, and **open decisions**. Do not present an inference as observed implementation.
+- Describe needed outcomes before suggesting a solution. A convenient endpoint or payload is not automatically a required contract.
+- Explain relevant existing implementation and useful code entry points when known. Do not dictate speculative receiver-internal architecture, task decomposition, or an unapproved plan.
+- State what the receiver is being asked to do (investigate, design, implement, review, or continue), and what should come back. Do not imply permission to broaden scope, use secrets, merge, or otherwise bypass existing authorization.
+- If the work needs a new correctness-sensitive normative contract, use `obligation-contract`; if it needs a durable behavioral or architectural specification, use `behavioral-spec` or `architectural-spec`. A handoff can point to these artifacts but does not replace them.
+- Do not use this skill for Loom's internal task routing or as a substitute for its authoritative workflow state.
 
-## Requirement levels
+## Choose the level of detail
 
-Use requirement levels deliberately:
+**Focused handoff — YAML v1:** Suitable for a narrow, well-understood dependency with shared vocabulary, few decisions, and little background needed. Preserve the existing v1 shape when a receiver expects it.
 
-- **MUST** — the receiving implementation must satisfy this for the source need to work.
+**Context-rich handoff — Markdown v2:** Prefer for a different repository or fresh session, unfamiliar domain language, multiple interacting systems, security/authorization concerns, material research, prior decisions, or significant unknowns. Use a small YAML frontmatter for identification and Markdown prose for explanations.
+
+These are options, **not mandatory checklists or length tiers**. Follow a caller's requested format and a receiver's established machine-readable contract. A short handoff can include more context; a rich handoff can be brief. Add, rename, combine, or omit prose sections based on what the receiver actually needs. Do not create filler merely to match a template.
+
+When in doubt, preserve a little more *relevant reasoning and context*, especially across repositories or sessions.
+
+## Build the handoff
+
+1. **Orient an unfamiliar receiver.** Identify source and target repositories/components or responsibilities. Explain the product use case, user journey, and important terms or acronyms before relying on local jargon. If the target is unknown, name the needed responsibility rather than guessing.
+2. **Explain why now.** Describe the originating problem, the current limitation, the desired end-to-end result, and why the other component is involved.
+3. **Transfer system context.** Summarize relevant data/identity flows, integration boundaries, existing behavior, and interaction with other components. Include known code locations or interfaces when they save investigation, but do not invent locations or designs.
+4. **Preserve research and decision history.** Carry forward findings, established decisions and reasons, meaningful alternatives considered or rejected, and assumptions that affect the next step. Do not turn a preference into an accepted decision.
+5. **Separate outcomes from mechanisms.** State the receiver-visible behavior, necessary requirements, constraints, non-goals, and proposed interfaces. Mark any interface as `required`, `suggested`, or `example`; say why if that distinction matters.
+6. **Make verification possible.** Include integration-facing acceptance conditions, failure cases, and relevant security or lifecycle cases where material. A full Given/When/Then list is optional, not a format tax.
+7. **Make the request actionable.** Name the requested type of work, any scope/authority limits, decisions the receiver may own, and the expected response or deliverables (for example, agreed contract, tests, documentation, or unresolved blockers). Do not add an invented implementation plan.
+8. **Carry useful evidence.** Prefer stable repository paths with owner, branch/commit when relevant, and precise findings; link documents, PRs, tests, and public references. Summarize crucial inaccessible information instead of depending on a chat or screenshot. Do not copy credentials, tokens, or other secrets.
+9. **Surface unknowns honestly.** Identify unresolved questions and, when useful, whether they block implementation or belong to the receiving side. Do not guess to make the handoff appear complete.
+10. **Run the fresh-session test.** With no source conversation, can the receiver explain *why this exists, how the systems fit, what is known, what is settled vs proposed, what it must accomplish, how success is checked, and what to return*? Fill genuine gaps before trimming words.
+
+### Requirement levels
+
+When giving normative requirements stable IDs, use them deliberately:
+
+- **MUST** — necessary for the established outcome.
 - **SHOULD** — expected unless the receiver has a concrete reason to choose differently.
 - **MAY** — optional capability or convenience.
 
-Never use `MUST` merely because the source implementation was designed around one possible solution.
+Keep stable IDs such as `REQ-001` and `AC-001` when another session may refer to them. Do not label a suggested implementation as MUST simply because the source envisioned it.
 
-## Method
+## Focused format: YAML v1
 
-1. **Identify the seam.** Name the source component/context and the target component or responsibility. If the exact target is unknown, describe the responsibility instead of guessing a repository or service name.
-2. **State the objective.** Explain what the source side needs to accomplish and why the dependency exists.
-3. **Describe the current gap.** Capture only the existing behavior or limitation needed to understand the request.
-4. **Describe requested behavior.** State externally observable outcomes at the seam. Keep receiver-internal design out of this section.
-5. **Extract requirements.** Give each normative requirement a stable local ID. Split unrelated guarantees rather than combining them into one broad statement.
-6. **Define acceptance.** Express what the source side can observe to know the dependency is satisfied. Prefer integration-boundary evidence over receiver-internal details.
-7. **Preserve constraints and non-goals.** Include compatibility, authority, security, performance, lifecycle, or migration constraints only when they are established and material.
-8. **Handle interfaces carefully.** If an endpoint, payload, schema, command, event, or other interface is required, mark it `required`. If it is only a useful proposal, mark it `suggested` or `example`. Do not let an example silently become normative.
-9. **Surface uncertainty.** Put unresolved questions in `open_questions`. Do not guess just to make the handoff look complete.
-10. **Preserve provenance.** Include concise evidence or source references when they materially help the receiver understand why a requirement exists. Do not depend on links to ephemeral chat context.
-11. **Run the fresh-session test.** Read the artifact as if this conversation did not exist. Remove phrases such as "as discussed", "the above", or unexplained local shorthand. If the receiver still needs the source transcript, the handoff is incomplete.
-
-## Default output
-
-When asked to produce a handoff, emit only the handoff artifact unless the caller asks for explanation around it.
-
-Use this compact YAML shape. Omit optional sections that add no useful information.
+This is the existing compatible shape for concise handoffs. Omit unused optional sections, but expand context when needed to make the request standalone. Do not silently change the structure for an established v1 consumer.
 
 ```yaml
 kind: feature-handoff
@@ -63,14 +71,14 @@ target:
   component: <component, repository, subsystem, or responsibility>
 
 objective: >
-  <outcome this dependency enables>
+  <end-to-end outcome this dependency enables>
 
 context:
   current_behavior:
-    - <relevant existing behavior or limitation>
+    - <relevant existing behavior, gap, or finding>
 
 requested_behavior:
-  - <observable outcome at the seam>
+  - <observable outcome at the integration seam>
 
 requirements:
   - id: REQ-001
@@ -91,86 +99,136 @@ non_goals:
 
 interface:
   status: suggested # required | suggested | example
-  description: <interface proposal or established contract>
-  example: <optional concise example>
+  description: <established contract or proposal>
+  example: <optional payload or interaction example>
 
 open_questions:
-  - <unresolved question the receiver should not silently decide>
+  - <unresolved question that must not be silently decided>
 
 evidence:
-  - <durable source artifact, file, issue, observed behavior, or other useful provenance>
+  - <durable reference plus what it establishes>
 ```
 
-## Output quality rules
+## Context-rich format: Markdown v2
 
-- Keep the artifact as small as possible while remaining standalone.
-- Prefer one requirement per semantic promise.
-- Use stable IDs such as `REQ-001` and `AC-001`; once another session references an ID, do not renumber it casually.
-- Acceptance criteria verify the dependency from the seam, not the target's internal implementation.
-- Separate established constraints from suggested design.
-- Include concrete payload or interaction examples when they remove ambiguity, but label examples honestly.
-- Do not include a receiving-side implementation plan, task decomposition, file list, or guessed architecture.
-- Do not dump the source conversation. Distill only context needed to preserve meaning.
+The frontmatter identifies the handoff; the document itself is **flexible prose**, not a fixed schema. The headings below are prompts for useful information, not required sections. `version: 2` denotes this Markdown presentation; it does not claim compatibility with a v1 YAML parser.
 
-## Example
-
-```yaml
+```markdown
+---
 kind: feature-handoff
-version: 1
-title: Expose registered agent metadata
+version: 2
+title: <outcome-oriented title>
+source: <repository or component>
+target: <repository or responsibility>
+purpose: <implementation-request | investigation | review | continuation>
+---
 
-source:
-  component: agent-selection frontend
-  need: Display available agents and let the user select an appropriate role.
+# Requested outcome
 
-target:
-  component: backend agent-discovery API
+What should become possible, for whom, and what the receiving side is asked to do.
 
-objective: >
-  Allow the frontend to discover currently registered agents without reading
-  OpenCode configuration files directly.
+## Background and user journey
 
-context:
-  current_behavior:
-    - The frontend has no supported way to enumerate registered agents.
+Why the feature exists, what happens today, and where the user gets blocked.
+Define source-specific terms the receiver might not know.
 
-requested_behavior:
-  - The backend exposes the registered agents available to the current OpenCode instance.
-  - Available role and responsibility metadata is returned with each agent.
+## System context and verified findings
 
-requirements:
-  - id: REQ-001
-    level: MUST
-    text: The backend MUST expose the currently registered agents.
-  - id: REQ-002
-    level: MUST
-    text: Each returned agent MUST include its name.
-  - id: REQ-003
-    level: SHOULD
-    text: Each returned agent SHOULD include role and responsibility metadata when available.
+Relevant components, data/identity flows, current contracts, and useful code
+entry points. Distinguish inspected code from source reports and assumptions.
 
-acceptance:
-  - id: AC-001
-    given: At least one agent is registered in OpenCode.
-    when: The frontend requests the available agents.
-    then: The response contains that agent and its name.
-  - id: AC-002
-    given: A registered agent has no role metadata.
-    when: The frontend requests the available agents.
-    then: The agent remains discoverable without inventing role metadata.
+## Decisions and rationale
 
-constraints:
-  - Existing agent definitions without role metadata must remain usable.
+Accepted decisions and reasons; material alternatives not chosen.
+Keep suggestions and undecided questions visibly separate.
 
-interface:
-  status: suggested
-  description: A read-only endpoint returning normalized agent metadata.
-  example:
-    method: GET
-    path: /agents
+## Requirements, interfaces, and boundaries
 
-open_questions:
-  - Should unknown frontmatter fields be exposed or only normalized known metadata?
+Required observable behavior, constraints, non-goals, and integration shape.
+Label proposed interfaces as suggested/example rather than established.
+
+## Acceptance and failure cases
+
+How the two sides can verify the outcome, including relevant error paths.
+
+## Open questions and receiver discretion
+
+What is unknown, what blocks work, and what the receiver may decide.
+
+## Expected return
+
+What the receiving session should report or deliver back to the source.
+
+## Evidence and references
+
+Repo/path/ref + finding; durable specs, tests, PRs, and relevant research.
 ```
 
-The example is illustrative. Do not copy its endpoint, fields, or assumptions into unrelated handoffs.
+### Illustrative rich handoff
+
+The following names and details are fictional. This example demonstrates *how to convey context and uncertainty*, not an authorization or a reusable API contract.
+
+```markdown
+---
+kind: feature-handoff
+version: 2
+title: Let the repository console discover current-user Admin capability
+source: example/repository-console
+target: example/repository-api
+purpose: implementation-request
+---
+
+# Requested outcome
+
+The console needs to know whether the signed-in user may use the API's
+Admin-only repository team-management controls. The API should provide a
+caller-scoped capability response; the console will integrate it separately.
+
+## Why and how it is used
+
+On a repository details page, ordinary users can view team ownership. Admins
+also need controls to manage team assignments. The page currently cannot
+determine whether to display those controls. This request is about UI
+discovery, not changing authorization for writes.
+
+## System context and confidence
+
+- Established for this example: the console makes user-scoped requests through
+  its server; the API independently authorizes team-assignment mutations.
+- Source report, not independently verified: no caller-capability read is
+  exposed for this screen.
+- Not yet checked: whether the API already has a reusable capability endpoint
+  or authorization predicate. Inspect the receiving repository before adding one.
+- Identity boundary: the browser must not receive the downstream access token.
+
+## Decisions and contract boundary
+
+- Required: reflect the authenticated caller, not a supplied user ID.
+- Required: a capability response never authorizes a later write.
+- Suggested, not accepted: GET /me/capabilities with
+  can_manage_repository_team_assignments: boolean.
+- Still open: whether the flag means Admin-only management or all assignment
+  operations the caller could perform. Resolve this before fixing the response.
+
+## Verification and expected return
+
+Check Admin/non-Admin callers, failed lookup, and a forbidden write after a
+positive UI hint. Return the chosen endpoint, exact capability meaning and
+response, authentication/failure behavior, test evidence, and questions that
+remain for console integration.
+
+## References
+
+Attach inspected repository/path/commit references and the finding supported
+by each. No source code references have been verified in this fictional example.
+```
+
+## Output quality
+
+- Make the artifact **as complete as needed to be understood independently**, not as short as possible. Relevance matters more than length; avoid raw transcripts and unrelated history.
+- Prefer a short, clear explanation of a decision's *reason* over unexplained decisions or a wall of links.
+- Be specific about which repository owns a fact or document. If access to a reference is uncertain, summarize the essential fact and flag the limitation.
+- Do not invent source evidence, receiver internals, user permissions, or accepted scope to fill a section.
+- Preserve concrete payload examples and edge cases where they remove ambiguity; label examples honestly.
+- A handoff is not a substitute for an implementation plan, independent review, or authoritative specs. It should allow those to begin without reconstructing the originating conversation.
+- By default, output just the handoff artifact unless the caller requests discussion around it.
