@@ -4515,6 +4515,41 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       return grant
     }
 
+    // OpenCode runs tool.execute.before before the shell tool's permission.assert.
+    // Consumption is single-use, but the host must still authorize the exact
+    // in-flight tool call after the receipt becomes consumed.
+    const consumedCommandElevationForPermission = async (event: any) => {
+      if (event.action !== "shell" || !Array.isArray(event.resources) ||
+          event.resources.length === 0 ||
+          !event.resources.every((resource: unknown) => typeof resource === "string")) return false
+      const source = event.source
+      if (source?.type !== "tool" || typeof source.id !== "string" ||
+          !source.id || typeof source.messageID !== "string") return false
+
+      // Permission.Source identifies the original shell/bash call even when
+      // OpenCode's shell scanner splits a pipeline into multiple resources.
+      for (const tool of ["shell", "bash"]) {
+        const key = observationCallKey({
+          sessionID: event.sessionID, messageID: source.messageID,
+          id: source.id, tool,
+        })
+        const pending = key ? pendingObservations.get(key) : undefined
+        if (!pending?.ready || pending.ambiguous || !pending.commandElevationId) continue
+        const grant = await ctx.storage.get(
+          commandElevationKey(pending.commandElevationId),
+        ) as CommandElevation | undefined
+        if (!grant || grant.sessionID !== event.sessionID ||
+            grant.agent !== event.agent || grant.kind !== "unrestricted" ||
+            !grant.consumedAt || grant.observationId) continue
+        if (!(await exactRunnableStepAttemptBinding(
+          ctx, grant.sessionID, grant.workflowId, grant.stepId,
+        ))) continue
+        if ((await ctx.storage.get(sessionStepAttemptKey(grant.sessionID))) !== grant.attempt) continue
+        return true
+      }
+      return false
+    }
+
     const consumeCommandElevation = async (
       sessionID: string, agent: string, command: string,
       stepAuthorityAlreadyLocked = false,
@@ -13727,6 +13762,12 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         event.effect = "allow"
         return
       }
+      // The one-use receipt was consumed by tool.execute.before. Only the
+      // originating host tool call may use it during shell permission checks.
+      if (await consumedCommandElevationForPermission(event)) {
+        event.effect = "allow"
+        return
+      }
       if (event.action === "edit" && Array.isArray(event.resources) &&
           (await Promise.all(event.resources.map((resource: string) =>
             targetsEffectiveLocalPermissionPolicy(ctx.location.directory, resource),
@@ -14395,7 +14436,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         if (!workerShellResourcesAllowed(event.resources, effectiveWrite)) {
           event.effect = "deny"
           event.message =
-            "Worker shell is limited to inspection, build/test/run, safe delivery operations, and writes already inside the current Loom scope. Call loom_scope_elevate before retrying a newly discovered project-local write target."
+            "Worker shell command is not routinely admitted, or its explicit output files are outside the current Loom write scope. For an unrecognized command use loom_command_elevate for one audited execution (or add it to .loom.yaml). Use loom_scope_elevate only when a known file-producing command needs additional project-local write paths."
           return
         }
 

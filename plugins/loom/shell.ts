@@ -597,7 +597,12 @@ export function isGitInspectionShellCommand(command: string) {
   ) return true
 
   if (parsed.subcommand === "branch") {
-    return parsed.args.length === 1 && parsed.args[0] === "--show-current"
+    if (parsed.args.length === 1 && parsed.args[0] === "--show-current") return true
+    // Branch listing is inspection; deletion, renaming, setting upstream and
+    // other branch mutations must never inherit the inspection allowance.
+    return parsed.args.every((arg) =>
+      ["-a", "--all", "-r", "--remotes", "-l", "--list", "-v", "-vv", "--verbose"].includes(arg)
+    )
   }
 
   if (parsed.subcommand === "remote") {
@@ -1098,6 +1103,30 @@ function workerExecutionAllowed(command: string) {
 function githubInspectionAllowed(command: string) {
   const words = parsedCommandWords(command)
   if (!words || words[0] !== "gh") return false
+
+  if (words[1] === "repo" && words[2] === "view") {
+    // Only bounded repository metadata reads. Flags such as --web, --jq and
+    // --template are deliberately excluded, as are all repo write subcommands.
+    const args = words.slice(3)
+    let seenRepo = false
+    let seenJson = false
+    for (let i = 0; i < args.length; i += 1) {
+      const arg = args[i]
+      const fields = arg === "--json" ? args[++i]
+        : arg.startsWith("--json=") ? arg.slice("--json=".length)
+        : undefined
+      if (fields !== undefined) {
+        if (seenJson || !/^[A-Za-z][A-Za-z0-9]*(?:,[A-Za-z][A-Za-z0-9]*)*$/.test(fields)) return false
+        seenJson = true
+        continue
+      }
+      if (arg === "--json" || seenRepo ||
+          !/^(?:[A-Za-z0-9_.-]+\/)?[A-Za-z0-9_.-]+$/.test(arg) ||
+          arg.split("/").some((part) => part === "." || part === "..")) return false
+      seenRepo = true
+    }
+    return true
+  }
 
   if (words[1] === "pr") {
     return ["view", "checks", "status", "diff"].includes(words[2] ?? "")

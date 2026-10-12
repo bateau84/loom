@@ -11350,6 +11350,71 @@ test("known formatter, Go module and test outputs inherit elevated write authori
   } finally { h.restore() }
 })
 
+test("consumed command elevations authorize only the originating OpenCode shell call", async () => {
+  const h = await waveLifecycleFixture("wave")
+  try {
+    const worker = await h.attach("task:one", "worker", "host-order-elevation-worker")
+    const evaluate = h.permissionHooks.get("evaluate")!
+    const before = h.toolHooks.get("execute.before")!
+    const after = h.toolHooks.get("execute.after")!
+    const permission = async (
+      source?: { type: string; messageID: string; id: string },
+      resources: string[] = ["make swagger-v2"],
+      sessionID = worker,
+      agent = "worker",
+    ) => {
+      const event: any = { action: "shell", agent, resources, sessionID, effect: "ask",
+        ...(source ? { source } : {}) }
+      await evaluate(event)
+      return event
+    }
+
+    const command = "make swagger-v2"
+    const granted = await h.call("command_elevate", {
+      workflowId: h.workflowId, stepId: "task:one", command,
+      reason: "Generate scoped Swagger artifacts using the repository target.",
+    }, "worker", worker)
+    expect(granted).toMatchObject({ granted: true, kind: "unrestricted", singleUse: true })
+    const call = { tool: "shell", callID: "shell-call-1", messageID: "assistant-message-1",
+      sessionID: worker, agent: "worker", input: { command } }
+
+    // OpenCode's real order is execute.before -> shell permission.assert.
+    await before(call)
+    expect((await h.durableStorage.get("command-elevation/" + granted.grantId) as any).consumedAt)
+      .toBeDefined()
+    const source = { type: "tool", messageID: call.messageID, id: call.callID }
+    expect((await permission()).effect).toBe("deny")
+    expect((await permission({ ...source, id: "another-call" })).effect).toBe("deny")
+    expect((await permission({ ...source, messageID: "another-message" })).effect).toBe("deny")
+    expect((await permission(source, [command], "another-session")).effect).toBe("deny")
+    expect((await permission(source, [command], worker, "critic")).effect).toBe("deny")
+    expect((await permission(source)).effect).toBe("allow")
+    await after({ ...call, status: "completed", result: { output: "ok", metadata: { exit: 0 } } })
+    expect((await permission(source)).effect).toBe("deny")
+
+    // A pipeline is still one exact elevated host call, even though the shell
+    // scanner supplies two resources to permission.assert.
+    const pipeline = "echo ready | cat"
+    const pipelineGrant = await h.call("command_elevate", {
+      workflowId: h.workflowId, stepId: "task:one", command: pipeline,
+      reason: "Verify audited pipeline command admission.",
+    }, "worker", worker)
+    expect(pipelineGrant.granted).toBe(true)
+    const pipelineCall = { tool: "shell", callID: "shell-call-2",
+      messageID: "assistant-message-2", sessionID: worker, agent: "worker",
+      input: { command: pipeline } }
+    await before(pipelineCall)
+    const pipelineSource = { type: "tool", messageID: pipelineCall.messageID, id: pipelineCall.callID }
+    expect((await permission(pipelineSource, ["echo ready", "cat"])).effect).toBe("allow")
+    expect((await permission(source, ["echo ready", "cat"])).effect).toBe("deny")
+    await after({ ...pipelineCall, status: "completed",
+      result: { output: "ready", metadata: { exit: 0 } } })
+    expect((await permission(pipelineSource, ["echo ready", "cat"])).effect).toBe("deny")
+  } finally {
+    h.restore()
+  }
+})
+
 test("arbitrary audited elevation admits Git, installers, pipelines and generators without fake write provenance", async () => {
   const h = await waveLifecycleFixture("wave")
   try {
