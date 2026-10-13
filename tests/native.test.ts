@@ -88,6 +88,38 @@ test("plugin integration: configured roles, five tools, reload, scoping, capture
     expect((await invoke("record", { operation: "query", action_id: action.id })).items).toHaveLength(2)
     await hooks.get("context")(event)
     expect(event.system).toEqual([nativePart])
+    // Pinned OpenCode v2.0.18 passes the outer context to each Code Mode child.
+    // These share IDs, but are two invocations; completion order is reversed.
+    await writeFile(path, "ledger:\n  capture: automatic\ninstructions:\n  enabled: false\n")
+    const first = { ...toolEvent, id: "shared", input: { path: "a" } }
+    const second = { ...toolEvent, id: "shared", input: { path: "b" } }
+    await Promise.all([hooks.get("execute.before")(first), hooks.get("execute.before")(second)])
+    await hooks.get("execute.after")({ ...second, status: "completed", result: { content: "B" } })
+    await hooks.get("execute.after")({ ...first, status: "completed", result: { content: "A" } })
+    const sessionPage = await invoke("record", { operation: "query", session_only: true })
+    expect(sessionPage.items).toHaveLength(6)
+    const unpaired = sessionPage.items.filter((r: any) => r.data.call_id === "shared" && r.data.phase === "finished")
+    expect(unpaired).toHaveLength(2)
+    for (const r of unpaired) {
+      expect(r.data.attribution).toContain("ambiguous-host-call")
+      expect(r.data.start_id).toBeUndefined()
+      expect(r.action_id).toBeUndefined()
+    }
+    expect((await invoke("record", { operation: "query" })).items).toHaveLength(4)
+    expect((await invoke("context", {})).action.id).toBe(action.id)
+    await expect(invoke("record", { operation: "query", session_only: true, action_id: action.id })).rejects.toThrow("session_only")
+    await expect(invoke("record", { operation: "add", session_only: true, kind: "claim", statement: "No" })).rejects.toThrow("session_only")
+    // A disabled-before sibling must not consume the captured start, even with identical input.
+    const gap = { ...toolEvent, id: "gap" }
+    await hooks.get("execute.before")(gap)
+    await writeFile(path, "ledger:\n  capture: off\ninstructions:\n  enabled: false\n")
+    await hooks.get("execute.before")({ ...gap })
+    await hooks.get("execute.after")({ ...gap, status: "completed", result: {} })
+    expect((await invoke("agents", {})).evidence.pairing).toBe("degraded")
+    const gapFinish = (await invoke("record", { operation: "query", session_only: true })).items.at(-1)
+    expect(gapFinish.data.attribution).toContain("capture-gap")
+    expect(gapFinish.data.start_id).toBeUndefined()
+    expect(gapFinish.action_id).toBeUndefined()
     // A Session at another location must not read or mutate this instance's Action data.
     location = join(dir, "other")
     await expect(invoke("action", { operation: "list" })).rejects.toThrow("does not own")

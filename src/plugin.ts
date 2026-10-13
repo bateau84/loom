@@ -33,7 +33,7 @@ const specs = [
   { name: "action", description: "Create, list or update an Action. create selects it for this Session. Plans and reviews are optional. State is a progress label, not a process kill or proof of success.", input: obj({ operation: choice("list", "create", "update"), action_id: str, title: str, goal: str, state: choice("active", "paused", "completed", "cancelled"), expected_revision: num, offset: num }, ["operation"]) },
   { name: "plan", description: "Read or save an optional Action plan. Use stable node IDs and expected_revision. Missing hierarchy levels are allowed. Reading can target one historical revision. Saving does not erase results or evidence.", input: obj({ operation: choice("read", "save"), action_id: str, revision: num, expected_revision: num, nodes: { type: "array", maxItems: 300, items: obj({ id: str, kind: choice("phase", "wave", "task", "subtask"), title: str, parent: str, depends_on: list, outcome: str, context: str, criteria: list, skills: list, roles: list, agent: str }, ["id", "kind", "title"]) } }, ["operation", "action_id"]) },
   { name: "context", description: "Read context for the selected work. Supplying action_id (and optional node_id) selects work for this Session and returns its task, dependencies and records. clear stops attributing later observations to it. Pass IDs to delegated agents so they can select their own task.", input: obj({ action_id: str, node_id: str, clear: { type: "boolean" } }) },
-  { name: "record", description: "Append a result, claim, assessment or QA finding; or query the paged ledger. Evidence IDs must be existing observations in the same Action. Use record_id for an exact record, node_id for Task history. Cannot create observations or certify independence. Without action_id, use this Session's selected Action or its unassigned ledger.", input: obj({ operation: choice("add", "query"), action_id: str, node_id: str, kind: choice("claim", "result", "assessment", "qa"), statement: str, evidence_ids: list, artifact_refs: list, verdict: choice("pass", "fail", "inconclusive"), record_id: str, after: num, limit: { type: "integer", minimum: 1, maximum: 50 } }, ["operation"]) },
+  { name: "record", description: "Append a result, claim, assessment or QA finding; or query the paged ledger. Evidence IDs must be existing observations in the same Action. Use record_id for an exact record, node_id for Task history. Cannot create observations or certify independence. Without action_id, use this Session's selected Action or its unassigned ledger. Use session_only=true to inspect this Session including unpaired evidence, without changing selection.", input: obj({ operation: choice("add", "query"), action_id: str, node_id: str, kind: choice("claim", "result", "assessment", "qa"), statement: str, evidence_ids: list, artifact_refs: list, verdict: choice("pass", "fail", "inconclusive"), record_id: str, session_only: { type: "boolean" }, after: num, limit: { type: "integer", minimum: 1, maximum: 50 } }, ["operation"]) },
 ] as const
 
 export default Plugin.define({
@@ -85,7 +85,7 @@ export default Plugin.define({
             switch (spec.name) {
               case "agents": {
                 const entries = registry(snapshot.config, agents(await ctx.agent.list()))
-                result = { agents: entries, config_sources: snapshot.sources, errors: snapshot.errors, warnings: entries.filter(a => a.configured && !a.available).map(a => `Configured agent is unavailable: ${a.id}`) }; break
+                result = { agents: entries, evidence: { capture: snapshot.config.ledger.capture, ...observer.status() }, config_sources: snapshot.sources, errors: snapshot.errors, warnings: entries.filter(a => a.configured && !a.available).map(a => `Configured agent is unavailable: ${a.id}`) }; break
               }
               case "action":
                 if (input.operation === "list") result = store.list(input.offset as number | undefined)
@@ -105,7 +105,8 @@ export default Plugin.define({
                 if (input.action_id) store.select(actor.session_id, focus)
                 break
               case "record":
-                if (input.operation === "query") result = store.records({ action_id: focus?.action_id, session_id: actor.session_id, node_id: focus?.node_id, record_id: input.record_id as string | undefined, after: input.after as number | undefined, limit: input.limit as number | undefined })
+                if (input.session_only && (input.operation !== "query" || input.action_id !== undefined || input.node_id !== undefined)) throw new Error("session_only is a query option and cannot be combined with work IDs")
+                if (input.operation === "query") result = store.records({ action_id: input.session_only ? undefined : focus?.action_id, session_id: actor.session_id, node_id: input.session_only ? undefined : focus?.node_id, record_id: input.record_id as string | undefined, after: input.after as number | undefined, limit: input.limit as number | undefined })
                 else if (input.operation === "add") {
                   if (!focus) throw new Error("Provide action_id or select work before recording an Action result")
                   result = store.record(actor, focus, { kind: input.kind as Parameters<Store["record"]>[2]["kind"], statement: input.statement as string, evidence_ids: input.evidence_ids as string[] | undefined, artifact_refs: input.artifact_refs as string[] | undefined, verdict: input.verdict as string | undefined })
@@ -140,11 +141,20 @@ export default Plugin.define({
       }))
       disposers.push(await ctx.tool.hook("execute.before", async event => {
         if (/^loom[_.]/.test(event.tool)) return
-        try { if (await owns(event.sessionID) && (await getConfig()).config.ledger.capture === "automatic") observer.before(event) } catch (error) { warn(error) }
+        try {
+          if (!await owns(event.sessionID)) return
+          if ((await getConfig()).config.ledger.capture === "automatic") observer.before(event)
+          else observer.skip(event)
+        } catch (error) { observer.captureGap(); warn(error) }
       }))
       disposers.push(await ctx.tool.hook("execute.after", async event => {
         if (/^loom[_.]/.test(event.tool)) return
-        try { if (observer.has(event) || (await owns(event.sessionID) && (await getConfig()).config.ledger.capture === "automatic")) observer.after(event) } catch (error) { warn(error) }
+        try {
+          if (observer.has(event) || (await owns(event.sessionID) && (await getConfig()).config.ledger.capture === "automatic")) {
+            const record = observer.after(event)
+            if (record.data.attribution !== "captured-at-start") warn(`Evidence is unpaired (${record.data.attribution}). Inspect loom_record with operation=query, session_only=true.`)
+          }
+        } catch (error) { warn(error) }
       }))
     } catch (error) {
       await Promise.allSettled(disposers.map(d => d.dispose())); db.close(); throw error

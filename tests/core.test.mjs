@@ -121,8 +121,8 @@ test('missing start never borrows current work attribution', t => {
  assert.equal(r.action_id,undefined); assert.match(r.data.attribution,/missing-start/)
 })
 test('a started but interrupted call is not a completed observation', t => {
- const s=fixture(t),a=s.create('A','Goal',actor),o=new Observer(s); const e={sessionID:actor.session_id,agent:actor.agent,messageID:'m',id:'c',tool:'read',input:{}}
- o.before(e); o.before(e); const rows=s.records({action_id:a.id}).items; assert.equal(rows.length,1); assert.equal(rows[0].data.phase,'started'); assert.equal(rows[0].data.status,undefined)
+ const s=fixture(t),a=s.create('Fix','Goal',actor),o=new Observer(s); const e={sessionID:actor.session_id,agent:actor.agent,messageID:'m',id:'c',tool:'read',input:{}}
+ o.before(e); const rows=s.records({action_id:a.id}).items; assert.equal(rows.length,1); assert.equal(rows[0].data.phase,'started'); assert.equal(rows[0].data.status,undefined)
 })
 test('clearing selection leaves conversation independent of Actions', t => {
  const s=fixture(t); s.create('A','Goal',actor); s.select(actor.session_id); assert.equal(s.selected(actor.session_id),undefined); assert.equal(s.hasSelection(actor.session_id),true)

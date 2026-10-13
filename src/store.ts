@@ -19,6 +19,9 @@ export class Store {
       CREATE TABLE IF NOT EXISTS ledger (seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQUE, action_id TEXT, session_id TEXT NOT NULL, kind TEXT NOT NULL, data TEXT NOT NULL);
       CREATE INDEX IF NOT EXISTS ledger_action ON ledger(action_id, seq);
       CREATE INDEX IF NOT EXISTS ledger_session ON ledger(session_id, seq);
+      CREATE INDEX IF NOT EXISTS ledger_observation_boundary ON ledger(
+        json_extract(data,'$.data.correlation_key'), json_extract(data,'$.data.phase'), seq
+      ) WHERE kind='observation';
       PRAGMA user_version=1;`)
   }
   private transaction<T>(fn: () => T): T {
@@ -87,6 +90,52 @@ export class Store {
   /** Internal capture only. Agents cannot insert observation records through the tool API. */
   observe(actor: Actor, focus: Focus | undefined, data: Record<string, unknown>, fingerprint?: string): LedgerRecord {
     return this.append({ ...actor, ...focus, fingerprint, kind: "observation", data })
+  }
+  /** Capture selection and its contract in the same transaction as the start. */
+  startObservation(actor: Actor, data: Record<string, unknown>): LedgerRecord {
+    return this.transaction(() => {
+      const focus = this.selected(actor.session_id)
+      let fingerprint: string | undefined
+      if (focus) {
+        // A removed Task still has a historical selection, but no current contract.
+        const action = this.action(focus.action_id), plan = this.plan(focus.action_id)
+        if (!focus.node_id || plan.nodes.some(n => n.id === focus.node_id)) fingerprint = subject(action, plan, focus.node_id)
+      }
+      return this.observe(actor, focus, data, fingerprint)
+    })
+  }
+  private observationBoundary(key: string, phase: string, limit: number): LedgerRecord[] {
+    return this.db.prepare(`SELECT data FROM ledger WHERE kind='observation'
+      AND json_extract(data,'$.data.correlation_key')=?
+      AND json_extract(data,'$.data.phase')=? ORDER BY seq LIMIT ?`)
+      .all(key, phase, limit).map(row => parse<LedgerRecord>(row))
+  }
+  hasObservationStart(key: string): boolean { return this.observationBoundary(key, "started", 1).length > 0 }
+  /**
+   * At most two starts and one finish are read through an index. Counts/order,
+   * equal inputs, and elapsed time never disambiguate a reused host call key.
+   * The transaction also prevents two writers from claiming the same start.
+   */
+  finishObservation(actor: Actor, data: Record<string, unknown>, allowPairing: boolean): LedgerRecord {
+    return this.transaction(() => {
+      const key = String(data.correlation_key)
+      const starts = this.observationBoundary(key, "started", 2)
+      const finished = this.observationBoundary(key, "finished", 1).length > 0
+      const start = starts[0]
+      const reason = !allowPairing ? "capture-gap"
+        : starts.length > 1 ? "ambiguous-host-call"
+        : !start ? "missing-start"
+        : finished ? "already-finished-host-call"
+        : start.data.observer_epoch !== data.observer_epoch ? "observer-restarted"
+        : start.session_id !== actor.session_id || start.agent !== actor.agent ? "actor-mismatch"
+        : start.data.input_digest !== data.input_digest ? "input-mismatch"
+        : undefined
+      const matched = reason === undefined ? start : undefined
+      const focus = matched?.action_id ? { action_id: matched.action_id, ...(matched.node_id ? { node_id: matched.node_id } : {}) } : undefined
+      return this.observe(matched ? { session_id: matched.session_id, agent: matched.agent } : actor, focus,
+        { ...data, ...(matched ? { start_id: matched.id } : {}),
+          attribution: matched ? "captured-at-start" : `${reason}; not assigned to current work` }, matched?.fingerprint)
+    })
   }
   private append(input: Omit<LedgerRecord, "id" | "created_at">): LedgerRecord {
     const r: LedgerRecord = { ...input, id: randomUUID(), created_at: now() }

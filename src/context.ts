@@ -1,4 +1,5 @@
-import { type Actor, type Focus, type PlanNode, subject, digest } from "./model.js"
+import { randomUUID } from "node:crypto"
+import { type Focus, type PlanNode, digest } from "./model.js"
 import { Store } from "./store.js"
 
 export function taskContext(store: Store, focus: Focus, maxChars = 16000) {
@@ -35,28 +36,39 @@ export function taskContext(store: Store, focus: Focus, maxChars = 16000) {
 }
 export type CaptureEvent = { sessionID: string; agent: string; messageID: string; id: string; tool: string; input: unknown }
 export type EndEvent = CaptureEvent & { status: "completed" | "error"; result?: unknown; error?: unknown }
-/** Never store raw tool input/output. Hashes support trace lookup, not semantic proof. */
+/**
+ * Host IDs identify a group, not necessarily one invocation (notably Code Mode).
+ * Saved starts are the correlation source. There is no pending-call heap to fill
+ * or evict, and no FIFO/input-hash guess when the host identity is ambiguous.
+ */
 export class Observer {
-  private pending = new Map<string, { actor: Actor; focus?: Focus; fingerprint?: string; start_id: string }>()
+  private readonly epoch = randomUUID()
+  private pairingDegraded = false
   constructor(private store: Store) {}
-  private key(e: CaptureEvent) { return JSON.stringify([e.sessionID, e.messageID, e.id, e.tool]) }
-  has(e: CaptureEvent) { return this.pending.has(this.key(e)) }
+  private key(e: CaptureEvent) { return digest([e.sessionID, e.messageID, e.id, e.tool]) }
+  has(e: CaptureEvent) { return this.store.hasObservationStart(this.key(e)) }
+  /** A lost before hook means even identical inputs cannot establish pairing. */
+  captureGap() { this.pairingDegraded = true }
+  status() { return { pairing: this.pairingDegraded ? "degraded" : "available", restart_continuity: "not-assumed" } }
+  /** An uncaptured sibling must not consume a previously captured start. */
+  skip(e: CaptureEvent) {
+    if (this.has(e)) this.captureGap()
+  }
   before(e: CaptureEvent) {
-    const key = this.key(e)
-    if (this.pending.has(key)) return
-    if (this.pending.size >= 1024) throw new Error("Loom evidence capture is at capacity; this call will be unattributed")
-    const actor = { session_id: e.sessionID, agent: e.agent }, focus = this.store.selected(e.sessionID)
-    let fingerprint: string | undefined
-    if (focus) { try { fingerprint = subject(this.store.action(focus.action_id), this.store.plan(focus.action_id), focus.node_id) } catch { /* retain historical origin without asserting a current contract */ } }
-    const start = this.store.observe(actor, focus, { phase: "started", tool: e.tool, message_id: e.messageID, call_id: e.id, input_digest: digest(e.input) }, fingerprint)
-    this.pending.set(key, { actor, focus, fingerprint, start_id: start.id })
+    try {
+      return this.store.startObservation({ session_id: e.sessionID, agent: e.agent }, {
+        phase: "started", tool: e.tool, message_id: e.messageID, call_id: e.id,
+        correlation_key: this.key(e), observer_epoch: this.epoch, input_digest: digest(e.input),
+      })
+    } catch (error) { this.captureGap(); throw error }
   }
   after(e: EndEvent) {
-    const key = this.key(e), start = this.pending.get(key)
-    this.pending.delete(key)
-    return this.store.observe(start?.actor ?? { session_id: e.sessionID, agent: e.agent }, start?.focus,
-      { phase: "finished", tool: e.tool, message_id: e.messageID, call_id: e.id, status: e.status, start_id: start?.start_id,
-        attribution: start ? "captured-at-start" : "missing-start; not assigned to current work",
-        result_digest: digest(e.status === "completed" ? e.result : e.error) }, start?.fingerprint)
+    // Compute first. A digest/insert failure leaves all saved starts intact.
+    return this.store.finishObservation({ session_id: e.sessionID, agent: e.agent }, {
+      phase: "finished", tool: e.tool, message_id: e.messageID, call_id: e.id,
+      correlation_key: this.key(e), observer_epoch: this.epoch,
+      input_digest: digest(e.input), result_digest: digest(e.status === "completed" ? e.result : e.error),
+      status: e.status,
+    }, !this.pairingDegraded)
   }
 }
