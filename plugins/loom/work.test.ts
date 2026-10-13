@@ -52,6 +52,33 @@ test("whole-Plan advice requires an actual receiver and prevents direct meaning 
   expect(() => validatePlanRoleFeasibility(validateWorkPlan(definition))).toThrow("receiver")
 })
 
+test("reviewed delivery Plan admits native Acceptance before cutover without resolving user waits", () => {
+  const definition = plan()
+  const acceptance = definition.phases[0]!.waves[0]!.tasks[1]!
+  acceptance.role = "acceptance"
+  acceptance.responsibility = "review"
+  const cutover = definition.phases[0]!.waves[1]!.tasks[0]!
+  const waits = Array.from({ length: 4 }, (_, i) => ({
+    ...structuredClone(cutover),
+    id: `user-policy-${i + 1}`,
+    title: `Policy decision ${i + 1}`,
+    role: "user",
+    responsibility: "obtain-user-decision" as const,
+    dependsOn: ["b"],
+  }))
+  cutover.dependsOn = ["b", ...waits.map((task) => task.id)]
+  definition.phases[0]!.waves[1]!.tasks.unshift(...waits)
+  expect(validatePlanRoleFeasibility(validateWorkPlan(definition))).toBe(true)
+  expect(definition.phases[0]!.waves[0]!.tasks[1]!.role).toBe("acceptance")
+  expect(definition.phases[0]!.waves[1]!.tasks[0]!.responsibility).toBe("obtain-user-decision")
+  const duplicate = { ...structuredClone(acceptance), id: "second-acceptance" }
+  definition.phases[0]!.waves[0]!.tasks.push(duplicate)
+  expect(() => validatePlanRoleFeasibility(validateWorkPlan(definition))).toThrow("only one native Product Acceptance")
+  definition.phases[0]!.waves[0]!.tasks.pop()
+  acceptance.dependsOn = ["c"]
+  expect(() => validateWorkPlan(definition)).toThrow("dependency cycle")
+})
+
 function plan(): WorkPlanDefinition {
   const richTask = (id: string, title: string, objective: string, dependsOn: string[]) => ({
     id,
