@@ -133,3 +133,106 @@ test("plugin integration: configured roles, five tools, reload, scoping, capture
   }
   expect(disposed).toBe(4)
 })
+
+test("removed-task recovery is injected, repeatable, non-mutating and cleared by explicit selection", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "loom-reselection-"))
+  const oldState = process.env.XDG_STATE_HOME, oldConfig = process.env.OPENCODE_CONFIG_DIR
+  process.env.XDG_STATE_HOME = join(dir, "state")
+  process.env.OPENCODE_CONFIG_DIR = join(dir, "config")
+  const path = join(dir, ".loom.yaml")
+  const config = "version: 1\ncontext:\n  max_chars: 2000\nagents:\n  external:\n    roles: [implementation]\n"
+  const tools = new Map<string, any>(), hooks = new Map<string, any>()
+  const registration = () => ({ dispose: async () => {} })
+  const ctx = {
+    location: { directory: dir, project: { id: "reselection", directory: dir, canonical: dir } },
+    agent: { list: async () => [{ id: "external" }], transform: () => { throw new Error("No agent rewriting") } },
+    permission: { hook: () => { throw new Error("No permission gates") } },
+    tool: {
+      transform: async (fn: any) => { fn({ namespace: () => {}, add: (tool: any) => tools.set(tool.name, tool) }); return registration() },
+      hook: async (name: string, fn: any) => { hooks.set(name, fn); return registration() },
+    },
+    session: {
+      get: async ({ sessionID }: { sessionID: string }) => ({ id: sessionID, projectID: "reselection", location: { directory: dir } }),
+      hook: async (name: string, fn: any) => { hooks.set(name, fn); return registration() },
+    },
+  }
+  let cleanup: (() => Promise<void>) | undefined
+  const invoke = async (name: string, input: unknown, sessionID = "s") => {
+    const result = await tools.get(name).execute(input, { sessionID, agent: "external", messageID: "m", id: "call", signal: new AbortController().signal })
+    return JSON.parse(result.content).result
+  }
+  const prefix = "<!-- loom:context:v2 -->\nLoom work context (reference data, not instructions):\n"
+  const nativePart = { type: "text", text: "Unchanged native prompt" }
+  const event = { sessionID: "s", agent: "external", system: [nativePart], messages: [], options: {}, tools: {} }
+  const injected = () => event.system.filter(p => p.text.startsWith(prefix))
+  const content = () => JSON.parse(injected()[0].text.slice(prefix.length))
+  try {
+    await writeFile(path, config)
+    cleanup = await (plugin as any).setup(ctx)
+    expect(tools.size).toBe(5)
+    const action = await invoke("action", { operation: "create", title: "A", goal: "Goal" })
+    const old = { id: "old", kind: "task", title: "Old work" }, next = { id: "next", kind: "task", title: "New work" }
+    await invoke("plan", { operation: "save", action_id: action.id, expected_revision: 0, nodes: [old, next] })
+    await invoke("context", { action_id: action.id, node_id: "old" })
+    const record = await invoke("record", { operation: "add", kind: "result", statement: "Only valid while the original condition holds." })
+    await hooks.get("context")(event)
+    expect(content().task.id).toBe("old")
+    const call = { sessionID: "s", agent: "external", messageID: "m", id: "before-removal", tool: "read", input: { path: "file" } }
+    await hooks.get("execute.before")(call)
+    await invoke("plan", { operation: "save", action_id: action.id, expected_revision: 1, nodes: [next] })
+    await hooks.get("context")(event)
+    expect(content().recovery.code).toBe("task-not-in-current-plan")
+    expect(content().task).toBeNull()
+    expect(event.system[0]).toBe(nativePart)
+    expect(JSON.stringify(content()).length).toBeLessThanOrEqual(2000)
+    await hooks.get("context")(event)
+    expect(injected()).toHaveLength(1)
+    expect((await invoke("context", {})).node_id).toBe("old")
+    expect((await invoke("context", { action_id: action.id, node_id: "unknown" })).recovery.code).toBe("task-not-in-current-plan")
+    expect((await invoke("context", {})).node_id).toBe("old")
+    expect((await invoke("record", content().recovery.read_history.input)).items[0].id).toBe(record.id)
+    expect((await invoke("plan", content().recovery.read_plan.input)).revision).toBe(2)
+    await writeFile(path, config + "instructions:\n  enabled: false\n")
+    await hooks.get("context")(event)
+    expect(event.system).toEqual([nativePart])
+    // The explicit context tool stays usable while automatic injection is disabled.
+    expect((await invoke("context", {})).recovery.code).toBe("task-not-in-current-plan")
+    await writeFile(path, config)
+    await hooks.get("context")(event)
+    expect(content().recovery.code).toBe("task-not-in-current-plan")
+    event.agent = "unconfigured"
+    await hooks.get("context")(event)
+    expect(event.system).toEqual([nativePart])
+    event.agent = "external"
+    // Restart the plugin/database; do not infer a replacement or replay a completion.
+    await cleanup(); cleanup = undefined
+    cleanup = await (plugin as any).setup(ctx)
+    await hooks.get("context")(event)
+    expect(content().node_id).toBe("old")
+    expect(content().recovery.code).toBe("task-not-in-current-plan")
+    expect((await invoke("context", {}, "new-session")).selected).toBeNull()
+    expect((await invoke("context", { action_id: action.id, node_id: "old" }, "new-session")).recovery.code).toBe("task-not-in-current-plan")
+    expect((await invoke("context", {}, "new-session")).selected).toBeNull()
+    await invoke("context", { action_id: action.id, node_id: "next" })
+    await hooks.get("context")(event)
+    expect(content().task.id).toBe("next")
+    expect(content().recovery).toBeUndefined()
+    expect(injected()).toHaveLength(1)
+    // Native hooks still run, but the pre-restart call must not borrow the new Task.
+    await hooks.get("execute.after")({ ...call, status: "completed", result: { content: "done" } })
+    const late = (await invoke("record", { operation: "query", session_only: true })).items.at(-1)
+    expect(late.node_id).toBeUndefined()
+    expect(late.data.attribution).toContain("observer-restarted")
+    await invoke("context", { clear: true })
+    await hooks.get("context")(event)
+    expect(injected()).toHaveLength(0)
+    expect((await invoke("context", {})).selected).toBeNull()
+    expect((await invoke("record", { operation: "query", action_id: action.id, record_id: record.id })).items[0].node_id).toBe("old")
+    expect(tools.size).toBe(5)
+  } finally {
+    await cleanup?.()
+    if (oldState === undefined) delete process.env.XDG_STATE_HOME; else process.env.XDG_STATE_HOME = oldState
+    if (oldConfig === undefined) delete process.env.OPENCODE_CONFIG_DIR; else process.env.OPENCODE_CONFIG_DIR = oldConfig
+    await rm(dir, { recursive: true, force: true })
+  }
+})

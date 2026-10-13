@@ -1,12 +1,43 @@
 import { randomUUID } from "node:crypto"
-import { type Focus, type PlanNode, digest, subject } from "./model.js"
+import { type Focus, type PlanNode, digest, subject, uid } from "./model.js"
 import { Store } from "./store.js"
+
+/** Only an absent node in a successfully read snapshot gets a recovery notice. */
+class MissingContextTask extends Error {
+  constructor(readonly action_id: string, readonly node_id: string, readonly plan_revision: number) {
+    super(`Task ${node_id} is not in the current plan (removed or unknown). Select current work; any historical ledger remains available.`)
+  }
+}
+
+/** Model-facing read: preserve selection/history and expose existing recovery tools. */
+export function taskContextOrRecovery(store: Store, focus: Focus, maxChars = 16000) {
+  try { return taskContext(store, focus, maxChars) }
+  catch (error) {
+    // Storage failures, invalid input and unknown Actions must not masquerade as task removal.
+    if (!(error instanceof MissingContextTask)) throw error
+    const { action_id, node_id, plan_revision } = error
+    return {
+      action_id, node_id, plan_revision, task: null, selection_unchanged: true,
+      recovery: {
+        code: "task-not-in-current-plan" as const,
+        message: "The requested task is not in the current plan. There is no current task contract to inject. Any earlier history is unchanged; no replacement was selected.",
+        read_plan: { tool: "loom_plan", input: { operation: "read", action_id } },
+        read_history: { tool: "loom_record", input: { operation: "query", action_id, node_id } },
+        reselect: "After reading the plan, call loom_context with action_id and an explicitly chosen current node_id. Do not infer a replacement from a similar title.",
+        use_action: { tool: "loom_context", input: { action_id } },
+        clear_selection: { tool: "loom_context", input: { clear: true } },
+      },
+      note: "Native execution and permissions are unchanged. This notice is not a new execution gate. Historical selection remains until explicitly changed or cleared; it does not supply a current task contract.",
+    }
+  }
+}
 
 export function taskContext(store: Store, focus: Focus, maxChars = 16000) {
   if (!Number.isSafeInteger(maxChars) || maxChars < 2000 || maxChars > 64000) throw new Error("Context budget must be 2000-64000 characters")
+  if (focus.node_id !== undefined) uid(focus.node_id, "node id")
   return store.contextSnapshot(focus.action_id, (action, plan) => {
     const node = focus.node_id ? plan.nodes.find(n => n.id === focus.node_id) : undefined
-    if (focus.node_id && !node) throw new Error(`Task ${focus.node_id} was removed. Select current work; its historical ledger is still available.`)
+    if (focus.node_id && !node) throw new MissingContextTask(action.id, focus.node_id, plan.revision)
     const relevant = new Set<string>(), byID = new Map(plan.nodes.map(n => [n.id, n]))
     // Breadth first: a long transitive chain must not precede every direct dependency.
     const pending = node ? [node.id] : []

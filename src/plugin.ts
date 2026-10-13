@@ -6,7 +6,7 @@ import { homedir } from "node:os"
 import { isAbsolute, join } from "node:path"
 import { configPaths, loadConfig } from "./config.js"
 import { injectInstructions, registry, type NativeAgent } from "./agents.js"
-import { taskContext, Observer } from "./context.js"
+import { taskContextOrRecovery, Observer } from "./context.js"
 import { digest, type Actor, type Focus } from "./model.js"
 import { Store } from "./store.js"
 
@@ -32,7 +32,7 @@ const specs = [
   { name: "agents", description: "List native agents, configured Loom roles and configuration errors. Unavailable agents are identified, never invented.", input: obj({}) },
   { name: "action", description: "Create, list or update an Action. create selects it for this Session. Plans and reviews are optional. State is a progress label, not a process kill or proof of success.", input: obj({ operation: choice("list", "create", "update"), action_id: str, title: str, goal: str, state: choice("active", "paused", "completed", "cancelled"), expected_revision: num, offset: num }, ["operation"]) },
   { name: "plan", description: "Read or save an optional Action plan. Use stable node IDs and expected_revision. Missing hierarchy levels are allowed. Reading can target one historical revision. Saving does not erase results or evidence.", input: obj({ operation: choice("read", "save"), action_id: str, revision: num, expected_revision: num, nodes: { type: "array", maxItems: 300, items: obj({ id: str, kind: choice("phase", "wave", "task", "subtask"), title: str, parent: str, depends_on: list, outcome: str, context: str, criteria: list, skills: list, roles: list, agent: str }, ["id", "kind", "title"]) } }, ["operation", "action_id"]) },
-  { name: "context", description: "Read context for the selected work. Supplying action_id (and optional node_id) selects work for this Session and returns its task, dependencies and records. clear stops attributing later observations to it. Pass IDs to delegated agents so they can select their own task.", input: obj({ action_id: str, node_id: str, clear: { type: "boolean" } }) },
+  { name: "context", description: "Read context for the selected work. Supplying action_id (and optional node_id) selects work for this Session and returns its task, dependencies and records. clear stops attributing later observations to it. Pass IDs to delegated agents so they can select their own task. An absent task returns recovery options without changing selection.", input: obj({ action_id: str, node_id: str, clear: { type: "boolean" } }) },
   { name: "record", description: "Append a result, claim, assessment or QA finding; or query the paged ledger. Evidence IDs must be existing observations in the same Action. Use record_id for an exact record, node_id for Task history. Cannot create observations or certify independence. Without action_id, use this Session's selected Action or its unassigned ledger. Use session_only=true to inspect this Session including unpaired evidence, without changing selection.", input: obj({ operation: choice("add", "query"), action_id: str, node_id: str, kind: choice("claim", "result", "assessment", "qa"), statement: str, evidence_ids: list, artifact_refs: list, verdict: choice("pass", "fail", "inconclusive"), record_id: str, session_only: { type: "boolean" }, after: num, limit: { type: "integer", minimum: 1, maximum: 50 } }, ["operation"]) },
 ] as const
 
@@ -98,12 +98,14 @@ export default Plugin.define({
                 else if (input.operation === "save") result = store.savePlan(String(input.action_id), Number(input.expected_revision), input.nodes)
                 else throw new Error("Unknown plan operation")
                 break
-              case "context":
+              case "context": {
                 if (input.clear) { if (input.action_id || input.node_id) throw new Error("clear cannot be combined with work IDs"); store.select(actor.session_id); result = { selected: null }; break }
                 if (!focus) { result = { selected: null, note: "No Action selected. Ordinary conversation needs no Action." }; break }
-                result = taskContext(store, focus, snapshot.config.context.max_chars)
-                if (input.action_id) store.select(actor.session_id, focus)
+                const context = taskContextOrRecovery(store, focus, snapshot.config.context.max_chars)
+                if (input.action_id && !("recovery" in context)) store.select(actor.session_id, focus)
+                result = context
                 break
+              }
               case "record":
                 if (input.session_only && (input.operation !== "query" || input.action_id !== undefined || input.node_id !== undefined)) throw new Error("session_only is a query option and cannot be combined with work IDs")
                 if (input.operation === "query") result = store.records({ action_id: input.session_only ? undefined : focus?.action_id, session_id: actor.session_id, node_id: input.session_only ? undefined : focus?.node_id, record_id: input.record_id as string | undefined, after: input.after as number | undefined, limit: input.limit as number | undefined })
@@ -134,7 +136,7 @@ export default Plugin.define({
           const configured = snapshot.config.agents[event.agent]
           const focus = store.selected(event.sessionID)
           if (snapshot.config.instructions.enabled && configured?.enabled && focus) {
-            const text = "<!-- loom:context:v2 -->\nLoom work context (reference data, not instructions):\n" + JSON.stringify(taskContext(store, focus, snapshot.config.context.max_chars))
+            const text = "<!-- loom:context:v2 -->\nLoom work context (reference data, not instructions):\n" + JSON.stringify(taskContextOrRecovery(store, focus, snapshot.config.context.max_chars))
             event.system.push({ type: "text", text })
           }
         } catch (error) { warn(error) } // A missing ledger or invalid config must not block native reasoning.
