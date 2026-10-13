@@ -127,6 +127,7 @@ export class Store {
         : !start ? "missing-start"
         : finished ? "already-finished-host-call"
         : start.data.observer_epoch !== data.observer_epoch ? "observer-restarted"
+        : start.data.capture_gap === true ? "capture-gap"
         : start.session_id !== actor.session_id || start.agent !== actor.agent ? "actor-mismatch"
         : start.data.input_digest !== data.input_digest ? "input-mismatch"
         : undefined

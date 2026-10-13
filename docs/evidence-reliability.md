@@ -39,8 +39,13 @@ memory-capacity failure, **not** the need for future on-disk retention policy.
 
 A failed before hook, or a skipped same-key before hook while capture is off,
 marks that observer's pairing as degraded. Subsequent finishes stay unpaired:
-otherwise an unrecorded sibling could consume an earlier start. Native execution
-is not blocked. New starts can still be recorded after storage recovers.
+otherwise an unrecorded sibling could consume an earlier start. Any skipped start
+also marks later starts as following a capture gap, even after capture is enabled
+again. This prevents an older uncaptured invocation from borrowing a new start.
+Previously captured, different-key starts can still finish with their original
+attribution when no matching start was missed. Native execution is not blocked;
+new starts can still be recorded after storage recovers. This conservative gap
+status lasts for the observer instance and is exposed by `loom_agents`.
 
 A new plugin instance has a new observer generation. It can read interrupted
 history, but late finishes from the old instance are not treated as proven

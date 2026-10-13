@@ -44,14 +44,16 @@ export type EndEvent = CaptureEvent & { status: "completed" | "error"; result?: 
 export class Observer {
   private readonly epoch = randomUUID()
   private pairingDegraded = false
+  private startsAfterGap = false
   constructor(private store: Store) {}
   private key(e: CaptureEvent) { return digest([e.sessionID, e.messageID, e.id, e.tool]) }
   has(e: CaptureEvent) { return this.store.hasObservationStart(this.key(e)) }
   /** A lost before hook means even identical inputs cannot establish pairing. */
   captureGap() { this.pairingDegraded = true }
-  status() { return { pairing: this.pairingDegraded ? "degraded" : "available", restart_continuity: "not-assumed" } }
+  status() { return { pairing: this.pairingDegraded || this.startsAfterGap ? "degraded" : "available", restart_continuity: "not-assumed" } }
   /** An uncaptured sibling must not consume a previously captured start. */
   skip(e: CaptureEvent) {
+    this.startsAfterGap = true
     if (this.has(e)) this.captureGap()
   }
   before(e: CaptureEvent) {
@@ -59,6 +61,7 @@ export class Observer {
       return this.store.startObservation({ session_id: e.sessionID, agent: e.agent }, {
         phase: "started", tool: e.tool, message_id: e.messageID, call_id: e.id,
         correlation_key: this.key(e), observer_epoch: this.epoch, input_digest: digest(e.input),
+        capture_gap: this.pairingDegraded || this.startsAfterGap,
       })
     } catch (error) { this.captureGap(); throw error }
   }
