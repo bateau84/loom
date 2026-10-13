@@ -22,6 +22,10 @@ export class Store {
       CREATE INDEX IF NOT EXISTS ledger_observation_boundary ON ledger(
         json_extract(data,'$.data.correlation_key'), json_extract(data,'$.data.phase'), seq
       ) WHERE kind='observation';
+      CREATE INDEX IF NOT EXISTS ledger_context_kind ON ledger(action_id, kind, seq)
+        WHERE kind<>'observation';
+      CREATE INDEX IF NOT EXISTS ledger_context_scope ON ledger(action_id, json_extract(data,'$.node_id'), kind, seq)
+        WHERE kind<>'observation';
       PRAGMA user_version=1;`)
   }
   private transaction<T>(fn: () => T): T {
@@ -174,6 +178,62 @@ export class Store {
     const rows = this.db.prepare(`SELECT seq,data FROM ledger WHERE ${where} ORDER BY seq LIMIT ?`).all(...params, limit + 1) as { seq: number; data: string }[]
     const page = rows.slice(0, limit)
     return { items: page.map(row => ({ sequence: row.seq, ...parse<LedgerRecord>(row) })), next_after: rows.length > limit ? page.at(-1)!.seq : null }
+  }
+  /** One read-only snapshot; the callback must stay synchronous and never write. */
+  contextSnapshot<T>(actionID: string, read: (action: Action, plan: Plan) => T): T {
+    this.db.exec("BEGIN")
+    try {
+      const action = this.action(actionID)
+      const row = this.db.prepare("SELECT data FROM plans WHERE action_id=? ORDER BY revision DESC LIMIT 1").get(actionID)
+      const plan = row ? parse<Plan>(row) : { revision: 0, nodes: [] }
+      const result = read(action, plan)
+      this.db.exec("COMMIT")
+      return result
+    } catch (error) { this.db.exec("ROLLBACK"); throw error }
+  }
+  /**
+   * Conclusions have their own indexed buckets. Routine observations cannot
+   * evict them, and a busy Task cannot evict every dependency or review result.
+   * Limits are a context sampling policy, not a completeness or truth claim.
+   */
+  contextRecords(actionID: string, nodeIDs?: string[]) {
+    uid(actionID)
+    const kinds = ["result", "qa", "assessment", "claim"] as const
+    const allScopes = nodeIDs?.length ? [...new Set([nodeIDs[0], null, ...nodeIDs.slice(1)])] : [undefined]
+    const scopes = allScopes.slice(0, 16)
+    type Row = { seq: number; data: string }
+    const decode = (row: Row) => ({ sequence: row.seq, ...parse<LedgerRecord>(row) })
+    let hasMore = allScopes.length > scopes.length
+    const groups = scopes.map(scope => kinds.map(kind => {
+      const params: unknown[] = [actionID, kind]
+      const scoped = scope !== undefined
+      if (scoped) params.push(scope)
+      const rows = this.db.prepare(`SELECT seq,data FROM ledger WHERE action_id=?
+        AND kind<>'observation' AND kind=?${scoped ? " AND json_extract(data,'$.node_id') IS ?" : ""}
+        ORDER BY seq DESC LIMIT 3`).all(...params) as Row[]
+      if (rows.length > 2) hasMore = true
+      return rows.slice(0, 2).map(decode)
+    }))
+    const conclusions: Array<ReturnType<typeof decode>> = []
+    // First give each scope a recent result of each kind, then older context.
+    for (let depth = 0; depth < 2; depth++) for (let kind = 0; kind < kinds.length; kind++) {
+      for (const group of groups) {
+        const record = group[kind][depth]
+        if (record) conclusions.push(record)
+      }
+    }
+    if (conclusions.length > 48) hasMore = true
+    let filter = "action_id=? AND kind='observation'"
+    const params: unknown[] = [actionID]
+    if (nodeIDs?.length) {
+      filter += ` AND (json_extract(data,'$.node_id') IS NULL OR json_extract(data,'$.node_id') IN (${nodeIDs.map(() => "?").join(",")}))`
+      params.push(...nodeIDs)
+    }
+    const observations = this.db.prepare(`SELECT seq,data FROM ledger WHERE ${filter} ORDER BY seq DESC LIMIT 9`).all(...params) as Row[]
+    return {
+      conclusions: conclusions.slice(0, 48), observations: observations.slice(0, 8).map(decode),
+      has_more: hasMore || observations.length > 8, scopes_omitted: allScopes.length - scopes.length,
+    }
   }
   recent(actionID: string, nodeIDs?: string[]) {
     this.action(actionID)
