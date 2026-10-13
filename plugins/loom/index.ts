@@ -267,6 +267,10 @@ async function assertStepHostAvailability(ctx: any, workflow: Workflow, work: Wo
   if (requiresReviewedPlannedDispatchBinding(workflow, step)) await assertAdviceHostPaths(ctx, work, workflow.work?.generation)
   else if (step.id === "review-plan") await assertAdviceHostPaths(ctx, work, workflow.work?.generation, true)
   if (step.task && work && nativeTaskPath(step.task)?.nativeKind === "producer") await assertAdviceInputEvidence(ctx, workflow, work, step.task.id)
+  if (work && workflow.work && requiresReviewedPlannedDispatchBinding(workflow, step)) {
+    await assertCurrentAcceptanceDependencies(ctx, workflow, work,
+      plannedTaskSteps(workflow).map((candidate) => candidate.task!.id))
+  }
 }
 
 async function assertAdviceInputEvidence(ctx: any, workflow: Workflow, work: WorkHierarchy, taskId: string) {
@@ -7285,7 +7289,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             }
           }
 
-          if (stepId === "product-acceptance") {
+          if (nativeAcceptanceGate(workflow)?.id === stepId) {
             const plan = (await ctx.storage.get(acceptanceKey(workflowId))) as AcceptancePlan | undefined
             if (!plan) {
               return { content: renderToolOutput({ error: "Product Acceptance plan is missing." }) }
@@ -7439,6 +7443,9 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             if (!currentStep) throw new Error("Step not found.")
             await validateAdviceResolutions(ctx, workflow, adviceWork, currentStep, summary, adviceResolutions)
             finishStep(workflow, stepId, tool.agent, resolvedOutcome, summary)
+            if (resolvedOutcome === "pass" && nativeAcceptanceGate(workflow)?.id === stepId) {
+              await assertCurrentAcceptanceProof(ctx, workflow, currentStep)
+            }
             if (
               stepId === "review-plan" &&
               resolvedOutcome === "pass" &&
@@ -7573,7 +7580,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                             completedAt: now,
                             completedAttempt: taskStep.attempt ?? 0,
                             producerAgent: taskStep.agent,
-                            ...(nativePath?.stepKind === "work" ? {
+                            ...(nativePath?.stepKind === "work" || nativePath?.nativeKind === "acceptance" ? {
                               nativeKind: nativePath.nativeKind,
                               generation: workflow.work!.generation,
                               taskId: taskStep.task!.id,
@@ -8242,10 +8249,11 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 delete workflow.work.reviewedPlanFingerprint
               }
 
-              if (reset.includes("product-acceptance")) {
+              const acceptanceGate = nativeAcceptanceGate(workflow)
+              if (acceptanceGate && reset.includes(acceptanceGate.id)) {
                 const acceptance = (await ctx.storage.get(acceptanceKey(workflowId))) as AcceptancePlan | undefined
                 if (acceptance) {
-                  resetAcceptance(acceptance)
+                  resetAcceptance(acceptance, acceptanceGate.attempt ?? 0)
                   await ctx.storage.set(acceptanceKey(workflowId), acceptance)
                 }
               }
@@ -11668,6 +11676,8 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                       }
                       return completedWave
                     })()
+
+                await assertCurrentAcceptanceDependencies(ctx, workflow, work, compiledTaskIds)
 
                 for (const step of steps) {
                   const scope: TaskScope = {
