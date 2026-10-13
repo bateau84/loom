@@ -258,6 +258,34 @@ describe("Loom persistent work hierarchy", () => {
     expect(validatePlanRoleFeasibility(candidate)).toBe(true)
   })
 
+  test("standalone native Acceptance Wave validates reviewed cross-Wave prerequisite with no local edge", () => {
+    const definition = plan()
+    const acceptance = definition.phases[0]!.waves[1]!.tasks[0]!
+    acceptance.role = "acceptance"
+    acceptance.responsibility = "review"
+    const cutover = { ...structuredClone(acceptance), id: "release-cutover",
+      title: "Release cutover", objective: "Deploy after independent Acceptance",
+      role: "worker", responsibility: "execute" as const, dependsOn: ["c"] }
+    definition.phases[0]!.waves.push({
+      id: "cutover", title: "Separately authorized cutover",
+      objective: "Deploy only after prior Acceptance", constraints: [],
+      tasks: [cutover],
+    })
+    const work = createWorkHierarchy("docs/anchors/product/anchor.md", "wf-source", now)
+    materializeWorkPlan(work, "wf-source", definition, now)
+    expect(validatePlanRoleFeasibility(definition)).toBe(true)
+    claimWorkflowWave(work, "wf-source", work.generation, [task("a"), task("b", ["a"])], false, now)
+    syncWorkTaskStatuses(work, "wf-source", work.generation,
+      [{ taskId: "a", complete: true }, { taskId: "b", complete: true }], now)
+    completeWaveForTasks(work, "wf-source", work.generation, ["a", "b"], now, graphFingerprint)
+    expect(nextRunnableWaves(work).map((wave) => wave.id)).toEqual(["runtime"])
+    const nativeSpec: TaskSpec = {
+      ...task("c"), role: "acceptance", responsibility: "review",
+      dependsOn: [], write: [], skills: [],
+    }
+    expect(validateWorkflowWave(work, [nativeSpec], false).logicalId).toBe("runtime")
+  })
+
   test("legacy role-less Plan Tasks fail executable Wave admission instead of defaulting to Worker", () => {
     const work = createWorkHierarchy("docs/anchors/product/anchor.md", "wf-legacy", now)
     materializeWorkPlan(work, "wf-legacy", plan(), now)
