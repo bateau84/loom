@@ -12710,7 +12710,7 @@ test("native Product Acceptance owns persistent Task completion and blocks stale
     const missing = structuredClone(originalPlan)
     missing.scenarios[0].evidenceClaimIds = ["missing-claim"]
     await assertDenied(missing)
-    await h.durableStorage.set(`acceptance/${source.workflowId}`, undefined)
+    await h.durableStorage.delete!(`acceptance/${source.workflowId}`)
     expect((await compileCutover()).error).toMatch(/Acceptance|accepted product/)
     await h.durableStorage.set(`acceptance/${source.workflowId}`, originalPlan)
     await writeFile(join(h.root, "src", "unaccepted-change.txt"), "product behavior changed")
