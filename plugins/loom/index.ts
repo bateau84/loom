@@ -2735,6 +2735,117 @@ function acceptanceKey(workflowId: string) {
   return `acceptance/${workflowId}`
 }
 
+/** One workflow/attempt owns one canonical Product Acceptance gate, including
+ * Acceptance Tasks compiled into a non-final delivery Wave. */
+function nativeAcceptanceGate(workflow: Workflow) {
+  const gates = workflow.steps.filter((step) =>
+    step.agent === "acceptance" && step.kind === "gate" &&
+    (step.id === "product-acceptance" || (step.task && nativeTaskPath(step.task)?.nativeKind === "acceptance")))
+  if (gates.length > 1) throw new Error("Workflow has ambiguous native Product Acceptance gates.")
+  return gates[0]
+}
+
+/** Check the original current-attempt claims AND their observed origins.
+ * A scenario label, persisted PASS flag, or task summary is never proof. */
+async function assertCurrentAcceptanceProof(
+  ctx: any, workflow: Workflow, step: Workflow["steps"][number],
+) {
+  if (step.status !== "passed" || step.agent !== "acceptance" || step.kind !== "gate") {
+    throw new Error("Native Product Acceptance gate has not passed.")
+  }
+  const plan = await ctx.storage.get(acceptanceKey(workflow.id)) as AcceptancePlan | undefined
+  if (!plan || plan.workflowId !== workflow.id || acceptanceReadiness(plan) !== "passed" ||
+      (plan.stepId !== undefined && plan.stepId !== step.id) ||
+      (plan.stepAttempt !== undefined && plan.stepAttempt !== (step.attempt ?? 0)) ||
+      (step.task && (plan.stepId !== step.id || plan.stepAttempt !== (step.attempt ?? 0)))) {
+    throw new Error("Product Acceptance plan is missing, unproven, or bound to a stale native gate attempt.")
+  }
+  const indexed = new Map((await stepClaims(ctx, workflow.id, step.id)).map((claim) => [claim.id, claim]))
+  for (const scenario of plan.scenarios) {
+    if (scenario.outcome !== "passed" || !scenario.evidenceClaimIds.length ||
+        new Set(scenario.evidenceClaimIds).size !== scenario.evidenceClaimIds.length) {
+      throw new Error(`Product Acceptance scenario ${scenario.id} has no valid PASS evidence set.`)
+    }
+    for (const id of scenario.evidenceClaimIds) {
+      const claim = indexed.get(id)
+      const canonical = await ctx.storage.get(claimIdKey(id)) as EvidenceClaim | undefined
+      if (!claim || !canonical || JSON.stringify(claim) !== JSON.stringify(canonical) ||
+          claim.workflowId !== workflow.id || claim.stepId !== step.id ||
+          claim.byAgent !== "acceptance" || claim.kind !== "product-acceptance" ||
+          (claim.attempt ?? 0) !== (step.attempt ?? 0) || !claim.observationIds.length) {
+        throw new Error(`Product Acceptance scenario ${scenario.id} has missing or stale original claims.`)
+      }
+      const observations = await Promise.all(claim.observationIds.map((obsId) =>
+        ctx.storage.get(evidenceKey(obsId)) as Promise<EvidenceObservation | undefined>))
+      if (observations.some((observation) =>
+            !observation || (step.task && !observation.admission) ||
+            !observationMatchesStep(observation, workflow, step.id)) ||
+          !observationsSupportKind("product-acceptance", observations.filter(
+            (observation): observation is EvidenceObservation => Boolean(observation)))) {
+        throw new Error(`Product Acceptance scenario ${scenario.id} has missing, failed, or stale host observations.`)
+      }
+    }
+  }
+}
+
+/** Fail closed on upstream Acceptance proofs at BOTH Wave compilation and
+ * downstream dispatch. Review receipts remain owned by the source Workflow. */
+async function assertCurrentAcceptanceDependencies(
+  ctx: any, workflow: Workflow, work: WorkHierarchy, taskIds: string[],
+) {
+  if (!workflow.work || !taskIds.length) return
+  const generation = workflow.work.generation
+  const snapshot = work.plans?.find((plan) => plan.generation === generation)
+  if (!snapshot || snapshot.invalidated || work.generation !== generation) {
+    throw new Error("Product Acceptance dependencies require the current valid Plan.")
+  }
+  const contracts = new Map(snapshot.phases.flatMap((phase) =>
+    phase.waves.flatMap((wave) => wave.tasks.map((task) => [task.id, task] as const))))
+  const nodes = new Map(work.nodes.filter((node) => node.type === "task" &&
+    node.generation === generation && node.status !== "superseded").map((node) => [node.logicalId, node]))
+  const selectedWaves = new Set(taskIds.map((id) => nodes.get(id)?.parentId))
+  if (selectedWaves.size !== 1 || selectedWaves.has(undefined)) {
+    throw new Error("Product Acceptance dependency admission requires exactly one current Wave.")
+  }
+  const checked = new Set<string>()
+  const visit = async (taskId: string): Promise<void> => {
+    if (checked.has(taskId)) return
+    checked.add(taskId)
+    const contract = contracts.get(taskId)
+    if (!contract) throw new Error(`Missing Plan dependency ${taskId}.`)
+    if (nativeTaskPath(contract)?.nativeKind === "acceptance") {
+      const node = nodes.get(taskId)
+      if (!node) throw new Error(`Missing persistent Acceptance Task ${taskId}.`)
+      if (!selectedWaves.has(node.parentId)) {
+        const result = node.result
+        const source = result ? await readWorkflow(ctx, result.workflowId) : undefined
+        const step = source?.steps.find((candidate) => candidate.id === taskStepId(taskId))
+        const wave = work.nodes.find((candidate) => candidate.id === node.parentId)
+        const completion = wave?.completion
+        if (!result || !source || !step || step.task?.id !== taskId ||
+            node.status !== "complete" || result.nativeKind !== "acceptance" ||
+            result.producerAgent !== "acceptance" || result.stepId !== step.id ||
+            result.generation !== generation || result.taskId !== taskId ||
+            result.completedAttempt !== (step.attempt ?? 0) || !completion ||
+            !result.semanticClosureFingerprint ||
+            result.semanticClosureFingerprint !== taskSemanticClosureFingerprintAtRevision(work, taskId, generation)) {
+          throw new Error(`Cutover blocked: Acceptance Task ${taskId} lacks a current persistent gate receipt.`)
+        }
+        assertCompletedWaveForTasks(work, result.workflowId, generation,
+          completion.taskIds, completion.bindingFingerprint)
+        await assertCurrentAcceptanceProof(ctx, source, step)
+        // A later product change cannot inherit the old observed acceptance.
+        const head = await cleanRepositoryHead(ctx.location.directory)
+        if (!head || !result.cleanRepositoryHead || head !== result.cleanRepositoryHead) {
+          throw new Error(`Cutover blocked: accepted product repository revision changed after Acceptance Task ${taskId}.`)
+        }
+      }
+    }
+    for (const parent of contract.dependsOn) await visit(parent)
+  }
+  for (const id of taskIds) await visit(id)
+}
+
 function knowledgeKey(workflowId: string) {
   return `knowledge/${workflowId}`
 }
