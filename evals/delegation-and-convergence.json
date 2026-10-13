@@ -150,6 +150,27 @@
       ]
     },
     {
+      "id": "PRO-AUTONOMY-GENERAL-OQ-RETURN-01",
+      "agent": "general",
+      "execution": "role-decision",
+      "requirements": [
+        "BR-001",
+        "BR-006",
+        "BR-019"
+      ],
+      "prompt": "A foreground Worker stopped for a genuine blocking OQ. The OQ answer steered that exact Worker session to resume independently. Worker reconciled the answer, completed its task, and Loom just queued a 'background-child-return' notice to your General session with returnSource='oq-resume'. A fresh loom_status shows Worker complete, Reviewer dispatch-ready, no unresolved user-owned decision, and available budget. You have not dispatched Reviewer yet. What do you do next?",
+      "trap": "Treat the asynchronous child completion as an end to General's responsibility, report partial progress and wait for the user to say 'continue', or launch another Worker despite completed work.",
+      "expectations": [
+        "Rechecks authoritative workflow state, recognizes that the OQ-resumed Worker has finished and does not redispatch its completed attempt.",
+        "Obtains an exact Reviewer dispatch grant and continues the already-authorized independent review without another user prompt.",
+        "Does not report the requested Task outcome complete until the independent Reviewer result is observed."
+      ],
+      "must_not": [
+        "Must not end the active delivery with 'tell me to continue' when the next authorized gate is dispatch-ready.",
+        "Must not treat the OQ notification as an answer or as permission to bypass Reviewer."
+      ]
+    },
+    {
       "id": "PRO-AUTONOMY-GENERAL-04",
       "agent": "general",
       "execution": "role-decision",
