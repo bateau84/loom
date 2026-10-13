@@ -47,7 +47,7 @@ def require(condition: bool, message: str) -> None:
 def isolated_environment(root: Path) -> dict[str, str]:
     # Never pass provider keys, shared-server addresses or the user's OpenCode config.
     env = {k: os.environ[k] for k in ("PATH", "SYSTEMROOT", "WINDIR") if k in os.environ}
-    env.update({"CI": "1", "TERM": "dumb", "NO_COLOR": "1", "LANG": "C.UTF-8"})
+    env.update({"CI": "1", "TERM": "dumb", "NO_COLOR": "1", "LANG": "C.UTF-8", "OPENCODE_PRINT_LOGS": "1"})
     for key, directory in {
         "HOME": "home", "XDG_CONFIG_HOME": "config", "XDG_DATA_HOME": "data",
         "XDG_STATE_HOME": "state", "XDG_CACHE_HOME": "cache", "TMPDIR": "tmp",
@@ -60,7 +60,7 @@ def isolated_environment(root: Path) -> dict[str, str]:
 
 
 def api_get_args(path: str, project: Path) -> list[str]:
-    require(path in {"/api/agent", "/api/plugin"}, "Boot probe only permits read-only roster endpoints")
+    require(path in {"/api/agent", "/api/plugin", "/api/config"}, "Boot probe only permits read-only roster/config endpoints")
     return ["api", "--standalone", "GET", path + "?" + urlencode({"location[directory]": str(project)})]
 
 
@@ -145,6 +145,8 @@ def run_probe(executable: str, repo: Path, output: Path, expected: str) -> dict:
             require(re.search(r"(?<![\d.])" + re.escape(expected) + r"(?![\d.])", version) is not None,
                     f"Wrong OpenCode version: {version!r}")
             report["observed_version"] = version
+            run("effective-config-before", *api_get_args("/api/config", project))
+            run("native-plugins-before", *api_get_args("/api/plugin", project))
             baseline = roster_response(run("native-agents-before", *api_get_args("/api/agent", project)), project)
             require(isinstance(baseline, list) and len(baseline) > 0, "Native agent list must be non-empty")
             baseline.sort(key=lambda a: a["id"])
