@@ -151,6 +151,29 @@ describe("Loom routing DAG", () => {
     expect(runnable(w).map((step) => step.id)).toEqual(["review-implementation"])
   })
 
+  test("standalone Acceptance Wave accepts external Plan prerequisites without local Task edges", () => {
+    const w = workflow(buildSteps({
+      humanFacing: false, behavioral: false, structural: false, externalUnknown: false,
+      diagnostic: false, productOutcome: true, workLevel: "wave",
+    }))
+    finishStep(w, "critic-solution", "critic", "pass", "independent solution review")
+    // The semantic Plan lists upstream implementation/database Task ids.
+    // TaskSpec.dependsOn is Wave-local by contract, so this list is empty.
+    applyTaskPlan(w, [{
+      id: "accept", title: "Native Acceptance", objective: "Prove reviewed integrated product",
+      dependsOn: [], write: [], skills: [], verify: ["SC-001", "SC-002"],
+      role: "acceptance", responsibility: "review",
+    }])
+    expect(w.steps.find((step) => step.id === "task:accept")).toMatchObject({
+      kind: "gate", agent: "acceptance", dependsOn: ["review-plan"],
+    })
+    finishStep(w, "plan", "planner", "complete", "Plan compiled")
+    finishStep(w, "review-plan", "reviewer", "pass", "Plan approved")
+    expect(runnable(w).map((step) => step.id)).toEqual(["task:accept"])
+    finishStep(w, "task:accept", "acceptance", "pass", "Product proof passed")
+    expect(runnable(w).map((step) => step.id)).toEqual(["review-implementation"])
+  })
+
   test("Objective closure reuses planned native Acceptance without a second gate or ordering cycle", () => {
     const w = workflow(buildSteps({
       humanFacing: false, behavioral: false, structural: false, externalUnknown: false,
