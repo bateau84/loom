@@ -11730,6 +11730,23 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
                 await assertCurrentAcceptanceDependencies(ctx, workflow, work, compiledTaskIds)
 
+                // Specifier/Reviewer may have prepared scenarios against the
+                // default Objective gate before Planner compiled this Wave.
+                // Rebind only untouched definitions; never migrate a verdict.
+                const plannedAcceptance = steps.find((step) =>
+                  nativeTaskPath(step.task!)?.nativeKind === "acceptance")
+                if (plannedAcceptance) {
+                  const prepared = await ctx.storage.get(acceptanceKey(workflow.id)) as AcceptancePlan | undefined
+                  if (prepared?.stepId === "product-acceptance") {
+                    if (prepared.scenarios.some((scenario) => scenario.outcome !== "pending")) {
+                      throw new Error("Previously executed Product Acceptance cannot be rebound to a planned Task.")
+                    }
+                    prepared.stepId = plannedAcceptance.id
+                    prepared.stepAttempt = plannedAcceptance.attempt ?? 0
+                    await ctx.storage.set(acceptanceKey(workflow.id), prepared)
+                  }
+                }
+
                 for (const step of steps) {
                   const scope: TaskScope = {
                     workflowId: value.workflowId,
