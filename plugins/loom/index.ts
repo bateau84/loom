@@ -2780,7 +2780,7 @@ async function assertCurrentAcceptanceProof(
     // When the Plan assigns named SC-### coverage to this Task, it is
     // mandatory. A subset of scenarios cannot authorize the whole Task.
     const required = snapshot.acceptanceCoverage
-      .filter((coverage) => coverage.taskIds.includes(step.task!.id) && /^sc-\\d+$/i.test(coverage.id))
+      .filter((coverage) => coverage.taskIds.includes(step.task!.id) && /^sc-\d+$/i.test(coverage.id))
       .map((coverage) => coverage.id.toLowerCase())
     const actual = new Set(plan.scenarios.map((scenario) => scenario.id.toLowerCase()))
     if (required.some((id) => !actual.has(id))) {
