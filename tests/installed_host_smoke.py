@@ -3,18 +3,21 @@
 from __future__ import annotations
 
 import argparse
+import base64
 from contextlib import closing
 import hashlib
 import json
 import os
 from pathlib import Path
 import re
+import secrets
 import signal
 import sqlite3
 import subprocess
 import tempfile
 import time
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit
+from urllib.request import Request, build_opener, ProxyHandler, HTTPRedirectHandler
 
 EXPECTED_TABLES = {"actions", "plans", "focus", "ledger"}
 PROBE_AGENTS = {
@@ -23,29 +26,41 @@ PROBE_AGENTS = {
 }
 
 
+def require(condition: bool, message: str) -> None:
+    if not condition:
+        raise RuntimeError(message)
+
+
 def host_config(plugin: Path | None = None) -> dict:
-    # Preserve built-in plugin enablement; the fixtures are external native config.
     return {"plugins": ["*", *([str(plugin)] if plugin else [])], "agents": PROBE_AGENTS,
             "update": "disable", "share": "disabled"}
 
 
 def roster_response(text: str, project: Path) -> list[dict]:
     response = json.loads(text)
-    require(isinstance(response, dict) and isinstance(response.get("location"), dict),
-            "Expected the pinned host's location/data envelope")
+    require(isinstance(response, dict) and isinstance(response.get("location"), dict), "Expected location/data envelope")
     require(response["location"].get("directory") == str(project), "Host responded for a different location")
     data = response.get("data")
-    require(isinstance(data, list) and all(isinstance(item, dict) for item in data), "Host roster data must be a list of objects")
+    require(isinstance(data, list) and all(isinstance(item, dict) for item in data), "Host roster must be a list of objects")
     return data
 
 
-def require(condition: bool, message: str) -> None:
-    if not condition:
-        raise RuntimeError(message)
+def endpoint_path(path: str, project: Path) -> str:
+    require(path in {"/api/agent", "/api/plugin", "/api/config", "/api/info"}, "Only read-only boot endpoints are permitted")
+    return path if path == "/api/info" else path + "?" + urlencode({"location[directory]": str(project)})
+
+
+def ready_url(text: str) -> str:
+    url = json.loads(text)["url"]
+    parts = urlsplit(url)
+    require(parts.scheme == "http" and parts.hostname in {"127.0.0.1", "::1"}
+            and parts.port is not None and not parts.username and not parts.password
+            and not parts.query and not parts.fragment and parts.path in {"", "/"},
+            "Private host must advertise a loopback HTTP endpoint")
+    return url.rstrip("/")
 
 
 def isolated_environment(root: Path) -> dict[str, str]:
-    # Never pass provider keys, shared-server addresses or the user's OpenCode config.
     env = {k: os.environ[k] for k in ("PATH", "SYSTEMROOT", "WINDIR") if k in os.environ}
     env.update({"CI": "1", "TERM": "dumb", "NO_COLOR": "1", "LANG": "C.UTF-8", "OPENCODE_PRINT_LOGS": "1"})
     for key, directory in {
@@ -59,23 +74,88 @@ def isolated_environment(root: Path) -> dict[str, str]:
     return env
 
 
-def api_get_args(path: str, project: Path) -> list[str]:
-    require(path in {"/api/agent", "/api/plugin", "/api/config"}, "Boot probe only permits read-only roster/config endpoints")
-    return ["api", "--standalone", "GET", path + "?" + urlencode({"location[directory]": str(project)})]
+class NoRedirect(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        raise RuntimeError("Private host redirected a boot request")
+
+
+class PrivateHost:
+    """Keep one real host alive across reads; its plugin activation is asynchronous."""
+    def __init__(self, executable: str, project: Path, env: dict, output: Path, label: str):
+        self.project, self.output, self.label = project, output, label
+        self.password = secrets.token_urlsafe(24)
+        self.opener = build_opener(ProxyHandler({}), NoRedirect())
+        self.stdout_path = output / f"{label}.server.stdout.txt"
+        self.stdout = self.stdout_path.open("w")
+        self.stderr = (output / f"{label}.server.stderr.txt").open("w")
+        try:
+            self.proc = subprocess.Popen([executable, "serve", "--stdio", "--hostname", "127.0.0.1", "--port", "0"],
+                cwd=project, env={**env, "OPENCODE_PASSWORD": self.password}, stdin=subprocess.PIPE,
+                stdout=self.stdout, stderr=self.stderr, start_new_session=True)
+        except Exception:
+            self.stdout.close(); self.stderr.close(); raise
+        try:
+            deadline = time.monotonic() + 30
+            while time.monotonic() < deadline:
+                require(self.proc.poll() is None, f"{label}: server exited before readiness")
+                with self.stdout_path.open() as stream:
+                    line = stream.readline(65536)
+                if line.endswith("\n"):
+                    self.url = ready_url(line)
+                    return
+                time.sleep(0.05)
+            raise RuntimeError(f"{label}: server readiness timed out")
+        except Exception:
+            self.close(); raise
+
+    def close(self):
+        if self.proc.stdin and not self.proc.stdin.closed:
+            self.proc.stdin.close()  # EOF releases the private server's ownership lease.
+        try:
+            self.proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(self.proc.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            self.proc.wait(timeout=5)
+        finally:
+            self.stdout.close(); self.stderr.close()
+
+    def get(self, path: str, label: str) -> str:
+        require(self.proc.poll() is None, f"{self.label}: server stopped during validation")
+        token = base64.b64encode(f"opencode:{self.password}".encode()).decode()
+        request = Request(self.url + endpoint_path(path, self.project), headers={"Authorization": "Basic " + token})
+        with self.opener.open(request, timeout=10) as response:
+            data = response.read(2 * 1024 * 1024 + 1)
+        require(len(data) <= 2 * 1024 * 1024, "Boot response exceeded 2 MiB")
+        text = data.decode()
+        (self.output / f"{self.label}.{label}.latest.json").write_text(text + "\n")
+        return text
+
+    def wait_roster(self, path: str, label: str, predicate) -> tuple[list[dict], int]:
+        # A successful HTTP response is not evidence that activation has finished.
+        for attempt in range(120):
+            data = roster_response(self.get(path, label), self.project)
+            for item in data:
+                if item.get("state", {}).get("status") == "failed":
+                    raise RuntimeError(f"{self.label}: plugin failure: {item}")
+            if predicate(data):
+                return data, attempt + 1
+            time.sleep(0.25)
+        raise RuntimeError(f"{self.label}: expected {label} did not become ready; inspect latest response")
 
 
 def ledger_inventory(state: Path) -> list[dict]:
     result = []
     for path in sorted((state / "loom" / "actions-v1").glob("*/ledger.sqlite")):
-        # Read only. Do not initialize, repair or otherwise create the expected tables.
         with closing(sqlite3.connect(path.as_uri() + "?mode=ro", uri=True)) as db:
             tables = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
             require(EXPECTED_TABLES <= tables, f"Incomplete Loom schema at {path}")
             require(db.execute("PRAGMA integrity_check").fetchone()[0] == "ok", "Loom database integrity failure")
             require(db.execute("PRAGMA user_version").fetchone()[0] == 1, "Unexpected Loom schema version")
-            result.append({"relative_path": str(path.relative_to(state)),
-                           "counts": {table: db.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
-                                      for table in sorted(EXPECTED_TABLES)}})
+            result.append({"relative_path": str(path.relative_to(state)), "counts": {
+                table: db.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] for table in sorted(EXPECTED_TABLES)}})
     return result
 
 
@@ -103,7 +183,6 @@ def run_probe(executable: str, repo: Path, output: Path, expected: str) -> dict:
     report = {"status": "running", "kind": "installed-host-boot-only", "expected_version": expected,
               "model_prompts_sent_by_probe": 0, "independent_review": False,
               "two_agent_acceptance": "not exercised", "checks": [], **source_inventory(repo)}
-    (output / "report.json").write_text(json.dumps(report, indent=2) + "\n")
     try:
         with tempfile.TemporaryDirectory(prefix="loom-installed-") as temporary:
             root = Path(temporary).resolve()
@@ -111,76 +190,50 @@ def run_probe(executable: str, repo: Path, output: Path, expected: str) -> dict:
             project = root / "project"
             project.mkdir()
             subprocess.run(["git", "init", "-q", str(project)], env=env, check=True, timeout=10)
+            version = subprocess.run([executable, "--version"], cwd=project, env=env, capture_output=True, text=True, check=True, timeout=15)
+            (output / "version.stdout.txt").write_text(version.stdout)
+            require(re.search(r"(?<![\d.])" + re.escape(expected) + r"(?![\d.])", version.stdout) is not None, "Wrong CLI version")
+            report["observed_version"] = version.stdout.strip()
             config = Path(env["OPENCODE_CONFIG_DIR"]) / "opencode.json"
-            config.write_text(json.dumps(host_config()) + "\n")
-
-            def run(label: str, *args: str) -> str:
-                started = time.monotonic()
-                proc = subprocess.Popen([executable, *args], cwd=project, env=env,
-                                        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                        text=True, start_new_session=True)
-                try:
-                    try:
-                        stdout, stderr = proc.communicate(timeout=90)
-                    except subprocess.TimeoutExpired:
-                        os.killpg(proc.pid, signal.SIGKILL)
-                        stdout, stderr = proc.communicate()
-                        (output / f"{label}.stdout.txt").write_text(stdout)
-                        (output / f"{label}.stderr.txt").write_text(stderr)
-                        raise RuntimeError(f"{label} timed out; isolated process group stopped")
-                finally:
-                    # Also stop a private server if it outlived the CLI command.
-                    try:
-                        os.killpg(proc.pid, signal.SIGKILL)
-                    except ProcessLookupError:
-                        pass
-                (output / f"{label}.stdout.txt").write_text(stdout)
-                (output / f"{label}.stderr.txt").write_text(stderr)
-                require(proc.returncode == 0, f"{label} exited {proc.returncode}; inspect captured stderr")
-                report["checks"].append({"name": label, "exit_code": proc.returncode,
-                                         "elapsed_seconds": round(time.monotonic() - started, 3)})
-                return stdout
-
-            version = run("version", "--version").strip()
-            require(re.search(r"(?<![\d.])" + re.escape(expected) + r"(?![\d.])", version) is not None,
-                    f"Wrong OpenCode version: {version!r}")
-            report["observed_version"] = version
-            run("effective-config-before", *api_get_args("/api/config", project))
-            run("native-plugins-before", *api_get_args("/api/plugin", project))
-            baseline = roster_response(run("native-agents-before", *api_get_args("/api/agent", project)), project)
-            require(isinstance(baseline, list) and len(baseline) > 0, "Native agent list must be non-empty")
-            baseline.sort(key=lambda a: a["id"])
-            for name, definition in PROBE_AGENTS.items():
-                actual = next((a for a in baseline if a.get("id") == name), None)
-                require(actual is not None and actual.get("description") == definition["description"],
-                        f"Real host did not load external native agent {name}")
-            native_id = "probe-worker"
             state = Path(env["XDG_STATE_HOME"])
-            require(not ledger_inventory(state), "Baseline unexpectedly loaded Loom")
-            config.write_text(json.dumps(host_config(repo)) + "\n")
-            loom_config = Path(env["OPENCODE_CONFIG_DIR"]) / ".loom.yaml"
-            # JSON is a YAML subset; the plugin still decodes this with its real YAML loader.
-            loom_config.write_text(json.dumps({"version": 1, "agents": {native_id: {"roles": ["implementation"]}}}) + "\n")
-            listing = roster_response(run("plugin-list", *api_get_args("/api/plugin", project)), project)
-            require(isinstance(listing, list) and any(p.get("id") == "loom" for p in listing),
-                    "Real host did not report loaded plugin ID loom")
-            after = roster_response(run("native-agents-with-loom", *api_get_args("/api/agent", project)), project)
-            after.sort(key=lambda a: a["id"])
-            require(after == baseline, "Loom changed native agent definitions")
-            first = ledger_inventory(state)
-            require(len(first) == 1, "Expected exactly one project Loom Action database")
-            require(all(n == 0 for n in first[0]["counts"].values()), "Boot invented work or ledger records")
-            restarted = roster_response(run("plugin-list-after-restart", *api_get_args("/api/plugin", project)), project)
-            require(any(p.get("id") == "loom" for p in restarted), "Loom did not load after private-server restart")
-            require(ledger_inventory(state) == first, "Boot restart changed the existing empty ledger")
-            # Removing Loom's config entry tests rollback of loading, not historical data migration.
-            config.write_text(json.dumps(host_config()) + "\n")
-            rollback = roster_response(run("plugin-list-after-removal", *api_get_args("/api/plugin", project)), project)
-            require(isinstance(rollback, list) and not any(p.get("id") == "loom" for p in rollback), "Loom still loads after config removal")
-            restored = roster_response(run("native-agents-after-removal", *api_get_args("/api/agent", project)), project)
-            require(sorted(restored, key=lambda a: a["id"]) == baseline,
-                    "Native agents changed after plugin removal")
-            require(ledger_inventory(state) == first, "Removing the plugin modified its saved database")
+            baseline = None
+            first = None
+            for label, enabled in [("baseline", False), ("with-loom", True), ("restart", True), ("removed", False)]:
+                config.write_text(json.dumps(host_config(repo if enabled else None)) + "\n")
+                (config.parent / ".loom.yaml").write_text(json.dumps({"version": 1, "agents": {"probe-worker": {"roles": ["implementation"]}}}) + "\n")
+                started = time.monotonic()
+                with closing(PrivateHost(executable, project, env, output, label)) as host:
+                    info = json.loads(host.get("/api/info", "info"))
+                    require(info.get("version") == expected, "Wrong server version")
+                    host.get("/api/config", "config")
+                    def ready_agents(items):
+                        return all(any(a.get("id") == name and a.get("description") == cfg["description"] for a in items)
+                                   for name, cfg in PROBE_AGENTS.items())
+                    agents, attempts = host.wait_roster("/api/agent", "agents", ready_agents)
+                    def ready_plugins(items):
+                        if not items:
+                            return False
+                        loom = next((p for p in items if p.get("id") == "loom"), None)
+                        return loom is not None and loom.get("state", {}).get("status") == "active" if enabled else loom is None
+                    plugins, plugin_attempts = host.wait_roster("/api/plugin", "plugins", ready_plugins)
+                    # Re-read after plugin activation before comparing complete native definitions.
+                    agents = sorted(roster_response(host.get("/api/agent", "agents-final"), project), key=lambda a: a["id"])
+                    if baseline is None:
+                        baseline = agents
+                    else:
+                        require(agents == baseline, f"{label}: native agent definitions changed")
+                ledger = ledger_inventory(state)
+                if label == "baseline":
+                    require(not ledger, "Baseline unexpectedly loaded Loom")
+                elif label == "with-loom":
+                    require(len(ledger) == 1, "Expected exactly one host-created Loom database")
+                    require(all(n == 0 for n in ledger[0]["counts"].values()), "Boot invented work or ledger entries")
+                    first = ledger
+                else:
+                    require(ledger == first, "Restart/removal changed the existing empty ledger")
+                report["checks"].append({"name": label, "agents": len(agents), "plugins": len(plugins),
+                    "agent_read_attempts": attempts, "plugin_read_attempts": plugin_attempts,
+                    "elapsed_seconds": round(time.monotonic() - started, 3)})
             report["ledger"] = first
             report["status"] = "passed"
     except Exception as error:
@@ -200,7 +253,6 @@ if __name__ == "__main__":
     parser.add_argument("--expect-version", default="2.0.18")
     args = parser.parse_args()
     try:
-        result = run_probe(str(args.opencode.absolute()), args.repository.resolve(), args.report_directory.resolve(), args.expect_version)
-        print(json.dumps(result, indent=2))
+        print(json.dumps(run_probe(str(args.opencode.absolute()), args.repository.resolve(), args.report_directory.resolve(), args.expect_version), indent=2))
     except Exception as error:
         parser.exit(1, f"Installed-host boot probe failed: {error}\n")

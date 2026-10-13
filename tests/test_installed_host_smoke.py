@@ -14,6 +14,23 @@ spec.loader.exec_module(smoke)
 
 
 class BootHarnessTest(unittest.TestCase):
+    def test_same_host_retries_empty_inventory_until_observable_readiness(self):
+        host = object.__new__(smoke.PrivateHost)
+        host.project, host.label = Path("/tmp/project"), "unit"
+        replies = iter([[], [{"id": "native"}]])
+        host.get = lambda path, label: json.dumps({"location": {"directory": str(host.project)}, "data": next(replies)})
+        with patch.object(smoke.time, "sleep"):
+            data, attempts = host.wait_roster("/api/agent", "agents", lambda items: bool(items))
+        self.assertEqual(attempts, 2)
+        self.assertEqual(data, [{"id": "native"}])
+
+    def test_failed_plugin_cannot_be_treated_as_ready(self):
+        host = object.__new__(smoke.PrivateHost)
+        host.project, host.label = Path("/tmp/project"), "unit"
+        host.get = lambda path, label: json.dumps({"location": {"directory": str(host.project)}, "data": [{"id": "loom", "state": {"status": "failed"}}]})
+        with self.assertRaisesRegex(RuntimeError, "plugin failure"):
+            host.wait_roster("/api/plugin", "plugins", lambda items: True)
+
     def test_roster_envelope_requires_the_requested_location(self):
         project = Path("/tmp/project")
         source = {"location": {"directory": str(project)}, "data": [{"id": "a"}]}
@@ -31,13 +48,23 @@ class BootHarnessTest(unittest.TestCase):
         self.assertEqual(enabled["plugins"], ["*", "/tmp/plugin"])
         self.assertEqual(set(before["agents"]), {"probe-research", "probe-worker"})
 
-    def test_private_server_option_belongs_to_api_subcommand(self):
+    def test_read_only_endpoint_paths_preserve_location(self):
         from urllib.parse import parse_qs, urlsplit
-        args = smoke.api_get_args("/api/agent", Path("/tmp/a space"))
-        self.assertEqual(args[:3], ["api", "--standalone", "GET"])
-        self.assertEqual(parse_qs(urlsplit(args[3]).query), {"location[directory]": ["/tmp/a space"]})
+        path = smoke.endpoint_path("/api/agent", Path("/tmp/a space"))
+        self.assertEqual(urlsplit(path).path, "/api/agent")
+        self.assertEqual(parse_qs(urlsplit(path).query), {"location[directory]": ["/tmp/a space"]})
         with self.assertRaises(RuntimeError):
-            smoke.api_get_args("/api/session", Path("/tmp/project"))
+            smoke.endpoint_path("/api/session", Path("/tmp/project"))
+
+    def test_readiness_rejects_remote_endpoints(self):
+        self.assertEqual(smoke.ready_url('{"url":"http://127.0.0.1:12345"}'), "http://127.0.0.1:12345")
+        for url in ["http://example.com:123", "https://127.0.0.1:123", "http://user:pw@127.0.0.1:123", "http://127.0.0.1:123/path"]:
+            with self.assertRaises(RuntimeError):
+                smoke.ready_url(json.dumps({"url": url}))
+
+    def test_redirects_cannot_send_private_credentials_elsewhere(self):
+        with self.assertRaises(RuntimeError):
+            smoke.NoRedirect().redirect_request(None, None, 302, "", {}, "http://example.com")
 
     def test_environment_does_not_inherit_credentials_or_remote_server(self):
         with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {

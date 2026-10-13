@@ -2,37 +2,50 @@
 
 The existing Bun native suite uses a simulated host API. It proves callback
 behavior under that contract, not that the published OpenCode CLI can load Loom.
-`tests/installed_host_smoke.py` adds a separate, no-inference boot probe using an
-already installed, exact OpenCode CLI version. The CI job installs
-`@opencode/cli@2.0.18` outside the plugin's dependency tree, matching the reviewed
-SDK target; it does not upgrade the user's CLI or patch upstream source.
+`tests/installed_host_smoke.py` is a separate, no-inference boot probe using an
+already installed, exact OpenCode CLI version. CI installs
+`@opencode/cli@2.0.18` outside the plugin dependency tree, matching the reviewed
+SDK target. It does not upgrade the user's CLI or patch upstream source.
 
 ## What this probe actually checks
 
-The probe creates an empty temporary Git project and isolated HOME, configuration,
+The probe creates a temporary Git project and isolated HOME, configuration,
 state, data, runtime and cache directories. Provider credentials, shared-server
-addresses and user configuration are not inherited. Every host command uses a
-private server (`--standalone`); the probe never sends a prompt or model request.
-It stops its isolated process groups and removes temporary state on exit.
+addresses and user configuration are not inherited. Two native agent fixtures
+are defined in the temporary OpenCode configuration, outside Loom. The same
+config retains built-in plugin enablement before, during and after the trial.
 
-1. Verify the installed version and read a nonempty native agent roster without Loom.
-2. Add Loom's checkout to the temporary OpenCode configuration, and map one actual
-   native agent to a role in the temporary `.loom.yaml`.
-3. Ask the real host to list loaded plugins; require plugin ID `loom`. Compare
-   complete native agent definitions with the baseline.
-4. Read the host-created Loom SQLite database in read-only mode, checking its
-   schema, integrity and empty Action/Plan/selection/ledger tables. The test must
-   not initialize the tables it expects to find.
-5. Start another private host and verify the same database remains intact.
-6. Remove the plugin configuration entry, verify it no longer loads, and verify
-   native definitions and the existing empty Loom database are unchanged.
+Each stage starts an actual `opencode serve --stdio` process, retaining its stdin
+ownership lease. The reported endpoint must be loopback HTTP; private credentials
+are not sent through proxies or redirects. Requests are restricted to read-only
+info/config/agent/plugin endpoints. No prompt or model request is sent.
 
-The report includes the checked Git commit, runtime source hashes, command output
-and elapsed times. Failure or unavailable installation is not PASS. CI preserves
-reports and command logs as a seven-day artifact. The local Python harness tests
-check environment isolation, read-only inspection and failure reporting only.
+A newly listening server may still have empty inventories while plugin activation
+runs asynchronously. The probe keeps that same process alive and polls for the
+actual fixture agents and active plugin status, with a bounded retry count. It
+does not treat an HTTP 200, an empty list or a failed plugin record as readiness.
+Starting and closing a new private server for every query cannot test this
+startup boundary reliably.
 
-Run after installing dependencies and the exact CLI separately:
+1. Verify both the CLI and server version; read the host's effective config.
+2. Require the real host to discover both native fixture agents without Loom.
+3. Add Loom's checkout to temporary config and map the Worker fixture to a role
+   in `.loom.yaml`. Require active plugin ID `loom`, not merely a listed failure.
+4. Compare complete native agent definitions against the pre-Loom baseline.
+5. Read the host-created Loom SQLite database in read-only mode. Require its
+   schema, integrity and empty Action/Plan/selection/ledger tables. The test does
+   not create or repair the tables it expects to find.
+6. Stop the host, start another, and verify plugin loading and the same empty
+   database. Remove the plugin config entry, start again, and verify native
+   definitions and the existing database are unchanged while Loom is absent.
+
+The probe closes stdin to stop its private server, with bounded forced cleanup
+when necessary, and removes temporary state. The report includes the checked
+commit, runtime hashes, completed stages, attempt counts and elapsed times.
+Server logs and latest API responses are retained as CI artifacts for seven days.
+Failed assertions or unavailable installation are not PASS. Python harness tests
+cover the test's isolation, response validation, readiness and error behavior;
+they are not substitutes for the installed-host run.
 
 ```sh
 python3 tests/installed_host_smoke.py \
@@ -46,34 +59,30 @@ python3 tests/installed_host_smoke.py \
 This does not exercise model-context injection, tool execution, native delegation,
 parallel Code Mode calls, capture toggles, interruption, task selection/recovery,
 nonempty-ledger persistence or review recording. It does not measure model quality
-or establish that the user's laptop behaves like the CI host. Fresh private-server
-boots are not equivalent to the two-agent resumption scenario. A config-entry
-removal is not a full backup/restore or old/new-runtime migration test.
+or establish that the user's laptop behaves like CI. Creating fixture agents is
+not executing a two-agent task. Config-entry removal is not backup/restore or a
+full old/new-runtime migration test.
 
-The next installed-host acceptance run must still cover:
+The next installed-host acceptance run must still cover Research recording a
+conclusion, Worker consuming its dependency context, replanning/removal and an
+explicit recovery choice, and a genuinely fresh Session recovering the same
+Action. It must also exercise parallel same-tool calls, capture off/on,
+interruption, restart and late completions, with honest attribution/ambiguity and
+Assessment/QA records that remain opinions rather than automatic proof.
 
-- Research records a conclusion; a Worker consumes its dependency context.
-- Replanning removes the selected task; the agent sees the recovery notice and
-  explicitly reselects work without altered historical records.
-- A genuinely fresh Session recovers the same Action and useful conclusions.
-- Parallel same-tool calls, capture off/on, interruption, restart and late
-  completions retain the documented honest attribution/ambiguity behavior.
-- Assessment/QA records remain opinions with evidence links, not automatic proof.
-
-Use isolated state and record host version, actual tool results, ledger snapshots
-and limitations. Do not replace the real host with manual hook calls and call it
-live acceptance. Paid/model-driven runs need their own explicit execution setup.
+Use isolated state and record host version, real tool results, ledger snapshots
+and limits. Do not replace host execution with manual hook calls and call it live
+acceptance. Model-driven runs need their own explicit execution setup.
 
 ## Review independence and the unused method
 
-This same authoring session cannot supply an independent Reviewer gate merely by
-renaming its own check. That gate remains open. The report includes a direct
-source call-site scan for `Store.recent()`; this is useful review evidence, not
-proof about intended or external consumers. The method is not removed by this
-patch, preserving the requested independent consumer check.
+This authoring session does not supply an independent Reviewer gate by renaming
+its own checks. That gate stays open. The report includes a direct source-call
+scan for `Store.recent()`; it is evidence for review, not proof about intended or
+external consumers. This patch leaves the method unchanged.
 
 A/B/C/D remain implemented and regression-tested. E and broader F coverage remain
-open. Short excerpts can omit qualifications; consequential decisions still
-require full-source reads. Keep PR #180 draft until independent review and the
-remaining real-host acceptance work are complete. No runtime code, tool, gate,
-orchestration behavior, dependency lock or backup semantics change here.
+open. Excerpts can omit qualifications; consequential decisions require full-source
+reads. Keep PR #180 draft until independent review and the remaining real-host
+acceptance work are complete. This patch changes tests and documentation, not
+runtime code, tools, gates, orchestration, dependency locks or backup semantics.
