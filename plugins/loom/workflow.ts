@@ -909,7 +909,8 @@ export function applyTaskPlan(
     const responsibility = task.responsibility
     const path = nativeTaskPath(task)
     validateAdviceAssociation(task)
-    const reviewerTask = responsibility === "review"
+    const reviewerTask = role === "reviewer" && responsibility === "review"
+    const acceptanceTask = path?.nativeKind === "acceptance"
     const decisionTask = responsibility === "obtain-user-decision"
     if (decisionTask) {
       if (role !== "user") throw new Error(`Task ${task.id} user-decision responsibility requires user ownership.`)
@@ -922,18 +923,18 @@ export function applyTaskPlan(
     if (!path) {
       throw new Error(`Task ${task.id} role ${role} has no supported Task execution slot.`)
     }
-    if (reviewerTask && task.dependsOn.length === 0) throw new Error(`Task ${task.id} review Task must name reviewed work as dependencies.`)
+    if ((reviewerTask || acceptanceTask) && task.dependsOn.length === 0) throw new Error(`Task ${task.id} review Task must name reviewed work as dependencies.`)
     if (!decisionTask && role === "user") throw new Error(`Task ${task.id} user ownership requires user-decision responsibility.`)
     const deps = task.dependsOn.map((dependency) => {
       const source = taskById.get(dependency)
-      return source && role !== source.role && responsibility !== "review" && source.responsibility !== "review" && source.responsibility !== "obtain-user-decision"
+      return source && role !== source.role && !reviewerTask && source.responsibility !== "review" && source.responsibility !== "obtain-user-decision"
         ? `task-review:${dependency}`
         : taskStepId(dependency)
     })
     return {
       id: taskStepId(task.id),
       agent: role,
-      kind: decisionTask ? "wait" : reviewerTask ? "gate" : "work",
+      kind: path.stepKind,
       dependsOn: [executionGateId, ...deps],
       status: decisionTask ? "waiting" : "pending",
       task,
@@ -948,7 +949,7 @@ export function applyTaskPlan(
 
   const handoffGates: Step[] = allTaskSpecs
     .filter((source) => source.responsibility !== "review" && source.responsibility !== "obtain-user-decision" &&
-      allTaskSpecs.some((target) => target.role !== source.role && target.responsibility !== "review" && target.dependsOn.includes(source.id)))
+      allTaskSpecs.some((target) => target.role !== source.role && target.role !== "reviewer" && target.dependsOn.includes(source.id)))
     .map((source) => ({
       id: `task-review:${source.id}`, agent: "reviewer", kind: "gate",
       dependsOn: [executionGateId, taskStepId(source.id)], status: "pending",
@@ -966,6 +967,25 @@ export function applyTaskPlan(
   const review = workflow.steps.find((step) => step.id === "review-implementation")
   if (!review) throw new Error("Workflow has no implementation review step.")
   review.dependsOn = [...taskSteps.map((step) => step.id), ...handoffGates.map((step) => step.id)]
+
+  // A planned Acceptance task is itself the native gate. Never also schedule
+  // the Objective-closure gate for the same product, or create a second PASS
+  // that is detached from the persistent Task identity.
+  const plannedAcceptance = taskSteps.filter((step) =>
+    nativeTaskPath(step.task!)?.nativeKind === "acceptance")
+  if (plannedAcceptance.length > 1) {
+    throw new Error("A compiled Wave may have only one native Product Acceptance gate.")
+  }
+  if (plannedAcceptance.length === 1) {
+    const nativeGate = plannedAcceptance[0]!.id
+    const oldClosure = workflow.steps.find((step) => step.id === "product-acceptance" && !step.task)
+    if (oldClosure) {
+      workflow.steps = workflow.steps.filter((step) => step !== oldClosure)
+      for (const step of workflow.steps) {
+        step.dependsOn = step.dependsOn.map((id) => id === "product-acceptance" ? nativeGate : id)
+      }
+    }
+  }
 
   return taskSteps
 }
